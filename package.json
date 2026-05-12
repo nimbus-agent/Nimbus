@@ -116,7 +116,7 @@
     "@types/bun": "^1.3.13",
     "dependency-cruiser": "^17.4.0",
     "js-yaml": "^4.1.1",
-    "jscpd": "^4.0.9",
+    "jscpd": "^4.1.1",
     "knip": "^6.12.0",
     "markdownlint-cli2": "^0.22.1",
     "tweetnacl": "^1.0.3",
