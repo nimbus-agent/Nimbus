@@ -2,6 +2,48 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.4.0](https://github.com/nimbus-agent/Nimbus/compare/v0.3.0...v0.4.0) (2026-05-16)
+
+
+### Features
+
+* **audit:** promote D12 to binary; new DB_RUN_EXEC_ALLOW_LIST (T6 PR 4) ([10b9876](https://github.com/nimbus-agent/Nimbus/commit/10b9876a4fbd1e1a4e1c16b7bc0b3c425697a305))
+* **cli:** T6 PR 3 — nimbus index reembed ([46f1e8c](https://github.com/nimbus-agent/Nimbus/commit/46f1e8c4e3cfc2f43d2abe8e2a2b44f60e9d292b))
+* **config:** [pagerduty] TOML block — max_pages_per_sync + severity_p1_aliases ([62eeb39](https://github.com/nimbus-agent/Nimbus/commit/62eeb3960dda99955c0a46c51928ae9e79db3a67))
+* **config:** add severityP1Aliases field to ServiceConfig ([5dfca63](https://github.com/nimbus-agent/Nimbus/commit/5dfca63e0e6554598957977ed5e4f26ff2939c13))
+* **config:** thread [pagerduty].severity_p1_aliases into ServiceConfig ([18e1612](https://github.com/nimbus-agent/Nimbus/commit/18e161291b4bae3acb8ee2e2e83bb7f0967d752a))
+* **db:** add dbStmtRun wrapper for prepared-statement writes (T6 PR 4) ([3dfd2ea](https://github.com/nimbus-agent/Nimbus/commit/3dfd2ea81c51f4ee235421f747b6783f1a134763))
+* **db:** T6 PR 3 — V30 vec_items_1536 + dim-aware delete triggers ([0b0e3c7](https://github.com/nimbus-agent/Nimbus/commit/0b0e3c79777cfaa924c39f3131649af0e8da15a9))
+* **db:** T6 PR 4 — route all writes through dbRun/dbExec/dbStmtRun (I14) ([639dd64](https://github.com/nimbus-agent/Nimbus/commit/639dd64321aea479e527d48286a2b476a96e30db))
+* **db:** widen dbRun to return RunResult (T6 PR 4) ([4511a5b](https://github.com/nimbus-agent/Nimbus/commit/4511a5bd7f81d14f740192589da8d5bf992d6068))
+* **embedding:** T6 PR 3 — dim-aware pipeline + backfillForRoutingKeys ([2c258cc](https://github.com/nimbus-agent/Nimbus/commit/2c258ccf9b1a905f24310afa5b80bec10d7a54d2))
+* **embedding:** T6 PR 3 — provider="hybrid" + promote provider="openai" to 1536 ([f1a3f70](https://github.com/nimbus-agent/Nimbus/commit/f1a3f704219a1ecfa9ba111c0c1440aa7e80ee46))
+* **embedding:** T6 PR 3 — real embedQueryDual on lazy + worker runtimes ([2d3363a](https://github.com/nimbus-agent/Nimbus/commit/2d3363a22259c70b61ee0a7f73a6d3fb2fe1efad))
+* **embedding:** T6 PR 3 — routing module + dim constants ([e392f0d](https://github.com/nimbus-agent/Nimbus/commit/e392f0dcc344d330e68c255d2397fa570b563fbc))
+* **embedding:** T6 PR 3 — RoutingEmbeddingPipeline (hybrid mode) ([508f647](https://github.com/nimbus-agent/Nimbus/commit/508f647ff04f2ee70acecc458bc6798a305e6b1d))
+* **gateway:** wire [pagerduty].max_pages_per_sync at bootstrap ([ca7d65b](https://github.com/nimbus-agent/Nimbus/commit/ca7d65bee2ee6b3b02282186fe4ecdbb592773d9))
+* **gateway:** wire Updater factory in assemblePlatformServices (S6-F1) ([5fd38bd](https://github.com/nimbus-agent/Nimbus/commit/5fd38bd73005441e75b02f0a9bff01cef4f36a76))
+* **invariants:** wire I14 — typed dbRun/dbExec/dbStmtRun (T6 PR 4) ([eda338e](https://github.com/nimbus-agent/Nimbus/commit/eda338ea50ccae4e66e064a97ccee35ced0eebb7))
+* **ipc:** add IPCServer.setUpdater + broadcast for late attachment ([c1d9e48](https://github.com/nimbus-agent/Nimbus/commit/c1d9e48ab7f2a63a89aa425d5ff4da1445e5154c))
+* **ipc:** T6 PR 3 — index.reembed long-running RPC ([26c1075](https://github.com/nimbus-agent/Nimbus/commit/26c1075eac8727a6d50ff0df183e79f7a0f9245a))
+* **pagerduty:** walk all incident pages per sync ([e4a0720](https://github.com/nimbus-agent/Nimbus/commit/e4a0720d4764111bcb31873782cf18df2b35c82f))
+* **pagerduty:** write metadata.urgency on indexed incidents ([596b47a](https://github.com/nimbus-agent/Nimbus/commit/596b47add2799557d93e464bcbb86e154c6b5ab1))
+* **preflight:** urgency-gap diagnostic probe ([80ef006](https://github.com/nimbus-agent/Nimbus/commit/80ef00637bfa36b5cc1540704618daed30c7a378))
+* **preflight:** widen active-P1 filter to severity_p1_aliases ([742740d](https://github.com/nimbus-agent/Nimbus/commit/742740db5c8c560ce030a15f4c4f70bc1680cd82))
+* **search:** T6 PR 3 — vectorSearchChunksDual merge helper ([fe01976](https://github.com/nimbus-agent/Nimbus/commit/fe0197610eeee6cf712cd7e37d944498cf2860e0))
+* **search:** T6 PR 3 — wire dual-search through hybrid options ([4570841](https://github.com/nimbus-agent/Nimbus/commit/4570841d5b1f2607203ae8286e5c5be6fac9e3e2))
+* **updater:** createUpdaterFromConfig factory with disabled + unsupported-platform paths ([423fe23](https://github.com/nimbus-agent/Nimbus/commit/423fe23677615f8153ca1bd9106c4230edde7a5b))
+* **updater:** derivePlatformTarget() with explicit unsupported-combo coverage ([7714aea](https://github.com/nimbus-agent/Nimbus/commit/7714aea57e1e690e8f796f6710ec94390d905ce2))
+* **updater:** S6-F1 production wiring ([a1c69b9](https://github.com/nimbus-agent/Nimbus/commit/a1c69b9e46d9fc0ec6c3a570b695b8f7ff53b06f))
+
+
+### Bug Fixes
+
+* **cli:** T6 PR 3 — drop the word "any" from index reembed help ([676cbd2](https://github.com/nimbus-agent/Nimbus/commit/676cbd219f797bfd00851b3cbaf861a1ca7a6e0c))
+* **db:** T6 PR 3 — guard V30 no-vec branch against db.exec("") on macOS ([4130138](https://github.com/nimbus-agent/Nimbus/commit/4130138fedc9f06294aa88d8972ce7dcfd5fddf5))
+* **gitleaks:** rename fake API-key fixtures to defuse generic-api-key rule ([fddf720](https://github.com/nimbus-agent/Nimbus/commit/fddf7209f7064cbd8aed8b9982a27f5ad3c8363d))
+* **security:** T6 PR 3 — block index.reembed* over LAN (I5) ([4f0d6c4](https://github.com/nimbus-agent/Nimbus/commit/4f0d6c4946e058c3ab14ac4b206504a519bbdef1))
+
 ## [0.3.0](https://github.com/nimbus-agent/Nimbus/compare/v0.2.0...v0.3.0) (2026-05-15)
 
 
