@@ -96,6 +96,21 @@ afterEach(() => {
   googleOAuthPresent = false;
 });
 
+// ─── Completion sentinel ──────────────────────────────────────────────────────
+
+/**
+ * `ensureCredentialConnectorsRunning` calls `ensureObsidianMcp` and
+ * `ensurePhase3BundleMcp` UNCONDITIONALLY — no vault check guards them.
+ * Asserting that both appeared in `spawnCalls` proves the function ran to
+ * completion rather than throwing or returning early before any credential
+ * check happened.  Call this BEFORE every `.not.toContain()` absence assertion.
+ */
+function expectRanToCompletion(): void {
+  const names = spawnCalls.map((c) => c);
+  expect(names).toContain("obsidian");
+  expect(names).toContain("phase3");
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("ensureCredentialConnectorsRunning — empty vault", () => {
@@ -143,6 +158,7 @@ describe("single-secret connectors", () => {
     it("does not spawn github when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("github");
     });
 
@@ -150,6 +166,7 @@ describe("single-secret connectors", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("github.pat", "");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("github");
     });
   });
@@ -165,6 +182,7 @@ describe("single-secret connectors", () => {
     it("does not spawn gitlab when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("gitlab");
     });
   });
@@ -180,6 +198,7 @@ describe("single-secret connectors", () => {
     it("does not spawn linear when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("linear");
     });
   });
@@ -195,6 +214,7 @@ describe("single-secret connectors", () => {
     it("does not spawn circleci when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("circleci");
     });
 
@@ -202,6 +222,7 @@ describe("single-secret connectors", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("circleci.api_token", "   ");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("circleci");
     });
   });
@@ -217,6 +238,7 @@ describe("single-secret connectors", () => {
     it("does not spawn pagerduty when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("pagerduty");
     });
 
@@ -224,6 +246,7 @@ describe("single-secret connectors", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("pagerduty.api_token", "  ");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("pagerduty");
     });
   });
@@ -239,6 +262,7 @@ describe("single-secret connectors", () => {
     it("does not spawn kubernetes when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("kubernetes");
     });
 
@@ -246,6 +270,7 @@ describe("single-secret connectors", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("kubernetes.kubeconfig", "   ");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("kubernetes");
     });
   });
@@ -261,6 +286,7 @@ describe("single-secret connectors", () => {
     it("does not spawn slack when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("slack");
     });
   });
@@ -276,6 +302,7 @@ describe("single-secret connectors", () => {
     it("does not spawn notion when vault is empty", async () => {
       const { ctx } = makeCtx();
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("notion");
     });
   });
@@ -289,6 +316,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("bitbucket.username", "alice");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("bitbucket");
     });
 
@@ -296,6 +324,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("bitbucket.app_password", "secret");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("bitbucket");
     });
 
@@ -313,6 +342,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jira.api_token", "jira_tok");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("jira");
     });
 
@@ -321,6 +351,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jira.api_token", "jira_tok");
       await vault.set("jira.email", "alice@acme.com");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("jira");
     });
 
@@ -339,6 +370,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("confluence.api_token", "conf_tok");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("confluence");
     });
 
@@ -347,6 +379,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("confluence.api_token", "conf_tok");
       await vault.set("confluence.email", "alice@acme.com");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("confluence");
     });
 
@@ -365,6 +398,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jenkins.base_url", "https://jenkins.local");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
 
@@ -373,6 +407,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jenkins.base_url", "https://jenkins.local");
       await vault.set("jenkins.username", "ops");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
 
@@ -391,6 +426,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jenkins.username", "  ");
       await vault.set("jenkins.api_token", "  ");
       await ensureCredentialConnectorsRunning(ctx);
+      expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
   });
@@ -402,6 +438,7 @@ describe("discord opt-in gate", () => {
   it("does not spawn when neither enabled nor bot_token is set", async () => {
     const { ctx } = makeCtx();
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
 
@@ -410,6 +447,7 @@ describe("discord opt-in gate", () => {
     await vault.set("discord.bot_token", "discord_tok");
     await vault.set("discord.enabled", "true"); // any value other than "1"
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
 
@@ -417,6 +455,7 @@ describe("discord opt-in gate", () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.enabled", "1");
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
 
@@ -433,6 +472,7 @@ describe("discord opt-in gate", () => {
     await vault.set("discord.enabled", "0");
     await vault.set("discord.bot_token", "discord_tok");
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
 });
@@ -444,6 +484,7 @@ describe("Google OAuth — anyGoogleOAuthVaultPresent", () => {
     googleOAuthPresent = false;
     const { ctx } = makeCtx();
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("google-drive");
   });
 
@@ -468,6 +509,7 @@ describe("Microsoft OAuth — microsoft.oauth", () => {
   it("does not spawn microsoft bundle when microsoft.oauth is not set", async () => {
     const { ctx } = makeCtx();
     await ensureCredentialConnectorsRunning(ctx);
+    expectRanToCompletion();
     expect(spawnCalls).not.toContain("microsoft");
   });
 });
