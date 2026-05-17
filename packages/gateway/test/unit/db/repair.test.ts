@@ -22,12 +22,7 @@ function insertVecRow(db: Database, rowid: number): void {
  * Insert an embedding_chunk row that bypasses the FK constraint so we can
  * create intentional violations for repair tests.
  */
-function insertChunkNoFk(
-  db: Database,
-  itemId: string,
-  vecRowid: number,
-  chunkIndex = 0,
-): void {
+function insertChunkNoFk(db: Database, itemId: string, vecRowid: number, chunkIndex = 0): void {
   db.run("PRAGMA foreign_keys = OFF");
   db.run(
     `INSERT INTO embedding_chunk (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)
@@ -138,7 +133,13 @@ describe("formatRepairReport", () => {
 
   test("skipped outcome renders [skipped] tag", () => {
     const report = {
-      outcomes: [{ action: "vec_orphan_delete" as const, status: "skipped" as const, detail: "no orphaned vec rows" }],
+      outcomes: [
+        {
+          action: "vec_orphan_delete" as const,
+          status: "skipped" as const,
+          detail: "no orphaned vec rows",
+        },
+      ],
       repairedAt: new Date().toISOString(),
     };
     const output = formatRepairReport(report);
@@ -149,7 +150,9 @@ describe("formatRepairReport", () => {
 
   test("error outcome renders [ error ] tag", () => {
     const report = {
-      outcomes: [{ action: "fts5_rebuild" as const, status: "error" as const, detail: "disk full" }],
+      outcomes: [
+        { action: "fts5_rebuild" as const, status: "error" as const, detail: "disk full" },
+      ],
       repairedAt: new Date().toISOString(),
     };
     const output = formatRepairReport(report);
