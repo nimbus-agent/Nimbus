@@ -135,23 +135,33 @@ PR 2 ships **no V<N> migration**. The publisher id is derived from the on-disk m
 
 ### 3.1 Canonical JSON algorithm (`extensions/canonical-json.ts`)
 
+**Preconditions.** The canonicalizer is called on values produced by `JSON.parse`, never on in-memory-constructed objects with potential cycles. JSON.parse guarantees a tree (no cycles), no `undefined`, no functions, no symbols. This narrows the input domain to what's enumerated below.
+
 ```typescript
-function canonicalize(value: unknown): string {
+const MAX_DEPTH = 32;  // defensive cap; real manifests have depth ≤ 4
+
+function canonicalize(value: unknown, depth = 0): string {
+  if (depth > MAX_DEPTH) throw new ManifestNestedTooDeep();
   if (value === null) return "null";
   if (value === true) return "true";
   if (value === false) return "false";
-  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "string") {
+    // Unicode normalize to NFC so a publisher signing "café" (composed) and a
+    // verifier reading "café" (decomposed e + combining accent) agree on the
+    // bytes. Without this, identical-looking strings fail signature verify.
+    return JSON.stringify(value.normalize("NFC"));
+  }
   if (typeof value === "number") {
     if (!Number.isInteger(value)) throw new NonIntegerNumberInManifest();
     return String(value);
   }
   if (Array.isArray(value)) {
-    return "[" + value.map(canonicalize).join(",") + "]";
+    return "[" + value.map(v => canonicalize(v, depth + 1)).join(",") + "]";
   }
   if (typeof value === "object") {
-    const keys = Object.keys(value as object).sort();   // Unicode codepoint order
+    const keys = Object.keys(value as object).sort();   // Unicode codepoint order, NOT NFC-normalized — keys are signed by the publisher byte-for-byte
     return "{" + keys.map(k =>
-      JSON.stringify(k) + ":" + canonicalize((value as Record<string, unknown>)[k])
+      JSON.stringify(k) + ":" + canonicalize((value as Record<string, unknown>)[k], depth + 1)
     ).join(",") + "}";
   }
   throw new UnsupportedManifestValueType();
@@ -163,11 +173,15 @@ export function canonicalizeManifest(manifest: ExtensionManifest): Uint8Array {
 }
 ```
 
+**Key vs value NFC asymmetry.** String values are NFC-normalized so that semantically-equal Unicode strings yield identical bytes. Object keys are **not** normalized — the publisher signs the manifest exactly as it serializes their object keys; a key that decomposes differently would change the signing surface in a way the publisher didn't author. Manifest keys are also ASCII-only by validator (the schema's `id`, `version`, etc. and the constrained `publisher`/`signature` shape), so this asymmetry has no practical effect on first-party usage; it's purely a defense against an adventurous third party.
+
 Property tests (`fast-check`):
 - Round-trip: `canonicalize(parse(canonicalize(x))) === canonicalize(x)` for arbitrary manifest-shaped inputs.
 - Key-order invariance: shuffling input object key order does not change output.
 - Signature-field stripping: `canonicalizeManifest({...m, signature: "anything"})` equals `canonicalizeManifest(m)`.
 - Integer-only rejection: any non-integer number anywhere in the manifest tree throws `NonIntegerNumberInManifest`.
+- NFC idempotence: `canonicalize({s: "café"}) === canonicalize({s: "café"})` (composed vs decomposed) — same canonical bytes.
+- Depth cap: a 33-deep nested array throws `ManifestNestedTooDeep`; a 32-deep one does not.
 
 ### 3.2 Ed25519 sign / verify (`extensions/verify-signature.ts`)
 
@@ -177,6 +191,7 @@ export class SignatureInvalidFormat extends Error { name = "SignatureInvalidForm
 export class SignatureInvalid extends Error { name = "SignatureInvalid"; }
 export class NonIntegerNumberInManifest extends Error { name = "NonIntegerNumberInManifest"; }
 export class UnsupportedManifestValueType extends Error { name = "UnsupportedManifestValueType"; }
+export class ManifestNestedTooDeep extends Error { name = "ManifestNestedTooDeep"; }
 
 export async function verifyManifestSignature(
   manifest: ExtensionManifest,
@@ -208,6 +223,8 @@ export async function signManifest(
 export function generateEd25519Keypair(): { privkey: Uint8Array; pubkey: Uint8Array };
 ```
 
+**On-disk private-key file format** (written by `nimbus extension keygen --out <path>`): base64-encoded 32-byte Ed25519 seed followed by a single trailing newline. **Not** raw bytes. Two reasons: (1) cross-platform line-ending safety — a raw-byte file opened in a Windows text editor would gain `\r\n` mangling that quietly corrupts the seed; base64 is `\r\n`-safe and editor-resistant. (2) Consistency with the manifest's `publisher.key` field, which is also base64. The CLI reader for `--key <path>` and `--publisher-key <path>` trims whitespace before decoding.
+
 `constantTimeBytesEqual` uses the existing [`util/timing-safe-compare.ts`](../../../packages/gateway/src/util/timing-safe-compare.ts) helper (invariant `I10`). Pubkeys are not secret, but the helper keeps the codebase uniform and avoids the lint smell of branching on key bytes.
 
 ### 3.3 Error → user-facing message map
@@ -220,7 +237,7 @@ export function generateEd25519Keypair(): { privkey: Uint8Array; pubkey: Uint8Ar
 | (vault key absent at startup) | n/a | `publisher_key_missing` |
 | `AirGapNoPublisherKey` (install) | "Air-gap is enforced; publisher key for `<id>` is not in your local cache. Re-run `nimbus extension install <path-or-url> --publisher-key <path>` with the key locally available." | n/a |
 | `PublisherNotRegistered` (install) | "Publisher `<id>` is not registered with the registry. Install refused." | n/a |
-| `RegistryUnreachable` (install) | "Could not reach `<registry>/publishers/<id>.key`. Try `nimbus extension sync` later, or re-run `nimbus extension install <path-or-url> --publisher-key <path>` with the key locally available." | n/a |
+| `RegistryUnreachable` (install) | "Could not reach `<registry>/publishers/<id>.key`. Check your network connection and re-run the install, or re-run `nimbus extension install <path-or-url> --publisher-key <path>` with the key locally available. (`nimbus extension sync` cannot help here — it only refreshes keys for already-installed extensions.)" | n/a |
 
 ## Section 4 — Registry client + `nimbus extension sync`
 
@@ -246,7 +263,7 @@ export function createPublisherKeyFetcher(opts: {
 
 - **Timeout** via `AbortController`; configurable via `[extensions].publisher_key_fetch_timeout_ms`.
 - **Retry once** on `transient` results (network error, 5xx, AbortError). No exponential backoff — sync is operator-initiated.
-- **Body parser:** trim → base64-decode → assert exactly 32 bytes. Reject otherwise as `registry_error`.
+- **Body parser:** trim → assert trimmed body is **exactly 44 characters** (the unique base64 length for a 32-byte payload with padding) → base64-decode → assert the decoded length is exactly 32 bytes. Reject any other shape as `registry_error`. The strict 44-character check defends against append-style attacks where a malicious or compromised registry serves "valid 32-byte key + trailing garbage"; lenient base64 decoders would silently truncate at the first padding and accept the malformed body.
 - **No JSON envelope.** Raw base64 ASCII body. Static-file-servable.
 
 ### 4.2 Vault cache (`extensions/publisher-keys.ts`)
@@ -426,7 +443,7 @@ test("I16: install-from-local.ts and verify-extensions.ts both call verifyManife
 });
 ```
 
-**Behavioral — load with missing vault key → hard-disabled:**
+**Behavioral #1 — load with missing vault key → hard-disabled:**
 
 ```typescript
 test("I16 behavioral: signed extension with missing vault key is hard-disabled at startup", async () => {
@@ -456,6 +473,39 @@ test("I16 behavioral: signed extension with missing vault key is hard-disabled a
 
 This is the test the recovered design-review §5 specifically asked for. It catches the "wired but doesn't actually hard-disable" failure mode that source-grep can't.
 
+**Behavioral #2 — tampered manifest after signing → hard-disabled:**
+
+```typescript
+test("I16 behavioral: tampered manifest (post-signing edit) is hard-disabled at startup", async () => {
+  const { vault, db, tmpDir } = await setupFreshGateway();
+
+  // Sign the manifest, then tamper with a non-signature field on disk after.
+  const { privkey, pubkey } = generateEd25519Keypair();
+  const baseManifest: ExtensionManifest = {
+    id: "test-ext",
+    version: "1.0.0",
+    permissions: defaultPermissions(),
+    publisher: { id: "test-pub", key: encodeBase64(pubkey) },
+  };
+  const signature = await signManifest(baseManifest, privkey);
+  writeExtensionToDisk(tmpDir, { ...baseManifest, signature });
+  await writePublisherKey(vault, "test-pub", pubkey);
+  insertExtensionStateRow(db, { id: "test-ext", path: extPath });
+
+  // Mutate the on-disk manifest: bump version while keeping the old signature.
+  // This is the canonical "attacker had FS write access" scenario.
+  rewriteManifestField(extPath, "version", "9.9.9");
+
+  await verifyExtensions({ vault, db, /* ... */ });
+
+  const state = readExtensionState(db, "test-ext");
+  expect(state.disabled).toBe(true);
+  expect(state.disabled_reason).toBe("signature_failed");
+});
+```
+
+This second test proves the canonicalization + Ed25519 verify wiring is sound end-to-end: a same-key signature against a different message must fail. The first test alone would pass even if `verifyManifestSignature` was a no-op stub (since hard-disable happens *before* the signature call when the vault key is missing); the second test forces the verify call to execute and produce the right outcome.
+
 ### 5.6 No DB schema migration
 
 `extension_state.publisher_id` column is **not** added in PR 2 — see §2.4. The publisher id is derived from the on-disk manifest at sync and startup time.
@@ -468,7 +518,7 @@ This is the test the recovered design-review §5 specifically asked for. It catc
 |---|---|---|
 | `nimbus extension install <path-or-url> [--publisher-key <key-file>]` | Existing + `--publisher-key` flag. If manifest carries `publisher`, verify using priority chain. | Writes `extension.publisher_key.<id>` on every successful install (idempotent — same bytes on re-install). |
 | `nimbus extension sync [--dry-run] [--json]` | Refresh cached publisher keys (Section 4.5). | Writes / evicts `extension.publisher_key.<id>`. |
-| `nimbus extension list [--json]` | Tabular human output: `ID | Version | Publisher | Status`. Publisher: `<id>` for verified, `(unverified)` for legacy. `--json` preserves machine-readable structure (`publisher: { id, key }` or `null`). | None. |
+| `nimbus extension list [--json]` | Tabular human output: `ID | Version | Publisher | Status`. Publisher: `<id>` for verified, `(unverified)` for legacy. When stdout is a TTY and `NO_COLOR` is unset, `(unverified)` is rendered in dim yellow to draw attention to legacy installs; otherwise plain ASCII. `--json` preserves machine-readable structure (`publisher: { id, key }` or `null`). | None. |
 | `nimbus extension info <id> [--json]` | Adds "Publisher" section: id, base64 pubkey (first 16 chars + `…` for human; full in `--json`), `verified_at`, `last_synced_at`. | None. |
 | `nimbus extension keygen [--out <path>] [--force]` | Generate fresh Ed25519 keypair. Prints pubkey (base64) to stdout. Writes privkey to `<path>` (default `~/.nimbus/publisher-key`) with mode `0600`. Refuses to overwrite without `--force`. | None — does not touch vault. |
 | `nimbus extension sign <ext-dir> [--key <path>]` | Read manifest; if a `signature` field is already present, strip it before canonicalization; compute the canonical bytes; sign; write the manifest back with the new `signature` field set (overwriting any prior value). `--key` defaults to `~/.nimbus/publisher-key`. | None. |
@@ -527,6 +577,8 @@ All test fixtures generate Ed25519 keypairs in-process at test setup — **no co
 - **HTTP write surface additions.** `WRITE_ROUTE_ALLOWLIST` unchanged (I13).
 - **Backwards-compat shim for OpenPGP-signed manifests from any third-party tooling.** No such tooling exists for Nimbus extensions; the format we ship is the format.
 - **Publisher-key expiration metadata.** Ed25519 keys carry no expiration; if needed later, an optional `expires_at` field at the registry-metadata layer is a follow-up.
+- **Signature-scheme versioning (`signature_version` field).** Deferred to a future migration. The v1-implicit-on-absent-field convention covers the migration cleanly: when v2 ships, v2 manifests carry `signature_version: 2`, the verifier interprets `undefined` as v1, and the two paths fork inside `verifyManifestSignature`. Adding the field now adds surface area for no current benefit. Captured here so the migration path is explicit.
+- **Startup-verify hash-pinning for very large extension counts (N >> 30).** A future optimization could store `SHA-256(manifest)` at install time and skip Ed25519 verify when the on-disk hash matches the pinned hash. This trades structural defense-in-depth (I16's "verify every startup" catches manifest tampering even if the pin store is compromised) for sub-millisecond startup-cost savings. Not warranted at current scale; revisit if usage data shows real cost. Captured here so the perf-vs-security tradeoff is documented.
 
 ## Section 7 — Cross-cutting
 
@@ -584,9 +636,29 @@ Per the cadence locked in the parent T2 spec (§4): feat / test / docs commits w
 These are below the threshold of "design decision" and should be locked in the implementation plan rather than here:
 
 - Exact name and shape of the registry test fixture (mock HTTP server library — likely Bun's built-in test fetch mocking).
-- Exact `cli-table3`-or-manual-padding column width tuning for `nimbus extension list` (manual padding chosen; width tuning is a UX detail).
-- Whether `nimbus extension keygen --out` writes the private key as a raw 32-byte file or base64-encoded text (decision in plan; recommend base64 for cross-platform line-ending safety).
+- Exact column-width tuning for `nimbus extension list`'s tabular output (manual padding chosen in §6.1; specific widths are a UX detail).
 - Whether `nimbus extension sign` accepts manifests from stdin in addition to a directory path (recommend directory-only; stdin add-on is a follow-up).
 - Exact wording of the "publisher rotated keys" CLI message (UX detail).
+- Whether to add a `--verbose` flag on `nimbus extension sync` that prints the publisher fingerprint (first 16 base64 chars) per entry (UX-only; default human output stays compact).
 
 These are not design-locked items — they will not change the architecture or invariant story.
+
+## Section 10 — Review disposition (2026-05-17)
+
+Source: [`2026-05-17-phase-5-t2-pr2-verified-publisher-design-review.md`](./2026-05-17-phase-5-t2-pr2-verified-publisher-design-review.md). Reviewer: Gemini CLI.
+
+| Review § | Item | Disposition | Where folded in |
+|---|---|---|---|
+| O1a | Unicode NFC normalization | **FIX** | §3.1 — `canonicalize` calls `String.prototype.normalize("NFC")` on string values; added a property test (`NFC idempotence`). Key vs value asymmetry documented inline (keys not normalized — publisher signs them byte-for-byte). |
+| O1b | Recursion depth limit | **FIX** | §3.1 — `MAX_DEPTH = 32` constant; new `ManifestNestedTooDeep` error class in §3.2; depth-cap property test added. |
+| O2 | `signature_version` field for future-proofing | **DEFER** | §6.5 — captured as a named out-of-scope item with the migration plan (v1-implicit-on-absent-field). Rationale: adding the field now adds surface area for no current benefit; the migration path is clean without it. |
+| O3 | `RegistryUnreachable` install advice wrong | **FIX** | §3.3 — message rewritten to suggest "check network and retry install" instead of `nimbus extension sync`; explicitly notes that sync only refreshes already-installed extensions. |
+| O4 | Performance at N >> 30 | **DEFER** | §6.5 — captured as a named out-of-scope item documenting the perf-vs-security tradeoff (hash-pinning weakens I16). Revisit if usage data shows real cost. |
+| S1 | Canonicalize preconditions (post-JSON.parse) | **FIX** | §3.1 — added a "Preconditions" paragraph noting the canonicalizer operates on `JSON.parse` output, so cycles / undefined / functions / symbols cannot reach it. |
+| S2 | `(unverified)` dimmed/yellow | **FIX** | §6.1 — locked: dim yellow when stdout is a TTY and `NO_COLOR` is unset; plain ASCII otherwise. |
+| S3 | Keygen base64 output format | **FIX** | §3.2 — promoted from "deferred to plan" (was in §9) to a locked decision. Two reasons cited: cross-platform `\r\n` safety and consistency with `publisher.key`. Removed from §9. |
+| S4 | I16 behavioral — also test tampered manifest | **FIX** | §5.5 — second behavioral test added (`I16 behavioral #2: tampered manifest`); rationale explains why the first test alone wouldn't exercise `verifyManifestSignature` end-to-end. |
+| S5 | Registry body decoder — trailing junk | **FIX** | §4.1 — body parser tightened to require exactly 44 trimmed characters before base64-decoding; explicit append-style attack rationale documented. |
+| Conclusion | "Ready for implementation planning" | **NO ACTION** | Acknowledged. Proceeding to writing-plans after this fold-in commits. |
+
+**Net effect on this spec:** eight inline fixes (NFC + depth + preconditions in §3.1; new error class in §3.2; keygen-format promotion in §3.2; install-message rewrite in §3.3; strict body-length check in §4.1; dimmed-rendering note in §6.1; second behavioral test in §5.5) and two deferred items captured as named out-of-scope bullets in §6.5. Nothing about the architecture, invariant story, or scope of PR 2 changes.
