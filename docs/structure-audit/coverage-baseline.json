@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-17T18:17:25.907Z",
+  "generated_at": "2026-05-17T19:32:07.429Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -150,7 +150,7 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.6
+      "min_coverage_pct": 57.95
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
@@ -308,12 +308,6 @@
     "packages/gateway/src/embedding/worker-bridge.ts": {
       "min_coverage_pct": 46.49
     },
-    "packages/gateway/src/engine/agent.ts": {
-      "min_coverage_pct": 56.13
-    },
-    "packages/gateway/src/engine/router.ts": {
-      "min_coverage_pct": 5.99
-    },
     "packages/gateway/src/index/item-list-query.ts": {
       "min_coverage_pct": 75
     },
@@ -354,7 +348,7 @@
       "min_coverage_pct": 73.86
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 45.21
+      "min_coverage_pct": 49.32
     },
     "packages/gateway/src/ipc/server/vault-dispatch.ts": {
       "min_coverage_pct": 65.17
@@ -368,9 +362,6 @@
     "packages/gateway/src/people/parse-from-header.ts": {
       "min_coverage_pct": 74.39
     },
-    "packages/gateway/src/platform/errors.ts": {
-      "min_coverage_pct": 60
-    },
     "packages/gateway/src/platform/gateway-state-file.ts": {
       "min_coverage_pct": 0
     },
@@ -378,7 +369,7 @@
       "min_coverage_pct": 45.45
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 39.62
+      "min_coverage_pct": 48.08
     },
     "packages/gateway/src/platform/register-user-mcp-sync.ts": {
       "min_coverage_pct": 75
@@ -394,9 +385,6 @@
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 66.67
-    },
-    "packages/gateway/src/vault/ffi-ptr.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/vault/nimbus-vault.ts": {
       "min_coverage_pct": 0
