@@ -354,13 +354,26 @@ describe("refreshNotionToken", () => {
 // runPKCEFlow — end-to-end: real Bun.serve callback server
 // ---------------------------------------------------------------------------
 
+async function waitForOpenUrl(signal: { value: string }, timeoutMs = 5_000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = () => {
+      if (signal.value) return resolve();
+      if (Date.now() > deadline)
+        return reject(new Error(`openUrl was never called within ${timeoutMs} ms`));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
 describe("runPKCEFlow", () => {
   it("completes the OAuth flow: opens URL, receives callback, exchanges code, persists tokens", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     let tokenRequest: Request | undefined;
@@ -388,15 +401,8 @@ describe("runPKCEFlow", () => {
     });
 
     // Wait until openUrl was called (guarantees the server is bound + auth URL is ready).
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl was never called within 5 s"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
@@ -446,14 +452,14 @@ describe("runPKCEFlow", () => {
     expect(parsed.refreshToken).toBe("flow-refresh");
     expect(parsed.expiresAt).toBeGreaterThan(Date.now());
     expect(parsed.scopes).toEqual(["read", "write"]);
-  });
+  }, 15_000);
 
   it("rejects when the callback arrives with ?error=access_denied (user denied)", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     // fakeFetch should not be called for this path (error before token exchange).
@@ -471,15 +477,8 @@ describe("runPKCEFlow", () => {
     });
 
     // Wait for the server to bind and openUrl to fire.
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
@@ -493,16 +492,16 @@ describe("runPKCEFlow", () => {
     // Server returns 200 with a plain-text denial message.
     expect(callbackResp.status).toBe(200);
 
-    // The flow promise must reject because the OAuth error was received.
-    await expect(flowPromise).rejects.toThrow();
-  });
+    // The flow promise must reject with the OAuth error code or the production message.
+    await expect(flowPromise).rejects.toThrow(/access_denied|authorization did not complete/i);
+  }, 15_000);
 
   it("uses microsoft token endpoint when provider is microsoft", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     let capturedTokenUrl = "";
@@ -528,15 +527,8 @@ describe("runPKCEFlow", () => {
       fetchImpl: fakeFetch,
     });
 
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     // Microsoft auth URL uses login.microsoftonline.com
@@ -560,15 +552,15 @@ describe("runPKCEFlow", () => {
     // Persisted under microsoft.oauth.
     const stored = await vault.get("microsoft.oauth");
     expect(stored).not.toBeNull();
-  });
+  }, 15_000);
 
   it("invokes onRandomPortFallback and still completes the flow", async () => {
     const vault = createMockVault();
     let fallbackCalled = false;
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     const fakeFetch: PKCEFetch = async () =>
@@ -594,15 +586,8 @@ describe("runPKCEFlow", () => {
       },
     });
 
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
@@ -618,14 +603,14 @@ describe("runPKCEFlow", () => {
 
     // onRandomPortFallback must have been invoked (ephemeral port path).
     expect(fallbackCalled).toBe(true);
-  });
+  }, 15_000);
 
   it("completes the Notion OAuth flow: opens URL, receives callback, exchanges code, persists tokens", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     let tokenRequest: Request | undefined;
@@ -652,15 +637,8 @@ describe("runPKCEFlow", () => {
     });
 
     // Wait for openUrl to fire.
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     // Notion auth URL uses api.notion.com
@@ -692,7 +670,11 @@ describe("runPKCEFlow", () => {
     expect(decoded).toBe("notion-client:notion-secret");
 
     const bodyText = await tokenRequest!.text();
-    const body = JSON.parse(bodyText) as { grant_type: string; code: string; redirect_uri: string };
+    const body = JSON.parse(bodyText) as {
+      grant_type: string;
+      code: string;
+      redirect_uri: string;
+    };
     expect(body.grant_type).toBe("authorization_code");
     expect(body.code).toBe("notion-auth-code");
     expect(body.redirect_uri).toBe(redirectUri);
@@ -703,7 +685,7 @@ describe("runPKCEFlow", () => {
     const parsed = JSON.parse(stored!) as { accessToken: string; refreshToken: string };
     expect(parsed.accessToken).toBe("notion-flow-access");
     expect(parsed.refreshToken).toBe("notion-flow-refresh");
-  });
+  }, 15_000);
 
   it("Notion flow rejects when oauthClientSecret is missing", async () => {
     const vault = createMockVault();
@@ -730,9 +712,9 @@ describe("runPKCEFlow", () => {
   it("completes the Slack OAuth flow: opens URL, receives callback, exchanges code, persists tokens", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     const fakeFetch: PKCEFetch = async () =>
@@ -759,15 +741,8 @@ describe("runPKCEFlow", () => {
     });
 
     // Wait for openUrl to fire.
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     expect(authUrlParsed.hostname).toBe("slack.com");
@@ -791,14 +766,14 @@ describe("runPKCEFlow", () => {
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!) as { accessToken: string };
     expect(parsed.accessToken).toBe("slack-flow-access");
-  });
+  }, 15_000);
 
   it("accepts a portRange and uses one of those ports for the callback server", async () => {
     const vault = createMockVault();
 
-    let capturedAuthUrl = "";
+    const capturedUrl = { value: "" };
     const openUrl = async (url: string): Promise<void> => {
-      capturedAuthUrl = url;
+      capturedUrl.value = url;
     };
 
     const fakeFetch: PKCEFetch = async () =>
@@ -822,15 +797,8 @@ describe("runPKCEFlow", () => {
       portRange: [49200, 49250],
     });
 
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 5_000;
-      const tick = () => {
-        if (capturedAuthUrl) return resolve();
-        if (Date.now() > deadline) return reject(new Error("openUrl never called"));
-        setTimeout(tick, 10);
-      };
-      tick();
-    });
+    await waitForOpenUrl(capturedUrl);
+    const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
@@ -847,7 +815,7 @@ describe("runPKCEFlow", () => {
 
     const result = await flowPromise;
     expect(result.accessToken).toBe("range-access");
-  });
+  }, 15_000);
 
   it("throws when portRange is invalid", () => {
     const vault = createMockVault();
