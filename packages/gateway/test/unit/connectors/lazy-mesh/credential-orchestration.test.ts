@@ -26,10 +26,27 @@ let googleOAuthPresent = false;
 mock.module("../../../../src/auth/google-access-token.ts", () => ({
   anyGoogleOAuthVaultPresent: async (): Promise<boolean> => googleOAuthPresent,
   // resolveGoogleOAuthVaultKey / getValidGoogleAccessToken are not called by
-  // credential-orchestration.ts directly (only ensureGoogleDriveMcp calls them,
-  // and that function is replaced by the connector-spawns mock below).
-  resolveGoogleOAuthVaultKey: async () => null,
-  getValidGoogleAccessToken: async () => "fake-google-token",
+  // credential-orchestration.ts directly (only ensureGoogleDriveMcp uses them,
+  // and that function is replaced by the connector-spawns mock below). The
+  // implementations below mirror connector-spawns.test.ts so that — when
+  // bun:test resolves test files in either order and the last mock wins —
+  // neither test file's expectations are silently overridden.
+  resolveGoogleOAuthVaultKey: async (
+    vault: { get: (k: string) => Promise<string | null> },
+    id: string,
+  ): Promise<string | null> => {
+    const perService: Record<string, string> = {
+      google_drive: "google_drive.oauth",
+      gmail: "google_gmail.oauth",
+      google_photos: "google_photos.oauth",
+    };
+    const k = perService[id];
+    if (k === undefined) return null;
+    const v = await vault.get(k);
+    return v !== null && v !== "" ? k : null;
+  },
+  getValidGoogleAccessToken: async (_vault: unknown, id: string): Promise<string> =>
+    `fake-google-${id}-access-token`,
 }));
 
 // Mock connector-spawns so every ensureXxxMcp is a lightweight recorder.

@@ -59,6 +59,20 @@ mock.module("@mastra/mcp", () => ({
 }));
 
 mock.module("../../../../src/auth/google-access-token.ts", () => ({
+  // anyGoogleOAuthVaultPresent is consumed by credential-orchestration.ts and
+  // tested in credential-orchestration.test.ts. Since `mock.module` is
+  // process-global and either test file's mock can win in any given bun:test
+  // run, BOTH files must export the full surface so loading
+  // credential-orchestration.ts never fails on a missing-export error.
+  anyGoogleOAuthVaultPresent: async (vault: {
+    get: (k: string) => Promise<string | null>;
+  }): Promise<boolean> => {
+    for (const k of ["google_drive.oauth", "google_gmail.oauth", "google_photos.oauth"]) {
+      const v = await vault.get(k);
+      if (v !== null && v !== "") return true;
+    }
+    return false;
+  },
   resolveGoogleOAuthVaultKey: async (
     vault: { get: (k: string) => Promise<string | null> },
     id: string,
