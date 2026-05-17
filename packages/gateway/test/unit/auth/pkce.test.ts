@@ -101,7 +101,9 @@ describe("refreshAccessToken", () => {
       fetchImpl: fakeFetch,
     });
 
-    expect(capturedUrl).toMatch(/login\.microsoftonline\.com\/[^/]+\/oauth2\/v2\.0\/token/);
+    expect(capturedUrl).toMatch(
+      /^https:\/\/login\.microsoftonline\.com\/[^/]+\/oauth2\/v2\.0\/token$/,
+    );
   });
 
   it("throws on non-200 response", async () => {

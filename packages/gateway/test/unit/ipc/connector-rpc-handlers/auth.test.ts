@@ -84,7 +84,7 @@ describe("handleConnectorAuth — github", () => {
   });
 
   test("happy path: writes github.pat and registers scheduler rows", async () => {
-    const PAT = "ghp_super_secret_token_12345";
+    const PAT = "pat-gh-super-fixture-12345";
     const ctx = makeCtx({ service: "github", personalAccessToken: PAT }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -99,7 +99,7 @@ describe("handleConnectorAuth — github", () => {
   });
 
   test("accepts token alias field", async () => {
-    const PAT = "ghp_alias_token_abc";
+    const PAT = "pat-gh-alias-fixture-abc";
     const ctx = makeCtx({ service: "github", token: PAT }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -126,7 +126,7 @@ describe("handleConnectorAuth — github", () => {
   });
 
   test("redaction: PAT value does not appear in the JSON-serialised response", async () => {
-    const PAT = "ghp_redact_me_please_xyz";
+    const PAT = "pat-gh-redact-fixture-xyz";
     const ctx = makeCtx({ service: "github", personalAccessToken: PAT }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -150,7 +150,7 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("happy path: writes gitlab.pat and registers scheduler row", async () => {
-    const PAT = "glpat-abc123";
+    const PAT = "pat-gl-fixture-abc123";
     const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -160,7 +160,7 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("happy path: optional apiBaseUrl writes gitlab.api_base stripped of trailing slashes", async () => {
-    const PAT = "glpat-baseurl";
+    const PAT = "pat-gl-fixture-baseurl";
     const ctx = makeCtx(
       { service: "gitlab", personalAccessToken: PAT, apiBaseUrl: "https://gitlab.corp.example///" },
       vault,
@@ -174,7 +174,7 @@ describe("handleConnectorAuth — gitlab", () => {
   test("happy path: omitting apiBaseUrl removes gitlab.api_base if present", async () => {
     // First set it
     await vault.set("gitlab.api_base", "https://old.example");
-    const PAT = "glpat-no-base";
+    const PAT = "pat-gl-fixture-no-base";
     const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
     await handleConnectorAuth(ctx);
 
@@ -189,7 +189,7 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("redaction: PAT value absent from response JSON", async () => {
-    const PAT = "glpat-redact-this";
+    const PAT = "pat-gl-fixture-redact-this";
     const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -213,7 +213,7 @@ describe("handleConnectorAuth — linear", () => {
   });
 
   test("happy path: writes linear.api_key and registers scheduler row", async () => {
-    const KEY = "lin_api_key_abc123";
+    const KEY = "key-lin-fixture-abc123";
     const ctx = makeCtx({ service: "linear", personalAccessToken: KEY }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -223,7 +223,7 @@ describe("handleConnectorAuth — linear", () => {
   });
 
   test("accepts apiKey alias field", async () => {
-    const KEY = "lin_api_key_alias";
+    const KEY = "key-lin-fixture-alias";
     const ctx = makeCtx({ service: "linear", apiKey: KEY }, vault, localIndex);
     await handleConnectorAuth(ctx);
 
@@ -238,7 +238,7 @@ describe("handleConnectorAuth — linear", () => {
   });
 
   test("redaction: API key absent from response JSON", async () => {
-    const KEY = "lin_redact_me_789";
+    const KEY = "key-lin-fixture-redact-789";
     const ctx = makeCtx({ service: "linear", personalAccessToken: KEY }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
@@ -860,8 +860,8 @@ describe("handleConnectorAuth — aws", () => {
   });
 
   test("happy path: access-key pair with region writes aws.access_key_id, aws.secret_access_key, aws.default_region", async () => {
-    const AK = "AKIAIOSFODNN7EXAMPLE";
-    const SK = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const AK = "aws-akid-fixture-primary";
+    const SK = "aws-secret-fixture-primary";
     const ctx = makeCtx(
       {
         service: "aws",
@@ -884,8 +884,8 @@ describe("handleConnectorAuth — aws", () => {
 
   test("happy path: access-key pair with profile only (no region) writes aws.profile and clears aws.default_region", async () => {
     await vault.set("aws.default_region", "old-region");
-    const AK = "AKIAIOSFODNN7EXAMPLE";
-    const SK = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const AK = "aws-akid-fixture-primary";
+    const SK = "aws-secret-fixture-primary";
     const ctx = makeCtx(
       {
         service: "aws",
@@ -919,7 +919,7 @@ describe("handleConnectorAuth — aws", () => {
     const ctx = makeCtx(
       {
         service: "aws",
-        accessKeyId: "AKIAALIASEXAMPLE",
+        accessKeyId: "aws-akid-fixture-alias",
         secretAccessKey: "aliasSecret",
         defaultRegion: "eu-west-1",
       },
@@ -928,7 +928,7 @@ describe("handleConnectorAuth — aws", () => {
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "aws.access_key_id", "AKIAALIASEXAMPLE");
+    await assertVaultKey(vault, "aws.access_key_id", "aws-akid-fixture-alias");
     await assertVaultKey(vault, "aws.default_region", "eu-west-1");
   });
 
@@ -936,7 +936,7 @@ describe("handleConnectorAuth — aws", () => {
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
+        awsAccessKeyId: "aws-akid-fixture-primary",
         awsSecretAccessKey: "someSecret",
       },
       vault,
@@ -959,7 +959,7 @@ describe("handleConnectorAuth — aws", () => {
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
+        awsAccessKeyId: "aws-akid-fixture-primary",
         awsSecretAccessKey: SK,
         awsDefaultRegion: "us-west-2",
       },
