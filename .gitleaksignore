@@ -21,3 +21,8 @@ b37e8d4b0abf44f8cd60b187499acea7f21914a7:packages/gateway/src/platform/gateway-l
 # the historical commit retains the `sk-`-prefixed shape that trips gitleaks
 # `generic-api-key`. The value was never a real OpenAI key — see commit message.
 084cbfd69fd96f675ef0577ac670804d99ad9aa7:packages/gateway/src/embedding/create-routing-runtime.test.ts:generic-api-key:158
+
+# Phase 1B test fixture false positives — scrubbed in HEAD but historical commits retain old strings.
+# These were never real secrets; they were test fixtures matching the connector PAT shape.
+fe9279eb7a68194d4ff848d6893e8f394f7347c9:packages/gateway/test/unit/ipc/connector-rpc-handlers/auth.test.ts:generic-api-key:204
+cbc264f51fdc7082c86a4564ec37cfc9066ee260:packages/gateway/test/unit/ipc/connector-rpc-handlers/auth.test.ts:generic-api-key:216

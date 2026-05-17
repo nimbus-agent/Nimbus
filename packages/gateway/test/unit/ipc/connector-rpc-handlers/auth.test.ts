@@ -84,8 +84,8 @@ describe("handleConnectorAuth — github", () => {
   });
 
   test("happy path: writes github.pat and registers scheduler rows", async () => {
-    const PAT = "pat-gh-super-fixture-12345";
-    const ctx = makeCtx({ service: "github", personalAccessToken: PAT }, vault, localIndex);
+    const fixture = "fixture-gh-1";
+    const ctx = makeCtx({ service: "github", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect(result.kind).toBe("hit");
@@ -93,18 +93,18 @@ describe("handleConnectorAuth — github", () => {
     expect(value.ok).toBe(true);
     expect(value.serviceId).toBe("github");
 
-    await assertVaultKey(vault, "github.pat", PAT);
+    await assertVaultKey(vault, "github.pat", fixture);
     assertSchedulerRow(db, "github");
     assertSchedulerRow(db, "github_actions");
   });
 
   test("accepts token alias field", async () => {
-    const PAT = "pat-gh-alias-fixture-abc";
-    const ctx = makeCtx({ service: "github", token: PAT }, vault, localIndex);
+    const fixture = "fixture-gh-2";
+    const ctx = makeCtx({ service: "github", token: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "github.pat", PAT);
+    await assertVaultKey(vault, "github.pat", fixture);
   });
 
   test("error path: missing PAT throws ConnectorRpcError with code -32602", async () => {
@@ -126,11 +126,11 @@ describe("handleConnectorAuth — github", () => {
   });
 
   test("redaction: PAT value does not appear in the JSON-serialised response", async () => {
-    const PAT = "pat-gh-redact-fixture-xyz";
-    const ctx = makeCtx({ service: "github", personalAccessToken: PAT }, vault, localIndex);
+    const fixture = "fixture-gh-redact";
+    const ctx = makeCtx({ service: "github", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, PAT);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -150,19 +150,23 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("happy path: writes gitlab.pat and registers scheduler row", async () => {
-    const PAT = "pat-gl-fixture-abc123";
-    const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
+    const fixture = "fixture-gl-1";
+    const ctx = makeCtx({ service: "gitlab", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "gitlab.pat", PAT);
+    await assertVaultKey(vault, "gitlab.pat", fixture);
     assertSchedulerRow(db, "gitlab");
   });
 
   test("happy path: optional apiBaseUrl writes gitlab.api_base stripped of trailing slashes", async () => {
-    const PAT = "pat-gl-fixture-baseurl";
+    const fixture = "fixture-gl-2";
     const ctx = makeCtx(
-      { service: "gitlab", personalAccessToken: PAT, apiBaseUrl: "https://gitlab.corp.example///" },
+      {
+        service: "gitlab",
+        personalAccessToken: fixture,
+        apiBaseUrl: "https://gitlab.corp.example///",
+      },
       vault,
       localIndex,
     );
@@ -174,8 +178,8 @@ describe("handleConnectorAuth — gitlab", () => {
   test("happy path: omitting apiBaseUrl removes gitlab.api_base if present", async () => {
     // First set it
     await vault.set("gitlab.api_base", "https://old.example");
-    const PAT = "pat-gl-fixture-no-base";
-    const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
+    const fixture = "fixture-gl-3";
+    const ctx = makeCtx({ service: "gitlab", personalAccessToken: fixture }, vault, localIndex);
     await handleConnectorAuth(ctx);
 
     await assertVaultKeyAbsent(vault, "gitlab.api_base");
@@ -189,11 +193,11 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("redaction: PAT value absent from response JSON", async () => {
-    const PAT = "pat-gl-fixture-redact-this";
-    const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
+    const fixture = "fixture-gl-redact";
+    const ctx = makeCtx({ service: "gitlab", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, PAT);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -213,21 +217,21 @@ describe("handleConnectorAuth — linear", () => {
   });
 
   test("happy path: writes linear.api_key and registers scheduler row", async () => {
-    const KEY = "key-lin-fixture-abc123";
-    const ctx = makeCtx({ service: "linear", personalAccessToken: KEY }, vault, localIndex);
+    const fixture = "fixture-lin-1";
+    const ctx = makeCtx({ service: "linear", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "linear.api_key", KEY);
+    await assertVaultKey(vault, "linear.api_key", fixture);
     assertSchedulerRow(db, "linear");
   });
 
   test("accepts apiKey alias field", async () => {
-    const KEY = "key-lin-fixture-alias";
-    const ctx = makeCtx({ service: "linear", apiKey: KEY }, vault, localIndex);
+    const fixture = "fixture-lin-2";
+    const ctx = makeCtx({ service: "linear", apiKey: fixture }, vault, localIndex);
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "linear.api_key", KEY);
+    await assertVaultKey(vault, "linear.api_key", fixture);
   });
 
   test("error path: missing api key throws -32602", async () => {
@@ -238,11 +242,11 @@ describe("handleConnectorAuth — linear", () => {
   });
 
   test("redaction: API key absent from response JSON", async () => {
-    const KEY = "key-lin-fixture-redact-789";
-    const ctx = makeCtx({ service: "linear", personalAccessToken: KEY }, vault, localIndex);
+    const fixture = "fixture-lin-redact";
+    const ctx = makeCtx({ service: "linear", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, KEY);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -262,12 +266,12 @@ describe("handleConnectorAuth — circleci", () => {
   });
 
   test("happy path: writes circleci.api_token and registers scheduler row", async () => {
-    const TOKEN = "circle_api_token_secret";
-    const ctx = makeCtx({ service: "circleci", personalAccessToken: TOKEN }, vault, localIndex);
+    const fixture = "fixture-circle";
+    const ctx = makeCtx({ service: "circleci", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "circleci.api_token", TOKEN);
+    await assertVaultKey(vault, "circleci.api_token", fixture);
     assertSchedulerRow(db, "circleci");
   });
 
@@ -279,11 +283,11 @@ describe("handleConnectorAuth — circleci", () => {
   });
 
   test("redaction: token absent from response JSON", async () => {
-    const TOKEN = "circle_redact_this_token";
-    const ctx = makeCtx({ service: "circleci", personalAccessToken: TOKEN }, vault, localIndex);
+    const fixture = "fixture-circle-redact";
+    const ctx = makeCtx({ service: "circleci", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -303,13 +307,13 @@ describe("handleConnectorAuth — jenkins", () => {
   });
 
   test("happy path: writes jenkins base_url, username, api_token and scheduler row", async () => {
-    const TOKEN = "jenkins_api_tok_secret";
+    const fixture = "fixture-jenkins";
     const ctx = makeCtx(
       {
         service: "jenkins",
         apiBaseUrl: "https://ci.example.com",
         username: "admin",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
       },
       vault,
       localIndex,
@@ -319,7 +323,7 @@ describe("handleConnectorAuth — jenkins", () => {
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     await assertVaultKey(vault, "jenkins.base_url", "https://ci.example.com");
     await assertVaultKey(vault, "jenkins.username", "admin");
-    await assertVaultKey(vault, "jenkins.api_token", TOKEN);
+    await assertVaultKey(vault, "jenkins.api_token", fixture);
     assertSchedulerRow(db, "jenkins");
   });
 
@@ -370,20 +374,20 @@ describe("handleConnectorAuth — jenkins", () => {
   });
 
   test("redaction: api_token absent from response JSON", async () => {
-    const TOKEN = "jenkins_redact_this";
+    const fixture = "fixture-jenkins-redact";
     const ctx = makeCtx(
       {
         service: "jenkins",
         apiBaseUrl: "https://ci.example.com",
         username: "admin",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
       },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -403,9 +407,9 @@ describe("handleConnectorAuth — bitbucket", () => {
   });
 
   test("happy path: writes bitbucket.username + bitbucket.app_password and scheduler row", async () => {
-    const PWD = "bb_app_password_secret";
+    const fixture = "fixture-bb";
     const ctx = makeCtx(
-      { service: "bitbucket", bitbucketUsername: "acme_user", personalAccessToken: PWD },
+      { service: "bitbucket", bitbucketUsername: "acme_user", personalAccessToken: fixture },
       vault,
       localIndex,
     );
@@ -413,21 +417,21 @@ describe("handleConnectorAuth — bitbucket", () => {
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     await assertVaultKey(vault, "bitbucket.username", "acme_user");
-    await assertVaultKey(vault, "bitbucket.app_password", PWD);
+    await assertVaultKey(vault, "bitbucket.app_password", fixture);
     assertSchedulerRow(db, "bitbucket");
   });
 
   test("accepts plain username alias field", async () => {
-    const PWD = "bb_app_pwd_alias";
+    const fixture = "fixture-bb-alias";
     const ctx = makeCtx(
-      { service: "bitbucket", username: "atlassian_user", personalAccessToken: PWD },
+      { service: "bitbucket", username: "atlassian_user", personalAccessToken: fixture },
       vault,
       localIndex,
     );
     await handleConnectorAuth(ctx);
 
     await assertVaultKey(vault, "bitbucket.username", "atlassian_user");
-    await assertVaultKey(vault, "bitbucket.app_password", PWD);
+    await assertVaultKey(vault, "bitbucket.app_password", fixture);
   });
 
   test("error path: missing username throws -32602", async () => {
@@ -447,15 +451,15 @@ describe("handleConnectorAuth — bitbucket", () => {
   });
 
   test("redaction: app password absent from response JSON", async () => {
-    const PWD = "bb_redact_this_password";
+    const fixture = "fixture-bb-redact";
     const ctx = makeCtx(
-      { service: "bitbucket", bitbucketUsername: "acme", personalAccessToken: PWD },
+      { service: "bitbucket", bitbucketUsername: "acme", personalAccessToken: fixture },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, PWD);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -475,12 +479,12 @@ describe("handleConnectorAuth — grafana", () => {
   });
 
   test("happy path: writes grafana.url + grafana.api_token and scheduler row", async () => {
-    const TOKEN = "glsa_api_token_secret";
+    const fixture = "fixture-grafana";
     const ctx = makeCtx(
       {
         service: "grafana",
         apiBaseUrl: "https://grafana.example.com",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
       },
       vault,
       localIndex,
@@ -489,7 +493,7 @@ describe("handleConnectorAuth — grafana", () => {
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     await assertVaultKey(vault, "grafana.url", "https://grafana.example.com");
-    await assertVaultKey(vault, "grafana.api_token", TOKEN);
+    await assertVaultKey(vault, "grafana.api_token", fixture);
     assertSchedulerRow(db, "grafana");
   });
 
@@ -525,19 +529,19 @@ describe("handleConnectorAuth — grafana", () => {
   });
 
   test("redaction: api_token absent from response JSON", async () => {
-    const TOKEN = "glsa_redact_me_grafana";
+    const fixture = "fixture-grafana-redact";
     const ctx = makeCtx(
       {
         service: "grafana",
         apiBaseUrl: "https://grafana.example.com",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
       },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -557,11 +561,11 @@ describe("handleConnectorAuth — sentry", () => {
   });
 
   test("happy path: writes sentry.auth_token + sentry.org_slug and scheduler row", async () => {
-    const TOKEN = "sentry_auth_token_secret";
+    const fixture = "fixture-sentry";
     const ctx = makeCtx(
       {
         service: "sentry",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
         sentryOrgSlug: "my-org",
       },
       vault,
@@ -570,7 +574,7 @@ describe("handleConnectorAuth — sentry", () => {
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "sentry.auth_token", TOKEN);
+    await assertVaultKey(vault, "sentry.auth_token", fixture);
     await assertVaultKey(vault, "sentry.org_slug", "my-org");
     assertSchedulerRow(db, "sentry");
   });
@@ -616,15 +620,15 @@ describe("handleConnectorAuth — sentry", () => {
   });
 
   test("redaction: auth_token absent from response JSON", async () => {
-    const TOKEN = "sentry_redact_this_token";
+    const fixture = "fixture-sentry-redact";
     const ctx = makeCtx(
-      { service: "sentry", personalAccessToken: TOKEN, sentryOrgSlug: "org" },
+      { service: "sentry", personalAccessToken: fixture, sentryOrgSlug: "org" },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -644,12 +648,12 @@ describe("handleConnectorAuth — newrelic", () => {
   });
 
   test("happy path: writes newrelic.api_key and registers scheduler row", async () => {
-    const KEY = "nr_user_api_key_secret";
-    const ctx = makeCtx({ service: "newrelic", personalAccessToken: KEY }, vault, localIndex);
+    const fixture = "fixture-newrelic";
+    const ctx = makeCtx({ service: "newrelic", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "newrelic.api_key", KEY);
+    await assertVaultKey(vault, "newrelic.api_key", fixture);
     assertSchedulerRow(db, "newrelic");
   });
 
@@ -680,11 +684,11 @@ describe("handleConnectorAuth — newrelic", () => {
   });
 
   test("redaction: api_key absent from response JSON", async () => {
-    const KEY = "nr_redact_me_key";
-    const ctx = makeCtx({ service: "newrelic", personalAccessToken: KEY }, vault, localIndex);
+    const fixture = "fixture-newrelic-redact";
+    const ctx = makeCtx({ service: "newrelic", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, KEY);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -704,33 +708,33 @@ describe("handleConnectorAuth — datadog", () => {
   });
 
   test("happy path: writes datadog.api_key + datadog.app_key and scheduler row", async () => {
-    const API_KEY = "dd_api_key_secret";
-    const APP_KEY = "dd_app_key_secret";
+    const fixtureA = "fixture-dd-api";
+    const fixtureB = "fixture-dd-app";
     const ctx = makeCtx(
-      { service: "datadog", datadogApiKey: API_KEY, datadogAppKey: APP_KEY },
+      { service: "datadog", datadogApiKey: fixtureA, datadogAppKey: fixtureB },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "datadog.api_key", API_KEY);
-    await assertVaultKey(vault, "datadog.app_key", APP_KEY);
+    await assertVaultKey(vault, "datadog.api_key", fixtureA);
+    await assertVaultKey(vault, "datadog.app_key", fixtureB);
     assertSchedulerRow(db, "datadog");
   });
 
   test("accepts plain apiKey/appKey alias fields", async () => {
-    const API_KEY = "dd_api_alias";
-    const APP_KEY = "dd_app_alias";
+    const fixtureA = "fixture-dd-api-alias";
+    const fixtureB = "fixture-dd-app-alias";
     const ctx = makeCtx(
-      { service: "datadog", apiKey: API_KEY, appKey: APP_KEY },
+      { service: "datadog", apiKey: fixtureA, appKey: fixtureB },
       vault,
       localIndex,
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "datadog.api_key", API_KEY);
-    await assertVaultKey(vault, "datadog.app_key", APP_KEY);
+    await assertVaultKey(vault, "datadog.api_key", fixtureA);
+    await assertVaultKey(vault, "datadog.app_key", fixtureB);
   });
 
   test("happy path: optional datadogSite writes datadog.site", async () => {
@@ -774,17 +778,17 @@ describe("handleConnectorAuth — datadog", () => {
   });
 
   test("redaction: api_key and app_key absent from response JSON", async () => {
-    const API_KEY = "dd_api_redact_this";
-    const APP_KEY = "dd_app_redact_this";
+    const fixtureA = "fixture-dd-api-redact";
+    const fixtureB = "fixture-dd-app-redact";
     const ctx = makeCtx(
-      { service: "datadog", datadogApiKey: API_KEY, datadogAppKey: APP_KEY },
+      { service: "datadog", datadogApiKey: fixtureA, datadogAppKey: fixtureB },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, API_KEY);
-    assertCredentialRedacted(result, APP_KEY);
+    assertCredentialRedacted(result, fixtureA);
+    assertCredentialRedacted(result, fixtureB);
   });
 });
 
@@ -804,21 +808,21 @@ describe("handleConnectorAuth — pagerduty", () => {
   });
 
   test("happy path: writes pagerduty.api_token and registers scheduler row", async () => {
-    const TOKEN = "pd_api_token_secret";
-    const ctx = makeCtx({ service: "pagerduty", personalAccessToken: TOKEN }, vault, localIndex);
+    const fixture = "fixture-pd";
+    const ctx = makeCtx({ service: "pagerduty", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "pagerduty.api_token", TOKEN);
+    await assertVaultKey(vault, "pagerduty.api_token", fixture);
     assertSchedulerRow(db, "pagerduty");
   });
 
   test("accepts token alias field", async () => {
-    const TOKEN = "pd_token_alias";
-    const ctx = makeCtx({ service: "pagerduty", token: TOKEN }, vault, localIndex);
+    const fixture = "fixture-pd-alias";
+    const ctx = makeCtx({ service: "pagerduty", token: fixture }, vault, localIndex);
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "pagerduty.api_token", TOKEN);
+    await assertVaultKey(vault, "pagerduty.api_token", fixture);
   });
 
   test("error path: missing token throws -32602", async () => {
@@ -836,11 +840,11 @@ describe("handleConnectorAuth — pagerduty", () => {
   });
 
   test("redaction: api_token absent from response JSON", async () => {
-    const TOKEN = "pd_redact_this_token";
-    const ctx = makeCtx({ service: "pagerduty", personalAccessToken: TOKEN }, vault, localIndex);
+    const fixture = "fixture-pd-redact";
+    const ctx = makeCtx({ service: "pagerduty", personalAccessToken: fixture }, vault, localIndex);
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -860,13 +864,13 @@ describe("handleConnectorAuth — aws", () => {
   });
 
   test("happy path: access-key pair with region writes aws.access_key_id, aws.secret_access_key, aws.default_region", async () => {
-    const AK = "aws-akid-fixture-primary";
-    const SK = "aws-secret-fixture-primary";
+    const awsId = "fixture-aws-id-1";
+    const awsVal = "fixture-aws-val-1";
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: AK,
-        awsSecretAccessKey: SK,
+        awsAccessKeyId: awsId,
+        awsSecretAccessKey: awsVal,
         awsDefaultRegion: "us-east-1",
       },
       vault,
@@ -876,21 +880,21 @@ describe("handleConnectorAuth — aws", () => {
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     expect((result.value as Record<string, unknown>).serviceId).toBe("aws");
-    await assertVaultKey(vault, "aws.access_key_id", AK);
-    await assertVaultKey(vault, "aws.secret_access_key", SK);
+    await assertVaultKey(vault, "aws.access_key_id", awsId);
+    await assertVaultKey(vault, "aws.secret_access_key", awsVal);
     await assertVaultKey(vault, "aws.default_region", "us-east-1");
     assertSchedulerRow(db, "aws");
   });
 
   test("happy path: access-key pair with profile only (no region) writes aws.profile and clears aws.default_region", async () => {
     await vault.set("aws.default_region", "old-region");
-    const AK = "aws-akid-fixture-primary";
-    const SK = "aws-secret-fixture-primary";
+    const awsId = "fixture-aws-id-1";
+    const awsVal = "fixture-aws-val-1";
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: AK,
-        awsSecretAccessKey: SK,
+        awsAccessKeyId: awsId,
+        awsSecretAccessKey: awsVal,
         awsProfile: "my-profile",
       },
       vault,
@@ -919,8 +923,8 @@ describe("handleConnectorAuth — aws", () => {
     const ctx = makeCtx(
       {
         service: "aws",
-        accessKeyId: "aws-akid-fixture-alias",
-        secretAccessKey: "aliasSecret",
+        accessKeyId: "fixture-aws-id-alias",
+        secretAccessKey: "fixture-aws-val-alias",
         defaultRegion: "eu-west-1",
       },
       vault,
@@ -928,7 +932,7 @@ describe("handleConnectorAuth — aws", () => {
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "aws.access_key_id", "aws-akid-fixture-alias");
+    await assertVaultKey(vault, "aws.access_key_id", "fixture-aws-id-alias");
     await assertVaultKey(vault, "aws.default_region", "eu-west-1");
   });
 
@@ -936,8 +940,8 @@ describe("handleConnectorAuth — aws", () => {
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: "aws-akid-fixture-primary",
-        awsSecretAccessKey: "someSecret",
+        awsAccessKeyId: "fixture-aws-id-1",
+        awsSecretAccessKey: "fixture-aws-val-err",
       },
       vault,
       localIndex,
@@ -955,12 +959,12 @@ describe("handleConnectorAuth — aws", () => {
   });
 
   test("redaction: secret_access_key absent from response JSON", async () => {
-    const SK = "wJalrXUtnFEMI_REDACT_THIS_KEY";
+    const awsVal = "fixture-aws-redact";
     const ctx = makeCtx(
       {
         service: "aws",
-        awsAccessKeyId: "aws-akid-fixture-primary",
-        awsSecretAccessKey: SK,
+        awsAccessKeyId: "fixture-aws-id-1",
+        awsSecretAccessKey: awsVal,
         awsDefaultRegion: "us-west-2",
       },
       vault,
@@ -968,7 +972,7 @@ describe("handleConnectorAuth — aws", () => {
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, SK);
+    assertCredentialRedacted(result, awsVal);
   });
 });
 
@@ -988,13 +992,13 @@ describe("handleConnectorAuth — azure", () => {
   });
 
   test("happy path: writes azure.tenant_id, azure.client_id, azure.client_secret and scheduler row", async () => {
-    const SECRET = "azure_client_secret_value";
+    const fixture = "fixture-azure";
     const ctx = makeCtx(
       {
         service: "azure",
         azureTenantId: "tenant-abc",
         azureClientId: "client-xyz",
-        azureClientSecret: SECRET,
+        azureClientSecret: fixture,
       },
       vault,
       localIndex,
@@ -1005,7 +1009,7 @@ describe("handleConnectorAuth — azure", () => {
     expect((result.value as Record<string, unknown>).serviceId).toBe("azure");
     await assertVaultKey(vault, "azure.tenant_id", "tenant-abc");
     await assertVaultKey(vault, "azure.client_id", "client-xyz");
-    await assertVaultKey(vault, "azure.client_secret", SECRET);
+    await assertVaultKey(vault, "azure.client_secret", fixture);
     assertSchedulerRow(db, "azure");
   });
 
@@ -1061,20 +1065,20 @@ describe("handleConnectorAuth — azure", () => {
   });
 
   test("redaction: client_secret absent from response JSON", async () => {
-    const SECRET = "azure_redact_this_secret";
+    const fixture = "fixture-azure-redact";
     const ctx = makeCtx(
       {
         service: "azure",
         azureTenantId: "tid",
         azureClientId: "cid",
-        azureClientSecret: SECRET,
+        azureClientSecret: fixture,
       },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, SECRET);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -1252,9 +1256,9 @@ describe("handleConnectorAuth — discord", () => {
   });
 
   test("happy path: enabled=true + token writes discord.bot_token + discord.enabled and scheduler row", async () => {
-    const TOKEN = "discord_bot_token_secret";
+    const fixture = "fixture-discord";
     const ctx = makeCtx(
-      { service: "discord", discordOptIn: true, personalAccessToken: TOKEN },
+      { service: "discord", discordOptIn: true, personalAccessToken: fixture },
       vault,
       localIndex,
     );
@@ -1262,46 +1266,46 @@ describe("handleConnectorAuth — discord", () => {
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     expect((result.value as Record<string, unknown>).serviceId).toBe("discord");
-    await assertVaultKey(vault, "discord.bot_token", TOKEN);
+    await assertVaultKey(vault, "discord.bot_token", fixture);
     await assertVaultKey(vault, "discord.enabled", "1");
     assertSchedulerRow(db, "discord");
   });
 
   test("accepts discordOptIn='true' string", async () => {
-    const TOKEN = "discord_string_true_token";
+    const fixture = "fixture-discord-str-true";
     const ctx = makeCtx(
-      { service: "discord", discordOptIn: "true", personalAccessToken: TOKEN },
+      { service: "discord", discordOptIn: "true", personalAccessToken: fixture },
       vault,
       localIndex,
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "discord.bot_token", TOKEN);
+    await assertVaultKey(vault, "discord.bot_token", fixture);
     await assertVaultKey(vault, "discord.enabled", "1");
   });
 
   test("accepts discordOptIn='1' string", async () => {
-    const TOKEN = "discord_one_string_token";
+    const fixture = "fixture-discord-str-one";
     const ctx = makeCtx(
-      { service: "discord", discordOptIn: "1", personalAccessToken: TOKEN },
+      { service: "discord", discordOptIn: "1", personalAccessToken: fixture },
       vault,
       localIndex,
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "discord.bot_token", TOKEN);
+    await assertVaultKey(vault, "discord.bot_token", fixture);
   });
 
   test("accepts token alias field", async () => {
-    const TOKEN = "discord_token_alias";
+    const fixture = "fixture-discord-alias";
     const ctx = makeCtx(
-      { service: "discord", discordOptIn: true, token: TOKEN },
+      { service: "discord", discordOptIn: true, token: fixture },
       vault,
       localIndex,
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "discord.bot_token", TOKEN);
+    await assertVaultKey(vault, "discord.bot_token", fixture);
   });
 
   test("error path: missing opt-in throws -32602 even when token present", async () => {
@@ -1334,15 +1338,15 @@ describe("handleConnectorAuth — discord", () => {
   });
 
   test("redaction: bot_token absent from response JSON", async () => {
-    const TOKEN = "discord_redact_this_token";
+    const fixture = "fixture-discord-redact";
     const ctx = makeCtx(
-      { service: "discord", discordOptIn: true, personalAccessToken: TOKEN },
+      { service: "discord", discordOptIn: true, personalAccessToken: fixture },
       vault,
       localIndex,
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -1416,12 +1420,12 @@ describe("handleConnectorAuth — jira", () => {
   });
 
   test("happy path: writes jira.email, jira.api_token, jira.base_url and scheduler row", async () => {
-    const TOKEN = "jira_api_token_secret";
+    const fixture = "fixture-jira";
     const ctx = makeCtx(
       {
         service: "jira",
         atlassianEmail: "user@example.com",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
         apiBaseUrl: "https://myorg.atlassian.net",
       },
       vault,
@@ -1432,7 +1436,7 @@ describe("handleConnectorAuth — jira", () => {
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     expect((result.value as Record<string, unknown>).serviceId).toBe("jira");
     await assertVaultKey(vault, "jira.email", "user@example.com");
-    await assertVaultKey(vault, "jira.api_token", TOKEN);
+    await assertVaultKey(vault, "jira.api_token", fixture);
     await assertVaultKey(vault, "jira.base_url", "https://myorg.atlassian.net");
     assertSchedulerRow(db, "jira");
   });
@@ -1499,12 +1503,12 @@ describe("handleConnectorAuth — jira", () => {
   });
 
   test("redaction: api_token absent from response JSON", async () => {
-    const TOKEN = "jira_redact_this_token";
+    const fixture = "fixture-jira-redact";
     const ctx = makeCtx(
       {
         service: "jira",
         atlassianEmail: "user@example.com",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
         apiBaseUrl: "https://myorg.atlassian.net",
       },
       vault,
@@ -1512,7 +1516,7 @@ describe("handleConnectorAuth — jira", () => {
     );
     const result = await handleConnectorAuth(ctx);
 
-    assertCredentialRedacted(result, TOKEN);
+    assertCredentialRedacted(result, fixture);
   });
 });
 
@@ -1532,12 +1536,12 @@ describe("handleConnectorAuth — confluence", () => {
   });
 
   test("happy path: writes confluence.email, confluence.api_token, confluence.base_url and scheduler row", async () => {
-    const TOKEN = "confluence_api_token_secret";
+    const fixture = "fixture-confluence";
     const ctx = makeCtx(
       {
         service: "confluence",
         atlassianEmail: "admin@example.com",
-        personalAccessToken: TOKEN,
+        personalAccessToken: fixture,
         apiBaseUrl: "https://myorg.atlassian.net",
       },
       vault,
@@ -1548,7 +1552,7 @@ describe("handleConnectorAuth — confluence", () => {
     expect((result.value as Record<string, unknown>).ok).toBe(true);
     expect((result.value as Record<string, unknown>).serviceId).toBe("confluence");
     await assertVaultKey(vault, "confluence.email", "admin@example.com");
-    await assertVaultKey(vault, "confluence.api_token", TOKEN);
+    await assertVaultKey(vault, "confluence.api_token", fixture);
     await assertVaultKey(vault, "confluence.base_url", "https://myorg.atlassian.net");
     assertSchedulerRow(db, "confluence");
   });
