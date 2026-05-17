@@ -1,3 +1,53 @@
 # When branch protection enables "Require code owner review", these owners are used.
 # Adjust handles if the core maintainer list changes.
+#
+# Specific entries below the catch-all win — they name the load-bearing files
+# behind security invariants I1–I15 (see docs/SECURITY-INVARIANTS.md). Today
+# they are documentary; they become enforcing the moment a second maintainer
+# gains write access.
+
 * @asafgolombek
+
+# HITL gate — I2, I3, I4
+/packages/gateway/src/engine/executor.ts                            @asafgolombek
+
+# Vault — I3 (no plaintext credentials), I12 (DPAPI entropy)
+/packages/gateway/src/vault/                                        @asafgolombek
+
+# Extension sandbox runner — I15
+/packages/gateway/src/platform/sandbox/                             @asafgolombek
+/packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts      @asafgolombek
+/packages/gateway/src-native/sandbox-helper/                        @asafgolombek
+
+# Tauri renderer allowlist — I7, I8
+/packages/ui/src-tauri/src/gateway_bridge.rs                        @asafgolombek
+/packages/ui/src-tauri/tauri.conf.json                              @asafgolombek
+
+# LAN server method allowlist — I5, I6
+/packages/gateway/src/ipc/lan-server.ts                             @asafgolombek
+/packages/gateway/src/ipc/lan-rpc.ts                                @asafgolombek
+
+# HTTP write surface — I13
+/packages/gateway/src/ipc/http-server.ts                            @asafgolombek
+/packages/gateway/src/ipc/http-write-routes.ts                      @asafgolombek
+/packages/gateway/src/ipc/http-auth.ts                              @asafgolombek
+/packages/gateway/src/ipc/http-rate-limit.ts                        @asafgolombek
+
+# DB write wrapper — I14
+/packages/gateway/src/db/write.ts                                   @asafgolombek
+
+# Tool-output envelope — I11
+/packages/gateway/src/engine/tool-output-envelope.ts                @asafgolombek
+
+# Constant-time compare — I10
+/packages/gateway/src/util/timing-safe-compare.ts                   @asafgolombek
+
+# The invariant enforcement test itself
+/packages/gateway/src/security-invariants.test.ts                   @asafgolombek
+
+# Static-audit complements to the runtime invariant tests
+/scripts/structure-audit/check-nimbus-invariants.ts                 @asafgolombek
+
+# CI workflows + release infrastructure
+/.github/workflows/                                                 @asafgolombek
+/.github/CODEOWNERS                                                 @asafgolombek
