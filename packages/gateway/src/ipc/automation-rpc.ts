@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import {
   deleteExtensionById,
+  type ExtensionRow,
   listExtensions,
   setExtensionEnabled,
 } from "../automation/extension-store.ts";
@@ -23,6 +24,11 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import {
+  PRE_T2_DISABLE_REASON,
+  preT2DisabledIds,
+  preT2DisableMessage,
+} from "../extensions/hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "../extensions/install-from-local.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 
@@ -140,10 +146,9 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     }),
   }),
 
-  "extension.list": (_rec, ctx) => ({
-    kind: "hit",
-    value: { extensions: listExtensions(ctx.db) },
-  }),
+  "extension.list": (rec, ctx) => handleExtensionList(rec, ctx),
+
+  "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
 
   "extension.install": (rec, ctx) => handleExtensionInstall(rec, ctx),
 
@@ -209,6 +214,55 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     }),
   }),
 };
+
+type ExtensionListItem = ExtensionRow & {
+  /** Set when the extension is hard-disabled with a structured reason. */
+  disabled_reason?: typeof PRE_T2_DISABLE_REASON;
+  /** True when the extension was hard-disabled and needs to be reinstalled. */
+  needs_reinstall?: boolean;
+};
+
+function decorateExtensionList(rows: readonly ExtensionRow[]): ExtensionListItem[] {
+  const preT2 = new Set(preT2DisabledIds());
+  return rows.map((r) =>
+    preT2.has(r.id)
+      ? { ...r, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true }
+      : { ...r },
+  );
+}
+
+function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+  const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
+  const all = decorateExtensionList(listExtensions(ctx.db));
+  const filtered =
+    filter === "needs-reinstall" || filter === "needs_reinstall"
+      ? all.filter((e) => e.needs_reinstall === true)
+      : all;
+  return { kind: "hit", value: { extensions: filtered } };
+}
+
+function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+  const id = requireString(rec, "id");
+  const row = listExtensions(ctx.db).find((r) => r.id === id);
+  if (row === undefined) {
+    throw new AutomationRpcError(-32602, "Extension not found");
+  }
+  const preT2 = new Set(preT2DisabledIds());
+  if (preT2.has(row.id)) {
+    return {
+      kind: "hit",
+      value: {
+        extension: {
+          ...row,
+          disabled_reason: PRE_T2_DISABLE_REASON,
+          needs_reinstall: true,
+        },
+        message: preT2DisableMessage(row.id, row.version),
+      },
+    };
+  }
+  return { kind: "hit", value: { extension: { ...row } } };
+}
 
 function handleExtensionInstall(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   const sourcePath = requireString(rec, "sourcePath");

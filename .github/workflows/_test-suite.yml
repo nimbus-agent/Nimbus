@@ -460,6 +460,8 @@ jobs:
             script: "test:coverage:perf"
           - name: SDK
             script: "test:coverage:sdk"
+          - name: Sandbox
+            script: "test:coverage:sandbox"
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
@@ -478,6 +480,26 @@ jobs:
         if: runner.os == 'Linux' && matrix.gate.name == 'Vault'
         shell: bash
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+
+      - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
+
+      - name: Build sandbox helper (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: bun run build:sandbox-helper
+
+      - name: Static-analyse sandbox helper with cppcheck (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
+
+      - name: Setcap on sandbox helper (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
 
       - name: Run coverage gate
         shell: bash

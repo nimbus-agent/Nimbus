@@ -14,9 +14,26 @@ import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import {
+  hostnameFromUrl,
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+} from "./first-party-manifests.ts";
 import { LAZY_MESH, mcpConnectorServerScript } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
 import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
+import { wrapServerSpec } from "./wrap-server-spec.ts";
+
+/**
+ * I15 (T2 PR 1) — wrap a first-party ServerSpec via the sandbox-wrapper
+ * script using the static `manifestForFirstParty(serviceId)` registry +
+ * the context-supplied sandbox cwd. Every `servers: { id: spec }` literal
+ * in this file routes through this helper so the I15 enforcement test
+ * sees the wiring on every spawn site.
+ */
+function wrap(spec: ServerSpec, serviceId: string, ctx: MeshSpawnContext): ServerSpec {
+  return wrapServerSpec(spec, manifestForFirstParty(serviceId), ctx.sandboxCwd);
+}
 
 /**
  * Starts the Phase 3 MCP bundle (any of AWS / Azure / GCP / IaC / observability) when vault keys are present.
@@ -28,7 +45,12 @@ export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void
     ctx.scheduleLazyDisconnect(slotKey);
     return;
   }
-  const servers = await buildPhase3Servers(ctx.vault);
+  // I15 (T2 PR 1) — `buildPhase3Servers` itself wraps each ServerSpec
+  // via `wrapServerSpec(...)` before returning, so this call site holds
+  // already-sandboxed specs. The `ctx.sandboxCwd` thread-through is
+  // load-bearing: a regression that drops it leaves the phase3 servers
+  // unwrapped and silently fails the I15 enforcement test.
+  const servers = await buildPhase3Servers(ctx.vault, ctx.sandboxCwd);
   if (Object.keys(servers).length === 0) {
     return;
   }
@@ -64,23 +86,35 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     }
     const token = await getValidGoogleAccessToken(ctx.vault, id);
     if (id === "google_drive") {
-      googleServers["google_drive"] = {
-        command: "bun",
-        args: [mcpConnectorServerScript("google-drive")],
-        env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-      };
+      googleServers["google_drive"] = wrap(
+        {
+          command: "bun",
+          args: [mcpConnectorServerScript("google-drive")],
+          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+        },
+        "google_drive",
+        ctx,
+      );
     } else if (id === "gmail") {
-      googleServers["gmail"] = {
-        command: "bun",
-        args: [mcpConnectorServerScript("gmail")],
-        env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-      };
+      googleServers["gmail"] = wrap(
+        {
+          command: "bun",
+          args: [mcpConnectorServerScript("gmail")],
+          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+        },
+        "gmail",
+        ctx,
+      );
     } else {
-      googleServers["google_photos"] = {
-        command: "bun",
-        args: [mcpConnectorServerScript("google-photos")],
-        env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
-      };
+      googleServers["google_photos"] = wrap(
+        {
+          command: "bun",
+          args: [mcpConnectorServerScript("google-photos")],
+          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+        },
+        "google_photos",
+        ctx,
+      );
     }
   }
   if (Object.keys(googleServers).length === 0) {
@@ -119,21 +153,33 @@ export async function ensureMicrosoftBundleMcp(ctx: MeshSpawnContext): Promise<v
     new MCPClient({
       id: `nimbus-ms-${randomUUID()}`,
       servers: {
-        onedrive: {
-          command: "bun",
-          args: [mcpConnectorServerScript("onedrive")],
-          env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
-        },
-        outlook: {
-          command: "bun",
-          args: [mcpConnectorServerScript("outlook")],
-          env: outlookEnv,
-        },
-        teams: {
-          command: "bun",
-          args: [mcpConnectorServerScript("teams")],
-          env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
-        },
+        onedrive: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("onedrive")],
+            env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
+          },
+          "onedrive",
+          ctx,
+        ),
+        outlook: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("outlook")],
+            env: outlookEnv,
+          },
+          "outlook",
+          ctx,
+        ),
+        teams: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("teams")],
+            env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
+          },
+          "teams",
+          ctx,
+        ),
       },
     }),
   );
@@ -161,16 +207,24 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-github-${randomUUID()}`,
       servers: {
-        github: {
-          command: "bun",
-          args: [mcpConnectorServerScript("github")],
-          env: extensionProcessEnv({ GITHUB_PAT: pat }),
-        },
-        github_actions: {
-          command: "bun",
-          args: [mcpConnectorServerScript("github-actions")],
-          env: extensionProcessEnv({ GITHUB_PAT: pat }),
-        },
+        github: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("github")],
+            env: extensionProcessEnv({ GITHUB_PAT: pat }),
+          },
+          "github",
+          ctx,
+        ),
+        github_actions: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("github-actions")],
+            env: extensionProcessEnv({ GITHUB_PAT: pat }),
+          },
+          "github_actions",
+          ctx,
+        ),
       },
     }),
   );
@@ -206,11 +260,15 @@ export async function ensureGitlabMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-gitlab-${randomUUID()}`,
       servers: {
-        gitlab: {
-          command: "bun",
-          args: [mcpConnectorServerScript("gitlab")],
-          env: gitlabServerEnv,
-        },
+        gitlab: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("gitlab")],
+            env: gitlabServerEnv,
+          },
+          "gitlab",
+          ctx,
+        ),
       },
     }),
   );
@@ -238,14 +296,18 @@ export async function ensureBitbucketMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-bitbucket-${randomUUID()}`,
       servers: {
-        bitbucket: {
-          command: "bun",
-          args: [mcpConnectorServerScript("bitbucket")],
-          env: extensionProcessEnv({
-            BITBUCKET_USERNAME: user,
-            BITBUCKET_APP_PASSWORD: pass,
-          }),
-        },
+        bitbucket: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("bitbucket")],
+            env: extensionProcessEnv({
+              BITBUCKET_USERNAME: user,
+              BITBUCKET_APP_PASSWORD: pass,
+            }),
+          },
+          "bitbucket",
+          ctx,
+        ),
       },
     }),
   );
@@ -278,11 +340,15 @@ export async function ensureSlackMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-slack-${randomUUID()}`,
       servers: {
-        slack: {
-          command: "bun",
-          args: [mcpConnectorServerScript("slack")],
-          env: extensionProcessEnv({ SLACK_USER_ACCESS_TOKEN: token }),
-        },
+        slack: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("slack")],
+            env: extensionProcessEnv({ SLACK_USER_ACCESS_TOKEN: token }),
+          },
+          "slack",
+          ctx,
+        ),
       },
     }),
   );
@@ -310,11 +376,15 @@ export async function ensureLinearMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-linear-${randomUUID()}`,
       servers: {
-        linear: {
-          command: "bun",
-          args: [mcpConnectorServerScript("linear")],
-          env: extensionProcessEnv({ LINEAR_API_KEY: apiKey }),
-        },
+        linear: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("linear")],
+            env: extensionProcessEnv({ LINEAR_API_KEY: apiKey }),
+          },
+          "linear",
+          ctx,
+        ),
       },
     }),
   );
@@ -350,15 +420,19 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-jira-${randomUUID()}`,
       servers: {
-        jira: {
-          command: "bun",
-          args: [mcpConnectorServerScript("jira")],
-          env: extensionProcessEnv({
-            JIRA_API_TOKEN: token,
-            JIRA_EMAIL: email,
-            JIRA_BASE_URL: baseUrl,
-          }),
-        },
+        jira: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("jira")],
+            env: extensionProcessEnv({
+              JIRA_API_TOKEN: token,
+              JIRA_EMAIL: email,
+              JIRA_BASE_URL: baseUrl,
+            }),
+          },
+          "jira",
+          ctx,
+        ),
       },
     }),
   );
@@ -395,11 +469,15 @@ export async function ensureNotionMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-notion-${randomUUID()}`,
       servers: {
-        notion: {
-          command: "bun",
-          args: [mcpConnectorServerScript("notion")],
-          env: extensionProcessEnv({ NOTION_ACCESS_TOKEN: accessToken }),
-        },
+        notion: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("notion")],
+            env: extensionProcessEnv({ NOTION_ACCESS_TOKEN: accessToken }),
+          },
+          "notion",
+          ctx,
+        ),
       },
     }),
   );
@@ -435,15 +513,19 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
     new MCPClient({
       id: `nimbus-confluence-${randomUUID()}`,
       servers: {
-        confluence: {
-          command: "bun",
-          args: [mcpConnectorServerScript("confluence")],
-          env: extensionProcessEnv({
-            CONFLUENCE_API_TOKEN: token,
-            CONFLUENCE_EMAIL: em,
-            CONFLUENCE_BASE_URL: baseUrl,
-          }),
-        },
+        confluence: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("confluence")],
+            env: extensionProcessEnv({
+              CONFLUENCE_API_TOKEN: token,
+              CONFLUENCE_EMAIL: em,
+              CONFLUENCE_BASE_URL: baseUrl,
+            }),
+          },
+          "confluence",
+          ctx,
+        ),
       },
     }),
   );
@@ -471,11 +553,15 @@ export async function ensureDiscordMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-discord-${randomUUID()}`,
       servers: {
-        discord: {
-          command: "bun",
-          args: [mcpConnectorServerScript("discord")],
-          env: extensionProcessEnv({ DISCORD_BOT_TOKEN: token }),
-        },
+        discord: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("discord")],
+            env: extensionProcessEnv({ DISCORD_BOT_TOKEN: token }),
+          },
+          "discord",
+          ctx,
+        ),
       },
     }),
   );
@@ -507,20 +593,34 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const base = stripTrailingSlashes(baseRaw.trim());
+  // I15 (T2 PR 1) — Jenkins is always user-configured; extend the static
+  // (empty) network list with the hostname parsed from JENKINS_BASE_URL
+  // so the sandbox lets the connector reach the user's CI server. If the
+  // URL fails to parse we fall through with the base manifest — the
+  // sandbox will reject the network call, which is the safe outcome.
+  const jenkinsHost = hostnameFromUrl(base);
+  const jenkinsManifest = manifestWithExtraNetworkHosts(
+    "jenkins",
+    jenkinsHost === null ? [] : [jenkinsHost],
+  );
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
       id: `nimbus-jenkins-${randomUUID()}`,
       servers: {
-        jenkins: {
-          command: "bun",
-          args: [mcpConnectorServerScript("jenkins")],
-          env: extensionProcessEnv({
-            JENKINS_BASE_URL: base,
-            JENKINS_USERNAME: user.trim(),
-            JENKINS_API_TOKEN: token.trim(),
-          }),
-        },
+        jenkins: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("jenkins")],
+            env: extensionProcessEnv({
+              JENKINS_BASE_URL: base,
+              JENKINS_USERNAME: user.trim(),
+              JENKINS_API_TOKEN: token.trim(),
+            }),
+          },
+          jenkinsManifest,
+          ctx.sandboxCwd,
+        ),
       },
     }),
   );
@@ -547,11 +647,15 @@ export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-circleci-${randomUUID()}`,
       servers: {
-        circleci: {
-          command: "bun",
-          args: [mcpConnectorServerScript("circleci")],
-          env: extensionProcessEnv({ CIRCLECI_API_TOKEN: tok.trim() }),
-        },
+        circleci: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("circleci")],
+            env: extensionProcessEnv({ CIRCLECI_API_TOKEN: tok.trim() }),
+          },
+          "circleci",
+          ctx,
+        ),
       },
     }),
   );
@@ -578,11 +682,15 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-pagerduty-${randomUUID()}`,
       servers: {
-        pagerduty: {
-          command: "bun",
-          args: [mcpConnectorServerScript("pagerduty")],
-          env: extensionProcessEnv({ PAGERDUTY_API_TOKEN: tok.trim() }),
-        },
+        pagerduty: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("pagerduty")],
+            env: extensionProcessEnv({ PAGERDUTY_API_TOKEN: tok.trim() }),
+          },
+          "pagerduty",
+          ctx,
+        ),
       },
     }),
   );
@@ -614,11 +722,15 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
     new MCPClient({
       id: `nimbus-kubernetes-${randomUUID()}`,
       servers: {
-        kubernetes: {
-          command: "bun",
-          args: [mcpConnectorServerScript("kubernetes")],
-          env: extensionProcessEnv(kubeExtra),
-        },
+        kubernetes: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("kubernetes")],
+            env: extensionProcessEnv(kubeExtra),
+          },
+          "kubernetes",
+          ctx,
+        ),
       },
     }),
   );
@@ -643,16 +755,36 @@ export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   if (vaultPaths.length === 0) {
     return;
   }
+  // I15 (T2 PR 1) — Obsidian needs read access to user vault paths
+  // (configured via `[[filesystem.roots]]`). Extend the base manifest's
+  // `filesystem.read` at spawn time before wrapping. The connector has
+  // no network — manifestForFirstParty("obsidian") declares
+  // `network: []` and the wrap function preserves that.
+  const obsidianBase = manifestForFirstParty("obsidian");
+  const obsidianManifest = {
+    ...obsidianBase,
+    permissions: {
+      ...obsidianBase.permissions,
+      filesystem: {
+        read: [...obsidianBase.permissions.filesystem.read, ...vaultPaths],
+        write: [...obsidianBase.permissions.filesystem.write],
+      },
+    },
+  };
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
       id: `nimbus-obsidian-${randomUUID()}`,
       servers: {
-        obsidian: {
-          command: "bun",
-          args: [mcpConnectorServerScript("obsidian")],
-          env: extensionProcessEnv({ OBSIDIAN_VAULT_PATHS_JSON: JSON.stringify(vaultPaths) }),
-        },
+        obsidian: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("obsidian")],
+            env: extensionProcessEnv({ OBSIDIAN_VAULT_PATHS_JSON: JSON.stringify(vaultPaths) }),
+          },
+          obsidianManifest,
+          ctx.sandboxCwd,
+        ),
       },
     }),
   );

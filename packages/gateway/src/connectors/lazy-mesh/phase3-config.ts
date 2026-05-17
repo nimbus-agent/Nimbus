@@ -1,12 +1,29 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import {
+  hostnameFromUrl,
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+} from "./first-party-manifests.ts";
 import { mcpConnectorServerScript } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
+import { wrapServerSpec } from "./wrap-server-spec.ts";
+
+/**
+ * I15 (T2 PR 1) — wrap each Phase-3 ServerSpec via the sandbox-wrapper
+ * so MCPClient's internal spawn lands in `sandbox-wrapper.ts`. The
+ * `serviceId` (the key in `servers`) is also the lookup key in
+ * `FIRST_PARTY_MANIFESTS`.
+ */
+function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSpec {
+  return wrapServerSpec(spec, manifestForFirstParty(serviceId), sandboxCwd);
+}
 
 export async function phase3AddAwsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
   const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
@@ -30,16 +47,21 @@ export async function phase3AddAwsMcp(
   if (prof !== "") {
     extra["AWS_PROFILE"] = prof;
   }
-  servers["aws"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("aws")],
-    env: extensionProcessEnv(extra),
-  };
+  servers["aws"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("aws")],
+      env: extensionProcessEnv(extra),
+    },
+    "aws",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddAzureMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const azT = (await readConnectorSecret(vault, "azure", "tenant_id"))?.trim() ?? "";
   const azC = (await readConnectorSecret(vault, "azure", "client_id"))?.trim() ?? "";
@@ -47,66 +69,94 @@ export async function phase3AddAzureMcp(
   if (azT === "" || azC === "" || azS === "") {
     return;
   }
-  servers["azure"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("azure")],
-    env: extensionProcessEnv({
-      AZURE_TENANT_ID: azT,
-      AZURE_CLIENT_ID: azC,
-      AZURE_CLIENT_SECRET: azS,
-    }),
-  };
+  servers["azure"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("azure")],
+      env: extensionProcessEnv({
+        AZURE_TENANT_ID: azT,
+        AZURE_CLIENT_ID: azC,
+        AZURE_CLIENT_SECRET: azS,
+      }),
+    },
+    "azure",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddGcpMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const gcpPath = (await readConnectorSecret(vault, "gcp", "credentials_json_path"))?.trim() ?? "";
   if (gcpPath === "") {
     return;
   }
-  servers["gcp"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("gcp")],
-    env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: gcpPath }),
-  };
+  servers["gcp"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("gcp")],
+      env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: gcpPath }),
+    },
+    "gcp",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddIacMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const iacEn = await readConnectorSecret(vault, "iac", "enabled");
   if (iacEn !== "1") {
     return;
   }
-  servers["iac"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("iac")],
-    env: extensionProcessEnv({}),
-  };
+  servers["iac"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("iac")],
+      env: extensionProcessEnv({}),
+    },
+    "iac",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddGrafanaMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const gfu = (await readConnectorSecret(vault, "grafana", "url"))?.trim() ?? "";
   const gtk = (await readConnectorSecret(vault, "grafana", "api_token"))?.trim() ?? "";
   if (gfu === "" || gtk === "") {
     return;
   }
-  servers["grafana"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("grafana")],
-    env: extensionProcessEnv({ GRAFANA_URL: gfu, GRAFANA_API_TOKEN: gtk }),
-  };
+  // I15 (T2 PR 1) — Grafana is always user-configured; extend the static
+  // (empty) network list with the hostname parsed from GRAFANA_URL so the
+  // sandbox lets the connector reach the user's Grafana instance.
+  const grafanaHost = hostnameFromUrl(gfu);
+  const grafanaManifest = manifestWithExtraNetworkHosts(
+    "grafana",
+    grafanaHost === null ? [] : [grafanaHost],
+  );
+  servers["grafana"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("grafana")],
+      env: extensionProcessEnv({ GRAFANA_URL: gfu, GRAFANA_API_TOKEN: gtk }),
+    },
+    grafanaManifest,
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddSentryMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const sentTok = (await readConnectorSecret(vault, "sentry", "auth_token"))?.trim() ?? "";
   const sentOrg = (await readConnectorSecret(vault, "sentry", "org_slug"))?.trim() ?? "";
@@ -121,31 +171,41 @@ export async function phase3AddSentryMcp(
   if (surl !== "") {
     extra["SENTRY_URL"] = surl;
   }
-  servers["sentry"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("sentry")],
-    env: extensionProcessEnv(extra),
-  };
+  servers["sentry"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("sentry")],
+      env: extensionProcessEnv(extra),
+    },
+    "sentry",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddNewrelicMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const nrKey = (await readConnectorSecret(vault, "newrelic", "api_key"))?.trim() ?? "";
   if (nrKey === "") {
     return;
   }
-  servers["newrelic"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("newrelic")],
-    env: extensionProcessEnv({ NEW_RELIC_API_KEY: nrKey }),
-  };
+  servers["newrelic"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("newrelic")],
+      env: extensionProcessEnv({ NEW_RELIC_API_KEY: nrKey }),
+    },
+    "newrelic",
+    sandboxCwd,
+  );
 }
 
 export async function phase3AddDatadogMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
 ): Promise<void> {
   const ddKey = (await readConnectorSecret(vault, "datadog", "api_key"))?.trim() ?? "";
   const ddApp = (await readConnectorSecret(vault, "datadog", "app_key"))?.trim() ?? "";
@@ -160,22 +220,29 @@ export async function phase3AddDatadogMcp(
   if (site !== "") {
     extra["DD_SITE"] = site;
   }
-  servers["datadog"] = {
-    command: "bun",
-    args: [mcpConnectorServerScript("datadog")],
-    env: extensionProcessEnv(extra),
-  };
+  servers["datadog"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("datadog")],
+      env: extensionProcessEnv(extra),
+    },
+    "datadog",
+    sandboxCwd,
+  );
 }
 
-export async function buildPhase3Servers(vault: NimbusVault): Promise<Record<string, ServerSpec>> {
+export async function buildPhase3Servers(
+  vault: NimbusVault,
+  sandboxCwd: string,
+): Promise<Record<string, ServerSpec>> {
   const servers: Record<string, ServerSpec> = {};
-  await phase3AddAwsMcp(vault, servers);
-  await phase3AddAzureMcp(vault, servers);
-  await phase3AddGcpMcp(vault, servers);
-  await phase3AddIacMcp(vault, servers);
-  await phase3AddGrafanaMcp(vault, servers);
-  await phase3AddSentryMcp(vault, servers);
-  await phase3AddNewrelicMcp(vault, servers);
-  await phase3AddDatadogMcp(vault, servers);
+  await phase3AddAwsMcp(vault, servers, sandboxCwd);
+  await phase3AddAzureMcp(vault, servers, sandboxCwd);
+  await phase3AddGcpMcp(vault, servers, sandboxCwd);
+  await phase3AddIacMcp(vault, servers, sandboxCwd);
+  await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
+  await phase3AddSentryMcp(vault, servers, sandboxCwd);
+  await phase3AddNewrelicMcp(vault, servers, sandboxCwd);
+  await phase3AddDatadogMcp(vault, servers, sandboxCwd);
   return servers;
 }

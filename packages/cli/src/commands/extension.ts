@@ -4,21 +4,128 @@ import { confirm, isCancel } from "@clack/prompts";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import {
+  formatNetworkIsolationLine,
+  type SandboxPlatformCapabilities,
+} from "./extension-sandbox-format.ts";
 
-function hasFlag(args: string[], flag: string): boolean {
+export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
-function stripFlags(args: string[]): string[] {
-  return args.filter((a) => a !== "--yes" && a !== "-y");
+export function takeFlagValue(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  if (i < 0 || i + 1 >= args.length) return undefined;
+  return args[i + 1];
 }
 
-async function runExtensionList(client: IPCClient): Promise<void> {
-  const out = await client.call<{ extensions: unknown }>("extension.list", {});
-  console.log(JSON.stringify(out, undefined, 2));
+export function stripFlags(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--yes" || a === "-y" || a === "--json") continue;
+    if (a === "--filter") {
+      // skip flag + value
+      i += 1;
+      continue;
+    }
+    out.push(a as string);
+  }
+  return out;
 }
 
-async function runExtensionInstall(
+type ExtensionListEntry = {
+  id: string;
+  version: string;
+  enabled?: number;
+  needs_reinstall?: boolean;
+  disabled_reason?: string;
+};
+
+export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
+  const filter = takeFlagValue(args, "--filter");
+  const json = hasFlag(args, "--json");
+  const params: Record<string, unknown> = {};
+  if (filter !== undefined) params["filter"] = filter;
+  const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
+  if (json) {
+    console.log(JSON.stringify(out, undefined, 2));
+    return;
+  }
+  const rows = out.extensions;
+  if (rows.length === 0) {
+    console.log("(no extensions installed)");
+    return;
+  }
+  for (const r of rows) {
+    const suffix = r.needs_reinstall === true ? " [needs-reinstall]" : "";
+    const enabled = r.enabled === 0 ? " (disabled)" : "";
+    console.log(`${r.id}@${r.version}${enabled}${suffix}`);
+  }
+}
+
+type DiagSnapshotResult = {
+  sandbox?: {
+    platform_capabilities?: SandboxPlatformCapabilities;
+  };
+};
+
+/**
+ * Fetch the sandbox posture from `diag.snapshot`. CLI runs in a separate
+ * process from the Gateway, so the Gateway-side `SandboxRunner` singleton
+ * is reachable only through IPC — the cleanest carrier is the existing
+ * `diag.snapshot` payload (T2 PR 1 Task 20). Returns `null` on any error so
+ * `extension info` still prints the rest of the row when the diagnostic
+ * call fails (e.g. permission denied on the data dir).
+ */
+export async function fetchSandboxPosture(
+  client: IPCClient,
+): Promise<SandboxPlatformCapabilities | null> {
+  try {
+    const snap = await client.call<DiagSnapshotResult>("diag.snapshot", {});
+    return snap.sandbox?.platform_capabilities ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function runExtensionInfo(
+  client: IPCClient,
+  rest: string[],
+  args: string[],
+): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension info <id> [--json]");
+  }
+  const out = await client.call<{
+    extension: ExtensionListEntry;
+    message?: string;
+  }>("extension.info", { id });
+  const sandboxCap = await fetchSandboxPosture(client);
+  if (hasFlag(args, "--json")) {
+    console.log(
+      JSON.stringify(
+        { ...out, sandbox: sandboxCap === null ? null : { platform_capabilities: sandboxCap } },
+        undefined,
+        2,
+      ),
+    );
+    return;
+  }
+  const e = out.extension;
+  console.log(`Extension: ${e.id}`);
+  console.log(`Version:   ${e.version}`);
+  console.log(`Enabled:   ${e.enabled === 1 ? "yes" : "no"}`);
+  console.log(formatNetworkIsolationLine(sandboxCap));
+  console.log("  See: docs/sandbox.md#platform-asymmetry");
+  if (e.needs_reinstall === true && out.message !== undefined) {
+    console.log("");
+    console.log(out.message);
+  }
+}
+
+export async function runExtensionInstall(
   client: IPCClient,
   args: string[],
   rest: string[],
@@ -52,7 +159,7 @@ async function runExtensionInstall(
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
+export async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
     throw new Error("Usage: nimbus extension enable <id>");
@@ -61,7 +168,7 @@ async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<vo
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function runExtensionDisable(client: IPCClient, rest: string[]): Promise<void> {
+export async function runExtensionDisable(client: IPCClient, rest: string[]): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
     throw new Error("Usage: nimbus extension disable <id>");
@@ -70,7 +177,7 @@ async function runExtensionDisable(client: IPCClient, rest: string[]): Promise<v
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function runExtensionRemove(
+export async function runExtensionRemove(
   client: IPCClient,
   args: string[],
   rest: string[],
@@ -111,7 +218,12 @@ export async function runExtension(args: string[]): Promise<void> {
   await client.connect();
   try {
     if (sub === "list" || sub === "") {
-      await runExtensionList(client);
+      await runExtensionList(client, args);
+      return;
+    }
+
+    if (sub === "info") {
+      await runExtensionInfo(client, rest, args);
       return;
     }
 
@@ -136,7 +248,7 @@ export async function runExtension(args: string[]): Promise<void> {
     }
 
     throw new Error(
-      "Usage: nimbus extension list | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes]",
+      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes]",
     );
   } finally {
     await client.disconnect();

@@ -277,3 +277,34 @@ describe("I14 — all SQLite write paths route through dbRun/dbExec/dbStmtRun", 
     expect(extra).toBeNull();
   });
 });
+
+describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
+  test("sandbox-runner.ts exports SandboxRunner + createSandboxRunner", async () => {
+    const src = await read("packages/gateway/src/platform/sandbox/sandbox-runner.ts");
+    expect(src).toMatch(/export interface SandboxRunner\b/);
+    expect(src).toMatch(/export async function createSandboxRunner\b/);
+  });
+
+  test("sandbox-wrapper.ts wires sandboxRunner.spawn at the wrapper entrypoint", async () => {
+    const src = await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts");
+    expect(src).toMatch(/createSandboxRunner/);
+    expect(src).toMatch(/runner\.spawn\s*\(/);
+  });
+
+  test("wrap-server-spec.ts exports wrapServerSpec", async () => {
+    const src = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
+    expect(src).toMatch(/export function wrapServerSpec\b/);
+  });
+
+  for (const file of [
+    "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+    "packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts",
+    "packages/gateway/src/connectors/lazy-mesh/phase3-config.ts",
+    "packages/gateway/src/connectors/lazy-mesh/user-mcp.ts",
+  ]) {
+    test(`${file} routes every ServerSpec through wrapServerSpec`, async () => {
+      const src = await read(file);
+      expect(src).toMatch(/wrapServerSpec\s*\(/);
+    });
+  }
+});

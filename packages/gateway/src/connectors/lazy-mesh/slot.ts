@@ -39,6 +39,14 @@ export interface MeshSpawnContext {
    * `OBSIDIAN_VAULT_PATHS_JSON`. Empty/undefined → obsidian MCP not started.
    */
   readonly obsidianVaultPaths?: readonly string[] | undefined;
+  /**
+   * Sandbox cwd for first-party connectors (T2 PR 1 / `I15`). Each MCP
+   * child is sandboxed with this directory as its working directory and
+   * always-on read/write access. Threaded from `paths.dataDir` so the
+   * connector can read/write its own scratch state within the user's
+   * data directory.
+   */
+  readonly sandboxCwd: string;
   clearLazyIdle(key: string): void;
   getLazyClient(key: string): MCPClient | undefined;
   setLazyClient(key: string, client: MCPClient): void;

@@ -808,10 +808,25 @@ The Extension Registry is Nimbus's plugin system. Third-party developers publish
 | **Manifest-gated** | `nimbus.extension.json` declares permissions and HITL requirements. Validated at install time. |
 | **Process-isolated** | Extensions run as child processes. A crash cannot destabilize the Gateway. |
 | **Permission-scoped** | Extensions receive credentials only for their declared service — via env injection at spawn time, never direct Vault access. |
+| **Sandbox-intrinsic (`I15`)** | Every lazy-mesh `ServerSpec` is routed through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` before MCPClient ever sees it. The per-OS `SandboxRunner` (bwrap+seccomp on Linux, sandbox-exec SBPL on macOS, AppContainer on Windows) is the single execution boundary; bypassing it is statically caught by audit rule `D10`. |
 | **Integrity-verified** | SHA-256 of the manifest is stored at install time and recomputed on every Gateway startup. Mismatch → extension disabled before it runs, user notified. |
 | **Marketplace-discoverable** | The Tauri UI ships an Extension Marketplace panel (Phase 4). |
 
-> **Current sandbox depth:** Extensions are currently isolated via process separation and scoped env injection. Full syscall-level and network-level isolation is planned for **Phase 5**. Treat third-party extensions from untrusted sources with the same caution as any npm package run with your user account.
+### Sandbox surface (T2 PR 1)
+
+Extension manifests declare their sandbox surface via a structured `permissions` object — `{ network?: string[]; filesystem?: { read?: string[]; write?: string[] } }`. `network` lists allowed hostnames (e.g. `"api.github.com"`); `filesystem.read` / `filesystem.write` list allowed path prefixes. The Gateway honours those declarations via per-OS sandbox runners; the full schema, manifest examples, operator overrides, and pre-T2 reinstall flow live in [`docs/sandbox.md`](./sandbox.md).
+
+#### Platform sandbox asymmetry
+
+Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Platform asymmetry"](./sandbox.md#platform-asymmetry).
+
+| OS | Network policy when `permissions.network: ["a.com"]` |
+| --- | --- |
+| Linux (helper available) | **Per-host** — bwrap + nimbus-sandbox-helper installs per-connector iptables; only `a.com` reachable. |
+| macOS | **Per-host** — sandbox-exec SBPL `(allow network* (remote tcp "a.com:443"))`. |
+| Windows | **All-or-nothing** — AppContainer `internetClient` capability; per-host filtering would require WFP callout drivers and is deferred ([`docs/sandbox.md` §"Windows platform status"](./sandbox.md#windows-platform-status)). |
+
+> **Current sandbox depth:** I15 is wired for every first-party lazy-mesh connector and every third-party extension that ships a T2-shape manifest. Treat third-party extensions from untrusted sources with the caution appropriate to the **least** isolated platform you intend to run them on — on Windows that is "network on or off".
 
 ### Extension Manifest
 

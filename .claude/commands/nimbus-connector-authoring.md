@@ -43,12 +43,16 @@ Write tools (`create`, `update`, `move`, `delete`) are conditional or always-HIT
 | `version` | semver | bumps on every release |
 | `entrypoint` | path | usually `dist/server.js` |
 | `runtime` | `"bun"` | only supported runtime today |
-| `permissions` | string array | enumerates capabilities |
+| `permissions` | object — `{ network?: string[]; filesystem?: { read?: string[]; write?: string[] } }` | declares the sandbox surface (I15) |
 | `hitlRequired` | string array | every write permission listed here |
 | `syncInterval` | seconds | default sync cadence |
 | `minNimbusVersion` | semver | gating |
 
 The `hitlRequired` field is what causes the Gateway to gate those tools — **omitting it means write tools run without consent**.
+
+### Sandbox declaration
+
+The `permissions` object is the manifest contract that drives the per-OS sandbox runner (invariant `I15`). Declare only the hostnames and path prefixes your connector actually needs — the runner denies everything else (bwrap + per-host iptables on Linux, sandbox-exec SBPL on macOS, AppContainer + `internetClient` capability on Windows). For the full schema, examples, platform asymmetry (Windows is network-on-or-off until WFP support lands), and the pre-T2 reinstall flow for older extensions, see [`docs/sandbox.md`](../../docs/sandbox.md).
 
 ## Credential Injection Pattern
 

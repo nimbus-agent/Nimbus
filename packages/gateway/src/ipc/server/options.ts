@@ -3,6 +3,7 @@ import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
+import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -63,4 +64,12 @@ export type CreateIpcServerOptions = {
   lanPairingWindow?: PairingWindow;
   /** Profile manager for profile.* RPCs. */
   profileManager?: ProfileManager;
+  /**
+   * Per-platform sandbox runner — surfaces extension-sandbox posture in
+   * `diag.snapshot` (`sandbox.platform_capabilities`). When undefined, the
+   * payload reports `network: "all_or_nothing"` with reason
+   * `"sandbox runner unavailable"`. Constructed in `assemblePlatformServices`
+   * (T2 PR 1).
+   */
+  sandboxRunner?: SandboxRunner;
 };

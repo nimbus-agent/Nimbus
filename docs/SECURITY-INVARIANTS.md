@@ -197,6 +197,27 @@ Companion files:
 
 ---
 
+## I15 — Sandbox runner intrinsic to every extension spawn
+
+**Statement:** **I15 — Sandbox runner intrinsic to every extension spawn.** Every connector spawn under `packages/gateway/src/connectors/lazy-mesh/` flows through `wrapServerSpec(...)` from `connectors/lazy-mesh/wrap-server-spec.ts`, which rewrites the `ServerSpec.command` to invoke `platform/sandbox/sandbox-wrapper.ts`. The wrapper reads the manifest from `NIMBUS_SANDBOX_MANIFEST_JSON` env, calls `createSandboxRunner()`, and invokes `runner.spawn(originalCmd, originalArgs, opts)`. The `SandboxRunner.spawn` site at `platform/sandbox/sandbox-wrapper.ts` is the single sandbox-execution boundary for every extension child process.
+
+**Wired at:**
+
+- `packages/gateway/src/connectors/lazy-mesh/mesh.ts`, `connector-spawns.ts`, `phase3-config.ts`, `user-mcp.ts` — every `ServerSpec` literal is routed through `wrapServerSpec(...)` before reaching MCPClient. No `ServerSpec` constructed under `connectors/lazy-mesh/` escapes the wrapper.
+- `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` — defines `wrapServerSpec`, the Option A wrapper-shim layer: it rewrites the `ServerSpec.command` to invoke `bun packages/gateway/src/platform/sandbox/sandbox-wrapper.ts`, preserving the original command/args as wrapper arguments and serializing the per-connector sandbox manifest into the `NIMBUS_SANDBOX_MANIFEST_JSON` env var.
+- `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` — the wrapper process. Parses `NIMBUS_SANDBOX_MANIFEST_JSON`, calls `createSandboxRunner()`, and invokes `runner.spawn(originalCmd, originalArgs, opts)`. This is the **single sandbox-execution boundary** — every extension child process passes through this exact call site, regardless of which lazy-mesh source file authored the original `ServerSpec`.
+- `packages/gateway/src/platform/sandbox/sandbox-runner.ts` — defines the `SandboxRunner` interface and the platform dispatcher that selects `linux.ts` / `darwin.ts` / `win32.ts` based on the host OS.
+
+**Anti-pattern:** constructing an MCPClient `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)`. Bypassing the wrapper means the child process is spawned with the raw command/args and **no sandbox is applied** — landlock/seccomp on Linux, seatbelt on macOS, Job Objects on Windows are all skipped. Caught by both the runtime I15 test in `security-invariants.test.ts` (greps each lazy-mesh file for `wrapServerSpec(`) and the static `D10` rule in `scripts/structure-audit/check-nimbus-invariants.ts` (exits 1 on any `ServerSpec` literal that does not pass through the wrapper).
+
+**Why Option A (wrapper-shim) rather than direct `runner.spawn` calls at every site:** the wrapper-shim is the single sandbox boundary. If we instead asked every spawn site to call `runner.spawn` directly, a future contributor could add a new spawn that forgot the wrapping and the runtime test would have to grow with every new call site. The wrapper-shim collapses N lazy-mesh spawn sites into one boundary (`sandbox-wrapper.ts:runner.spawn(...)`) — so the invariant is "any `ServerSpec` constructed in lazy-mesh is wrapped" rather than "every spawn site individually applies a sandbox". One boundary, one test pattern, one anti-pattern to catch.
+
+**Enforcement test:** `packages/gateway/src/security-invariants.test.ts` — asserts every lazy-mesh source file imports and calls `wrapServerSpec`, and asserts `sandbox-wrapper.ts` calls `runner.spawn(`. Static-audit complement at `D10` in `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (same pattern as `I1` and `I14`).
+
+**Audit cross-reference:** Phase 5 T2 PR 1 — sandbox + marketplace v2 sequencing. The wrapper-shim architecture is the Task 13 amendment to the original Task 16/17 plan ("every spawn under `connectors/` reaches `sandboxRunner.spawn`"); Option A was chosen to keep the invariant single-pointed instead of N-pointed.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

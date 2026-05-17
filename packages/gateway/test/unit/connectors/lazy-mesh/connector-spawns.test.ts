@@ -234,9 +234,17 @@ describe("ensureLinearMcp", () => {
 
     expect(capturedClients).toHaveLength(1);
     const linearSpec = capturedClients[0]?.servers["linear"];
-    expect(linearSpec?.command).toBe("bun");
-    expect(linearSpec?.args[0]).toMatch(/[\\/]mcp-connectors[\\/]linear[\\/]src[\\/]server\.ts$/);
+    // Post-T2 PR 1 (I15): ServerSpec is wrapped via wrapServerSpec — command
+    // is process.execPath (Bun), args[0] is sandbox-wrapper.ts, args[1] is
+    // the original command "bun", args[2..] are the original args. The env
+    // gains NIMBUS_SANDBOX_MANIFEST_JSON; the connector's vault-derived
+    // env vars + the baseline host env pass through unchanged.
+    expect(linearSpec?.command).toBe(process.execPath);
+    expect(linearSpec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(linearSpec?.args[1]).toBe("bun");
+    expect(linearSpec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]linear[\\/]src[\\/]server\.ts$/);
     expect(linearSpec?.env["LINEAR_API_KEY"]).toBe("lin_test_key");
+    expect(linearSpec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expectNoProcessEnvLeak(linearSpec?.env ?? {});
     expectBaselineHostEnv(linearSpec?.env ?? {});
   });
@@ -340,14 +348,28 @@ describe("ensureGithubMcp", () => {
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.github);
     const servers = capturedClients[0]?.servers ?? {};
 
+    // Post-T2 PR 1 (I15): both ServerSpecs are wrapped via wrapServerSpec —
+    // command is process.execPath (Bun), args[0] is sandbox-wrapper.ts,
+    // args[1] is the original command "bun", args[2..] are the original
+    // args. Vault-derived env vars + baseline host env pass through.
     expect(servers["github"]?.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(servers["github_actions"]?.env["GITHUB_PAT"]).toBe("ghp_test");
+    expect(servers["github"]?.command).toBe(process.execPath);
+    expect(servers["github_actions"]?.command).toBe(process.execPath);
     expect(servers["github"]?.args[0]).toMatch(
-      /[\\/]mcp-connectors[\\/]github[\\/]src[\\/]server\.ts$/,
+      /[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/,
     );
     expect(servers["github_actions"]?.args[0]).toMatch(
+      /[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/,
+    );
+    expect(servers["github"]?.args[2]).toMatch(
+      /[\\/]mcp-connectors[\\/]github[\\/]src[\\/]server\.ts$/,
+    );
+    expect(servers["github_actions"]?.args[2]).toMatch(
       /[\\/]mcp-connectors[\\/]github-actions[\\/]src[\\/]server\.ts$/,
     );
+    expect(servers["github"]?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
+    expect(servers["github_actions"]?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expectNoProcessEnvLeak(servers["github"]?.env ?? {});
     expectNoProcessEnvLeak(servers["github_actions"]?.env ?? {});
   });

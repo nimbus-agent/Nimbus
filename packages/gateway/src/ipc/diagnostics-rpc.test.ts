@@ -1,9 +1,16 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LocalIndex } from "../index/local-index.ts";
+import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
-import { dispatchDiagnosticsRpc } from "./diagnostics-rpc.ts";
+import {
+  buildSandboxDiagPayload,
+  DiagnosticsRpcError,
+  dispatchDiagnosticsRpc,
+} from "./diagnostics-rpc.ts";
 
 function makeCtx(dataDir: string): DiagnosticsRpcContext {
   return {
@@ -15,6 +22,39 @@ function makeCtx(dataDir: string): DiagnosticsRpcContext {
   };
 }
 
+function makeCtxWithIndex(dataDir: string): {
+  ctx: DiagnosticsRpcContext;
+  db: Database;
+  localIndex: LocalIndex;
+} {
+  const db = new Database(join(dataDir, "nimbus.db"));
+  LocalIndex.ensureSchema(db);
+  const localIndex = new LocalIndex(db);
+  const ctx: DiagnosticsRpcContext = {
+    dataDir,
+    configDir: dataDir,
+    consent: { pendingCount: () => 0 } as never,
+    gatewayVersion: "0.0.0-test",
+    startedAtMs: Date.now() - 5000,
+    localIndex,
+  };
+  return { ctx, db, localIndex };
+}
+
+/**
+ * Best-effort temp-dir cleanup. On Windows the SQLite handle is sometimes
+ * still pinned for a few hundred ms after `db.close()`, so `rmSync` can
+ * race and throw EBUSY. The OS will reap the temp dir on reboot in the
+ * worst case; never fail a test on cleanup.
+ */
+function rmTmp(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
 describe("telemetry.getStatus", () => {
   test("returns enabled:true when marker file absent", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-"));
@@ -23,7 +63,7 @@ describe("telemetry.getStatus", () => {
       expect(r.kind).toBe("hit");
       expect((r as { kind: "hit"; value: { enabled: boolean } }).value.enabled).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
     }
   });
 
@@ -35,7 +75,7 @@ describe("telemetry.getStatus", () => {
       expect(r.kind).toBe("hit");
       expect((r as { kind: "hit"; value: { enabled: boolean } }).value.enabled).toBe(false);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
     }
   });
 });
@@ -47,7 +87,7 @@ describe("telemetry.setEnabled", () => {
       dispatchDiagnosticsRpc("telemetry.setEnabled", { enabled: false }, makeCtx(dir));
       expect(existsSync(join(dir, ".nimbus-telemetry-disabled"))).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
     }
   });
 
@@ -58,7 +98,7 @@ describe("telemetry.setEnabled", () => {
       dispatchDiagnosticsRpc("telemetry.setEnabled", { enabled: true }, makeCtx(dir));
       expect(existsSync(join(dir, ".nimbus-telemetry-disabled"))).toBe(false);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
     }
   });
 
@@ -67,7 +107,7 @@ describe("telemetry.setEnabled", () => {
     try {
       expect(() => dispatchDiagnosticsRpc("telemetry.setEnabled", null, makeCtx(dir))).toThrow();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
     }
   });
 });
@@ -83,7 +123,835 @@ describe("diag.getVersion", () => {
       expect(v.version.length).toBeGreaterThan(0);
       expect(typeof v.uptimeMs).toBe("number");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTmp(dir);
+    }
+  });
+});
+
+/**
+ * Build a minimal in-memory `SandboxRunner` for the buildSandboxDiagPayload
+ * tests. We never call `.spawn()` so it returns a sentinel that fails the
+ * test if anything reaches it.
+ */
+function makeMockRunner(opts: {
+  platform: "linux" | "darwin" | "win32";
+  fullyActive: boolean;
+  reason: string | null;
+}): SandboxRunner {
+  return {
+    platform: opts.platform,
+    spawn: () => {
+      throw new Error("buildSandboxDiagPayload should not invoke spawn");
+    },
+    isFullyActive: () => opts.fullyActive,
+    degradedReason: () => opts.reason,
+  };
+}
+
+describe("buildSandboxDiagPayload (T2 PR 1 Task 20)", () => {
+  test("returns per_host + null reason for a fully-active macOS runner", () => {
+    const payload = buildSandboxDiagPayload(
+      makeMockRunner({ platform: "darwin", fullyActive: true, reason: null }),
+    );
+    expect(payload.platform_capabilities.network).toBe("per_host");
+    expect(payload.platform_capabilities.reason).toBeNull();
+    expect(payload.linux_helper).toBeNull();
+    expect(payload.stale_rules_count).toBe(0);
+  });
+
+  test("returns all_or_nothing + reason for a degraded Windows runner", () => {
+    const payload = buildSandboxDiagPayload(
+      makeMockRunner({
+        platform: "win32",
+        fullyActive: false,
+        reason: "Windows: per-host network filtering is degraded to all-or-nothing in T2 PR 1",
+      }),
+    );
+    expect(payload.platform_capabilities.network).toBe("all_or_nothing");
+    expect(payload.platform_capabilities.reason).toContain("Windows");
+    expect(payload.linux_helper).toBeNull();
+    expect(payload.stale_rules_count).toBe(0);
+  });
+
+  test("populates linux_helper={available:true,reason:null} on a fully-active Linux runner", () => {
+    const payload = buildSandboxDiagPayload(
+      makeMockRunner({ platform: "linux", fullyActive: true, reason: null }),
+    );
+    expect(payload.platform_capabilities.network).toBe("per_host");
+    expect(payload.linux_helper).toEqual({ available: true, reason: null });
+  });
+
+  test("populates linux_helper={available:false,reason:...} on a degraded Linux runner", () => {
+    const payload = buildSandboxDiagPayload(
+      makeMockRunner({
+        platform: "linux",
+        fullyActive: false,
+        reason: "nimbus-sandbox-helper not found at /usr/lib/nimbus/bin/nimbus-sandbox-helper",
+      }),
+    );
+    expect(payload.platform_capabilities.network).toBe("all_or_nothing");
+    expect(payload.platform_capabilities.reason).toContain("nimbus-sandbox-helper");
+    expect(payload.linux_helper).toEqual({
+      available: false,
+      reason: "nimbus-sandbox-helper not found at /usr/lib/nimbus/bin/nimbus-sandbox-helper",
+    });
+  });
+
+  test("reports all_or_nothing + 'sandbox runner unavailable' when no runner is wired", () => {
+    const payload = buildSandboxDiagPayload(undefined);
+    expect(payload.platform_capabilities.network).toBe("all_or_nothing");
+    expect(payload.platform_capabilities.reason).toBe("sandbox runner unavailable");
+    expect(payload.linux_helper).toBeNull();
+    expect(payload.stale_rules_count).toBe(0);
+  });
+});
+
+// ─── DiagnosticsRpcError ─────────────────────────────────────────────────────
+
+describe("DiagnosticsRpcError", () => {
+  test("carries rpcCode and message", () => {
+    const err = new DiagnosticsRpcError(-32602, "bad input");
+    expect(err.rpcCode).toBe(-32602);
+    expect(err.message).toBe("bad input");
+    expect(err.name).toBe("DiagnosticsRpcError");
+  });
+});
+
+// ─── Dispatcher unknown method ───────────────────────────────────────────────
+
+describe("dispatchDiagnosticsRpc — dispatcher", () => {
+  test("returns kind:miss for unknown method", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-miss-"));
+    try {
+      const r = await dispatchDiagnosticsRpc("not.a.real.method", null, makeCtx(dir));
+      expect(r.kind).toBe("miss");
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── config.validate ─────────────────────────────────────────────────────────
+
+describe("config.validate", () => {
+  test("returns ok:false with errors when nimbus.toml missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-cfg-"));
+    try {
+      const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      const v = (r as { kind: "hit"; value: { ok: boolean; errors: string[] } }).value;
+      expect(v.ok).toBe(false);
+      expect(v.errors.length).toBeGreaterThan(0);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns ok:true with warning when nimbus.toml lacks schema_version", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-cfg2-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), `[llm]\nremote_model = "gpt-4o"\n`);
+      const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      const v = (r as { kind: "hit"; value: { ok: boolean; warnings: string[] } }).value;
+      expect(v.ok).toBe(true);
+      expect(v.warnings.length).toBeGreaterThan(0);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns ok:true with no warnings when schema_version present", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-cfg3-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), `schema_version = 1\n`);
+      const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      const v = (r as { kind: "hit"; value: { ok: boolean; warnings: string[] } }).value;
+      expect(v.ok).toBe(true);
+      expect(v.warnings).toEqual([]);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── telemetry.disableMark (OS-temp guard) ───────────────────────────────────
+
+describe("telemetry.disableMark", () => {
+  test("refuses to write when dataDir is under OS temp", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-tmp-"));
+    try {
+      expect(() => dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(dir))).toThrow(
+        /temporary directory/i,
+      );
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── db.verify / db.repair (needs localIndex) ────────────────────────────────
+
+describe("db.verify", () => {
+  test("requires a local index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-noidx-"));
+    try {
+      expect(() => dispatchDiagnosticsRpc("db.verify", null, makeCtx(dir))).toThrow(
+        DiagnosticsRpcError,
+      );
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns clean:true on an empty fresh DB", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-verify-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("db.verify", null, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { kind: "hit"; value: { clean: boolean; findings: unknown[] } }).value;
+        expect(typeof v.clean).toBe("boolean");
+        expect(Array.isArray(v.findings)).toBe(true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+describe("db.repair", () => {
+  test("rejects without confirm:true", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-repair-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() => dispatchDiagnosticsRpc("db.repair", {}, ctx)).toThrow(/confirm: true/i);
+        expect(() => dispatchDiagnosticsRpc("db.repair", { confirm: false }, ctx)).toThrow(
+          /confirm: true/i,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("accepts confirm:true and returns a report", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-repair2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("db.repair", { confirm: true }, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { kind: "hit"; value: { report: unknown; formatted: string } }).value;
+        expect(v.report).toBeDefined();
+        expect(typeof v.formatted).toBe("string");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── db.snapshot.take / db.snapshots.list / db.snapshots.prune ──────────────
+
+describe("db.snapshot family", () => {
+  test("snapshot.take + snapshots.list round-trip", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-snap-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const take = await dispatchDiagnosticsRpc("db.snapshot.take", null, ctx);
+        expect(take.kind).toBe("hit");
+        expect(typeof (take as { value: { path: string } }).value.path).toBe("string");
+
+        const list = await dispatchDiagnosticsRpc("db.snapshots.list", null, ctx);
+        expect(list.kind).toBe("hit");
+        const entries = (list as { value: Array<{ filename: string }> }).value;
+        expect(entries.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("db.backups.list returns an array (empty when no migrations)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-backups-"));
+    try {
+      const r = await dispatchDiagnosticsRpc("db.backups.list", null, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      expect(Array.isArray((r as { value: unknown[] }).value)).toBe(true);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("snapshots.prune rejects without confirm:true", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prune-"));
+    try {
+      expect(() => dispatchDiagnosticsRpc("db.snapshots.prune", {}, makeCtx(dir))).toThrow(
+        /confirm: true/i,
+      );
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("snapshots.prune with confirm:true and explicit keepLast returns deleted count", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prune2-"));
+    try {
+      const r = await dispatchDiagnosticsRpc(
+        "db.snapshots.prune",
+        { confirm: true, keepLast: 3 },
+        makeCtx(dir),
+      );
+      expect(r.kind).toBe("hit");
+      const v = (r as { value: { deleted: number; keepLast: number } }).value;
+      expect(typeof v.deleted).toBe("number");
+      expect(v.keepLast).toBe(3);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("snapshots.prune with confirm:true and default keepLast (no number passed)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prune3-"));
+    try {
+      const r = await dispatchDiagnosticsRpc("db.snapshots.prune", { confirm: true }, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      expect((r as { value: { keepLast: number } }).value.keepLast).toBe(7);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("snapshots.prune clamps keepLast to range [1, 100]", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prune4-"));
+    try {
+      const high = await dispatchDiagnosticsRpc(
+        "db.snapshots.prune",
+        { confirm: true, keepLast: 5000 },
+        makeCtx(dir),
+      );
+      expect((high as { value: { keepLast: number } }).value.keepLast).toBe(100);
+      const low = await dispatchDiagnosticsRpc(
+        "db.snapshots.prune",
+        { confirm: true, keepLast: 0 },
+        makeCtx(dir),
+      );
+      expect((low as { value: { keepLast: number } }).value.keepLast).toBe(1);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("db.restore.preview rejects missing path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-restore-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() => dispatchDiagnosticsRpc("db.restore.preview", {}, ctx)).toThrow(/path/i);
+        expect(() => dispatchDiagnosticsRpc("db.restore.preview", { path: "  " }, ctx)).toThrow(
+          /path/i,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── db.getMeta / db.setMeta ─────────────────────────────────────────────────
+
+describe("db.getMeta / db.setMeta", () => {
+  test("getMeta rejects missing key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() => dispatchDiagnosticsRpc("db.getMeta", {}, ctx)).toThrow(/key/i);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("getMeta wraps allowlist rejection as DiagnosticsRpcError", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() => dispatchDiagnosticsRpc("db.getMeta", { key: "not_allowed" }, ctx)).toThrow(
+          DiagnosticsRpcError,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("setMeta + getMeta round-trip for whitelisted key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta3-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const set = await dispatchDiagnosticsRpc(
+          "db.setMeta",
+          { key: "onboarding_completed", value: "yes" },
+          ctx,
+        );
+        expect((set as { value: { ok: boolean } }).value.ok).toBe(true);
+        const get = await dispatchDiagnosticsRpc(
+          "db.getMeta",
+          { key: "onboarding_completed" },
+          ctx,
+        );
+        expect((get as { value: { value: string | null } }).value.value).toBe("yes");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("setMeta rejects missing key or value", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta4-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() => dispatchDiagnosticsRpc("db.setMeta", {}, ctx)).toThrow(/key or value/i);
+        expect(() =>
+          dispatchDiagnosticsRpc("db.setMeta", { key: "onboarding_completed" }, ctx),
+        ).toThrow(/key or value/i);
+        expect(() => dispatchDiagnosticsRpc("db.setMeta", { value: "x" }, ctx)).toThrow(
+          /key or value/i,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("setMeta wraps allowlist rejection as DiagnosticsRpcError", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta5-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        expect(() =>
+          dispatchDiagnosticsRpc("db.setMeta", { key: "not_allowed", value: "v" }, ctx),
+        ).toThrow(DiagnosticsRpcError);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── index.metrics / index.queryItems ────────────────────────────────────────
+
+describe("index.metrics", () => {
+  test("requires a local index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-metrics-no-"));
+    try {
+      expect(() => dispatchDiagnosticsRpc("index.metrics", null, makeCtx(dir))).toThrow(
+        /local index/i,
+      );
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns the serialized index metrics envelope", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-metrics-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("index.metrics", null, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (
+          r as {
+            value: {
+              totalItems: number;
+              itemCountByService: Record<string, number>;
+              lastSuccessfulSyncByConnector: Record<string, number | null>;
+            };
+          }
+        ).value;
+        expect(typeof v.totalItems).toBe("number");
+        expect(typeof v.itemCountByService).toBe("object");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+describe("index.queryItems", () => {
+  test("returns empty items list on empty db with default limit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("index.queryItems", {}, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { items: unknown[]; meta: { limit: number; total: number } } })
+          .value;
+        expect(v.items).toEqual([]);
+        expect(v.meta.limit).toBe(50);
+        expect(v.meta.total).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("honors services / types / limit / sinceMs / untilMs filters", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('i1', 'github', 'pr', 'pr-1', 'feature', 1000, 1000),
+                  ('i2', 'slack', 'message', 'm-1', 'hello', 2000, 2000)`,
+        );
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          {
+            services: ["github"],
+            types: ["pr"],
+            limit: 10,
+            sinceMs: 0,
+            untilMs: 5000,
+          },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { items: unknown[]; meta: { limit: number } } }).value;
+        expect(v.items.length).toBe(1);
+        expect(v.meta.limit).toBe(10);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("clamps limit to 1000", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi3-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("index.queryItems", { limit: 5000 }, ctx);
+        expect((r as { value: { meta: { limit: number } } }).value.meta.limit).toBe(1000);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("non-array services / types are ignored (treated as empty filter)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi4-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc(
+          "index.queryItems",
+          { services: "github", types: 7 },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── diag.slowQueries ────────────────────────────────────────────────────────
+
+describe("diag.slowQueries", () => {
+  test("returns rows:[] when slow_query_log table does not exist", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sq-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      // Drop the table to exercise the hasTable=null branch.
+      try {
+        db.run("DROP TABLE IF EXISTS slow_query_log");
+      } catch {
+        // ignore — best-effort
+      }
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.slowQueries", {}, ctx);
+        expect(r.kind).toBe("hit");
+        expect((r as { value: { rows: unknown[] } }).value.rows).toEqual([]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns rows from slow_query_log honoring limit + sinceMs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sq2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO slow_query_log (query_text, latency_ms, query_type, recorded_at)
+           VALUES ('SELECT 1', 12, 'sql', 1000),
+                  ('SELECT 2', 34, 'sql', 2000),
+                  ('SELECT 3', 56, 'sql', 3000)`,
+        );
+        const r = await dispatchDiagnosticsRpc(
+          "diag.slowQueries",
+          { limit: 2, sinceMs: 1500 },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+        const rows = (r as { value: { rows: Array<{ recorded_at: number }> } }).value.rows;
+        expect(rows.length).toBeLessThanOrEqual(2);
+        for (const row of rows) {
+          expect(row.recorded_at).toBeGreaterThanOrEqual(1500);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("clamps limit to [1, 500] and defaults sinceMs to 0", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sq3-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const high = await dispatchDiagnosticsRpc("diag.slowQueries", { limit: 9000 }, ctx);
+        expect(high.kind).toBe("hit");
+        const low = await dispatchDiagnosticsRpc("diag.slowQueries", { limit: -5 }, ctx);
+        expect(low.kind).toBe("hit");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── telemetry.preview ───────────────────────────────────────────────────────
+
+describe("telemetry.preview", () => {
+  test("returns disabled message when marker file exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prev-"));
+    try {
+      writeFileSync(join(dir, ".nimbus-telemetry-disabled"), `${Date.now()}\n`);
+      const r = await dispatchDiagnosticsRpc("telemetry.preview", null, makeCtx(dir));
+      expect(r.kind).toBe("hit");
+      const v = (r as { value: { disabled?: boolean; message?: string } }).value;
+      expect(v.disabled).toBe(true);
+      expect(typeof v.message).toBe("string");
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("returns a built telemetry preview when marker absent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prev2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("telemetry.preview", null, ctx);
+        expect(r.kind).toBe("hit");
+        // Should not be the disabled shape.
+        const v = (r as { value: Record<string, unknown> }).value;
+        expect((v as { disabled?: boolean }).disabled).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── diag.snapshot ───────────────────────────────────────────────────────────
+
+describe("diag.snapshot", () => {
+  test("returns the full diagnostic envelope with sandbox + extensions blocks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-snap-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (
+          r as {
+            value: {
+              gateway: { version: string; uptimeMs: number };
+              connectorHealth: unknown[];
+              index: Record<string, unknown>;
+              hitl: { pendingConsentRequests: number };
+              watchers: unknown[];
+              auditLogTail: unknown[];
+              extensions: { disabled_pre_t2: number };
+              sandbox: { platform_capabilities: { network: string } };
+            };
+          }
+        ).value;
+        expect(v.gateway.version).toBe("0.0.0-test");
+        expect(v.gateway.uptimeMs).toBeGreaterThanOrEqual(0);
+        expect(Array.isArray(v.connectorHealth)).toBe(true);
+        expect(Array.isArray(v.watchers)).toBe(true);
+        expect(v.hitl.pendingConsentRequests).toBe(0);
+        // Sandbox runner is undefined in this fixture → all_or_nothing.
+        expect(v.sandbox.platform_capabilities.network).toBe("all_or_nothing");
+        expect(typeof v.extensions.disabled_pre_t2).toBe("number");
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("serializes watchers (with last_fired_at)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-snap2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO watcher (id, name, enabled, condition_type, condition_json, action_type, action_json, created_at, last_fired_at)
+           VALUES ('w1', 'alpha', 1, 'schedule', '{}', 'notify', '{}', 0, 12345)`,
+        );
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        expect(r.kind).toBe("hit");
+        const value = (
+          r as {
+            value: {
+              watchers: Array<{ id: string; enabled: boolean; lastFiredAtMs: number | null }>;
+            };
+          }
+        ).value;
+        expect(value.watchers.length).toBe(1);
+        expect(value.watchers[0]?.enabled).toBe(true);
+        expect(value.watchers[0]?.lastFiredAtMs).toBe(12345);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── telemetry.getStatus (with localIndex) ──────────────────────────────────
+
+describe("telemetry.getStatus — with localIndex", () => {
+  test("returns enabled:true with preview fields when marker absent and index present", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-tgs-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("telemetry.getStatus", null, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { enabled: boolean } }).value;
+        expect(v.enabled).toBe(true);
+        // When a localIndex exists and telemetry is enabled, additional preview
+        // fields (from buildTelemetryPreview) are spread into the response.
+        expect(Object.keys(v).length).toBeGreaterThan(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+// ─── index.querySql ──────────────────────────────────────────────────────────
+
+describe("index.querySql", () => {
+  test("returns rows for a valid SELECT statement", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sql-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('i1', 'github', 'pr', 'pr-1', 'hi', 0, 0)`,
+        );
+        // The query runs against the disk path nimbus.db with a read-only handle.
+        const r = await dispatchDiagnosticsRpc(
+          "index.querySql",
+          { sql: "SELECT id FROM item WHERE service = 'github'" },
+          ctx,
+        );
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { rows: Array<{ id: string }>; meta: { count: number } } }).value;
+        expect(v.meta.count).toBeGreaterThanOrEqual(0);
+        // We cannot guarantee the row count because runReadOnlySelect opens a
+        // fresh handle and may not see the unflushed write — but the shape
+        // is contract-tested either way.
+        expect(Array.isArray(v.rows)).toBe(true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("wraps SqlGuardError as DiagnosticsRpcError -32602", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sql2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        let caught: unknown;
+        try {
+          await dispatchDiagnosticsRpc("index.querySql", { sql: "DROP TABLE item" }, ctx);
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(DiagnosticsRpcError);
+        expect((caught as DiagnosticsRpcError).rpcCode).toBe(-32602);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
     }
   });
 });

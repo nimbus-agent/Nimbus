@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  type SandboxPermissions,
+  validateAndNormalizePermissions,
+} from "./permissions-validator.ts";
+
 /** Canonical spec name; preferred when both exist. */
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 
@@ -24,15 +29,44 @@ export function resolveExtensionManifestPath(dir: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Resolved manifest shape consumed by the rest of the Gateway. `permissions`
+ * is the normalized `SandboxPermissions` envelope; legacy array-form input is
+ * silently mapped to default-deny by the validator (see
+ * `permissions-validator.ts`).
+ */
 export type ExtensionManifest = {
   id: string;
   version: string;
   name?: string;
   /** Relative path to entry file (default dist/index.js). */
   entry?: string;
+  /** Sandbox permission envelope (object form; legacy array → default-deny). */
+  permissions: SandboxPermissions;
 };
 
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
+  return parseExtensionManifestForRegistry(text).manifest;
+}
+
+/**
+ * Registry-load variant of {@link parseExtensionManifestJson}. Returns the
+ * resolved manifest plus an `isPreT2Legacy` flag that is `true` iff the raw
+ * `permissions` field used the legacy `string[]` form. T2 PR 1 (2026-05-16)
+ * hard-disables pre-T2 extensions at registry-load time — once the manifest
+ * has been normalized by `validateAndNormalizePermissions`, the array form
+ * is indistinguishable from an explicit default-deny object form, so the
+ * detection has to happen at this parse boundary. See
+ * `extensions/hard-disable.ts` for the wiring site and the §1 deviation in
+ * `docs/superpowers/specs/2026-05-16-phase-5-t2-pr1-sandbox-design.md`.
+ */
+export type RegistryParseResult = {
+  manifest: ExtensionManifest;
+  /** True iff the raw `permissions` field was the legacy `string[]` form. */
+  isPreT2Legacy: boolean;
+};
+
+export function parseExtensionManifestForRegistry(text: string): RegistryParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -51,10 +85,25 @@ export function parseExtensionManifestJson(text: string): ExtensionManifest {
   const name = typeof o["name"] === "string" ? o["name"].trim() : undefined;
   const entry =
     typeof o["entry"] === "string" ? o["entry"].trim().replaceAll("\\", "/") : undefined;
+  // Pre-T2 detection MUST happen on the raw JSON value, before
+  // `validateAndNormalizePermissions` collapses the legacy array form to
+  // default-deny. After normalization the two cases are indistinguishable.
+  const isPreT2Legacy = Array.isArray(o["permissions"]);
+  // Manifests without an explicit `permissions` field are treated as the
+  // legacy default-deny shape — `validateAndNormalizePermissions(undefined)`
+  // is not called directly because the validator only accepts arrays or
+  // objects; missing → explicit empty object form.
+  const permissions = validateAndNormalizePermissions(
+    o["permissions"] === undefined ? {} : o["permissions"],
+  );
   return {
-    id,
-    version,
-    ...(name !== undefined && name !== "" ? { name } : {}),
-    ...(entry !== undefined && entry !== "" ? { entry } : {}),
+    manifest: {
+      id,
+      version,
+      ...(name !== undefined && name !== "" ? { name } : {}),
+      ...(entry !== undefined && entry !== "" ? { entry } : {}),
+      permissions,
+    },
+    isPreT2Legacy,
   };
 }

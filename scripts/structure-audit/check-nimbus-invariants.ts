@@ -2,12 +2,13 @@
 // D10/D11/D12 — Nimbus-specific structural invariant checks.
 //
 // Subcommands:
-//   --rule spawn        D10: connectors/ spawn must use extensionProcessEnv() (binary, exits non-zero on hits)
-//   --rule vault-key    D11: vault-key construction must be in the allow-list (binary, exits non-zero on hits)
-//   --rule db-run       D12: census of db.run() outside db/write.ts (always exit 0; writes JSON)
-//   --rule db-run-exec  D12: binary gate — db.run/db.exec outside allow-list (exits non-zero on hits)
-//   --binary-only       runs spawn + vault-key + db-run-exec (CI mode)
-//   (no flag)           runs everything; binary-violation exit code on D10/D11/D12
+//   --rule spawn          D10: connectors/ spawn must use extensionProcessEnv() (binary, exits non-zero on hits)
+//   --rule wrap-spec      D10 (I15): every lazy-mesh ServerSpec construction must call wrapServerSpec()
+//   --rule vault-key      D11: vault-key construction must be in the allow-list (binary, exits non-zero on hits)
+//   --rule db-run         D12: census of db.run() outside db/write.ts (always exit 0; writes JSON)
+//   --rule db-run-exec    D12: binary gate — db.run/db.exec outside allow-list (exits non-zero on hits)
+//   --binary-only         runs spawn + wrap-spec + vault-key + db-run-exec (CI mode)
+//   (no flag)             runs everything; binary-violation exit code on D10/D11/D12
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import { auditOutputPath, iterateSourceFiles, stripComments } from "./lib.ts";
@@ -49,6 +50,65 @@ export function checkSpawnInvariant(files: readonly FileEntry[]): Violation[] {
         snippet: line.trim(),
       });
     }
+  }
+  return out;
+}
+
+// I15 — every lazy-mesh file that constructs a `ServerSpec` (either by
+// instantiating `new MCPClient({ servers: { ... } })` or by populating a
+// `Record<string, ServerSpec>`) must also call `wrapServerSpec(...)` so
+// MCPClient's internal spawn lands in `sandbox-wrapper.ts` (T2 PR 1).
+//
+// The plan amendment (Option A wrapper-command shim) means there are zero
+// direct `spawn(` calls under lazy-mesh — the I1 D10 rule has nothing to
+// catch there. I15 is the equivalent static rule for the wrapper-spec
+// rewrite that replaces the (now-impossible) direct spawn interception.
+//
+// Exemptions:
+//   - `wrap-server-spec.ts`     — defines `wrapServerSpec`; cannot call itself.
+//   - `slot.ts`                 — declares the `ServerSpec` type only; no construction.
+//   - `tool-map.ts`             — type-only `MCPClient` import; no construction.
+//   - `first-party-manifests.ts` — manifest data only; references in comments.
+export const LAZY_MESH_DIR = "packages/gateway/src/connectors/lazy-mesh";
+export const I15_EXEMPT: readonly string[] = [
+  `${LAZY_MESH_DIR}/wrap-server-spec.ts`,
+  `${LAZY_MESH_DIR}/slot.ts`,
+  `${LAZY_MESH_DIR}/tool-map.ts`,
+  `${LAZY_MESH_DIR}/first-party-manifests.ts`,
+];
+
+// `new MCPClient(` catches `mesh.ts` + `user-mcp.ts` + `connector-spawns.ts`.
+// `Record<string, ServerSpec>` catches `phase3-config.ts` which builds the
+// records and hands them to a parent `MCPClient` constructor elsewhere.
+const I15_CONSTRUCTS_RE = /\bnew\s+MCPClient\s*\(|Record\s*<\s*string\s*,\s*ServerSpec\s*>/;
+const I15_WRAP_RE = /\bwrapServerSpec\s*\(/;
+
+export function checkWrapServerSpecInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!f.relPath.startsWith(`${LAZY_MESH_DIR}/`)) continue;
+    if (I15_EXEMPT.includes(f.relPath)) continue;
+    // Strip comments so doc-block mentions of `new MCPClient(` (e.g. the
+    // rationale in `wrap-server-spec.ts`) and `Record<string, ServerSpec>`
+    // descriptions in JSDoc do not trigger the heuristic.
+    const stripped = stripComments(f.contents);
+    if (!I15_CONSTRUCTS_RE.test(stripped)) continue;
+    if (I15_WRAP_RE.test(stripped)) continue;
+    // First line that hits the construct pattern, for the GH annotation.
+    const lines = stripped.split("\n");
+    let hitLine = 1;
+    for (let i = 0; i < lines.length; i++) {
+      if (I15_CONSTRUCTS_RE.test(lines[i] as string)) {
+        hitLine = i + 1;
+        break;
+      }
+    }
+    out.push({
+      rule: "D10-wrap-spec",
+      file: f.relPath,
+      line: hitLine,
+      snippet: (lines[hitLine - 1] as string).trim(),
+    });
   }
   return out;
 }
@@ -162,14 +222,22 @@ export function collectDbRunCensus(files: readonly FileEntry[]): DbRunHit[] {
   return findDirectDbRunExec(files, []);
 }
 
-type Mode = "spawn" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
+type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--rule") {
       const r = argv[++i];
-      if (r === "spawn" || r === "vault-key" || r === "db-run" || r === "db-run-exec") return r;
+      if (
+        r === "spawn" ||
+        r === "wrap-spec" ||
+        r === "vault-key" ||
+        r === "db-run" ||
+        r === "db-run-exec"
+      ) {
+        return r;
+      }
       console.error(`unknown rule: ${r}`);
       process.exit(2);
     }
@@ -197,6 +265,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D10 spawn not via extensionProcessEnv: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "wrap-spec" || mode === "binary-only" || mode === "all") {
+    const v = checkWrapServerSpecInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::I15 lazy-mesh file constructs ServerSpec without wrapServerSpec — I15 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

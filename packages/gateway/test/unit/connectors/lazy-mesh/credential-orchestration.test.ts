@@ -75,6 +75,7 @@ function makeCtx(): {
   const vault = createMockVault();
   const ctx: MeshSpawnContext = {
     vault,
+    sandboxCwd: "/tmp/nimbus-test-sandbox",
     clearLazyIdle: () => undefined,
     getLazyClient: () => undefined,
     setLazyClient: () => undefined,

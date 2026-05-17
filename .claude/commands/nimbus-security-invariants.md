@@ -68,6 +68,27 @@ When adding new IPC methods accessible from the UI:
 - **Update the count assertion** in the test.
 - Never expose `vault.*`, `db.*` writes, `updater.*`, or `lan.*` pairing methods through this surface — these are RCE-class or pairing-class methods that must remain Gateway-only.
 
+## I15 — Sandbox Invariant
+
+Every connector child process under `packages/gateway/src/connectors/lazy-mesh/` is executed inside a per-OS sandbox. The architecture is **Option A wrapper-shim**:
+
+1. Every `ServerSpec` literal in lazy-mesh (`mesh.ts`, `connector-spawns.ts`, `phase3-config.ts`, `user-mcp.ts`) is constructed and then immediately routed through `wrapServerSpec(...)` from `connectors/lazy-mesh/wrap-server-spec.ts` before being handed to MCPClient.
+2. `wrapServerSpec` rewrites `ServerSpec.command` to invoke `bun packages/gateway/src/platform/sandbox/sandbox-wrapper.ts`, preserves the original command/args as wrapper arguments, and serializes the per-connector sandbox manifest into the `NIMBUS_SANDBOX_MANIFEST_JSON` env var.
+3. The wrapper process reads the manifest from env, calls `createSandboxRunner()` (which selects `linux.ts` / `darwin.ts` / `win32.ts`), and invokes `runner.spawn(originalCmd, originalArgs, opts)`. **This is the single sandbox-execution boundary** — every extension child process passes through this exact call site.
+
+The rule a contributor follows is the same as the other "intrinsic" invariants (`I2`/`I5`/`I14`): **never construct an MCPClient `ServerSpec` under `connectors/lazy-mesh/` without immediately routing it through `wrapServerSpec(...)`**. Bypassing the wrapper means landlock/seccomp on Linux, seatbelt on macOS, and Job Objects on Windows are all skipped for that child.
+
+Wiring sites the I15 enforcement test asserts against:
+
+- Each lazy-mesh source file imports `wrapServerSpec` from `./wrap-server-spec.ts` and the source contains at least one `wrapServerSpec(` call.
+- `platform/sandbox/sandbox-wrapper.ts` calls `runner.spawn(` against a `SandboxRunner` from `createSandboxRunner()`.
+
+Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invariants.ts` exits 1 on any `ServerSpec` literal under `connectors/lazy-mesh/` that does not pass through `wrapServerSpec(...)`. Same enforcement shape as the `D1` (`I1`) and `D12` (`I14`) static rules — fails before the test suite runs.
+
+**Why Option A:** the wrapper-shim collapses N lazy-mesh spawn sites into one sandbox boundary. If we instead asked every spawn site to call `runner.spawn` directly, the runtime test would have to grow with every new call site, and a future contributor could miss one. With Option A the invariant is "any `ServerSpec` constructed in lazy-mesh is wrapped" rather than "every spawn site individually applies a sandbox" — one boundary, one test pattern, one anti-pattern to catch.
+
+**Anti-pattern:** constructing a `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)`. Caught by both the runtime I15 test in `security-invariants.test.ts` and the static `D10` rule in `check-nimbus-invariants.ts`.
+
 ## When to Create a New Invariant Entry
 
 Add an invariant entry (`I<N>` row in `SECURITY-INVARIANTS.md` + test assertion) when you add:

@@ -666,6 +666,9 @@ export async function tryDispatchDiagnosticsRpc(
       consent: ctx.consentImpl,
       gatewayVersion: ctx.options.version,
       startedAtMs: ctx.startedAtMs,
+      ...(ctx.options.sandboxRunner === undefined
+        ? {}
+        : { sandboxRunner: ctx.options.sandboxRunner }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined

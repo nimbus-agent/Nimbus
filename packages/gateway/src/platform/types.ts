@@ -5,6 +5,7 @@ import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import type { PlatformPaths } from "./paths.ts";
+import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
 
 export interface AutostartManager {
   isEnabled(): Promise<boolean>;
@@ -31,6 +32,15 @@ export interface PlatformServices {
   openUrl(url: string): Promise<void>;
   /** RAG session memory (schema v10+); undefined when embeddings unavailable. */
   sessionMemoryStore?: SessionMemoryStore;
+  /**
+   * Per-platform sandbox runner singleton (T2 PR 1). Constructed once during
+   * platform assembly so the same posture (helper-probe result on Linux,
+   * Windows degraded marker, macOS fully-active) is observable from both the
+   * `diag.snapshot` payload and the gateway-startup banner. The wrapper
+   * subprocess constructs its own runner per spawn — this handle is for
+   * operator-visible surfaces only.
+   */
+  sandboxRunner: SandboxRunner;
   /** Optional HTTP / metrics sidecars; stopped before IPC on gateway shutdown. */
   disposeSidecars?: () => void;
 }

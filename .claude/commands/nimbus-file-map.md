@@ -38,6 +38,23 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/gateway/src/platform/darwin.ts` | macOS platform implementation |
 | `packages/gateway/src/platform/linux.ts` | Linux platform implementation |
 
+## Extension Sandbox (T2 PR 1 — invariant `I15`)
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` PAL interface + `createSandboxRunner()` dispatcher (I15 entry point). |
+| `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script invoked by lazy-mesh ServerSpec entries — reads manifest from env, calls `runner.spawn`. **Single I15 execution boundary**. |
+| `packages/gateway/src/platform/sandbox/linux.ts` | Linux SandboxRunner — bwrap + nimbus-sandbox-helper + per-host iptables; `decideNetworkMode` + `buildBwrapArgv` exposed for unit tests. |
+| `packages/gateway/src/platform/sandbox/darwin.ts` | macOS SandboxRunner — sandbox-exec SBPL profile generator. |
+| `packages/gateway/src/platform/sandbox/win32.ts` | Windows SandboxRunner — AppContainer + `internetClient` capability + orphan-reap helpers; FFI WIP. |
+| `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode emit, no native libseccomp; includes AUDIT_ARCH_X86_64 guard. |
+| `packages/gateway/src/platform/sandbox/orphan-reap.ts` | Windows AppContainer orphan-reap at Gateway startup. |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint for every lazy-mesh ServerSpec. |
+| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | Static `FIRST_PARTY_MANIFESTS` registry — per-connector sandbox manifests (T2 PR 1 §6). |
+| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; enforce-and-exec mode + `--check-caps` probe; post-unshare AUDIT_ARCH guard + setns/unshare-killer. |
+| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for first- and third-party connector authors. |
+| `docs/sandbox.md` | Operator-facing sandbox reference; `#platform-asymmetry` + `#windows-platform-status` anchors. |
+
 ## Vault + Auth
 
 | File | Purpose |
@@ -233,7 +250,7 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I14 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I15 rationale + anti-patterns + audit cross-references (I15 = sandbox runner intrinsic to extension spawn, T2 PR 1) |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist for headless releases; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | Worked CI integration examples (GitHub Actions self-hosted, GitLab CI, Jenkins) using `nimbus query --json` (Phase 5 T4 PR 1) |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1) |

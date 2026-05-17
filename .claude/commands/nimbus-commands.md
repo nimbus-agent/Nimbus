@@ -52,6 +52,7 @@ bun run test:coverage:agents          # ≥80% (built-in agents)
 # Vault + security-adjacent
 bun run test:coverage:vault           # ≥90% (vault)
 bun run test:coverage:extensions      # ≥85% (extension registry + manifest + verify)
+bun run test:coverage:sandbox         # ≥80% (platform/sandbox/ — T2 PR 1)
 
 # Sync + rate limiting
 bun run test:coverage:sync            # ≥80% (sync scheduler)

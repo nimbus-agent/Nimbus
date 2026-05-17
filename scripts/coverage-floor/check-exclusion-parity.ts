@@ -40,6 +40,10 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/gateway/src/perf/bench-cli.ts");
     return samples;
   }
+  if (pattern === "packages/gateway/src-native/**") {
+    samples.push("packages/gateway/src-native/sandbox-helper/main.c");
+    return samples;
+  }
   // Direct paths: treat the pattern itself as the sample.
   samples.push(pattern);
   return samples;

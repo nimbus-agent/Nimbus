@@ -76,19 +76,19 @@ afterEach(() => {
 });
 
 linuxTest("produces .deb with expected name", () => {
-  const r = runInstaller(["--skip-appimage"]);
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb"))).toBe(true);
 });
 
 linuxTest("produces tarball with expected name", () => {
-  const r = runInstaller(["--skip-appimage"]);
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz"))).toBe(true);
 });
 
 linuxTest("produces .AppImage with stubbed appimagetool", () => {
-  const r = runInstaller(["--appimagetool", stubToolPath]);
+  const r = runInstaller(["--appimagetool", stubToolPath, "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
   const appImage = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.AppImage");
   expect(existsSync(appImage)).toBe(true);
@@ -103,7 +103,7 @@ linuxTest("populates AppDir with AppRun, .desktop, icon, and binaries before inv
     `APPDIR="$1"\n(cd "$APPDIR" && find . -type f | sort) > "${listingPath}"\nprintf 'AITS' > "$2"`,
   );
 
-  const r = runInstaller(["--appimagetool", recordingStub]);
+  const r = runInstaller(["--appimagetool", recordingStub, "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
 
   const listing = readFileSync(listingPath, "utf8");
@@ -122,7 +122,7 @@ linuxTest("substitutes {{VERSION}} placeholder in desktop entry", () => {
     `APPDIR="$1"\ncp "$APPDIR/nimbus-headless.desktop" "${desktopOut}"\nprintf 'AITS' > "$2"`,
   );
 
-  runInstaller(["--appimagetool", recordingStub]);
+  runInstaller(["--appimagetool", recordingStub, "--skip-sandbox-helper"]);
 
   const desktop = readFileSync(desktopOut, "utf8");
   expect(desktop).toContain("X-AppImage-Version=0.1.0-rc1");
@@ -130,7 +130,7 @@ linuxTest("substitutes {{VERSION}} placeholder in desktop entry", () => {
 });
 
 linuxTest("tarball contains install.sh and uninstall.sh", () => {
-  const r = runInstaller(["--skip-appimage"]);
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
   const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
   expect(existsSync(tarballPath)).toBe(true);
@@ -143,8 +143,76 @@ linuxTest("tarball contains install.sh and uninstall.sh", () => {
 });
 
 linuxTest("AppImage output dir contains sibling install.sh and uninstall.sh", () => {
-  const r = runInstaller(["--appimagetool", stubToolPath]);
+  const r = runInstaller(["--appimagetool", stubToolPath, "--skip-sandbox-helper"]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "install.sh"))).toBe(true);
   expect(existsSync(join(outDir, "uninstall.sh"))).toBe(true);
+});
+
+linuxTest(".deb DEBIAN/control declares bubblewrap + libcap2-bin as Depends", () => {
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  expect(r.status).toBe(0);
+  const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
+  expect(existsSync(debPath)).toBe(true);
+  // dpkg-deb -I prints the control file metadata.
+  const info = spawnSync("/usr/bin/dpkg-deb", ["-I", debPath], { encoding: "utf8" });
+  expect(info.status).toBe(0);
+  expect(info.stdout).toMatch(/Depends:\s*bubblewrap,\s*libcap2-bin/);
+});
+
+linuxTest(".deb postinst runs setcap on nimbus-sandbox-helper", () => {
+  // Pre-build a stub helper so we exercise the helper-bundling path too.
+  const stubHelper = join(workDir, "stub-helper");
+  writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");
+  chmodSync(stubHelper, 0o755);
+
+  const r = runInstaller(["--skip-appimage", "--sandbox-helper", stubHelper]);
+  expect(r.status).toBe(0);
+  const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
+  expect(existsSync(debPath)).toBe(true);
+  // dpkg-deb -e extracts the DEBIAN control directory into the given dir.
+  const ctrlDir = join(workDir, "deb-ctrl");
+  mkdirSync(ctrlDir, { recursive: true });
+  const extract = spawnSync("/usr/bin/dpkg-deb", ["-e", debPath, ctrlDir], { encoding: "utf8" });
+  expect(extract.status).toBe(0);
+  const postinst = readFileSync(join(ctrlDir, "postinst"), "utf8");
+  expect(postinst).toContain("setcap cap_net_admin+ep");
+  expect(postinst).toContain("/usr/lib/nimbus/bin/nimbus-sandbox-helper");
+
+  // Verify the helper itself was copied into the .deb payload.
+  const contents = spawnSync("/usr/bin/dpkg-deb", ["-c", debPath], { encoding: "utf8" });
+  expect(contents.status).toBe(0);
+  expect(contents.stdout).toContain("./usr/lib/nimbus/bin/nimbus-sandbox-helper");
+});
+
+linuxTest("tarball linux-postinstall.sh prints bwrap pre-check banner", () => {
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  expect(r.status).toBe(0);
+  const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
+  expect(existsSync(tarballPath)).toBe(true);
+  const extractDir = join(workDir, "tar-extract");
+  mkdirSync(extractDir, { recursive: true });
+  const x = spawnSync("/usr/bin/tar", ["-xzf", tarballPath, "-C", extractDir], {
+    encoding: "utf8",
+  });
+  expect(x.status).toBe(0);
+  const postScript = readFileSync(join(extractDir, "linux-postinstall.sh"), "utf8");
+  // bwrap banner with per-distro install hints (T2 PR 1, Step 7.4).
+  expect(postScript).toContain("command -v bwrap");
+  expect(postScript).toContain("sudo apt install bubblewrap");
+  expect(postScript).toContain("sudo dnf install bubblewrap");
+  expect(postScript).toContain("sudo pacman -S bubblewrap");
+});
+
+linuxTest("tarball ships nimbus-sandbox-helper when --sandbox-helper is set", () => {
+  const stubHelper = join(workDir, "stub-helper");
+  writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");
+  chmodSync(stubHelper, 0o755);
+
+  const r = runInstaller(["--skip-appimage", "--sandbox-helper", stubHelper]);
+  expect(r.status).toBe(0);
+  const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
+  const tarList = spawnSync("/usr/bin/tar", ["-tzf", tarballPath], { encoding: "utf8" });
+  expect(tarList.status).toBe(0);
+  expect(tarList.stdout).toContain("bin/nimbus-sandbox-helper");
 });

@@ -7,7 +7,7 @@ Nimbus is a **local-first AI agent framework** — a headless Bun Gateway proces
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict
 **Linter:** Biome
 **License:** AGPL-3.0 (gateway/cli/mcp-connectors) + MIT (sdk)
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active · T4 PR 2 DORA metrics ✅ · T4 PR 3a pre-deploy check ✅ · T4 PR 3b annotation ✅ · T4 wrap-up: PagerDuty enrichment ✅ (2026-05-14) · T4 wrap-up: PagerDuty pagination + severity_p1_aliases ✅ (2026-05-16) · T6 sequencing spec ✅ (2026-05-14) · T6 PR 1 I10 helpers ✅ · T6 PR 2 `tool_call_log` V29 ✅ (2026-05-15) · T6 PR 3 `vec_items_1536` V30 ✅ (2026-05-15) · Sub-project A ✅ (2026-05-15) · docs/superpowers/ pruned (2026-05-15) · `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Workstream-level status is in [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active · T4 PR 2 DORA metrics ✅ · T4 PR 3a pre-deploy check ✅ · T4 PR 3b annotation ✅ · T4 wrap-up: PagerDuty enrichment ✅ (2026-05-14) · T4 wrap-up: PagerDuty pagination + severity_p1_aliases ✅ (2026-05-16) · T6 sequencing spec ✅ (2026-05-14) · T6 PR 1 I10 helpers ✅ · T6 PR 2 `tool_call_log` V29 ✅ (2026-05-15) · T6 PR 3 `vec_items_1536` V30 ✅ (2026-05-15) · Sub-project A ✅ (2026-05-15) · docs/superpowers/ pruned (2026-05-15) · T2 PR 1 sandbox ✅ (2026-05-17) · `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Workstream-level status is in [`docs/roadmap.md`](./docs/roadmap.md).
 
 **Gemini CLI:** [`GEMINI.md`](./GEMINI.md) mirrors this file for the same repository — update both when changing commands, roadmap rows, or non-negotiables.
 
@@ -49,10 +49,11 @@ Each invariant has a production wiring site and an enforcement test in `packages
 | I12 | DPAPI calls pass `pOptionalEntropy` from `<configDir>/vault/.entropy`                      | `vault/win32.ts`                                                                                                 | Dropping the entropy parameter "for compatibility"                                   |
 | I13 | HTTP write routes go through `WRITE_ROUTE_ALLOWLIST` + bearer auth                         | `ipc/http-server.ts`, `ipc/http-write-routes.ts`                                                                 | New POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` or opens a second writable DB outside the server context |
 | I14 | All SQLite write paths route through `dbRun` / `dbExec` / `dbStmtRun`                      | `db/write.ts` (`dbRun`, `dbExec`, `dbStmtRun`); enforced statically by `D12` in `check-nimbus-invariants.ts`    | Direct `db.run(` or `db.exec(` outside `DB_RUN_EXEC_ALLOW_LIST` — swallows `SQLITE_FULL`                            |
+| I15 | Sandbox runner intrinsic to every extension spawn — every lazy-mesh `ServerSpec` flows through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` | `connectors/lazy-mesh/{mesh.ts,connector-spawns.ts,phase3-config.ts,user-mcp.ts}` (call `wrapServerSpec`); `connectors/lazy-mesh/wrap-server-spec.ts` (defines `wrapServerSpec`); `platform/sandbox/sandbox-wrapper.ts` (calls `runner.spawn`); `platform/sandbox/sandbox-runner.ts` (defines `SandboxRunner` + dispatcher); enforced statically by `D10` in `check-nimbus-invariants.ts` | Constructing an MCPClient `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)` — caught by both the runtime I15 test and the static `D10` rule |
 
 When changing a wiring site, update both the test and `SECURITY-INVARIANTS.md` in the same commit. When retiring an invariant, delete the row — never leave it as documentation drift.
 
-**Static-time complement:** `scripts/structure-audit/check-nimbus-invariants.ts` enforces I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, and I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1) at static time. Runtime tests remain authoritative; the static checks fail before the test suite runs.
+**Static-time complement:** `scripts/structure-audit/check-nimbus-invariants.ts` enforces I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), and I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`) at static time. Runtime tests remain authoritative; the static checks fail before the test suite runs.
 
 ---
 
@@ -113,7 +114,7 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 
 - [`docs/architecture.md`](./docs/architecture.md) — full subsystem design, IPC method catalogue, schema reference. Read before modifying any subsystem.
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
-- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I14 rationale + anti-patterns.
+- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I15 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
 
 ---

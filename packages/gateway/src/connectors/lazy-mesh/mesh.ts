@@ -28,10 +28,12 @@ import {
 } from "./connector-spawns.ts";
 import { ensureCredentialConnectorsRunning } from "./credential-orchestration.ts";
 import { LazyDrainTracker } from "./drain.ts";
+import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { LAZY_MESH, USER_MESH_PREFIX, userMcpMeshKey } from "./keys.ts";
 import type { LazyMcpSlot, MeshLogger, MeshSpawnContext } from "./slot.ts";
 import { type LazyMeshToolMap, listLazyMeshClientTools, mergeToolMapsOrThrow } from "./tool-map.ts";
 import { ensureUserMcpClient } from "./user-mcp.ts";
+import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 /**
  * Eager filesystem MCP + lazily spawned Google MCP bundle (Drive + Gmail + Photos) + Microsoft bundle (OneDrive + Outlook + Teams) + GitHub (includes GitHub Actions MCP child) / GitLab / Bitbucket / Slack / Linear / Jira / Notion / Confluence / Jenkins / CircleCI / PagerDuty / Kubernetes credential MCP when vault keys exist; Phase 3 bundle (AWS, Azure, GCP, IaC, Grafana, Sentry, New Relic, Datadog) when matching vault keys exist; Discord MCP when **`discord.enabled`** + **`discord.bot_token`** are set (Q2 §1.6 / Phase 2–5 + §4.3).
@@ -76,13 +78,34 @@ export class LazyConnectorMesh {
     this.healthDb = options?.healthDb;
     this.auditDb = options?.auditDb;
     this.logger = options?.logger;
+    // I15 (T2 PR 1) — every lazy-mesh ServerSpec goes through
+    // `wrapServerSpec` so MCPClient's internal child process lands in
+    // `sandbox-wrapper.ts` → the platform sandbox runner. The filesystem
+    // connector needs read access to `paths.dataDir`; we extend the
+    // base manifest's `filesystem.read` at runtime because dataDir is
+    // user-scoped (not known until Gateway boot).
+    const fsBaseManifest = manifestForFirstParty("filesystem");
+    const fsManifest = {
+      ...fsBaseManifest,
+      permissions: {
+        ...fsBaseManifest.permissions,
+        filesystem: {
+          read: [...fsBaseManifest.permissions.filesystem.read, paths.dataDir],
+          write: [...fsBaseManifest.permissions.filesystem.write, paths.dataDir],
+        },
+      },
+    };
     this.filesystem = new MCPClient({
       servers: {
-        filesystem: {
-          command: "bunx",
-          args: ["@modelcontextprotocol/server-filesystem", paths.dataDir],
-          env: extensionProcessEnv({}),
-        },
+        filesystem: wrapServerSpec(
+          {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-filesystem", paths.dataDir],
+            env: extensionProcessEnv({}),
+          },
+          fsManifest,
+          paths.dataDir,
+        ),
       },
     });
     this.spawnContext = {
@@ -90,6 +113,7 @@ export class LazyConnectorMesh {
       logger: this.logger,
       healthDb: this.healthDb,
       obsidianVaultPaths: options?.obsidianVaultPaths,
+      sandboxCwd: paths.dataDir,
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
       setLazyClient: (k, c) => this.setLazyClient(k, c),

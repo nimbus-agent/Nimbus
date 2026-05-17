@@ -12,6 +12,7 @@ import {
 } from "../automation/extension-store.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
+import { hardDisablePreT2Extensions } from "./hard-disable.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
@@ -143,6 +144,21 @@ export async function verifyExtensionsBestEffort(
 ): Promise<void> {
   if (readIndexedUserVersion(db) < 10) {
     return;
+  }
+  // T2 PR 1 — refuse pre-T2 (legacy `permissions: string[]`) extensions at
+  // registry-load. The hard-disable runs BEFORE the per-extension verify
+  // sweep so a tampered + pre-T2 extension is short-circuited from the
+  // running mesh on a single pass. `setExtensionEnabled` flips the row to
+  // disabled; the in-memory registry (`preT2DisabledRegistry`) is rebuilt
+  // for `extension.list` + `diag.snapshot` to consume.
+  const preT2Disabled = hardDisablePreT2Extensions({ db, logger });
+  if (mesh !== undefined) {
+    for (const row of preT2Disabled) {
+      // Best-effort: stop the running child so a pre-T2 extension that was
+      // already spawned (e.g. previous Gateway version) stops executing
+      // immediately. New spawns are blocked by the disabled flag.
+      await mesh.stopExtensionClient(row.id);
+    }
   }
   const rows = listExtensions(db).filter((r) => r.enabled === 1);
   if (rows.length === 0) {

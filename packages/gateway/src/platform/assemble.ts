@@ -64,6 +64,7 @@ import { processEnvGet } from "./env-access.ts";
 import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
+import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import type { AutostartManager, NotificationService, PlatformServices } from "./types.ts";
 
 function createStubAutostart(): AutostartManager {
@@ -313,6 +314,12 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
   const vault = await createNimbusVault(paths);
+  // T2 PR 1 — construct the per-platform sandbox runner singleton. The
+  // wrapper subprocess (sandbox-wrapper.ts) constructs its own runner per
+  // spawn; this handle is the gateway-process view used by `diag.snapshot`
+  // and the startup posture banner so the same probe result (e.g. Linux
+  // helper present + CAP_NET_ADMIN) is observable from both surfaces.
+  const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
   const notifications = createStubNotifications();
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
@@ -379,6 +386,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,
+    sandboxRunner,
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;
@@ -445,6 +453,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     autostart: createStubAutostart(),
     notifications,
     openUrl: openUrlInDefaultBrowser,
+    sandboxRunner,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
