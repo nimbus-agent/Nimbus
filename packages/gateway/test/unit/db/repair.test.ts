@@ -83,15 +83,10 @@ describe("repairIndex — orphaned sync tokens", () => {
 });
 
 describe("repairIndex — FTS5 rebuild", () => {
-  test("FTS5 rebuild succeeds on healthy database", () => {
-    const db = makeDb();
-    // Directly trigger the fts5_rebuild action by calling repairFts5 indirectly:
-    // We force the repair by setting a fake failed finding via the verify interface.
-    // Instead, test the rebuild action by verifying it runs without error.
-    db.run("INSERT INTO item_fts(item_fts) VALUES('rebuild')");
-    // If no error thrown, the FTS table is healthy enough to rebuild
-    expect(true).toBe(true);
-    db.close();
+  test.skip("FTS5 rebuild — unreachable from :memory: (would need real FTS5 corruption to trigger fts5_consistency = fail)", () => {
+    // repairFts5 only runs when verifyIndex flags fts5_consistency = "fail",
+    // which requires actual FTS5 shadow-table corruption. Bun's :memory: SQLite
+    // cannot induce that state without lower-level manipulation outside the API.
   });
 });
 
@@ -107,11 +102,14 @@ describe("repairIndex — audit log entry", () => {
     repairIndex(db, LocalIndex.SCHEMA_VERSION);
 
     const rows = db
-      .query(`SELECT action_type, hitl_status FROM audit_log ORDER BY id DESC LIMIT 1`)
-      .all() as Array<{ action_type: string; hitl_status: string }>;
+      .query(`SELECT action_type, hitl_status, action_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .all() as Array<{ action_type: string; hitl_status: string; action_json: string }>;
 
     expect(rows[0]?.action_type).toBe("db.repair");
     expect(rows[0]?.hitl_status).toBe("not_required");
+    const parsed = JSON.parse(rows[0]?.action_json ?? "{}") as { outcomes: unknown[] };
+    expect(parsed.outcomes).toBeDefined();
+    expect(Array.isArray(parsed.outcomes)).toBe(true);
     db.close();
   });
 });
@@ -167,10 +165,9 @@ describe("formatRepairReport", () => {
     };
     const output = formatRepairReport(report);
     expect(output).toContain("[applied]");
-    // The action line itself should not contain ': ' (the detail separator)
     const actionLine = output.split("\n").find((l) => l.includes("orphaned_sync_tokens_delete"));
     expect(actionLine).toBeDefined();
-    expect(actionLine).not.toContain(": ");
+    expect(actionLine?.trim()).toBe("[applied] orphaned_sync_tokens_delete");
   });
 });
 
@@ -343,8 +340,8 @@ describe("repairIndex — multi-action report shape", () => {
   });
 });
 
-describe("repairIndex — isUnsafeSqlIdentifier defense (S5-F6)", () => {
-  test("outcome detail strings produced during repair never contain SQL injection sentinels", () => {
+describe("repairIndex — repair outcome detail strings", () => {
+  test("repair outcome detail strings contain no raw SQL metacharacters", () => {
     // isUnsafeSqlIdentifier is private; we reach it indirectly through repairForeignKeys.
     // Seed a FK violation so the path is exercised, then assert no outcome detail
     // contains SQL metacharacters that would indicate identifier injection.
