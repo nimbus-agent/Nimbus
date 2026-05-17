@@ -10,7 +10,7 @@
  * `ensureCredentialConnectorsRunning` — the mocks let us confirm they always fire.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import type { MeshSpawnContext } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
@@ -22,6 +22,18 @@ const spawnCalls: Array<string> = [];
 // Mock google-access-token so anyGoogleOAuthVaultPresent is fully controllable.
 // We set this flag in tests that need Google OAuth to appear present.
 let googleOAuthPresent = false;
+
+// Capture the real modules BEFORE installing mocks so we can restore them in
+// `afterAll`. bun:test's `mock.module` is process-global with no built-in
+// unmock — without these restores, our mocks leak into sibling test files
+// (notably connector-spawns.test.ts), which then call into our recorder
+// instead of the real ensureXxxMcp helpers and fail with cryptic length=0
+// assertions. Capturing originals + re-mocking with them on teardown is the
+// only portable cleanup pattern for cross-file isolation.
+const REAL_GOOGLE_ACCESS_TOKEN = await import("../../../../src/auth/google-access-token.ts");
+const REAL_CONNECTOR_SPAWNS = await import(
+  "../../../../src/connectors/lazy-mesh/connector-spawns.ts"
+);
 
 mock.module("../../../../src/auth/google-access-token.ts", () => ({
   anyGoogleOAuthVaultPresent: async (): Promise<boolean> => googleOAuthPresent,
@@ -76,6 +88,16 @@ mock.module("../../../../src/connectors/lazy-mesh/connector-spawns.ts", () => {
     ensurePhase3BundleMcp: make("phase3"),
     ensureSlackMcp: make("slack"),
   };
+});
+
+// Restore real modules so sibling test files (loaded after this one on Linux
+// CI) get the production implementations they need.
+afterAll(() => {
+  mock.module("../../../../src/auth/google-access-token.ts", () => REAL_GOOGLE_ACCESS_TOKEN);
+  mock.module(
+    "../../../../src/connectors/lazy-mesh/connector-spawns.ts",
+    () => REAL_CONNECTOR_SPAWNS,
+  );
 });
 
 // Dynamic import AFTER mock.module — bun:test resolves mocks at import time.
