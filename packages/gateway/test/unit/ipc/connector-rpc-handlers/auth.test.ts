@@ -9,7 +9,7 @@
  * iac, jira, confluence, and the OAuth/PKCE dispatch paths.
  */
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
 import { handleConnectorAuth } from "../../../../src/ipc/connector-rpc-handlers/auth.ts";
 import type { ConnectorRpcHandlerContext } from "../../../../src/ipc/connector-rpc-handlers/context.ts";
@@ -79,6 +79,10 @@ describe("handleConnectorAuth — github", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes github.pat and registers scheduler rows", async () => {
     const PAT = "ghp_super_secret_token_12345";
     const ctx = makeCtx({ service: "github", personalAccessToken: PAT }, vault, localIndex);
@@ -141,6 +145,10 @@ describe("handleConnectorAuth — gitlab", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes gitlab.pat and registers scheduler row", async () => {
     const PAT = "glpat-abc123";
     const ctx = makeCtx({ service: "gitlab", personalAccessToken: PAT }, vault, localIndex);
@@ -200,6 +208,10 @@ describe("handleConnectorAuth — linear", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes linear.api_key and registers scheduler row", async () => {
     const KEY = "lin_api_key_abc123";
     const ctx = makeCtx({ service: "linear", personalAccessToken: KEY }, vault, localIndex);
@@ -245,6 +257,10 @@ describe("handleConnectorAuth — circleci", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes circleci.api_token and registers scheduler row", async () => {
     const TOKEN = "circle_api_token_secret";
     const ctx = makeCtx({ service: "circleci", personalAccessToken: TOKEN }, vault, localIndex);
@@ -280,6 +296,10 @@ describe("handleConnectorAuth — jenkins", () => {
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   test("happy path: writes jenkins base_url, username, api_token and scheduler row", async () => {
@@ -378,6 +398,10 @@ describe("handleConnectorAuth — bitbucket", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes bitbucket.username + bitbucket.app_password and scheduler row", async () => {
     const PWD = "bb_app_password_secret";
     const ctx = makeCtx(
@@ -444,6 +468,10 @@ describe("handleConnectorAuth — grafana", () => {
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   test("happy path: writes grafana.url + grafana.api_token and scheduler row", async () => {
@@ -522,6 +550,10 @@ describe("handleConnectorAuth — sentry", () => {
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   test("happy path: writes sentry.auth_token + sentry.org_slug and scheduler row", async () => {
@@ -607,6 +639,10 @@ describe("handleConnectorAuth — newrelic", () => {
     ({ db, vault, localIndex } = freshDeps());
   });
 
+  afterEach(() => {
+    db.close();
+  });
+
   test("happy path: writes newrelic.api_key and registers scheduler row", async () => {
     const KEY = "nr_user_api_key_secret";
     const ctx = makeCtx({ service: "newrelic", personalAccessToken: KEY }, vault, localIndex);
@@ -661,6 +697,10 @@ describe("handleConnectorAuth — datadog", () => {
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   test("happy path: writes datadog.api_key + datadog.app_key and scheduler row", async () => {
@@ -757,6 +797,10 @@ describe("handleConnectorAuth — pagerduty", () => {
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   test("happy path: writes pagerduty.api_token and registers scheduler row", async () => {
