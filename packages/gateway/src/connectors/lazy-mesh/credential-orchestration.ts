@@ -6,26 +6,35 @@ import {
   type SharedOAuthProvider,
   sharedOAuthKey,
 } from "../connector-vault.ts";
-import {
-  ensureBitbucketMcp,
-  ensureCircleciMcp,
-  ensureConfluenceMcp,
-  ensureDiscordMcp,
-  ensureGithubMcp,
-  ensureGitlabMcp,
-  ensureGoogleDriveMcp,
-  ensureJenkinsMcp,
-  ensureJiraMcp,
-  ensureKubernetesMcp,
-  ensureLinearMcp,
-  ensureMicrosoftBundleMcp,
-  ensureNotionMcp,
-  ensureObsidianMcp,
-  ensurePagerdutyMcp,
-  ensurePhase3BundleMcp,
-  ensureSlackMcp,
-} from "./connector-spawns.ts";
+import * as defaultSpawners from "./connector-spawns.ts";
 import type { MeshSpawnContext } from "./slot.ts";
+
+/**
+ * Subset of `connector-spawns.ts` that `ensureCredentialConnectorsRunning`
+ * consumes. Exposed as a parameter so unit tests can pass a recorder without
+ * needing `mock.module("connector-spawns.ts", ...)` — which is process-global
+ * in bun:test and leaks into sibling test files. Production callers always
+ * use the default (the real exports).
+ */
+export type CredentialSpawners = {
+  readonly ensureBitbucketMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureCircleciMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureConfluenceMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureDiscordMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureGithubMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureGitlabMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureGoogleDriveMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureJenkinsMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureJiraMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureKubernetesMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureLinearMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureMicrosoftBundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureNotionMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureObsidianMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensurePagerdutyMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensurePhase3BundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureSlackMcp: (ctx: MeshSpawnContext) => Promise<void>;
+};
 
 // All 11 wrappers below are file-private (no `export`). Their sole caller is
 // `ensureCredentialConnectorsRunning` at the bottom of this file. Adding
@@ -55,47 +64,65 @@ async function ensureIfProviderOAuthSet(
   }
 }
 
-async function ensureIfGoogleOAuthPresent(ctx: MeshSpawnContext): Promise<void> {
+async function ensureIfGoogleOAuthPresent(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   if (await anyGoogleOAuthVaultPresent(ctx.vault)) {
-    await ensureGoogleDriveMcp(ctx);
+    await spawners.ensureGoogleDriveMcp(ctx);
   }
 }
 
-async function ensureBitbucketIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureBitbucketIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const bbUser = await readConnectorSecret(ctx.vault, "bitbucket", "username");
   const bbPass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
   if (bbUser !== null && bbUser !== "" && bbPass !== null && bbPass !== "") {
-    await ensureBitbucketMcp(ctx);
+    await spawners.ensureBitbucketMcp(ctx);
   }
 }
 
-async function ensureJiraIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureJiraIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const jt = await readConnectorSecret(ctx.vault, "jira", "api_token");
   const je = await readConnectorSecret(ctx.vault, "jira", "email");
   const jb = await readConnectorSecret(ctx.vault, "jira", "base_url");
   if (jt !== null && jt !== "" && je !== null && je !== "" && jb !== null && jb !== "") {
-    await ensureJiraMcp(ctx);
+    await spawners.ensureJiraMcp(ctx);
   }
 }
 
-async function ensureConfluenceIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureConfluenceIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const ct = await readConnectorSecret(ctx.vault, "confluence", "api_token");
   const ce = await readConnectorSecret(ctx.vault, "confluence", "email");
   const cb = await readConnectorSecret(ctx.vault, "confluence", "base_url");
   if (ct !== null && ct !== "" && ce !== null && ce !== "" && cb !== null && cb !== "") {
-    await ensureConfluenceMcp(ctx);
+    await spawners.ensureConfluenceMcp(ctx);
   }
 }
 
-async function ensureDiscordIfOptIn(ctx: MeshSpawnContext): Promise<void> {
+async function ensureDiscordIfOptIn(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const en = await readConnectorSecret(ctx.vault, "discord", "enabled");
   const tok = await readConnectorSecret(ctx.vault, "discord", "bot_token");
   if (en === "1" && tok !== null && tok !== "") {
-    await ensureDiscordMcp(ctx);
+    await spawners.ensureDiscordMcp(ctx);
   }
 }
 
-async function ensureJenkinsIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureJenkinsIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const jb = await readConnectorSecret(ctx.vault, "jenkins", "base_url");
   const ju = await readConnectorSecret(ctx.vault, "jenkins", "username");
   const jt = await readConnectorSecret(ctx.vault, "jenkins", "api_token");
@@ -107,50 +134,69 @@ async function ensureJenkinsIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
     jt !== null &&
     jt.trim() !== ""
   ) {
-    await ensureJenkinsMcp(ctx);
+    await spawners.ensureJenkinsMcp(ctx);
   }
 }
 
-async function ensureCircleciIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureCircleciIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const t = await readConnectorSecret(ctx.vault, "circleci", "api_token");
   if (t !== null && t.trim() !== "") {
-    await ensureCircleciMcp(ctx);
+    await spawners.ensureCircleciMcp(ctx);
   }
 }
 
-async function ensurePagerdutyIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensurePagerdutyIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const t = await readConnectorSecret(ctx.vault, "pagerduty", "api_token");
   if (t !== null && t.trim() !== "") {
-    await ensurePagerdutyMcp(ctx);
+    await spawners.ensurePagerdutyMcp(ctx);
   }
 }
 
-async function ensureKubernetesIfVaultCreds(ctx: MeshSpawnContext): Promise<void> {
+async function ensureKubernetesIfVaultCreds(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners,
+): Promise<void> {
   const k = await readConnectorSecret(ctx.vault, "kubernetes", "kubeconfig");
   if (k !== null && k.trim() !== "") {
-    await ensureKubernetesMcp(ctx);
+    await spawners.ensureKubernetesMcp(ctx);
   }
 }
 
-/** Spawns connector MCP children when matching vault keys are present (used before aggregating tools). */
-export async function ensureCredentialConnectorsRunning(ctx: MeshSpawnContext): Promise<void> {
-  await ensureIfGoogleOAuthPresent(ctx);
-  await ensureIfProviderOAuthSet(ctx, "microsoft", () => ensureMicrosoftBundleMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "github", "pat", () => ensureGithubMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "gitlab", "pat", () => ensureGitlabMcp(ctx));
-  await ensureBitbucketIfVaultCreds(ctx);
-  await ensureIfConnectorSecretSet(ctx, "slack", "oauth", () => ensureSlackMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "linear", "api_key", () => ensureLinearMcp(ctx));
-  await ensureJiraIfVaultCreds(ctx);
-  await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => ensureNotionMcp(ctx));
-  await ensureConfluenceIfVaultCreds(ctx);
-  await ensureDiscordIfOptIn(ctx);
-  await ensureJenkinsIfVaultCreds(ctx);
-  await ensureCircleciIfVaultCreds(ctx);
-  await ensurePagerdutyIfVaultCreds(ctx);
-  await ensureKubernetesIfVaultCreds(ctx);
+/**
+ * Spawns connector MCP children when matching vault keys are present (used
+ * before aggregating tools). The `spawners` parameter defaults to the real
+ * exports from `connector-spawns.ts` — production callers omit it. Unit
+ * tests pass a recorder to observe which spawn helpers fire without
+ * relying on process-global `mock.module()`, which leaks across sibling
+ * test files in bun:test.
+ */
+export async function ensureCredentialConnectorsRunning(
+  ctx: MeshSpawnContext,
+  spawners: CredentialSpawners = defaultSpawners,
+): Promise<void> {
+  await ensureIfGoogleOAuthPresent(ctx, spawners);
+  await ensureIfProviderOAuthSet(ctx, "microsoft", () => spawners.ensureMicrosoftBundleMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "github", "pat", () => spawners.ensureGithubMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "gitlab", "pat", () => spawners.ensureGitlabMcp(ctx));
+  await ensureBitbucketIfVaultCreds(ctx, spawners);
+  await ensureIfConnectorSecretSet(ctx, "slack", "oauth", () => spawners.ensureSlackMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "linear", "api_key", () => spawners.ensureLinearMcp(ctx));
+  await ensureJiraIfVaultCreds(ctx, spawners);
+  await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
+  await ensureConfluenceIfVaultCreds(ctx, spawners);
+  await ensureDiscordIfOptIn(ctx, spawners);
+  await ensureJenkinsIfVaultCreds(ctx, spawners);
+  await ensureCircleciIfVaultCreds(ctx, spawners);
+  await ensurePagerdutyIfVaultCreds(ctx, spawners);
+  await ensureKubernetesIfVaultCreds(ctx, spawners);
   // Wave A PR 2 — Obsidian MCP starts when `[[filesystem.roots]]` are
   // configured (no vault credential).
-  await ensureObsidianMcp(ctx);
-  await ensurePhase3BundleMcp(ctx);
+  await spawners.ensureObsidianMcp(ctx);
+  await spawners.ensurePhase3BundleMcp(ctx);
 }

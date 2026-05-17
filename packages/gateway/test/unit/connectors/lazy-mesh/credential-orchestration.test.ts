@@ -10,63 +10,33 @@
  * `ensureCredentialConnectorsRunning` — the mocks let us confirm they always fire.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
+import {
+  type CredentialSpawners,
+  ensureCredentialConnectorsRunning,
+} from "../../../../src/connectors/lazy-mesh/credential-orchestration.ts";
 import type { MeshSpawnContext } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
 
 // ─── Spawn-call recorder ──────────────────────────────────────────────────────
+//
+// Earlier revisions of this file used `mock.module(...)` to replace the
+// `connector-spawns.ts` exports with recorders. bun:test's `mock.module`
+// is process-global with no unmock, so those mocks leaked into the sibling
+// `connector-spawns.test.ts` whenever the bun:test runner loaded files in
+// the Linux-CI order (alphabetical inode, opposite of NTFS). The fix is
+// dependency injection: `ensureCredentialConnectorsRunning` now accepts a
+// `CredentialSpawners` parameter that defaults to the real module exports,
+// and these tests pass a recorder directly. No process-global mock, no
+// cross-file contamination.
 
 const spawnCalls: Array<string> = [];
 
-// Mock google-access-token so anyGoogleOAuthVaultPresent is fully controllable.
-// We set this flag in tests that need Google OAuth to appear present.
-let googleOAuthPresent = false;
-
-// Capture the real modules BEFORE installing mocks so we can restore them in
-// `afterAll`. bun:test's `mock.module` is process-global with no built-in
-// unmock — without these restores, our mocks leak into sibling test files
-// (notably connector-spawns.test.ts), which then call into our recorder
-// instead of the real ensureXxxMcp helpers and fail with cryptic length=0
-// assertions. Capturing originals + re-mocking with them on teardown is the
-// only portable cleanup pattern for cross-file isolation.
-const REAL_GOOGLE_ACCESS_TOKEN = await import("../../../../src/auth/google-access-token.ts");
-const REAL_CONNECTOR_SPAWNS = await import(
-  "../../../../src/connectors/lazy-mesh/connector-spawns.ts"
-);
-
-mock.module("../../../../src/auth/google-access-token.ts", () => ({
-  anyGoogleOAuthVaultPresent: async (): Promise<boolean> => googleOAuthPresent,
-  // resolveGoogleOAuthVaultKey / getValidGoogleAccessToken are not called by
-  // credential-orchestration.ts directly (only ensureGoogleDriveMcp uses them,
-  // and that function is replaced by the connector-spawns mock below). The
-  // implementations below mirror connector-spawns.test.ts so that — when
-  // bun:test resolves test files in either order and the last mock wins —
-  // neither test file's expectations are silently overridden.
-  resolveGoogleOAuthVaultKey: async (
-    vault: { get: (k: string) => Promise<string | null> },
-    id: string,
-  ): Promise<string | null> => {
-    const perService: Record<string, string> = {
-      google_drive: "google_drive.oauth",
-      gmail: "google_gmail.oauth",
-      google_photos: "google_photos.oauth",
-    };
-    const k = perService[id];
-    if (k === undefined) return null;
-    const v = await vault.get(k);
-    return v !== null && v !== "" ? k : null;
-  },
-  getValidGoogleAccessToken: async (_vault: unknown, id: string): Promise<string> =>
-    `fake-google-${id}-access-token`,
-}));
-
-// Mock connector-spawns so every ensureXxxMcp is a lightweight recorder.
-// The list must exactly match the named exports imported by credential-orchestration.ts.
-mock.module("../../../../src/connectors/lazy-mesh/connector-spawns.ts", () => {
+function makeRecorderSpawners(): CredentialSpawners {
   const make =
     (name: string) =>
-    async (_ctx: unknown): Promise<void> => {
+    async (_ctx: MeshSpawnContext): Promise<void> => {
       spawnCalls.push(name);
     };
   return {
@@ -88,22 +58,15 @@ mock.module("../../../../src/connectors/lazy-mesh/connector-spawns.ts", () => {
     ensurePhase3BundleMcp: make("phase3"),
     ensureSlackMcp: make("slack"),
   };
-});
+}
 
-// Restore real modules so sibling test files (loaded after this one on Linux
-// CI) get the production implementations they need.
-afterAll(() => {
-  mock.module("../../../../src/auth/google-access-token.ts", () => REAL_GOOGLE_ACCESS_TOKEN);
-  mock.module(
-    "../../../../src/connectors/lazy-mesh/connector-spawns.ts",
-    () => REAL_CONNECTOR_SPAWNS,
-  );
-});
+const recorderSpawners: CredentialSpawners = makeRecorderSpawners();
 
-// Dynamic import AFTER mock.module — bun:test resolves mocks at import time.
-const { ensureCredentialConnectorsRunning } = await import(
-  "../../../../src/connectors/lazy-mesh/credential-orchestration.ts"
-);
+// Convenience wrapper that always passes our recorder. Avoids repeating
+// `, recorderSpawners` in every test.
+async function runOrchestration(ctx: MeshSpawnContext): Promise<void> {
+  await ensureCredentialConnectorsRunning(ctx, recorderSpawners);
+}
 
 // ─── Context factory ──────────────────────────────────────────────────────────
 
@@ -128,12 +91,10 @@ function makeCtx(): {
 
 beforeEach(() => {
   spawnCalls.length = 0;
-  googleOAuthPresent = false;
 });
 
 afterEach(() => {
   spawnCalls.length = 0;
-  googleOAuthPresent = false;
 });
 
 // ─── Completion sentinel ──────────────────────────────────────────────────────
@@ -156,7 +117,7 @@ function expectRanToCompletion(): void {
 describe("ensureCredentialConnectorsRunning — empty vault", () => {
   it("spawns only the unconditional connectors (obsidian + phase3) when vault is empty", async () => {
     const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     // obsidian and phase3 are always called; all others require vault keys
     expect(spawnCalls).toContain("obsidian");
     expect(spawnCalls).toContain("phase3");
@@ -191,13 +152,13 @@ describe("single-secret connectors", () => {
     it("spawns github when github.pat is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("github.pat", "ghp_test");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("github");
     });
 
     it("does not spawn github when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("github");
     });
@@ -205,7 +166,7 @@ describe("single-secret connectors", () => {
     it("does not spawn github when github.pat is empty string", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("github.pat", "");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("github");
     });
@@ -215,13 +176,13 @@ describe("single-secret connectors", () => {
     it("spawns gitlab when gitlab.pat is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("gitlab.pat", "glpat_test");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("gitlab");
     });
 
     it("does not spawn gitlab when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("gitlab");
     });
@@ -231,13 +192,13 @@ describe("single-secret connectors", () => {
     it("spawns linear when linear.api_key is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("linear.api_key", "lin_test_key");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("linear");
     });
 
     it("does not spawn linear when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("linear");
     });
@@ -247,13 +208,13 @@ describe("single-secret connectors", () => {
     it("spawns circleci when circleci.api_token is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("circleci.api_token", "cci_token");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("circleci");
     });
 
     it("does not spawn circleci when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("circleci");
     });
@@ -261,7 +222,7 @@ describe("single-secret connectors", () => {
     it("does not spawn circleci when api_token is whitespace-only (trim defense)", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("circleci.api_token", "   ");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("circleci");
     });
@@ -271,13 +232,13 @@ describe("single-secret connectors", () => {
     it("spawns pagerduty when pagerduty.api_token is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("pagerduty.api_token", "pd_token");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("pagerduty");
     });
 
     it("does not spawn pagerduty when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("pagerduty");
     });
@@ -285,7 +246,7 @@ describe("single-secret connectors", () => {
     it("does not spawn pagerduty when api_token is whitespace-only (trim defense)", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("pagerduty.api_token", "  ");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("pagerduty");
     });
@@ -295,13 +256,13 @@ describe("single-secret connectors", () => {
     it("spawns kubernetes when kubernetes.kubeconfig is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("kubernetes.kubeconfig", "/home/u/.kube/config");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("kubernetes");
     });
 
     it("does not spawn kubernetes when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("kubernetes");
     });
@@ -309,7 +270,7 @@ describe("single-secret connectors", () => {
     it("does not spawn kubernetes when kubeconfig is whitespace-only", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("kubernetes.kubeconfig", "   ");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("kubernetes");
     });
@@ -319,13 +280,13 @@ describe("single-secret connectors", () => {
     it("spawns slack when slack.oauth is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("slack.oauth", "xoxp-token");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("slack");
     });
 
     it("does not spawn slack when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("slack");
     });
@@ -335,13 +296,13 @@ describe("single-secret connectors", () => {
     it("spawns notion when notion.oauth is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("notion.oauth", '{"access_token":"raw"}');
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("notion");
     });
 
     it("does not spawn notion when vault is empty", async () => {
       const { ctx } = makeCtx();
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("notion");
     });
@@ -355,7 +316,7 @@ describe("multi-secret connectors require ALL keys", () => {
     it("does not spawn when only username is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("bitbucket.username", "alice");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("bitbucket");
     });
@@ -363,7 +324,7 @@ describe("multi-secret connectors require ALL keys", () => {
     it("does not spawn when only app_password is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("bitbucket.app_password", "secret");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("bitbucket");
     });
@@ -372,7 +333,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("bitbucket.username", "alice");
       await vault.set("bitbucket.app_password", "bb_secret");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("bitbucket");
     });
   });
@@ -381,7 +342,7 @@ describe("multi-secret connectors require ALL keys", () => {
     it("does not spawn when only api_token is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jira.api_token", "jira_tok");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("jira");
     });
@@ -390,7 +351,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jira.api_token", "jira_tok");
       await vault.set("jira.email", "alice@acme.com");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("jira");
     });
@@ -400,7 +361,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jira.api_token", "jira_tok");
       await vault.set("jira.email", "alice@acme.com");
       await vault.set("jira.base_url", "https://acme.atlassian.net");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("jira");
     });
   });
@@ -409,7 +370,7 @@ describe("multi-secret connectors require ALL keys", () => {
     it("does not spawn when only api_token is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("confluence.api_token", "conf_tok");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("confluence");
     });
@@ -418,7 +379,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("confluence.api_token", "conf_tok");
       await vault.set("confluence.email", "alice@acme.com");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("confluence");
     });
@@ -428,7 +389,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("confluence.api_token", "conf_tok");
       await vault.set("confluence.email", "alice@acme.com");
       await vault.set("confluence.base_url", "https://acme.atlassian.net/wiki");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("confluence");
     });
   });
@@ -437,7 +398,7 @@ describe("multi-secret connectors require ALL keys", () => {
     it("does not spawn when only base_url is set", async () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jenkins.base_url", "https://jenkins.local");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
@@ -446,7 +407,7 @@ describe("multi-secret connectors require ALL keys", () => {
       const { ctx, vault } = makeCtx();
       await vault.set("jenkins.base_url", "https://jenkins.local");
       await vault.set("jenkins.username", "ops");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
@@ -456,7 +417,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jenkins.base_url", "https://jenkins.local");
       await vault.set("jenkins.username", "ops");
       await vault.set("jenkins.api_token", "jenkins_tok");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expect(spawnCalls).toContain("jenkins");
     });
 
@@ -465,7 +426,7 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("jenkins.base_url", "  ");
       await vault.set("jenkins.username", "  ");
       await vault.set("jenkins.api_token", "  ");
-      await ensureCredentialConnectorsRunning(ctx);
+      await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("jenkins");
     });
@@ -477,7 +438,7 @@ describe("multi-secret connectors require ALL keys", () => {
 describe("discord opt-in gate", () => {
   it("does not spawn when neither enabled nor bot_token is set", async () => {
     const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
@@ -486,7 +447,7 @@ describe("discord opt-in gate", () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.bot_token", "discord_tok");
     await vault.set("discord.enabled", "true"); // any value other than "1"
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
@@ -494,7 +455,7 @@ describe("discord opt-in gate", () => {
   it("does not spawn when enabled='1' but bot_token is missing", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.enabled", "1");
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
@@ -503,7 +464,7 @@ describe("discord opt-in gate", () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.enabled", "1");
     await vault.set("discord.bot_token", "discord_tok");
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expect(spawnCalls).toContain("discord");
   });
 
@@ -511,7 +472,7 @@ describe("discord opt-in gate", () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.enabled", "0");
     await vault.set("discord.bot_token", "discord_tok");
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
   });
@@ -521,17 +482,19 @@ describe("discord opt-in gate", () => {
 
 describe("Google OAuth — anyGoogleOAuthVaultPresent", () => {
   it("does not spawn google-drive when no Google OAuth key is present", async () => {
-    googleOAuthPresent = false;
     const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("google-drive");
   });
 
-  it("spawns google-drive when anyGoogleOAuthVaultPresent returns true", async () => {
-    googleOAuthPresent = true;
-    const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+  it("spawns google-drive when any Google OAuth vault key is set", async () => {
+    const { ctx, vault } = makeCtx();
+    // ALL_GOOGLE_OAUTH_VAULT_KEYS in connectors/connector-vault.ts:
+    //   google.oauth | google_drive.oauth | google_gmail.oauth | google_photos.oauth
+    // Any one being non-empty makes anyGoogleOAuthVaultPresent return true.
+    await vault.set("google_drive.oauth", '{"access_token":"ya29.test"}');
+    await runOrchestration(ctx);
     expect(spawnCalls).toContain("google-drive");
   });
 });
@@ -542,13 +505,13 @@ describe("Microsoft OAuth — microsoft.oauth", () => {
   it("spawns microsoft bundle when microsoft.oauth is set", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("microsoft.oauth", '{"access_token":"x"}');
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expect(spawnCalls).toContain("microsoft");
   });
 
   it("does not spawn microsoft bundle when microsoft.oauth is not set", async () => {
     const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("microsoft");
   });
@@ -562,7 +525,7 @@ describe("multi-connector composite — multiple creds spawn all matching connec
     await vault.set("github.pat", "ghp_test");
     await vault.set("linear.api_key", "lin_key");
     await vault.set("pagerduty.api_token", "pd_token");
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     const sorted = [...spawnCalls].sort();
     expect(sorted).toContain("github");
     expect(sorted).toContain("linear");
@@ -574,7 +537,7 @@ describe("multi-connector composite — multiple creds spawn all matching connec
 
   it("unconditional connectors (obsidian + phase3) always appear regardless of vault state", async () => {
     const { ctx } = makeCtx();
-    await ensureCredentialConnectorsRunning(ctx);
+    await runOrchestration(ctx);
     expect(spawnCalls).toContain("obsidian");
     expect(spawnCalls).toContain("phase3");
   });
