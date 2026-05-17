@@ -15,7 +15,6 @@
 > - [`nimbus-tauri-allowlist`](../.claude/commands/nimbus-tauri-allowlist.md) — `ALLOWED_METHODS` editing protocol; chain C1 from B1 lives here
 > - [`nimbus-testing`](../.claude/commands/nimbus-testing.md) — five-layer pyramid + coverage gates + ready-to-use patterns
 > - [`nimbus-tool-output-envelope`](../.claude/commands/nimbus-tool-output-envelope.md) — `<tool_output>` envelope rules (invariant `I11`)
-> - [`nimbus-phase-4`](../.claude/commands/nimbus-phase-4.md) — Phase 4 working reference (kept for historical alignment; primary phases now in [§ Phase 6+ Subsystems](#phase-6-subsystems-planned))
 
 ---
 
@@ -1480,7 +1479,7 @@ A new structural defense lands as a *triple*: the production wiring, an entry in
 
 ### Active invariants summary
 
-The current `I1`–`I14` set, mirrored from [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md). When changing a wiring site listed below, update the invariants file *and* the enforcement test in the same commit.
+The current `I1`–`I15` set, mirrored from [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md). When changing a wiring site listed below, update the invariants file *and* the enforcement test in the same commit.
 
 | # | Invariant | Wired at | Anti-pattern that regresses it |
 |---|---|---|---|
@@ -1498,8 +1497,9 @@ The current `I1`–`I14` set, mirrored from [`SECURITY-INVARIANTS.md`](./SECURIT
 | I12 | DPAPI calls pass `pOptionalEntropy` from `<configDir>/vault/.entropy` | `vault/win32.ts` | Dropping the entropy parameter "for compatibility" |
 | I13 | HTTP write routes go through `WRITE_ROUTE_ALLOWLIST` + bearer auth | `ipc/http-server.ts`, `ipc/http-write-routes.ts` | New POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` or opens a second writable DB outside the server context |
 | I14 | All SQLite write paths route through `dbRun` / `dbExec` / `dbStmtRun` | `db/write.ts` (`dbRun`, `dbExec`, `dbStmtRun`); enforced statically by `D12` in `check-nimbus-invariants.ts` | Direct `db.run(` or `db.exec(` outside `DB_RUN_EXEC_ALLOW_LIST` — swallows `SQLITE_FULL` |
+| I15 | Sandbox runner intrinsic to every extension spawn — every lazy-mesh `ServerSpec` flows through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` | `connectors/lazy-mesh/{mesh.ts,connector-spawns.ts,phase3-config.ts,user-mcp.ts}` (call `wrapServerSpec`); `connectors/lazy-mesh/wrap-server-spec.ts` (defines `wrapServerSpec`); `platform/sandbox/sandbox-wrapper.ts` (calls `runner.spawn`); enforced statically by `D10` in `check-nimbus-invariants.ts` | Constructing an MCPClient `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)` |
 
-A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, and I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
+A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), and I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
 
 ### Threat-to-mitigation table
 
@@ -1515,7 +1515,7 @@ A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) 
 | Supply chain (extension) | Manifest SHA-256 stored at install; verified on every startup | Extension Registry |
 | Token leakage in logs | Pino `redact` config covers `*.token`, `*.secret`, `oauth.*` patterns | Logger middleware |
 | Index exfiltration | SQLite stores metadata only (not content); protected by OS file permissions | OS file ACL |
-| Extension sandbox escape | **Partial:** process isolation + scoped env today; full syscall isolation (`bwrap` / `sandbox-exec` / AppContainer) planned in Phase 10 | Extension Registry / risk register |
+| Extension sandbox escape | Per-OS sandbox runner intrinsic to every spawn (invariant `I15`, Phase 5 T2 PR 1): bwrap + seccomp + per-host iptables on Linux, sandbox-exec SBPL on macOS, AppContainer + orphan-reap on Windows. Per-host network filtering is full on Linux/macOS and all-or-nothing on Windows ([sandbox.md](./sandbox.md#platform-asymmetry)) | Extension Registry / sandbox PAL |
 | Row-data exfiltration via warehouse or BI connector (Phase 5/6) | Connector boundary forbids row / binary / result-set fetches; only DDL, column tags, job status, and query plans cross into the index; contract test asserts absence of row-fetch tools on each connector's MCP surface | MCP connector contract |
 | Row-data exfiltration via local file profiling (Phase 5) | Filesystem profiler reads Parquet footers, CSV / JSONL header lines, and line counts only; no code path reads row groups, samples rows, or captures cell values; contract test asserts the profiler tool surface has no row-sample method | Filesystem connector contract |
 

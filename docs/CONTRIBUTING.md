@@ -47,7 +47,7 @@ bun test              # All unit tests
 
 ### 3. Find Something to Work On
 
-- Issues tagged [`good-first-issue`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3Agood-first-issue) are the best starting point
+- Issues tagged [`good first issue`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are the best starting point
 - Issues tagged [`help-wanted`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3Ahelp-wanted) are open for contributors
 - **Open a discussion before starting any large PR.** Architecture decisions belong in a discussion, not in a surprise diff
 
@@ -95,7 +95,14 @@ cd packages/ui && bunx vitest run # UI component tests
 bun run test:coverage:engine      # Engine ≥85%
 bun run test:coverage:agents      # Agents ≥80%
 bun run test:coverage:vault       # Vault ≥90%
+bun run test:coverage:sandbox     # Sandbox PAL ≥80%  (T2 PR 1)
+bun run test:coverage:embedding   # Embedding ≥80%
+bun run test:coverage:metrics     # DORA calculators + IPC ≥80%  (T4 PR 2)
+bun run test:coverage:preflight   # Preflight calculator + IPC ≥80%  (T4 PR 3a)
+bun run test:coverage:deployment  # Deployment annotation + HTTP write ≥80%  (T4 PR 3b)
 ```
+
+The full coverage-gate catalogue (including sync, rate-limiter, people, workflow, watcher, DB, health, config, telemetry, doctor, TUI, MCP, SDK, updater, LAN, perf, UI Vitest) plus environment-variable overrides lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
 
 ### Cross-platform test conventions
 
@@ -123,9 +130,20 @@ The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs gateway/CL
 
 ### Using the `nimbus-*` skill set (Claude Code / compatible AI assistants)
 
-The repository ships several `nimbus-*` skills under `.claude/commands/` that codify how to do common contributor tasks correctly: invariant changes (`nimbus-security-invariants`, `nimbus-tool-output-envelope`, `nimbus-tauri-allowlist`), IPC additions (`nimbus-ipc`), connector authoring (`nimbus-connector-authoring`), built-in agents (`nimbus-agent-patterns`), DB migrations (`nimbus-db-migrations`), and testing layers (`nimbus-testing`). When working in Claude Code (or a compatible AI assistant that respects skills), they load automatically and prevent the most common cross-cutting mistakes — orphan security defenses, broken HITL invariants, dead-code allowlist entries, and the like.
+The repository ships fourteen `nimbus-*` skills under `.claude/commands/` that codify how to do common contributor tasks correctly:
+
+- **Architecture & navigation:** `nimbus-architecture` (subsystem overview), `nimbus-file-map` (where things live), `nimbus-commands` (the full `bun run` + CLI catalogue with coverage gates and env-var overrides).
+- **Security invariants:** `nimbus-security-invariants` (the triple rule — wiring + docs + test), `nimbus-tool-output-envelope` (I11), `nimbus-tauri-allowlist` (I7), `nimbus-http-write-surface` (I13 — Phase 5 T4 PR 3b).
+- **Subsystem authoring:** `nimbus-ipc` (JSON-RPC method conventions), `nimbus-connector-authoring` (first-party MCP connectors), `nimbus-agent-patterns` (built-in agents), `nimbus-db-migrations` (SQLite schema), `nimbus-embedding-routing` (T6 PR 3 hybrid embedding).
+- **Cross-cutting:** `nimbus-cicd-data-layer` (T4 DORA + preflight + annotation), `nimbus-testing` (which test layer for which subsystem).
+
+When working in Claude Code (or a compatible AI assistant that respects skills), they load automatically and prevent the most common cross-cutting mistakes — orphan security defenses, broken HITL invariants, dead-code allowlist entries, and the like.
 
 Direct browsing: see `.claude/commands/` and the index in `CLAUDE.md`. The skills are equally useful as plain reading material if you are not using an AI assistant.
+
+### Shell scripts and audit gates
+
+The `scripts/` directory holds repository tooling — release packaging (`scripts/release/`, `scripts/install/`, `scripts/linux/`, `scripts/windows/`), structural audits (`scripts/structure-audit/` — invariant checks, OpenAPI drift, doc-ref drift, license check), CI helpers (`scripts/ci/`), per-package coverage-floor (`scripts/coverage-floor/`), README generators (`scripts/audit/`), and the asciinema hero-cast harness (`scripts/cast-driver/`). Every `.ts` script has a sibling `.test.ts`; the suite is wired as `bun run test:scripts` and runs in CI. The full list of contributor-facing `bun run` scripts (and the env-var overrides that gate them) lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
 
 ### Before Opening a PR
 
@@ -152,7 +170,7 @@ Connectors live in `packages/mcp-connectors/`. They depend only on `@nimbus-dev/
 
 2. Implement the MCP server against the service's API
 3. Declare write/delete tools with `hitlRequired: true` in the manifest — the Gateway enforces HITL automatically
-4. Add integration tests using `MockGateway` from the SDK
+4. Run the SDK contract tests against your manifest with `runContractTests(manifest)` from `@nimbus-dev/sdk` (validates mandatory tool surface, HITL declaration, item-ID format, `SyncResult` shape). If your connector declares `permissions.{network,filesystem}` for the T2 PR 1 sandbox, also run `runSandboxContractTests()`. Use `MockGateway` from `@nimbus-dev/sdk/testing` for in-process IPC stubbing in unit tests
 5. Register the connector in `packages/gateway/src/connectors/`
 
 See the [architecture](./architecture.md) for connector mesh details.

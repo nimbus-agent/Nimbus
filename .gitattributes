@@ -54,7 +54,6 @@ LICENSE       text eol=lf
 *.ttf         binary
 *.otf         binary
 *.eot         binary
-bun.lockb     binary
 *.sqlite      binary
 *.sqlite3     binary
 *.db          binary

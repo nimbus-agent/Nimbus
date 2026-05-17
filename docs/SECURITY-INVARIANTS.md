@@ -238,12 +238,12 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I13 — Sub-agent tool scope enforcement` section naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I16 — Sub-agent tool scope enforcement` section (the next free number after the current `I15`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
 ```typescript
-test("I13 — sub-agent dispatcher checks frozen tool scope", () => {
+test("I16 — sub-agent dispatcher checks frozen tool scope", () => {
   const source = readFileSync(
     join(REPO_ROOT, "packages/gateway/src/engine/sub-agent.ts"),
     "utf8"
