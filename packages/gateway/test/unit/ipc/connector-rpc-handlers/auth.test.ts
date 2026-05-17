@@ -1641,8 +1641,12 @@ function makeOAuthCtx(
   };
 }
 
+// Top-level const so both branches of the conditional test definitions read the
+// same value without repeated process.env access.
+const GOOGLE_CLIENT_ID_FOR_TESTS = process.env["NIMBUS_OAUTH_GOOGLE_CLIENT_ID"] ?? "";
+
 describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
-  let db: Database;
+  let db: Database; // held only for afterEach cleanup; no scheduler assertions in OAuth tests
   let vault: MockVault;
   let localIndex: LocalIndex;
 
@@ -1654,18 +1658,32 @@ describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
     db.close();
   });
 
-  // ── Google provider — clientId may be set; PKCE flow is invoked but aborted ──
+  // ── Google provider — clientId may or may not be set in CI ──
+  // When NIMBUS_OAUTH_GOOGLE_CLIENT_ID is empty the handler throws -32602 before
+  // reaching runPKCEFlow. When it is set, execution reaches runPKCEFlow which
+  // calls openUrl; the test ctx's sentinel openUrl throws a specific string.
 
-  test("google_drive: reaches runPKCEFlow (rejects — openUrl aborted)", async () => {
-    const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
-    // Either ConnectorRpcError (empty clientId) or our sentinel (clientId set → PKCE starts)
-    await expect(handleConnectorAuth(ctx)).rejects.toThrow();
-  });
+  if (GOOGLE_CLIENT_ID_FOR_TESTS === "") {
+    test("google_drive: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
+      const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
+      await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+    });
 
-  test("gmail: reaches runPKCEFlow (rejects — openUrl aborted)", async () => {
-    const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
-    await expect(handleConnectorAuth(ctx)).rejects.toThrow();
-  });
+    test("gmail: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
+      const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
+      await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+    });
+  } else {
+    test("google_drive: reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
+      const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
+      await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
+    });
+
+    test("gmail: reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
+      const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
+      await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
+    });
+  }
 
   // ── Microsoft provider — clientId is "" → ConnectorRpcError -32602 ──
 
