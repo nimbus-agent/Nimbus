@@ -30,7 +30,7 @@ The parent T2 sequencing spec locked OpenPGP / `openpgp.js` for this PR. The bra
 | Element | Where |
 |---|---|
 | Production wiring site #1 | [`packages/gateway/src/extensions/install-from-local.ts`](../../../packages/gateway/src/extensions/install-from-local.ts) — calls `verifyManifestSignature(...)` after manifest parse, before install commits. |
-| Production wiring site #2 | [`packages/gateway/src/extensions/verify-extensions.ts`](../../../packages/gateway/src/extensions/verify-extensions.ts) — iterates `extension_state` rows; for each row whose on-disk manifest carries `publisher`, calls `verifyManifestSignature(...)`. |
+| Production wiring site #2 | [`packages/gateway/src/extensions/verify-extensions.ts`](../../../packages/gateway/src/extensions/verify-extensions.ts) — iterates `extension` table rows; for each row whose on-disk manifest carries `publisher`, calls `verifyManifestSignature(...)`. |
 | Docs entry | [`docs/SECURITY-INVARIANTS.md`](../../SECURITY-INVARIANTS.md) §I16 (new row in the table at the top + new section near the bottom). |
 | Enforcement test (static) | `packages/gateway/src/security-invariants.test.ts` — greps both wiring sites for `verifyManifestSignature(`. |
 | Enforcement test (behavioral) | Same file — seeds an extension dir with a signed manifest but no vault key; calls `verifyExtensions`; asserts the extension is hard-disabled with reason `publisher_key_missing`. |
@@ -65,7 +65,7 @@ scripts/structure-audit/check-nimbus-invariants.ts
 ### 1.3 Data flow — install (`nimbus extension install <path-or-url>`)
 
 1. Parse manifest. Validate per Section 2.
-2. If `manifest.publisher === undefined`: install proceeds with pre-T2 unsigned legacy path; the row in `extension_state` records `publisher_id` implicitly `null` (no column exists; derived at read-time).
+2. If `manifest.publisher === undefined`: install proceeds with pre-T2 unsigned legacy path; the row in the `extension` table records nothing publisher-specific (no `publisher_id` column exists; the publisher field is derived from the on-disk manifest at read-time).
 3. If `manifest.publisher` is set:
    - **Resolve pubkey** via `resolvePublisherKey({ publisherId, explicitKeyPath, vault, fetcher, enforceAirGap })` in priority order:
      1. `--publisher-key <path>`: read file, base64-decode, expect 32 bytes.
@@ -76,11 +76,11 @@ scripts/structure-audit/check-nimbus-invariants.ts
 
 ### 1.4 Data flow — startup (`verifyExtensions`)
 
-1. Read all `extension_state` rows.
+1. Read all `extension` table rows via `listExtensions(db)`.
 2. For each row, parse the on-disk manifest. If `manifest.publisher !== undefined`:
    - Read cached pubkey from vault.
-   - **Vault key missing** → `hardDisable(row.id, "publisher_key_missing")` (I16 behavioral-test target).
-   - Else call `verifyManifestSignature(manifest, pubkey)`. On error → `hardDisable(row.id, <error→reason>)`.
+   - **Vault key missing** → flip the row via `setExtensionEnabled(db, row.id, false)` and mark the registry: `signatureDisabledRegistry.mark(row.id, "publisher_key_missing")` (I16 behavioral-test target — see §5.3 for the registry pattern).
+   - Else call `verifyManifestSignature(manifest, pubkey)`. On error → same flip + `signatureDisabledRegistry.mark(row.id, errorToReason(err))`.
 3. After the loop, append one batched `extension.startup_verification` audit entry with `{ signatures_checked, hard_disabled, failures }`.
 
 ### 1.5 Trust anchor model
@@ -305,7 +305,7 @@ export async function syncPublisherKeys(opts: {
 **Algorithm:**
 
 1. If `enforceAirGap`: throw `AirGapEnforcementError`. Caller maps to exit code 3.
-2. Read all `extension_state` rows; parse each on-disk manifest; collect `DISTINCT manifest.publisher.id`.
+2. Read all `extension` table rows via `listExtensions(db)`; parse each on-disk manifest; collect `DISTINCT manifest.publisher.id`.
 3. For each id (parallel; N is small, no rate-limiting needed):
    - `fetcher.fetch(id)`:
      - `ok` + equal to cached → `publishersUnchanged++`.
@@ -382,32 +382,41 @@ if (manifest.publisher !== undefined) {
 
 ### 5.2 `verify-extensions.ts` changes (I16 wiring site #2)
 
-Iterate `extension_state` rows; for each row whose on-disk manifest carries `publisher`, verify. Aggregate counts; emit one batched audit entry.
+Iterate `extension` table rows via `listExtensions(db)`; for each row whose on-disk manifest carries `publisher`, verify. Aggregate counts; emit one batched audit entry.
+
+The wiring rides on top of the existing `verifyExtensionsBestEffort` function — the new code runs after the existing SHA-256 + pre-T2 sweep, against the same row list. Flipping the row's `enabled` column uses the existing `setExtensionEnabled(db, row.id, false)` helper; the structured reason (e.g., `"publisher_key_missing"`) goes into a new `SignatureDisabledRegistry` singleton parallel to PR 1's `PreT2DisabledRegistry`. The `extension` table has no `disabled_reason` column and PR 2 does not add one (see §2.4).
 
 ```typescript
 let signaturesChecked = 0;
 let signatureHardDisabled = 0;
-const failures: { id: string; reason: string }[] = [];
+const failures: { id: string; reason: SignatureDisableReason }[] = [];
 
 for (const row of rows) {
-  const { manifest } = parseExtensionManifestForRegistry(readManifestText(row.path));
+  const manifestPath = resolveExtensionManifestPath(row.install_path);
+  if (manifestPath === undefined) continue;
+  const manifestText = readFileSync(manifestPath, "utf8");
+  const { manifest } = parseExtensionManifestForRegistry(manifestText);
   if (manifest.publisher === undefined) continue;
 
   signaturesChecked++;
   const pubkey = await readPublisherKey(opts.vault, manifest.publisher.id);
   if (pubkey === undefined) {
-    await hardDisable(opts.db, row.id, "publisher_key_missing");
+    setExtensionEnabled(opts.db, row.id, false);
+    signatureDisabledRegistry.mark(row.id, "publisher_key_missing");
     signatureHardDisabled++;
     failures.push({ id: row.id, reason: "publisher_key_missing" });
+    if (opts.mesh !== undefined) await opts.mesh.stopExtensionClient(row.id);
     continue;
   }
   try {
     await verifyManifestSignature(manifest, pubkey);
   } catch (err) {
     const reason = errorToHardDisableReason(err);
-    await hardDisable(opts.db, row.id, reason);
+    setExtensionEnabled(opts.db, row.id, false);
+    signatureDisabledRegistry.mark(row.id, reason);
     signatureHardDisabled++;
     failures.push({ id: row.id, reason });
+    if (opts.mesh !== undefined) await opts.mesh.stopExtensionClient(row.id);
   }
 }
 
@@ -417,14 +426,40 @@ appendAuditEntry({
 });
 ```
 
-### 5.3 `hard-disable.ts` reason additions
+`opts.mesh` is the same `ExtensionMeshHandle` the existing pre-T2 sweep uses to terminate a running extension child process when its row is flipped to disabled. Signature failures get the same treatment — a tampered extension must not continue executing past the verify pass.
 
-New `disabled_reason` values added to the existing string union:
+### 5.3 `hard-disable.ts` extension — `SignatureDisabledRegistry`
 
-- `publisher_key_missing`
-- `publisher_key_mismatch`
-- `signature_failed`
-- `signature_malformed`
+PR 1 introduced `PreT2DisabledRegistry` as an in-memory singleton mapping `extension_id → "needs_reinstall_pre_t2"`. PR 2 mirrors that pattern with `SignatureDisabledRegistry`, which maps `extension_id → SignatureDisableReason`:
+
+```typescript
+export type SignatureDisableReason =
+  | "publisher_key_missing"
+  | "publisher_key_mismatch"
+  | "signature_failed"
+  | "signature_malformed";
+
+class SignatureDisabledRegistry {
+  private readonly reasons = new Map<string, SignatureDisableReason>();
+
+  reset(): void { this.reasons.clear(); }
+  mark(id: string, reason: SignatureDisableReason): void { this.reasons.set(id, reason); }
+  has(id: string): boolean { return this.reasons.has(id); }
+  reasonFor(id: string): SignatureDisableReason | undefined { return this.reasons.get(id); }
+  list(): readonly { id: string; reason: SignatureDisableReason }[] {
+    return [...this.reasons.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, reason]) => ({ id, reason }));
+  }
+  count(): number { return this.reasons.size; }
+}
+
+export const signatureDisabledRegistry = new SignatureDisabledRegistry();
+```
+
+The registry is reset at the top of `verifyExtensionsBestEffort` (same lifecycle as the pre-T2 registry). `nimbus extension list` and `nimbus extension info` consult it for the per-row status badge. `diag.snapshot` reports `signature_disabled_count`. No schema migration — the truth lives in the singleton; the row's `enabled` flag carries the binary disabled state.
+
+`errorToHardDisableReason(err)` is a small helper in `verify-signature.ts` that maps the error classes from §3.2 to the reason strings.
 
 ### 5.4 `nimbus extension install --publisher-key <path>`
 
@@ -447,27 +482,35 @@ test("I16: install-from-local.ts and verify-extensions.ts both call verifyManife
 
 ```typescript
 test("I16 behavioral: signed extension with missing vault key is hard-disabled at startup", async () => {
-  const { vault, db, tmpDir } = await setupFreshGateway();
+  const { vault, db, logger, extensionsDir } = await setupFreshGateway();
 
   // Stage an extension dir with a signed manifest, but DON'T write the publisher key to vault.
   const { privkey, pubkey } = generateEd25519Keypair();
-  const baseManifest: ExtensionManifest = {
+  const baseManifest = {
     id: "test-ext",
     version: "1.0.0",
     permissions: defaultPermissions(),
     publisher: { id: "test-pub", key: encodeBase64(pubkey) },
   };
   const signature = await signManifest(baseManifest, privkey);
-  const signed = { ...baseManifest, signature };
-  writeExtensionToDisk(tmpDir, signed);
-  insertExtensionStateRow(db, { id: "test-ext", path: extPath });
+  const installPath = writeSignedExtensionToDisk(extensionsDir, { ...baseManifest, signature });
+  insertExtensionRow(db, {
+    id: "test-ext",
+    version: "1.0.0",
+    install_path: installPath,
+    manifest_hash: sha256HexOfFile(join(installPath, "nimbus.extension.json")),
+    entry_hash: sha256HexOfFile(join(installPath, "dist/index.js")),
+    enabled: 1,
+    installed_at: Date.now(),
+    last_verified_at: Date.now(),
+  });
   // (intentionally skip writePublisherKey)
 
-  await verifyExtensions({ vault, db, /* ... */ });
+  await verifyExtensionsBestEffort(db, logger, undefined, { vault });
 
-  const state = readExtensionState(db, "test-ext");
-  expect(state.disabled).toBe(true);
-  expect(state.disabled_reason).toBe("publisher_key_missing");
+  const row = getExtensionRow(db, "test-ext");
+  expect(row?.enabled).toBe(0);
+  expect(signatureDisabledRegistry.reasonFor("test-ext")).toBe("publisher_key_missing");
 });
 ```
 
@@ -477,38 +520,49 @@ This is the test the recovered design-review §5 specifically asked for. It catc
 
 ```typescript
 test("I16 behavioral: tampered manifest (post-signing edit) is hard-disabled at startup", async () => {
-  const { vault, db, tmpDir } = await setupFreshGateway();
+  const { vault, db, logger, extensionsDir } = await setupFreshGateway();
 
   // Sign the manifest, then tamper with a non-signature field on disk after.
   const { privkey, pubkey } = generateEd25519Keypair();
-  const baseManifest: ExtensionManifest = {
+  const baseManifest = {
     id: "test-ext",
     version: "1.0.0",
     permissions: defaultPermissions(),
     publisher: { id: "test-pub", key: encodeBase64(pubkey) },
   };
   const signature = await signManifest(baseManifest, privkey);
-  writeExtensionToDisk(tmpDir, { ...baseManifest, signature });
+  const installPath = writeSignedExtensionToDisk(extensionsDir, { ...baseManifest, signature });
   await writePublisherKey(vault, "test-pub", pubkey);
-  insertExtensionStateRow(db, { id: "test-ext", path: extPath });
+  insertExtensionRow(db, {
+    id: "test-ext",
+    version: "1.0.0",
+    install_path: installPath,
+    manifest_hash: sha256HexOfFile(join(installPath, "nimbus.extension.json")),
+    entry_hash: sha256HexOfFile(join(installPath, "dist/index.js")),
+    enabled: 1,
+    installed_at: Date.now(),
+    last_verified_at: Date.now(),
+  });
 
-  // Mutate the on-disk manifest: bump version while keeping the old signature.
-  // This is the canonical "attacker had FS write access" scenario.
-  rewriteManifestField(extPath, "version", "9.9.9");
+  // Mutate the on-disk manifest field other than `signature`. To keep PR 1's
+  // SHA-256 sweep from catching us first, we re-stamp manifest_hash to the
+  // post-mutation hash so the I16 path is the only one that can fail.
+  rewriteManifestField(installPath, "version", "9.9.9");
+  updateManifestHash(db, "test-ext", sha256HexOfFile(join(installPath, "nimbus.extension.json")));
 
-  await verifyExtensions({ vault, db, /* ... */ });
+  await verifyExtensionsBestEffort(db, logger, undefined, { vault });
 
-  const state = readExtensionState(db, "test-ext");
-  expect(state.disabled).toBe(true);
-  expect(state.disabled_reason).toBe("signature_failed");
+  const row = getExtensionRow(db, "test-ext");
+  expect(row?.enabled).toBe(0);
+  expect(signatureDisabledRegistry.reasonFor("test-ext")).toBe("signature_failed");
 });
 ```
 
-This second test proves the canonicalization + Ed25519 verify wiring is sound end-to-end: a same-key signature against a different message must fail. The first test alone would pass even if `verifyManifestSignature` was a no-op stub (since hard-disable happens *before* the signature call when the vault key is missing); the second test forces the verify call to execute and produce the right outcome.
+This second test proves the canonicalization + Ed25519 verify wiring is sound end-to-end: a same-key signature against a different message must fail. The first test alone would pass even if `verifyManifestSignature` was a no-op stub (since hard-disable happens *before* the signature call when the vault key is missing); the second test forces the verify call to execute and produce the right outcome. The `manifest_hash` re-stamp prevents PR 1's existing SHA-256 mismatch sweep from disabling the row first via a different code path.
 
 ### 5.6 No DB schema migration
 
-`extension_state.publisher_id` column is **not** added in PR 2 — see §2.4. The publisher id is derived from the on-disk manifest at sync and startup time.
+No new column is added to the `extension` table. The publisher id and signature live in the on-disk manifest; the structural-disabled reason lives in the in-memory `SignatureDisabledRegistry` singleton (§5.3). The truth lives on disk + in the singleton; the row's `enabled` flag carries the binary disabled state. This matches the parent T2 spec's "no V<N> migration in PR 2" intent (line 251).
 
 ## Section 6 — CLI, audit, testing, coverage, out of scope
 
