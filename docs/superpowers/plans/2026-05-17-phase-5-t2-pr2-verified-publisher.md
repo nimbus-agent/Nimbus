@@ -2887,6 +2887,26 @@ describe("nimbus extension sync", () => {
     expect(exitCode).toBe(4);
   });
 
+  it("per-publisher failure messages use sync-context framing, not install-context", async () => {
+    // Plan-review #2b: sync-time `RegistryUnreachable` must not point users at
+    // `re-run the install` — instead it must point at re-running sync or, if
+    // they need an immediate fix, reinstalling with --publisher-key.
+    const { stderr } = await runCliWithMockGateway(["extension", "sync"], {
+      rpcResponses: {
+        "extension.sync": {
+          publishersChecked: 2,
+          publishersUnchanged: 1,
+          publishersUpdated: [],
+          publishersEvicted: [],
+          failures: [{ id: "pub-a", reason: "ECONNREFUSED" }],
+        },
+      },
+    });
+    expect(stderr).toContain("publisher pub-a unreachable");
+    expect(stderr).toContain("re-run `nimbus extension sync` later");
+    expect(stderr).not.toContain("re-run the install");
+  });
+
   it("--json emits the raw SyncResult", async () => {
     const { stdout } = await runCliWithMockGateway(["extension", "sync", "--json"], {
       rpcResponses: {
@@ -2944,6 +2964,15 @@ async function runSync(args: string[]): Promise<number> {
           `publisher ${u.id} rotated keys; ${String(u.failedExtensions.length)} extension(s) failed re-verify: ${u.failedExtensions.join(", ")}\n`,
         );
       }
+    }
+    // Sync-context framing for per-publisher fetch failures. The
+    // `RegistryUnreachable` class message itself targets the install context
+    // ("re-run the install ..."); during sync we re-frame so the operator
+    // sees sync-appropriate guidance instead.
+    for (const f of result.failures) {
+      process.stderr.write(
+        `publisher ${f.id} unreachable (${f.reason}); cached key (if any) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
+      );
     }
   }
   if (result.publishersUpdated.some((u) => u.reverifyResult === "failed")) return 2;
@@ -4049,6 +4078,21 @@ EOF
 **Type consistency:** error class names match across tasks (`PublisherKeyMismatch`, `SignatureInvalid`, `SignatureInvalidFormat`, `ManifestNestedTooDeep`); `SignatureDisableReason` union matches in `verify-signature.ts` and `hard-disable.ts`; `SyncResult` shape consistent between gateway and CLI.
 
 ---
+
+## Plan-review disposition (2026-05-17)
+
+Source: [`2026-05-17-phase-5-t2-pr2-verified-publisher-plan-review.md`](./2026-05-17-phase-5-t2-pr2-verified-publisher-plan-review.md). Reviewer: Gemini CLI.
+
+| Review § | Item | Disposition | Where folded in / why |
+|---|---|---|---|
+| #1 | Confirms NFC + recursion depth + tamper test + keygen base64 carried forward | **NO ACTION** | Reviewer confirmation only. |
+| #2a | Add `signature_version: 1` field to manifest schema in Task 3 | **DEFER (re-affirm)** | Already explicitly DEFERed in spec §6.5 ("Signature-scheme versioning") during the spec-review fold-in. The v1-implicit-on-absent-field migration path is intentionally chosen; re-applying the field now contradicts a decided spec item. Cross-reference: [`2026-05-17-phase-5-t2-pr2-verified-publisher-design-review.md`](../specs/2026-05-17-phase-5-t2-pr2-verified-publisher-design-review.md) item O2 disposition. |
+| #2b | `RegistryUnreachable` should differentiate sync-context vs install-context wording | **FIX** | Task 14's `runSync` now re-frames per-publisher failure messages with sync-appropriate guidance ("re-run `nimbus extension sync` later, or reinstall affected extensions with --publisher-key") instead of leaking the install-context "re-run the install" hint. Added a Task 14 test that asserts the sync-context framing and explicitly forbids the install-context phrasing in sync output. |
+| #2c | Use `cli-table3` for Task 17 (`info`) instead of manual padding | **DEFER** | Spec §6.1 explicitly locked "manual padding — no new dep" for both `list` (Task 15) and `info` (Task 17). The reviewer's "manual approach is fine" caveat acknowledges the decision is defensible. Re-litigating contradicts a decided spec item. |
+| #3 | Technical integrity (I10, I16 coverage, SDK re-exports) confirmation | **NO ACTION** | Reviewer confirmation only. |
+| Conclusion | "Integrating signature_version is the only recommended change before starting" | **DEFER** | Same as #2a — re-applying contradicts the spec decision. |
+
+**Net effect on this plan:** one inline FIX (Task 14 sync-context framing + a test that locks it). Two DEFER items re-affirm decisions already documented in the spec. Nothing about the 31-task structure, phase ordering, or any other task changes.
 
 ## Execution handoff
 
