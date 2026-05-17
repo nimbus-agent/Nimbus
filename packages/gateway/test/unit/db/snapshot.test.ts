@@ -1,9 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalIndex } from "../../../src/index/local-index.ts";
 import {
   DEFAULT_SNAPSHOT_CONFIG,
   formatSnapshotList,
@@ -13,8 +12,8 @@ import {
   restoreSnapshot,
   startSnapshotScheduler,
   takeSnapshot,
-  type SnapshotEntry,
 } from "../../../src/db/snapshot.ts";
+import { LocalIndex } from "../../../src/index/local-index.ts";
 
 /** Create a DB at a real path (required for VACUUM INTO). Seeds 2 item rows. */
 function makeDbAt(dbPath: string): Database {
@@ -125,6 +124,7 @@ describe("db/snapshot", () => {
 
       const entries = listSnapshots(dataDir);
       // Only the legitimate snapshot should be present
+      expect(entries).toHaveLength(1);
       for (const e of entries) {
         expect(e.filename).toMatch(/^nimbus-\d+\.db\.gz$/);
       }
@@ -165,11 +165,11 @@ describe("db/snapshot", () => {
     });
 
     it("extracts snapshotTimestampMs from the filename", () => {
-      const snapshotPath = takeSnapshot(db, dataDir);
       const before = Date.now();
+      const snapshotPath = takeSnapshot(db, dataDir);
       const preview = previewRestore(db, snapshotPath);
-      expect(preview.snapshotTimestampMs).toBeGreaterThan(0);
-      expect(preview.snapshotTimestampMs).toBeLessThanOrEqual(before);
+      expect(preview.snapshotTimestampMs).toBeGreaterThanOrEqual(before);
+      expect(preview.snapshotTimestampMs).toBeLessThanOrEqual(Date.now());
     });
   });
 
@@ -304,17 +304,17 @@ describe("db/snapshot", () => {
     });
 
     it("fires on interval and stop() prevents further fires", async () => {
-      const config = { ...DEFAULT_SNAPSHOT_CONFIG, intervalMs: 10 };
+      const config = { ...DEFAULT_SNAPSHOT_CONFIG, intervalMs: 50 };
       const handle = startSnapshotScheduler(db, dataDir, config, false);
 
-      await Bun.sleep(60);
+      await Bun.sleep(300);
       handle.stop();
 
       const countAfterStop = listSnapshots(dataDir).length;
       expect(countAfterStop).toBeGreaterThanOrEqual(1);
 
-      // Wait another interval; count must not grow
-      await Bun.sleep(30);
+      // Wait another two intervals; count must not grow
+      await Bun.sleep(100);
       expect(listSnapshots(dataDir).length).toBe(countAfterStop);
     });
 
