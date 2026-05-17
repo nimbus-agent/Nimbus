@@ -155,6 +155,23 @@ describe("refreshAccessToken", () => {
 
     expect(capturedBody).toContain("client_secret=my-secret");
   });
+
+  it("falls back to input refresh token when response omits refresh_token", async () => {
+    const vault = createMockVault();
+    const fakeFetch: PKCEFetch = async () =>
+      new Response(JSON.stringify({ access_token: "new-access", expires_in: 3600 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const result = await refreshAccessToken("original-refresh", "google", "client-x", {
+      vault,
+      fetchImpl: fakeFetch,
+    });
+
+    expect(result.refreshToken).toBe("original-refresh");
+    expect(result.accessToken).toBe("new-access");
+  });
 });
 
 // ---------------------------------------------------------------------------
