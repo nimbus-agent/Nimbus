@@ -862,7 +862,10 @@ describe("github-sync — full-cycle integration", () => {
         "SELECT external_id FROM item WHERE service = 'github' ORDER BY external_id",
       )
       .all();
-    expect(rows.map((r) => r.external_id)).toEqual(["acme/app#500", "acme/app#issue-501"]);
+    expect(rows.map((r: { external_id: string }) => r.external_id)).toEqual([
+      "acme/app#500",
+      "acme/app#issue-501",
+    ]);
     if (res.cursor === null) throw new Error("expected cursor after multi-event sync");
     const decoded = decodeCursor<{ etag: string | null; login: string | null }>(res.cursor);
     expect(decoded.etag).toBe('"mixed1"');
