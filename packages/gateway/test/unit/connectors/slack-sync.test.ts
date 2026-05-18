@@ -291,3 +291,176 @@ describe("slack-sync — cursor decode", () => {
     expect(body["inclusive"]).toBe(true);
   });
 });
+
+describe("slack-sync — slackWebApi error shapes", () => {
+  test("non-JSON response body parses to ok:false (JSON.parse catch path)", async () => {
+    fixture.fetchMock.respondWithText("POST", "https://slack.com/api/auth.test", "not valid json");
+    fixture.fetchMock.respondWithText(
+      "POST",
+      "https://slack.com/api/conversations.list",
+      "<html>500</html>",
+    );
+    // The conversations.list non-JSON triggers the !res.ok throw inside
+    // slackAdvanceListPhase because okField is undefined and res.ok matters.
+    await expect(
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+    ).rejects.toThrow(/conversations\.list/);
+  });
+
+  test("JSON parses to an array (not an object) treated as ok:false", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", [1, 2, 3]);
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    // auth.test returns an array -> slackTryFillTeamSubdomain bails to !ok branch
+    // -> teamSubdomain stays null -> sync still completes through empty list.
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+
+  test("HTTP 500 with ok:true in body still treated as ok:false (res.ok gate)", async () => {
+    fixture.fetchMock.respond(
+      "POST",
+      "https://slack.com/api/auth.test",
+      { ok: true },
+      { status: 500 },
+    );
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    // auth.test 500 -> !res.ok -> bail; sync completes through empty list.
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+});
+
+describe("slack-sync — slackTryFillTeamSubdomain", () => {
+  test("auth.test ok with valid Slack URL extracts subdomain into permalinks", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", {
+      ok: true,
+      url: "https://acme.slack.com/",
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [{ id: "C1", is_member: true }],
+      response_metadata: { next_cursor: "" },
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [{ ts: "1700000000.000100", text: "hi", user: "U1" }],
+      response_metadata: { next_cursor: "" },
+    });
+
+    // Single sync call: list phase (finds C1) then immediately runs history
+    // phase within the same invocation. The implementation only returns early
+    // from the list phase when there is a next_cursor for pagination; when the
+    // list is complete it falls through to the history phase in the same call.
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.itemsUpserted).toBe(1);
+
+    const row = fixture.db
+      .query<{ url: string | null }, []>("SELECT url FROM item WHERE service = 'slack' LIMIT 1")
+      .get();
+    expect(row?.url).toBe("https://acme.slack.com/archives/C1/p1700000000000100");
+  });
+
+  test("auth.test missing url field -> teamSubdomain stays null -> permalink null", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: true });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [{ id: "C1", is_member: true }],
+      response_metadata: { next_cursor: "" },
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [{ ts: "1700000000.000200", text: "hi", user: "U1" }],
+      response_metadata: { next_cursor: "" },
+    });
+    // Single sync call processes list then history in one invocation.
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.itemsUpserted).toBe(1);
+    const row = fixture.db
+      .query<{ url: string | null }, []>("SELECT url FROM item WHERE service = 'slack' LIMIT 1")
+      .get();
+    expect(row?.url).toBeNull();
+  });
+
+  test("auth.test url has no .slack.com suffix -> teamSub null branch", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", {
+      ok: true,
+      url: "https://example.com/",
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+
+  test("auth.test url is malformed (URL constructor throws) -> teamSubdomain stays null", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", {
+      ok: true,
+      url: "::::not-a-url::::",
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+
+  test("auth.test url is empty string -> early return", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: true, url: "" });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+
+  test("auth.test url is non-string -> early return", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: true, url: 42 });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+  });
+
+  test("cursor carries teamSubdomain -> auth.test is not called", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    // No auth.test stub: if it gets called, MockFetch throws "no stub matched".
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      encodeCursor({
+        phase: "list",
+        floorTs: "1.0",
+        ids: [],
+        nextIdx: 0,
+        hw: {},
+        listCursor: null,
+        histCursor: null,
+        teamSubdomain: "acme",
+      }),
+    );
+    expect(res.hasMore).toBe(false);
+    const authCalls = fixture.fetchMock.calls.filter((c) => c.url.includes("auth.test"));
+    expect(authCalls).toHaveLength(0);
+  });
+});
