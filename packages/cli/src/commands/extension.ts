@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
@@ -319,13 +319,29 @@ export async function runExtensionKeygen(args: string[]): Promise<number> {
     const candidate = args[outIdx + 1];
     if (candidate !== undefined) outPath = candidate;
   }
-  if (existsSync(outPath) && !force) {
-    process.stderr.write(`refusing to overwrite ${outPath} without --force\n`);
-    return 2;
-  }
   const { privkey, pubkey } = generateEd25519Keypair();
   mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, `${encodeBase64(privkey)}\n`);
+  // Atomic create-or-fail to close the TOCTOU window between `existsSync` and
+  // `writeFileSync` — an attacker who can plant a symlink at `outPath` between
+  // those two calls would otherwise have the privkey clobber an arbitrary
+  // file the user can write. `wx` = O_CREAT|O_EXCL; falls through to EEXIST
+  // when the file already exists, even if it's a symlink. With `--force` we
+  // truncate via `w` (still atomic; no separate stat).
+  try {
+    writeFileSync(outPath, `${encodeBase64(privkey)}\n`, {
+      flag: force ? "w" : "wx",
+      mode: 0o600,
+    });
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      process.stderr.write(`refusing to overwrite ${outPath} without --force\n`);
+      return 2;
+    }
+    throw e;
+  }
+  // chmod is a no-op on the file we just created with mode=0o600 on POSIX
+  // umasks; explicit chmod keeps the 0o600 invariant if umask stripped bits.
   if (process.platform !== "win32") chmodSync(outPath, 0o600);
   process.stdout.write(`${encodeBase64(pubkey)}\n`);
   return 0;
@@ -431,7 +447,7 @@ export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Pr
     // Sync-context framing (plan-review #2b) — DO NOT say "re-run the install".
     for (const f of result.failures) {
       opts.writeStderr(
-        `publisher ${f.id} unreachable (${f.reason}); cached key (if any) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
+        `publisher ${f.id} unreachable (${f.reason}); cached key (if present) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
       );
     }
   }
