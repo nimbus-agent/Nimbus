@@ -3,9 +3,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  setupFreshExtensionDb,
+  stageSignedExtensionOnDisk,
+} from "../../test/fixtures/extension.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { writePublisherKey } from "../extensions/publisher-keys.ts";
+import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
 
 function seededDb(): Database {
@@ -710,6 +717,78 @@ describe("extension.install", () => {
       ).rejects.toThrow(AutomationRpcError);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── extension.sync (T2 PR 2 Task 11) ────────────────────────────────────────
+
+describe("extension.sync", () => {
+  test("returns SyncResult with publishersChecked=1 when extension is signed", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const vault = new MockVault();
+      const { pubkey, privkey } = generateEd25519Keypair();
+      await writePublisherKey(vault, "test-pub", pubkey);
+      await stageSignedExtensionOnDisk({
+        db,
+        extensionsDir,
+        publisherId: "test-pub",
+        pubkey,
+        privkey,
+      });
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.sync",
+        params: { dryRun: false },
+        db,
+        vault,
+        fetcher: { fetch: async () => ({ kind: "ok", pubkey }) },
+        enforceAirGap: false,
+      });
+      expect(out.kind).toBe("hit");
+      if (out.kind === "hit") {
+        expect(out.value).toMatchObject({
+          publishersChecked: 1,
+          publishersUnchanged: 1,
+        });
+      }
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects when vault is not provided", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      await expect(
+        dispatchAutomationRpc({
+          method: "extension.sync",
+          params: {},
+          db,
+        }),
+      ).rejects.toThrow(AutomationRpcError);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates AirGapEnforcementError when enforceAirGap=true", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const vault = new MockVault();
+      await expect(
+        dispatchAutomationRpc({
+          method: "extension.sync",
+          params: { dryRun: false },
+          db,
+          vault,
+          fetcher: { fetch: async () => ({ kind: "not_found" }) },
+          enforceAirGap: true,
+        }),
+      ).rejects.toThrow(AutomationRpcError);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
 });

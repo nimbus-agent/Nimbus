@@ -31,6 +31,7 @@ import {
 } from "../extensions/hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "../extensions/install-from-local.ts";
 import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import { syncPublisherKeys } from "../extensions/sync.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 
@@ -163,6 +164,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "extension.install": (rec, ctx) => handleExtensionInstall(rec, ctx),
 
+  "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
+
   "extension.enable": (rec, ctx) => ({
     kind: "hit",
     value: { ok: setExtensionEnabled(ctx.db, requireString(rec, "id"), true) },
@@ -273,6 +276,33 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     };
   }
   return { kind: "hit", value: { extension: { ...row } } };
+}
+
+async function handleExtensionSync(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  if (ctx.vault === undefined) {
+    throw new AutomationRpcError(-32603, "Gateway is not configured with a vault");
+  }
+  if (ctx.fetcher === undefined) {
+    throw new AutomationRpcError(-32603, "Gateway is not configured with a publisher key fetcher");
+  }
+  const dryRun =
+    rec !== undefined && typeof rec["dryRun"] === "boolean" ? (rec["dryRun"] as boolean) : false;
+  try {
+    const result = await syncPublisherKeys({
+      vault: ctx.vault,
+      db: ctx.db,
+      fetcher: ctx.fetcher,
+      enforceAirGap: ctx.enforceAirGap ?? false,
+      dryRun,
+    });
+    return { kind: "hit", value: result as unknown as Record<string, unknown> };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new AutomationRpcError(-32603, msg);
+  }
 }
 
 async function handleExtensionInstall(

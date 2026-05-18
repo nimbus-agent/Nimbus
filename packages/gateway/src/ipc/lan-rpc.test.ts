@@ -71,3 +71,11 @@ describe("checkLanMethodAllowed", () => {
     expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
   });
 });
+
+describe("extension.sync over LAN", () => {
+  test("rejected by checkLanMethodAllowed (T2 PR 2 / I5)", () => {
+    expect(() =>
+      checkLanMethodAllowed("extension.sync", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+  });
+});
