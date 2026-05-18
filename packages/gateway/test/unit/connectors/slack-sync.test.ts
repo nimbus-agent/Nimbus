@@ -487,7 +487,7 @@ describe("slack-sync — list phase", () => {
   });
 
   test("ratelimited list error -> throws (covers penalise-branch)", async () => {
-    // The  line
+    // The `if (error === "ratelimited") { rateLimiter.penalise(...) }` line
     // executes here; line-coverage records it without needing to inspect
     // the limiter's internal bucket state. ProviderRateLimiter has no read
     // accessor and adding one would scope-creep into the 85% sync gate.
@@ -663,7 +663,7 @@ describe("slack-sync — history phase", () => {
     ).rejects.toThrow(/conversations\.history/);
   });
 
-  test("hwVal set -> request body carries oldest=hwVal, no inclusive flag", async () => {
+  test("hwVal set -> request body carries oldest=hwVal, inclusive=false", async () => {
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
       ok: true,
@@ -892,8 +892,8 @@ describe("slack-sync — message indexing skip paths", () => {
         "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
       )
       .get();
-    expect(row?.title.length).toBeLessThanOrEqual(512);
-    expect(row?.body_preview?.length).toBe(512); // preview clipped at 512 too
+    expect(row?.title.length).toBeLessThanOrEqual(120); // shortIndexedMessageTitleFromPreview caps title at ~118 chars
+    expect(row?.body_preview?.length).toBe(512); // preview clipped at 512
   });
 
   test("maxTs updated across batch -> stored as hwVal in next cursor", async () => {
