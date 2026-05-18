@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { decodeBase64, encodeBase64, generateEd25519Keypair, signManifest } from "@nimbus-dev/sdk";
 
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
@@ -229,6 +229,46 @@ export async function runExtensionKeygen(args: string[]): Promise<number> {
   return 0;
 }
 
+export async function runExtensionSign(args: string[]): Promise<number> {
+  const extDir = args[0];
+  if (extDir === undefined || extDir.startsWith("--")) {
+    process.stderr.write("usage: nimbus extension sign <ext-dir> [--key <path>]\n");
+    return 2;
+  }
+  const keyIdx = args.indexOf("--key");
+  let keyPath = join(homedir(), ".nimbus", "publisher-key");
+  if (keyIdx >= 0 && keyIdx + 1 < args.length) {
+    const candidate = args[keyIdx + 1];
+    if (candidate !== undefined) keyPath = candidate;
+  }
+  let priv: Uint8Array;
+  try {
+    priv = decodeBase64(readFileSync(keyPath, "utf8").trim());
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`could not read key file ${keyPath}: ${msg}\n`);
+    return 2;
+  }
+  if (priv.length !== 32) {
+    process.stderr.write(`key file ${keyPath} did not decode to 32 bytes\n`);
+    return 2;
+  }
+  const manifestPath = join(extDir, "nimbus.extension.json");
+  let text: string;
+  try {
+    text = readFileSync(manifestPath, "utf8");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`could not read manifest ${manifestPath}: ${msg}\n`);
+    return 2;
+  }
+  const parsed = JSON.parse(text) as Record<string, unknown>;
+  delete parsed["signature"];
+  const sig = await signManifest(parsed, priv);
+  writeFileSync(manifestPath, JSON.stringify({ ...parsed, signature: sig }, null, 2));
+  return 0;
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
@@ -236,6 +276,12 @@ export async function runExtension(args: string[]): Promise<void> {
   // Local-only subcommands — no Gateway connection required.
   if (sub === "keygen") {
     const code = await runExtensionKeygen(rest);
+    if (code !== 0) process.exit(code);
+    return;
+  }
+
+  if (sub === "sign") {
+    const code = await runExtensionSign(rest);
     if (code !== 0) process.exit(code);
     return;
   }
