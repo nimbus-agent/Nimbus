@@ -28,7 +28,7 @@ export function stripFlags(args: string[]): string[] {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--yes" || a === "-y" || a === "--json") continue;
-    if (a === "--filter") {
+    if (a === "--filter" || a === "--publisher-key") {
       // skip flag + value
       i += 1;
       continue;
@@ -217,11 +217,19 @@ export async function runExtensionInstall(
     }
   }
   const sourcePath = resolve(process.cwd(), sourceRaw);
+  // T2 PR 2 Task 16 — optional `--publisher-key <path>` flag forwarded as
+  // params.publisherKeyPath. The Gateway side (automation-rpc.ts) reads this
+  // field and routes it into `installExtensionFromLocalDirectory`.
+  const publisherKeyPath = takeFlagValue(args, "--publisher-key");
+  const installParams: Record<string, unknown> = { sourcePath };
+  if (publisherKeyPath !== undefined && publisherKeyPath !== "") {
+    installParams["publisherKeyPath"] = publisherKeyPath;
+  }
   const out = await client.call<{
     id: string;
     version: string;
     installPath: string;
-  }>("extension.install", { sourcePath });
+  }>("extension.install", installParams);
   console.log(JSON.stringify(out, undefined, 2));
 }
 

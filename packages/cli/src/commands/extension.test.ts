@@ -116,6 +116,9 @@ describe("stripFlags", () => {
   test("removes --filter + value pair", () => {
     expect(stripFlags(["info", "--filter", "needs-reinstall", "id"])).toEqual(["info", "id"]);
   });
+  test("removes --publisher-key + value pair", () => {
+    expect(stripFlags(["install", "/p", "--publisher-key", "/tmp/k"])).toEqual(["install", "/p"]);
+  });
   test("preserves non-flag positional args", () => {
     expect(stripFlags(["install", "/some/path"])).toEqual(["install", "/some/path"]);
   });
@@ -494,6 +497,46 @@ describe("runExtension top-level dispatcher", () => {
   // info, install, enable, disable, remove) requires a connectable IPC
   // socket. Those branches are intentionally left to e2e tests; the
   // per-handler logic above already covers the meaningful code paths.
+});
+
+// ----------------------------- runExtensionInstall --publisher-key (T2 PR 2) -
+
+describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
+  const origIsTty = process.stdout.isTTY;
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: origIsTty,
+    });
+  });
+
+  test("forwards --publisher-key path through to extension.install IPC params", async () => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    const { client, calls } = mockClient([{ id: "ext-a", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(
+      client,
+      ["install", "/path/to/ext", "--publisher-key", "/tmp/pub.key", "--yes"],
+      ["/path/to/ext"],
+    );
+    expect(calls[0]?.method).toBe("extension.install");
+    expect(calls[0]?.params).toMatchObject({ publisherKeyPath: "/tmp/pub.key" });
+  });
+
+  test("does NOT include publisherKeyPath when flag is absent", async () => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    const { client, calls } = mockClient([{ id: "ext-a", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(client, ["install", "/path/to/ext", "--yes"], ["/path/to/ext"]);
+    expect(calls[0]?.method).toBe("extension.install");
+    const params = calls[0]?.params as Record<string, unknown>;
+    expect(params["publisherKeyPath"]).toBeUndefined();
+  });
 });
 
 // ----------------------------- formatExtensionListTable (T2 PR 2) ----------
