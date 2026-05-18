@@ -8,11 +8,35 @@ import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 
 import { listExtensions } from "../automation/extension-store.ts";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { parseExtensionManifestForRegistry, resolveExtensionManifestPath } from "./manifest.ts";
 import { evictPublisherKey, readPublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import type { PublisherKeyFetcher } from "./registry-client.ts";
 import { encodeBase64, verifyManifestSignature } from "./verify-signature.ts";
+
+type SyncedKind = "unchanged" | "updated" | "evicted" | "failed";
+
+function auditPublisherKeySynced(
+  db: Database,
+  dryRun: boolean,
+  publisherId: string,
+  kind: SyncedKind,
+  reason?: string,
+): void {
+  // Spec §6.2: extension.publisher_key_synced — one audit row per publisher per
+  // sync run. dryRun runs do NOT emit audit (per spec §4.3 "dry-run writes
+  // nothing, audits nothing").
+  if (dryRun) return;
+  const payload: Record<string, unknown> = { id: publisherId, kind };
+  if (reason !== undefined) payload["reason"] = reason;
+  appendAuditEntry(db, {
+    actionType: "extension.publisher_key_synced",
+    hitlStatus: "not_required",
+    actionJson: JSON.stringify(payload),
+    timestamp: Date.now(),
+  });
+}
 
 export class AirGapEnforcementError extends Error {
   override readonly name = "AirGapEnforcementError";
@@ -76,25 +100,29 @@ export async function syncPublisherKeys(opts: {
       failures: [],
     };
 
+    const dryRun = opts.dryRun === true;
     for (const [publisherId, extIds] of publisherIdToExtensions) {
       result.publishersChecked++;
       const fetched = await opts.fetcher.fetch(publisherId);
       if (fetched.kind === "transient" || fetched.kind === "registry_error") {
         result.failures.push({ id: publisherId, reason: fetched.message });
+        auditPublisherKeySynced(opts.db, dryRun, publisherId, "failed", fetched.message);
         continue;
       }
       if (fetched.kind === "not_found") {
-        if (opts.dryRun !== true) await evictPublisherKey(opts.vault, publisherId);
+        if (!dryRun) await evictPublisherKey(opts.vault, publisherId);
         result.publishersEvicted.push(publisherId);
+        auditPublisherKeySynced(opts.db, dryRun, publisherId, "evicted");
         continue;
       }
       const cached = await readPublisherKey(opts.vault, publisherId);
       const equal = cached !== undefined && encodeBase64(cached) === encodeBase64(fetched.pubkey);
       if (equal) {
         result.publishersUnchanged++;
+        auditPublisherKeySynced(opts.db, dryRun, publisherId, "unchanged");
         continue;
       }
-      if (opts.dryRun !== true) await writePublisherKey(opts.vault, publisherId, fetched.pubkey);
+      if (!dryRun) await writePublisherKey(opts.vault, publisherId, fetched.pubkey);
       const failed: string[] = [];
       let allOk = true;
       for (const extId of extIds) {
@@ -115,6 +143,7 @@ export async function syncPublisherKeys(opts: {
         reverifyResult: allOk ? "ok" : "failed",
         failedExtensions: failed,
       });
+      auditPublisherKeySynced(opts.db, dryRun, publisherId, "updated");
     }
 
     return result;
