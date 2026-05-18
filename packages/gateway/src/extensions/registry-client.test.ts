@@ -75,7 +75,7 @@ describe("PublisherKeyFetcher", () => {
   it("registry_error: appended trailing garbage rejected (S5 hardening)", async () => {
     const { pubkey } = generateEd25519Keypair();
     const valid = encodeBase64(pubkey);
-    const padded = valid + "EXTRA-ATTACKER-BYTES==";
+    const padded = `${valid}EXTRA-ATTACKER-BYTES==`;
     const f = createPublisherKeyFetcher({
       baseUrl: "https://reg.example",
       fetchFn: fakeFetch([new Response(padded, { status: 200 })]),

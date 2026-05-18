@@ -78,7 +78,7 @@ export async function syncPublisherKeys(opts: {
     for (const row of rows) {
       const mp = resolveExtensionManifestPath(row.install_path);
       if (mp === undefined) continue;
-      let parsed;
+      let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
       try {
         parsed = parseExtensionManifestForRegistry(readFileSync(mp, "utf8"));
       } catch {

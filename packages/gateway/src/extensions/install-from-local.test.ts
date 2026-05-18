@@ -216,7 +216,7 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
     });
     const keyDir = mkdtempSync(join(tmpdir(), "nimbus-pub-"));
     const keyFile = join(keyDir, "pub.key");
-    writeFileSync(keyFile, encodeBase64(otherKey) + "\n");
+    writeFileSync(keyFile, `${encodeBase64(otherKey)}\n`);
     try {
       await expect(
         installExtensionFromLocalDirectory({
@@ -244,7 +244,7 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
     await writeSignedSource({ sourceDir: src, id: "test-ext-ok", privkey, pubkey });
     const keyDir = mkdtempSync(join(tmpdir(), "nimbus-pub-"));
     const keyFile = join(keyDir, "pub.key");
-    writeFileSync(keyFile, encodeBase64(pubkey) + "\n");
+    writeFileSync(keyFile, `${encodeBase64(pubkey)}\n`);
     try {
       const result = await installExtensionFromLocalDirectory({
         db,

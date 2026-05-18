@@ -94,7 +94,7 @@ describe("parseExtensionManifestForRegistry — publisher + signature fields", (
 
   test("rejects bad publisher.id format", () => {
     const pubkey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    const sig = "A".repeat(86) + "==";
+    const sig = `${"A".repeat(86)}==`;
     expect(() =>
       parseExtensionManifestForRegistry(
         makeJson({ publisher: { id: "BAD ID WITH SPACE", key: pubkey }, signature: sig }),
@@ -103,7 +103,7 @@ describe("parseExtensionManifestForRegistry — publisher + signature fields", (
   });
 
   test("rejects publisher.key with wrong length", () => {
-    const sig = "A".repeat(86) + "==";
+    const sig = `${"A".repeat(86)}==`;
     expect(() =>
       parseExtensionManifestForRegistry(
         makeJson({ publisher: { id: "test-pub", key: "too-short" }, signature: sig }),
@@ -122,7 +122,7 @@ describe("parseExtensionManifestForRegistry — publisher + signature fields", (
 
   test("rejects unknown keys inside publisher", () => {
     const pubkey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    const sig = "A".repeat(86) + "==";
+    const sig = `${"A".repeat(86)}==`;
     expect(() =>
       parseExtensionManifestForRegistry(
         makeJson({

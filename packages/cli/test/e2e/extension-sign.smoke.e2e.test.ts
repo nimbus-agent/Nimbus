@@ -14,7 +14,7 @@ describe("nimbus extension sign", () => {
     mkdirSync(join(extDir, "dist"), { recursive: true });
     const { privkey, pubkey } = generateEd25519Keypair();
     const keyPath = join(dir, "priv.key");
-    writeFileSync(keyPath, encodeBase64(privkey) + "\n");
+    writeFileSync(keyPath, `${encodeBase64(privkey)}\n`);
     writeFileSync(
       join(extDir, "nimbus.extension.json"),
       JSON.stringify({
@@ -42,8 +42,8 @@ describe("nimbus extension sign", () => {
     mkdirSync(extDir, { recursive: true });
     const { privkey, pubkey } = generateEd25519Keypair();
     const keyPath = join(dir, "priv.key");
-    writeFileSync(keyPath, encodeBase64(privkey) + "\n");
-    const placeholder = "A".repeat(86) + "==";
+    writeFileSync(keyPath, `${encodeBase64(privkey)}\n`);
+    const placeholder = `${"A".repeat(86)}==`;
     writeFileSync(
       join(extDir, "nimbus.extension.json"),
       JSON.stringify({

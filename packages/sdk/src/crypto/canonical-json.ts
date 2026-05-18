@@ -48,14 +48,14 @@ export function canonicalize(value: unknown, depth = 0): string {
     return String(value);
   }
   if (Array.isArray(value)) {
-    return "[" + value.map((v) => canonicalize(v, depth + 1)).join(",") + "]";
+    return `[${value.map((v) => canonicalize(v, depth + 1)).join(",")}]`;
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj).sort();
     return (
       "{" +
-      keys.map((k) => JSON.stringify(k) + ":" + canonicalize(obj[k], depth + 1)).join(",") +
+      keys.map((k) => `${JSON.stringify(k)}:${canonicalize(obj[k], depth + 1)}`).join(",") +
       "}"
     );
   }

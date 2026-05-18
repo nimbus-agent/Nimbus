@@ -72,7 +72,7 @@ describe("resolvePublisherKey", () => {
 
     const dir = mkdtempSync(join(tmpdir(), "nimbus-key-"));
     const file = join(dir, "pub.key");
-    writeFileSync(file, encodeBase64(fileKey) + "\n");
+    writeFileSync(file, `${encodeBase64(fileKey)}\n`);
     try {
       const out = await resolvePublisherKey({
         publisherId: "test-pub",

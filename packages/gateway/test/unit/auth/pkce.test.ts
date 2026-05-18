@@ -807,7 +807,7 @@ describe("runPKCEFlow", () => {
     const state = authUrlParsed.searchParams.get("state");
 
     // Confirm the redirect_uri uses a port in the declared range (or ephemeral if all were busy).
-    const boundPort = parseInt(new URL(redirectUri!).port);
+    const boundPort = parseInt(new URL(redirectUri!).port, 10);
     expect(boundPort).toBeGreaterThan(0);
 
     const callbackUrl = new URL(redirectUri!);
