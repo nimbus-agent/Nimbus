@@ -28,6 +28,24 @@ function authHeaderForUserPass(user: string, pass: string): string {
   return `Basic ${Buffer.from(`${user}:${pass}`, "utf8").toString("base64")}`;
 }
 
+/**
+ * Run a callback against a fresh fixture that does NOT inherit the
+ * default vault-seeded credentials from `beforeEach`. Used by the
+ * credential-short-circuit tests so each can stage its own vault state
+ * (or none) without leakage. Mirrors the slack-sync.test.ts pattern.
+ */
+async function withIsolatedFixture(
+  fn: (fixture: ConnectorSyncFixture) => Promise<void>,
+): Promise<void> {
+  const isolated = createConnectorSyncFixture();
+  isolated.fetchMock.install();
+  try {
+    await fn(isolated);
+  } finally {
+    isolated.cleanup();
+  }
+}
+
 let fixture: ConnectorSyncFixture;
 
 beforeEach(async () => {
@@ -45,75 +63,55 @@ afterEach(() => {
 
 describe("bitbucket-sync — credential short-circuits", () => {
   test("returns noop when neither vault key is set", async () => {
-    const empty = createConnectorSyncFixture();
-    empty.fetchMock.install();
-    try {
+    await withIsolatedFixture(async (iso) => {
       const syncable = createBitbucketSyncable(ENSURE_MCP);
-      const res = await syncable.sync(empty.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext(), null);
       expect(res.hasMore).toBe(false);
       expect(res.itemsUpserted).toBe(0);
       expect(res.itemsDeleted).toBe(0);
-      expect(empty.fetchMock.calls).toHaveLength(0);
-    } finally {
-      empty.cleanup();
-    }
+      expect(iso.fetchMock.calls).toHaveLength(0);
+    });
   });
 
   test("returns noop when username is set but app_password is missing", async () => {
-    const partial = createConnectorSyncFixture();
-    partial.fetchMock.install();
-    try {
-      await partial.vault.set("bitbucket.username", "bitbucket-stub-username");
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("bitbucket.username", "bitbucket-stub-username");
       const syncable = createBitbucketSyncable(ENSURE_MCP);
-      const res = await syncable.sync(partial.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext(), null);
       expect(res.hasMore).toBe(false);
-      expect(partial.fetchMock.calls).toHaveLength(0);
-    } finally {
-      partial.cleanup();
-    }
+      expect(iso.fetchMock.calls).toHaveLength(0);
+    });
   });
 
   test("returns noop when username is empty string", async () => {
-    const partial = createConnectorSyncFixture();
-    partial.fetchMock.install();
-    try {
-      await partial.vault.set("bitbucket.username", "");
-      await partial.vault.set("bitbucket.app_password", "bitbucket-stub-pass");
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("bitbucket.username", "");
+      await iso.vault.set("bitbucket.app_password", "bitbucket-stub-pass");
       const syncable = createBitbucketSyncable(ENSURE_MCP);
-      const res = await syncable.sync(partial.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext(), null);
       expect(res.hasMore).toBe(false);
-      expect(partial.fetchMock.calls).toHaveLength(0);
-    } finally {
-      partial.cleanup();
-    }
+      expect(iso.fetchMock.calls).toHaveLength(0);
+    });
   });
 
   test("returns noop when app_password is empty string", async () => {
-    const partial = createConnectorSyncFixture();
-    partial.fetchMock.install();
-    try {
-      await partial.vault.set("bitbucket.username", "bitbucket-stub-username");
-      await partial.vault.set("bitbucket.app_password", "");
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("bitbucket.username", "bitbucket-stub-username");
+      await iso.vault.set("bitbucket.app_password", "");
       const syncable = createBitbucketSyncable(ENSURE_MCP);
-      const res = await syncable.sync(partial.createSyncContext(), null);
+      const res = await syncable.sync(iso.createSyncContext(), null);
       expect(res.hasMore).toBe(false);
-      expect(partial.fetchMock.calls).toHaveLength(0);
-    } finally {
-      partial.cleanup();
-    }
+      expect(iso.fetchMock.calls).toHaveLength(0);
+    });
   });
 
   test("syncNoopResult preserves the incoming cursor", async () => {
-    const empty = createConnectorSyncFixture();
-    empty.fetchMock.install();
-    try {
+    await withIsolatedFixture(async (iso) => {
       const incomingCursor = "nimbus-bbkt1:opaque-cursor-value";
       const syncable = createBitbucketSyncable(ENSURE_MCP);
-      const res = await syncable.sync(empty.createSyncContext(), incomingCursor);
+      const res = await syncable.sync(iso.createSyncContext(), incomingCursor);
       expect(res.cursor).toBe(incomingCursor);
-    } finally {
-      empty.cleanup();
-    }
+    });
   });
 });
 
@@ -254,17 +252,12 @@ describe("bitbucket-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
-    // The mock-fetch FetchCall doesn't capture headers, so we re-wrap the
-    // fetch mock with an inspector. Simpler: re-execute through a one-shot
-    // header-capturing fetch wrapper.
     expect(fixture.fetchMock.calls).toHaveLength(1);
-    // We additionally verify by recreating the expected header value.
+    // MockFetch.FetchCall.headers captures the `init.headers` map normalized
+    // to lower-cased keys. The production code sets `Authorization: Basic ...`
+    // from the vault-resolved username + app_password.
     const expectedAuth = authHeaderForUserPass("bitbucket-stub-username", "bitbucket-stub-pass");
-    // Sanity: the helper produces a well-formed Basic auth header.
-    expect(expectedAuth).toStartWith("Basic ");
-    // The production code reads vault values and constructs the header. We
-    // rely on the unit test of `basicAuthHeader` (indirect — covered by
-    // ensuring this call path completed without throw + the URL matched).
+    expect(fixture.fetchMock.calls[0].headers["authorization"]).toBe(expectedAuth);
   });
 
   test("workspace list URL contains role=member and pagelen=30", async () => {
@@ -363,18 +356,13 @@ describe("bitbucket-sync — indexing skip paths", () => {
     });
     fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, {
       values: [
-        { title: "no id", state: "OPEN" }, // missing id → skipped, no upsertedDelta
+        { title: "no id", state: "OPEN" }, // missing id → skipped inside upsertFromPullRequest
         { id: 1, title: "kept" }, // valid
       ],
       next: null,
     });
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Both entries flow through the loop, but only the one with an id upserts.
-    // However, `upsertedDelta += 1` is incremented even for the id-less entry
-    // in the current source (it is unconditional after the asRecord check).
-    // TODO: bug? upsertedDelta increments unconditionally — file follow-up if confirmed.
-    // We assert the actual DB row count instead of itemsUpserted, since the DB
-    // is the ground truth for what was actually indexed.
+    // DB ground truth: only the id-bearing PR is indexed.
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'bitbucket'",
@@ -383,6 +371,17 @@ describe("bitbucket-sync — indexing skip paths", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].external_id).toBe("acme/app#1");
     expect(res.hasMore).toBe(false);
+
+    // TODO: bug — `itemsUpserted` over-counts when a PR has a missing id.
+    // bitbucket-sync.ts:202 increments `upsertedDelta += 1` unconditionally
+    // after `upsertFromPullRequest()` returns, but the helper at
+    // bitbucket-sync.ts:105-108 returns early when `id` is missing without
+    // writing any row. The counter therefore reflects "PR records processed",
+    // not "items indexed" — a divergence from the SyncResult.itemsUpserted
+    // contract documented for other connectors. Filing a follow-up issue.
+    // This assertion locks in the current (buggy) production behavior so the
+    // fix will trip this test and force a coordinated update.
+    expect(res.itemsUpserted).toBe(2);
   });
 
   test("pull request with malformed full_name (no slash) is filtered out at workspace parse", async () => {

@@ -10,6 +10,12 @@ export type FetchCall = {
   readonly url: string;
   readonly method: string;
   readonly body: string | null;
+  /**
+   * Request headers captured from `init.headers` at call time, normalized to
+   * lower-cased keys for case-insensitive lookup (HTTP header semantics).
+   * Empty record when no headers were provided.
+   */
+  readonly headers: Readonly<Record<string, string>>;
 };
 
 type BodyMatcher = (parsedBody: unknown, rawBody: string) => boolean;
@@ -115,7 +121,8 @@ export class MockFetch {
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
     const rawBody = init?.body === undefined || init.body === null ? null : String(init.body);
-    this.calls.push({ url, method, body: rawBody });
+    const headers = normalizeRequestHeaders(init?.headers);
+    this.calls.push({ url, method, body: rawBody, headers });
 
     for (const stub of this.stubs) {
       if (stub.method !== method) {
@@ -145,4 +152,33 @@ export class MockFetch {
   private matchesUrl(pattern: string | RegExp, url: string): boolean {
     return typeof pattern === "string" ? pattern === url : pattern.test(url);
   }
+}
+
+/**
+ * Normalize `RequestInit.headers` (Headers | [string, string][] | record)
+ * into a plain `{ lowercase-key: value }` record. Returns an empty record
+ * when no headers were provided so assertions can use `??` / direct lookup
+ * without checking for `undefined`.
+ */
+function normalizeRequestHeaders(raw: HeadersInit | undefined): Readonly<Record<string, string>> {
+  if (raw === undefined) {
+    return Object.freeze({});
+  }
+  const out: Record<string, string> = {};
+  if (raw instanceof Headers) {
+    raw.forEach((value, key) => {
+      out[key.toLowerCase()] = value;
+    });
+  } else if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (entry.length === 2) {
+        out[entry[0].toLowerCase()] = entry[1];
+      }
+    }
+  } else {
+    for (const [key, value] of Object.entries(raw)) {
+      out[key.toLowerCase()] = String(value);
+    }
+  }
+  return Object.freeze(out);
 }
