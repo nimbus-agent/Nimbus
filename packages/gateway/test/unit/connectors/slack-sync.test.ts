@@ -602,3 +602,330 @@ describe("slack-sync — list phase", () => {
     expect((bodies[0] as Record<string, unknown>)["cursor"]).toBe("page-N");
   });
 });
+
+describe("slack-sync — history phase", () => {
+  function historyCursor(
+    overrides: Partial<{
+      floorTs: string;
+      ids: string[];
+      nextIdx: number;
+      hw: Record<string, string | null>;
+      histCursor: string | null;
+      teamSubdomain: string | null;
+    }>,
+  ): string {
+    return encodeCursor({
+      phase: "history",
+      floorTs: "1.0",
+      ids: ["C1"],
+      nextIdx: 0,
+      hw: {},
+      listCursor: null,
+      histCursor: null,
+      teamSubdomain: null,
+      ...overrides,
+    });
+  }
+
+  test("ids=[''] (empty channel slot) -> early return with hasMore=false", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({ ids: [""] }),
+    );
+    expect(res.hasMore).toBe(false);
+    // conversations.history NOT called
+    const histCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.includes("conversations.history"),
+    );
+    expect(histCalls).toHaveLength(0);
+  });
+
+  test("history ratelimited error -> throws (covers penalise-branch)", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: false,
+      error: "ratelimited",
+    });
+    await expect(
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor({})),
+    ).rejects.toThrow(/conversations\.history.*ratelimited/);
+  });
+
+  test("history non-ratelimited error -> throws (covers no-penalty branch)", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: false,
+      error: "boom",
+    });
+    await expect(
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor({})),
+    ).rejects.toThrow(/conversations\.history/);
+  });
+
+  test("hwVal set -> request body carries oldest=hwVal, no inclusive flag", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "" },
+    });
+    await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({ hw: { C1: "999.0" } }),
+    );
+    const body = fixture.fetchMock.bodiesFor(
+      "POST",
+      "https://slack.com/api/conversations.history",
+    )[0] as Record<string, unknown>;
+    expect(body["oldest"]).toBe("999.0");
+    expect(body["inclusive"]).toBe(false);
+  });
+
+  test("histCursor non-empty -> request body carries cursor, omits oldest", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "" },
+    });
+    await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({ histCursor: "next-hist-page" }),
+    );
+    const body = fixture.fetchMock.bodiesFor(
+      "POST",
+      "https://slack.com/api/conversations.history",
+    )[0] as Record<string, unknown>;
+    expect(body["cursor"]).toBe("next-hist-page");
+    expect(body["oldest"]).toBeUndefined();
+  });
+
+  test("paginated history -> next_cursor non-empty returns hasMore=true with same channel", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [{ ts: "100.000010", text: "m1", user: "U1" }],
+      response_metadata: { next_cursor: "hist-page-2" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({}),
+    );
+    expect(res.hasMore).toBe(true);
+    expect(res.itemsUpserted).toBe(1);
+  });
+
+  test("end of history -> advances nextIdx, hasMore depends on remaining channels", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [{ ts: "200.000020", text: "m2", user: "U2" }],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({ ids: ["C1", "C2"], nextIdx: 0 }),
+    );
+    expect(res.hasMore).toBe(true); // C2 still pending
+    expect(res.itemsUpserted).toBe(1);
+  });
+
+  test("last channel exhausted -> hasMore=false", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor({ ids: ["C1"], nextIdx: 0 }),
+    );
+    expect(res.hasMore).toBe(false);
+  });
+});
+
+describe("slack-sync — message indexing skip paths", () => {
+  function stageHistory(messages: unknown[]): void {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages,
+      response_metadata: { next_cursor: "" },
+    });
+  }
+  function historyCursor(): string {
+    return encodeCursor({
+      phase: "history",
+      floorTs: "1.0",
+      ids: ["C1"],
+      nextIdx: 0,
+      hw: {},
+      listCursor: null,
+      histCursor: null,
+      teamSubdomain: null,
+    });
+  }
+
+  test("messages not an array -> 0 upserts", async () => {
+    stageHistory("not-array" as unknown as unknown[]);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor(),
+    );
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("non-record array entries skipped", async () => {
+    stageHistory(["string-entry", 42, null]);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor(),
+    );
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("ts missing or empty skipped", async () => {
+    stageHistory([
+      { text: "no ts", user: "U1" },
+      { ts: "", text: "empty ts", user: "U1" },
+    ]);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor(),
+    );
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("subtype other than thread_broadcast skipped", async () => {
+    stageHistory([{ ts: "100.0", text: "join", user: "U1", subtype: "channel_join" }]);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor(),
+    );
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("subtype=thread_broadcast indexed", async () => {
+    stageHistory([{ ts: "100.0", text: "broadcast", user: "U1", subtype: "thread_broadcast" }]);
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      historyCursor(),
+    );
+    expect(res.itemsUpserted).toBe(1);
+  });
+
+  test("non-string text -> preview empty, title is '(no text)'", async () => {
+    stageHistory([{ ts: "100.0", text: 42, user: "U1" }]);
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const row = fixture.db
+      .query<{ title: string; body_preview: string | null }, []>(
+        "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
+      )
+      .get();
+    expect(row?.body_preview).toBe("");
+    expect(row?.title).toBe("(no text)");
+  });
+
+  test("non-string user -> authorId null", async () => {
+    stageHistory([{ ts: "100.0", text: "hi", user: 42 }]);
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const row = fixture.db
+      .query<{ author_id: string | null }, []>(
+        "SELECT author_id FROM item WHERE service = 'slack' LIMIT 1",
+      )
+      .get();
+    expect(row?.author_id).toBeNull();
+  });
+
+  test("empty user string -> authorId null", async () => {
+    stageHistory([{ ts: "100.0", text: "hi", user: "" }]);
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const row = fixture.db
+      .query<{ author_id: string | null }, []>(
+        "SELECT author_id FROM item WHERE service = 'slack' LIMIT 1",
+      )
+      .get();
+    expect(row?.author_id).toBeNull();
+  });
+
+  test("non-finite ts number -> modifiedAt falls back to now", async () => {
+    // ts="abc" -> parseFloat -> NaN -> non-finite -> modifiedAt=now
+    stageHistory([{ ts: "abc", text: "hi", user: "U1" }]);
+    const beforeMs = Date.now();
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const afterMs = Date.now();
+    const row = fixture.db
+      .query<{ modified_at: number }, []>(
+        "SELECT modified_at FROM item WHERE service = 'slack' LIMIT 1",
+      )
+      .get();
+    expect(row?.modified_at).toBeGreaterThanOrEqual(beforeMs);
+    expect(row?.modified_at).toBeLessThanOrEqual(afterMs);
+  });
+
+  test("thread_ts string preserved in metadata; non-string -> null", async () => {
+    stageHistory([
+      { ts: "100.0", text: "in-thread", user: "U1", thread_ts: "99.0" },
+      { ts: "101.0", text: "no-thread", user: "U1", thread_ts: 42 },
+    ]);
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const rows = fixture.db
+      .query<{ metadata: string }, []>(
+        "SELECT metadata FROM item WHERE service = 'slack' ORDER BY external_id",
+      )
+      .all();
+    expect(rows).toHaveLength(2);
+    const meta0 = JSON.parse(rows[0].metadata) as Record<string, unknown>;
+    const meta1 = JSON.parse(rows[1].metadata) as Record<string, unknown>;
+    expect(meta0["thread_ts"]).toBe("99.0");
+    expect(meta1["thread_ts"]).toBeNull();
+  });
+
+  test("title sliced to 512 chars on very long messages", async () => {
+    const long = "x".repeat(1024);
+    stageHistory([{ ts: "100.0", text: long, user: "U1" }]);
+    await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
+    const row = fixture.db
+      .query<{ title: string; body_preview: string | null }, []>(
+        "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
+      )
+      .get();
+    expect(row?.title.length).toBeLessThanOrEqual(512);
+    expect(row?.body_preview?.length).toBe(512); // preview clipped at 512 too
+  });
+
+  test("maxTs updated across batch -> stored as hwVal in next cursor", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [
+        { ts: "100.0", text: "earlier", user: "U1" },
+        { ts: "200.0", text: "later", user: "U1" },
+        { ts: "150.0", text: "middle", user: "U1" },
+      ],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      encodeCursor({
+        phase: "history",
+        floorTs: "1.0",
+        ids: ["C1"],
+        nextIdx: 0,
+        hw: {},
+        listCursor: null,
+        histCursor: null,
+        teamSubdomain: null,
+      }),
+    );
+    expect(res.itemsUpserted).toBe(3);
+    // Decode the returned cursor and verify hw.C1 == "200.0"
+    const raw = res.cursor!.slice("nimbus-slk1:".length);
+    const decoded = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as {
+      hw: Record<string, string | null>;
+    };
+    expect(decoded.hw["C1"]).toBe("200.0");
+  });
+});
