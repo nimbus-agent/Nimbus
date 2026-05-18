@@ -155,6 +155,28 @@ export async function fetchSandboxPosture(
   }
 }
 
+/**
+ * Pure formatter for the Publisher section of `nimbus extension info` human
+ * output (T2 PR 2 Task 17). For signed extensions the publisher id + a
+ * 16-character truncated key with an ellipsis are shown; for unsigned
+ * extensions the section renders `Publisher: (unverified)`. The `--json`
+ * path bypasses this formatter so external tooling sees the full key.
+ */
+export function formatExtensionInfoHuman(info: {
+  id: string;
+  version: string;
+  publisher?: { id: string; key: string };
+}): string {
+  const lines: string[] = [`ID:        ${info.id}`, `Version:   ${info.version}`];
+  if (info.publisher !== undefined) {
+    const shortKey = `${info.publisher.key.slice(0, 16)}…`;
+    lines.push(`Publisher: ${info.publisher.id}`, `  key:     ${shortKey}`);
+  } else {
+    lines.push(`Publisher: (unverified)`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export async function runExtensionInfo(
   client: IPCClient,
   rest: string[],
@@ -183,6 +205,16 @@ export async function runExtensionInfo(
   console.log(`Extension: ${e.id}`);
   console.log(`Version:   ${e.version}`);
   console.log(`Enabled:   ${e.enabled === 1 ? "yes" : "no"}`);
+  // T2 PR 2 Task 17 — Publisher section. Signed extensions display the
+  // publisher id + a truncated key; unsigned extensions show (unverified).
+  // The full key is only emitted via the `--json` branch above.
+  if (e.publisher !== undefined && typeof e.publisher.key === "string") {
+    const shortKey = `${e.publisher.key.slice(0, 16)}…`;
+    console.log(`Publisher: ${e.publisher.id}`);
+    console.log(`  key:     ${shortKey}`);
+  } else {
+    console.log("Publisher: (unverified)");
+  }
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   if (e.needs_reinstall === true && out.message !== undefined) {

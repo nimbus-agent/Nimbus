@@ -40,6 +40,7 @@ afterAll(() => {
 const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
+  formatExtensionInfoHuman,
   formatExtensionListTable,
   hasFlag,
   runExtension,
@@ -578,5 +579,79 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       noColor: true,
     });
     expect(out).toContain("disabled");
+  });
+});
+
+// ----------------------------- formatExtensionInfoHuman (T2 PR 2) ----------
+
+describe("formatExtensionInfoHuman (T2 PR 2)", () => {
+  test("shows Publisher section with id + truncated key for signed extensions", () => {
+    const out = formatExtensionInfoHuman({
+      id: "ext-a",
+      version: "1.0.0",
+      publisher: { id: "pub-a", key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+    });
+    expect(out).toMatch(/Publisher:\s+pub-a/);
+    expect(out).toContain("AAAAAAAAAAAAAAAA…");
+  });
+
+  test("shows (unverified) for unsigned extensions", () => {
+    const out = formatExtensionInfoHuman({ id: "ext-b", version: "0.5.1" });
+    expect(out).toMatch(/Publisher:\s+\(unverified\)/);
+  });
+});
+
+// ----------------------------- runExtensionInfo --json (T2 PR 2) ----------
+
+describe("runExtensionInfo publisher (T2 PR 2)", () => {
+  test("human output includes Publisher section with truncated key", async () => {
+    const fullKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: fullKey },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-a"], ["info", "ext-a"]);
+    const out = captured.join("\n");
+    expect(out).toMatch(/Publisher:\s+pub-a/);
+    expect(out).toContain("AAAAAAAAAAAAAAAA…");
+    // Truncated, not full
+    expect(out).not.toContain(fullKey);
+  });
+
+  test("human output shows (unverified) when publisher absent", async () => {
+    const { client } = mockClient([
+      { extension: { id: "ext-b", version: "0.5.1", enabled: 1 } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-b"], ["info", "ext-b"]);
+    expect(captured.join("\n")).toMatch(/Publisher:\s+\(unverified\)/);
+  });
+
+  test("--json output includes full publisher.key (not truncated)", async () => {
+    const fullKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: fullKey },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-a"], ["info", "ext-a", "--json"]);
+    const parsed = JSON.parse(captured.join("\n")) as {
+      extension: { publisher: { id: string; key: string } };
+    };
+    expect(parsed.extension.publisher.id).toBe("pub-a");
+    expect(parsed.extension.publisher.key).toBe(fullKey);
   });
 });
