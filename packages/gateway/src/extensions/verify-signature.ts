@@ -71,12 +71,17 @@ export async function verifyManifestSignature(
   const canonical = canonicalizeManifest(manifest);
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
-    resolvedPubkey,
+    new Uint8Array(resolvedPubkey),
     { name: "Ed25519" },
     false,
     ["verify"],
   );
-  const ok = await crypto.subtle.verify("Ed25519", cryptoKey, sig, canonical);
+  const ok = await crypto.subtle.verify(
+    "Ed25519",
+    cryptoKey,
+    new Uint8Array(sig),
+    new Uint8Array(canonical),
+  );
   if (!ok) throw new SignatureInvalid();
 }
 
@@ -102,7 +107,7 @@ export async function signManifest(
     ["sign"],
   );
   const canonical = canonicalizeManifest(manifest);
-  const sig = await crypto.subtle.sign("Ed25519", cryptoKey, canonical);
+  const sig = await crypto.subtle.sign("Ed25519", cryptoKey, new Uint8Array(canonical));
   return encodeBase64(new Uint8Array(sig));
 }
 
