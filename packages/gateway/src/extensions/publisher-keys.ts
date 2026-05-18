@@ -4,7 +4,10 @@
  * (D11 static audit) restricts this namespace.
  */
 
+import { readFileSync } from "node:fs";
+
 import type { NimbusVault } from "../vault/index.ts";
+import type { PublisherKeyFetcher } from "./registry-client.ts";
 import { decodeBase64, encodeBase64 } from "./verify-signature.ts";
 
 export const PUBLISHER_KEY_VAULT_PREFIX = "extension.publisher_key." as const;
@@ -48,4 +51,83 @@ export async function listCachedPublisherIds(vault: NimbusVault): Promise<readon
     }
   }
   return out.sort((a, b) => a.localeCompare(b));
+}
+
+export class AirGapNoPublisherKey extends Error {
+  override readonly name = "AirGapNoPublisherKey";
+  constructor(publisherId: string) {
+    super(
+      `air-gap is enforced; publisher key for "${publisherId}" is not in your local cache — re-run \`nimbus extension install <path-or-url> --publisher-key <path>\` with the key locally available`,
+    );
+  }
+}
+
+export class PublisherNotRegistered extends Error {
+  override readonly name = "PublisherNotRegistered";
+  constructor(publisherId: string) {
+    super(`publisher "${publisherId}" is not registered with the registry; install refused`);
+  }
+}
+
+export class RegistryUnreachable extends Error {
+  override readonly name = "RegistryUnreachable";
+  constructor(publisherId: string, reason: string) {
+    super(
+      `could not reach registry for publisher "${publisherId}" (${reason}); check your network connection and re-run the install, or re-run \`nimbus extension install <path-or-url> --publisher-key <path>\` with the key locally available — \`nimbus extension sync\` cannot help here because it only refreshes already-installed extensions`,
+    );
+  }
+}
+
+export interface ResolvePublisherKeyOpts {
+  publisherId: string;
+  explicitKeyPath: string | undefined;
+  vault: NimbusVault;
+  fetcher: PublisherKeyFetcher;
+  enforceAirGap: boolean;
+}
+
+/**
+ * Resolve a publisher's 32-byte pubkey in priority order:
+ *   1. --publisher-key <path>
+ *   2. cached vault key extension.publisher_key.<id>
+ *   3. registry fetch (refused under enforceAirGap)
+ * Throws on the documented error classes.
+ */
+export async function resolvePublisherKey(opts: ResolvePublisherKeyOpts): Promise<Uint8Array> {
+  // Priority 1: explicit file
+  if (opts.explicitKeyPath !== undefined) {
+    let text: string;
+    try {
+      text = readFileSync(opts.explicitKeyPath, "utf8");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`publisher key file ${opts.explicitKeyPath} could not be read: ${msg}`);
+    }
+    const trimmed = text.trim();
+    if (trimmed.length !== 44) {
+      throw new Error(
+        `publisher key file ${opts.explicitKeyPath} must contain exactly 44 base64 chars (got ${String(trimmed.length)})`,
+      );
+    }
+    const bytes = decodeBase64(trimmed);
+    if (bytes.length !== 32) {
+      throw new Error(`publisher key file ${opts.explicitKeyPath} did not decode to 32 bytes`);
+    }
+    return bytes;
+  }
+  // Priority 2: vault cache
+  const cached = await readPublisherKey(opts.vault, opts.publisherId);
+  if (cached !== undefined) return cached;
+  // Priority 3: registry
+  if (opts.enforceAirGap) throw new AirGapNoPublisherKey(opts.publisherId);
+  const result = await opts.fetcher.fetch(opts.publisherId);
+  if (result.kind === "ok") return result.pubkey;
+  if (result.kind === "not_found") throw new PublisherNotRegistered(opts.publisherId);
+  if (result.kind === "transient") {
+    throw new RegistryUnreachable(opts.publisherId, result.message);
+  }
+  throw new RegistryUnreachable(
+    opts.publisherId,
+    `${String(result.statusCode)}: ${result.message}`,
+  );
 }
