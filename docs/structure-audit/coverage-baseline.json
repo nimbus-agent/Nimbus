@@ -269,9 +269,6 @@
     "packages/gateway/src/connectors/sentry-sync.ts": {
       "min_coverage_pct": 30.49
     },
-    "packages/gateway/src/connectors/slack-sync.ts": {
-      "min_coverage_pct": 4.35
-    },
     "packages/gateway/src/connectors/sync-iso-helpers.ts": {
       "min_coverage_pct": 75
     },
