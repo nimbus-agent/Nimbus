@@ -464,3 +464,141 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
     expect(authCalls).toHaveLength(0);
   });
 });
+
+describe("slack-sync — list phase", () => {
+  test("happy path: non-empty next_cursor returns 'return' with hasMore=true", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [
+        { id: "C1", is_member: true },
+        { id: "C2", is_member: false }, // filtered out
+        { id: "", is_member: true }, // empty id filtered out
+        "not-a-record", // not a record - skipped
+        { foo: "no-id" }, // record without id - skipped
+      ],
+      response_metadata: { next_cursor: "page2" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(true);
+    expect(res.itemsUpserted).toBe(0);
+    // Cursor carries forward listCursor=page2 and ids=[C1]
+    expect(res.cursor).toStartWith("nimbus-slk1:");
+  });
+
+  test("ratelimited list error -> throws (covers penalise-branch)", async () => {
+    // The  line
+    // executes here; line-coverage records it without needing to inspect
+    // the limiter's internal bucket state. ProviderRateLimiter has no read
+    // accessor and adding one would scope-creep into the 85% sync gate.
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: false,
+      error: "ratelimited",
+    });
+    await expect(
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+    ).rejects.toThrow(/conversations.list.*ratelimited/);
+  });
+
+  test("non-ratelimited list error -> throws (covers no-penalty branch)", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: false,
+      error: "internal_error",
+    });
+    await expect(
+      createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
+    ).rejects.toThrow(/conversations.list/);
+  });
+
+  test("done_list with non-empty unique sort - transitions to history with hasMore=true", async () => {
+    // NOTE: production falls from list → history in the same call when done_list
+    // returns with non-empty ids. So a single sync call runs both phases for the
+    // first channel. We assert the first history call hit C1 (alpha-first after
+    // dedup of [C2, C1, C1] -> [C1, C2]).
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [
+        { id: "C2", is_member: true },
+        { id: "C1", is_member: true },
+        { id: "C1", is_member: true }, // duplicate -> uniqued
+      ],
+      response_metadata: { next_cursor: "" },
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "" },
+    });
+
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    // After single call: list ran (done_list with [C1, C2]), then history ran for
+    // C1 (no messages), advanced nextIdx to 1, returned hasMore=true because 1 < 2.
+    expect(res.hasMore).toBe(true);
+    const histCalls = fixture.fetchMock.bodiesFor(
+      "POST",
+      "https://slack.com/api/conversations.history",
+    );
+    expect(histCalls).toHaveLength(1);
+    expect((histCalls[0] as Record<string, unknown>)["channel"]).toBe("C1");
+  });
+
+  test("empty channels -> done_list with hasMore=false", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    expect(res.hasMore).toBe(false);
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("missing response_metadata -> defaults to empty next_cursor -> done_list", async () => {
+    // production: meta = asRecord(json["response_metadata"]) -> undefined when missing
+    // -> nextList = "" (the else branch). With non-empty ids, done_list falls through
+    // to history. Stage an empty-message history so the run completes cleanly.
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [{ id: "C1", is_member: true }],
+    });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "" },
+    });
+    const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
+    // After single call: list (done_list, ids=[C1]) -> history C1 -> nextIdx=1,
+    // hasMore = 1 < 1 = false.
+    expect(res.hasMore).toBe(false);
+    expect(res.itemsUpserted).toBe(0);
+  });
+
+  test("listCursor non-empty in cursor is forwarded as cursor param", async () => {
+    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+      ok: true,
+      channels: [],
+      response_metadata: { next_cursor: "" },
+    });
+    await createSlackSyncable(ENSURE_MCP).sync(
+      fixture.createSyncContext(),
+      encodeCursor({
+        phase: "list",
+        floorTs: "1.0",
+        ids: [], // empty so done_list with empty channels -> no history needed
+        nextIdx: 0,
+        hw: {},
+        listCursor: "page-N",
+        histCursor: null,
+        teamSubdomain: null,
+      }),
+    );
+    const bodies = fixture.fetchMock.bodiesFor("POST", "https://slack.com/api/conversations.list");
+    expect((bodies[0] as Record<string, unknown>)["cursor"]).toBe("page-N");
+  });
+});
