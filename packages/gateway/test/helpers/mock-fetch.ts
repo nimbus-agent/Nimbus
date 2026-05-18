@@ -29,6 +29,7 @@ export class MockFetch {
   /**
    * Stage a response. URL may be a literal string (exact match) or a RegExp.
    * The first stub that matches in registration order wins.
+   * A stub without `bodyMatch` matches any body; register more-specific stubs (with `bodyMatch`) BEFORE catch-all stubs for the same URL.
    *
    * @example
    * mock.respond("POST", "https://slack.com/api/auth.test", {
@@ -94,7 +95,16 @@ export class MockFetch {
   bodiesFor(method: string, urlPattern: string | RegExp): unknown[] {
     return this.calls
       .filter((c) => c.method === method.toUpperCase() && this.matchesUrl(urlPattern, c.url))
-      .map((c) => (c.body === null ? null : (JSON.parse(c.body) as unknown)));
+      .map((c) => {
+        if (c.body === null) return null;
+        try {
+          return JSON.parse(c.body) as unknown;
+        } catch {
+          throw new Error(
+            `MockFetch.bodiesFor: body is not valid JSON for ${c.method} ${c.url} — raw: ${c.body.slice(0, 120)}`,
+          );
+        }
+      });
   }
 
   private async handle(input: string | URL | Request, init?: RequestInit): Promise<Response> {
