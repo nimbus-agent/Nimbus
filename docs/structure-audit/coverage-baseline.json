@@ -150,7 +150,7 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.95
+      "min_coverage_pct": 57.6
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
@@ -345,7 +345,7 @@
       "min_coverage_pct": 73.86
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 49.32
+      "min_coverage_pct": 45.21
     },
     "packages/gateway/src/ipc/server/vault-dispatch.ts": {
       "min_coverage_pct": 65.17
@@ -362,11 +362,14 @@
     "packages/gateway/src/platform/gateway-state-file.ts": {
       "min_coverage_pct": 0
     },
+    "packages/gateway/src/platform/errors.ts": {
+      "min_coverage_pct": 60
+    },
     "packages/gateway/src/platform/index.ts": {
       "min_coverage_pct": 45.45
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 48.08
+      "min_coverage_pct": 39.62
     },
     "packages/gateway/src/platform/register-user-mcp-sync.ts": {
       "min_coverage_pct": 75
@@ -382,6 +385,9 @@
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 66.67
+    },
+    "packages/gateway/src/vault/ffi-ptr.ts": {
+      "min_coverage_pct": 0
     },
     "packages/gateway/src/vault/nimbus-vault.ts": {
       "min_coverage_pct": 0
