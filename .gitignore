@@ -140,9 +140,6 @@ nimbus-*.deb
 nimbus-*.AppImage
 nimbus
 
-# Git worktrees
-.worktrees/
-
 # Per-run audit-orchestrator output (committed artifacts are tracked separately)
 docs/structure-audit/run-*.json
 

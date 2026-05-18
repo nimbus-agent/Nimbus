@@ -216,7 +216,52 @@ nimbus expert --json src/billing/retry.ts
 
 **Read-only:** never triggers HITL, never makes a live API call — answered entirely from the local index.
 
-> **Other built-in agents:** `nimbus impact <file-or-PR-url>` (reverse-dependency blast radius, shipped 2026-05-09) and `nimbus catchup --since <duration>` (personalized retrospective digest, shipped 2026-05-10) are also available — run `nimbus help` for usage, or see [`docs/roadmap.md#team-intelligence`](./roadmap.md#team-intelligence) for design notes.
+---
+
+### `nimbus impact`
+
+Answer "if I change this, what breaks?" — reverse-dependency blast radius across five categories: services that import the affected module (via indexed code symbols and `depends_on` graph edges), pipelines that would rebuild (via `pipeline_run` items linked to the repo), dashboards pulling from affected data models (via `upstream_refs` graph edges), API endpoints exposed by the affected service (via the OpenAPI indexer's `api_endpoint → service` edges), and on-call rotations that own the affected services (via PagerDuty schedules). Five parallel sub-agents over the relationship graph.
+
+```bash
+nimbus impact src/billing/retry.ts
+nimbus impact https://github.com/acme/payment-service/pull/312
+nimbus impact --json --service payment-service src/billing/retry.ts
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | Restrict the report to a single service id |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** structured blast-radius report grouped by category (services / pipelines / dashboards / endpoints / on-call), with gap notes when the local index lacks a connector or relation needed for a confident answer.
+
+**Read-only:** never triggers HITL, never makes a live API call. Built entirely on the Phase 3 relationship graph substrate — no new connectors required.
+
+---
+
+### `nimbus catchup`
+
+Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike `nimbus changelog` (service-scoped and uniform), `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
+
+```bash
+nimbus catchup
+nimbus catchup --since 7d
+nimbus catchup --since 24h --service payment-service --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Window to summarise (default: `3d`); accepts `<n>d` / `<n>h` |
+| `--service <id>` | Restrict the digest to a single service |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** sections per service, prioritized by a per-section relevance score; each section lists recent items (PRs, incidents, threads, tickets) with one-line context.
+
+**Read-only:** never triggers HITL, never makes a live API call.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-17T18:17:25.907Z",
+  "generated_at": "2026-05-17T19:32:07.429Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -269,9 +269,6 @@
     "packages/gateway/src/connectors/sentry-sync.ts": {
       "min_coverage_pct": 30.49
     },
-    "packages/gateway/src/connectors/slack-sync.ts": {
-      "min_coverage_pct": 4.35
-    },
     "packages/gateway/src/connectors/sync-iso-helpers.ts": {
       "min_coverage_pct": 75
     },
@@ -307,12 +304,6 @@
     },
     "packages/gateway/src/embedding/worker-bridge.ts": {
       "min_coverage_pct": 46.49
-    },
-    "packages/gateway/src/engine/agent.ts": {
-      "min_coverage_pct": 56.13
-    },
-    "packages/gateway/src/engine/router.ts": {
-      "min_coverage_pct": 5.99
     },
     "packages/gateway/src/index/item-list-query.ts": {
       "min_coverage_pct": 75
@@ -368,11 +359,11 @@
     "packages/gateway/src/people/parse-from-header.ts": {
       "min_coverage_pct": 74.39
     },
-    "packages/gateway/src/platform/errors.ts": {
-      "min_coverage_pct": 60
-    },
     "packages/gateway/src/platform/gateway-state-file.ts": {
       "min_coverage_pct": 0
+    },
+    "packages/gateway/src/platform/errors.ts": {
+      "min_coverage_pct": 60
     },
     "packages/gateway/src/platform/index.ts": {
       "min_coverage_pct": 45.45

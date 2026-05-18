@@ -174,7 +174,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 3 (shipped):** Jenkins, GitHub Actions, CircleCI, GitLab CI, AWS, Azure, GCP, Kubernetes, Terraform/Pulumi/CloudFormation, Datadog, Grafana, Sentry, PagerDuty, New Relic
 
-**Phase 5 (planned):** Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
+**Phase 5 (in flight):** Obsidian vault + OpenAPI / AsyncAPI spec indexer (Wave A, shipped). Planned: Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
 
 **Phase 6 (planned, Team tier):** Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye (SSO-gated warehouse, BI, and data-quality connectors; depends on Team Vault)
 
@@ -214,10 +214,35 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 
 **Landed since `v0.1.0` (Phase 5 in flight):**
 
-- **`nimbus expert <topic-or-file>`** — first built-in agent: ranks team members with the most context on a file or topic from indexed PR authorship, review history, and incident involvement. Read-only, no HITL. T3 Team Intelligence PR 1 (2026-05-09).
-- **`nimbus impact <file-or-PR-url>`** — second built-in agent: reverse-dependency blast radius across services, pipelines, dashboards, and on-call rotations. Five parallel sub-agents over the relationship graph. Read-only, no HITL. `--json` for CI integration. T3 Team Intelligence PR 2 (2026-05-09).
-- **`nimbus catchup --since <duration>`** — third built-in agent: personalized retrospective digest weighted by the user's historical involvement (services owned, repos contributed to, incidents responded to). Five parallel sub-agents over the local index; three-tier self-person resolver (override → git email → OS username). Read-only, no HITL. `--json` for CI integration. T3 Team Intelligence PR 3 (2026-05-10) — closes the T3 epic.
+*Team Intelligence built-in agents (T3, closed 2026-05-10):*
+
+- **`nimbus expert <topic-or-file>`** — first built-in agent: ranks team members with the most context on a file or topic from indexed PR authorship, review history, and incident involvement. Read-only, no HITL. T3 PR 1 (2026-05-09).
+- **`nimbus impact <file-or-PR-url>`** — second built-in agent: reverse-dependency blast radius across services, pipelines, dashboards, and on-call rotations. Five parallel sub-agents over the relationship graph. Read-only, no HITL. `--json` for CI integration. T3 PR 2 (2026-05-09).
+- **`nimbus catchup --since <duration>`** — third built-in agent: personalized retrospective digest weighted by the user's historical involvement (services owned, repos contributed to, incidents responded to). Five parallel sub-agents over the local index; three-tier self-person resolver (override → git email → OS username). Read-only, no HITL. `--json` for CI integration. T3 PR 3 (2026-05-10) — closes the T3 epic.
 - **Parallel sub-agent dispatch** — `AgentCoordinator.executeAll` now runs sub-tasks concurrently rather than sequentially.
+
+*Wave A — locally-rooted indexers (2026-05-10):*
+
+- **OpenAPI / AsyncAPI spec indexer** — crawls `[[filesystem.roots]]` for `openapi.{yaml,yml,json}`, `swagger.*`, and `asyncapi.*` files; indexes each operation as an `api_endpoint` item with method, path, tags, and service inferred from `nimbus.openapi.toml` overrides or the spec's `info.title`. Emits `api_endpoint → service` graph edges so `nimbus impact` reports include API-surface ramifications. V25 migration. Fully local — no outbound call.
+- **Obsidian vault connector** — indexes Markdown vaults discovered via `[[filesystem.roots]]`: frontmatter, backlinks, daily notes. `obsidian_note` item type; `backlinks` edge type. The append-to-daily-note write tool is HITL-gated. V26 migration.
+
+*CI/CD data layer (T4, 2026-05-12 → 2026-05-16):*
+
+- **`nimbus metrics dora`** — four DORA metrics (deployment frequency, lead time, change failure rate, MTTR) computed locally from indexed deploys, PRs, and PagerDuty incidents. T4 PR 2 (2026-05-12).
+- **`nimbus deploy preflight`** / `nimbus-dev/query-action` — pre-deploy index check: counts active P1 incidents, failing CI on target ref, and open PR conflicts. T4 PR 3a (2026-05-13).
+- **`nimbus deploy annotate`** / `nimbus-dev/annotate-action` — post-deploy annotation via `POST /v1/deployments`, the only HTTP write route Nimbus accepts (invariant `I13`: compile-time allowlist + bearer auth + per-token rate limit + audit-on-rejection). T4 PR 3b (2026-05-14).
+- **PagerDuty enrichment + pagination + `severity_p1_aliases`** — T4 wrap-up (2026-05-14, 2026-05-16). DORA CFR/MTTR and Preflight active-P1 now compute against real PagerDuty data; org-specific severity strings (`"Critical"`, `"SEV-1"`) opt in via config.
+
+*B1 hardening + semantic layer prep (T6, 2026-05-14 → 2026-05-16):*
+
+- **Invariant `I10` consolidation** — `util/timing-safe-compare.ts` is now the canonical constant-time compare; LAN pairing, HTTP bearer auth, extension verify, and updater all consume it. T6 PR 1.
+- **`tool_call_log` (V29) + `audit.toolCalls` IPC** — forensic complement to invariant `I11`: every `<tool_output>` envelope is recorded for after-the-fact reconstruction. Read surface is IPC-only — not LAN-callable, not in the Tauri allowlist, not on the HTTP API. T6 PR 2.
+- **Hybrid embeddings (`vec_items_1536`, V30) + `nimbus index reembed`** — per-`(service, type)` routing sends prose-heavy items to OpenAI `text-embedding-3-small` (1536-dim) while keeping sparse / structured items on local MiniLM (384-dim). Missing `openai.api_key` falls back to MiniLM-only — the gateway never refuses to start. Selective backfill via the CLI; long-running with cancellable progress notifications. T6 PR 3.
+- **Typed `dbRun` / `dbExec` migration — invariant `I14`** — 163 direct `db.run` / `db.exec` / `stmt.run` sites migrated to the central wrappers; `SQLITE_FULL` now surfaces as a typed `DiskFullError` instead of being swallowed. Static-audit rule `D12` blocks regressions at CI time. T6 PR 4.
+
+*Extension sandbox (T2 PR 1, 2026-05-17):*
+
+- **Per-OS sandbox runner — invariant `I15`** — every lazy-mesh extension spawn is routed through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)`. Linux: bwrap user/PID/IPC/mount/network namespaces + seccomp BPF + per-host iptables via `nimbus-sandbox-helper`. macOS: `sandbox-exec` SBPL profile. Windows: AppContainer + `internetClient` capability + orphan-reap for leftover profiles. Manifest-declared `permissions.{network,filesystem}` define the allowed surface; everything else is kernel-denied. Static-audit rule `D10` catches missed wrapping at CI time. Pre-T2 extensions are hard-disabled until reinstalled.
 
 See [`docs/roadmap.md`](./roadmap.md) for the full delivery list and [`docs/cli-reference.md`](./cli-reference.md) for the complete CLI command reference.
 

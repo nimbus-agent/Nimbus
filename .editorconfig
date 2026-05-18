@@ -18,10 +18,6 @@ max_line_length = 100
 trim_trailing_whitespace = false
 max_line_length = off
 
-[*.mdc]
-trim_trailing_whitespace = false
-max_line_length = off
-
 [*.rs]
 indent_size = 4
 
