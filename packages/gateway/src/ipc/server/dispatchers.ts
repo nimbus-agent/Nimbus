@@ -544,7 +544,7 @@ export async function tryDispatchAutomationRpc(
       throw new RpcMethodError(-32603, "Local index is not available");
     }
     try {
-      const out = dispatchAutomationRpc({
+      const out = await dispatchAutomationRpc({
         method,
         params,
         db: ctx.options.localIndex.getDatabase(),
@@ -554,6 +554,15 @@ export async function tryDispatchAutomationRpc(
         // S7-F10 — pass the mesh so extension.disable can terminate the
         // running child immediately (fire-and-forget inside the dispatcher).
         ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
+        // I16 — signed-extension install path needs the vault (publisher key cache),
+        // a registry fetcher (when network is permitted), and the air-gap flag.
+        vault: ctx.options.vault,
+        ...(ctx.options.extensionsPublisherKeyFetcher === undefined
+          ? {}
+          : { fetcher: ctx.options.extensionsPublisherKeyFetcher }),
+        ...(ctx.options.extensionsEnforceAirGap === undefined
+          ? {}
+          : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       });
       if (out.kind === "hit") {
         return out.value;

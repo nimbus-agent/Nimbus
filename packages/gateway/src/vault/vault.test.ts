@@ -26,6 +26,13 @@ describe("vault key validation", () => {
     expect(isWellFormedVaultKey("google_drive.oauth")).toBe(true);
   });
 
+  test("accepts N-segment keys with publisher-id char set in trailing segments (T2 PR 2)", () => {
+    expect(isWellFormedVaultKey("extension.publisher_key.foo")).toBe(true);
+    expect(isWellFormedVaultKey("extension.publisher_key.nimbus.test")).toBe(true);
+    expect(isWellFormedVaultKey("extension.publisher_key.acme-corp")).toBe(true);
+    expect(isWellFormedVaultKey("extension.publisher_key.0abc")).toBe(true);
+  });
+
   test("rejects empty and oversize keys", () => {
     expect(isWellFormedVaultKey("")).toBe(false);
     expect(isWellFormedVaultKey(`${"x".repeat(255)}.y`)).toBe(false);
@@ -35,9 +42,10 @@ describe("vault key validation", () => {
     expect(isWellFormedVaultKey(".oauth")).toBe(false);
     expect(isWellFormedVaultKey("gmail.")).toBe(false);
     expect(isWellFormedVaultKey("gmail..oauth")).toBe(false);
-    expect(isWellFormedVaultKey("gmail.oauth.extra")).toBe(false);
     expect(isWellFormedVaultKey("9mail.oauth")).toBe(false);
     expect(isWellFormedVaultKey("gmail.o auth")).toBe(false);
+    expect(isWellFormedVaultKey("extension.publisher_key.")).toBe(false);
+    expect(isWellFormedVaultKey("extension.publisher_key.UPPER")).toBe(false);
   });
 
   // S2-F7 — mixed-case keys would silently collide on case-insensitive

@@ -3,7 +3,7 @@ import { constantTimeStringEqual, sha256HexEqualConstantTime } from "./timing-sa
 
 const HEX_A = "a".repeat(64);
 const HEX_B = "b".repeat(64);
-const HEX_OFF_BY_ONE = "a".repeat(32) + "b" + "a".repeat(31);
+const HEX_OFF_BY_ONE = `${"a".repeat(32)}b${"a".repeat(31)}`;
 
 // ─── sha256HexEqualConstantTime — regression-lock from hex-compare.ts ────────
 
@@ -88,6 +88,6 @@ describe("constantTimeStringEqual", () => {
     // Locks in compatibility for http-auth's existing call site (long opaque token).
     const t = "n1mb_dep1oy_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     expect(constantTimeStringEqual(t, t)).toBe(true);
-    expect(constantTimeStringEqual(t, t.slice(0, -1) + "Z")).toBe(false);
+    expect(constantTimeStringEqual(t, `${t.slice(0, -1)}Z`)).toBe(false);
   });
 });

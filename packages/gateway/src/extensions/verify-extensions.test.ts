@@ -1,14 +1,23 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
+import pino, { type Logger } from "pino";
 
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import {
+  setupFreshExtensionDb,
+  stageSignedExtensionOnDisk,
+} from "../../test/fixtures/extension.ts";
+import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
+import { signatureDisabledRegistry } from "./hard-disable.ts";
+import { writePublisherKey } from "./publisher-keys.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
+import { generateEd25519Keypair } from "./verify-signature.ts";
 
 function memoryLogger(): { logger: Logger; warns: unknown[]; errors: unknown[] } {
   const warns: unknown[] = [];
@@ -177,5 +186,100 @@ describe("verifyOneExtensionStrict (S7-F3)", () => {
       "utf8",
     );
     expect(verifyOneExtensionStrict(row)).toBe(false);
+  });
+});
+
+const silentLogger = pino({ level: "silent" });
+
+describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
+  beforeEach(() => signatureDisabledRegistry.reset());
+
+  test("signed manifest with cached key passes", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writePublisherKey(vault, "test-pub", pubkey);
+    await stageSignedExtensionOnDisk({
+      db,
+      extensionsDir,
+      publisherId: "test-pub",
+      pubkey,
+      privkey,
+    });
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    const row = listExtensions(db).find((r) => r.id === "ext-test-pub");
+    expect(row?.enabled).toBe(1);
+    expect(signatureDisabledRegistry.count()).toBe(0);
+  });
+
+  test("vault key missing → row disabled + registry marked publisher_key_missing", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await stageSignedExtensionOnDisk({
+      db,
+      extensionsDir,
+      publisherId: "test-pub",
+      pubkey,
+      privkey,
+    });
+    // intentionally skip writePublisherKey
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    const row = listExtensions(db).find((r) => r.id === "ext-test-pub");
+    expect(row?.enabled).toBe(0);
+    expect(signatureDisabledRegistry.reasonFor("ext-test-pub")).toBe("publisher_key_missing");
+  });
+
+  test("tampered manifest (post-signing edit) → row disabled + signature_failed", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writePublisherKey(vault, "test-pub", pubkey);
+    const installPath = await stageSignedExtensionOnDisk({
+      db,
+      extensionsDir,
+      publisherId: "test-pub",
+      pubkey,
+      privkey,
+    });
+    // Tamper with version. Re-stamp manifest_hash so the existing
+    // SHA-256 sweep doesn't catch the row via a different code path.
+    const mfPath = join(installPath, "nimbus.extension.json");
+    const orig = JSON.parse(readFileSync(mfPath, "utf8")) as Record<string, unknown>;
+    orig["version"] = "9.9.9";
+    writeFileSync(mfPath, JSON.stringify(orig));
+    const newHash = createHash("sha256").update(readFileSync(mfPath)).digest("hex");
+    dbRun(db, "UPDATE extension SET manifest_hash = ? WHERE id = ?", [newHash, "ext-test-pub"]);
+
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+
+    const row = listExtensions(db).find((r) => r.id === "ext-test-pub");
+    expect(row?.enabled).toBe(0);
+    expect(signatureDisabledRegistry.reasonFor("ext-test-pub")).toBe("signature_failed");
+  });
+
+  test("unsigned extension is unaffected by the new path", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const vault = new MockVault();
+    const id = "ext-legacy";
+    mkdirSync(join(extensionsDir, id, "dist"), { recursive: true });
+    const mfBytes = Buffer.from(JSON.stringify({ id, version: "1.0.0", permissions: {} }), "utf8");
+    writeFileSync(join(extensionsDir, id, "nimbus.extension.json"), mfBytes);
+    const entryText = "export default {};";
+    writeFileSync(join(extensionsDir, id, "dist", "index.js"), entryText);
+    insertExtensionRow(db, {
+      id,
+      version: "1.0.0",
+      install_path: join(extensionsDir, id),
+      manifest_hash: createHash("sha256").update(mfBytes).digest("hex"),
+      entry_hash: createHash("sha256").update(entryText).digest("hex"),
+      enabled: 1,
+      installed_at: Date.now(),
+      last_verified_at: Date.now(),
+    });
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    const row = listExtensions(db).find((r) => r.id === id);
+    expect(row?.enabled).toBe(1);
+    expect(signatureDisabledRegistry.count()).toBe(0);
   });
 });

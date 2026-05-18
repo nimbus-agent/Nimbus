@@ -111,7 +111,7 @@ describe("startMetricsServer", () => {
     runIndexedSchemaMigrations(escapeDb, 30);
     const now = Date.now();
     // Service name carrying every Prometheus-sensitive character at once.
-    const wild = String.raw`tricky"name\with` + "\nnewline";
+    const wild = `${String.raw`tricky"name\with`}\nnewline`;
     escapeDb.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES (?, ?, 'doc', 'x', 't', ?, ?)`,

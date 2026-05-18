@@ -373,7 +373,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // child. Must run AFTER mesh creation; the mesh handle did not exist
   // pre-G7 so this call was placed before mesh creation in the original
   // wiring.
-  await verifyExtensionsBestEffort(db, syncLogger, connectorMesh);
+  await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
   rt?.startBackgroundJobs();
   const ipcOpts: Parameters<typeof createIpcServer>[0] = {
     listenPath: paths.socketPath,

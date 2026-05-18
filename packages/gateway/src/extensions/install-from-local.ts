@@ -29,11 +29,17 @@ export function resolveSystemTarCommand(): string {
 }
 
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { appendAuditEntry } from "../db/audit-chain.ts";
+import type { NimbusVault } from "../vault/index.ts";
 import {
   type ExtensionManifest,
+  parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
+import type { PublisherKeyFetcher } from "./registry-client.ts";
+import { verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -76,23 +82,86 @@ export function extensionInstallDirectory(extensionsDir: string, extensionId: st
   return join(extensionsDir, ...parts);
 }
 
-function completeExtensionInstallAfterCopy(options: {
+async function completeExtensionInstallAfterCopy(options: {
   db: Database;
   dest: string;
   manifest: ExtensionManifest;
-}): InstallExtensionFromLocalResult {
+  vault?: NimbusVault;
+  fetcher?: PublisherKeyFetcher;
+  enforceAirGap?: boolean;
+  publisherKeyPath?: string;
+}): Promise<InstallExtensionFromLocalResult> {
   const destManifestPath = resolveExtensionManifestPath(options.dest);
   if (destManifestPath === undefined) {
     throw new Error("extension manifest missing after copy");
   }
   const destManifestBytes = readFileSync(destManifestPath);
   const manifestHex = sha256HexOfBytes(destManifestBytes);
-  const destManifest = parseExtensionManifestJson(destManifestBytes.toString("utf8"));
+  const destManifestText = destManifestBytes.toString("utf8");
+  // Use the registry parser so we see publisher + signature fields if present.
+  const { manifest: destManifest } = parseExtensionManifestForRegistry(destManifestText);
   if (
     destManifest.id !== options.manifest.id ||
     destManifest.version !== options.manifest.version
   ) {
     throw new Error("manifest id/version changed across copy");
+  }
+
+  // I16 — signed-manifest verification. Only fires when the manifest has a
+  // publisher block; unsigned manifests install unchanged.
+  if (destManifest.publisher !== undefined) {
+    if (options.vault === undefined || options.fetcher === undefined) {
+      throw new Error(
+        "signed-extension install requires vault and publisher key fetcher to be wired",
+      );
+    }
+    const publisherId = destManifest.publisher.id;
+    // Re-parse the raw manifest bytes from disk so we sign over the *exact*
+    // canonicalized bytes the verifier will see (matches the on-disk JSON).
+    const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
+    const vault = options.vault;
+    try {
+      const resolvedPubkey = await resolvePublisherKey({
+        publisherId,
+        explicitKeyPath: options.publisherKeyPath,
+        vault,
+        fetcher: options.fetcher,
+        enforceAirGap: options.enforceAirGap ?? false,
+      });
+      await verifyManifestSignature(
+        rawManifestObj as {
+          publisher?: { id: string; key: string };
+          signature?: string;
+          [k: string]: unknown;
+        },
+        resolvedPubkey,
+      );
+      // Success — cache the resolved pubkey + write the verified audit row.
+      await writePublisherKey(vault, publisherId, resolvedPubkey);
+      appendAuditEntry(options.db, {
+        actionType: "extension.signature_verified",
+        hitlStatus: "not_required",
+        actionJson: JSON.stringify({
+          id: options.manifest.id,
+          publisher_id: publisherId,
+          verified_at_ms: Date.now(),
+        }),
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      appendAuditEntry(options.db, {
+        actionType: "extension.signature_failed",
+        hitlStatus: "not_required",
+        actionJson: JSON.stringify({
+          id: options.manifest.id,
+          publisher_id: publisherId,
+          error: err instanceof Error ? err.name : "Unknown",
+          message: err instanceof Error ? err.message : String(err),
+        }),
+        timestamp: Date.now(),
+      });
+      throw err;
+    }
   }
 
   const entryRelRaw =
@@ -218,19 +287,29 @@ function extractTarGzToDirectory(archivePath: string, destDir: string): void {
   assertNoEntryEscapes(destDir);
 }
 
-function installExtensionFromArchive(options: {
+async function installExtensionFromArchive(options: {
   db: Database;
   extensionsDir: string;
   archivePath: string;
-}): InstallExtensionFromLocalResult {
+  vault?: NimbusVault;
+  fetcher?: PublisherKeyFetcher;
+  enforceAirGap?: boolean;
+  publisherKeyPath?: string;
+}): Promise<InstallExtensionFromLocalResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
     extractTarGzToDirectory(options.archivePath, tmp);
     const root = findExtensionSourceRootInTree(tmp);
-    return installExtensionFromLocalDirectory({
+    return await installExtensionFromLocalDirectory({
       db: options.db,
       extensionsDir: options.extensionsDir,
       sourcePath: root,
+      ...(options.vault !== undefined && { vault: options.vault }),
+      ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+      ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+      ...(options.publisherKeyPath !== undefined && {
+        publisherKeyPath: options.publisherKeyPath,
+      }),
     });
   } finally {
     try {
@@ -280,11 +359,19 @@ export type InstallExtensionFromLocalResult = {
  * Copies a local extension directory (or extracts `.tar.gz` / `.tgz`) into `extensionsDir`,
  * computes manifest/entry hashes, inserts DB row. Rolls back the copy if the DB insert fails.
  */
-export function installExtensionFromLocalDirectory(options: {
+export async function installExtensionFromLocalDirectory(options: {
   db: Database;
   extensionsDir: string;
   sourcePath: string;
-}): InstallExtensionFromLocalResult {
+  /** Vault used to cache verified publisher pubkeys (I16). */
+  vault?: NimbusVault;
+  /** Registry client used to fetch unknown publisher pubkeys (I16). */
+  fetcher?: PublisherKeyFetcher;
+  /** When true, never reach the registry; rely on vault cache or explicit key. */
+  enforceAirGap?: boolean;
+  /** Path to a 44-char base64 publisher public-key file (`--publisher-key`). */
+  publisherKeyPath?: string;
+}): Promise<InstallExtensionFromLocalResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
     throw new Error("extension source path does not exist");
@@ -295,10 +382,16 @@ export function installExtensionFromLocalDirectory(options: {
     if (!lower.endsWith(".tar.gz") && !lower.endsWith(".tgz")) {
       throw new Error("extension source file must be a .tar.gz or .tgz archive");
     }
-    return installExtensionFromArchive({
+    return await installExtensionFromArchive({
       db: options.db,
       extensionsDir: options.extensionsDir,
       archivePath: sourceResolved,
+      ...(options.vault !== undefined && { vault: options.vault }),
+      ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+      ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+      ...(options.publisherKeyPath !== undefined && {
+        publisherKeyPath: options.publisherKeyPath,
+      }),
     });
   }
   if (!st.isDirectory()) {
@@ -335,7 +428,17 @@ export function installExtensionFromLocalDirectory(options: {
   }
 
   try {
-    return completeExtensionInstallAfterCopy({ db: options.db, dest, manifest });
+    return await completeExtensionInstallAfterCopy({
+      db: options.db,
+      dest,
+      manifest,
+      ...(options.vault !== undefined && { vault: options.vault }),
+      ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+      ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+      ...(options.publisherKeyPath !== undefined && {
+        publisherKeyPath: options.publisherKeyPath,
+      }),
+    });
   } catch (e) {
     try {
       rmSync(dest, { recursive: true, force: true });

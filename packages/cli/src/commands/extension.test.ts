@@ -40,6 +40,8 @@ afterAll(() => {
 const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
+  formatExtensionInfoHuman,
+  formatExtensionListTable,
   hasFlag,
   runExtension,
   runExtensionDisable,
@@ -115,6 +117,9 @@ describe("stripFlags", () => {
   test("removes --filter + value pair", () => {
     expect(stripFlags(["info", "--filter", "needs-reinstall", "id"])).toEqual(["info", "id"]);
   });
+  test("removes --publisher-key + value pair", () => {
+    expect(stripFlags(["install", "/p", "--publisher-key", "/tmp/k"])).toEqual(["install", "/p"]);
+  });
   test("preserves non-flag positional args", () => {
     expect(stripFlags(["install", "/some/path"])).toEqual(["install", "/some/path"]);
   });
@@ -153,7 +158,7 @@ describe("runExtensionList", () => {
     expect(captured.some((l) => l.includes("(no extensions installed)"))).toBe(true);
   });
 
-  test("prints id@version per row with needs-reinstall + disabled suffixes", async () => {
+  test("renders tabular rows + preserves [needs-reinstall] annotation lines", async () => {
     const { client } = mockClient([
       {
         extensions: [
@@ -165,8 +170,14 @@ describe("runExtensionList", () => {
     ]);
     await runExtensionList(client, ["list"]);
     const out = captured.join("\n");
-    expect(out).toContain("a.b@1.0.0");
-    expect(out).toContain("c.d@2.0.0 (disabled)");
+    // New tabular format: ID | Version | Publisher | Status
+    expect(out).toMatch(/ID\s+Version\s+Publisher\s+Status/);
+    expect(out).toContain("a.b");
+    expect(out).toContain("1.0.0");
+    expect(out).toContain("c.d");
+    expect(out).toContain("disabled");
+    expect(out).toContain("(unverified)");
+    // needs-reinstall annotation lines are preserved for grep-based scripts.
     expect(out).toContain("e.f@3.0.0 [needs-reinstall]");
   });
 
@@ -487,4 +498,164 @@ describe("runExtension top-level dispatcher", () => {
   // info, install, enable, disable, remove) requires a connectable IPC
   // socket. Those branches are intentionally left to e2e tests; the
   // per-handler logic above already covers the meaningful code paths.
+});
+
+// ----------------------------- runExtensionInstall --publisher-key (T2 PR 2) -
+
+describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
+  const origIsTty = process.stdout.isTTY;
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: origIsTty,
+    });
+  });
+
+  test("forwards --publisher-key path through to extension.install IPC params", async () => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    const { client, calls } = mockClient([{ id: "ext-a", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(
+      client,
+      ["install", "/path/to/ext", "--publisher-key", "/tmp/pub.key", "--yes"],
+      ["/path/to/ext"],
+    );
+    expect(calls[0]?.method).toBe("extension.install");
+    expect(calls[0]?.params).toMatchObject({ publisherKeyPath: "/tmp/pub.key" });
+  });
+
+  test("does NOT include publisherKeyPath when flag is absent", async () => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    const { client, calls } = mockClient([{ id: "ext-a", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(client, ["install", "/path/to/ext", "--yes"], ["/path/to/ext"]);
+    expect(calls[0]?.method).toBe("extension.install");
+    const params = calls[0]?.params as Record<string, unknown>;
+    expect(params["publisherKeyPath"]).toBeUndefined();
+  });
+});
+
+// ----------------------------- formatExtensionListTable (T2 PR 2) ----------
+
+describe("formatExtensionListTable (T2 PR 2)", () => {
+  test("renders header with ID | Version | Publisher | Status", () => {
+    const out = formatExtensionListTable(
+      [
+        { id: "ext-a", version: "1.0.0", enabled: 1, publisher: { id: "pub-a", key: "AAA" } },
+        { id: "ext-b", version: "0.5.1", enabled: 1 },
+      ],
+      { isTty: false, noColor: true },
+    );
+    expect(out).toMatch(/ID\s+Version\s+Publisher\s+Status/);
+    expect(out).toContain("ext-a");
+    expect(out).toContain("pub-a");
+    expect(out).toContain("(unverified)");
+  });
+
+  test("(unverified) is wrapped in ANSI dim-yellow on TTY with NO_COLOR unset", () => {
+    const out = formatExtensionListTable([{ id: "ext-b", version: "0.5.1", enabled: 1 }], {
+      isTty: true,
+      noColor: false,
+    });
+    // ESC = U+001B; build via String.fromCharCode so the literal regex doesn't
+    // carry a control character (Biome `noControlCharactersInRegex`).
+    const ESC = String.fromCharCode(27);
+    expect(out).toMatch(new RegExp(`${ESC}\\[2;33m\\(unverified\\)\\s*${ESC}\\[0m`));
+  });
+
+  test("NO_COLOR=1 (noColor=true) disables ANSI codes even on TTY", () => {
+    const out = formatExtensionListTable([{ id: "ext-b", version: "0.5.1", enabled: 1 }], {
+      isTty: true,
+      noColor: true,
+    });
+    const ESC = String.fromCharCode(27);
+    expect(out).not.toMatch(new RegExp(`${ESC}\\[`));
+  });
+
+  test("disabled row shows 'disabled' in Status column", () => {
+    const out = formatExtensionListTable([{ id: "ext-c", version: "1.0.0", enabled: 0 }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(out).toContain("disabled");
+  });
+});
+
+// ----------------------------- formatExtensionInfoHuman (T2 PR 2) ----------
+
+describe("formatExtensionInfoHuman (T2 PR 2)", () => {
+  test("shows Publisher section with id + truncated key for signed extensions", () => {
+    const out = formatExtensionInfoHuman({
+      id: "ext-a",
+      version: "1.0.0",
+      publisher: { id: "pub-a", key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+    });
+    expect(out).toMatch(/Publisher:\s+pub-a/);
+    expect(out).toContain("AAAAAAAAAAAAAAAA…");
+  });
+
+  test("shows (unverified) for unsigned extensions", () => {
+    const out = formatExtensionInfoHuman({ id: "ext-b", version: "0.5.1" });
+    expect(out).toMatch(/Publisher:\s+\(unverified\)/);
+  });
+});
+
+// ----------------------------- runExtensionInfo --json (T2 PR 2) ----------
+
+describe("runExtensionInfo publisher (T2 PR 2)", () => {
+  test("human output includes Publisher section with truncated key", async () => {
+    const fullKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: fullKey },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-a"], ["info", "ext-a"]);
+    const out = captured.join("\n");
+    expect(out).toMatch(/Publisher:\s+pub-a/);
+    expect(out).toContain("AAAAAAAAAAAAAAAA…");
+    // Truncated, not full
+    expect(out).not.toContain(fullKey);
+  });
+
+  test("human output shows (unverified) when publisher absent", async () => {
+    const { client } = mockClient([
+      { extension: { id: "ext-b", version: "0.5.1", enabled: 1 } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-b"], ["info", "ext-b"]);
+    expect(captured.join("\n")).toMatch(/Publisher:\s+\(unverified\)/);
+  });
+
+  test("--json output includes full publisher.key (not truncated)", async () => {
+    const fullKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: fullKey },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-a"], ["info", "ext-a", "--json"]);
+    const parsed = JSON.parse(captured.join("\n")) as {
+      extension: { publisher: { id: string; key: string } };
+    };
+    expect(parsed.extension.publisher.id).toBe("pub-a");
+    expect(parsed.extension.publisher.key).toBe(fullKey);
+  });
 });

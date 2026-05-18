@@ -7,12 +7,21 @@ import { basename, dirname, join } from "node:path";
 
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
 import {
   assertSafeExtensionId,
   extensionInstallDirectory,
   installExtensionFromLocalDirectory,
   resolveSystemTarCommand,
 } from "./install-from-local.ts";
+import { readPublisherKey } from "./publisher-keys.ts";
+import {
+  encodeBase64,
+  generateEd25519Keypair,
+  PublisherKeyMismatch,
+  SignatureInvalid,
+  signManifest,
+} from "./verify-signature.ts";
 
 function createExtensionInstallFixture(
   tmpPrefix: string,
@@ -50,7 +59,7 @@ describe("install-from-local", () => {
     expect(extensionInstallDirectory(root, "@acme/demo")).toBe(join(root, "@acme", "demo"));
   });
 
-  test("installExtensionFromLocalDirectory copies, hashes, and inserts row", () => {
+  test("installExtensionFromLocalDirectory copies, hashes, and inserts row", async () => {
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-ext-",
       "src-ext",
@@ -66,7 +75,7 @@ describe("install-from-local", () => {
     );
     writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
 
-    const r = installExtensionFromLocalDirectory({
+    const r = await installExtensionFromLocalDirectory({
       db,
       extensionsDir,
       sourcePath: src,
@@ -85,7 +94,7 @@ describe("install-from-local", () => {
     expect(rows[0]?.entry_hash.length).toBe(64);
   });
 
-  test("legacy nimbus-extension.json is accepted", () => {
+  test("legacy nimbus-extension.json is accepted", async () => {
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-legacy-",
       "src",
@@ -97,11 +106,11 @@ describe("install-from-local", () => {
     );
     writeFileSync(join(src, "dist", "index.js"), "1\n", "utf8");
 
-    installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
     expect(listExtensions(db).length).toBe(1);
   });
 
-  test("installExtensionFromLocalDirectory accepts .tar.gz bundle", () => {
+  test("installExtensionFromLocalDirectory accepts .tar.gz bundle", async () => {
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-tgz-",
       "pkg-root",
@@ -122,7 +131,7 @@ describe("install-from-local", () => {
       });
       expect(pack.status).toBe(0);
 
-      const r = installExtensionFromLocalDirectory({
+      const r = await installExtensionFromLocalDirectory({
         db,
         extensionsDir,
         sourcePath: archive,
@@ -162,8 +171,146 @@ describe("install-from-local symlink + traversal hardening (G7)", () => {
     unlinkSync(sym);
     symlinkSync("/etc/hostname", sym);
 
-    expect(() =>
+    await expect(
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
-    ).toThrow(/symlink/i);
+    ).rejects.toThrow(/symlink/i);
+  });
+});
+
+async function writeSignedSource(opts: {
+  sourceDir: string;
+  id: string;
+  privkey: Uint8Array;
+  pubkey: Uint8Array;
+  publisherId?: string;
+}): Promise<void> {
+  mkdirSync(join(opts.sourceDir, "dist"), { recursive: true });
+  const manifest = {
+    id: opts.id,
+    version: "1.0.0",
+    permissions: {},
+    publisher: { id: opts.publisherId ?? "test-pub", key: encodeBase64(opts.pubkey) },
+  };
+  const signature = await signManifest(manifest, opts.privkey);
+  writeFileSync(
+    join(opts.sourceDir, "nimbus.extension.json"),
+    JSON.stringify({ ...manifest, signature }),
+  );
+  writeFileSync(join(opts.sourceDir, "dist", "index.js"), "export default {};");
+}
+
+describe("installExtensionFromLocalDirectory — signed extensions (I16)", () => {
+  test("rejects when publisher.key in manifest disagrees with --publisher-key file", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-sig-mismatch-",
+      "src",
+    );
+    const vault = new MockVault();
+    const signer = generateEd25519Keypair();
+    const otherKey = generateEd25519Keypair().pubkey;
+    await writeSignedSource({
+      sourceDir: src,
+      id: "test-ext-mismatch",
+      privkey: signer.privkey,
+      pubkey: signer.pubkey,
+    });
+    const keyDir = mkdtempSync(join(tmpdir(), "nimbus-pub-"));
+    const keyFile = join(keyDir, "pub.key");
+    writeFileSync(keyFile, `${encodeBase64(otherKey)}\n`);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src,
+          vault,
+          fetcher: { fetch: async () => ({ kind: "not_found" }) },
+          enforceAirGap: false,
+          publisherKeyPath: keyFile,
+        }),
+      ).rejects.toThrow(PublisherKeyMismatch);
+    } finally {
+      rmSync(keyDir, { recursive: true, force: true });
+    }
+  });
+
+  test("installs successfully when --publisher-key matches manifest publisher.key", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-sig-ok-",
+      "src",
+    );
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "test-ext-ok", privkey, pubkey });
+    const keyDir = mkdtempSync(join(tmpdir(), "nimbus-pub-"));
+    const keyFile = join(keyDir, "pub.key");
+    writeFileSync(keyFile, `${encodeBase64(pubkey)}\n`);
+    try {
+      const result = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        vault,
+        fetcher: { fetch: async () => ({ kind: "not_found" }) },
+        enforceAirGap: false,
+        publisherKeyPath: keyFile,
+      });
+      expect(result.id).toBe("test-ext-ok");
+      expect(await readPublisherKey(vault, "test-pub")).toEqual(pubkey);
+    } finally {
+      rmSync(keyDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses install when manifest tampered after signing", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-sig-tampered-",
+      "src",
+    );
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({
+      sourceDir: src,
+      id: "test-ext-tampered",
+      privkey,
+      pubkey,
+    });
+    const mfPath = join(src, "nimbus.extension.json");
+    const parsed = JSON.parse(readFileSync(mfPath, "utf8")) as Record<string, unknown>;
+    parsed["version"] = "9.9.9";
+    writeFileSync(mfPath, JSON.stringify(parsed));
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        vault,
+        fetcher: { fetch: async () => ({ kind: "ok", pubkey }) },
+        enforceAirGap: false,
+      }),
+    ).rejects.toThrow(SignatureInvalid);
+  });
+
+  test("unsigned manifest installs without writing publisher_key vault entry", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-unsigned-",
+      "src",
+    );
+    const vault = new MockVault();
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test-ext-unsigned", version: "1.0.0", permissions: {} }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export default {};");
+    const result = await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: src,
+      vault,
+      fetcher: { fetch: async () => ({ kind: "not_found" }) },
+      enforceAirGap: false,
+    });
+    expect(result.id).toBe("test-ext-unsigned");
+    expect(await readPublisherKey(vault, "test-pub")).toBeUndefined();
   });
 });

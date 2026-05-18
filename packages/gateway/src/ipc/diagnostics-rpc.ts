@@ -23,7 +23,7 @@ import { runReadOnlySelect, SqlGuardError } from "../db/query-guard.ts";
 import { formatRepairReport, repairIndex } from "../db/repair.ts";
 import { listSnapshots, previewRestore, pruneSnapshots, takeSnapshot } from "../db/snapshot.ts";
 import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
-import { preT2DisabledCount } from "../extensions/hard-disable.ts";
+import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
@@ -459,8 +459,13 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       auditLogTail: audit,
       // T2 PR 1 — pre-T2 extensions are hard-disabled at registry-load
       // time. Surface the count so operators can see how many extensions
-      // need to be reinstalled after the T2 upgrade.
-      extensions: { disabled_pre_t2: preT2DisabledCount() },
+      // need to be reinstalled after the T2 upgrade. T2 PR 2 adds the
+      // parallel `signature_disabled_count` from `SignatureDisabledRegistry`
+      // (every signed extension whose verification failed at startup).
+      extensions: {
+        disabled_pre_t2: preT2DisabledCount(),
+        signature_disabled_count: signatureDisabledRegistry.count(),
+      },
       // T2 PR 1 (Task 20) — operator-visible sandbox posture. Three fields
       // are intentionally separated: `platform_capabilities` is the live
       // posture, `linux_helper` is Linux-only structured detail, and

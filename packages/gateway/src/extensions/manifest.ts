@@ -43,7 +43,58 @@ export type ExtensionManifest = {
   entry?: string;
   /** Sandbox permission envelope (object form; legacy array → default-deny). */
   permissions: SandboxPermissions;
+  /** Verified-publisher identity (T2 PR 2). Paired with `signature`. */
+  publisher?: { id: string; key: string };
+  /** Base64 Ed25519 signature over the canonicalized manifest minus this field. */
+  signature?: string;
 };
+
+/** Allowed publisher id format. Matches the service-id pattern from CI/CD data layer. */
+const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** 32-byte Ed25519 pubkey in base64 standard encoding (with padding). */
+const PUBLISHER_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+
+/** 64-byte Ed25519 signature in base64 standard encoding (with padding). */
+const SIGNATURE_RE = /^[A-Za-z0-9+/]{86}==$/;
+
+function parsePublisher(value: unknown): { id: string; key: string } | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("extension manifest publisher must be an object");
+  }
+  const o = value as Record<string, unknown>;
+  const allowed = new Set(["id", "key"]);
+  for (const k of Object.keys(o)) {
+    if (!allowed.has(k)) {
+      throw new Error(`extension manifest publisher has unknown key: ${k}`);
+    }
+  }
+  const id = typeof o["id"] === "string" ? o["id"].trim() : "";
+  if (id === "" || id.length > 64 || !PUBLISHER_ID_RE.test(id)) {
+    throw new Error(
+      "extension manifest publisher.id is required and must match [a-z0-9][a-z0-9._-]* (max 64 chars)",
+    );
+  }
+  const key = typeof o["key"] === "string" ? o["key"].trim() : "";
+  if (!PUBLISHER_KEY_RE.test(key)) {
+    throw new Error(
+      "extension manifest publisher.key must be 44-char base64 of a 32-byte Ed25519 public key",
+    );
+  }
+  return { id, key };
+}
+
+function parseSignature(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error("extension manifest signature must be a string");
+  if (!SIGNATURE_RE.test(value)) {
+    throw new Error(
+      "extension manifest signature must be 88-char base64 of a 64-byte Ed25519 signature",
+    );
+  }
+  return value;
+}
 
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
   return parseExtensionManifestForRegistry(text).manifest;
@@ -85,6 +136,11 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
   const name = typeof o["name"] === "string" ? o["name"].trim() : undefined;
   const entry =
     typeof o["entry"] === "string" ? o["entry"].trim().replaceAll("\\", "/") : undefined;
+  const publisher = parsePublisher(o["publisher"]);
+  const signature = parseSignature(o["signature"]);
+  if ((publisher === undefined) !== (signature === undefined)) {
+    throw new Error("extension manifest must have publisher and signature together, or neither");
+  }
   // Pre-T2 detection MUST happen on the raw JSON value, before
   // `validateAndNormalizePermissions` collapses the legacy array form to
   // default-deny. After normalization the two cases are indistinguishable.
@@ -103,6 +159,8 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       ...(name !== undefined && name !== "" ? { name } : {}),
       ...(entry !== undefined && entry !== "" ? { entry } : {}),
       permissions,
+      ...(publisher !== undefined ? { publisher } : {}),
+      ...(signature !== undefined ? { signature } : {}),
     },
     isPreT2Legacy,
   };

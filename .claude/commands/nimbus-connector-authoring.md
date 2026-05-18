@@ -133,3 +133,55 @@ Then add the sync handler and register in the connector registry at `packages/ga
 - [ ] `nimbus test` passes (contract tests green).
 - [ ] Connector registered in `packages/gateway/src/connectors/registry.ts`.
 - [ ] Line coverage ≥ 70%.
+
+## Signing your extension (T2 PR 2)
+
+Every published extension SHOULD carry a `publisher` field + an embedded
+Ed25519 `signature` field. Pre-T2 unsigned extensions still work but show
+`(unverified)` in `nimbus extension list` and `nimbus extension info`.
+
+**Generate a publisher keypair** (one-time):
+
+```bash
+nimbus extension keygen --out ~/.nimbus/publisher-key
+```
+
+`--out` writes the base64-encoded 32-byte Ed25519 seed to the given path
+(mode `0600` on POSIX; best-effort on Windows). The matching public key is
+printed to stdout — register this with the Nimbus registry (or with whoever
+distributes your extension's public key).
+
+**Add `publisher` to your manifest** (`nimbus.extension.json`):
+
+```json
+{
+  "id": "com.example.my-extension",
+  "version": "0.1.0",
+  "permissions": { ... },
+  "publisher": {
+    "id": "my-publisher-id",
+    "key": "<your base64 pubkey from keygen>"
+  }
+}
+```
+
+**Sign the manifest** before publishing:
+
+```bash
+nimbus extension sign ./path/to/my-extension --key ~/.nimbus/publisher-key
+```
+
+This writes the `signature` field back into the manifest in place. Re-run
+after any manifest edit — the signature is over the canonicalized manifest
+minus the signature field, so any other change invalidates the signature.
+
+**Verification.** Both `nimbus extension install` and every Gateway startup
+verify the signature against the publisher key (cached in vault under
+`extension.publisher_key.<id>`). Verification failures refuse install or
+hard-disable the extension at startup with a structured reason
+(`publisher_key_missing`, `publisher_key_mismatch`, `signature_failed`, or
+`signature_malformed`). See `docs/SECURITY-INVARIANTS.md` §I16.
+
+For air-gap installs, ship the public key as a separate file and install
+with `--publisher-key <path>`. To refresh keys for already-installed
+extensions when the publisher rotates, run `nimbus extension sync`.

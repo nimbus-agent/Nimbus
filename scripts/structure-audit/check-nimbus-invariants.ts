@@ -27,6 +27,9 @@ export const VAULT_KEY_ALLOW_LIST = [
   // Canonical declaration of per-connector vault keys; structurally equivalent
   // to connector-vault.ts (declaration site, not runtime construction).
   "packages/gateway/src/connectors/connector-secrets-manifest.ts",
+  // T2 PR 2 — extension publisher-key vault cache. Constructs vault keys of
+  // the form `extension.publisher_key.<id>` for Ed25519 manifest verification.
+  "packages/gateway/src/extensions/publisher-keys.ts",
 ];
 
 // Match a Bun.spawn or child_process spawn call.

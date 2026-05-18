@@ -3,9 +3,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  setupFreshExtensionDb,
+  stageSignedExtensionOnDisk,
+} from "../../test/fixtures/extension.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { writePublisherKey } from "../extensions/publisher-keys.ts";
+import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
 
 function seededDb(): Database {
@@ -15,9 +22,9 @@ function seededDb(): Database {
 }
 
 describe("watcher.listCandidateRelations", () => {
-  test("returns the three logical kinds with underlying relation types", () => {
+  test("returns the three logical kinds with underlying relation types", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.listCandidateRelations",
       params: {},
       db,
@@ -36,9 +43,9 @@ describe("watcher.listCandidateRelations", () => {
 });
 
 describe("watcher.validateCondition", () => {
-  test("returns matchCount = 0 when graph has no edges", () => {
+  test("returns matchCount = 0 when graph has no edges", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.validateCondition",
       params: {
         graphPredicateJson: JSON.stringify({
@@ -54,7 +61,7 @@ describe("watcher.validateCondition", () => {
     expect((out.value as { matchCount: number }).matchCount).toBe(0);
   });
 
-  test("counts items matching the predicate within the since window", () => {
+  test("counts items matching the predicate within the since window", async () => {
     const db = seededDb();
     const t0 = 1_700_000_000_000;
     db.run(
@@ -76,7 +83,7 @@ describe("watcher.validateCondition", () => {
     });
     upsertGraphRelation(db, personId, prId, "authored", t0);
 
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.validateCondition",
       params: {
         graphPredicateJson: JSON.stringify({
@@ -92,18 +99,18 @@ describe("watcher.validateCondition", () => {
     expect((out.value as { matchCount: number }).matchCount).toBe(1);
   });
 
-  test("rejects malformed graphPredicateJson with RPC error -32602", () => {
+  test("rejects malformed graphPredicateJson with RPC error -32602", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "watcher.validateCondition",
         params: { graphPredicateJson: "not-json", sinceMs: 0 },
         db,
       }),
-    ).toThrow(/graph_predicate_json|JSON|relation/i);
+    ).rejects.toThrow(/graph_predicate_json|JSON|relation/i);
   });
 
-  test("does not leak item content in the response (matchCount only)", () => {
+  test("does not leak item content in the response (matchCount only)", async () => {
     const db = seededDb();
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
@@ -123,7 +130,7 @@ describe("watcher.validateCondition", () => {
       service: "github",
     });
     upsertGraphRelation(db, personId, prId, "authored", 1_700_000_000_000);
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.validateCondition",
       params: {
         graphPredicateJson: JSON.stringify({
@@ -141,7 +148,7 @@ describe("watcher.validateCondition", () => {
 });
 
 describe("watcher.listHistory", () => {
-  test("returns fires newest-first", () => {
+  test("returns fires newest-first", async () => {
     const db = seededDb();
     db.run(
       `INSERT INTO watcher (id, name, enabled, condition_type, condition_json, action_type, action_json, created_at)
@@ -151,7 +158,7 @@ describe("watcher.listHistory", () => {
       `INSERT INTO watcher_event (watcher_id, fired_at, condition_snapshot, action_result)
        VALUES ('w1', 10, '{"a":1}', '{"ok":true}'), ('w1', 20, '{"a":2}', '{"ok":true}')`,
     );
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.listHistory",
       params: { watcherId: "w1", limit: 5 },
       db,
@@ -163,20 +170,20 @@ describe("watcher.listHistory", () => {
     expect(value.events[0]?.firedAt).toBe(20);
   });
 
-  test("rejects missing watcherId", () => {
+  test("rejects missing watcherId", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "watcher.listHistory",
         params: { limit: 5 },
         db,
       }),
-    ).toThrow(AutomationRpcError);
+    ).rejects.toThrow(AutomationRpcError);
   });
 });
 
 describe("workflow.listRuns", () => {
-  test("returns last N runs newest-first", () => {
+  test("returns last N runs newest-first", async () => {
     const db = seededDb();
     db.run(
       `INSERT INTO workflow (id, name, description, steps_json, created_at, updated_at)
@@ -187,7 +194,7 @@ describe("workflow.listRuns", () => {
        VALUES ('r1', 'wf1', 'user', 'done', 10, 20, NULL, 0, NULL),
               ('r2', 'wf1', 'user', 'done', 30, 40, NULL, 0, NULL)`,
     );
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "workflow.listRuns",
       params: { workflowName: "alpha", limit: 5 },
       db,
@@ -203,9 +210,9 @@ describe("workflow.listRuns", () => {
 // ─── Dispatcher / unknown method ─────────────────────────────────────────────
 
 describe("dispatchAutomationRpc — dispatcher behavior", () => {
-  test("returns kind:miss for unknown method", () => {
+  test("returns kind:miss for unknown method", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.nonexistent",
       params: {},
       db,
@@ -213,7 +220,7 @@ describe("dispatchAutomationRpc — dispatcher behavior", () => {
     expect(out.kind).toBe("miss");
   });
 
-  test("AutomationRpcError carries rpcCode and message", () => {
+  test("AutomationRpcError carries rpcCode and message", async () => {
     const err = new AutomationRpcError(-32602, "boom");
     expect(err.rpcCode).toBe(-32602);
     expect(err.message).toBe("boom");
@@ -224,9 +231,9 @@ describe("dispatchAutomationRpc — dispatcher behavior", () => {
 // ─── watcher.list / create / pause / resume / delete ─────────────────────────
 
 describe("watcher.list", () => {
-  test("returns empty list on a fresh db", () => {
+  test("returns empty list on a fresh db", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({ method: "watcher.list", params: {}, db });
+    const out = await dispatchAutomationRpc({ method: "watcher.list", params: {}, db });
     expect(out.kind).toBe("hit");
     if (out.kind !== "hit") return;
     expect((out.value as { watchers: unknown[] }).watchers).toEqual([]);
@@ -234,9 +241,9 @@ describe("watcher.list", () => {
 });
 
 describe("watcher.create / pause / resume / delete", () => {
-  test("create inserts a row with graph_predicate_json null when omitted", () => {
+  test("create inserts a row with graph_predicate_json null when omitted", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.create",
       params: {
         name: "alpha",
@@ -257,9 +264,9 @@ describe("watcher.create / pause / resume / delete", () => {
     expect(row.graph_predicate_json).toBeNull();
   });
 
-  test("create accepts graph_predicate_json when provided", () => {
+  test("create accepts graph_predicate_json when provided", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "watcher.create",
       params: {
         name: "alpha",
@@ -280,9 +287,9 @@ describe("watcher.create / pause / resume / delete", () => {
     expect(row.graph_predicate_json).toBe('{"any":true}');
   });
 
-  test("create rejects missing name", () => {
+  test("create rejects missing name", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "watcher.create",
         params: {
@@ -293,12 +300,12 @@ describe("watcher.create / pause / resume / delete", () => {
         },
         db,
       }),
-    ).toThrow(AutomationRpcError);
+    ).rejects.toThrow(AutomationRpcError);
   });
 
-  test("pause / resume toggle enabled", () => {
+  test("pause / resume toggle enabled", async () => {
     const db = seededDb();
-    const create = dispatchAutomationRpc({
+    const create = await dispatchAutomationRpc({
       method: "watcher.create",
       params: {
         name: "alpha",
@@ -312,21 +319,21 @@ describe("watcher.create / pause / resume / delete", () => {
     expect(create.kind).toBe("hit");
     if (create.kind !== "hit") return;
     const id = (create.value as { id: string }).id;
-    const pause = dispatchAutomationRpc({ method: "watcher.pause", params: { id }, db });
+    const pause = await dispatchAutomationRpc({ method: "watcher.pause", params: { id }, db });
     expect(pause.kind).toBe("hit");
     expect((pause as { value: { ok: boolean } }).value.ok).toBe(true);
     let row = db.query("SELECT enabled FROM watcher WHERE id = ?").get(id) as { enabled: number };
     expect(row.enabled).toBe(0);
-    const resume = dispatchAutomationRpc({ method: "watcher.resume", params: { id }, db });
+    const resume = await dispatchAutomationRpc({ method: "watcher.resume", params: { id }, db });
     expect(resume.kind).toBe("hit");
     expect((resume as { value: { ok: boolean } }).value.ok).toBe(true);
     row = db.query("SELECT enabled FROM watcher WHERE id = ?").get(id) as { enabled: number };
     expect(row.enabled).toBe(1);
   });
 
-  test("delete removes the row", () => {
+  test("delete removes the row", async () => {
     const db = seededDb();
-    const create = dispatchAutomationRpc({
+    const create = await dispatchAutomationRpc({
       method: "watcher.create",
       params: {
         name: "alpha",
@@ -340,35 +347,35 @@ describe("watcher.create / pause / resume / delete", () => {
     expect(create.kind).toBe("hit");
     if (create.kind !== "hit") return;
     const id = (create.value as { id: string }).id;
-    const del = dispatchAutomationRpc({ method: "watcher.delete", params: { id }, db });
+    const del = await dispatchAutomationRpc({ method: "watcher.delete", params: { id }, db });
     expect(del.kind).toBe("hit");
     expect((del as { value: { ok: boolean } }).value.ok).toBe(true);
     const row = db.query("SELECT id FROM watcher WHERE id = ?").get(id);
     expect(row).toBeNull();
   });
 
-  test("delete rejects missing id", () => {
+  test("delete rejects missing id", async () => {
     const db = seededDb();
-    expect(() => dispatchAutomationRpc({ method: "watcher.delete", params: {}, db })).toThrow(
-      AutomationRpcError,
-    );
+    await expect(
+      dispatchAutomationRpc({ method: "watcher.delete", params: {}, db }),
+    ).rejects.toThrow(AutomationRpcError);
   });
 });
 
 // ─── workflow.list / save / delete ───────────────────────────────────────────
 
 describe("workflow.list / save / delete", () => {
-  test("list returns empty array initially", () => {
+  test("list returns empty array initially", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({ method: "workflow.list", params: {}, db });
+    const out = await dispatchAutomationRpc({ method: "workflow.list", params: {}, db });
     expect(out.kind).toBe("hit");
     if (out.kind !== "hit") return;
     expect((out.value as { workflows: unknown[] }).workflows).toEqual([]);
   });
 
-  test("save upserts a workflow (insert + update)", () => {
+  test("save upserts a workflow (insert + update)", async () => {
     const db = seededDb();
-    const ins = dispatchAutomationRpc({
+    const ins = await dispatchAutomationRpc({
       method: "workflow.save",
       params: { name: "wf", stepsJson: "[]" },
       db,
@@ -377,7 +384,7 @@ describe("workflow.list / save / delete", () => {
     const id1 = (ins as { value: { id: string } }).value.id;
     expect(typeof id1).toBe("string");
 
-    const upd = dispatchAutomationRpc({
+    const upd = await dispatchAutomationRpc({
       method: "workflow.save",
       params: { name: "wf", description: "v2", stepsJson: "[1]" },
       db,
@@ -392,9 +399,9 @@ describe("workflow.list / save / delete", () => {
     expect(row.steps_json).toBe("[1]");
   });
 
-  test("save with non-string description stores null", () => {
+  test("save with non-string description stores null", async () => {
     const db = seededDb();
-    const ins = dispatchAutomationRpc({
+    const ins = await dispatchAutomationRpc({
       method: "workflow.save",
       params: { name: "wf", stepsJson: "[]" },
       db,
@@ -406,21 +413,21 @@ describe("workflow.list / save / delete", () => {
     expect(row.description).toBeNull();
   });
 
-  test("delete returns ok:true on hit, ok:false on miss", () => {
+  test("delete returns ok:true on hit, ok:false on miss", async () => {
     const db = seededDb();
-    dispatchAutomationRpc({
+    await dispatchAutomationRpc({
       method: "workflow.save",
       params: { name: "wf", stepsJson: "[]" },
       db,
     });
-    const hit = dispatchAutomationRpc({
+    const hit = await dispatchAutomationRpc({
       method: "workflow.delete",
       params: { name: "wf" },
       db,
     });
     expect((hit as { value: { ok: boolean } }).value.ok).toBe(true);
 
-    const miss = dispatchAutomationRpc({
+    const miss = await dispatchAutomationRpc({
       method: "workflow.delete",
       params: { name: "nope" },
       db,
@@ -444,28 +451,28 @@ function seedExtensionRow(db: Database, id: string, installPath: string): void {
 }
 
 describe("extension.list", () => {
-  test("returns empty list with no extensions installed", () => {
+  test("returns empty list with no extensions installed", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({ method: "extension.list", params: {}, db });
+    const out = await dispatchAutomationRpc({ method: "extension.list", params: {}, db });
     expect(out.kind).toBe("hit");
     if (out.kind !== "hit") return;
     expect((out.value as { extensions: unknown[] }).extensions).toEqual([]);
   });
 
-  test("returns rows ordered by id", () => {
+  test("returns rows ordered by id", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.b", "/p/b");
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({ method: "extension.list", params: {}, db });
+    const out = await dispatchAutomationRpc({ method: "extension.list", params: {}, db });
     expect(out.kind).toBe("hit");
     const value = (out as { value: { extensions: Array<{ id: string }> } }).value;
     expect(value.extensions.map((e) => e.id)).toEqual(["com.example.a", "com.example.b"]);
   });
 
-  test("filter=needs-reinstall returns only pre-T2 disabled extensions", () => {
+  test("filter=needs-reinstall returns only pre-T2 disabled extensions", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.list",
       params: { filter: "needs-reinstall" },
       db,
@@ -475,10 +482,10 @@ describe("extension.list", () => {
     expect((out as { value: { extensions: unknown[] } }).value.extensions).toEqual([]);
   });
 
-  test("filter=needs_reinstall alias is supported", () => {
+  test("filter=needs_reinstall alias is supported", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.list",
       params: { filter: "needs_reinstall" },
       db,
@@ -487,10 +494,10 @@ describe("extension.list", () => {
     expect((out as { value: { extensions: unknown[] } }).value.extensions).toEqual([]);
   });
 
-  test("non-string filter is ignored (returns all)", () => {
+  test("non-string filter is ignored (returns all)", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.list",
       params: { filter: 7 },
       db,
@@ -503,10 +510,10 @@ describe("extension.list", () => {
 });
 
 describe("extension.info", () => {
-  test("returns the extension row when found", () => {
+  test("returns the extension row when found", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.info",
       params: { id: "com.example.a" },
       db,
@@ -516,30 +523,30 @@ describe("extension.info", () => {
     expect(v.extension.id).toBe("com.example.a");
   });
 
-  test("throws AutomationRpcError when extension missing", () => {
+  test("throws AutomationRpcError when extension missing", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "extension.info",
         params: { id: "does.not.exist" },
         db,
       }),
-    ).toThrow(/not found/i);
+    ).rejects.toThrow(/not found/i);
   });
 
-  test("rejects missing id param", () => {
+  test("rejects missing id param", async () => {
     const db = seededDb();
-    expect(() => dispatchAutomationRpc({ method: "extension.info", params: {}, db })).toThrow(
-      AutomationRpcError,
-    );
+    await expect(
+      dispatchAutomationRpc({ method: "extension.info", params: {}, db }),
+    ).rejects.toThrow(AutomationRpcError);
   });
 });
 
 describe("extension.enable / disable / remove", () => {
-  test("enable returns ok:true for an existing extension", () => {
+  test("enable returns ok:true for an existing extension", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.enable",
       params: { id: "com.example.a" },
       db,
@@ -547,9 +554,9 @@ describe("extension.enable / disable / remove", () => {
     expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
   });
 
-  test("enable returns ok:false for missing extension", () => {
+  test("enable returns ok:false for missing extension", async () => {
     const db = seededDb();
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.enable",
       params: { id: "com.missing" },
       db,
@@ -557,10 +564,10 @@ describe("extension.enable / disable / remove", () => {
     expect((out as { value: { ok: boolean } }).value.ok).toBe(false);
   });
 
-  test("disable returns ok:true and does not require a mesh", () => {
+  test("disable returns ok:true and does not require a mesh", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.disable",
       params: { id: "com.example.a" },
       db,
@@ -568,7 +575,7 @@ describe("extension.enable / disable / remove", () => {
     expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
   });
 
-  test("disable invokes mesh.stopExtensionClient when mesh is provided", () => {
+  test("disable invokes mesh.stopExtensionClient when mesh is provided", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
     const stopped: string[] = [];
@@ -577,7 +584,7 @@ describe("extension.enable / disable / remove", () => {
         stopped.push(id);
       },
     };
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.disable",
       params: { id: "com.example.a" },
       db,
@@ -589,7 +596,7 @@ describe("extension.enable / disable / remove", () => {
     expect(stopped).toContain("com.example.a");
   });
 
-  test("disable does not invoke mesh for a missing extension", () => {
+  test("disable does not invoke mesh for a missing extension", async () => {
     const db = seededDb();
     let invoked = 0;
     const mesh = {
@@ -597,7 +604,7 @@ describe("extension.enable / disable / remove", () => {
         invoked++;
       },
     };
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.disable",
       params: { id: "com.missing" },
       db,
@@ -607,12 +614,12 @@ describe("extension.enable / disable / remove", () => {
     expect(invoked).toBe(0);
   });
 
-  test("remove deletes the row and best-effort removes the install dir", () => {
+  test("remove deletes the row and best-effort removes the install dir", async () => {
     const db = seededDb();
     const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-"));
     try {
       seedExtensionRow(db, "com.example.a", tmpDir);
-      const out = dispatchAutomationRpc({
+      const out = await dispatchAutomationRpc({
         method: "extension.remove",
         params: { id: "com.example.a" },
         db,
@@ -625,21 +632,21 @@ describe("extension.enable / disable / remove", () => {
     }
   });
 
-  test("remove rejects missing extension with AutomationRpcError", () => {
+  test("remove rejects missing extension with AutomationRpcError", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "extension.remove",
         params: { id: "com.missing" },
         db,
       }),
-    ).toThrow(/not found/i);
+    ).rejects.toThrow(/not found/i);
   });
 
-  test("remove tolerates a non-existent install_path on disk (best-effort cleanup)", () => {
+  test("remove tolerates a non-existent install_path on disk (best-effort cleanup)", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/definitely/not/a/real/path-xyz-12345");
-    const out = dispatchAutomationRpc({
+    const out = await dispatchAutomationRpc({
       method: "extension.remove",
       params: { id: "com.example.a" },
       db,
@@ -651,36 +658,36 @@ describe("extension.enable / disable / remove", () => {
 // ─── extension.install ────────────────────────────────────────────────────────
 
 describe("extension.install", () => {
-  test("rejects when extensionsDir is not configured", () => {
+  test("rejects when extensionsDir is not configured", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "extension.install",
         params: { sourcePath: "/some/path" },
         db,
       }),
-    ).toThrow(/extensions directory/i);
+    ).rejects.toThrow(/extensions directory/i);
   });
 
-  test("rejects when extensionsDir is blank", () => {
+  test("rejects when extensionsDir is blank", async () => {
     const db = seededDb();
-    expect(() =>
+    await expect(
       dispatchAutomationRpc({
         method: "extension.install",
         params: { sourcePath: "/some/path" },
         db,
         extensionsDir: "   ",
       }),
-    ).toThrow(/extensions directory/i);
+    ).rejects.toThrow(/extensions directory/i);
   });
 
-  test("wraps installation failures as AutomationRpcError -32602", () => {
+  test("wraps installation failures as AutomationRpcError -32602", async () => {
     const db = seededDb();
     const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-install-"));
     try {
       let caught: unknown;
       try {
-        dispatchAutomationRpc({
+        await dispatchAutomationRpc({
           method: "extension.install",
           params: { sourcePath: "/definitely/not/a/real/source-xyz-12345" },
           db,
@@ -696,20 +703,92 @@ describe("extension.install", () => {
     }
   });
 
-  test("rejects missing sourcePath param", () => {
+  test("rejects missing sourcePath param", async () => {
     const db = seededDb();
     const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-install-"));
     try {
-      expect(() =>
+      await expect(
         dispatchAutomationRpc({
           method: "extension.install",
           params: {},
           db,
           extensionsDir: tmpDir,
         }),
-      ).toThrow(AutomationRpcError);
+      ).rejects.toThrow(AutomationRpcError);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── extension.sync (T2 PR 2 Task 11) ────────────────────────────────────────
+
+describe("extension.sync", () => {
+  test("returns SyncResult with publishersChecked=1 when extension is signed", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const vault = new MockVault();
+      const { pubkey, privkey } = generateEd25519Keypair();
+      await writePublisherKey(vault, "test-pub", pubkey);
+      await stageSignedExtensionOnDisk({
+        db,
+        extensionsDir,
+        publisherId: "test-pub",
+        pubkey,
+        privkey,
+      });
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.sync",
+        params: { dryRun: false },
+        db,
+        vault,
+        fetcher: { fetch: async () => ({ kind: "ok", pubkey }) },
+        enforceAirGap: false,
+      });
+      expect(out.kind).toBe("hit");
+      if (out.kind === "hit") {
+        expect(out.value).toMatchObject({
+          publishersChecked: 1,
+          publishersUnchanged: 1,
+        });
+      }
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects when vault is not provided", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      await expect(
+        dispatchAutomationRpc({
+          method: "extension.sync",
+          params: {},
+          db,
+        }),
+      ).rejects.toThrow(AutomationRpcError);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates AirGapEnforcementError when enforceAirGap=true", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const vault = new MockVault();
+      await expect(
+        dispatchAutomationRpc({
+          method: "extension.sync",
+          params: { dryRun: false },
+          db,
+          vault,
+          fetcher: { fetch: async () => ({ kind: "not_found" }) },
+          enforceAirGap: true,
+        }),
+      ).rejects.toThrow(AutomationRpcError);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
 });

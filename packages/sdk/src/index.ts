@@ -9,6 +9,25 @@
 export type { AuditEmit, AuditLogger } from "./audit-logger";
 export { createScopedAuditLogger } from "./audit-logger";
 export { ExtensionContractError, runContractTests } from "./contract-tests";
+export {
+  canonicalize,
+  canonicalizeManifest,
+  ManifestNestedTooDeep,
+  NonIntegerNumberInManifest,
+  UnsupportedManifestValueType,
+} from "./crypto/canonical-json";
+export type { SignatureDisableReason } from "./crypto/verify-signature";
+export {
+  decodeBase64,
+  encodeBase64,
+  errorToHardDisableReason,
+  generateEd25519Keypair,
+  PublisherKeyMismatch,
+  SignatureInvalid,
+  SignatureInvalidFormat,
+  signManifest,
+  verifyManifestSignature,
+} from "./crypto/verify-signature";
 export type { HitlRequest } from "./hitl-request";
 export { isHitlRequest } from "./hitl-request";
 export { NimbusExtensionServer } from "./server";
