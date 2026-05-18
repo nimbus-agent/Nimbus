@@ -460,7 +460,8 @@ describe("discord-sync — phase machine transitions", () => {
     // One unique message indexed; cycle completes.
     expect(res.itemsUpserted).toBe(1);
     expect(res.hasMore).toBe(false);
-    expect(res.cursor.startsWith(CURSOR_PREFIX)).toBe(true);
+    expect(res.cursor).not.toBeNull();
+    expect((res.cursor ?? "").startsWith(CURSOR_PREFIX)).toBe(true);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'discord'")
       .all();
@@ -520,6 +521,8 @@ describe("discord-sync — phase machine transitions", () => {
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(true);
+    expect(res.cursor).not.toBeNull();
+    if (res.cursor === null) throw new Error("cursor must be non-null after budget exhaustion");
     const decoded = decodeCursor<{
       guildIds: string[];
       guildIndex: number;
