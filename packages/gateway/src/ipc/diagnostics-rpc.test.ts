@@ -826,7 +826,7 @@ describe("diag.snapshot", () => {
               hitl: { pendingConsentRequests: number };
               watchers: unknown[];
               auditLogTail: unknown[];
-              extensions: { disabled_pre_t2: number };
+              extensions: { disabled_pre_t2: number; signature_disabled_count: number };
               sandbox: { platform_capabilities: { network: string } };
             };
           }
@@ -839,6 +839,8 @@ describe("diag.snapshot", () => {
         // Sandbox runner is undefined in this fixture → all_or_nothing.
         expect(v.sandbox.platform_capabilities.network).toBe("all_or_nothing");
         expect(typeof v.extensions.disabled_pre_t2).toBe("number");
+        // T2 PR 2 — SignatureDisabledRegistry count surfaces here too.
+        expect(typeof v.extensions.signature_disabled_count).toBe("number");
       } finally {
         db.close();
       }
