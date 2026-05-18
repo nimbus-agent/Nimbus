@@ -1,5 +1,9 @@
-import { resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
+
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
@@ -205,9 +209,37 @@ export async function runExtensionRemove(
   console.log(JSON.stringify(out, undefined, 2));
 }
 
+export async function runExtensionKeygen(args: string[]): Promise<number> {
+  const outIdx = args.indexOf("--out");
+  const force = args.includes("--force");
+  let outPath = join(homedir(), ".nimbus", "publisher-key");
+  if (outIdx >= 0 && outIdx + 1 < args.length) {
+    const candidate = args[outIdx + 1];
+    if (candidate !== undefined) outPath = candidate;
+  }
+  if (existsSync(outPath) && !force) {
+    process.stderr.write(`refusing to overwrite ${outPath} without --force\n`);
+    return 2;
+  }
+  const { privkey, pubkey } = generateEd25519Keypair();
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, `${encodeBase64(privkey)}\n`);
+  if (process.platform !== "win32") chmodSync(outPath, 0o600);
+  process.stdout.write(`${encodeBase64(pubkey)}\n`);
+  return 0;
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
+
+  // Local-only subcommands — no Gateway connection required.
+  if (sub === "keygen") {
+    const code = await runExtensionKeygen(rest);
+    if (code !== 0) process.exit(code);
+    return;
+  }
+
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
