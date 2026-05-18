@@ -5,7 +5,7 @@ import { encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
 
 function fakeFetch(responses: Array<Response | Error>): typeof fetch {
   let i = 0;
-  return mock((_url: RequestInfo | URL) => {
+  return mock((_url: string | URL | Request) => {
     const r = responses[i++];
     if (r === undefined) throw new Error("fakeFetch ran out of responses");
     if (r instanceof Error) return Promise.reject(r);
@@ -97,7 +97,7 @@ describe("PublisherKeyFetcher", () => {
     const seen: string[] = [];
     const f = createPublisherKeyFetcher({
       baseUrl: "https://reg.example",
-      fetchFn: (async (url: RequestInfo | URL) => {
+      fetchFn: (async (url: string | URL | Request) => {
         seen.push(String(url));
         return new Response(encodeBase64(pubkey), { status: 200 });
       }) as unknown as typeof fetch,
