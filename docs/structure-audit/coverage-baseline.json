@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-17T19:32:07.429Z",
+  "generated_at": "2026-05-18T18:40:22.064Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -203,9 +203,6 @@
     "packages/gateway/src/connectors/azure-sync.ts": {
       "min_coverage_pct": 30.38
     },
-    "packages/gateway/src/connectors/bitbucket-sync.ts": {
-      "min_coverage_pct": 74.47
-    },
     "packages/gateway/src/connectors/circleci-sync.ts": {
       "min_coverage_pct": 10.76
     },
@@ -218,9 +215,6 @@
     "packages/gateway/src/connectors/datadog-sync.ts": {
       "min_coverage_pct": 24.24
     },
-    "packages/gateway/src/connectors/discord-sync.ts": {
-      "min_coverage_pct": 76.32
-    },
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_coverage_pct": 73.58
     },
@@ -232,15 +226,6 @@
     },
     "packages/gateway/src/connectors/github-index-repos.ts": {
       "min_coverage_pct": 71.43
-    },
-    "packages/gateway/src/connectors/github-sync.ts": {
-      "min_coverage_pct": 77.53
-    },
-    "packages/gateway/src/connectors/gitlab-sync.ts": {
-      "min_coverage_pct": 62.19
-    },
-    "packages/gateway/src/connectors/google-drive-sync.ts": {
-      "min_coverage_pct": 78.57
     },
     "packages/gateway/src/connectors/grafana-sync.ts": {
       "min_coverage_pct": 31.58
@@ -359,11 +344,11 @@
     "packages/gateway/src/people/parse-from-header.ts": {
       "min_coverage_pct": 74.39
     },
-    "packages/gateway/src/platform/gateway-state-file.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/platform/errors.ts": {
       "min_coverage_pct": 60
+    },
+    "packages/gateway/src/platform/gateway-state-file.ts": {
+      "min_coverage_pct": 0
     },
     "packages/gateway/src/platform/index.ts": {
       "min_coverage_pct": 45.45
