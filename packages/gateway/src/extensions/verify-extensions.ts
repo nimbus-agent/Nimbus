@@ -10,10 +10,22 @@ import {
   setExtensionEnabled,
   touchExtensionVerifiedAt,
 } from "../automation/extension-store.ts";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
-import { hardDisablePreT2Extensions } from "./hard-disable.ts";
-import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
+import type { NimbusVault } from "../vault/index.ts";
+import { hardDisablePreT2Extensions, signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  parseExtensionManifestForRegistry,
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "./manifest.ts";
+import { readPublisherKey } from "./publisher-keys.ts";
+import {
+  errorToHardDisableReason,
+  type SignatureDisableReason,
+  verifyManifestSignature,
+} from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -130,17 +142,37 @@ export function verifyOneExtensionStrict(row: ExtensionRow): boolean {
 }
 
 /**
+ * T2 PR 2 / I16 — startup signature-verification options. When supplied,
+ * `verifyExtensionsBestEffort` runs a second pass after the existing
+ * hash-verify sweep that re-checks the Ed25519 manifest signature on every
+ * enabled signed extension. Any failure flips `enabled = 0`, records a
+ * reason in {@link signatureDisabledRegistry}, and (when `mesh` is supplied)
+ * stops the running extension child.
+ */
+export interface VerifyExtensionsSignatureOpts {
+  vault: NimbusVault;
+}
+
+/**
  * Verifies enabled extensions: manifest + entry file SHA-256 vs registry columns.
  * Logs warnings on most issues; manifest or entry hash mismatch logs ERROR
  * and disables the extension. When `mesh` is supplied (S7-F10), a hash
  * mismatch additionally calls `mesh.stopExtensionClient(extensionId)` so a
  * tampered extension's running child process is terminated immediately.
  * Updates `last_verified_at` when checks complete.
+ *
+ * When `signatureOpts` is supplied (T2 PR 2 / I16), a second pass runs after
+ * the hash-verify sweep: every enabled signed extension is re-checked for a
+ * valid Ed25519 manifest signature against the publisher key cached in the
+ * vault. Failures flip `enabled = 0`, mark
+ * {@link signatureDisabledRegistry}, and emit a batched
+ * `extension.startup_verification` audit entry summarising the run.
  */
 export async function verifyExtensionsBestEffort(
   db: Database,
   logger: Logger,
   mesh?: ExtensionMeshHandle,
+  signatureOpts?: VerifyExtensionsSignatureOpts,
 ): Promise<void> {
   if (readIndexedUserVersion(db) < 10) {
     return;
@@ -167,5 +199,87 @@ export async function verifyExtensionsBestEffort(
   const now = Date.now();
   for (const row of rows) {
     await verifyOneExtension(db, logger, row, now, mesh);
+  }
+
+  // T2 PR 2 / I16 — startup signature verification. Runs AFTER the hash
+  // sweep so a tampered manifest is already disabled by the hash gate when
+  // possible; the signature pass catches the remaining vectors (valid hash
+  // but the publisher key has rotated, manifest was signed by an unknown
+  // publisher, etc.).
+  if (signatureOpts !== undefined) {
+    signatureDisabledRegistry.reset();
+    let signaturesChecked = 0;
+    let signatureHardDisabled = 0;
+    const failures: { id: string; reason: SignatureDisableReason }[] = [];
+    for (const row of listExtensions(db).filter((r) => r.enabled === 1)) {
+      const manifestPath = resolveExtensionManifestPath(row.install_path);
+      if (manifestPath === undefined) continue;
+      let manifestText: string;
+      try {
+        manifestText = readFileSync(manifestPath, "utf8");
+      } catch {
+        continue;
+      }
+      let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
+      try {
+        parsed = parseExtensionManifestForRegistry(manifestText);
+      } catch {
+        continue;
+      }
+      const m = parsed.manifest;
+      if (m.publisher === undefined) continue;
+      // Use the raw parsed JSON for signature verification so canonical bytes
+      // match what the publisher signed at install time — `parseExtensionManifestForRegistry`
+      // normalizes `permissions` (e.g. legacy `string[]` → default-deny envelope, missing
+      // → `{ network: [], filesystem: { read: [], write: [] } }`), which would otherwise
+      // produce different canonical bytes than the on-disk JSON. Mirrors the pattern in
+      // `install-from-local.ts`.
+      let rawManifestObj: Record<string, unknown>;
+      try {
+        rawManifestObj = JSON.parse(manifestText) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      signaturesChecked++;
+      const pubkey = await readPublisherKey(signatureOpts.vault, m.publisher.id);
+      let reason: SignatureDisableReason | undefined;
+      if (pubkey === undefined) {
+        reason = "publisher_key_missing";
+      } else {
+        try {
+          await verifyManifestSignature(
+            rawManifestObj as {
+              publisher?: { id: string; key: string };
+              signature?: string;
+              [k: string]: unknown;
+            },
+            pubkey,
+          );
+        } catch (err) {
+          reason = errorToHardDisableReason(err);
+        }
+      }
+      if (reason !== undefined) {
+        setExtensionEnabled(db, row.id, false);
+        signatureDisabledRegistry.mark(row.id, reason);
+        signatureHardDisabled++;
+        failures.push({ id: row.id, reason });
+        logger.error(
+          { extensionId: row.id, reason },
+          "extensions: signature verification failed — extension disabled",
+        );
+        if (mesh !== undefined) await mesh.stopExtensionClient(row.id);
+      }
+    }
+    appendAuditEntry(db, {
+      actionType: "extension.startup_verification",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({
+        signatures_checked: signaturesChecked,
+        hard_disabled: signatureHardDisabled,
+        failures,
+      }),
+      timestamp: Date.now(),
+    });
   }
 }
