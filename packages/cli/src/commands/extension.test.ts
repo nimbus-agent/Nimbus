@@ -40,6 +40,7 @@ afterAll(() => {
 const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
+  formatExtensionListTable,
   hasFlag,
   runExtension,
   runExtensionDisable,
@@ -153,7 +154,7 @@ describe("runExtensionList", () => {
     expect(captured.some((l) => l.includes("(no extensions installed)"))).toBe(true);
   });
 
-  test("prints id@version per row with needs-reinstall + disabled suffixes", async () => {
+  test("renders tabular rows + preserves [needs-reinstall] annotation lines", async () => {
     const { client } = mockClient([
       {
         extensions: [
@@ -165,8 +166,14 @@ describe("runExtensionList", () => {
     ]);
     await runExtensionList(client, ["list"]);
     const out = captured.join("\n");
-    expect(out).toContain("a.b@1.0.0");
-    expect(out).toContain("c.d@2.0.0 (disabled)");
+    // New tabular format: ID | Version | Publisher | Status
+    expect(out).toMatch(/ID\s+Version\s+Publisher\s+Status/);
+    expect(out).toContain("a.b");
+    expect(out).toContain("1.0.0");
+    expect(out).toContain("c.d");
+    expect(out).toContain("disabled");
+    expect(out).toContain("(unverified)");
+    // needs-reinstall annotation lines are preserved for grep-based scripts.
     expect(out).toContain("e.f@3.0.0 [needs-reinstall]");
   });
 
@@ -487,4 +494,46 @@ describe("runExtension top-level dispatcher", () => {
   // info, install, enable, disable, remove) requires a connectable IPC
   // socket. Those branches are intentionally left to e2e tests; the
   // per-handler logic above already covers the meaningful code paths.
+});
+
+// ----------------------------- formatExtensionListTable (T2 PR 2) ----------
+
+describe("formatExtensionListTable (T2 PR 2)", () => {
+  test("renders header with ID | Version | Publisher | Status", () => {
+    const out = formatExtensionListTable(
+      [
+        { id: "ext-a", version: "1.0.0", enabled: 1, publisher: { id: "pub-a", key: "AAA" } },
+        { id: "ext-b", version: "0.5.1", enabled: 1 },
+      ],
+      { isTty: false, noColor: true },
+    );
+    expect(out).toMatch(/ID\s+Version\s+Publisher\s+Status/);
+    expect(out).toContain("ext-a");
+    expect(out).toContain("pub-a");
+    expect(out).toContain("(unverified)");
+  });
+
+  test("(unverified) is wrapped in ANSI dim-yellow on TTY with NO_COLOR unset", () => {
+    const out = formatExtensionListTable([{ id: "ext-b", version: "0.5.1", enabled: 1 }], {
+      isTty: true,
+      noColor: false,
+    });
+    expect(out).toMatch(/\x1b\[2;33m\(unverified\)\s*\x1b\[0m/);
+  });
+
+  test("NO_COLOR=1 (noColor=true) disables ANSI codes even on TTY", () => {
+    const out = formatExtensionListTable([{ id: "ext-b", version: "0.5.1", enabled: 1 }], {
+      isTty: true,
+      noColor: true,
+    });
+    expect(out).not.toMatch(/\x1b\[/);
+  });
+
+  test("disabled row shows 'disabled' in Status column", () => {
+    const out = formatExtensionListTable([{ id: "ext-c", version: "1.0.0", enabled: 0 }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(out).toContain("disabled");
+  });
 });

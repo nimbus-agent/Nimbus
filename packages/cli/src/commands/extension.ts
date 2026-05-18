@@ -44,7 +44,53 @@ type ExtensionListEntry = {
   enabled?: number;
   needs_reinstall?: boolean;
   disabled_reason?: string;
+  publisher?: { id: string; key?: string };
 };
+
+export interface ExtensionListTableRow {
+  id: string;
+  version: string;
+  enabled: number | boolean;
+  publisher?: { id: string; key?: string };
+}
+
+/**
+ * Pure formatter for the tabular `nimbus extension list` output (T2 PR 2 Task 15).
+ *
+ * Columns: ID | Version | Publisher | Status. Rows without a publisher render
+ * "(unverified)" — when the output is a TTY and NO_COLOR is unset, that token
+ * is wrapped in ANSI dim-yellow so it stands out without becoming noisy. Manual
+ * padding is used so the CLI gains no new dependency.
+ */
+export function formatExtensionListTable(
+  rows: readonly ExtensionListTableRow[],
+  opts: { isTty: boolean; noColor: boolean },
+): string {
+  const headers = ["ID", "Version", "Publisher", "Status"];
+  const data = rows.map((r) => [
+    r.id,
+    r.version,
+    r.publisher !== undefined ? r.publisher.id : "(unverified)",
+    (typeof r.enabled === "number" ? r.enabled === 1 : r.enabled) ? "enabled" : "disabled",
+  ]);
+  const widths = headers.map((h, i) =>
+    Math.max(h.length, ...data.map((row) => (row[i] ?? "").length)),
+  );
+  const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+  const renderCell = (s: string, w: number, col: number): string => {
+    const padded = pad(s, w);
+    if (!opts.isTty || opts.noColor) return padded;
+    if (col === 2 && s === "(unverified)") return `\x1b[2;33m${padded}\x1b[0m`;
+    return padded;
+  };
+  const lines: string[] = [];
+  lines.push(headers.map((h, i) => pad(h, widths[i] ?? 0)).join("  "));
+  lines.push(widths.map((w) => "-".repeat(w)).join("  "));
+  for (const row of data) {
+    lines.push(row.map((c, i) => renderCell(c, widths[i] ?? 0, i)).join("  "));
+  }
+  return `${lines.join("\n")}\n`;
+}
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
   const filter = takeFlagValue(args, "--filter");
@@ -61,10 +107,26 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     console.log("(no extensions installed)");
     return;
   }
+  const noColorEnv = process.env["NO_COLOR"];
+  const noColor = noColorEnv !== undefined && noColorEnv !== "";
+  const isTty = process.stdout.isTTY === true;
+  const tableRows: ExtensionListTableRow[] = rows.map((r) => {
+    const enabled = r.enabled === undefined ? 1 : r.enabled;
+    const base: ExtensionListTableRow = { id: r.id, version: r.version, enabled };
+    if (r.publisher !== undefined) base.publisher = r.publisher;
+    return base;
+  });
+  const table = formatExtensionListTable(tableRows, { isTty, noColor });
+  // The formatter terminates with a trailing newline; console.log adds another,
+  // but routing through console.log keeps the output reachable by stdout
+  // capture in tests and respects existing CLI conventions.
+  console.log(table.replace(/\n$/, ""));
+  // Preserve the per-row needs-reinstall annotations as a secondary line so
+  // existing scripts that grep for "[needs-reinstall]" still work.
   for (const r of rows) {
-    const suffix = r.needs_reinstall === true ? " [needs-reinstall]" : "";
-    const enabled = r.enabled === 0 ? " (disabled)" : "";
-    console.log(`${r.id}@${r.version}${enabled}${suffix}`);
+    if (r.needs_reinstall === true) {
+      console.log(`  ${r.id}@${r.version} [needs-reinstall]`);
+    }
   }
 }
 
