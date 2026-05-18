@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -203,5 +203,37 @@ describe("hardDisablePreT2Extensions", () => {
     expect(msg).toContain("Extension acme.foo v3.1.4 was installed before sandbox hardening");
     expect(msg).toContain("(T2 PR 1, 2026-05-16)");
     expect(msg).toContain("Reinstall to enable: nimbus extension reinstall acme.foo");
+  });
+});
+
+import { signatureDisabledRegistry } from "./hard-disable.ts";
+
+describe("signatureDisabledRegistry", () => {
+  beforeEach(() => signatureDisabledRegistry.reset());
+
+  test("mark + reasonFor round-trip", () => {
+    signatureDisabledRegistry.mark("ext-a", "publisher_key_missing");
+    expect(signatureDisabledRegistry.reasonFor("ext-a")).toBe("publisher_key_missing");
+  });
+
+  test("has + count", () => {
+    expect(signatureDisabledRegistry.has("ext-a")).toBe(false);
+    expect(signatureDisabledRegistry.count()).toBe(0);
+    signatureDisabledRegistry.mark("ext-a", "signature_failed");
+    expect(signatureDisabledRegistry.has("ext-a")).toBe(true);
+    expect(signatureDisabledRegistry.count()).toBe(1);
+  });
+
+  test("list returns sorted by id", () => {
+    signatureDisabledRegistry.mark("ext-c", "signature_failed");
+    signatureDisabledRegistry.mark("ext-a", "publisher_key_missing");
+    signatureDisabledRegistry.mark("ext-b", "publisher_key_mismatch");
+    expect(signatureDisabledRegistry.list().map((e) => e.id)).toEqual(["ext-a", "ext-b", "ext-c"]);
+  });
+
+  test("reset clears all", () => {
+    signatureDisabledRegistry.mark("ext-a", "signature_failed");
+    signatureDisabledRegistry.reset();
+    expect(signatureDisabledRegistry.count()).toBe(0);
   });
 });

@@ -23,6 +23,7 @@ import {
   setExtensionEnabled,
 } from "../automation/extension-store.ts";
 import { parseExtensionManifestForRegistry, resolveExtensionManifestPath } from "./manifest.ts";
+import type { SignatureDisableReason } from "./verify-signature.ts";
 
 /** Sentinel string used by `nimbus extension list` + `nimbus extension info`. */
 export const PRE_T2_DISABLE_REASON = "needs_reinstall_pre_t2" as const;
@@ -144,3 +145,40 @@ export function preT2DisabledCount(): number {
 export function preT2DisabledIds(): readonly string[] {
   return preT2DisabledRegistry.list();
 }
+
+/**
+ * In-memory registry of extension ids that are hard-disabled by the T2 PR 2
+ * verified-publisher pipeline. Parallel to {@link PreT2DisabledRegistry};
+ * rebuilt at the top of every `verifyExtensionsBestEffort` run.
+ */
+class SignatureDisabledRegistry {
+  private readonly reasons = new Map<string, SignatureDisableReason>();
+
+  reset(): void {
+    this.reasons.clear();
+  }
+
+  mark(id: string, reason: SignatureDisableReason): void {
+    this.reasons.set(id, reason);
+  }
+
+  has(id: string): boolean {
+    return this.reasons.has(id);
+  }
+
+  reasonFor(id: string): SignatureDisableReason | undefined {
+    return this.reasons.get(id);
+  }
+
+  list(): readonly { id: string; reason: SignatureDisableReason }[] {
+    return [...this.reasons.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, reason]) => ({ id, reason }));
+  }
+
+  count(): number {
+    return this.reasons.size;
+  }
+}
+
+export const signatureDisabledRegistry = new SignatureDisabledRegistry();
