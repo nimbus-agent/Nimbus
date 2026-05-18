@@ -30,6 +30,8 @@ import {
   preT2DisableMessage,
 } from "../extensions/hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "../extensions/install-from-local.ts";
+import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 
 export class AutomationRpcError extends Error {
@@ -88,9 +90,18 @@ interface AutomationCtx {
   db: Database;
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
+  /** I16 — vault for caching verified publisher pubkeys at install time. */
+  vault?: NimbusVault;
+  /** I16 — registry client used to fetch unknown publisher pubkeys. */
+  fetcher?: PublisherKeyFetcher;
+  /** I16 — when true, refuse install if vault cache or explicit key cannot satisfy. */
+  enforceAirGap?: boolean;
 }
 
-type AutomationHandler = (rec: Record<string, unknown> | undefined, ctx: AutomationCtx) => Hit;
+type AutomationHandler = (
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+) => Hit | Promise<Hit>;
 
 const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "watcher.list": (_rec, ctx) => ({
@@ -264,17 +275,29 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   return { kind: "hit", value: { extension: { ...row } } };
 }
 
-function handleExtensionInstall(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+async function handleExtensionInstall(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
   const sourcePath = requireString(rec, "sourcePath");
   const dir = ctx.extensionsDir;
   if (dir === undefined || dir.trim() === "") {
     throw new AutomationRpcError(-32603, "Gateway is not configured with an extensions directory");
   }
+  // Optional publisherKeyPath parameter for `--publisher-key <path>` CLI flow.
+  const publisherKeyPath =
+    rec !== undefined && typeof rec["publisherKeyPath"] === "string"
+      ? rec["publisherKeyPath"].trim()
+      : undefined;
   try {
-    const installed = installExtensionFromLocalDirectory({
+    const installed = await installExtensionFromLocalDirectory({
       db: ctx.db,
       extensionsDir: dir,
       sourcePath,
+      ...(ctx.vault !== undefined && { vault: ctx.vault }),
+      ...(ctx.fetcher !== undefined && { fetcher: ctx.fetcher }),
+      ...(ctx.enforceAirGap !== undefined && { enforceAirGap: ctx.enforceAirGap }),
+      ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
     });
     return {
       kind: "hit",
@@ -292,7 +315,7 @@ function handleExtensionInstall(rec: Record<string, unknown> | undefined, ctx: A
   }
 }
 
-export function dispatchAutomationRpc(options: {
+export async function dispatchAutomationRpc(options: {
   method: string;
   params: unknown;
   db: Database;
@@ -300,7 +323,13 @@ export function dispatchAutomationRpc(options: {
   extensionsDir?: string;
   /** S7-F10 — `extension.disable` calls `stopExtensionClient` to terminate the running child. */
   mesh?: AutomationRpcExtensionMeshHandle;
-}): Hit | { kind: "miss" } {
+  /** I16 — vault for caching verified publisher pubkeys at install time. */
+  vault?: NimbusVault;
+  /** I16 — registry client used to fetch unknown publisher pubkeys. */
+  fetcher?: PublisherKeyFetcher;
+  /** I16 — when true, refuse signed-extension install if no local pubkey is available. */
+  enforceAirGap?: boolean;
+}): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
     return { kind: "miss" };
@@ -309,6 +338,9 @@ export function dispatchAutomationRpc(options: {
     db: options.db,
     ...(options.extensionsDir !== undefined && { extensionsDir: options.extensionsDir }),
     ...(options.mesh !== undefined && { mesh: options.mesh }),
+    ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+    ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
   };
-  return handler(asRecord(options.params), ctx);
+  return await handler(asRecord(options.params), ctx);
 }

@@ -1,5 +1,6 @@
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
@@ -72,4 +73,16 @@ export type CreateIpcServerOptions = {
    * (T2 PR 1).
    */
   sandboxRunner?: SandboxRunner;
+  /**
+   * Optional fetcher for signed-extension install signature verification (I16).
+   * When undefined, `extension.install` falls back to vault-cache-only / explicit
+   * `--publisher-key` paths for signed manifests.
+   */
+  extensionsPublisherKeyFetcher?: PublisherKeyFetcher;
+  /**
+   * Air-gap flag for signed-extension install (I16). When true, the install
+   * refuses to reach the registry — only the vault cache and `--publisher-key`
+   * file are consulted.
+   */
+  extensionsEnforceAirGap?: boolean;
 };
