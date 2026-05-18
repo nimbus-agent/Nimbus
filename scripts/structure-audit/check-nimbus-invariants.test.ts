@@ -107,14 +107,16 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 6 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 7 entries", () => {
     // Each entry has a documented structural reason. The first 5 land in the
     // structure-audit design spec § 4.4 (helper home, Google OAuth canonical
     // reader, Google PKCE writer, Microsoft provider-shared OAuth, OpenAI
     // embedding provider). The 6th — connector-secrets-manifest.ts — was
     // added in the manifest-derived widening spec (2026-05-02) as the
-    // canonical declaration site for per-connector vault keys.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(6);
+    // canonical declaration site for per-connector vault keys. The 7th —
+    // extensions/publisher-keys.ts — was added in Phase 5 T2 PR 2 as the
+    // declaration site for the `extension.publisher_key.<id>` namespace.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(7);
   });
 });
 
