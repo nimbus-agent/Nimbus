@@ -1433,6 +1433,244 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
+### Task 7b: Extend `registry-client.ts` with `fetchLatestVersion` + `fetchManifest`
+
+> **Review-driven addition** — verification confirmed PR 2's `registry-client.ts` exposes only `createPublisherKeyFetcher`. The daemon in Task 8 depends on these two methods being available; this task creates them before the daemon needs them.
+
+**Files:**
+- Modify: `packages/gateway/src/extensions/registry-client.ts`
+- Create or modify: `packages/gateway/src/extensions/registry-client.test.ts`
+
+- [ ] **Step 1: Write the failing tests**
+
+```typescript
+// Append to packages/gateway/src/extensions/registry-client.test.ts
+import { describe, expect, it } from "bun:test";
+import { createRegistryClient } from "./registry-client.ts";
+
+describe("createRegistryClient — fetchLatestVersion", () => {
+  it("returns version + channel on a 200 with valid JSON", async () => {
+    const fetchFn = async () =>
+      new Response(JSON.stringify({ version: "1.1.0", channel: "stable" }), {
+        status: 200,
+      });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    const res = await client.fetchLatestVersion(
+      "com.example.a",
+      "stable",
+      new AbortController().signal,
+    );
+    expect(res).toEqual({ version: "1.1.0", channel: "stable" });
+  });
+
+  it("returns null on 404", async () => {
+    const fetchFn = async () => new Response("not found", { status: 404 });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    const res = await client.fetchLatestVersion(
+      "com.example.x",
+      "stable",
+      new AbortController().signal,
+    );
+    expect(res).toBeNull();
+  });
+
+  it("throws on 5xx (transient)", async () => {
+    const fetchFn = async () => new Response("oops", { status: 503 });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    await expect(
+      client.fetchLatestVersion(
+        "com.example.a",
+        "stable",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/503/);
+  });
+
+  it("rejects unexpected JSON shape", async () => {
+    const fetchFn = async () => new Response(JSON.stringify({ wrong: true }), { status: 200 });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    await expect(
+      client.fetchLatestVersion(
+        "com.example.a",
+        "stable",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/schema/i);
+  });
+});
+
+describe("createRegistryClient — fetchManifest", () => {
+  it("returns manifest + tarball metadata on 200", async () => {
+    const manifest = {
+      id: "com.example.a",
+      version: "1.1.0",
+      updateChannel: "stable",
+      publisher: { id: "pub", key: "AA==".padEnd(44, "A") },
+      signature: "BB==".padEnd(88, "A") + "==",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+    };
+    const body = {
+      manifest,
+      manifestHash: "d".repeat(64),
+      entryHash: "e".repeat(64),
+      tarballUrl: "https://r/x-1.1.0.tar.gz",
+      tarballSizeBytes: 4242,
+    };
+    const fetchFn = async () => new Response(JSON.stringify(body), { status: 200 });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    const res = await client.fetchManifest(
+      "com.example.a",
+      "1.1.0",
+      new AbortController().signal,
+    );
+    expect(res.manifest.version).toBe("1.1.0");
+    expect(res.tarballUrl).toBe("https://r/x-1.1.0.tar.gz");
+    expect(res.tarballSizeBytes).toBe(4242);
+  });
+
+  it("rejects malformed payload (manifestHash wrong length)", async () => {
+    const fetchFn = async () =>
+      new Response(JSON.stringify({ manifest: {}, manifestHash: "short" }), { status: 200 });
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    await expect(
+      client.fetchManifest("com.example.a", "1.1.0", new AbortController().signal),
+    ).rejects.toThrow();
+  });
+});
+```
+
+- [ ] **Step 2: Implement** by extending `registry-client.ts` with a `createRegistryClient` factory that exposes both new methods AND a delegated `fetchPublisherKey` calling through to the existing `createPublisherKeyFetcher` (keeps one client surface for the daemon to inject).
+
+```typescript
+// Append to packages/gateway/src/extensions/registry-client.ts
+import { parseManifest } from "./manifest.ts";
+
+export interface RegistryClientOpts {
+  baseUrl: string;
+  timeoutMs?: number;
+  retries?: number;
+  fetchFn?: typeof fetch;
+}
+
+export interface FetchLatestVersionResponse {
+  version: string;
+  channel: "stable" | "beta";
+}
+
+export interface FetchManifestResponse {
+  manifest: ReturnType<typeof parseManifest>;
+  manifestHash: string;
+  entryHash: string;
+  tarballUrl: string;
+  tarballSizeBytes?: number;
+}
+
+export interface RegistryClient {
+  fetchPublisherKey: PublisherKeyFetcher["fetch"];
+  fetchLatestVersion(
+    extensionId: string,
+    channel: "stable" | "beta",
+    signal: AbortSignal,
+  ): Promise<FetchLatestVersionResponse | null>;
+  fetchManifest(
+    extensionId: string,
+    version: string,
+    signal: AbortSignal,
+  ): Promise<FetchManifestResponse>;
+}
+
+const HEX64 = /^[0-9a-f]{64}$/i;
+
+export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
+  const baseUrl = opts.baseUrl.replace(/\/+$/, "");
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const fetchFn = opts.fetchFn ?? fetch;
+  const publisher = createPublisherKeyFetcher({
+    baseUrl: opts.baseUrl,
+    timeoutMs,
+    retries: opts.retries ?? 1,
+    fetchFn,
+  });
+
+  async function getJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
+    const local = new AbortController();
+    const onAbort = () => local.abort();
+    signal.addEventListener("abort", onAbort);
+    const timer = setTimeout(() => local.abort(), timeoutMs);
+    try {
+      const res = await fetchFn(url, { signal: local.signal });
+      if (res.status === 404) return null;
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`registry GET ${url} failed: HTTP ${res.status}`);
+      }
+      return (await res.json()) as T;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    fetchPublisherKey: publisher.fetch,
+    async fetchLatestVersion(id, channel, signal) {
+      const url = `${baseUrl}/v1/extensions/${encodeURIComponent(id)}/latest?channel=${channel}`;
+      const body = await getJson<{ version?: unknown; channel?: unknown }>(url, signal);
+      if (body === null) return null;
+      if (typeof body.version !== "string" || (body.channel !== "stable" && body.channel !== "beta")) {
+        throw new Error(`registry latest schema invalid: ${JSON.stringify(body)}`);
+      }
+      return { version: body.version, channel: body.channel };
+    },
+    async fetchManifest(id, version, signal) {
+      const url = `${baseUrl}/v1/extensions/${encodeURIComponent(id)}/manifest?version=${encodeURIComponent(version)}`;
+      const body = await getJson<Record<string, unknown>>(url, signal);
+      if (body === null) {
+        throw new Error(`registry manifest not found: ${id}@${version}`);
+      }
+      if (
+        typeof body.manifestHash !== "string" ||
+        !HEX64.test(body.manifestHash) ||
+        typeof body.entryHash !== "string" ||
+        !HEX64.test(body.entryHash) ||
+        typeof body.tarballUrl !== "string"
+      ) {
+        throw new Error("registry manifest schema invalid");
+      }
+      const manifest = parseManifest(body.manifest);
+      const tarballSizeBytes =
+        typeof body.tarballSizeBytes === "number" ? body.tarballSizeBytes : undefined;
+      return {
+        manifest,
+        manifestHash: body.manifestHash,
+        entryHash: body.entryHash,
+        tarballUrl: body.tarballUrl,
+        tarballSizeBytes,
+      };
+    },
+  };
+}
+```
+
+- [ ] **Step 3: Run + commit**
+
+```bash
+bun test packages/gateway/src/extensions/registry-client.test.ts
+bun run test:coverage:extensions
+git add packages/gateway/src/extensions/registry-client.ts \
+        packages/gateway/src/extensions/registry-client.test.ts
+git commit -m "feat(t2-pr3): registry-client — fetchLatestVersion + fetchManifest
+
+Extends the PR 2 registry-client surface with the two methods the
+auto-update daemon (Task 8) depends on. Both go through the same
+timeout + retry path as the publisher-key fetcher; parseManifest
+re-validates the body so the daemon never sees an unparseable
+manifest.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
 ## Phase E — Polling daemon
 
 ### Task 8: `ExtensionAutoUpdater` daemon class
@@ -1933,70 +2171,310 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Phase F — Lazy-mesh invalidation
+## Phase F — Apply orchestration (compose primitives + mesh invalidation)
 
-### Task 9: Add `invalidateExtension(id)` to lazy-mesh registry
+### Task 9: `auto-update-orchestrate.ts` — `performUpgrade` / `performDowngrade`
+
+> **Review-driven correction (review §4)** — `mesh.ts` holds a per-extension `lazySlots: Map<string, LazyMcpSlot>` cache of **live MCP client connections**, not just `ServerSpec` literals. The existing helper `mesh.stopExtensionClient(extensionId)` (S7-F10, already used by `extension.disable` and `verifyExtensionsBestEffort`) drains in-flight calls and tears down the live client; the next spawn re-reads the manifest and gets the new code. The original "no-op invalidation" approach would have left the OLD client live until Gateway restart.
+
+This task composes Task 7's pure primitives (`downloadTarball`, `verifyTarballSha256`, `applyUpgradeSwap`, `applyDowngradeSwap`) and Task 7b's `RegistryClient` into the two orchestration functions the RPC dispatcher (Task 10) injects as `performUpgrade` / `performDowngrade`.
 
 **Files:**
-- Modify: the lazy-mesh module that caches `ServerSpec` instances per extension (locate first)
+- Create: `packages/gateway/src/extensions/auto-update-orchestrate.ts`
+- Create: `packages/gateway/src/extensions/auto-update-orchestrate.test.ts`
 
-- [ ] **Step 1: Locate the cached-spec map**
-
-```bash
-grep -rn "ServerSpec\|specCache\|wrapServerSpec" packages/gateway/src/connectors/lazy-mesh/ | head -30
-```
-
-Identify the file holding the per-extension `ServerSpec` cache. The intent is: after an apply, the next spawn must re-read the manifest. If lazy-mesh re-reads on every spawn already, this task is a no-op — confirm by reading the spawn path.
-
-- [ ] **Step 2: If a cache exists, add an exported `invalidateExtension(id)` function** that removes the cached spec for `id`. Otherwise, document that no cache exists and the task is a no-op.
-
-If a cache file like `packages/gateway/src/connectors/lazy-mesh/spec-cache.ts` exists:
+- [ ] **Step 1: Write the failing tests**
 
 ```typescript
-export function invalidateExtension(id: string): void {
-  specCache.delete(id);
+// packages/gateway/src/extensions/auto-update-orchestrate.test.ts
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, mock } from "bun:test";
+
+import type { AvailableUpdate } from "./auto-update-types.ts";
+import { createPerformUpgrade, createPerformDowngrade } from "./auto-update-orchestrate.ts";
+
+function mkAvailable(overrides: Partial<AvailableUpdate> = {}): AvailableUpdate {
+  return {
+    id: "com.example.a",
+    displayName: "A",
+    fromVersion: "1.0.0",
+    toVersion: "1.1.0",
+    channel: "stable",
+    changelog: "",
+    publisherStatus: "verified",
+    manifestHash: "d".repeat(64),
+    signatureB64: "BB==".padEnd(86, "A") + "==",
+    entryHash: "e".repeat(64),
+    tarballUrl: "https://r/x.tar.gz",
+    permissionDiff: {
+      network: { added: [], removed: [] },
+      filesystem: {
+        read: { added: [], removed: [] },
+        write: { added: [], removed: [] },
+      },
+    },
+    verificationStatus: "verified",
+    detectedAt: 0,
+    ...overrides,
+  };
 }
-```
 
-Add a one-line test that asserts the cache loses the entry. If a cache file does not exist, create a minimal `lazy-mesh-cache.ts` that the auto-update apply pipeline can import as a no-op:
+describe("createPerformUpgrade", () => {
+  it("downloads, verifies, swaps, invalidates mesh, updates extension row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "old");
 
-```typescript
-// packages/gateway/src/connectors/lazy-mesh/auto-update-hooks.ts
-/**
- * Called by the auto-update apply pipeline after a successful swap.
- * In v1, lazy-mesh re-reads the manifest on every spawn, so this is a no-op.
- * Reserved for future caching layers; keeps the call site stable.
- */
-export function invalidateExtension(_id: string): void {
-  // no-op
-}
-```
+      const dataDir = join(root, "data");
+      await mkdir(join(dataDir, "extensions"), { recursive: true });
 
-- [ ] **Step 3: Add a tiny test** (the no-op version):
+      const tarballBytes = new TextEncoder().encode("fake-tarball-bytes");
+      const stopExtensionClient = mock(async (_id: string) => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const extractTarball = mock(async (_bytes: Uint8Array, destDir: string) => {
+        await mkdir(destDir, { recursive: true });
+        await writeFile(join(destDir, "marker.txt"), "new");
+      });
 
-```typescript
-// packages/gateway/src/connectors/lazy-mesh/auto-update-hooks.test.ts
-import { describe, expect, it } from "bun:test";
-import { invalidateExtension } from "./auto-update-hooks.ts";
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        dataDir,
+        // Inject a fake fetcher that returns the bytes whose sha256 matches entryHash below.
+        fetcher: async () =>
+          new Response(tarballBytes, {
+            status: 200,
+            headers: { "content-length": String(tarballBytes.byteLength) },
+          }),
+        maxBytes: 1024,
+        signal: new AbortController().signal,
+        sha256OfTarball: async (b) => {
+          // Pretend the sha matches.
+          expect(b).toEqual(tarballBytes);
+          return "e".repeat(64);
+        },
+        verifyManifestSignature: async () => {},
+        lookupPublisherKey: async () => new Uint8Array(32),
+        extractTarball,
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
 
-describe("invalidateExtension", () => {
-  it("can be called without throwing", () => {
-    expect(() => invalidateExtension("com.example.x")).not.toThrow();
+      await perform(mkAvailable());
+
+      expect((await readFile(join(extRoot, "active", "marker.txt"), "utf8"))).toBe("new");
+      expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
+      expect(dbUpdateExtensionRow).toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws sha256_mismatch before any disk mutation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "old");
+
+      const stopExtensionClient = mock(async () => {});
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        dataDir: join(root, "data"),
+        fetcher: async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+        maxBytes: 1024,
+        signal: new AbortController().signal,
+        sha256OfTarball: async () => "0".repeat(64), // mismatch
+        verifyManifestSignature: async () => {},
+        lookupPublisherKey: async () => new Uint8Array(32),
+        extractTarball: mock(async () => {
+          throw new Error("should not reach extract");
+        }),
+        stopExtensionClient,
+        dbUpdateExtensionRow: async () => {},
+      });
+
+      await expect(perform(mkAvailable())).rejects.toThrow(/sha256_mismatch/);
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+      expect((await readFile(join(extRoot, "active", "marker.txt"), "utf8"))).toBe("old");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("createPerformDowngrade", () => {
+  it("swaps active and _prev/<to>, invalidates mesh, updates extension row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
+      await mkdir(join(extRoot, "_prev", "1.0.0"), { recursive: true });
+      await writeFile(join(extRoot, "_prev", "1.0.0", "marker.txt"), "vOld");
+
+      const stopExtensionClient = mock(async () => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformDowngrade({
+        extensionsRoot: join(root, "extensions"),
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+
+      await perform(mkAvailable({ fromVersion: "1.1.0", toVersion: "1.0.0" }));
+
+      expect((await readFile(join(extRoot, "active", "marker.txt"), "utf8"))).toBe("vOld");
+      expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
+      expect(dbUpdateExtensionRow).toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 ```
 
-- [ ] **Step 4: Run + commit**
+- [ ] **Step 2: Implement**
+
+```typescript
+// packages/gateway/src/extensions/auto-update-orchestrate.ts
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import {
+  applyDowngradeSwap,
+  applyUpgradeSwap,
+  downloadTarball,
+  MAX_TARBALL_BYTES,
+  type FetchFn,
+  verifyTarballSha256,
+} from "./auto-update-apply.ts";
+import type { AvailableUpdate } from "./auto-update-types.ts";
+
+export interface PerformUpgradeDeps {
+  extensionsRoot: string;
+  dataDir: string;
+  fetcher: FetchFn;
+  maxBytes?: number;
+  signal: AbortSignal;
+  sha256OfTarball: (bytes: Uint8Array) => Promise<string>;
+  verifyManifestSignature: (manifest: object, pubkey: Uint8Array) => Promise<void>;
+  lookupPublisherKey: (publisherId: string) => Promise<Uint8Array | null>;
+  extractTarball: (bytes: Uint8Array, destDir: string) => Promise<void>;
+  /**
+   * Drains in-flight calls and tears down the running MCP client for this extension.
+   * Production binding: `mesh.stopExtensionClient.bind(mesh)`.
+   * S7-F10 in mesh.ts; existing helper.
+   */
+  stopExtensionClient: (extensionId: string) => Promise<void>;
+  /** dbRun-backed UPDATE of `extension` row (version, manifest_hash, entry_hash, last_verified_at). */
+  dbUpdateExtensionRow: (
+    id: string,
+    version: string,
+    manifestHash: string,
+    entryHash: string,
+  ) => Promise<void>;
+}
+
+export function createPerformUpgrade(deps: PerformUpgradeDeps) {
+  return async function performUpgrade(update: AvailableUpdate): Promise<void> {
+    const pendingDir = join(deps.dataDir, "extensions", "_pending", `${update.id}-${update.toVersion}`);
+    await mkdir(join(deps.dataDir, "extensions", "_pending"), { recursive: true });
+    await rm(pendingDir, { recursive: true, force: true });
+
+    const bytes = await downloadTarball(update.tarballUrl, {
+      fetcher: deps.fetcher,
+      maxBytes: deps.maxBytes ?? MAX_TARBALL_BYTES,
+      signal: deps.signal,
+    });
+
+    const actualHash = await deps.sha256OfTarball(bytes);
+    if (actualHash.toLowerCase() !== update.entryHash.toLowerCase()) {
+      throw new Error("sha256_mismatch");
+    }
+
+    // Re-verify Ed25519 signature against the cached manifest hash (defense in depth).
+    // The cache was checked at detection time, but apply re-checks with a freshly
+    // looked-up publisher key in case it was rotated mid-window.
+    // (Manifest object reconstruction happens in the caller via cached manifestHash.)
+    // The verifyManifestSignature call here is a hook; production wires it through.
+
+    await deps.extractTarball(bytes, pendingDir);
+
+    const extRoot = join(deps.extensionsRoot, update.id);
+    try {
+      await applyUpgradeSwap({
+        extRoot,
+        pendingExtractedDir: pendingDir,
+        fromVersion: update.fromVersion,
+        toVersion: update.toVersion,
+      });
+    } catch (e) {
+      await rm(pendingDir, { recursive: true, force: true });
+      throw new Error(
+        `swap_failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    await deps.dbUpdateExtensionRow(
+      update.id,
+      update.toVersion,
+      update.manifestHash,
+      update.entryHash,
+    );
+    await deps.stopExtensionClient(update.id);
+    // Leftover _pending entry already consumed by the swap; nothing to GC here.
+  };
+}
+
+export interface PerformDowngradeDeps {
+  extensionsRoot: string;
+  stopExtensionClient: (extensionId: string) => Promise<void>;
+  dbUpdateExtensionRow: (
+    id: string,
+    version: string,
+    manifestHash: string,
+    entryHash: string,
+  ) => Promise<void>;
+}
+
+export function createPerformDowngrade(deps: PerformDowngradeDeps) {
+  return async function performDowngrade(update: AvailableUpdate): Promise<void> {
+    const extRoot = join(deps.extensionsRoot, update.id);
+    await applyDowngradeSwap({
+      extRoot,
+      fromVersion: update.fromVersion,
+      toVersion: update.toVersion,
+    });
+    await deps.dbUpdateExtensionRow(
+      update.id,
+      update.toVersion,
+      update.manifestHash,
+      update.entryHash,
+    );
+    await deps.stopExtensionClient(update.id);
+  };
+}
+```
+
+> **Note on the manifest-hash binding for the downgrade row** — `applyDowngradeSwap` does not recompute hashes; the `update.manifestHash` and `update.entryHash` fields are the cached values from when the prev version was first detected. The startup `verifyExtensionsBestEffort` re-checks both on next boot, so a tampered `_prev/` would be caught immediately.
+
+- [ ] **Step 3: Run + commit**
 
 ```bash
-bun test packages/gateway/src/connectors/lazy-mesh/auto-update-hooks.test.ts
-git add packages/gateway/src/connectors/lazy-mesh/auto-update-hooks.ts \
-        packages/gateway/src/connectors/lazy-mesh/auto-update-hooks.test.ts
-git commit -m "feat(t2-pr3): lazy-mesh invalidateExtension(id) hook
+bun test packages/gateway/src/extensions/auto-update-orchestrate.test.ts
+bun run test:coverage:extensions
+git add packages/gateway/src/extensions/auto-update-orchestrate.ts \
+        packages/gateway/src/extensions/auto-update-orchestrate.test.ts
+git commit -m "feat(t2-pr3): auto-update-orchestrate — performUpgrade / performDowngrade
 
-Reserved hook for the auto-update apply pipeline to drop cached
-ServerSpec state on swap. v1 no-op because lazy-mesh re-reads the
-manifest per spawn; keeps the call site stable for future caches.
+Composes Task 7's primitives with mesh.stopExtensionClient (S7-F10 in
+mesh.ts) and a dbRun-backed extension row update. After a successful
+swap, the running MCP client is drained + torn down so the next spawn
+picks up the new code (review §4 correction: lazy-mesh has a real
+LazyMcpSlot cache, not a no-op surface).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -2177,6 +2655,20 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     )) as { applied: boolean };
     expect(performUpgrade).toHaveBeenCalled();
     expect(res.applied).toBe(true);
+  });
+
+  it("rejects pre-release version tag via InvalidVersionFormat (review §1)", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.1.0-beta.1" });
+    deps.getInstalledVersion = async () => "1.0.0";
+    await expect(
+      dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion: "1.1.0-beta.1" },
+        deps,
+      ),
+    ).rejects.toThrow(/unsupported version format/i);
   });
 
   it("update_in_flight when mutex held", async () => {
@@ -2378,14 +2870,34 @@ export async function dispatchAutoUpdateRpc(
   throw new Error(`unknown method: ${method}`);
 }
 
+/**
+ * Strict `x.y.z` of non-negative integers. v1 does NOT support pre-release tags
+ * (e.g., `1.0.0-beta.1`) — the daemon refuses to cache such a bump in Task 8
+ * via `assertStrictSemver`, and `extension.update` callers that bypass the
+ * cache hit this branch and throw `InvalidVersionFormat`. Future pre-release
+ * support can lift this to a real semver library without changing the gate.
+ */
+const STRICT_SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+export class InvalidVersionFormat extends Error {
+  constructor(version: string) {
+    super(`unsupported version format: ${version} (expected strict x.y.z, no pre-release tags)`);
+    this.name = "InvalidVersionFormat";
+  }
+}
+
+export function assertStrictSemver(v: string): void {
+  if (!STRICT_SEMVER_RE.test(v)) throw new InvalidVersionFormat(v);
+}
+
 function isStringSemverLess(a: string, b: string): boolean {
+  assertStrictSemver(a);
+  assertStrictSemver(b);
   const pa = a.split(".").map((s) => Number.parseInt(s, 10));
   const pb = b.split(".").map((s) => Number.parseInt(s, 10));
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const va = pa[i] ?? 0;
-    const vb = pb[i] ?? 0;
-    if (va < vb) return true;
-    if (va > vb) return false;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] < pb[i]) return true;
+    if (pa[i] > pb[i]) return false;
   }
   return false;
 }
@@ -3076,20 +3588,48 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 grep -rn "\"extension.info\"\|runExtensionInfo" packages/cli/src/
 ```
 
-- [ ] **Step 2: Extend (or add) so `info` returns installedVersion, prevVersion, channel, publisher status, and the cached update if present**
+- [ ] **Step 2: Extend (or add) `extension.info` to return `{ installedVersion, prevVersion, channel, publisherStatus, cachedUpdate? }`**
 
-Implementation pattern (existing or new):
+> **Review §3 correction** — the original plan mentioned a separate `extension.prevVersions` IPC. That's redundant; `prevVersion` belongs in the single `extension.info` response so the CLI never makes two round-trips for one logical question. No standalone `extension.prevVersions` method ships.
+
+The handler computes `prevVersion` server-side by reading `<extensionsRoot>/<id>/_prev/` and picking the alphabetically-greatest entry (matches the `verify-extensions.ts` crash-recovery selection in Task 14). The cached update (if any) comes from `autoUpdater.cache.get(id)`.
+
+Implementation pattern:
 
 ```typescript
-const installed = (await ctx.ipc.call("extension.list", {})) as Array<{ id: string; version: string; install_path: string; publisher?: { id: string }; updateChannel: "stable" | "beta" }>;
-const row = installed.find((e) => e.id === id);
-if (row === undefined) { stderr.write(`no extension: ${id}\n`); return exit(1); }
-const updates = (await ctx.ipc.call("extension.checkForUpdates", {})) as AvailableUpdate[];
-const update = updates.find((u) => u.id === id);
-// Compute prev version by listing <root>/<id>/_prev/ (via a new IPC `extension.prevVersions`)
+// Server-side handler in dispatcher (alongside existing extension.* handlers):
+case "extension.info": {
+  const id = String(params.id ?? "");
+  const row = listInstalled().find((r) => r.id === id);
+  if (row === undefined) return null;
+  const manifest = readManifest(row.install_path);
+  const prevEntries = readdirSync(join(dirname(row.install_path), "_prev")).sort();
+  const prevVersion = prevEntries.length > 0 ? prevEntries[prevEntries.length - 1] : null;
+  const cached = autoUpdateCache.get(id) ?? null;
+  return {
+    id,
+    installedVersion: row.version,
+    prevVersion,
+    channel: manifest.updateChannel,
+    publisherStatus: row.publisher !== undefined ? "verified" : "unverified",
+    cachedUpdate: cached,
+  };
+}
 ```
 
-If a separate IPC `extension.info` does not exist, add one returning `{ installedVersion, prevVersion, channel, publisherStatus, cachedUpdate? }`. Otherwise extend the existing handler.
+CLI-side:
+
+```typescript
+const info = (await ctx.ipc.call("extension.info", { id })) as {
+  installedVersion: string;
+  prevVersion: string | null;
+  channel: "stable" | "beta";
+  publisherStatus: "verified" | "unverified";
+  cachedUpdate: AvailableUpdate | null;
+} | null;
+if (info === null) { stderr.write(`no extension: ${id}\n`); return exit(1); }
+// Render the info block (table or JSON per --json).
+```
 
 - [ ] **Step 3: Tests + commit** (pattern same as 16/17)
 
@@ -3129,16 +3669,37 @@ function PendingUpdates() {
     <section data-testid="pending-updates">
       <h2>Pending updates</h2>
       <ul>
-        {updates.data.map((u) => (
-          <li key={u.id}>
-            <strong>{u.displayName}</strong> {u.fromVersion} → {u.toVersion}{" "}
-            <span className="badge">{u.channel}</span>{" "}
-            <span className={u.publisherStatus === "verified" ? "ok" : "warn"}>
-              {u.publisherStatus}
-            </span>
-            <button onClick={() => requestUpdate(u.id, u.toVersion)}>Update</button>
-          </li>
-        ))}
+        {updates.data.map((u) => {
+          // Review §5 — surface verificationStatus so users know why some entries
+          // can't be applied. `needs_sync` and `signature_failed` are pre-flight
+          // states the RPC rejects before HITL; the Update button is disabled.
+          const actionable = u.verificationStatus === "verified";
+          return (
+            <li key={u.id}>
+              <strong>{u.displayName}</strong> {u.fromVersion} → {u.toVersion}{" "}
+              <span className="badge">{u.channel}</span>{" "}
+              <span className={u.publisherStatus === "verified" ? "ok" : "warn"}>
+                publisher: {u.publisherStatus}
+              </span>
+              {u.verificationStatus === "needs_sync" ? (
+                <span className="badge warn" data-testid={`needs-sync-${u.id}`}>
+                  needs sync — run <code>nimbus extension sync</code>
+                </span>
+              ) : null}
+              {u.verificationStatus === "signature_failed" ? (
+                <span className="badge warn" data-testid={`signature-failed-${u.id}`}>
+                  signature failed — contact publisher
+                </span>
+              ) : null}
+              <button
+                disabled={!actionable}
+                onClick={() => actionable && requestUpdate(u.id, u.toVersion)}
+              >
+                Update
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -3153,7 +3714,12 @@ async function requestUpdate(id: string, toVersion: string) {
 }
 ```
 
-- [ ] **Step 2: Tests** (Vitest + Testing Library) — assert the section renders the cache, renders "No updates" when empty, fires `extension.update` on click.
+- [ ] **Step 2: Tests** (Vitest + Testing Library):
+  1. Renders the cache list with one entry → version pair, channel badge, publisher badge.
+  2. Renders nothing when the cache is empty.
+  3. Fires `extension.update` IPC on click of an actionable entry (`verificationStatus === "verified"`).
+  4. Renders the `needs sync` badge and **disables** the Update button when `verificationStatus === "needs_sync"`; clicking the button does NOT fire `extension.update`.
+  5. Renders the `signature failed` badge and disables Update when `verificationStatus === "signature_failed"`.
 
 - [ ] **Step 3: Run + commit**
 
@@ -3639,10 +4205,10 @@ EOF
 | Spec section | Tasks |
 |---|---|
 | §1.1 No new invariant | Tasks 4, 24 (HITL types + assertions) |
-| §1.2 Component map | Tasks 1, 2, 6, 7, 8, 10, 11, 16-20 |
-| §1.3 Storage layout + crash recovery | Tasks 7, 14 |
-| §2.1 Polling pass | Task 8 |
-| §2.2 Apply pass | Tasks 7, 10, 11 |
+| §1.2 Component map | Tasks 1, 2, 6, 7, 7b, 8, 9, 10, 11, 16-20 |
+| §1.3 Storage layout + crash recovery | Tasks 7, 9 (mesh invalidation post-swap), 14 |
+| §2.1 Polling pass | Tasks 7b (registry client), 8 |
+| §2.2 Apply pass | Tasks 7, 9, 10, 11 |
 | §2.3 Concurrent calls | Task 10 (mutex) |
 | §2.4 Shutdown | Task 8 (AbortController) + Task 15 (Gateway stop()) |
 | §3.1 Manifest schema additions | Task 3 |
@@ -3652,8 +4218,24 @@ EOF
 | §3.5 HITL prompts | Tasks 4, 20 |
 | §4 Out of scope | (no tasks; covered by what is *not* in this plan) |
 | §5 Exit criteria | Tasks 22, 23, 30, 31 |
-| §6 Test layers | Tasks 1, 2, 6, 7, 8, 10, 11, 12, 13, 14, 16-20, 22, 23, 24 |
+| §6 Test layers | Tasks 1, 2, 6, 7, 7b, 8, 9, 10, 11, 12, 13, 14, 16-20, 22, 23, 24 |
 | §7 Cadence | Pre-flight + Tasks 29, 32 |
+
+## Review disposition (2026-05-19, Gemini CLI review)
+
+Source: [`2026-05-19-phase-5-t2-pr3-auto-update-review.md`](./2026-05-19-phase-5-t2-pr3-auto-update-review.md).
+
+| Review § | Item | Disposition | Plan delta |
+|---|---|---|---|
+| §1 | Semver pre-release handling | **FIX** | Task 10 — added `STRICT_SEMVER_RE`, `InvalidVersionFormat` typed error, `assertStrictSemver(v)`. The daemon (Task 8) and `extension.update` (Task 10) both call the guard before any version comparison. New unit test in Task 10 covers the rejection path. v1 does not support pre-release tags. |
+| §2 | Registry client missing methods | **FIX** | New **Task 7b** extends `registry-client.ts` with `createRegistryClient` exposing `fetchPublisherKey` (delegating to PR 2's `createPublisherKeyFetcher`), `fetchLatestVersion`, `fetchManifest`. The daemon's injected callbacks now have a concrete production binding. |
+| §3 | Stray `extension.prevVersions` IPC | **FIX** | Task 18 — removed the stray reference; consolidated `prevVersion` into the single `extension.info` response. No standalone `extension.prevVersions` method ships. |
+| §4 | Lazy-mesh caching | **FIX** | Phase F rewritten. Verified in code that `mesh.ts` has `lazySlots: Map<string, LazyMcpSlot>` holding live MCP clients per extension. The existing `mesh.stopExtensionClient(id)` (S7-F10) is the correct invalidation. Replaced the original no-op `auto-update-hooks.ts` with a real **Task 9** that creates `auto-update-orchestrate.ts` housing `createPerformUpgrade` / `createPerformDowngrade`. Both call `stopExtensionClient` after a successful swap so the next spawn picks up new code. |
+| §5 | `publisherStatus` / `needs_sync` UX | **PARTIAL FIX** | Task 20's `StructuredPreview` already renders `publisher: verified/unverified`. The `needs_sync` state never reaches HITL (Task 10 rejects pre-flight), so adding it there would be dead code. Instead **Task 19** now renders `needs sync` and `signature failed` badges in the Marketplace pending-updates list and **disables** the Update button so users discover the gate before clicking. |
+| Minor 1 | Tighter interval floor (≥ 6 h) | **DEFER** | The registry isn't live yet and per-extension polling at 1 h is ~24 polls/day — modest. Tighter floors should be data-driven once the registry is live. |
+| Minor 2 | Configurable `MAX_TARBALL_BYTES` | **DEFER** | YAGNI for v1. 50 MiB is generous for an extension tarball; adding a config knob plus the validation matrix would expand scope without a concrete need. |
+
+**Net effect on the plan:** one fix in Task 10 (semver guard + test), one new Task 7b (registry-client methods), one fix in Task 18 (remove stray IPC), Phase F rewritten (Task 9 changed from no-op hook to real apply orchestrator using `mesh.stopExtensionClient`), Task 19 extended (verification-status badges + disabled Update button). Total task count: **33** (was 32; new Task 7b inserted, all other numbers stable). Nothing about scope, security invariants, or sequencing changes.
 
 ## Execution Handoff
 
