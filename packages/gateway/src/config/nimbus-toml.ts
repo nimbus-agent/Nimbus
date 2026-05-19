@@ -690,6 +690,75 @@ export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAuto
   return loadNimbusAutomationFromPath(join(configDir, "nimbus.toml"));
 }
 
+// ─── [extensions] section (T2 PR 3) ─────────────────────────────────────────
+
+export type NimbusExtensionsToml = {
+  /**
+   * Polling cadence (hours) for the `ExtensionAutoUpdater` daemon. Integer in
+   * [1, 168]. Default 24.
+   */
+  updateCheckIntervalHours: number;
+};
+
+export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
+  updateCheckIntervalHours: 24,
+};
+
+function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
+  const lines = source.split(/\r?\n/);
+  let inSection = false;
+  const out: Partial<NimbusExtensionsToml> = {};
+  for (const line of lines) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") continue;
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      inSection = trimmed === "[extensions]";
+      continue;
+    }
+    if (!inSection) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const valRaw = trimmed.slice(eq + 1).trim();
+    if (key === "update_check_interval_hours") {
+      const n = Number(valRaw);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        throw new Error(
+          `[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`,
+        );
+      }
+      if (n < 1 || n > 168) {
+        throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);
+      }
+      out.updateCheckIntervalHours = n;
+    }
+  }
+  return out;
+}
+
+export function parseNimbusExtensionsToml(
+  raw: string,
+  defaults: NimbusExtensionsToml = DEFAULT_NIMBUS_EXTENSIONS_TOML,
+): NimbusExtensionsToml {
+  return { ...defaults, ...parseNimbusTomlExtensionsSection(raw) };
+}
+
+export function loadNimbusExtensionsFromPath(tomlPath: string): NimbusExtensionsToml {
+  if (!existsSync(tomlPath)) {
+    return structuredClone(DEFAULT_NIMBUS_EXTENSIONS_TOML);
+  }
+  try {
+    const raw = readFileSync(tomlPath, "utf8");
+    return parseNimbusExtensionsToml(raw);
+  } catch {
+    return structuredClone(DEFAULT_NIMBUS_EXTENSIONS_TOML);
+  }
+}
+
+export function loadNimbusExtensionsFromConfigDir(configDir: string): NimbusExtensionsToml {
+  return loadNimbusExtensionsFromPath(join(configDir, "nimbus.toml"));
+}
+
 // ---------------------------------------------------------------------------
 // [user] — first-class identity hint for built-in agents (T3 PR 3).
 // ---------------------------------------------------------------------------
