@@ -28,7 +28,9 @@
  *
  * Build: `make` in this directory; requires libcap-dev. C99 + -Werror clean.
  */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
