@@ -110,6 +110,14 @@ describe("HITL_REQUIRED", () => {
       expect(HITL_REQUIRED.has(t)).toBe(true);
     }
   });
+
+  test("includes extension.autoUpdate (T2 PR 3)", () => {
+    expect(HITL_REQUIRED.has("extension.autoUpdate")).toBe(true);
+  });
+
+  test("includes extension.downgrade (T2 PR 3)", () => {
+    expect(HITL_REQUIRED.has("extension.downgrade")).toBe(true);
+  });
 });
 
 function createMocks(initialApprove = true): {

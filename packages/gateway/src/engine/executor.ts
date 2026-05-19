@@ -103,6 +103,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // IPC-native destructive operations
   "data.delete",
   "connector.remove",
+  "extension.autoUpdate",
+  "extension.downgrade",
   "extension.install",
   "connector.addMcp",
   "data.export",
