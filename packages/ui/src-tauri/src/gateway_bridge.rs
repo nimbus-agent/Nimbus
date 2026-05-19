@@ -85,10 +85,12 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "engine.askStream",
     "engine.cancelStream",
     "engine.getSessionTranscript",
+    "extension.checkForUpdates",
     "extension.disable",
     "extension.enable",
     "extension.list",
     "extension.remove",
+    "extension.update",
     "index.metrics",
     "llm.cancelPull",
     "llm.getRouterStatus",
@@ -447,7 +449,9 @@ mod tests {
         // Phase 5 T3 PR 1 adds agents.expert → 58 total.
         // Phase 5 T3 PR 2 adds agents.impact → 59 total.
         // Phase 5 T3 PR 3 adds agents.catchup → 60 total.
-        assert_eq!(ALLOWED_METHODS.len(), 60);
+        // Phase 5 T2 PR 3 adds extension.checkForUpdates + extension.update → 62 total.
+        // extension.install stays absent (chain C1 from B1 audit).
+        assert_eq!(ALLOWED_METHODS.len(), 62);
     }
 
     #[test]
