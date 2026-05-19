@@ -254,6 +254,6 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     )) as { applied: boolean; reason?: string };
     expect(res).toEqual({ applied: false, reason: "internal_error" });
     expect(audits[0]?.type).toBe("extension.autoUpdate.failed");
-    expect(audits[0]?.payload.phase).toBe("sha256_mismatch");
+    expect(audits[0]?.payload["phase"]).toBe("sha256_mismatch");
   });
 });

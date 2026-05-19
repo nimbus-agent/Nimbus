@@ -792,3 +792,79 @@ describe("extension.sync", () => {
     }
   });
 });
+
+describe("extension.checkForUpdates / extension.update (T2 PR 3)", () => {
+  test("extension.checkForUpdates routes to dispatchAutoUpdateRpc when wired", async () => {
+    const { AutoUpdateCache } = await import("../extensions/auto-update-cache.ts");
+    const { _resetAutoUpdateMutexForTests } = await import("../extensions/auto-update-rpc.ts");
+    _resetAutoUpdateMutexForTests();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const cache = new AutoUpdateCache();
+      const out = await dispatchAutomationRpc({
+        method: "extension.checkForUpdates",
+        params: {},
+        db,
+        autoUpdate: {
+          cache,
+          forcePoll: async () => {},
+          gate: async () => "proceed" as const,
+          performUpgrade: async () => {},
+          performDowngrade: async () => {},
+          appendAudit: async () => {},
+          getInstalledVersion: async () => null,
+          hasPrevVersion: async () => false,
+        },
+      });
+      expect(out).toEqual({ kind: "hit", value: [] });
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("extension.update returns cache_miss when no cached entry", async () => {
+    const { AutoUpdateCache } = await import("../extensions/auto-update-cache.ts");
+    const { _resetAutoUpdateMutexForTests } = await import("../extensions/auto-update-rpc.ts");
+    _resetAutoUpdateMutexForTests();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      const cache = new AutoUpdateCache();
+      const out = await dispatchAutomationRpc({
+        method: "extension.update",
+        params: { id: "com.nope", toVersion: "1.0.0" },
+        db,
+        autoUpdate: {
+          cache,
+          forcePoll: async () => {},
+          gate: async () => "proceed" as const,
+          performUpgrade: async () => {},
+          performDowngrade: async () => {},
+          appendAudit: async () => {},
+          getInstalledVersion: async () => null,
+          hasPrevVersion: async () => false,
+        },
+      });
+      expect(out).toEqual({
+        kind: "hit",
+        value: { applied: false, reason: "cache_miss" },
+      });
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns -32603 when autoUpdate context absent", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    try {
+      await expect(
+        dispatchAutomationRpc({
+          method: "extension.checkForUpdates",
+          params: {},
+          db,
+        }),
+      ).rejects.toThrow(/auto-update support/);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
+    }
+  });
+});

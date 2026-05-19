@@ -24,6 +24,7 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -97,6 +98,13 @@ interface AutomationCtx {
   fetcher?: PublisherKeyFetcher;
   /** I16 — when true, refuse install if vault cache or explicit key cannot satisfy. */
   enforceAirGap?: boolean;
+  /**
+   * T2 PR 3 — auto-update RPC dependencies. Present iff the Gateway wired the
+   * `ExtensionAutoUpdater` daemon; absent in legacy callers (e.g. some unit
+   * tests). When absent, `extension.checkForUpdates` and `extension.update`
+   * return -32603 instead of crashing.
+   */
+  autoUpdate?: AutoUpdateRpcDeps;
 }
 
 type AutomationHandler = (
@@ -165,6 +173,11 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.install": (rec, ctx) => handleExtensionInstall(rec, ctx),
 
   "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
+
+  "extension.checkForUpdates": async (rec, ctx) =>
+    handleAutoUpdateRpc("extension.checkForUpdates", rec, ctx),
+
+  "extension.update": async (rec, ctx) => handleAutoUpdateRpc("extension.update", rec, ctx),
 
   "extension.enable": (rec, ctx) => ({
     kind: "hit",
@@ -345,6 +358,18 @@ async function handleExtensionInstall(
   }
 }
 
+async function handleAutoUpdateRpc(
+  method: "extension.checkForUpdates" | "extension.update",
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  if (ctx.autoUpdate === undefined) {
+    throw new AutomationRpcError(-32603, "Gateway is not configured with auto-update support");
+  }
+  const value = (await dispatchAutoUpdateRpc(method, rec ?? {}, ctx.autoUpdate)) as unknown;
+  return { kind: "hit", value };
+}
+
 export async function dispatchAutomationRpc(options: {
   method: string;
   params: unknown;
@@ -359,6 +384,8 @@ export async function dispatchAutomationRpc(options: {
   fetcher?: PublisherKeyFetcher;
   /** I16 — when true, refuse signed-extension install if no local pubkey is available. */
   enforceAirGap?: boolean;
+  /** T2 PR 3 — wired auto-update dependencies; absent in legacy callers. */
+  autoUpdate?: AutoUpdateRpcDeps;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -371,6 +398,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.vault !== undefined && { vault: options.vault }),
     ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
     ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+    ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
   };
   return await handler(asRecord(options.params), ctx);
 }

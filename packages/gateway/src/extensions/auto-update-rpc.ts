@@ -43,15 +43,15 @@ export async function dispatchAutoUpdateRpc(
   deps: AutoUpdateRpcDeps,
 ): Promise<unknown> {
   if (method === "extension.checkForUpdates") {
-    if (params.force === true) {
+    if (params["force"] === true) {
       await deps.forcePoll();
     }
     return deps.cache.list();
   }
 
   if (method === "extension.update") {
-    const id = typeof params.id === "string" ? params.id : "";
-    const toVersion = typeof params.toVersion === "string" ? params.toVersion : "";
+    const id = typeof params["id"] === "string" ? params["id"] : "";
+    const toVersion = typeof params["toVersion"] === "string" ? params["toVersion"] : "";
     if (id === "" || toVersion === "") {
       return { applied: false, reason: "cache_miss" } satisfies UpdateApplyResult;
     }

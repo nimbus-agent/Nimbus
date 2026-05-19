@@ -174,7 +174,7 @@ describe("ExtensionAutoUpdater", () => {
 
   it("skips unsigned (no publisher) extensions", async () => {
     const installed = fakeInstalled();
-    installed[0]!.manifest.publisher = undefined;
+    delete installed[0]!.manifest.publisher;
     const cache = new AutoUpdateCache();
     const fetchLatest = mock(async () => null);
     const updater = new ExtensionAutoUpdater({

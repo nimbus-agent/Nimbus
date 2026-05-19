@@ -195,25 +195,29 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
       if (body === null) {
         throw new Error(`registry manifest not found: ${id}@${version}`);
       }
+      const manifestHash = body["manifestHash"];
+      const entryHash = body["entryHash"];
+      const tarballUrl = body["tarballUrl"];
+      const manifestRaw = body["manifest"];
+      const tarballSizeRaw = body["tarballSizeBytes"];
       if (
-        typeof body.manifestHash !== "string" ||
-        !HEX64.test(body.manifestHash) ||
-        typeof body.entryHash !== "string" ||
-        !HEX64.test(body.entryHash) ||
-        typeof body.tarballUrl !== "string" ||
-        typeof body.manifest !== "object" ||
-        body.manifest === null
+        typeof manifestHash !== "string" ||
+        !HEX64.test(manifestHash) ||
+        typeof entryHash !== "string" ||
+        !HEX64.test(entryHash) ||
+        typeof tarballUrl !== "string" ||
+        typeof manifestRaw !== "object" ||
+        manifestRaw === null
       ) {
         throw new Error("registry manifest schema invalid");
       }
-      const manifest = parseExtensionManifestJson(JSON.stringify(body.manifest));
-      const tarballSizeBytes =
-        typeof body.tarballSizeBytes === "number" ? body.tarballSizeBytes : undefined;
+      const manifest = parseExtensionManifestJson(JSON.stringify(manifestRaw));
+      const tarballSizeBytes = typeof tarballSizeRaw === "number" ? tarballSizeRaw : undefined;
       return {
         manifest,
-        manifestHash: body.manifestHash,
-        entryHash: body.entryHash,
-        tarballUrl: body.tarballUrl,
+        manifestHash,
+        entryHash,
+        tarballUrl,
         ...(tarballSizeBytes !== undefined ? { tarballSizeBytes } : {}),
       };
     },
