@@ -23,6 +23,8 @@ type FakeSubprocess = {
   readonly stderr: ReadableStream<Uint8Array>;
 };
 
+const ENCODER = new TextEncoder();
+
 /**
  * Test-only `Bun.spawn` shim. Stages canned subprocess results keyed by
  * (binary, optional argv-matcher) and records every call.
@@ -72,17 +74,24 @@ export class MockSpawn {
     });
   }
 
+  /**
+   * Install the spawn shim. Uses `spyOn(Bun, "spawn")`, which manages its own
+   * restore stack — unlike MockFetch (which saves the original `globalThis.fetch`
+   * pointer directly). Do not install a second `MockSpawn` instance before the
+   * first is restored: the spy stack will unwind LIFO, not in instance order.
+   * Phase 2C's `beforeEach` / `afterEach` lifecycle keeps installations
+   * one-per-test, which is the supported usage.
+   */
   install(): void {
     if (this.spy !== null) {
       throw new Error("MockSpawn.install() called twice without restore()");
     }
     this.spy = spyOn(Bun, "spawn").mockImplementation(((
-      cmd: string | readonly string[],
+      cmd: readonly string[],
       options?: { env?: Record<string, string> },
     ): FakeSubprocess => {
-      const argvAll: readonly string[] = typeof cmd === "string" ? [cmd] : cmd;
-      const binary = argvAll[0] ?? "";
-      const argv = argvAll.slice(1);
+      const binary = cmd[0] ?? "";
+      const argv = cmd.slice(1);
       const env = options?.env ?? {};
       this.calls.push({
         binary,
@@ -109,11 +118,10 @@ export class MockSpawn {
 }
 
 function fakeSubprocess(r: { exitCode: number; stdout: string; stderr: string }): FakeSubprocess {
-  const enc = new TextEncoder();
   return {
     exited: Promise.resolve(r.exitCode),
-    stdout: streamFromString(enc.encode(r.stdout)),
-    stderr: streamFromString(enc.encode(r.stderr)),
+    stdout: streamFromString(ENCODER.encode(r.stdout)),
+    stderr: streamFromString(ENCODER.encode(r.stderr)),
   };
 }
 
