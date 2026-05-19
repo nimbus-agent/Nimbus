@@ -1,5 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
+import { PendingUpdates } from "../components/PendingUpdates";
 import { useIpcQuery } from "../hooks/useIpcQuery";
 import { createIpcClient } from "../ipc/client";
 import type { ExtensionListResult, ExtensionSummary } from "../ipc/types";
@@ -116,6 +117,8 @@ export function Marketplace() {
       {isLoading && <p className="text-neutral-500 text-sm">Loading…</p>}
       {error && <p className="text-red-600 text-sm">{error}</p>}
       {installError && <p className="text-red-600 text-sm">{installError}</p>}
+
+      <PendingUpdates offline={offline} />
 
       {data && (
         <table className="w-full text-left border-collapse">
