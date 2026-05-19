@@ -38,6 +38,9 @@
     "packages/cli/src/commands/expert.ts": {
       "min_coverage_pct": 39.53
     },
+    "packages/cli/src/commands/extension.ts": {
+      "min_coverage_pct": 68.31
+    },
     "packages/cli/src/commands/help.ts": {
       "min_coverage_pct": 0
     },
@@ -475,6 +478,12 @@
     },
     "packages/sdk/src/contract-tests.ts": {
       "min_coverage_pct": 78.43
+    },
+    "packages/sdk/src/crypto/canonical-json.ts": {
+      "min_coverage_pct": 30.77
+    },
+    "packages/sdk/src/crypto/verify-signature.ts": {
+      "min_coverage_pct": 18.68
     },
     "packages/sdk/src/ipc/index.ts": {
       "min_coverage_pct": 0
