@@ -8,11 +8,13 @@ import { createMockVault } from "../../src/vault/mock.ts";
 import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
 import { MockFetch } from "./mock-fetch.ts";
 import { MockNotificationLog } from "./mock-notification-log.ts";
+import { MockSpawn } from "./mock-spawn.ts";
 
 export interface ConnectorSyncFixture {
   readonly db: Database;
   readonly vault: NimbusVault;
   readonly fetchMock: MockFetch;
+  readonly spawnMock: MockSpawn;
   readonly notifications: MockNotificationLog;
   readonly logger: Logger;
   readonly rateLimiter: ProviderRateLimiter;
@@ -20,7 +22,7 @@ export interface ConnectorSyncFixture {
   /** Build the SyncContext shape consumed by `Syncable.sync(ctx, cursor)`. */
   createSyncContext(): SyncContext;
 
-  /** Close the in-memory DB and restore the original `globalThis.fetch`. */
+  /** Close the in-memory DB and restore the original `globalThis.fetch` + `Bun.spawn`. */
   cleanup(): void;
 }
 
@@ -53,6 +55,7 @@ export function createConnectorSyncFixture(): ConnectorSyncFixture {
 
   const vault = createMockVault();
   const fetchMock = new MockFetch();
+  const spawnMock = new MockSpawn();
   const notifications = new MockNotificationLog();
   const logger = pino({ level: "silent" });
   const rateLimiter = new ProviderRateLimiter();
@@ -61,6 +64,7 @@ export function createConnectorSyncFixture(): ConnectorSyncFixture {
     db,
     vault,
     fetchMock,
+    spawnMock,
     notifications,
     logger,
     rateLimiter,
@@ -74,6 +78,7 @@ export function createConnectorSyncFixture(): ConnectorSyncFixture {
     },
     cleanup(): void {
       fetchMock.restore();
+      spawnMock.restore();
       db.close();
     },
   };
