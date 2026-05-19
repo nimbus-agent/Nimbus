@@ -10,6 +10,7 @@ import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-tom
 import {
   loadNimbusAutomationFromConfigDir,
   loadNimbusEmbeddingFromPath,
+  loadNimbusExtensionsFromConfigDir,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
@@ -35,6 +36,7 @@ import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
+import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import {
   LocalIndex,
@@ -374,6 +376,35 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // pre-G7 so this call was placed before mesh creation in the original
   // wiring.
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
+
+  // T2 PR 3 — auto-update daemon. Constructed when a registry base URL is
+  // configured via env (`NIMBUS_EXTENSIONS_REGISTRY_URL`) and air-gap is not
+  // enforced via env (`NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`). Without
+  // either the daemon is omitted and `extension.checkForUpdates` /
+  // `extension.update` return `-32603 not configured` at the dispatcher.
+  let autoUpdateRuntime: AutoUpdateRuntime | undefined;
+  const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
+  const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
+  if (autoUpdateRegistryUrl !== "" && !autoUpdateDisabled) {
+    const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
+    autoUpdateRuntime = createAutoUpdateRuntime({
+      db,
+      vault,
+      extensionsDir: paths.extensionsDir,
+      dataDir: paths.dataDir,
+      registryBaseUrl: autoUpdateRegistryUrl,
+      intervalHours: extensionsCfg.updateCheckIntervalHours,
+      enforceAirGap: false,
+      stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
+    });
+    // Fire-and-forget daemon start; stop is registered in sidecarStops below.
+    void autoUpdateRuntime.daemon.start();
+    sidecarStops.push(() => {
+      autoUpdateRuntime?.abortController.abort();
+      void autoUpdateRuntime?.daemon.stop();
+    });
+  }
+
   rt?.startBackgroundJobs();
   const ipcOpts: Parameters<typeof createIpcServer>[0] = {
     listenPath: paths.socketPath,
@@ -387,6 +418,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncScheduler,
     connectorMesh,
     sandboxRunner,
+    ...(autoUpdateRuntime !== undefined ? { extensionsAutoUpdate: autoUpdateRuntime.deps } : {}),
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;

@@ -1,5 +1,6 @@
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
@@ -85,4 +86,13 @@ export type CreateIpcServerOptions = {
    * file are consulted.
    */
   extensionsEnforceAirGap?: boolean;
+  /**
+   * T2 PR 3 — auto-update runtime bag. When undefined,
+   * `extension.checkForUpdates` and `extension.update` return
+   * `-32603 Gateway is not configured with auto-update support` (the
+   * dispatcher does not synthesize fallbacks). Constructed in
+   * `assemblePlatformServices` when both a registry URL is configured and
+   * air-gap is not enforced.
+   */
+  extensionsAutoUpdate?: AutoUpdateRuntimeBag;
 };

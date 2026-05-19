@@ -544,6 +544,35 @@ export async function tryDispatchAutomationRpc(
       throw new RpcMethodError(-32603, "Local index is not available");
     }
     try {
+      // T2 PR 3 — for extension.checkForUpdates / extension.update, build a
+      // per-request ToolExecutor with a consent channel bound to THIS client
+      // and combine the runtime bag's helpers with a per-request gate.
+      let autoUpdateDeps: Parameters<typeof dispatchAutomationRpc>[0]["autoUpdate"];
+      if (
+        ctx.options.extensionsAutoUpdate !== undefined &&
+        (method === "extension.checkForUpdates" || method === "extension.update")
+      ) {
+        const stubDispatcher: ConnectorDispatcher = {
+          dispatch(): Promise<unknown> {
+            return Promise.reject(new Error("auto-update gate does not dispatch to MCP"));
+          },
+        };
+        const toolExecutor = new ToolExecutor(
+          bindConsentChannel(ctx.consentImpl, clientId),
+          ctx.options.localIndex,
+          stubDispatcher,
+        );
+        autoUpdateDeps = {
+          ...ctx.options.extensionsAutoUpdate,
+          gate: async (action) => {
+            const r = await toolExecutor.gate(action);
+            if (r === "proceed") return "proceed";
+            // Narrow the broader ActionResult shape; gate() never returns
+            // status="ok" in practice (dispatch is the "ok" path).
+            return { status: "rejected" };
+          },
+        };
+      }
       const out = await dispatchAutomationRpc({
         method,
         params,
@@ -563,6 +592,7 @@ export async function tryDispatchAutomationRpc(
         ...(ctx.options.extensionsEnforceAirGap === undefined
           ? {}
           : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
+        ...(autoUpdateDeps !== undefined ? { autoUpdate: autoUpdateDeps } : {}),
       });
       if (out.kind === "hit") {
         return out.value;
