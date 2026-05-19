@@ -972,6 +972,35 @@ nimbus extension remove nimbus-notion
 
 ---
 
+### `nimbus extension update [<id>] [--check] [--to <version>] [--json]`
+
+Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate registry poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
+
+```bash
+nimbus extension update --check                       # force poll + list
+nimbus extension update                                # list cached only
+nimbus extension update com.example.notion             # apply cached toVersion
+nimbus extension update com.example.notion --to 1.0.0  # roll back to a cached _prev
+nimbus extension update com.example.notion --json
+```
+
+Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `publisher_key_missing` directs the user to `nimbus extension sync`).
+
+---
+
+### `nimbus extension downgrade <id> --to <version> [--json]`
+
+Roll an installed extension back to a cached `_prev/<version>/` (T2 PR 3). The `<version>` must already exist on disk under the extension's `_prev/` directory — typically the version the auto-update flow saved when the user accepted the previous bump.
+
+```bash
+nimbus extension downgrade com.example.notion --to 1.0.0
+nimbus extension downgrade com.example.notion --to 1.0.0 --json
+```
+
+Fires the `extension.downgrade` HITL action type so the consent prompt clearly distinguishes the direction from a forward update.
+
+---
+
 ### `nimbus scaffold extension`
 
 Scaffold a new extension package from the `@nimbus-dev/sdk` template.

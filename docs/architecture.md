@@ -896,6 +896,32 @@ server.registerTool("createPage", {
 server.start();
 ```
 
+### Extension Auto-Update (T2 PR 3)
+
+The Gateway runs an in-process polling daemon (`ExtensionAutoUpdater` in `packages/gateway/src/extensions/auto-update.ts`) that periodically asks the registry whether any installed signed extension has a newer manifest. Cadence is `[extensions].update_check_interval_hours` (default 24, range 1..168) with a 30–300 s startup jitter. The daemon is constructed only when `NIMBUS_EXTENSIONS_REGISTRY_URL` is set and `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1`.
+
+Detected bumps live in an **in-memory cache** (`AutoUpdateCache`) keyed by extension id — no DB persistence; the next poll repopulates after a Gateway restart. Cache entries carry the version pair, channel, permission diff, manifest + entry hashes, and a `verificationStatus` (`verified` / `needs_sync` / `signature_failed`) computed at detection time against the vault-cached publisher key (I16).
+
+Apply flow uses two HITL action types (I2):
+
+- **`extension.autoUpdate`** — forward bump, fires the consent prompt with the version pair + changelog + permission diff
+- **`extension.downgrade`** — backward revert, applied via the cached `_prev/<v>/` directory
+
+The on-disk layout is two-version: `<extensionsRoot>/<id>/active/` holds the live code, `<extensionsRoot>/<id>/_prev/<v>/` holds the previous version after a successful upgrade. Applying an upgrade is an atomic `fs.rename` swap with revert-on-failure (older `_prev` entries move aside to a holding directory and restore on swap failure). Downgrade is a three-step swap through `_swap-buffer`.
+
+**Crash recovery.** If the Gateway is killed mid-swap and `active/` is missing on next start, `verifyExtensionsBestEffort` promotes the alphabetically-greatest `_prev/<v>/` back to `active/` and audits `extension.autoUpdate.crash_recovered`. If no `_prev/` is available, the extension is hard-disabled with reason `auto_update_install_path_missing`.
+
+**IPC surface.** Two CLI/UI-only methods:
+
+- `extension.checkForUpdates` — read the cache (or force a poll with `{ force: true }`)
+- `extension.update { id, toVersion }` — gate through `ToolExecutor`, perform the swap
+
+Both are in `FORBIDDEN_OVER_LAN` (I5) and in Tauri `ALLOWED_METHODS` (I7, bumped from 60 → 62). The Tauri Marketplace surfaces pending updates and the HITL consent dialog renders the permission-diff table prominently when `permissions.network` / `permissions.filesystem` widen.
+
+**Audit chain.** Discrete action types: `extension.autoUpdate.detected` (once per `(id, toVersion)`), `extension.autoUpdate.applied` / `extension.autoUpdate.failed`, `extension.downgrade.applied` / `extension.downgrade.failed`, `extension.autoUpdate.crash_recovered` / `extension.autoUpdate.crash_recovery_failed`.
+
+---
+
 ### Extension Marketplace — Tauri UI
 
 The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service. The registry index is a JSON file fetched from `https://registry.nimbus-agent.dev/index.json` and cached locally. All installation, validation, and loading is performed by the local Gateway.

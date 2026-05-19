@@ -34,6 +34,8 @@ Companion files:
 
 **How to comply:** every new IPC method that mutates state outside the index, deletes data, or reaches the network on the user's behalf is added to `HITL_REQUIRED_BACKING` *and* dispatched through `ToolExecutor`. There is no "trusted caller" exception.
 
+**T2 PR 3 additions (2026-MM-DD):** `extension.autoUpdate` (forward version bump) and `extension.downgrade` (revert to a cached `_prev/<v>/`) joined the frozen set. The RPC handler in `extensions/auto-update-rpc.ts` builds the `PlannedAction` and gates it through a per-client `ToolExecutor` constructed by the IPC dispatcher.
+
 ---
 
 ## I3 — HITL gate consults `action.type`, not `payload.mcpToolId`
@@ -93,6 +95,8 @@ Companion files:
 **Anti-pattern:** adding a write/RCE-class method to the allowlist without a corresponding HITL gate, or shipping an entry whose gateway handler does not exist (`connector.startAuth` had no handler — S4-F2). S7-F2 / chain C1 (`extension.install` allowlisted with no HITL) was the chain that turned a renderer XSS into full credential exfiltration.
 
 **How to comply:** when adding to `ALLOWED_METHODS`, verify the gateway handler exists, route any write through `HITL_REQUIRED`, and update the allowlist test that asserts every entry resolves to a real handler.
+
+**T2 PR 3 additions (2026-MM-DD):** `extension.checkForUpdates` (read-only cache surface) and `extension.update` (HITL-gated via `extension.autoUpdate` / `extension.downgrade`) joined the allowlist, bumping `allowlist_exact_size` from 60 to 62. `extension.install` stays absent — the marketplace install flow continues to use the Rust-native file picker so chain C1 cannot be reintroduced via the auto-update surface.
 
 ---
 

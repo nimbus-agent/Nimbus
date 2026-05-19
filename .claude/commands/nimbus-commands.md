@@ -51,7 +51,7 @@ bun run test:coverage:agents          # ≥80% (built-in agents)
 
 # Vault + security-adjacent
 bun run test:coverage:vault           # ≥90% (vault)
-bun run test:coverage:extensions      # ≥85% (extension registry + manifest + verify)
+bun run test:coverage:extensions      # ≥85% (extension registry + manifest + verify + T2 PR 3 auto-update)
 bun run test:coverage:sandbox         # ≥80% (platform/sandbox/ — T2 PR 1)
 
 # Sync + rate limiting
@@ -238,7 +238,33 @@ nimbus index reembed --model <id> [--item-type <key>] [--service <name>] [--limi
 # IPC: index.reembed / index.reembedCancel — CLI-only (not in Tauri allowlist; FORBIDDEN_OVER_LAN).
 ```
 
+### Phase 5 T2 PR 3 — Extension auto-update
+
+```bash
+nimbus extension update [<id>] [--check] [--to <version>] [--json]
+# --check: force registry poll + list. <id>: apply cached bump via HITL.
+# --to <v>: override target (forward or backward; backward fires extension.downgrade).
+# Exit 0 on success, 1 on apply failure (stderr hint when reason has one).
+# IPC: extension.checkForUpdates / extension.update — CLI + Tauri allowed (ALLOWED_METHODS 62),
+# FORBIDDEN_OVER_LAN (I5).
+
+nimbus extension downgrade <id> --to <version> [--json]
+# Thin wrapper around extension.update; the <version> must already exist
+# under <extRoot>/<id>/_prev/<version>/ (a prior swap saved it). Fires the
+# extension.downgrade HITL action type.
+
+# nimbus.toml knob:
+#   [extensions].update_check_interval_hours = 24    # integer in [1, 168]; default 24
+```
+
 ## Environment-variable overrides
+
+### Auto-update daemon (Phase 5 T2 PR 3)
+
+```
+NIMBUS_EXTENSIONS_REGISTRY_URL=<url>     # registry base URL; daemon construction is gated on this
+NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1  # hard-disable the polling daemon at Gateway init
+```
 
 ### Multi-agent loop guards (Phase 4)
 
