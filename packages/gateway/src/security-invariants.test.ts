@@ -63,6 +63,12 @@ describe("I2 — HITL frozen-set membership", () => {
     const src = await read("packages/gateway/src/engine/executor.ts");
     expect(src).not.toMatch(/export\s+(?:const|let|var)\s+HITL_REQUIRED_BACKING/);
   });
+
+  test("HITL_REQUIRED_BACKING contains T2 PR 3 auto-update action types", async () => {
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toMatch(/"extension\.autoUpdate"/);
+    expect(src).toMatch(/"extension\.downgrade"/);
+  });
 });
 
 describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => {
@@ -441,5 +447,25 @@ describe("I16 — Verified-publisher invariant", () => {
     } finally {
       rmSync(extensionsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
+  test("ALLOWED_METHODS contains extension.checkForUpdates and extension.update", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toContain(`"extension.checkForUpdates"`);
+    expect(rust).toContain(`"extension.update"`);
+  });
+
+  test("extension.install stays absent from ALLOWED_METHODS (chain C1 / B1 audit)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    // The ALLOWED_METHODS array entry would be a quoted string on its own
+    // line; the absence of that exact pattern locks in the security fix.
+    expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
+  });
+
+  test("allowlist_exact_size assertion is 62", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*62\s*\)/);
   });
 });
