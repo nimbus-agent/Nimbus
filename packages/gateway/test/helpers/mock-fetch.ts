@@ -95,6 +95,20 @@ export class MockFetch {
   }
 
   /**
+   * Return the first recorded call. Throws a descriptive error if no calls
+   * have been recorded yet. Use when you want to read `.url` / `.headers`
+   * / `.body` on a guaranteed-present call without sprinkling
+   * `noUncheckedIndexedAccess` narrowing boilerplate through tests.
+   */
+  firstCall(): FetchCall {
+    const c = this.calls[0];
+    if (c === undefined) {
+      throw new Error("MockFetch.firstCall(): no calls recorded");
+    }
+    return c;
+  }
+
+  /**
    * Helper for assertions: every call body that matches `urlPattern`,
    * parsed as JSON. Throws on bodies that aren't valid JSON.
    */

@@ -9,6 +9,9 @@ import {
 const ENSURE_MCP = { ensureGrafanaMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-grafana1:";
 
+// Exact-anchor regex — the Grafana search URL is a fixed string with no
+// optional query params. If a future change adds query params (e.g.
+// `&orgId=1`), drop the `$` anchor or convert to a `toMatch` substring check.
 const SEARCH_RE = /^https:\/\/grafana\.example\.com\/api\/search\?type=dash-db&limit=30$/;
 
 function encodeCursor(payload: unknown): string {
@@ -91,6 +94,11 @@ describe("grafana-sync — credential short-circuits", () => {
   });
 });
 
+// All shared-fixture tests live under this outer describe so the
+// `beforeEach`/`afterEach` are scoped to it. Phase 2B's bitbucket reference
+// installed the fetch mock at module scope, but Phase 2C deliberately scopes
+// it here — the credential-short-circuit suite above uses `withIsolatedFixture`
+// and a module-level mock would nest under that helper's per-test install.
 describe("grafana-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -109,9 +117,7 @@ describe("grafana-sync — with shared fixture", () => {
     test("sends Authorization: Bearer <token> and Accept: application/json", async () => {
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
       await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      const call = fixture.fetchMock.calls[0];
-      expect(call).toBeDefined();
-      if (call === undefined) throw new Error("expected at least one fetch call");
+      const call = fixture.fetchMock.firstCall();
       expect(call.headers["authorization"]).toBe("Bearer grafana-stub-token");
       expect(call.headers["accept"]).toBe("application/json");
     });
@@ -120,10 +126,9 @@ describe("grafana-sync — with shared fixture", () => {
       await fixture.vault.set("grafana.url", "https://grafana.example.com/");
       fixture.fetchMock.respond("GET", SEARCH_RE, []);
       await createGrafanaSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      const call = fixture.fetchMock.calls[0];
-      expect(call).toBeDefined();
-      if (call === undefined) throw new Error("expected at least one fetch call");
-      expect(call.url).toBe("https://grafana.example.com/api/search?type=dash-db&limit=30");
+      expect(fixture.fetchMock.firstCall().url).toBe(
+        "https://grafana.example.com/api/search?type=dash-db&limit=30",
+      );
     });
 
     test("non-200 → no upserts, returns http-empty pass cursor", async () => {
