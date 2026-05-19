@@ -283,3 +283,111 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
     expect(signatureDisabledRegistry.count()).toBe(0);
   });
 });
+
+describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
+  test("promotes _prev/<v>/ to active/ when active/ is missing", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const id = "com.example.crash-recover";
+      // Build <extRoot>/<id>/_prev/1.0.0/ as the only on-disk artifact;
+      // active/ is intentionally absent (mid-swap crash).
+      const extRoot = join(extensionsDir, id);
+      const prevDir = join(extRoot, "_prev", "1.0.0");
+      mkdirSync(prevDir, { recursive: true });
+      const manifestText = JSON.stringify({ id, version: "1.0.0" });
+      writeFileSync(join(prevDir, "nimbus.extension.json"), manifestText, "utf8");
+      mkdirSync(join(prevDir, "dist"), { recursive: true });
+      writeFileSync(join(prevDir, "dist", "index.js"), "// prev entry", "utf8");
+
+      const manifestHex = createHash("sha256")
+        .update(readFileSync(join(prevDir, "nimbus.extension.json")))
+        .digest("hex");
+      const entryHex = createHash("sha256")
+        .update(readFileSync(join(prevDir, "dist", "index.js")))
+        .digest("hex");
+
+      // Insert with install_path pointing at the missing active/ dir.
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0", // pretend we were rolling 1.0.0 → 1.1.0 when we crashed
+        install_path: join(extRoot, "active"),
+        manifest_hash: manifestHex,
+        entry_hash: entryHex,
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      // active/ now exists (promoted from _prev/1.0.0).
+      expect(readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8")).toBe(
+        manifestText,
+      );
+      // extension row was rolled back to the recovered version.
+      const row = listExtensions(db).find((r) => r.id === id);
+      expect(row?.version).toBe("1.0.0");
+      expect(row?.enabled).toBe(1);
+
+      // Audit row appended with the structured payload.
+      const auditRow = db
+        .query(
+          `SELECT action_type, action_json FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`,
+        )
+        .get("extension.autoUpdate.crash_recovered") as
+        | { action_type: string; action_json: string }
+        | undefined;
+      expect(auditRow).toBeDefined();
+      const parsed = JSON.parse(auditRow!.action_json) as {
+        id: string;
+        promoted_from: string;
+      };
+      expect(parsed.id).toBe(id);
+      expect(parsed.promoted_from).toBe("1.0.0");
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+
+  test("hard-disables when neither active/ nor _prev/* exists", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const id = "com.example.crash-fail";
+      const extRoot = join(extensionsDir, id);
+      mkdirSync(extRoot, { recursive: true }); // empty — no active/, no _prev/
+
+      insertExtensionRow(db, {
+        id,
+        version: "1.0.0",
+        install_path: join(extRoot, "active"),
+        manifest_hash: "0".repeat(64),
+        entry_hash: "0".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      const row = listExtensions(db).find((r) => r.id === id);
+      expect(row?.enabled).toBe(0);
+
+      const auditRow = db
+        .query(
+          `SELECT action_type, action_json FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`,
+        )
+        .get("extension.autoUpdate.crash_recovery_failed") as
+        | { action_type: string; action_json: string }
+        | undefined;
+      expect(auditRow).toBeDefined();
+      const parsed = JSON.parse(auditRow!.action_json) as { reason: string };
+      expect(parsed.reason).toBe("auto_update_install_path_missing");
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 
 import {
@@ -9,6 +9,7 @@ import {
   listExtensions,
   setExtensionEnabled,
   touchExtensionVerifiedAt,
+  updateExtensionRowVersion,
 } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
@@ -41,6 +42,90 @@ export interface ExtensionMeshHandle {
   stopExtensionClient(extensionId: string): Promise<void>;
 }
 
+/**
+ * T2 PR 3 — recover from a Gateway crash mid auto-update swap.
+ *
+ * If the row's `install_path` (typically `<extRoot>/<id>/active`) is missing,
+ * attempt to promote the alphabetically-greatest `_prev/<v>/` entry to
+ * `active/`. On success: rewrites `extension.version` to that promoted
+ * version, audits `extension.autoUpdate.crash_recovered`, returns `true`.
+ * On failure (no `_prev/` or rename fails): hard-disables the row with
+ * reason `auto_update_install_path_missing`, returns `false`.
+ */
+async function maybeRecoverMissingActive(
+  db: Database,
+  logger: Logger,
+  row: ExtensionRow,
+  now: number,
+): Promise<boolean> {
+  const activePath = row.install_path;
+  if (existsSync(activePath)) return true;
+
+  const extRoot = dirname(activePath);
+  const prevDir = join(extRoot, "_prev");
+  if (existsSync(prevDir)) {
+    let candidates: string[] = [];
+    try {
+      candidates = readdirSync(prevDir).sort();
+    } catch {
+      candidates = [];
+    }
+    if (candidates.length > 0) {
+      const target = candidates[candidates.length - 1]!;
+      try {
+        renameSync(join(prevDir, target), activePath);
+        updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);
+        try {
+          appendAuditEntry(db, {
+            actionType: "extension.autoUpdate.crash_recovered",
+            hitlStatus: "not_required",
+            actionJson: JSON.stringify({
+              id: row.id,
+              promoted_from: target,
+              recovered_active: activePath,
+            }),
+            timestamp: now,
+          });
+        } catch (e) {
+          logger.warn(
+            { extensionId: row.id, err: e instanceof Error ? e.message : String(e) },
+            "extensions: crash-recovery audit append failed",
+          );
+        }
+        logger.warn(
+          { extensionId: row.id, promotedFrom: target },
+          "extensions: auto-update crash-recovered — promoted _prev to active",
+        );
+        return true;
+      } catch (e) {
+        logger.error(
+          { extensionId: row.id, target, err: e instanceof Error ? e.message : String(e) },
+          "extensions: crash-recovery promote rename failed",
+        );
+      }
+    }
+  }
+
+  // Neither active/ nor a usable _prev/<v>/ — hard-disable.
+  setExtensionEnabled(db, row.id, false);
+  try {
+    appendAuditEntry(db, {
+      actionType: "extension.autoUpdate.crash_recovery_failed",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({
+        id: row.id,
+        reason: "auto_update_install_path_missing",
+        install_path: activePath,
+      }),
+      timestamp: now,
+    });
+  } catch {
+    /* best-effort audit */
+  }
+  touchExtensionVerifiedAt(db, row.id, now);
+  return false;
+}
+
 async function verifyOneExtension(
   db: Database,
   logger: Logger,
@@ -48,6 +133,12 @@ async function verifyOneExtension(
   now: number,
   mesh?: ExtensionMeshHandle,
 ): Promise<void> {
+  // T2 PR 3 — crash recovery runs BEFORE every other check. If active/ went
+  // missing (Gateway killed mid-swap) we try to promote _prev/<v>/ to
+  // active/; failures hard-disable the row and we short-circuit.
+  const recovered = await maybeRecoverMissingActive(db, logger, row, now);
+  if (!recovered) return;
+
   const manifestPath = resolveExtensionManifestPath(row.install_path);
   try {
     if (manifestPath === undefined) {

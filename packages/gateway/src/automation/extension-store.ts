@@ -33,6 +33,33 @@ export function touchExtensionVerifiedAt(db: Database, id: string, ts: number): 
   dbRun(db, `UPDATE extension SET last_verified_at = ? WHERE id = ?`, [ts, id]);
 }
 
+/**
+ * T2 PR 3 — update an extension row to reflect a new version + hashes after
+ * an auto-update apply (forward or backward). All four fields move together
+ * because the manifest and entry tarball are bound by the registry. Always
+ * routed through `dbRun` for invariant I14.
+ */
+export function updateExtensionRowVersion(
+  db: Database,
+  id: string,
+  version: string,
+  manifestHash: string,
+  entryHash: string,
+  lastVerifiedAt: number,
+): boolean {
+  if (readIndexedUserVersion(db) < 10) {
+    return false;
+  }
+  const r = dbRun(
+    db,
+    `UPDATE extension
+        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?
+      WHERE id = ?`,
+    [version, manifestHash, entryHash, lastVerifiedAt, id],
+  );
+  return r.changes > 0;
+}
+
 export function insertExtensionRow(
   db: Database,
   row: Omit<ExtensionRow, "enabled"> & { enabled?: number },
