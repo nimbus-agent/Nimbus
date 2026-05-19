@@ -95,4 +95,14 @@ export type CreateIpcServerOptions = {
    * air-gap is not enforced.
    */
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
+  /**
+   * T2 PR 3 — auto-update diagnostic snapshot. Surfaced under
+   * `diag.snapshot.extensions.auto_update`. Omitted when the daemon was
+   * not configured.
+   */
+  extensionsAutoUpdateDiag?: {
+    cachedUpdatesCount: () => number;
+    intervalHours: number;
+    airGapBlocked: boolean;
+  };
 };

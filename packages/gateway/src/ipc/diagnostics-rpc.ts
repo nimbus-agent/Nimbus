@@ -55,6 +55,17 @@ export type DiagnosticsRpcContext = {
    * runner unavailable"`.
    */
   readonly sandboxRunner?: SandboxRunner;
+  /**
+   * T2 PR 3 — auto-update state. When present, `diag.snapshot` adds an
+   * `extensions.auto_update` sub-block exposing `cached_updates_count`,
+   * `interval_hours`, and `air_gap_blocked`. When undefined the block is
+   * omitted (auto-update not configured for this Gateway).
+   */
+  readonly autoUpdateDiag?: {
+    cachedUpdatesCount: () => number;
+    intervalHours: number;
+    airGapBlocked: boolean;
+  };
 };
 
 /**
@@ -465,6 +476,17 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       extensions: {
         disabled_pre_t2: preT2DisabledCount(),
         signature_disabled_count: signatureDisabledRegistry.count(),
+        // T2 PR 3 — auto-update posture. Omitted when the daemon was not
+        // constructed (no NIMBUS_EXTENSIONS_REGISTRY_URL).
+        ...(ctx.autoUpdateDiag !== undefined
+          ? {
+              auto_update: {
+                cached_updates_count: ctx.autoUpdateDiag.cachedUpdatesCount(),
+                interval_hours: ctx.autoUpdateDiag.intervalHours,
+                air_gap_blocked: ctx.autoUpdateDiag.airGapBlocked,
+              },
+            }
+          : {}),
       },
       // T2 PR 1 (Task 20) — operator-visible sandbox posture. Three fields
       // are intentionally separated: `platform_capabilities` is the live

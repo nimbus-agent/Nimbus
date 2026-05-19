@@ -419,6 +419,16 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     connectorMesh,
     sandboxRunner,
     ...(autoUpdateRuntime !== undefined ? { extensionsAutoUpdate: autoUpdateRuntime.deps } : {}),
+    ...(autoUpdateRuntime !== undefined
+      ? {
+          extensionsAutoUpdateDiag: {
+            cachedUpdatesCount: (): number => autoUpdateRuntime!.deps.cache.list().length,
+            intervalHours: loadNimbusExtensionsFromConfigDir(paths.configDir)
+              .updateCheckIntervalHours,
+            airGapBlocked: autoUpdateDisabled,
+          },
+        }
+      : {}),
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;

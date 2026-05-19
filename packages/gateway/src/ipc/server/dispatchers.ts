@@ -708,6 +708,9 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.sandboxRunner === undefined
         ? {}
         : { sandboxRunner: ctx.options.sandboxRunner }),
+      ...(ctx.options.extensionsAutoUpdateDiag === undefined
+        ? {}
+        : { autoUpdateDiag: ctx.options.extensionsAutoUpdateDiag }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined
