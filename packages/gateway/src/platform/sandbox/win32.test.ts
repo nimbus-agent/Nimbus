@@ -9,6 +9,7 @@ function manifest(perms: Partial<ExtensionManifest["permissions"]> = {}): Extens
     entrypoint: "x.js",
     runtime: "bun",
     permissions: { network: [], filesystem: { read: [], write: [] }, ...perms },
+    updateChannel: "stable",
   } as ExtensionManifest;
 }
 

@@ -47,6 +47,18 @@ export type ExtensionManifest = {
   publisher?: { id: string; key: string };
   /** Base64 Ed25519 signature over the canonicalized manifest minus this field. */
   signature?: string;
+  /**
+   * Update channel for auto-update (T2 PR 3). Default `"stable"` when absent
+   * on disk. The defaulted field is NOT emitted into canonical signature
+   * bytes — `verifyManifestSignature` operates on the raw on-disk JSON, so
+   * pre-PR-3 signed manifests keep verifying.
+   */
+  updateChannel: "stable" | "beta";
+  /**
+   * Plain-text changelog surfaced in the auto-update HITL consent dialog
+   * (T2 PR 3). ≤ 4 KiB after NFC normalization.
+   */
+  changelog?: string;
 };
 
 /** Allowed publisher id format. Matches the service-id pattern from CI/CD data layer. */
@@ -96,6 +108,34 @@ function parseSignature(value: unknown): string | undefined {
   return value;
 }
 
+/** Max byte length of the changelog after NFC normalization. */
+const CHANGELOG_MAX_BYTES = 4096;
+
+function parseUpdateChannel(value: unknown): "stable" | "beta" {
+  if (value === undefined) return "stable";
+  if (value !== "stable" && value !== "beta") {
+    throw new Error(
+      `extension manifest updateChannel must be "stable" or "beta" (got: ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function parseChangelog(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error("extension manifest changelog must be a string");
+  }
+  const normalized = value.normalize("NFC");
+  const bytes = Buffer.byteLength(normalized, "utf8");
+  if (bytes > CHANGELOG_MAX_BYTES) {
+    throw new Error(
+      `extension manifest changelog must be ≤ 4 KiB after NFC normalization (got ${bytes} bytes)`,
+    );
+  }
+  return normalized;
+}
+
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
   return parseExtensionManifestForRegistry(text).manifest;
 }
@@ -141,6 +181,8 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
   if ((publisher === undefined) !== (signature === undefined)) {
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
+  const updateChannel = parseUpdateChannel(o["updateChannel"]);
+  const changelog = parseChangelog(o["changelog"]);
   // Pre-T2 detection MUST happen on the raw JSON value, before
   // `validateAndNormalizePermissions` collapses the legacy array form to
   // default-deny. After normalization the two cases are indistinguishable.
@@ -161,6 +203,8 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       permissions,
       ...(publisher !== undefined ? { publisher } : {}),
       ...(signature !== undefined ? { signature } : {}),
+      updateChannel,
+      ...(changelog !== undefined ? { changelog } : {}),
     },
     isPreT2Legacy,
   };

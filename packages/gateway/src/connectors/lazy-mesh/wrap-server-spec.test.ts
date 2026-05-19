@@ -15,6 +15,7 @@ function makeManifest(
       filesystem: { read: [], write: [] },
       ...overrides,
     },
+    updateChannel: "stable",
   };
 }
 

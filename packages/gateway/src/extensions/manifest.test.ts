@@ -6,10 +6,12 @@ describe("parseExtensionManifestJson", () => {
   test("parses minimal manifest", () => {
     const m = parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0" }));
     // Missing `permissions` is normalized to default-deny by the validator.
+    // `updateChannel` is defaulted to "stable" on the parsed shape (T2 PR 3).
     expect(m).toEqual({
       id: "x",
       version: "1.0.0",
       permissions: { network: [], filesystem: { read: [], write: [] } },
+      updateChannel: "stable",
     });
   });
 
@@ -131,5 +133,59 @@ describe("parseExtensionManifestForRegistry — publisher + signature fields", (
         }),
       ),
     ).toThrow(/unknown key/);
+  });
+});
+
+describe("parseExtensionManifestJson — updateChannel + changelog (T2 PR 3)", () => {
+  const minimalWithExtras = (extras: Record<string, unknown>) =>
+    JSON.stringify({
+      id: "com.example.x",
+      version: "1.0.0",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      ...extras,
+    });
+
+  test("parses updateChannel = 'beta'", () => {
+    const m = parseExtensionManifestJson(minimalWithExtras({ updateChannel: "beta" }));
+    expect(m.updateChannel).toBe("beta");
+  });
+
+  test("defaults updateChannel to 'stable' when absent", () => {
+    const m = parseExtensionManifestJson(minimalWithExtras({}));
+    expect(m.updateChannel).toBe("stable");
+  });
+
+  test("rejects updateChannel = 'unstable'", () => {
+    expect(() =>
+      parseExtensionManifestJson(minimalWithExtras({ updateChannel: "unstable" })),
+    ).toThrow(/updateChannel must be/i);
+  });
+
+  test("parses changelog string", () => {
+    const m = parseExtensionManifestJson(minimalWithExtras({ changelog: "Fixed bug X." }));
+    expect(m.changelog).toBe("Fixed bug X.");
+  });
+
+  test("normalizes changelog to NFC", () => {
+    // 'café' with the 'é' as combining sequence (e + U+0301)
+    const decomposed = "café";
+    // 'café' with the precomposed 'é' (U+00E9)
+    const composed = "café";
+    expect(decomposed).not.toBe(composed);
+    const m = parseExtensionManifestJson(minimalWithExtras({ changelog: decomposed }));
+    expect(m.changelog).toBe(composed);
+  });
+
+  test("rejects changelog > 4 KiB after NFC normalization", () => {
+    const big = "x".repeat(4097);
+    expect(() => parseExtensionManifestJson(minimalWithExtras({ changelog: big }))).toThrow(
+      /changelog/i,
+    );
+  });
+
+  test("rejects non-string changelog", () => {
+    expect(() => parseExtensionManifestJson(minimalWithExtras({ changelog: 42 }))).toThrow(
+      /changelog must be a string/i,
+    );
   });
 });

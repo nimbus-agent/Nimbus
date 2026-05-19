@@ -43,6 +43,7 @@ function userMcpDefaultManifest(serviceId: string): ExtensionManifest {
       network: [],
       filesystem: { read: [], write: [] },
     },
+    updateChannel: "stable",
   };
 }
 

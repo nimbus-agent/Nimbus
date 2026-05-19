@@ -83,6 +83,7 @@ function baseManifest(
     id,
     version: "1.0.0",
     permissions,
+    updateChannel: "stable",
   };
 }
 

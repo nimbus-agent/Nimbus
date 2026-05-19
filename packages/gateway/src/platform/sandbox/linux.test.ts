@@ -10,6 +10,7 @@ const baseManifest = (perms: Partial<ExtensionManifest["permissions"]> = {}): Ex
     entrypoint: "dist/server.js",
     runtime: "bun",
     permissions: { network: [], filesystem: { read: [], write: [] }, ...perms },
+    updateChannel: "stable",
   }) as ExtensionManifest;
 
 describe("decideNetworkMode", () => {
