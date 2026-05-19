@@ -531,10 +531,189 @@ export async function runExtension(args: string[]): Promise<void> {
       return;
     }
 
+    if (sub === "update") {
+      const code = await runExtensionUpdate(client, args);
+      if (code !== 0) process.exit(code);
+      return;
+    }
+
+    if (sub === "downgrade") {
+      const code = await runExtensionDowngrade(client, args);
+      if (code !== 0) process.exit(code);
+      return;
+    }
+
     throw new Error(
-      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] | sync [--dry-run] [--json]",
+      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
     );
   } finally {
     await client.disconnect();
   }
+}
+
+// ─── T2 PR 3 — auto-update CLI ──────────────────────────────────────────────
+
+export interface AvailableUpdateCli {
+  readonly id: string;
+  readonly displayName: string;
+  readonly fromVersion: string;
+  readonly toVersion: string;
+  readonly channel: "stable" | "beta";
+  readonly publisherStatus: "verified" | "unverified";
+  readonly verificationStatus: "verified" | "needs_sync" | "signature_failed";
+}
+
+export interface UpdateApplyResultCli {
+  readonly applied: boolean;
+  readonly reason?: string;
+  readonly hint?: string;
+  readonly jobId?: string;
+}
+
+export type AutoUpdateIpcCaller = (
+  method: "extension.checkForUpdates" | "extension.update",
+  params: Record<string, unknown>,
+) => Promise<unknown>;
+
+export interface RunExtensionUpdateOpts {
+  args: string[];
+  caller: AutoUpdateIpcCaller;
+  writeStdout: (s: string) => void;
+  writeStderr: (s: string) => void;
+}
+
+function formatUpdateRow(u: AvailableUpdateCli): string {
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\t${u.publisherStatus}\t${u.verificationStatus}`;
+}
+
+export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
+  const args = opts.args;
+  const isJson = hasFlag(args, "--json");
+  const isCheck = hasFlag(args, "--check");
+  const toVersion = takeFlagValue(args, "--to");
+  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
+  const id = positional[0];
+
+  // No id → list cached pending updates (poll on --check).
+  if (id === undefined) {
+    const list = (await opts.caller("extension.checkForUpdates", {
+      ...(isCheck ? { force: true } : {}),
+    })) as AvailableUpdateCli[];
+    if (isJson) {
+      opts.writeStdout(`${JSON.stringify(list, undefined, 2)}\n`);
+      return 0;
+    }
+    if (list.length === 0) {
+      opts.writeStdout("No updates available.\n");
+      return 0;
+    }
+    for (const u of list) opts.writeStdout(`${formatUpdateRow(u)}\n`);
+    return 0;
+  }
+
+  // id supplied → check cache, then apply.
+  const list = (await opts.caller("extension.checkForUpdates", {})) as AvailableUpdateCli[];
+  const entry = list.find((e) => e.id === id);
+  if (entry === undefined) {
+    opts.writeStderr(
+      `no cached update for ${id} — run \`nimbus extension update --check\` first\n`,
+    );
+    return 1;
+  }
+  const targetVersion = toVersion ?? entry.toVersion;
+  const res = (await opts.caller("extension.update", {
+    id,
+    toVersion: targetVersion,
+  })) as UpdateApplyResultCli;
+
+  if (isJson) {
+    opts.writeStdout(`${JSON.stringify(res, undefined, 2)}\n`);
+    return res.applied ? 0 : 1;
+  }
+  if (res.applied) {
+    opts.writeStdout(
+      `updated ${id} to ${targetVersion}${res.jobId !== undefined ? ` (jobId=${res.jobId})` : ""}\n`,
+    );
+    return 0;
+  }
+  opts.writeStderr(
+    `update failed: ${res.reason ?? "unknown"}${res.hint !== undefined ? `\n  hint: ${res.hint}` : ""}\n`,
+  );
+  return 1;
+}
+
+export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
+  return runExtensionUpdateWithCaller({
+    args: args.slice(1), // drop the "update" subcommand token
+    caller: async (method, params) => client.call<unknown>(method, params),
+    writeStdout: (s) => process.stdout.write(s),
+    writeStderr: (s) => process.stderr.write(s),
+  });
+}
+
+export interface ExtensionInfoForDowngrade {
+  readonly extension?: {
+    id: string;
+    version: string;
+  };
+}
+
+export interface RunExtensionDowngradeOpts {
+  args: string[];
+  caller: AutoUpdateIpcCaller;
+  fetchInfo: (id: string) => Promise<ExtensionInfoForDowngrade>;
+  writeStdout: (s: string) => void;
+  writeStderr: (s: string) => void;
+}
+
+/**
+ * Resolve the prev-version target for a downgrade by reading the cached
+ * pending bumps. The CLI requires `--to <version>` because info doesn't yet
+ * expose prevVersion (Task 18 may extend info; for v1 the user supplies it).
+ */
+export async function runExtensionDowngradeWithCaller(
+  opts: RunExtensionDowngradeOpts,
+): Promise<number> {
+  const args = opts.args;
+  const isJson = hasFlag(args, "--json");
+  const toVersion = takeFlagValue(args, "--to");
+  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
+  const id = positional[0];
+  if (id === undefined) {
+    opts.writeStderr("usage: nimbus extension downgrade <id> --to <version> [--json]\n");
+    return 1;
+  }
+  if (toVersion === undefined) {
+    opts.writeStderr(
+      `downgrade requires --to <version> (the cached _prev/<v>/ tag to roll back to)\n`,
+    );
+    return 1;
+  }
+  const res = (await opts.caller("extension.update", {
+    id,
+    toVersion,
+  })) as UpdateApplyResultCli;
+
+  if (isJson) {
+    opts.writeStdout(`${JSON.stringify(res, undefined, 2)}\n`);
+    return res.applied ? 0 : 1;
+  }
+  if (res.applied) {
+    opts.writeStdout(`downgraded ${id} to ${toVersion}\n`);
+    return 0;
+  }
+  opts.writeStderr(
+    `downgrade failed: ${res.reason ?? "unknown"}${res.hint !== undefined ? `\n  hint: ${res.hint}` : ""}\n`,
+  );
+  return 1;
+}
+
+export async function runExtensionDowngrade(client: IPCClient, args: string[]): Promise<number> {
+  return runExtensionDowngradeWithCaller({
+    args: args.slice(1),
+    caller: async (method, params) => client.call<unknown>(method, params),
+    fetchInfo: async (id) => client.call<ExtensionInfoForDowngrade>("extension.info", { id }),
+    writeStdout: (s) => process.stdout.write(s),
+    writeStderr: (s) => process.stderr.write(s),
+  });
 }
