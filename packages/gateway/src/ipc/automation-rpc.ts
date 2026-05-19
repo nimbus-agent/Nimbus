@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -288,7 +289,27 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
       },
     };
   }
-  return { kind: "hit", value: { extension: { ...row } } };
+
+  // T2 PR 3 — surface prevVersion (alphabetically-greatest _prev/<v>/ entry)
+  // and cachedUpdate (the AutoUpdateCache entry if the daemon detected a bump).
+  let prevVersion: string | null = null;
+  try {
+    const extRoot = dirname(row.install_path);
+    const prevDir = join(extRoot, "_prev");
+    if (existsSync(prevDir)) {
+      const entries = readdirSync(prevDir).sort();
+      if (entries.length > 0) {
+        prevVersion = entries[entries.length - 1]!;
+      }
+    }
+  } catch {
+    // Best-effort — info still surfaces the row even if _prev/ probe failed.
+  }
+  const cachedUpdate = ctx.autoUpdate?.cache.get(row.id) ?? null;
+  return {
+    kind: "hit",
+    value: { extension: { ...row, prevVersion, cachedUpdate } },
+  };
 }
 
 async function handleExtensionSync(
