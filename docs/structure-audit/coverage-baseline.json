@@ -260,29 +260,17 @@
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
     },
-    "packages/gateway/src/ipc/connector-rpc.ts": {
-      "min_coverage_pct": 68.29
-    },
     "packages/gateway/src/ipc/http-server.ts": {
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/http-write-routes.ts": {
       "min_coverage_pct": 79.38
     },
-    "packages/gateway/src/ipc/server/dispatchers.ts": {
-      "min_coverage_pct": 78.23
-    },
-    "packages/gateway/src/ipc/server/inline-handlers.ts": {
-      "min_coverage_pct": 51.5
-    },
     "packages/gateway/src/ipc/server/server.ts": {
       "min_coverage_pct": 73.86
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
       "min_coverage_pct": 45.21
-    },
-    "packages/gateway/src/ipc/server/vault-dispatch.ts": {
-      "min_coverage_pct": 65.17
     },
     "packages/gateway/src/llm/registry.ts": {
       "min_coverage_pct": 0
