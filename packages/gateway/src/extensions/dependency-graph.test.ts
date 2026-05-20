@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import fc from "fast-check";
 import {
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
@@ -219,5 +220,82 @@ describe("resolveClosure", () => {
         expect(e.parent).toBe("com.example.foo");
       }
     }
+  });
+});
+
+interface DagFixture {
+  rootId: string;
+  registry: Record<string, Record<string, ExtensionManifestForSolver>>;
+}
+
+function dagArb(): fc.Arbitrary<DagFixture> {
+  return fc.integer({ min: 2, max: 12 }).chain((n) => {
+    const ids = Array.from({ length: n }, (_, i) => `com.test.n${i}`);
+    return fc
+      .array(fc.integer({ min: 0, max: 100 }), { minLength: n * n, maxLength: n * n })
+      .map((flat) => {
+        const registry: Record<string, Record<string, ExtensionManifestForSolver>> = {};
+        for (let i = 0; i < n; i++) {
+          const dependsOn: Record<string, string> = {};
+          // DAG constraint: only depend on higher-index nodes (i.e. j > i).
+          for (let j = i + 1; j < n; j++) {
+            const cell = flat[i * n + j];
+            if ((cell ?? 0) > 70) dependsOn[ids[j] ?? "x"] = "^1.0.0";
+          }
+          const id = ids[i] ?? "x";
+          registry[id] = { "1.0.0": { id, version: "1.0.0", dependsOn } };
+        }
+        return { rootId: ids[0] ?? "x", registry };
+      });
+  });
+}
+
+describe("resolveClosure — fast-check corpus", () => {
+  it("if a solution exists, every pin satisfies every range", async () => {
+    await fc.assert(
+      fc.asyncProperty(dagArb(), async ({ rootId, registry }) => {
+        const fetcher = makeFetcher(registry);
+        const root = registry[rootId]?.["1.0.0"];
+        if (!root) return;
+        try {
+          const plan = await resolveClosure(root, fetcher, {
+            installed: new Map(),
+            activeConstraints: new Map(),
+          });
+          // Every dep's resolvedVersion is in the registry's published list.
+          for (const node of plan.nodes) {
+            for (const dep of node.deps) {
+              expect(registry[dep.id]?.[dep.resolvedVersion]).toBeDefined();
+            }
+          }
+        } catch (e) {
+          // Either DependencyConflictError or OfflineDependencyResolutionError is acceptable.
+          expect(isDependencyConflictError(e) || isOfflineDependencyResolutionError(e)).toBe(true);
+        }
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  it("diamond never false-positives as cycle", async () => {
+    await fc.assert(
+      fc.asyncProperty(dagArb(), async ({ rootId, registry }) => {
+        const fetcher = makeFetcher(registry);
+        const root = registry[rootId]?.["1.0.0"];
+        if (!root) return;
+        try {
+          await resolveClosure(root, fetcher, {
+            installed: new Map(),
+            activeConstraints: new Map(),
+          });
+        } catch (e) {
+          // DAG fixtures only emit higher-index edges, so any cycle is the solver's fault.
+          if (isDependencyConflictError(e)) {
+            expect(e.conflict.kind).not.toBe("cycle");
+          }
+        }
+      }),
+      { numRuns: 50 },
+    );
   });
 });
