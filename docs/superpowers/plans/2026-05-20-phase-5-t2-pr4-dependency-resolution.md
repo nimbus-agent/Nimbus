@@ -113,6 +113,13 @@ export interface DependencyConflict {
   readonly id: string;
   readonly chain?: readonly string[];
   readonly constraints?: readonly DependencyConstraint[];
+  /**
+   * For `kind === "unsatisfiable"`: the versions the registry advertised for `id`
+   * at the time the solver gave up. Renderers use this to print "available: 1.0.0, 1.5.0"
+   * alongside the conflicting ranges — much easier to debug than ranges alone.
+   * Empty array means "no versions were listed" (e.g. registry returned `[]`).
+   */
+  readonly availableVersions?: readonly string[];
 }
 ```
 
@@ -389,7 +396,7 @@ describe("resolveClosure", () => {
     }
   });
 
-  it("unsatisfiable range across closure returns kind=unsatisfiable + named constraints", async () => {
+  it("unsatisfiable range across closure returns kind=unsatisfiable + named constraints + availableVersions", async () => {
     const fetcher = makeFetcher({
       "com.shared.utils": { "1.5.0": { id: "com.shared.utils", version: "1.5.0" } },
       "com.example.c": { "1.0.0": { id: "com.example.c", version: "1.0.0", dependsOn: { "com.shared.utils": "^2.0.0" } } },
@@ -408,6 +415,9 @@ describe("resolveClosure", () => {
         expect(e.conflict.kind).toBe("unsatisfiable");
         expect(e.conflict.id).toBe("com.shared.utils");
         expect(e.conflict.constraints?.length).toBeGreaterThanOrEqual(2);
+        // Review-fix: error carries the registry's listed versions so CLI can print
+        // "available: 1.5.0" alongside the conflicting ranges.
+        expect(e.conflict.availableVersions).toEqual(["1.5.0"]);
       }
     }
   });
@@ -635,6 +645,9 @@ async function visit(
           kind: "unsatisfiable",
           id: depId,
           constraints: [...constraintList],
+          // Review-fix #4: pass through the registry's published versions so the CLI/HITL
+          // renderer can show "available: x, y, z" without re-querying.
+          availableVersions: [...versions],
         });
       }
     }
@@ -672,7 +685,15 @@ async function visit(
   ancestors.delete(current.id);
 }
 
-/** Kahn's algorithm — emit leaf-first. */
+/**
+ * Kahn's algorithm — emit leaf-first.
+ *
+ * Perf note: `queue.sort()` on every iteration is O(V log V) per step → O(V² log V) overall.
+ * With the closure bound of ~15 nodes in practice (and the per-PR-spec out-of-scope
+ * statement that solver inputs stay small), this is microscopic. If the ecosystem ever
+ * needs closures with hundreds of nodes, swap the array+sort for a binary-heap priority
+ * queue keyed on id — the algorithm is otherwise unchanged.
+ */
 function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] {
   const inDegree: Map<string, number> = new Map();
   const reverseEdges: Map<string, string[]> = new Map(); // depId → list of dependents
@@ -1157,6 +1178,7 @@ You will likely find the PR 3 auto-update fetcher. Re-use its raw HTTP path; do 
 // packages/gateway/src/extensions/registry-fetcher.ts
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { parseManifest } from "./manifest-schema.ts";
 import type { ExtensionManifestForSolver, RegistryFetcher } from "./dependency-types.ts";
 
 export interface RegistryFetcherDeps {
@@ -1172,6 +1194,13 @@ export interface RegistryFetcherDeps {
 /**
  * Local-first RegistryFetcher (spec §2.1, §2.3). An installed id resolves from on-disk
  * state without a network call; only unknown ids hit the remote registry.
+ *
+ * Review-fix #3: the on-disk read goes through `parseManifest` (the canonical Zod
+ * schema). PR 2's startup signature-verify already catches post-install tampering,
+ * but layering a lightweight schema check here closes the window between two
+ * signature-verify passes — disk corruption or manual tampering between Gateway
+ * starts produces a clear `manifest_parse_failed` error instead of feeding garbage
+ * to the solver.
  */
 export function createRegistryFetcher(deps: RegistryFetcherDeps): RegistryFetcher {
   return {
@@ -1185,7 +1214,8 @@ export function createRegistryFetcher(deps: RegistryFetcherDeps): RegistryFetche
       if (installed === version) {
         const manifestPath = join(deps.extensionDir(id), "nimbus.extension.json");
         const raw = await readFile(manifestPath, "utf8");
-        const parsed = JSON.parse(raw) as ExtensionManifestForSolver & Record<string, unknown>;
+        // Validate through the canonical schema — throws on tampering / corruption.
+        const parsed = parseManifest(JSON.parse(raw));
         return {
           id: parsed.id,
           version: parsed.version,
@@ -1260,6 +1290,25 @@ describe("createRegistryFetcher (local-first)", () => {
     });
     expect(await fetcher.listVersions("com.unknown")).toEqual(["1.0.0"]);
     expect(remoteListCalled).toBe(true);
+  });
+
+  it("tampered on-disk manifest fails parseManifest (review-fix #3)", async () => {
+    // Setup: a manifest with garbage in a typed field that parseManifest will reject.
+    const tamperedRoot = join(tmpdir(), `nimbus-test-tampered-${Date.now()}`);
+    await mkdir(join(tamperedRoot, "com.tampered", "active"), { recursive: true });
+    await writeFile(
+      join(tamperedRoot, "com.tampered", "active", "nimbus.extension.json"),
+      JSON.stringify({ id: 42, version: "1.0.0" }), // id must be string per schema
+      "utf8",
+    );
+    const fetcher = createRegistryFetcher({
+      installed: new Map([["com.tampered", "1.0.0"]]),
+      extensionDir: (id) => join(tamperedRoot, id, "active"),
+      remoteListVersions: async () => [],
+      remoteFetchManifest: async () => { throw new Error("should not be called"); },
+    });
+    await expect(fetcher.fetchManifest("com.tampered", "1.0.0")).rejects.toThrow();
+    await rm(tamperedRoot, { recursive: true, force: true });
   });
 });
 ```
@@ -1414,15 +1463,27 @@ try {
 }
 
 // Now install closure leaf-first with per-session cleanup tracking.
+//
+// Per-node atomicity (review-fix #2): `installSingleNode` MUST pair the on-disk unpack
+// of `<extensions-root>/<node.id>/active/` with its `extension_state` row write in the
+// same transaction the existing single-extension install already uses. This way, a
+// process crash mid-loop leaves *consistent* (disk-and-DB) per-node state — never a
+// disk dir without a row. If the existing install helper does NOT already do this,
+// fix it here in PR 4 (it's a pre-existing correctness gap, not a regression).
+// The orphan-`active/`-without-`extension_state` case is then impossible by
+// construction; the startup sweep in Task 12 is defense-in-depth, not the primary
+// guarantee.
 const createdDirs: string[] = [];
 try {
   for (const node of plan.nodes) {
     if (!node.newlyInstalled) continue;
-    const dir = await installSingleNode(node, /* signature-verify + sha256 + unpack */ ...);
+    const dir = await installSingleNode(node, /* signature-verify + sha256 + unpack + extension_state write, all transactional */ ...);
     createdDirs.push(dir);
   }
 } catch (e) {
-  // Best-effort rollback: rm -rf each path in reverse order.
+  // Best-effort rollback: rm -rf each path in reverse order. Even with per-node
+  // atomicity, partial-closure rollback is wanted — we don't want B installed
+  // without C if installing C failed; cleaner to roll the whole closure back.
   for (const d of [...createdDirs].reverse()) {
     try { await rm(d, { recursive: true, force: true }); } catch { /* swallow */ }
   }
@@ -1705,9 +1766,10 @@ git commit -m "feat(t2-pr4): auto-update passes activeConstraints to solver + co
 grep -n "verifyExtensionsBestEffort\|SignatureDisabledRegistry\|PreT2DisabledRegistry" packages/gateway/src/extensions/verify-extensions.ts | head
 ```
 
-- [ ] **Step 2: Add the backfill step**
+- [ ] **Step 2: Add the backfill step + orphan-`active/` sweep (review-fix #2)**
 
 ```typescript
+import { readdir } from "node:fs/promises";
 import { forwardDeps, recordInstall } from "./dependency-store.ts";
 
 // After PR 2's signature-verify pass, BEFORE PR 1's pre-T2 check:
@@ -1731,17 +1793,60 @@ async function backfillDependencyRowsBestEffort(db: Database, installed: Readonl
     }
   }
 }
+
+/**
+ * Review-fix #2 (defense-in-depth): sweep orphan `<extensions-root>/<id>/active/`
+ * directories with no matching `extension_state` row. This should be impossible
+ * under the per-node-atomicity contract from Task 9 step 2, but if a future
+ * change regresses that contract — or if a previous Gateway version crashed
+ * mid-install without per-node atomicity — the dirs would otherwise leak.
+ * Leaks are not a security or functional issue (the extension never runs without
+ * its row), just disk waste. Best-effort, never throws.
+ */
+async function sweepOrphanActiveDirsBestEffort(db: Database, extensionsRoot: string): Promise<readonly string[]> {
+  const removed: string[] = [];
+  try {
+    const entries = await readdir(extensionsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const id = entry.name;
+      const row = db.query("SELECT id FROM extension_state WHERE id = ?").get(id);
+      if (row) continue;
+      // No state row — orphan dir. Remove the whole id subtree (active/ + _prev/*).
+      try {
+        await rm(join(extensionsRoot, id), { recursive: true, force: true });
+        removed.push(id);
+      } catch { /* swallow */ }
+    }
+  } catch { /* swallow */ }
+  return removed;
+}
 ```
 
-- [ ] **Step 3: Add a startup-integrity test**
+Wire `sweepOrphanActiveDirsBestEffort` into `verifyExtensionsBestEffort` AFTER the backfill (the backfill needs `active/` to exist; the sweep removes dirs that should not exist regardless).
+
+- [ ] **Step 3: Add startup-integrity tests**
 
 ```typescript
-describe("verify-extensions — backfill", () => {
+describe("verify-extensions — backfill + orphan sweep", () => {
   it("populates extension_dependency rows from on-disk manifest (network-free)", async () => {
     // setup: B installed at 1.0.0 with manifest dependsOn { A: ^1.0.0 }; A also installed at 1.5.0; no rows in extension_dependency.
     await verifyExtensionsBestEffort({ db, vault, paths });
     const fwd = forwardDeps(db, "com.example.B");
     expect(fwd.map((f) => f.id)).toEqual(["com.shared.A"]);
+  });
+
+  it("removes orphan active/ dirs whose extension_state row is missing (review-fix #2)", async () => {
+    // setup: <extensionsRoot>/com.orphan/active/ exists on disk; NO row in extension_state.
+    await mkdir(join(paths.extensionsRoot, "com.orphan", "active"), { recursive: true });
+    await writeFile(
+      join(paths.extensionsRoot, "com.orphan", "active", "nimbus.extension.json"),
+      JSON.stringify({ id: "com.orphan", version: "1.0.0" }),
+      "utf8",
+    );
+    expect(existsSync(join(paths.extensionsRoot, "com.orphan"))).toBe(true);
+    await verifyExtensionsBestEffort({ db, vault, paths });
+    expect(existsSync(join(paths.extensionsRoot, "com.orphan"))).toBe(false);
   });
 });
 ```
@@ -1823,31 +1928,67 @@ export function _resetMissingDependencyRegistry(): void {
 import semver from "semver";
 import { reverseDeps } from "./dependency-store.ts";
 import { getMissingDependencyRegistry } from "./missing-dependency-registry.ts";
+import { getSignatureDisabledRegistry } from "./signature-disabled-registry.ts"; // PR 2
+import { getPreT2DisabledRegistry } from "./pre-t2-disabled-registry.ts";       // PR 1
 
-// In verifyExtensionsBestEffort, after backfill:
+/**
+ * Spec §4.4 completeness guard. Treats hard-disabled deps as MISSING — that's how
+ * cascade-disable works (review-fix #5): A force-removed → B unsatisfied → if C
+ * depends on B, C is also unsatisfied because B is now hard-disabled.
+ *
+ * Iterates until fixed-point so a single pass disables every transitive level.
+ */
 async function completenessGuard(db: Database, installed: ReadonlyMap<string, string>): Promise<void> {
   const registry = getMissingDependencyRegistry();
-  // For each row in extension_dependency, check the dep is installed + version satisfies.
-  const rows = db.query("SELECT extension_id, depends_on_id, range FROM extension_dependency").all() as Array<{ extension_id: string; depends_on_id: string; range: string }>;
-  for (const r of rows) {
-    const depVersion = installed.get(r.depends_on_id);
-    if (!depVersion) {
-      registry.mark({
-        extensionId: r.extension_id,
-        reason: "dependency_missing",
-        missingDepId: r.depends_on_id,
-        requiredRange: r.range,
-      });
-      continue;
-    }
-    if (!semver.satisfies(depVersion, r.range)) {
-      registry.mark({
-        extensionId: r.extension_id,
-        reason: "dependency_unsatisfied",
-        missingDepId: r.depends_on_id,
-        requiredRange: r.range,
-        observedVersion: depVersion,
-      });
+  const sigDisabled = getSignatureDisabledRegistry();
+  const preT2Disabled = getPreT2DisabledRegistry();
+
+  const isUsable = (id: string): boolean => {
+    if (!installed.has(id)) return false;
+    if (sigDisabled.has(id)) return false;
+    if (preT2Disabled.has(id)) return false;
+    if (registry.has(id)) return false;
+    return true;
+  };
+
+  const rows = db.query(
+    "SELECT extension_id, depends_on_id, range FROM extension_dependency",
+  ).all() as Array<{ extension_id: string; depends_on_id: string; range: string }>;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const r of rows) {
+      if (registry.has(r.extension_id)) continue; // already disabled this pass
+      if (!isUsable(r.depends_on_id)) {
+        registry.mark({
+          extensionId: r.extension_id,
+          reason: "dependency_missing",
+          missingDepId: r.depends_on_id,
+          requiredRange: r.range,
+        });
+        changed = true;
+        continue;
+      }
+      const depVersion = installed.get(r.depends_on_id);
+      let satisfies = false;
+      try {
+        // Belt-and-suspenders: a malformed `range` column (e.g., from a future schema)
+        // should be treated as unsatisfied, never crash the guard.
+        satisfies = depVersion !== undefined && semver.satisfies(depVersion, r.range);
+      } catch {
+        satisfies = false;
+      }
+      if (!satisfies) {
+        registry.mark({
+          extensionId: r.extension_id,
+          reason: "dependency_unsatisfied",
+          missingDepId: r.depends_on_id,
+          requiredRange: r.range,
+          observedVersion: depVersion,
+        });
+        changed = true;
+      }
     }
   }
 }
@@ -1921,6 +2062,40 @@ describe("verify-extensions — completeness guard", () => {
     _resetMissingDependencyRegistry();
     await verifyExtensionsBestEffort({ db, vault, paths });
     expect(getMissingDependencyRegistry().has("com.example.B")).toBe(false);
+  });
+
+  it("propagates hard-disable across the closure: A removed → B disabled → C disabled (review-fix #5)", async () => {
+    // setup: chain A ← B ← C. A is force-removed. B depends on A, C depends on B.
+    // Spec §4.4 says the guard treats hard-disabled extensions the same as missing;
+    // so removing A should propagate hard-disable to both B and C.
+    recordInstall(db, "com.example.B", "1.0.0", [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.5.0" }], 1);
+    recordInstall(db, "com.example.C", "1.0.0", [{ id: "com.example.B", range: "^1.0.0", resolvedVersion: "1.0.0" }], 2);
+    // extension_state: B + C present, A missing (force-removed).
+    setExtensionState(db, "com.example.B", "1.0.0");
+    setExtensionState(db, "com.example.C", "1.0.0");
+    // (no setExtensionState for com.shared.A — it was force-removed)
+
+    await verifyExtensionsBestEffort({ db, vault, paths });
+
+    const r = getMissingDependencyRegistry();
+    expect(r.has("com.example.B")).toBe(true);
+    expect(r.reasonFor("com.example.B")?.missingDepId).toBe("com.shared.A");
+    expect(r.has("com.example.C")).toBe(true);
+    expect(r.reasonFor("com.example.C")?.missingDepId).toBe("com.example.B");
+  });
+
+  it("guard never throws on malformed rows (defensive) — semver-invalid range is treated as unsatisfied, not a crash", async () => {
+    // Belt-and-suspenders: even though we control all writes, a corrupt range column
+    // (e.g., from a future-version row read by an older Gateway) should not blow up.
+    db.run(
+      "INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at) VALUES (?, ?, ?, ?)",
+      ["com.example.B", "com.shared.A", "not-a-range", 1],
+    );
+    setExtensionState(db, "com.example.B", "1.0.0");
+    setExtensionState(db, "com.shared.A", "1.0.0");
+    await verifyExtensionsBestEffort({ db, vault, paths });
+    // Treated as unsatisfied (the dep "exists" but the range can't be parsed → can't satisfy).
+    expect(getMissingDependencyRegistry().has("com.example.B")).toBe(true);
   });
 });
 ```
@@ -2291,6 +2466,22 @@ git push
 - ✅ Spec coverage: every section of the spec maps to a task (§1.2 → Tasks 1–8, §2 → Task 3, §3 → Task 5, §4 → Tasks 9 + 10 + 12 + 13, §5 → Task 10, §6 → Task 11, §7 → Task 15, §8 → recap only, §11 exit criteria → Task 17, §12 review disposition → covered by item-by-item fixes throughout)
 - ✅ No placeholders: every code block contains the actual code; "adapt the names" notes appear only where the file's existing identifiers are unknown (Task 9, 10, 11, 12, 14) and the surrounding context names exactly what to look for via `grep`
 - ✅ Type consistency: `ResolvedDep` shape used identically across Tasks 1, 3, 6; `RegistryFetcher` signature stable Tasks 1/3/7/9/11; `DependencyConflict` shape unchanged 1→3→6→11; `MissingDependencyEntry` defined Task 13 and used in Task 18 doc
+
+## Review disposition (2026-05-20)
+
+Source: [`2026-05-20-phase-5-t2-pr4-dependency-resolution-review.md`](./2026-05-20-phase-5-t2-pr4-dependency-resolution-review.md).
+
+| Review § | Item | Disposition | Where in this plan |
+|---|---|---|---|
+| 1 | Kahn `queue.sort()` perf O(V² log V) | **DEFER + NOTE** | Closure size bounded ~15 nodes by spec; intermediate sorts ≈ 225 ops total. Min-heap swap is mechanical if ecosystem ever exceeds ~100 nodes. Acknowledgement comment added inline to the `topoSort` doc. | Task 3 `topoSort` jsdoc |
+| 2 | Crash mid-install — orphan `active/` dirs | **FIX** | Two-part: (a) explicit per-node atomicity contract in Task 9 (pair on-disk unpack + `extension_state` row write per node), (b) defense-in-depth orphan-`active/` sweep in Task 12 with a test that creates a fake orphan and asserts it's removed. | Task 9 install loop comment; Task 12 step 2 (`sweepOrphanActiveDirsBestEffort`) + step 3 test |
+| 3 | Local manifest not run through `parseManifest` | **FIX** | `createRegistryFetcher`'s on-disk path now calls `parseManifest(JSON.parse(raw))`. Added a tampered-manifest test that asserts the fetcher rejects garbage (id=42). | Task 7 step 2 + step 3 new test |
+| 4 | `DependencyConflictError` should expose available versions | **FIX** | Added optional `availableVersions` field on `DependencyConflict`; populated at the `maxSatisfying`-returns-null throw site in the solver; covered by a new assertion in the existing unsatisfiable-range test. | Task 1 type + Task 3 throw site + Task 3 test |
+| 5 | Cascade dangling-dep edge case | **FIX (impl + test)** | Pseudocode for the completeness guard now iterates to fixed-point, consults `SignatureDisabledRegistry` + `PreT2DisabledRegistry` + `MissingDependencyRegistry` to determine "usable" status, and wraps `semver.satisfies` in try/catch so a malformed range column never crashes the guard. Added two new tests: cascade (A→B→C disable chain) + malformed-range robustness. | Task 13 step 2 + step 3 new tests |
+
+**Net effect:** four code-changing fixes (orphan sweep + manifest parse + availableVersions field + cascade-aware guard with try-catch) and one explanatory deferral (Kahn perf). None of the brainstorming-locked decisions changed; no new files; no migration impact.
+
+---
 
 ## Notes for the implementer
 
