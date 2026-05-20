@@ -260,15 +260,6 @@
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
     },
-    "packages/gateway/src/ipc/connector-rpc-handlers/config.ts": {
-      "min_coverage_pct": 61.76
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/lifecycle.ts": {
-      "min_coverage_pct": 78.13
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/status.ts": {
-      "min_coverage_pct": 25
-    },
     "packages/gateway/src/ipc/connector-rpc.ts": {
       "min_coverage_pct": 68.29
     },
@@ -277,9 +268,6 @@
     },
     "packages/gateway/src/ipc/http-write-routes.ts": {
       "min_coverage_pct": 79.38
-    },
-    "packages/gateway/src/ipc/people-rpc.ts": {
-      "min_coverage_pct": 57.04
     },
     "packages/gateway/src/ipc/server/dispatchers.ts": {
       "min_coverage_pct": 78.23
