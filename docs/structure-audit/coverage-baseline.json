@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-18T18:40:22.064Z",
+  "generated_at": "2026-05-19T22:37:25.168Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -200,62 +200,23 @@
     "packages/gateway/src/config/telemetry-toml.ts": {
       "min_coverage_pct": 76.64
     },
-    "packages/gateway/src/connectors/aws-sync.ts": {
-      "min_coverage_pct": 21.05
-    },
-    "packages/gateway/src/connectors/azure-sync.ts": {
-      "min_coverage_pct": 30.38
-    },
-    "packages/gateway/src/connectors/circleci-sync.ts": {
-      "min_coverage_pct": 10.76
-    },
     "packages/gateway/src/connectors/connector-catalog.ts": {
       "min_coverage_pct": 64.71
     },
     "packages/gateway/src/connectors/connector-vault.ts": {
       "min_coverage_pct": 67.74
     },
-    "packages/gateway/src/connectors/datadog-sync.ts": {
-      "min_coverage_pct": 24.24
-    },
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_coverage_pct": 73.58
     },
-    "packages/gateway/src/connectors/gcp-sync.ts": {
-      "min_coverage_pct": 38.16
-    },
-    "packages/gateway/src/connectors/github-actions-sync.ts": {
-      "min_coverage_pct": 12.05
-    },
-    "packages/gateway/src/connectors/github-index-repos.ts": {
-      "min_coverage_pct": 71.43
-    },
-    "packages/gateway/src/connectors/grafana-sync.ts": {
-      "min_coverage_pct": 31.58
-    },
     "packages/gateway/src/connectors/index.ts": {
       "min_coverage_pct": 0
-    },
-    "packages/gateway/src/connectors/jenkins-api-jobs.ts": {
-      "min_coverage_pct": 11.11
-    },
-    "packages/gateway/src/connectors/jenkins-sync.ts": {
-      "min_coverage_pct": 14.35
-    },
-    "packages/gateway/src/connectors/kubernetes-sync.ts": {
-      "min_coverage_pct": 19.05
     },
     "packages/gateway/src/connectors/lazy-mesh/mesh.ts": {
       "min_coverage_pct": 60.83
     },
     "packages/gateway/src/connectors/lazy-mesh/tool-map.ts": {
       "min_coverage_pct": 73.91
-    },
-    "packages/gateway/src/connectors/newrelic-sync.ts": {
-      "min_coverage_pct": 30.26
-    },
-    "packages/gateway/src/connectors/sentry-sync.ts": {
-      "min_coverage_pct": 30.49
     },
     "packages/gateway/src/connectors/sync-iso-helpers.ts": {
       "min_coverage_pct": 75
