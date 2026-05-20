@@ -82,11 +82,20 @@ describe("Marketplace page", () => {
   });
 
   it("toggling an enabled extension calls extensionDisable", async () => {
-    stubExtensionList([EXT_1]);
+    // T2 PR 3: PendingUpdates also calls extension.checkForUpdates — discriminate
+    // by method name to keep extension.list returns deterministic.
     extensionDisableMock.mockResolvedValue({ ok: true });
-    callMock
-      .mockResolvedValueOnce({ extensions: [EXT_1] })
-      .mockResolvedValue({ extensions: [{ ...EXT_1, enabled: 0 }] });
+    let listCallCount = 0;
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "extension.checkForUpdates") return [];
+      if (method === "extension.list") {
+        listCallCount += 1;
+        return listCallCount === 1
+          ? { extensions: [EXT_1] }
+          : { extensions: [{ ...EXT_1, enabled: 0 }] };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
     renderPage();
     await waitFor(() => expect(screen.getByLabelText("nimbus-git enabled")).toBeInTheDocument());
     await userEvent.click(screen.getByLabelText("nimbus-git enabled"));
@@ -94,11 +103,18 @@ describe("Marketplace page", () => {
   });
 
   it("toggling a disabled extension calls extensionEnable", async () => {
-    stubExtensionList([EXT_2]);
     extensionEnableMock.mockResolvedValue({ ok: true });
-    callMock
-      .mockResolvedValueOnce({ extensions: [EXT_2] })
-      .mockResolvedValue({ extensions: [{ ...EXT_2, enabled: 1 }] });
+    let listCallCount = 0;
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "extension.checkForUpdates") return [];
+      if (method === "extension.list") {
+        listCallCount += 1;
+        return listCallCount === 1
+          ? { extensions: [EXT_2] }
+          : { extensions: [{ ...EXT_2, enabled: 1 }] };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
     renderPage();
     await waitFor(() => expect(screen.getByLabelText("nimbus-slack enabled")).toBeInTheDocument());
     await userEvent.click(screen.getByLabelText("nimbus-slack enabled"));
@@ -106,9 +122,16 @@ describe("Marketplace page", () => {
   });
 
   it("calls extensionRemove after confirm", async () => {
-    stubExtensionList([EXT_1]);
     extensionRemoveMock.mockResolvedValue({ ok: true });
-    callMock.mockResolvedValueOnce({ extensions: [EXT_1] }).mockResolvedValue({ extensions: [] });
+    let listCallCount = 0;
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "extension.checkForUpdates") return [];
+      if (method === "extension.list") {
+        listCallCount += 1;
+        return listCallCount === 1 ? { extensions: [EXT_1] } : { extensions: [] };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPage();
     await waitFor(() => expect(screen.getByText("nimbus-git")).toBeInTheDocument());

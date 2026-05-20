@@ -49,7 +49,10 @@ export function PendingUpdates({
   } | null>(null);
   const [inFlight, setInFlight] = useState<string | null>(null);
 
-  const list = data ?? [];
+  // Defensive coercion — `useIpcQuery<T>` doesn't enforce the runtime shape,
+  // and a stale mock or schema regression could hand back a non-array. Render
+  // nothing in that case instead of crashing the Marketplace page.
+  const list: AvailableUpdateUi[] = Array.isArray(data) ? (data as AvailableUpdateUi[]) : [];
 
   async function handleApply(id: string, toVersion: string): Promise<void> {
     setApplyError(null);
