@@ -66,3 +66,76 @@ describe("StructuredPreview", () => {
     expect(screen.getByRole("button", { name: /Show full/i })).toBeInTheDocument();
   });
 });
+
+describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
+  function autoUpdateDetails(overrides: Record<string, unknown> = {}) {
+    return {
+      displayName: "Notion",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      channel: "stable",
+      changelog: "Fixed parser bug",
+      publisherStatus: "verified",
+      addedPermissions: {
+        network: [],
+        filesystem: { read: [], write: [] },
+      },
+      removedPermissions: {
+        network: [],
+        filesystem: { read: [], write: [] },
+      },
+      ...overrides,
+    };
+  }
+
+  it("renders version pair + channel + publisher for extension.autoUpdate", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.getByTestId("auto-update-preview")).toBeInTheDocument();
+    expect(screen.getByText(/Update extension/)).toBeInTheDocument();
+    expect(screen.getByText("Notion")).toBeInTheDocument();
+    expect(screen.getByText("1.0.0")).toBeInTheDocument();
+    expect(screen.getByText("1.1.0")).toBeInTheDocument();
+    expect(screen.getByText("stable")).toBeInTheDocument();
+    expect(screen.getByText(/publisher: verified/)).toBeInTheDocument();
+  });
+
+  it("renders 'Roll back extension' for extension.downgrade direction", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.downgrade" />);
+    expect(screen.getByText(/Roll back extension/)).toBeInTheDocument();
+  });
+
+  it("renders the changelog inside a <pre> block (no HTML execution)", () => {
+    const details = autoUpdateDetails({
+      changelog: "<script>alert(1)</script>\nFixed parser bug",
+    });
+    render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    const pre = screen.getByTestId("auto-update-changelog");
+    // textContent has the literal script tag — would have executed if we
+    // used dangerouslySetInnerHTML; this asserts the CSP-safe path.
+    expect(pre.textContent).toContain("<script>alert(1)</script>");
+  });
+
+  it("renders permission diff when network adds a host", () => {
+    const details = autoUpdateDetails({
+      addedPermissions: {
+        network: ["api.new-host.com"],
+        filesystem: { read: [], write: [] },
+      },
+    });
+    render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    expect(screen.getByTestId("auto-update-permission-diff")).toBeInTheDocument();
+    expect(screen.getByText("api.new-host.com")).toBeInTheDocument();
+  });
+
+  it("omits permission diff when no axis widened", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.queryByTestId("auto-update-permission-diff")).toBeNull();
+  });
+
+  it("falls through to generic renderer when action is unknown", () => {
+    render(<StructuredPreview details={{ foo: "bar" }} action="some.other.action" />);
+    expect(screen.queryByTestId("auto-update-preview")).toBeNull();
+    expect(screen.getByText("foo")).toBeInTheDocument();
+    expect(screen.getByText("bar")).toBeInTheDocument();
+  });
+});
