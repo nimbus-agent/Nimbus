@@ -67,6 +67,14 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // the same exemption rationale — zero executable statements.
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
+  // IPC invocation-context type aliases — `export type` declarations only.
+  // The dispatchers (agents-rpc, automation-rpc, connector-rpc) consume
+  // these contexts; the type files themselves emit nothing at runtime so
+  // their lcov entry is always 0/0. Coverage floor was treating them as
+  // baseline 0% entries before this exemption.
+  { kind: "exact", path: "packages/gateway/src/ipc/agent-invoke.ts" },
+  { kind: "exact", path: "packages/gateway/src/ipc/workflow-invoke.ts" },
+  { kind: "exact", path: "packages/gateway/src/ipc/connector-rpc-handlers/context.ts" },
 
   // Reference benches — run via `nimbus bench` interactive protocol, not bun test.
   { kind: "dirPrefix", prefix: "packages/gateway/src/perf/" },

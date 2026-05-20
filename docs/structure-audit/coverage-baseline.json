@@ -260,14 +260,8 @@
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
     },
-    "packages/gateway/src/ipc/agent-invoke.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/ipc/connector-rpc-handlers/config.ts": {
       "min_coverage_pct": 61.76
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/context.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/ipc/connector-rpc-handlers/lifecycle.ts": {
       "min_coverage_pct": 78.13
@@ -301,9 +295,6 @@
     },
     "packages/gateway/src/ipc/server/vault-dispatch.ts": {
       "min_coverage_pct": 65.17
-    },
-    "packages/gateway/src/ipc/workflow-invoke.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/llm/registry.ts": {
       "min_coverage_pct": 0
