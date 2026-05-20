@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as tar from "tar";
@@ -114,12 +113,15 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
 async function extractTarballToDir(bytes: Uint8Array, destDir: string): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
   await mkdir(destDir, { recursive: true });
-  const tmpFile = join(tmpdir(), `nimbus-au-${randomUUID()}.tar`);
-  await writeFile(tmpFile, bytes);
+  // mkdtemp creates the staging dir with O_EXCL + 0o700 semantics, so the
+  // tarball never lands at a predictable path in the shared OS temp dir.
+  const tmpDir = await mkdtemp(join(tmpdir(), "nimbus-au-"));
+  const tmpFile = join(tmpDir, "src.tar");
   try {
+    await writeFile(tmpFile, bytes);
     await tar.x({ cwd: destDir, file: tmpFile });
   } finally {
-    await rm(tmpFile, { force: true });
+    await rm(tmpDir, { recursive: true, force: true });
   }
 }
 
