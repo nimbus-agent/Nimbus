@@ -225,10 +225,10 @@
       "min_coverage_pct": 34.62
     },
     "packages/gateway/src/connectors/user-mcp-store.ts": {
-      "min_coverage_pct": 57.63
+      "min_coverage_pct": 77.97
     },
     "packages/gateway/src/connectors/user-mcp-sync.ts": {
-      "min_coverage_pct": 5.26
+      "min_coverage_pct": 52.63
     },
     "packages/gateway/src/db/backups-list.ts": {
       "min_coverage_pct": 40.91
@@ -310,9 +310,6 @@
     },
     "packages/gateway/src/platform/worker-security.ts": {
       "min_coverage_pct": 0
-    },
-    "packages/gateway/src/sync/scheduler-store.ts": {
-      "min_coverage_pct": 78.53
     },
     "packages/gateway/src/telemetry/flush-scheduler.ts": {
       "min_coverage_pct": 33.6
