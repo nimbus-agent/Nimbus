@@ -26,7 +26,7 @@ import {
   signManifest,
 } from "../../../src/extensions/verify-signature.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
-import { setupFreshExtensionDb, stageSignedExtensionOnDisk } from "../../fixtures/extension.ts";
+import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
 interface RegistryEntry {
   version: string;
@@ -140,7 +140,6 @@ async function buildSignedTarball(opts: {
     writeFileSync(join(stageRoot, "dist", "index.js"), entryText, "utf8");
 
     const manifestBytes = Buffer.from(manifestText, "utf8");
-    const entryBytes = Buffer.from(entryText, "utf8");
     const sha256Hex = (b: Buffer): string => {
       const { createHash } = require("node:crypto") as typeof import("node:crypto");
       return createHash("sha256").update(b).digest("hex");

@@ -298,8 +298,9 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     const prevDir = join(extRoot, "_prev");
     if (existsSync(prevDir)) {
       const entries = readdirSync(prevDir).sort();
-      if (entries.length > 0) {
-        prevVersion = entries[entries.length - 1]!;
+      const last = entries[entries.length - 1];
+      if (last !== undefined) {
+        prevVersion = last;
       }
     }
   } catch {

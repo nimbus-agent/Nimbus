@@ -70,8 +70,8 @@ async function maybeRecoverMissingActive(
     } catch {
       candidates = [];
     }
-    if (candidates.length > 0) {
-      const target = candidates[candidates.length - 1]!;
+    const target = candidates[candidates.length - 1];
+    if (target !== undefined) {
       try {
         renameSync(join(prevDir, target), activePath);
         updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);

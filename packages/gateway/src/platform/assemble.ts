@@ -422,7 +422,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ...(autoUpdateRuntime !== undefined
       ? {
           extensionsAutoUpdateDiag: {
-            cachedUpdatesCount: (): number => autoUpdateRuntime!.deps.cache.list().length,
+            cachedUpdatesCount: (): number => autoUpdateRuntime?.deps.cache.list().length ?? 0,
             intervalHours: loadNimbusExtensionsFromConfigDir(paths.configDir)
               .updateCheckIntervalHours,
             airGapBlocked: autoUpdateDisabled,
