@@ -511,7 +511,7 @@
         "@tauri-apps/plugin-fs": "^2",
         "@tauri-apps/plugin-global-shortcut": "^2.0.0",
         "@tauri-apps/plugin-shell": "^2.0.0",
-        "react": "^19.2.5",
+        "react": "^19.2.6",
         "react-dom": "^19.2.6",
         "react-router-dom": "^7.14.2",
         "react-window": "^2.2.7",
@@ -2787,7 +2787,7 @@
 
     "rc-config-loader": ["rc-config-loader@4.1.4", "", { "dependencies": { "debug": "^4.4.3", "js-yaml": "^4.1.1", "json5": "^2.2.3", "require-from-string": "^2.0.2" } }, "sha512-3GiwEzklkbXTDp52UR5nT8iXgYAx1V9ZG/kDZT7p60u2GCv2XTwQq4NzinMoMpNtXhmt3WkhYXcj6HH8HdwCEQ=="],
 
-    "react": ["react@19.2.5", "", {}, "sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA=="],
+    "react": ["react@19.2.6", "", {}, "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q=="],
 
     "react-devtools-core": ["react-devtools-core@7.0.1", "", { "dependencies": { "shell-quote": "^1.6.1", "ws": "^7" } }, "sha512-C3yNvRHaizlpiASzy7b9vbnBGLrhvdhl1CbdU6EnZgxPNbai60szdLtl+VL76UNOt5bOoVTOz5rNWZxgGt+Gsw=="],
 
