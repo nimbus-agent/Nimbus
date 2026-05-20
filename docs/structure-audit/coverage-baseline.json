@@ -39,7 +39,7 @@
       "min_coverage_pct": 39.53
     },
     "packages/cli/src/commands/extension.ts": {
-      "min_coverage_pct": 68.31
+      "min_coverage_pct": 69.03
     },
     "packages/cli/src/commands/help.ts": {
       "min_coverage_pct": 0
@@ -287,6 +287,9 @@
     "packages/gateway/src/ipc/people-rpc.ts": {
       "min_coverage_pct": 57.04
     },
+    "packages/gateway/src/ipc/server/dispatchers.ts": {
+      "min_coverage_pct": 78.23
+    },
     "packages/gateway/src/ipc/server/inline-handlers.ts": {
       "min_coverage_pct": 51.5
     },
@@ -307,6 +310,9 @@
     },
     "packages/gateway/src/people/parse-from-header.ts": {
       "min_coverage_pct": 74.39
+    },
+    "packages/gateway/src/platform/assemble.ts": {
+      "min_coverage_pct": 77.75
     },
     "packages/gateway/src/platform/errors.ts": {
       "min_coverage_pct": 60
