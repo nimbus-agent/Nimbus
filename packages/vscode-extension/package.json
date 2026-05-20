@@ -161,8 +161,8 @@
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.0",
-    "@types/node": "^25.7.0",
-    "@types/vscode": "^1.90.0",
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.120.0",
     "@vitest/coverage-v8": "^2.0.0",
     "@vscode/test-electron": "^2.4.0",
     "@vscode/vsce": "^3.0.0",
