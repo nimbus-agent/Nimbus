@@ -41,7 +41,10 @@ export default defineConfig({
             { label: "Query & HTTP", link: "/query-and-http/" },
             { label: "Telemetry", link: "/telemetry/" },
             { label: "Performance benchmarks", link: "/perf/" },
-            { label: "Connectors (per-service)", autogenerate: { directory: "connectors" } },
+            {
+              label: "Connectors (per-service)",
+              items: [{ autogenerate: { directory: "connectors" } }],
+            },
           ],
         },
         {
