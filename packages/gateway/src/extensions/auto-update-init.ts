@@ -112,6 +112,8 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
 }
 
 async function extractTarballToDir(bytes: Uint8Array, destDir: string): Promise<void> {
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(destDir, { recursive: true });
   const tmpFile = join(tmpdir(), `nimbus-au-${randomUUID()}.tar`);
   await writeFile(tmpFile, bytes);
   try {
@@ -146,22 +148,14 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     fetchLatestVersion: (id, channel, signal) => registry.fetchLatestVersion(id, channel, signal),
     fetchManifest: async (id, version, signal) => {
       const r = await registry.fetchManifest(id, version, signal);
-      // Re-shape ExtensionManifest into the InstalledExtensionManifestSlice
-      // the daemon expects. The registry manifest is fully parsed so we know
-      // updateChannel + permissions are present; signature is required for the
-      // auto-update path (no signature → daemon skips at the publisher gate).
       const m = r.manifest;
       const sig = m.signature ?? "";
-      const result: ReturnType<RegistryClient["fetchManifest"]> extends Promise<infer T>
-        ? T
-        : never = r;
       return {
-        manifestHash: result.manifestHash,
-        entryHash: result.entryHash,
-        tarballUrl: result.tarballUrl,
-        ...(result.tarballSizeBytes !== undefined
-          ? { tarballSizeBytes: result.tarballSizeBytes }
-          : {}),
+        manifestHash: r.manifestHash,
+        entryHash: r.entryHash,
+        tarballUrl: r.tarballUrl,
+        manifestRaw: r.manifestRaw,
+        ...(r.tarballSizeBytes !== undefined ? { tarballSizeBytes: r.tarballSizeBytes } : {}),
         manifest: {
           id: m.id,
           version: m.version,

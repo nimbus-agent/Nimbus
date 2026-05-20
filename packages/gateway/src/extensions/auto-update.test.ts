@@ -88,6 +88,7 @@ describe("ExtensionAutoUpdater", () => {
         manifestHash: "deadbeef".repeat(8),
         entryHash: "cafef00d".repeat(8),
         tarballUrl: "https://r/x.tar.gz",
+        manifestRaw: {},
       }),
       verifyManifestSignature: async () => {}, // resolve = verify passed
       lookupPublisherKey: async () => new Uint8Array(32),
@@ -126,6 +127,7 @@ describe("ExtensionAutoUpdater", () => {
         manifestHash: "deadbeef".repeat(8),
         entryHash: "cafef00d".repeat(8),
         tarballUrl: "https://r/x.tar.gz",
+        manifestRaw: {},
       }),
       verifyManifestSignature: async () => {},
       lookupPublisherKey: async () => null, // not in vault
@@ -157,6 +159,7 @@ describe("ExtensionAutoUpdater", () => {
         manifestHash: "deadbeef".repeat(8),
         entryHash: "cafef00d".repeat(8),
         tarballUrl: "https://r/x.tar.gz",
+        manifestRaw: {},
       }),
       verifyManifestSignature: async () => {
         throw new Error("signature_failed");
@@ -216,6 +219,7 @@ describe("ExtensionAutoUpdater", () => {
         manifestHash: "deadbeef".repeat(8),
         entryHash: "cafef00d".repeat(8),
         tarballUrl: "https://r/x.tar.gz",
+        manifestRaw: {},
       }),
       verifyManifestSignature: async () => {},
       lookupPublisherKey: async () => new Uint8Array(32),

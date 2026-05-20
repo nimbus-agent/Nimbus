@@ -122,6 +122,14 @@ export interface FetchLatestVersionResponse {
 
 export interface FetchManifestResponse {
   manifest: ExtensionManifest;
+  /**
+   * Raw on-disk JSON object as received from the registry. Used by the
+   * auto-update daemon for `verifyManifestSignature` because canonicalization
+   * is over the bytes the publisher actually signed — the parsed
+   * `ExtensionManifest` includes defaulted fields (e.g. `updateChannel`) that
+   * would change the canonical bytes.
+   */
+  manifestRaw: Record<string, unknown>;
   manifestHash: string;
   entryHash: string;
   tarballUrl: string;
@@ -215,6 +223,7 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
       const tarballSizeBytes = typeof tarballSizeRaw === "number" ? tarballSizeRaw : undefined;
       return {
         manifest,
+        manifestRaw: manifestRaw as Record<string, unknown>,
         manifestHash,
         entryHash,
         tarballUrl,

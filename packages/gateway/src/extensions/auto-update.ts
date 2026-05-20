@@ -30,6 +30,14 @@ export interface FetchLatestVersionResult {
 
 export interface FetchManifestResult {
   manifest: InstalledExtensionManifestSlice & { signature: string; changelog?: string };
+  /**
+   * Raw on-disk JSON manifest bytes as received from the registry. Daemon
+   * uses this — NOT `manifest` — for `verifyManifestSignature` because the
+   * canonical signature bytes are over the on-disk JSON, not the parsed +
+   * defaulted shape (e.g. `updateChannel` defaults to "stable" in the parsed
+   * shape but is absent from pre-PR-3 signed manifests).
+   */
+  manifestRaw: Record<string, unknown>;
   manifestHash: string;
   entryHash: string;
   tarballUrl: string;
@@ -149,7 +157,10 @@ export class ExtensionAutoUpdater {
       verificationStatus = "needs_sync";
     } else {
       try {
-        await this.opts.verifyManifestSignature(newManifest, pubkey);
+        // Verify against the RAW on-disk JSON, not the parsed slice — the
+        // canonical signature bytes are over what the publisher actually
+        // signed (no defaulted updateChannel, etc.).
+        await this.opts.verifyManifestSignature(manifestResult.manifestRaw, pubkey);
         verificationStatus = "verified";
         publisherStatus = "verified";
       } catch {
