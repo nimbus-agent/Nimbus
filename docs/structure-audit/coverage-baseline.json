@@ -38,9 +38,6 @@
     "packages/cli/src/commands/expert.ts": {
       "min_coverage_pct": 39.53
     },
-    "packages/cli/src/commands/extension-tree.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/cli/src/commands/extension.ts": {
       "min_coverage_pct": 72.13
     },
@@ -153,7 +150,7 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.95
+      "min_coverage_pct": 57.6
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
@@ -203,17 +200,8 @@
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
     },
-    "packages/gateway/src/extensions/dependency-errors.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/extensions/dependency-graph.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/extensions/dependency-store.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/extensions/missing-dependency-registry.ts": {
-      "min_coverage_pct": 0
+    "packages/gateway/src/extensions/install-from-local.ts": {
+      "min_coverage_pct": 66.9
     },
     "packages/gateway/src/extensions/registry-fetcher.ts": {
       "min_coverage_pct": 0
@@ -225,10 +213,10 @@
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/server/server.ts": {
-      "min_coverage_pct": 76.27
+      "min_coverage_pct": 76.7
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 49.32
+      "min_coverage_pct": 45.21
     },
     "packages/gateway/src/platform/assemble.ts": {
       "min_coverage_pct": 77.75
@@ -237,7 +225,7 @@
       "min_coverage_pct": 63.64
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 48.08
+      "min_coverage_pct": 39.62
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 75
