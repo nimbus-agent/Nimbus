@@ -512,11 +512,11 @@ async function installDepFromRegistry(opts: {
     // Sanity-check: the entry hash from the registry must match the installed
     // entry hash. This is a defence against tarball substitution attacks.
     if (result.entryHash.toLowerCase() !== expectedEntryHash.toLowerCase()) {
-      // Roll back the extension_state row that completeExtensionInstallAfterCopy
+      // Roll back the extension row that completeExtensionInstallAfterCopy
       // inserted, so the next Gateway startup doesn't see a row pointing at a
       // missing directory and hard-disable it with a misleading reason.
       try {
-        dbRun(opts.db, "DELETE FROM extension_state WHERE id = ?", [opts.depId]);
+        dbRun(opts.db, "DELETE FROM extension WHERE id = ?", [opts.depId]);
       } catch {
         /* best-effort — the rmSync + rethrow are the primary recovery */
       }
