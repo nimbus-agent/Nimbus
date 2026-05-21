@@ -1,8 +1,8 @@
 # Review: Coverage Floor Phase 5 Design Spec
 
-**Date:** 2026-05-21
+**Date:** 2026-05-21 (rev 2 — corrected after external design-review feedback)
 **Target Spec:** [2026-05-21-coverage-floor-phase-5-design.md](../specs/2026-05-21-coverage-floor-phase-5-design.md)
-**Reviewer:** Self-review (same session)
+**Reviewer:** Self-review (same session); point #1 corrected after external design-review at [`2026-05-21-coverage-floor-phase-5-design-review.md`](../specs/2026-05-21-coverage-floor-phase-5-design-review.md) flagged the broken hypothesis.
 
 Phase 5 is shaped as the Gateway-finishing PR — close the long-tail by either testing pinned files (now possible thanks to Phase 4's commit-7 precedent) or honestly admitting structural exclusions. The spec is consistent with Phase 4's structural conventions: low-risk-first commit ordering, per-file triage tables, explicit carry-forwards. Two structural-exclusion calls (`platform/index.ts`, `vault/factory.ts`) are load-bearing and the rest of the scope hinges on hypotheses I verified during the review pass below.
 
@@ -10,19 +10,36 @@ This review surfaces 5 points the plan author should adopt before authoring the 
 
 ---
 
-## 1. Verified: `bun test` and `bun run test:integration` are separate processes (good news for commit 12)
+## 1. ~~Verified~~ **CORRECTED** — commit 12's test-process isolation hypothesis is WRONG for the coverage build (rev 2)
 
-**Concern:** Commit 12's `embedding/model.ts` isolation approach claims that placing the test under `packages/gateway/test/integration/embedding/model-isolated.test.ts` gives it a separate process from `create-routing-runtime.test.ts`'s `mock.module("@xenova/transformers", ...)`. If they're the same `bun test` invocation, the mock state collides regardless of file path.
+**Original concern:** Commit 12's `embedding/model.ts` isolation approach claims that placing the test under `packages/gateway/test/integration/embedding/model-isolated.test.ts` gives it a separate process from `create-routing-runtime.test.ts`'s `mock.module("@xenova/transformers", ...)`.
 
-**Evidence:** Inspected the root `package.json`. `test:integration` is its own script:
+**Original evidence (partial — only covered `test:ci`):** `test:integration` is its own script in root `package.json`:
 
 ```json
 "test:integration": "bun test packages/gateway/test/integration/ packages/cli/test/integration/"
 ```
 
-And `test:ci` invokes `bun test` first, then `bun run test:integration` as a follow-on shell command — two separate `bun test` invocations, two separate Node-ish processes, two independent `mock.module` global registries.
+`test:ci` invokes `bun test` first, then `bun run test:integration` as a follow-on shell command — two separate `bun test` invocations. This part of the original evidence still holds, but it's **the wrong process to care about**.
 
-**Conclusion:** Commit 12's isolation approach works because of how the CI scripts invoke bun, not because of the directory placement alone. The plan should make this explicit so a future reader doesn't try to move the test back to a colocated `*.test.ts` under `embedding/` and re-introduce the collision. **Plan should add an explicit "Why a separate integration test process?" note in Task 12.**
+**Correction (external design-review caught this, 2026-05-21):** Coverage measurement is driven by `bun run audit:coverage-floor:build-lcov`, which runs `scripts/coverage-floor/build-lcov.sh`. That script (line 32) does:
+
+```bash
+(cd "${pkg}"; bun test --coverage --coverage-reporter=lcov)
+```
+
+— **one `bun test` invocation per package**, no path args. `bun test` then discovers ALL `*.test.ts` files recursively in the package, including both colocated `src/embedding/model.test.ts` AND `test/integration/embedding/model-isolated.test.ts`. They share the same bun-test process. They share the same `mock.module` global registry. The collision persists.
+
+**The `test:ci` finding is irrelevant** because Phase 5 is measured against `build-lcov.sh` lcov, not `test:ci` lcov.
+
+**Resolution:** Commit 12 now uses the **extract-and-exclude refactor** (originally listed as fallback). Spec rev 2 makes that approach primary:
+
+- Create `packages/gateway/src/embedding/load-transformer-pipeline.ts` — a 4-line shim around `await import("@xenova/transformers")`.
+- `model.ts`'s `createLocalEmbedder` calls `loadTransformerPipeline()` from the sibling.
+- `model.test.ts` mocks `./load-transformer-pipeline.ts` — a unique target path that does NOT collide with `create-routing-runtime.test.ts`'s `@xenova/transformers` mock.
+- The new shim is added to `EXCLUSIONS` + `sonar-project.properties` in lockstep (commit 12 carries both).
+
+**Plan implication:** Task 12 now refactors `model.ts` to call `loadTransformerPipeline()`, adds the new sibling, adds the exclusion in lockstep, then writes the test against the local mock target. The "isolated test process" framing is dead; do not reintroduce it.
 
 ---
 
@@ -84,18 +101,25 @@ b) **Identify the load-bearing uncovered branches in the spec.** The plan author
 
 ---
 
-## Conclusion
+## Conclusion (rev 2)
 
-The spec is internally consistent, mirrors Phase 4 conventions cleanly, and its three biggest load-bearing hypotheses (test-process isolation for commit 12, cross-platform `net.createServer` for commit 9, `port: 0` integration-test precedent for commit 7) all hold up under inspection. The structural-exclusion calls for `platform/index.ts` + `vault/factory.ts` are well-justified — they mirror the existing `sandbox-runner.ts` exclusion verbatim in shape.
+Rev 1 of this review claimed all three big hypotheses held up. The external design-review (at [`docs/superpowers/specs/2026-05-21-coverage-floor-phase-5-design-review.md`](../specs/2026-05-21-coverage-floor-phase-5-design-review.md)) caught that point #1 was load-bearing wrong — `test:integration` is a separate bun-test process from `test` only under `test:ci`; the **coverage build** uses `scripts/coverage-floor/build-lcov.sh` which runs `bun test --coverage` per package and pulls in `test/integration/**/*.test.ts` into the same process as colocated `*.test.ts`. The `mock.module` collision persists.
+
+Spec rev 2 fixes commit 12 to use the extract-and-exclude refactor (introduce `embedding/load-transformer-pipeline.ts` shim, exclude it, mock the local path in `model.test.ts`). The other two hypotheses (commit 7 lifecycle-only test, commit 9 cross-platform `net.createServer`) still hold.
+
+The other four external-review concerns:
+
+- **TUI TTY mocking (concern 2):** Folded into spec's Tier B `App.tsx` row + adds explicit `Object.defineProperty(process.stdout, 'isTTY', ...)` guidance with `afterEach` restore.
+- **install-from-local.ts split (concern 3):** Deferred to plan-author judgment with split-criteria added to the spec's Tier C row.
+- **socket-listeners.ts shim parity (concern 4):** Risk row now lists the explicit (a)/(b)/(c) parity-bump checklist.
+- **Windows long-path cleanup (concern 5):** Out-of-band cleanup section now lists the PowerShell fallback.
 
 **Actions for the plan author (carried into the implementation plan, not back into the spec):**
 
-1. Task 12: explicit "Why a separate integration test process?" note citing `package.json:86`.
+1. Task 12 (rev 2): refactor `model.ts` to call `loadTransformerPipeline()` from the new sibling; add the sibling to both `EXCLUSIONS` and `sonar-project.properties`; bump count assertions; then write the test against `./load-transformer-pipeline.ts` as the mock target. **Do NOT relocate the test to `test/integration/` — that doesn't isolate it from the colocated test under coverage builds.**
 2. Task 7: explicit "lifecycle, not route coverage — see precedent `openapi-route.test.ts`" guidance.
 3. Task 9: explicit "use a unix socket path under tmp dir, not a `\\.\pipe\...` path" guidance.
-4. Task 10: explicit "use existing `App.test.tsx` ink-testing-library imports; no `bun add` needed" + reiterate watermark fallback.
-5. Task 11: include a "Read the source and identify uncovered branches" step (Phase 4 Task 7 did this for `mesh.ts` and it worked).
+4. Task 10: existing `App.test.tsx` ink-testing-library imports; no `bun add` needed; explicit TTY stubs in `beforeEach` + restore in `afterEach`; watermark fallback if 80% out of reach.
+5. Task 11: include a "Read the source and identify uncovered branches" step; **judge whether to split into Tier C-1 + C-2** per the spec's deferred option.
 
-None of these are spec-changing — they're plan-level execution guidance that prevents the implementer from re-discovering the same hypotheses.
-
-**Spec status: ready to inform the implementation plan.**
+**Spec status (rev 2): ready to inform the implementation plan.**
