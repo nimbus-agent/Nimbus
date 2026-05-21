@@ -44,9 +44,9 @@ describe("listMigrationBackups", () => {
 
     expect(result).toHaveLength(2);
     // Sorted descending by mtimeMs: newer first
-    expect(result[0].filename).toBe("pre-migration-V29-newer.db.gz");
-    expect(result[1].filename).toBe("pre-migration-V28-older.db.gz");
-    expect(result[0].mtimeMs).toBeGreaterThan(result[1].mtimeMs);
+    expect(result[0]?.filename).toBe("pre-migration-V29-newer.db.gz");
+    expect(result[1]?.filename).toBe("pre-migration-V28-older.db.gz");
+    expect(result[0]?.mtimeMs ?? 0).toBeGreaterThan(result[1]?.mtimeMs ?? 0);
   });
 
   test("ignores malformed filenames that do not match expected prefix and suffix", () => {
@@ -70,7 +70,7 @@ describe("listMigrationBackups", () => {
 
     const result = listMigrationBackups(dataDir);
     expect(result).toHaveLength(1);
-    expect(result[0].filename).toBe("pre-migration-V30-valid.db.gz");
+    expect(result[0]?.filename).toBe("pre-migration-V30-valid.db.gz");
   });
 
   test("returns compressedSizeBytes matching actual file size", () => {
@@ -85,6 +85,6 @@ describe("listMigrationBackups", () => {
 
     const result = listMigrationBackups(dataDir);
     expect(result).toHaveLength(1);
-    expect(result[0].compressedSizeBytes).toBe(Buffer.byteLength(content, "utf8"));
+    expect(result[0]?.compressedSizeBytes).toBe(Buffer.byteLength(content, "utf8"));
   });
 });
