@@ -3,6 +3,10 @@ import { describe, expect, it, mock } from "bun:test";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 
+// Minimal valid publisher key (44-char base64 of 32 bytes) and signature (88-char base64 of 64 bytes).
+const FAKE_KEY = "x".repeat(43) + "=";
+const FAKE_SIG = "y".repeat(86) + "==";
+
 function fakeInstalled(): InstalledExtensionRow[] {
   return [
     {
@@ -260,5 +264,138 @@ describe("ExtensionAutoUpdater", () => {
     expect(updater.isRunning()).toBe(false);
     await updater.stop(); // no-op
     expect(updater.isRunning()).toBe(false);
+  });
+});
+
+describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
+  it("populates conflicts on AvailableUpdate when bump would break installed reverse-dep", async () => {
+    // Setup:
+    // - A@1.5.0 installed (no deps).
+    // - C@1.0.0 installed; C dependsOn A@^1.0.0.
+    // - Registry latest for A is 2.0.0 (incompatible with ^1.0.0).
+    //
+    // After pollOnce: cache entry for A should have conflicts set, kind=unsatisfiable.
+    const cache = new AutoUpdateCache();
+    const updater = new ExtensionAutoUpdater({
+      cache,
+      listInstalled: async (): Promise<InstalledExtensionRow[]> => [
+        {
+          id: "com.shared.A",
+          version: "1.5.0",
+          install_path: "/tmp/fake-a",
+          enabled: 1,
+          manifest: {
+            id: "com.shared.A",
+            version: "1.5.0",
+            updateChannel: "stable",
+            publisher: { id: "pub.test", key: FAKE_KEY },
+            signature: FAKE_SIG,
+            permissions: { network: [], filesystem: { read: [], write: [] } },
+          },
+        },
+        {
+          id: "com.example.C",
+          version: "1.0.0",
+          install_path: "/tmp/fake-c",
+          enabled: 1,
+          manifest: {
+            id: "com.example.C",
+            version: "1.0.0",
+            updateChannel: "stable",
+            publisher: { id: "pub.test", key: FAKE_KEY },
+            signature: "z".repeat(86) + "==",
+            permissions: { network: [], filesystem: { read: [], write: [] } },
+            dependsOn: { "com.shared.A": "^1.0.0" },
+          },
+        },
+      ],
+      fetchLatestVersion: async (id) =>
+        id === "com.shared.A" ? { version: "2.0.0", channel: "stable" } : null,
+      fetchManifest: async (id, version) => ({
+        manifest: {
+          id,
+          version,
+          updateChannel: "stable",
+          publisher: { id: "pub.test", key: FAKE_KEY },
+          signature: "w".repeat(86) + "==",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+        manifestRaw: { id, version },
+        manifestHash: "h".repeat(64),
+        entryHash: "e".repeat(64),
+        tarballUrl: "https://registry.example/ext.tar.gz",
+      }),
+      verifyManifestSignature: async () => {
+        /* always verified */
+      },
+      lookupPublisherKey: async () => new Uint8Array(32),
+      appendAudit: async () => {},
+      solverRemoteFetchManifest: async (id, version) => ({ id, version }),
+      intervalHours: 24,
+      enforceAirGap: false,
+      now: () => 1_700_000_000_000,
+      random: () => 0,
+    });
+
+    await updater.pollOnce();
+
+    const entry = cache.get("com.shared.A");
+    expect(entry?.conflicts).toBeDefined();
+    expect(entry?.conflicts?.[0]?.kind).toBe("unsatisfiable");
+    expect(entry?.conflicts?.[0]?.id).toBe("com.shared.A");
+  });
+
+  it("leaves conflicts undefined when solverRemoteFetchManifest is not provided", async () => {
+    // Existing behaviour: no solver → no conflicts field set.
+    const cache = new AutoUpdateCache();
+    const updater = new ExtensionAutoUpdater({
+      cache,
+      listInstalled: async (): Promise<InstalledExtensionRow[]> => [
+        {
+          id: "com.shared.A",
+          version: "1.5.0",
+          install_path: "/tmp/fake-a",
+          enabled: 1,
+          manifest: {
+            id: "com.shared.A",
+            version: "1.5.0",
+            updateChannel: "stable",
+            publisher: { id: "pub.test", key: FAKE_KEY },
+            signature: FAKE_SIG,
+            permissions: { network: [], filesystem: { read: [], write: [] } },
+          },
+        },
+      ],
+      fetchLatestVersion: async (id) =>
+        id === "com.shared.A" ? { version: "2.0.0", channel: "stable" } : null,
+      fetchManifest: async (id, version) => ({
+        manifest: {
+          id,
+          version,
+          updateChannel: "stable",
+          publisher: { id: "pub.test", key: FAKE_KEY },
+          signature: "w".repeat(86) + "==",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+        manifestRaw: { id, version },
+        manifestHash: "h".repeat(64),
+        entryHash: "e".repeat(64),
+        tarballUrl: "https://registry.example/ext.tar.gz",
+      }),
+      verifyManifestSignature: async () => {},
+      lookupPublisherKey: async () => new Uint8Array(32),
+      appendAudit: async () => {},
+      // solverRemoteFetchManifest deliberately absent
+      intervalHours: 24,
+      enforceAirGap: false,
+      now: () => 0,
+      random: () => 0,
+    });
+
+    await updater.pollOnce();
+
+    const entry = cache.get("com.shared.A");
+    expect(entry).toBeDefined();
+    expect(entry?.conflicts).toBeUndefined();
   });
 });

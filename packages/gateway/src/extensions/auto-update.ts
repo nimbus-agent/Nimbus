@@ -1,6 +1,19 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import semver from "semver";
+
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import { diffPermissions } from "./auto-update-permissions-diff.ts";
 import type { AvailableUpdate, UpdateChannel, VerificationStatus } from "./auto-update-types.ts";
+import { DependencyConflictError, isDependencyConflictError } from "./dependency-errors.ts";
+import { resolveClosure } from "./dependency-graph.ts";
+import type {
+  DependencyConflict,
+  ExtensionManifestForSolver,
+  RegistryFetcher,
+} from "./dependency-types.ts";
+import { parseExtensionManifestJson } from "./manifest.ts";
 
 interface InstalledExtensionManifestSlice {
   id: string;
@@ -13,6 +26,7 @@ interface InstalledExtensionManifestSlice {
     network: string[];
     filesystem: { read: string[]; write: string[] };
   };
+  dependsOn?: Readonly<Record<string, string>>;
 }
 
 export interface InstalledExtensionRow {
@@ -61,6 +75,17 @@ export interface ExtensionAutoUpdaterOpts {
   now: () => number;
   /** 0..1; jittered startup poll delay is 30s + random*270s. */
   random: () => number;
+  /**
+   * Optional remote fetcher used to resolve dep manifests during conflict
+   * detection. When undefined, the daemon SKIPS conflict checking (the
+   * AvailableUpdate.conflicts stays unset).
+   *
+   * v1: list-of-versions side reuses `fetchLatestVersion` (latest-only).
+   */
+  solverRemoteFetchManifest?: (
+    id: string,
+    version: string,
+  ) => Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }>;
 }
 
 /**
@@ -127,14 +152,17 @@ export class ExtensionAutoUpdater {
       if (row.enabled !== 1) continue;
       if (row.manifest.publisher === undefined) continue; // unsigned — not auto-updateable
       try {
-        await this.pollOne(row);
+        await this.pollOne(row, installed);
       } catch {
         // Per-extension failure does not stop the loop.
       }
     }
   }
 
-  private async pollOne(row: InstalledExtensionRow): Promise<void> {
+  private async pollOne(
+    row: InstalledExtensionRow,
+    installed: readonly InstalledExtensionRow[],
+  ): Promise<void> {
     const channel = row.manifest.updateChannel;
     const latest = await this.opts.fetchLatestVersion(row.id, channel, this.abort.signal);
     if (latest === null) return;
@@ -170,6 +198,122 @@ export class ExtensionAutoUpdater {
 
     const permissionDiff = diffPermissions(row.manifest.permissions, newManifest.permissions);
 
+    // --- Dependency conflict detection (spec §6) ---
+    // Only runs when solverRemoteFetchManifest is provided; skipped silently otherwise.
+    let conflicts: readonly DependencyConflict[] | undefined;
+    if (this.opts.solverRemoteFetchManifest !== undefined) {
+      try {
+        // Build the post-bump world: installed map + active constraints from all rows.
+        const installedMap = new Map<string, string>();
+        const activeConstraints = new Map<string, Map<string, string>>();
+        const dirById = new Map<string, string>();
+        for (const r of installed) {
+          installedMap.set(r.id, r.version);
+          dirById.set(r.id, r.install_path);
+          if (r.manifest.dependsOn !== undefined && Object.keys(r.manifest.dependsOn).length > 0) {
+            activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
+          }
+        }
+        // Apply the proposed bump so the solver evaluates the post-bump world.
+        installedMap.set(row.id, toVersion);
+        if (newManifest.dependsOn !== undefined && Object.keys(newManifest.dependsOn).length > 0) {
+          activeConstraints.set(row.id, new Map(Object.entries(newManifest.dependsOn)));
+        } else {
+          activeConstraints.delete(row.id);
+        }
+
+        const solverRemoteFetchManifest = this.opts.solverRemoteFetchManifest;
+        const fetchLatestVersion = this.opts.fetchLatestVersion;
+        const abortSignal = this.abort.signal;
+
+        const fetcher: RegistryFetcher = {
+          listVersions: async (id: string): Promise<readonly string[]> => {
+            const installedVersion = installedMap.get(id);
+            if (installedVersion !== undefined) return [installedVersion];
+            const latest = await fetchLatestVersion(id, "stable", abortSignal);
+            return latest === null ? [] : [latest.version];
+          },
+          fetchManifest: async (
+            id: string,
+            version: string,
+          ): Promise<ExtensionManifestForSolver> => {
+            // For the bump under consideration, use what we already fetched.
+            if (id === row.id && version === toVersion) {
+              return {
+                id: row.id,
+                version: toVersion,
+                ...(newManifest.dependsOn !== undefined
+                  ? { dependsOn: newManifest.dependsOn }
+                  : {}),
+              };
+            }
+            // For installed ids at their installed version, prefer the on-disk manifest.
+            const installedVersion = installedMap.get(id);
+            if (installedVersion === version) {
+              const dir = dirById.get(id);
+              if (dir !== undefined) {
+                try {
+                  const raw = await readFile(join(dir, "nimbus.extension.json"), "utf8");
+                  const parsed = parseExtensionManifestJson(raw);
+                  return {
+                    id: parsed.id,
+                    version: parsed.version,
+                    ...(parsed.dependsOn !== undefined ? { dependsOn: parsed.dependsOn } : {}),
+                  };
+                } catch {
+                  // Fall through to remote fetch.
+                }
+              }
+            }
+            return await solverRemoteFetchManifest(id, version);
+          },
+        };
+
+        // Pre-check: ensure the bumped version satisfies all range constraints that
+        // other installed extensions contribute for this id (these constraints live in
+        // activeConstraints but resolveClosure only checks them when visiting the id
+        // as a *dependency* — not when the id is the root). Without this check, a
+        // reverse-dep incompatibility on the root itself is silently missed.
+        const constraintsOnRoot: Array<{ from: string; range: string }> = [];
+        for (const [dependent, depMap] of activeConstraints) {
+          if (dependent === row.id) continue; // skip the bump itself
+          const range = depMap.get(row.id);
+          if (range !== undefined) {
+            constraintsOnRoot.push({ from: dependent, range });
+          }
+        }
+        const unsatisfiedConstraints = constraintsOnRoot.filter(
+          (c) => !semver.satisfies(toVersion, c.range),
+        );
+        if (unsatisfiedConstraints.length > 0) {
+          throw new DependencyConflictError({
+            kind: "unsatisfiable",
+            id: row.id,
+            constraints: unsatisfiedConstraints,
+            availableVersions: [toVersion],
+          });
+        }
+
+        const proposedManifest: ExtensionManifestForSolver = {
+          id: row.id,
+          version: toVersion,
+          ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
+        };
+
+        await resolveClosure(proposedManifest, fetcher, {
+          installed: installedMap,
+          activeConstraints,
+        });
+        // No conflict thrown → conflicts stays undefined.
+      } catch (e) {
+        if (isDependencyConflictError(e)) {
+          conflicts = [e.conflict];
+        }
+        // OfflineDependencyResolutionError or other network/IO errors:
+        // leave conflicts undefined so the bump is still surfaced without conflict info.
+      }
+    }
+
     const update: AvailableUpdate = {
       id: row.id,
       displayName: newManifest.name ?? row.id,
@@ -188,6 +332,7 @@ export class ExtensionAutoUpdater {
       permissionDiff,
       verificationStatus,
       detectedAt: this.opts.now(),
+      ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
     };
 
     const isNew = this.opts.cache.isNewDetection(update);
