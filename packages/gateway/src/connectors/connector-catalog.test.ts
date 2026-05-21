@@ -131,7 +131,7 @@ describe("oauthProfileForService — supported providers", () => {
 });
 
 describe("oauthProfileForService — unsupported providers throw structured errors", () => {
-  const unsupported: readonly ConnectorServiceId[] = [
+  const unsupported: ConnectorServiceId[] = [
     "github",
     "github_actions",
     "gitlab",
