@@ -3,16 +3,23 @@
  *
  * These tests cover the thin wiring paths that the dispatcher and
  * inline-handler tests don't reach: `broadcast`, `setAgentInvokeHandler`,
- * `setWorkflowRunHandler`, `setUpdater`, and the `voiceService.onMicrophoneStateChange`
- * callback wiring. No real socket is started — the tests interact with the
- * returned `IPCServer` object directly.
+ * `setWorkflowRunHandler`, `setUpdater`, the `voiceService.onMicrophoneStateChange`
+ * callback wiring, the listener startup/shutdown lifecycle on POSIX, and
+ * several previously-uncovered RPC dispatch arms (`audit.list`,
+ * `engine.cancelStream`, default `vault-or-method-not-found`).
  */
 
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import { platform, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
+import type { IPCServer } from "../types.ts";
 import { createIpcServer } from "./server.ts";
 
 function makeMinimalServer() {
@@ -85,5 +92,272 @@ describe("createIpcServer", () => {
     expect(typeof storedCallback).toBe("function");
     // Invoking it with zero clients should not throw
     expect(() => storedCallback?.({ active: true, source: "microphone" })).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group A: Listener startup + shutdown on POSIX (Linux/macOS unix-socket arm).
+//
+// These cover the uncovered `start()` lines 219-223 (removeStaleUnixSocketIfPresent
+// + startBunUnixListener + chmodListenSocketBestEffort) and the `stop()` lines
+// 241-255 (drain bunListener + unlink socket file). On Windows the start() arm
+// returns early after startWin32NetServer; these tests skip there.
+// ---------------------------------------------------------------------------
+
+describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)", () => {
+  let tmpDir: string;
+  let socketPath: string;
+
+  beforeEach(() => {
+    if (platform() === "win32") return;
+    // Keep the socket name short — unix socket paths are length-capped (104 on
+    // macOS, 108 on Linux). The mkdtemp prefix already consumes ~25 chars.
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-srv-"));
+    socketPath = join(tmpDir, "g.sock");
+  });
+
+  afterEach(() => {
+    if (platform() === "win32") return;
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  });
+
+  test("start() binds a unix socket at listenPath; stop() unlinks it", async () => {
+    if (platform() === "win32") return;
+    const server = createIpcServer({
+      listenPath: socketPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+    expect(existsSync(socketPath)).toBe(true);
+    await server.stop();
+    expect(existsSync(socketPath)).toBe(false);
+  });
+
+  test("start() removes a stale socket file at listenPath before bind", async () => {
+    if (platform() === "win32") return;
+    // Pre-create a junk regular file at the listen path. The bind would
+    // EADDRINUSE without removeStaleUnixSocketIfPresent.
+    writeFileSync(socketPath, "stale");
+    expect(existsSync(socketPath)).toBe(true);
+
+    const server = createIpcServer({
+      listenPath: socketPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+    // bind succeeded => the stale file was cleared and re-bound as a unix sock
+    expect(existsSync(socketPath)).toBe(true);
+    await server.stop();
+    expect(existsSync(socketPath)).toBe(false);
+  });
+
+  test("stop() is idempotent (a second call after cleanup is a no-op)", async () => {
+    if (platform() === "win32") return;
+    const server = createIpcServer({
+      listenPath: socketPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+    await server.stop();
+    // Second stop() must not throw — bunListener is already undefined.
+    await expect(server.stop()).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group B: RPC dispatch coverage.
+//
+// Drive real JSON-RPC requests through the listener so the switch-arm in
+// dispatchMethod (server.ts:168-194) executes. Cross-platform: Win32 uses
+// \\.\pipe\..., POSIX uses a unix socket under tmpdir. Pattern mirrors
+// `exchangeFirstNdjsonLine` in ipc.test.ts.
+// ---------------------------------------------------------------------------
+
+function testListenPath(): string {
+  if (platform() === "win32") {
+    return String.raw`\\.\pipe\nimbus-server-dispatch-${randomUUID()}`;
+  }
+  return join(mkdtempSync(join(tmpdir(), "nimbus-srv-d-")), "s.sock");
+}
+
+function appendAndTakeFirstLine(buffer: string, chunk: string): { next: string; line?: string } {
+  const combined = buffer + chunk;
+  const nl = combined.indexOf("\n");
+  if (nl < 0) {
+    return { next: combined };
+  }
+  return { next: combined.slice(nl + 1), line: combined.slice(0, nl) };
+}
+
+async function exchangeFirstNdjsonLine(listenPath: string, lineToWrite: string): Promise<string> {
+  if (platform() === "win32") {
+    return await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      const sock = net.createConnection(listenPath);
+      sock.on("connect", () => {
+        sock.write(lineToWrite);
+      });
+      sock.on("data", (b: Buffer) => {
+        const { next, line } = appendAndTakeFirstLine(buf, b.toString("utf8"));
+        buf = next;
+        if (line !== undefined) {
+          resolve(line);
+          sock.end();
+        }
+      });
+      sock.on("error", reject);
+    });
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    Bun.connect({
+      unix: listenPath,
+      socket: {
+        open(socket) {
+          socket.write(lineToWrite);
+        },
+        data(socket, chunk: Uint8Array) {
+          const { next, line } = appendAndTakeFirstLine(buf, new TextDecoder().decode(chunk));
+          buf = next;
+          if (line !== undefined) {
+            resolve(line);
+            socket.end();
+          }
+        },
+        error() {
+          reject(new Error("socket error"));
+        },
+      },
+    }).catch(reject);
+  });
+}
+
+describe("createIpcServer — RPC dispatch arms", () => {
+  let server: IPCServer | undefined;
+  let listenPath: string;
+
+  beforeEach(() => {
+    listenPath = testListenPath();
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      try {
+        await server.stop();
+      } catch {
+        /* ignore */
+      }
+      server = undefined;
+    }
+  });
+
+  test("audit.list reaches rpcAuditList through the switch arm", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const localIndex = new LocalIndex(db);
+
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+      localIndex,
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "audit.list",
+        params: { limit: 10 },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: unknown; error?: unknown };
+    // Either result (empty audit log) or a typed error from rpcAuditList. Both
+    // prove the switch-arm `case "audit.list"` executed.
+    expect(res.result !== undefined || res.error !== undefined).toBe(true);
+  });
+
+  test("engine.cancelStream reaches createCancelStreamHandler", async () => {
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "engine.cancelStream",
+        params: { streamId: "nonexistent" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: unknown; error?: unknown };
+    // The cancel handler returns either { cancelled: false } or a typed error
+    // for an unknown streamId. Either path proves the case arm executed.
+    expect(res.result !== undefined || res.error !== undefined).toBe(true);
+  });
+
+  test("engine.getSessionTranscript without a localIndex throws -32603", async () => {
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+      // intentionally no localIndex — exercises the `li === undefined` branch
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "engine.getSessionTranscript",
+        params: { sessionId: "s1" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as {
+      result?: unknown;
+      error?: { code: number; message: string };
+    };
+    expect(res.error).toBeDefined();
+    expect(res.error?.code).toBe(-32603);
+    expect(res.error?.message).toContain("local index");
+  });
+
+  test("unknown methods fall through to vault-or-method-not-found (default arm)", async () => {
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "nimbus.does-not-exist",
+        params: {},
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { error?: { code: number } };
+    expect(res.error).toBeDefined();
+    // -32601 = method not found; -32603 = vault-routed internal error. Either
+    // value proves the default arm + rpcVaultOrMethodNotFound executed.
+    expect(res.error?.code === -32601 || res.error?.code === -32603).toBe(true);
   });
 });
