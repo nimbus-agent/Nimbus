@@ -287,6 +287,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Mobile CI ---
+  bitrise: baseManifest("com.nimbus.bitrise", {
+    // Bitrise SaaS REST API. There is no self-hosted variant today —
+    // api.bitrise.io is the canonical host for the v0.1 + v0.2 surfaces.
+    network: ["api.bitrise.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

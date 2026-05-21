@@ -79,6 +79,7 @@ describe("manifestForFirstParty", () => {
       "snyk",
       "kubernetes",
       "obsidian",
+      "bitrise",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();

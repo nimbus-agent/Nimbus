@@ -28,7 +28,8 @@ export type Provider =
   | "sentry"
   | "newrelic"
   | "datadog"
-  | "snyk";
+  | "snyk"
+  | "bitrise";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -62,6 +63,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   newrelic: { requestsPerMinute: 60, burstSize: 10 },
   datadog: { requestsPerMinute: 60, burstSize: 10 },
   snyk: { requestsPerMinute: 60, burstSize: 10 },
+  bitrise: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

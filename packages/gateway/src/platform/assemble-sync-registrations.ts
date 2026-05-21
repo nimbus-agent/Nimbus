@@ -1,6 +1,7 @@
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
 import { createAzureSyncable } from "../connectors/azure-sync.ts";
 import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
+import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
 import { createCircleciSyncable } from "../connectors/circleci-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
@@ -185,6 +186,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createSnykSyncable({
       ensureSnykMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createBitriseSyncable({
+      ensureBitriseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

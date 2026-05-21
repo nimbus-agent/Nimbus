@@ -251,6 +251,26 @@ export async function phase3AddSnykMcp(
   );
 }
 
+export async function phase3AddBitriseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "bitrise", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  servers["bitrise"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("bitrise")],
+      env: extensionProcessEnv({ BITRISE_TOKEN: tok }),
+    },
+    "bitrise",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -265,5 +285,6 @@ export async function buildPhase3Servers(
   await phase3AddNewrelicMcp(vault, servers, sandboxCwd);
   await phase3AddDatadogMcp(vault, servers, sandboxCwd);
   await phase3AddSnykMcp(vault, servers, sandboxCwd);
+  await phase3AddBitriseMcp(vault, servers, sandboxCwd);
   return servers;
 }

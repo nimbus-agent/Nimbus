@@ -31,6 +31,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "newrelic",
   "datadog",
   "snyk",
+  "bitrise",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -86,6 +87,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   newrelic: MIN120,
   datadog: MIN120,
   snyk: MIN10,
+  bitrise: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -241,6 +243,8 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       return oauthUnsupported("datadog", "uses API + application keys (connector.auth datadog)");
     case "snyk":
       return oauthUnsupported("snyk", "uses a REST API token (connector.auth snyk)");
+    case "bitrise":
+      return oauthUnsupported("bitrise", "uses a personal access token (connector.auth bitrise)");
     default: {
       const _never: never = serviceId;
       return _never;
