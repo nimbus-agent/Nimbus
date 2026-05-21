@@ -275,7 +275,7 @@ export interface LanPeerRow {
 }
 
 /** Current indexed DB schema version — also accessible as `LocalIndex.SCHEMA_VERSION`. */
-export const CURRENT_SCHEMA_VERSION = 30;
+export const CURRENT_SCHEMA_VERSION = 31;
 
 /**
  * S4-F1 — explicit allowlist for `LocalIndex.getMeta` / `setMeta`. The `_meta`
