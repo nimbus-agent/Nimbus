@@ -1,38 +1,48 @@
-# nimbus-mcp-snyk
+# Snyk Connector
 
-First-party MCP connector exposing the Snyk REST API as read-only tools for
-the Nimbus engine and indexing the user's Snyk **issues** (open-source,
-container, IaC, code) as `snyk:vulnerability` items in the local index.
+## What this is
 
-## Tools
+First-party Nimbus MCP connector for Snyk. Indexes the user's Snyk
+**issues** (open-source, container, IaC, code) as `snyk:vulnerability`
+items in the local index and exposes three read-only tools to the
+Nimbus agent (`snyk_list`, `snyk_get`, `snyk_search`).
+
+## Install
+
+Bundled with Nimbus — no separate install required.
+
+## Quickstart
+
+```bash
+nimbus vault set snyk.token <your-snyk-api-token>
+nimbus ask "What critical vulnerabilities did Snyk surface this week?"
+```
+
+The Gateway injects `snyk.token` as `SNYK_TOKEN` env at spawn time; the
+connector itself never touches the vault. The gateway-side syncable
+(`packages/gateway/src/connectors/snyk-sync.ts`) walks
+`/v1/orgs → /v1/org/<id>/projects → /v1/org/<id>/project/<pid>/aggregated-issues`
+and upserts each issue with metadata `{ severity, cve_id, affected_package,
+affected_versions, fix_available, fix_version, project_url, project_id,
+org_id, type, disclosed_at, published_at }`.
+
+Tools exposed:
 
 | Tool          | Purpose                                                                  |
 | ------------- | ------------------------------------------------------------------------ |
-| `snyk_list`   | List issues for an org and optional project; severity / type filters.    |
+| `snyk_list`   | List org projects, or aggregated issues for a project (severity filter). |
 | `snyk_get`    | Fetch a single issue by id from an org + project.                        |
-| `snyk_search` | Substring search across issue titles + CVE ids (server-side via filter). |
+| `snyk_search` | Substring search across issue titles, CVE ids, and package names.        |
 
-All three tools are read-only; **no write tools** are exposed and
-`hitlRequired` is intentionally empty.
+All three tools are read-only; `hitlRequired` is intentionally empty.
+The `snyk.issue.ignore` write tool is a deferred Phase 8 follow-up.
 
-## Credentials
+## See also
 
-The connector reads `SNYK_TOKEN` from the environment at startup. The
-Gateway injects it at spawn time from the `snyk.token` vault key — the
-connector itself never touches the vault.
+- [Nimbus Connectors Overview](https://nimbus-agent.dev/user-guide/connectors/)
+- [Nimbus Architecture Overview](https://nimbus-agent.dev/architecture-overview/)
+- [HITL and Safety](https://nimbus-agent.dev/user-guide/hitl-and-safety/)
 
-## Manifest
+## License
 
-`permissions.network` is restricted to `api.snyk.io`. Snyk does not expose a
-documented endpoint outside that hostname for the read flows used here.
-Self-hosted Snyk endpoints (e.g. on-prem instances) are a deferred
-follow-up — same Task 14 limitation as Sentry self-hosted.
-
-## Indexing
-
-The gateway-side syncable (`packages/gateway/src/connectors/snyk-sync.ts`)
-walks the org's projects, fetches each project's open issues via Snyk's
-`/v1/org/<orgId>/project/<projectId>/aggregated-issues` endpoint, and
-upserts each issue as a `snyk:vulnerability` item with metadata
-`{ severity, cve_id, affected_package, affected_version, fix_available,
-fix_version, project_url, project_id, disclosed_at, published_at, type }`.
+AGPL-3.0
