@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T15:11:26.296Z",
+  "generated_at": "2026-05-21T18:05:17.064Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -237,6 +237,9 @@
       "min_coverage_pct": 0
     },
     "packages/mcp-connectors/bitbucket/src/server.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/mcp-connectors/bitrise/src/server.ts": {
       "min_coverage_pct": 0
     },
     "packages/mcp-connectors/circleci/src/server.ts": {
