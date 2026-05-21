@@ -375,8 +375,12 @@ export async function runExtensionRemove(
   }
 
   let out: { ok: boolean };
+  // Omit `force` from the payload when it's false so legacy callers (and
+  // the existing `--yes` happy-path test) keep observing the {id} shape.
+  // The gateway handler treats absent and `false` identically.
+  const payload: { id: string; force?: true } = force ? { id, force: true } : { id };
   try {
-    out = await client.call<{ ok: boolean }>("extension.remove", { id, force });
+    out = await client.call<{ ok: boolean }>("extension.remove", payload);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("reverse_dep_blocked")) {
