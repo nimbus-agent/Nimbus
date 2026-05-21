@@ -179,23 +179,11 @@
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_coverage_pct": 73.82
     },
-    "packages/gateway/src/connectors/index.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/db/query-guard-worker.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/db/verify.ts": {
       "min_coverage_pct": 78.44
     },
     "packages/gateway/src/embedding/create-embedding-runtime.ts": {
       "min_coverage_pct": 77.38
-    },
-    "packages/gateway/src/embedding/embedding-runtime.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/embedding/embedding-worker.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
@@ -204,9 +192,6 @@
       "min_coverage_pct": 66.9
     },
     "packages/gateway/src/extensions/registry-fetcher.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
     },
     "packages/gateway/src/ipc/http-server.ts": {
@@ -229,9 +214,6 @@
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 75
-    },
-    "packages/gateway/src/vault/nimbus-vault.ts": {
-      "min_coverage_pct": 0
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0
