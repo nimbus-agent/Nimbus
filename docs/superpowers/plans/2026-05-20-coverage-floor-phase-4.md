@@ -78,6 +78,94 @@ These are non-negotiable per Phase 3A/3B-rest carry-forwards (see spec §"Carry-
 
 ---
 
+## Test hygiene (cross-cutting rules)
+
+Apply these patterns in any task that mutates global state, dynamic imports, or subprocess APIs. Skipping these is the most common cause of CI flakiness in this kind of coverage program.
+
+### Env-var and global state restoration
+
+Any task that mutates `process.env`, `globalThis`, or any other global **must** restore the original value in `afterEach`. The pattern:
+
+```typescript
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
+describe("…", () => {
+  const ORIGINAL_ENV = process.env.SOME_VAR;
+  beforeEach(() => {
+    process.env.SOME_VAR = "test-value";
+  });
+  afterEach(() => {
+    if (ORIGINAL_ENV === undefined) {
+      delete process.env.SOME_VAR;
+    } else {
+      process.env.SOME_VAR = ORIGINAL_ENV;
+    }
+  });
+});
+```
+
+For `globalThis.<prop>` stubs done via `Object.defineProperty`, capture the original descriptor and restore it:
+
+```typescript
+let originalOriginDescriptor: PropertyDescriptor | undefined;
+beforeEach(() => {
+  originalOriginDescriptor = Object.getOwnPropertyDescriptor(globalThis, "origin");
+  Object.defineProperty(globalThis, "origin", { value: "https://example", configurable: true });
+});
+afterEach(() => {
+  if (originalOriginDescriptor === undefined) {
+    delete (globalThis as Record<string, unknown>).origin;
+  } else {
+    Object.defineProperty(globalThis, "origin", originalOriginDescriptor);
+  }
+});
+```
+
+**Applies to:** Task 2 (`platform/assemble.ts` — `XDG_CONFIG_HOME` mutation), Task 6 (`auth/notion-access-token.ts` — `fetch` stub), Task 13 (`auth/slack-access-token.ts` — `fetch` stub), Task 14 (`voice/*` — `Bun.spawn` stub), Task 15 (`platform/worker-security.ts` — `globalThis.origin`; `platform/gateway-state-file.ts` — `NIMBUS_GATEWAY_LOG_PATH`; `embedding/create-embedding-runtime.ts` — `NIMBUS_SKIP_EMBEDDING_RUNTIME` + `OPENAI_API_KEY`).
+
+### `Bun.spawn` mock surface
+
+When stubbing `Bun.spawn`, the mocked return object must implement enough of the `Subprocess` interface to keep the consumer code from throwing on unfamiliar shapes. Minimum surface for the voice modules:
+
+```typescript
+type MockedSubprocess = {
+  stdout: ReadableStream | AsyncIterable<Uint8Array>;
+  stderr: ReadableStream | AsyncIterable<Uint8Array>;
+  exited: Promise<number>;          // resolves to exit code (0 = success)
+  kill(signal?: number | string): void;
+  killed: boolean;
+};
+```
+
+Use a small helper `createMockSubprocess({ exitCode, stdout, stderr })` in the test file to keep call sites short.
+
+**Applies to:** Task 14 (`voice/tts.ts`, `voice/wake-word.ts`).
+
+### Dynamic-import mocking with `mock.module`
+
+When stubbing `await import("…")`, the `mock.module(...)` call **must appear at the top of the test file, before the source module is imported**. Bun resolves the dynamic-import target eagerly when the source module is first evaluated; installing the mock after that point produces a real-module reference inside the source.
+
+```typescript
+import { mock } from "bun:test";
+
+// Top of file, BEFORE any import of the module under test.
+mock.module("@xenova/transformers", () => ({
+  env: { cacheDir: "" },
+  pipeline: async () => async () => ({ data: new Float32Array([1, 2, 3]), dims: [1, 3] }),
+}));
+
+// Now safe to import the source.
+import { createLocalEmbedder } from "./model.ts";
+```
+
+If a test needs *different* mock values per case, prefer a single mock with a mutable inner factory (set values via `beforeEach`) over re-registering the mock per test.
+
+If the dynamic-import mock proves fragile (e.g. the source module captures the import at module-load time before the mock can install), fall back to partial coverage + raised watermark per spec rule 3.
+
+**Applies to:** Task 15 (`embedding/model.ts`).
+
+---
+
 ## Task 0: Worktree setup + stale cleanup
 
 **Files:** `.worktrees/coverage-floor-phase-4-2026-05-21/` (created)
@@ -735,7 +823,7 @@ cat packages/gateway/src/db/backups-list.ts
 
 Approximate 4 cases:
 - Empty backups dir → empty list.
-- Mixed scheduled + manual snapshots → sorted by timestamp descending.
+- Mixed scheduled + manual snapshots → sorted by timestamp descending. **Determinism note:** the source orders by either filename-encoded timestamp or `fs.statSync(...).mtimeMs`. Inspect `db/backups-list.ts` to confirm which; if it parses the filename, encode timestamps directly in the test fixture filenames (e.g. `pre-migration-V29-1700000000000.db`, `pre-migration-V30-1700000001000.db`). If it stats, call `fs.utimesSync(path, atime, mtime)` after creating each fixture file with explicitly chosen `mtime` values at least 10 ms apart. Never rely on tight-loop create order — it races on Windows + macOS NFS-style filesystems.
 - Malformed filename ignored (not in result).
 - Non-existent backups dir → empty list (not an error).
 
