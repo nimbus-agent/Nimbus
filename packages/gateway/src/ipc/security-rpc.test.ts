@@ -182,9 +182,9 @@ describe("dispatchSecurityRpc — audit row", () => {
     expect(audits.length).toBe(1);
     expect(audits[0]!.hitl_status).toBe("not_required");
     const payload = JSON.parse(audits[0]!.action_json) as Record<string, unknown>;
-    expect(payload.items_scanned).toBe(1);
-    expect(payload.findings_count).toBe(1);
-    expect(payload.scanned_at_ms).toBe(1_747_000_000_000);
+    expect(payload["items_scanned"]).toBe(1);
+    expect(payload["findings_count"]).toBe(1);
+    expect(payload["scanned_at_ms"]).toBe(1_747_000_000_000);
     // Crucially: no secret in the audit row.
     expect(audits[0]!.action_json).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
