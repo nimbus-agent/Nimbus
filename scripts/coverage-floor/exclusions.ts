@@ -50,6 +50,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // in its test, this dispatcher uses async `await import(...)` and
   // mocking module imports across async boundaries is fragile in bun.
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-runner.ts" },
+  // Async per-OS dispatchers — same shape as platform/sandbox/sandbox-runner.ts
+  // above. Each calls `await import("./<os>.ts").<factory>(...)` and only one
+  // switch arm is reachable per CI run. Tests cover the freebsd default branch
+  // (PlatformInitError throw) for both — verified by each file's test header.
+  { kind: "exact", path: "packages/gateway/src/platform/index.ts" },
+  { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
   // Pure re-export module — `export type { ... }` + `export { fn } from "./..."`
   // produces no executable code in TypeScript erasure. Bun's V8 coverage
   // emits no lcov entries for this file.
