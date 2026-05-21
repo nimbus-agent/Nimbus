@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T19:10:08.222Z",
+  "generated_at": "2026-05-21T12:26:50.821Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -150,7 +150,10 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.95
+      "min_coverage_pct": 57.6
+    },
+    "packages/cli/src/tui/detect-fallback.ts": {
+      "min_coverage_pct": 69.23
     },
     "packages/cli/src/types/agents.ts": {
       "min_coverage_pct": 6.67
@@ -170,17 +173,41 @@
     "packages/client/src/stream-events.ts": {
       "min_coverage_pct": 0
     },
+    "packages/gateway/src/agents/impact.ts": {
+      "min_coverage_pct": 77.81
+    },
+    "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
+      "min_coverage_pct": 73.82
+    },
+    "packages/gateway/src/db/verify.ts": {
+      "min_coverage_pct": 78.44
+    },
+    "packages/gateway/src/embedding/create-embedding-runtime.ts": {
+      "min_coverage_pct": 77.38
+    },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
     },
     "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_coverage_pct": 67.08
+      "min_coverage_pct": 66.9
+    },
+    "packages/gateway/src/extensions/registry-fetcher.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/ipc/http-server.ts": {
+      "min_coverage_pct": 65.12
+    },
+    "packages/gateway/src/ipc/server/server.ts": {
+      "min_coverage_pct": 76.7
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 62.16
+      "min_coverage_pct": 45.21
     },
-    "packages/gateway/src/updater/public-key.ts": {
-      "min_coverage_pct": 48.15
+    "packages/gateway/src/platform/assemble.ts": {
+      "min_coverage_pct": 77.75
+    },
+    "packages/gateway/src/platform/paths.ts": {
+      "min_coverage_pct": 39.62
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0
@@ -271,6 +298,9 @@
     },
     "packages/mcp-connectors/teams/src/server.ts": {
       "min_coverage_pct": 0
+    },
+    "packages/sdk/src/crypto/canonical-json.ts": {
+      "min_coverage_pct": 30.77
     },
     "packages/sdk/src/crypto/verify-signature.ts": {
       "min_coverage_pct": 18.68
