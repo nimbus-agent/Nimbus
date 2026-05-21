@@ -290,9 +290,17 @@ export async function runExtensionRemove(
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension remove <id> [--yes]");
+    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force]");
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
+  const force = hasFlag(args, "--force");
+
+  if (force) {
+    process.stderr.write(
+      "--force: will remove even if other installed extensions depend on this.\n",
+    );
+  }
+
   if (!accept) {
     if (process.stdout.isTTY !== true) {
       throw new Error(
@@ -307,7 +315,20 @@ export async function runExtensionRemove(
       return;
     }
   }
-  const out = await client.call<{ ok: boolean }>("extension.remove", { id });
+
+  let out: { ok: boolean };
+  try {
+    out = await client.call<{ ok: boolean }>("extension.remove", { id, force });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("reverse_dep_blocked")) {
+      // Extract the human-readable part after the code prefix (if present) or
+      // surface the full message which already contains the blocker list.
+      process.stderr.write(`${msg}\nRe-run with --force to override.\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
   console.log(JSON.stringify(out, undefined, 2));
 }
 
@@ -544,7 +565,7 @@ export async function runExtension(args: string[]): Promise<void> {
     }
 
     throw new Error(
-      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
+      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
     );
   } finally {
     await client.disconnect();

@@ -3,7 +3,9 @@ import {
   DependencyConflictError,
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
+  isReverseDepBlockedError,
   OfflineDependencyResolutionError,
+  ReverseDepBlockedError,
 } from "./dependency-errors.ts";
 
 describe("DependencyConflictError", () => {
@@ -48,5 +50,44 @@ describe("OfflineDependencyResolutionError", () => {
       parent: "y",
     });
     expect(isOfflineDependencyResolutionError(e)).toBe(true);
+  });
+});
+
+describe("ReverseDepBlockedError", () => {
+  it("carries target + blockers and encodes them in the message", () => {
+    const e = new ReverseDepBlockedError({
+      target: "com.shared.A",
+      blockers: [{ id: "com.example.B", range: "^1.0.0" }],
+    });
+    expect(e.name).toBe("ReverseDepBlockedError");
+    expect(e.target).toBe("com.shared.A");
+    expect(e.blockers).toHaveLength(1);
+    expect(e.blockers[0]?.id).toBe("com.example.B");
+    expect(e.blockers[0]?.range).toBe("^1.0.0");
+    expect(e.message).toContain("reverse_dep_blocked");
+    expect(e.message).toContain("com.shared.A");
+    expect(e.message).toContain("1"); // blocker count
+  });
+
+  it("narrows via isReverseDepBlockedError", () => {
+    const e: unknown = new ReverseDepBlockedError({
+      target: "com.shared.A",
+      blockers: [{ id: "com.example.B", range: "^1.0.0" }],
+    });
+    expect(isReverseDepBlockedError(e)).toBe(true);
+    expect(isReverseDepBlockedError(new Error("other"))).toBe(false);
+    expect(isReverseDepBlockedError("not an error")).toBe(false);
+  });
+
+  it("handles multiple blockers", () => {
+    const e = new ReverseDepBlockedError({
+      target: "com.shared.core",
+      blockers: [
+        { id: "com.example.alpha", range: "^2.0.0" },
+        { id: "com.example.beta", range: "~3.1.0" },
+      ],
+    });
+    expect(e.blockers).toHaveLength(2);
+    expect(e.message).toContain("2");
   });
 });

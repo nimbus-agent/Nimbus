@@ -26,6 +26,7 @@ import {
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
+import { clearDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -199,10 +200,33 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   },
 
   "extension.remove": (rec, ctx) => {
-    const installPath = deleteExtensionById(ctx.db, requireString(rec, "id"));
+    const id = requireString(rec, "id");
+    const force = rec !== undefined && rec["force"] === true;
+
+    // Reverse-dep guard: refuse removal when other installed extensions depend
+    // on this one, unless `force` is set.
+    if (!force) {
+      const rdeps = reverseDeps(ctx.db, id);
+      if (rdeps.length > 0) {
+        const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
+        const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
+        // Prefix "reverse_dep_blocked:" lets the CLI (and tests) pattern-match
+        // this error class without importing gateway types.
+        throw new AutomationRpcError(
+          -32603,
+          `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
+        );
+      }
+    }
+
+    const installPath = deleteExtensionById(ctx.db, id);
     if (installPath === null) {
       throw new AutomationRpcError(-32602, "Extension not found");
     }
+    // Clear forward-dep edges owned by the removed extension so the dependency
+    // graph stays consistent (startup completeness guard will hard-disable any
+    // remaining reverse dependents on next start).
+    clearDeps(ctx.db, id);
     try {
       rmSync(installPath, { recursive: true, force: true });
     } catch {

@@ -24,6 +24,19 @@ export class OfflineDependencyResolutionError extends Error {
   }
 }
 
+/** Thrown by `extension.remove` when one or more installed extensions still depend on the target and `force` was not set. */
+export class ReverseDepBlockedError extends Error {
+  readonly target: string;
+  readonly blockers: ReadonlyArray<{ id: string; range: string }>;
+
+  constructor(opts: { target: string; blockers: ReadonlyArray<{ id: string; range: string }> }) {
+    super(`reverse_dep_blocked:${opts.target}:${opts.blockers.length}`);
+    this.name = "ReverseDepBlockedError";
+    this.target = opts.target;
+    this.blockers = opts.blockers;
+  }
+}
+
 /** Type-narrowing helpers — never use `instanceof` across module boundaries. */
 export function isDependencyConflictError(e: unknown): e is DependencyConflictError {
   return e instanceof Error && (e as Error).name === "DependencyConflictError";
@@ -33,4 +46,8 @@ export function isOfflineDependencyResolutionError(
   e: unknown,
 ): e is OfflineDependencyResolutionError {
   return e instanceof Error && (e as Error).name === "OfflineDependencyResolutionError";
+}
+
+export function isReverseDepBlockedError(e: unknown): e is ReverseDepBlockedError {
+  return e instanceof Error && (e as Error).name === "ReverseDepBlockedError";
 }
