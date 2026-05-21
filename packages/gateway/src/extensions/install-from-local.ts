@@ -31,6 +31,7 @@ export function resolveSystemTarCommand(): string {
 
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { dbRun } from "../db/write.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { downloadTarball, MAX_TARBALL_BYTES } from "./auto-update-apply.ts";
 import { resolveClosure } from "./dependency-graph.ts";
@@ -511,7 +512,15 @@ async function installDepFromRegistry(opts: {
     // Sanity-check: the entry hash from the registry must match the installed
     // entry hash. This is a defence against tarball substitution attacks.
     if (result.entryHash.toLowerCase() !== expectedEntryHash.toLowerCase()) {
-      // Roll back the installed dep.
+      // Roll back the extension_state row that completeExtensionInstallAfterCopy
+      // inserted, so the next Gateway startup doesn't see a row pointing at a
+      // missing directory and hard-disable it with a misleading reason.
+      try {
+        dbRun(opts.db, "DELETE FROM extension_state WHERE id = ?", [opts.depId]);
+      } catch {
+        /* best-effort — the rmSync + rethrow are the primary recovery */
+      }
+      // Roll back the installed dep from disk.
       rmSync(dest, { recursive: true, force: true });
       throw new Error(
         `dependency entry hash mismatch for ${opts.depId}@${opts.depVersion}: ` +
