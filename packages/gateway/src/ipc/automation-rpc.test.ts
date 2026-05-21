@@ -541,6 +541,65 @@ describe("extension.info", () => {
       dispatchAutomationRpc({ method: "extension.info", params: {}, db }),
     ).rejects.toThrow(AutomationRpcError);
   });
+
+  test("returns forwardDeps + reverseDeps from extension_dependency table", async () => {
+    const db = seededDb();
+    // Seed two extensions
+    seedExtensionRow(db, "com.shared.A", "/p/a");
+    seedExtensionRow(db, "com.example.B", "/p/b");
+    // Record that B depends on A
+    recordInstall(
+      db,
+      "com.example.B",
+      "1.0.0",
+      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      Date.now(),
+    );
+
+    // Call extension.info for A (no forward deps, reverse dep from B)
+    const outA = await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.shared.A" },
+      db,
+    });
+    expect(outA.kind).toBe("hit");
+    if (outA.kind !== "hit") return;
+    const extA = (
+      outA as {
+        value: {
+          extension: {
+            id: string;
+            forwardDeps: Array<{ id: string; range: string }>;
+            reverseDeps: Array<{ extensionId: string; range: string }>;
+          };
+        };
+      }
+    ).value.extension;
+    expect(extA.forwardDeps).toEqual([]);
+    expect(extA.reverseDeps).toEqual([{ extensionId: "com.example.B", range: "^1.0.0" }]);
+
+    // Call extension.info for B (forward dep on A, no reverse deps)
+    const outB = await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.example.B" },
+      db,
+    });
+    expect(outB.kind).toBe("hit");
+    if (outB.kind !== "hit") return;
+    const extB = (
+      outB as {
+        value: {
+          extension: {
+            id: string;
+            forwardDeps: Array<{ id: string; range: string }>;
+            reverseDeps: Array<{ extensionId: string; range: string }>;
+          };
+        };
+      }
+    ).value.extension;
+    expect(extB.forwardDeps).toEqual([{ id: "com.shared.A", range: "^1.0.0" }]);
+    expect(extB.reverseDeps).toEqual([]);
+  });
 });
 
 describe("extension.enable / disable / remove", () => {

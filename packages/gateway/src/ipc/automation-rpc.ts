@@ -26,7 +26,7 @@ import {
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
-import { clearDeps, reverseDeps } from "../extensions/dependency-store.ts";
+import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -299,6 +299,8 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   if (row === undefined) {
     throw new AutomationRpcError(-32602, "Extension not found");
   }
+  const fwd = forwardDeps(ctx.db, row.id);
+  const rev = reverseDeps(ctx.db, row.id);
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
     return {
@@ -308,6 +310,8 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
           ...row,
           disabled_reason: PRE_T2_DISABLE_REASON,
           needs_reinstall: true,
+          forwardDeps: fwd,
+          reverseDeps: rev,
         },
         message: preT2DisableMessage(row.id, row.version),
       },
@@ -333,7 +337,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   const cachedUpdate = ctx.autoUpdate?.cache.get(row.id) ?? null;
   return {
     kind: "hit",
-    value: { extension: { ...row, prevVersion, cachedUpdate } },
+    value: { extension: { ...row, prevVersion, cachedUpdate, forwardDeps: fwd, reverseDeps: rev } },
   };
 }
 
