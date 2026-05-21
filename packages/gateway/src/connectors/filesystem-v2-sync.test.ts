@@ -68,6 +68,61 @@ test("indexes exported symbol from a TypeScript file", async () => {
   expect(row?.title).toContain("helloWorld");
 });
 
+test("skips a non-existent root path silently (no rows upserted, no error)", async () => {
+  // Plan: directory-not-readable error branch. Pointing at a nonexistent
+  // root exercises the existsSync() / statSync().isDirectory() guard
+  // (line ~458) which is the same defence as a permission-error from the
+  // fs layer.
+  const sync = createFilesystemV2Syncable({
+    roots: [
+      {
+        path: join(tmpdir(), `nimbus-fsv2-missing-${Date.now()}-${Math.random()}`),
+        gitAware: false,
+        codeIndex: true,
+        dependencyGraph: true,
+        exclude: [],
+      },
+    ],
+  });
+  const db = createMemoryIndexDb();
+  const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  expect(r.itemsUpserted).toBe(0);
+  expect(r.itemsDeleted).toBe(0);
+});
+
+test("excludes directories listed in `exclude` from the dependency walk (defends against node_modules recursion / symlink-cycle analog)", async () => {
+  // Plan: symlink-cycle detector. The actual defence is the exclude list
+  // (and the maxFiles+depth cap), not a realpath-based cycle check. Test
+  // that an excluded directory's package.json is invisible to the walker.
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-excl-"));
+  // Top-level package.json: visible.
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { top: "1.0.0" } }));
+  // Excluded subdir's package.json: invisible.
+  mkdirSync(join(dir, "node_modules", "ignored-pkg"), { recursive: true });
+  writeFileSync(
+    join(dir, "node_modules", "ignored-pkg", "package.json"),
+    JSON.stringify({ dependencies: { hidden: "9.9.9" } }),
+  );
+  const sync = createFilesystemV2Syncable({
+    roots: [
+      {
+        path: dir,
+        gitAware: false,
+        codeIndex: false,
+        dependencyGraph: true,
+        exclude: ["node_modules", ".git"],
+      },
+    ],
+  });
+  const db = createMemoryIndexDb();
+  await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
+  const titles = db
+    .query("SELECT title FROM item WHERE service = 'filesystem' AND type = 'dependency'")
+    .all() as Array<{ title: string }>;
+  expect(titles.some((t) => t.title.startsWith("top@"))).toBe(true);
+  expect(titles.some((t) => t.title.startsWith("hidden@"))).toBe(false);
+});
+
 test("code_symbol body_preview captures docstring text for OAuth-style queries", async () => {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-oauth-"));
   mkdirSync(join(dir, "lib"), { recursive: true });
