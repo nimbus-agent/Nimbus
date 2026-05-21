@@ -279,6 +279,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Security scanning ---
+  snyk: baseManifest("com.nimbus.snyk", {
+    // Snyk SaaS REST API. Self-hosted Snyk endpoints inherit the same
+    // Task 14 runtime-merge follow-up as Sentry's `sentry.url`.
+    network: ["api.snyk.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

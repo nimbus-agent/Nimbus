@@ -231,6 +231,26 @@ export async function phase3AddDatadogMcp(
   );
 }
 
+export async function phase3AddSnykMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "snyk", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  servers["snyk"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("snyk")],
+      env: extensionProcessEnv({ SNYK_TOKEN: tok }),
+    },
+    "snyk",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -244,5 +264,6 @@ export async function buildPhase3Servers(
   await phase3AddSentryMcp(vault, servers, sandboxCwd);
   await phase3AddNewrelicMcp(vault, servers, sandboxCwd);
   await phase3AddDatadogMcp(vault, servers, sandboxCwd);
+  await phase3AddSnykMcp(vault, servers, sandboxCwd);
   return servers;
 }

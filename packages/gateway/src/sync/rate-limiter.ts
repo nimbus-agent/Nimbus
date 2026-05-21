@@ -27,7 +27,8 @@ export type Provider =
   | "grafana"
   | "sentry"
   | "newrelic"
-  | "datadog";
+  | "datadog"
+  | "snyk";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -60,6 +61,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   sentry: { requestsPerMinute: 60, burstSize: 10 },
   newrelic: { requestsPerMinute: 60, burstSize: 10 },
   datadog: { requestsPerMinute: 60, burstSize: 10 },
+  snyk: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

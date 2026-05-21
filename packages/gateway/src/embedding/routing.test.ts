@@ -17,7 +17,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (14 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (15 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -33,6 +33,7 @@ describe("embedding/routing", () => {
       "github:issue",
       "gitlab:issue",
       "bitbucket:issue",
+      "snyk:vulnerability",
     ]);
     expect(PROSE_HEAVY_TYPES.size).toBe(expected.size);
     for (const key of expected) {
@@ -41,6 +42,10 @@ describe("embedding/routing", () => {
     for (const key of PROSE_HEAVY_TYPES) {
       expect(expected.has(key)).toBe(true);
     }
+  });
+
+  test("isProseHeavy returns true for snyk:vulnerability", () => {
+    expect(isProseHeavy("snyk", "vulnerability")).toBe(true);
   });
 
   test("routingKey formats correctly", () => {

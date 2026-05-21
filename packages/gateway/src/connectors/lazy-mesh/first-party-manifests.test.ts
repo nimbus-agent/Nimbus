@@ -76,6 +76,7 @@ describe("manifestForFirstParty", () => {
       "sentry",
       "newrelic",
       "datadog",
+      "snyk",
       "kubernetes",
       "obsidian",
     ];

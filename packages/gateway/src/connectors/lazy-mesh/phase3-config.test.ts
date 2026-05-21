@@ -26,6 +26,7 @@ import {
   phase3AddIacMcp,
   phase3AddNewrelicMcp,
   phase3AddSentryMcp,
+  phase3AddSnykMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -340,6 +341,37 @@ describe("phase3AddDatadogMcp", () => {
   });
 });
 
+// ─── phase3AddSnykMcp ────────────────────────────────────────────────────────
+
+describe("phase3AddSnykMcp", () => {
+  test("no-op without snyk.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnykMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snyk"]).toBeUndefined();
+  });
+
+  test("no-op when snyk.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("snyk.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnykMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snyk"]).toBeUndefined();
+  });
+
+  test("spawns with SNYK_TOKEN set + api.snyk.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("snyk.token", "snyk-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnykMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["snyk"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.snyk.io");
+    expect(spec.env?.["SNYK_TOKEN"]).toBe("snyk-test-token");
+  });
+});
+
 // ─── buildPhase3Servers (aggregator) ────────────────────────────────────────
 
 describe("buildPhase3Servers", () => {
@@ -366,9 +398,10 @@ describe("buildPhase3Servers", () => {
     await vault.set("newrelic.api_key", "nrk");
     await vault.set("datadog.api_key", "ak");
     await vault.set("datadog.app_key", "appk");
+    await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
     expect(Object.keys(servers).sort()).toEqual(
-      ["aws", "azure", "datadog", "gcp", "grafana", "iac", "newrelic", "sentry"].sort(),
+      ["aws", "azure", "datadog", "gcp", "grafana", "iac", "newrelic", "sentry", "snyk"].sort(),
     );
     // Each server should be wrapped via the sandbox wrapper.
     for (const id of Object.keys(servers)) {
