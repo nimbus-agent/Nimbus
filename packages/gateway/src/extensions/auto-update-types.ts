@@ -1,3 +1,5 @@
+import type { DependencyConflict } from "./dependency-types.ts";
+
 /** Update channel literals. `stable` is the default when manifest omits the field. */
 export type UpdateChannel = "stable" | "beta";
 
@@ -33,6 +35,13 @@ export interface AvailableUpdate {
   permissionDiff: PermissionDiff;
   verificationStatus: VerificationStatus;
   detectedAt: number; // unix ms
+  /**
+   * Populated when the proposed bump would conflict with constraints contributed
+   * by other installed extensions (spec §6). HITL renderers should surface this
+   * before the user approves. Absent when the bump is conflict-free or when the
+   * solver could not run (offline).
+   */
+  conflicts?: readonly DependencyConflict[];
 }
 
 /** HITL action type literals. NEVER derive from version comparison at the gate; the RPC handler emits these. */

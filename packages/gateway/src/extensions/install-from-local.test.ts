@@ -314,3 +314,146 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
     expect(await readPublisherKey(vault, "test-pub")).toBeUndefined();
   });
 });
+
+describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)", () => {
+  test("installs closure leaf-first: already-installed dep is skipped, root is newly installed", async () => {
+    // Pre-install dep A so the solver sees it as already installed.
+    const {
+      extensionsDir,
+      src: srcA,
+      db,
+    } = createExtensionInstallFixture("nimbus-closure-dep-", "ext-a");
+    writeFileSync(
+      join(srcA, "nimbus.extension.json"),
+      JSON.stringify({ id: "closure.dep.a", version: "1.0.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(srcA, "dist", "index.js"), "export {}\n", "utf8");
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
+
+    // Now install root B which depends on A@^1.0.0.
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-closure-root-"));
+    const srcB = join(tmp, "ext-b");
+    mkdirSync(join(srcB, "dist"), { recursive: true });
+    writeFileSync(
+      join(srcB, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "closure.root.b",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "closure.dep.a": "^1.0.0" },
+      }),
+      "utf8",
+    );
+    writeFileSync(join(srcB, "dist", "index.js"), "export {}\n", "utf8");
+
+    const result = await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: srcB,
+    });
+
+    // Root was installed.
+    expect(result.id).toBe("closure.root.b");
+    expect(result.version).toBe("1.0.0");
+
+    // The `installed` array contains both the dep and the root (leaf-first order).
+    expect(result.installed.length).toBe(2);
+
+    const depNode = result.installed.find((n) => n.id === "closure.dep.a");
+    const rootNode = result.installed.find((n) => n.id === "closure.root.b");
+    expect(depNode).toBeDefined();
+    expect(rootNode).toBeDefined();
+    // A was already installed — should not be marked as newly installed.
+    expect(depNode?.newlyInstalled).toBe(false);
+    // B is newly installed.
+    expect(rootNode?.newlyInstalled).toBe(true);
+
+    // Root B's dep edge was recorded.
+    expect(rootNode?.deps.length).toBe(1);
+    expect(rootNode?.deps[0]?.id).toBe("closure.dep.a");
+
+    // Dep node appears before root in the leaf-first ordering.
+    const depIdx = result.installed.findIndex((n) => n.id === "closure.dep.a");
+    const rootIdx = result.installed.findIndex((n) => n.id === "closure.root.b");
+    expect(depIdx).toBeLessThan(rootIdx);
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("refuses install on conflict; zero disk mutation", async () => {
+    // Pre-install dep A at version 1.5.0.
+    const {
+      extensionsDir,
+      src: srcA,
+      db,
+    } = createExtensionInstallFixture("nimbus-conflict-dep-", "ext-a-conflict");
+    writeFileSync(
+      join(srcA, "nimbus.extension.json"),
+      JSON.stringify({ id: "conflict.dep.a", version: "1.5.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(srcA, "dist", "index.js"), "export {}\n", "utf8");
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
+
+    // Root B requires A@^2.0.0 — conflicts with the installed 1.5.0.
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-conflict-root-"));
+    const srcB = join(tmp, "ext-b-conflict");
+    mkdirSync(join(srcB, "dist"), { recursive: true });
+    writeFileSync(
+      join(srcB, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "conflict.root.b",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "conflict.dep.a": "^2.0.0" },
+      }),
+      "utf8",
+    );
+    writeFileSync(join(srcB, "dist", "index.js"), "export {}\n", "utf8");
+
+    try {
+      // Solver must throw DependencyConflictError (1.5.0 does not satisfy ^2.0.0).
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcB }),
+      ).rejects.toThrow(/dependency_conflict/i);
+
+      // Root B must NOT have been written to disk (error before any disk mutation).
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(join(extensionsDir, "conflict.root.b"))).toBe(false);
+
+      // Only the pre-installed A is in the DB (root B was not inserted).
+      const rows = listExtensions(db);
+      expect(rows.every((r) => r.id !== "conflict.root.b")).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("rolls back newly-created directories on failure mid-install", async () => {
+    // Root with a missing entry file — completeExtensionInstallAfterCopy will throw
+    // "extension entry file missing" after cpSync. The rollback should remove the dest dir.
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-rollback-",
+      "ext-rollback",
+    );
+    // Write manifest pointing to an entry that does NOT exist.
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "rollback.root", version: "1.0.0", entry: "dist/missing.js" }),
+      "utf8",
+    );
+    // Note: intentionally NOT writing dist/missing.js
+
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow(/entry file missing/i);
+
+    // The rollback must have removed the partially-installed directory.
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(extensionsDir, "rollback.root"))).toBe(false);
+
+    // Nothing was inserted into the DB.
+    expect(listExtensions(db).length).toBe(0);
+  });
+});

@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -28,9 +29,14 @@ export function resolveSystemTarCommand(): string {
   return join("C:", "Windows", "System32", "tar.exe");
 }
 
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { dbRun } from "../db/write.ts";
 import type { NimbusVault } from "../vault/index.ts";
+import { downloadTarball, MAX_TARBALL_BYTES } from "./auto-update-apply.ts";
+import { resolveClosure } from "./dependency-graph.ts";
+import { recordInstall } from "./dependency-store.ts";
+import type { ResolvedNode } from "./dependency-types.ts";
 import {
   type ExtensionManifest,
   parseExtensionManifestForRegistry,
@@ -38,7 +44,11 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
-import type { PublisherKeyFetcher } from "./registry-client.ts";
+import type {
+  FetchManifestResponse,
+  PublisherKeyFetcher,
+  RegistryClient,
+} from "./registry-client.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
@@ -90,7 +100,7 @@ async function completeExtensionInstallAfterCopy(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
-}): Promise<InstallExtensionFromLocalResult> {
+}): Promise<SingleInstallResult> {
   const destManifestPath = resolveExtensionManifestPath(options.dest);
   if (destManifestPath === undefined) {
     throw new Error("extension manifest missing after copy");
@@ -347,7 +357,8 @@ function assertEntryInsideInstall(installRoot: string, entryRel: string): string
   return absEntry;
 }
 
-export type InstallExtensionFromLocalResult = {
+/** Internal result shape returned by completeExtensionInstallAfterCopy — no closure info. */
+type SingleInstallResult = {
   id: string;
   version: string;
   installPath: string;
@@ -355,9 +366,188 @@ export type InstallExtensionFromLocalResult = {
   entryHash: string;
 };
 
+export type InstallExtensionFromLocalResult = SingleInstallResult & {
+  /**
+   * All nodes in the resolved install closure, leaf-first. Includes the root
+   * extension and every newly-installed or already-present dependency.
+   * Added in T2 PR 4. Single-extension installs (no dependsOn) return a
+   * one-element array containing only the root node.
+   */
+  installed: readonly ResolvedNode[];
+};
+
 /**
- * Copies a local extension directory (or extracts `.tar.gz` / `.tgz`) into `extensionsDir`,
- * computes manifest/entry hashes, inserts DB row. Rolls back the copy if the DB insert fails.
+ * Build the `installed` and `activeConstraints` maps needed by the solver from
+ * the current DB state. For each installed extension we attempt to read its
+ * on-disk manifest and extract `dependsOn`; unreadable/malformed manifests are
+ * silently skipped (the solver will still see the pinned version).
+ */
+function buildSolverInputs(db: Database): {
+  installed: ReadonlyMap<string, string>;
+  activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>;
+} {
+  const rows = listExtensions(db);
+  const installed = new Map<string, string>();
+  const activeConstraints = new Map<string, ReadonlyMap<string, string>>();
+  for (const row of rows) {
+    installed.set(row.id, row.version);
+    const manifestPath = resolveExtensionManifestPath(row.install_path);
+    if (manifestPath === undefined) continue;
+    try {
+      const raw = readFileSync(manifestPath, "utf8");
+      const mf = parseExtensionManifestJson(raw);
+      if (mf.dependsOn !== undefined && Object.keys(mf.dependsOn).length > 0) {
+        activeConstraints.set(row.id, new Map(Object.entries(mf.dependsOn)));
+      }
+    } catch {
+      // Unreadable / malformed manifest — skip. The signature-verify startup
+      // pass (I16) is the authoritative check; here we just skip gracefully.
+    }
+  }
+  return { installed, activeConstraints };
+}
+
+/**
+ * Install a single dependency node from the registry: fetch the manifest,
+ * download the tarball, extract it into a temp dir, and call
+ * completeExtensionInstallAfterCopy. Returns the install result.
+ *
+ * v1 limitation: the registry exposes only the latest version (no
+ * `listVersions` endpoint), so the solver receives exactly one candidate
+ * version per dep. If the caller needs a different version than "latest", that
+ * would require a richer registry API — deferred to a future PR.
+ */
+async function installDepFromRegistry(opts: {
+  db: Database;
+  extensionsDir: string;
+  registryClient: RegistryClient;
+  depId: string;
+  depVersion: string;
+  abortSignal: AbortSignal;
+  vault?: NimbusVault;
+  pubkeyFetcher?: PublisherKeyFetcher;
+  enforceAirGap?: boolean;
+}): Promise<{ dest: string; result: SingleInstallResult }> {
+  let fetchResponse: FetchManifestResponse;
+  try {
+    fetchResponse = await opts.registryClient.fetchManifest(
+      opts.depId,
+      opts.depVersion,
+      opts.abortSignal,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `dependency install failed: could not fetch manifest for ${opts.depId}@${opts.depVersion}: ${msg}`,
+    );
+  }
+
+  const { tarballUrl, entryHash: expectedEntryHash } = fetchResponse;
+  let tarballBytes: Uint8Array;
+  try {
+    tarballBytes = await downloadTarball(tarballUrl, {
+      fetcher: fetch,
+      maxBytes: MAX_TARBALL_BYTES,
+      signal: opts.abortSignal,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `dependency install failed: could not download tarball for ${opts.depId}@${opts.depVersion}: ${msg}`,
+    );
+  }
+
+  // Extract to a temp directory.
+  const tmp = mkdtempSync(join(tmpdir(), "nimbus-dep-"));
+  try {
+    // Write tarball to disk so extractTarGzToDirectory can read it.
+    const tarPath = join(tmp, "dep.tar.gz");
+    writeFileSync(tarPath, tarballBytes);
+
+    const extractDir = join(tmp, "extracted");
+    mkdirSync(extractDir, { recursive: true });
+    extractTarGzToDirectory(tarPath, extractDir);
+
+    const sourceRoot = findExtensionSourceRootInTree(extractDir);
+
+    // Validate the extracted manifest matches what the registry advertised.
+    const srcManifestPath = resolveExtensionManifestPath(sourceRoot);
+    if (srcManifestPath === undefined) {
+      throw new Error(`dependency ${opts.depId}: manifest missing after extract`);
+    }
+    const extractedManifest = parseExtensionManifestJson(readFileSync(srcManifestPath, "utf8"));
+    if (extractedManifest.id !== opts.depId) {
+      throw new Error(
+        `dependency id mismatch: registry advertised ${opts.depId} but manifest has ${extractedManifest.id}`,
+      );
+    }
+    if (extractedManifest.version !== opts.depVersion) {
+      throw new Error(
+        `dependency version mismatch: expected ${opts.depVersion} but manifest has ${extractedManifest.version}`,
+      );
+    }
+
+    const dest = extensionInstallDirectory(opts.extensionsDir, opts.depId);
+
+    // S7-F5 — same symlink sweep as the user-provided source path.
+    scanForSymlinks(sourceRoot);
+    mkdirSync(opts.extensionsDir, { recursive: true });
+
+    try {
+      cpSync(sourceRoot, dest, { recursive: true, dereference: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`dependency copy failed: ${msg}`);
+    }
+
+    const result = await completeExtensionInstallAfterCopy({
+      db: opts.db,
+      dest,
+      manifest: extractedManifest,
+      ...(opts.vault !== undefined && { vault: opts.vault }),
+      ...(opts.pubkeyFetcher !== undefined && { fetcher: opts.pubkeyFetcher }),
+      ...(opts.enforceAirGap !== undefined && { enforceAirGap: opts.enforceAirGap }),
+    });
+
+    // Sanity-check: the entry hash from the registry must match the installed
+    // entry hash. This is a defence against tarball substitution attacks.
+    if (result.entryHash.toLowerCase() !== expectedEntryHash.toLowerCase()) {
+      // Roll back the extension row that completeExtensionInstallAfterCopy
+      // inserted, so the next Gateway startup doesn't see a row pointing at a
+      // missing directory and hard-disable it with a misleading reason.
+      try {
+        dbRun(opts.db, "DELETE FROM extension WHERE id = ?", [opts.depId]);
+      } catch {
+        /* best-effort — the rmSync + rethrow are the primary recovery */
+      }
+      // Roll back the installed dep from disk.
+      rmSync(dest, { recursive: true, force: true });
+      throw new Error(
+        `dependency entry hash mismatch for ${opts.depId}@${opts.depVersion}: ` +
+          `expected ${expectedEntryHash} got ${result.entryHash}`,
+      );
+    }
+
+    return { dest, result };
+  } finally {
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* best-effort temp-dir cleanup */
+    }
+  }
+}
+
+/**
+ * Copies a local extension directory (or extracts `.tar.gz` / `.tgz`) into
+ * `extensionsDir`, resolves and installs the full dependency closure (T2 PR 4),
+ * computes manifest/entry hashes, inserts DB rows. Rolls back any newly-created
+ * directories on failure.
+ *
+ * When `registryClient` is omitted, the solver still runs but has no way to
+ * fetch uninstalled deps — it will throw `OfflineDependencyResolutionError` if
+ * the root manifest lists deps that are not already on disk. For zero-dep
+ * extensions this is not an issue.
  */
 export async function installExtensionFromLocalDirectory(options: {
   db: Database;
@@ -371,6 +561,14 @@ export async function installExtensionFromLocalDirectory(options: {
   enforceAirGap?: boolean;
   /** Path to a 44-char base64 publisher public-key file (`--publisher-key`). */
   publisherKeyPath?: string;
+  /**
+   * Registry client for fetching dependency tarballs (T2 PR 4). When absent,
+   * deps that are not already installed on disk will cause an
+   * OfflineDependencyResolutionError at solver time.
+   */
+  registryClient?: RegistryClient;
+  /** AbortSignal forwarded to registry HTTP calls for dependency installs. */
+  abortSignal?: AbortSignal;
 }): Promise<InstallExtensionFromLocalResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
@@ -392,6 +590,8 @@ export async function installExtensionFromLocalDirectory(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.registryClient !== undefined && { registryClient: options.registryClient }),
+      ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
     });
   }
   if (!st.isDirectory()) {
@@ -408,43 +608,201 @@ export async function installExtensionFromLocalDirectory(options: {
   const manifestBytes = readFileSync(srcManifestPath);
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
 
-  const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
-  if (existsSync(dest)) {
-    throw new Error(`extension already installed at ${dest}`);
-  }
+  // ── Solver: resolve the full dependency closure (T2 PR 4) ───────────────────
+  //
+  // We run the solver even for zero-dep extensions so the code path is uniform.
+  // For a zero-dep root it returns a single-node plan trivially.
+  const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 
-  // S7-F5 — recursively reject symlinks inside the source tree before copy.
-  // Even with { dereference: true } there is an in-flight TOCTOU between lstat
-  // and cpSync; rejecting outright is the simpler and stronger guarantee.
-  scanForSymlinks(sourceResolved);
+  const signal = options.abortSignal ?? new AbortController().signal;
 
-  mkdirSync(options.extensionsDir, { recursive: true });
+  // Build the RegistryFetcher for the solver.
+  //
+  // v1: the registry only exposes `fetchLatestVersion` (not `listVersions`), so
+  // for deps that are not already installed we return a single-element array
+  // containing the latest version. The solver picks that version if it satisfies
+  // the range, or throws DependencyConflictError(unsatisfiable). Full
+  // multi-version backtracking is deferred to a future PR when the registry
+  // adds a `listVersions` endpoint.
+  const registryClient = options.registryClient;
+  const solverFetcher = {
+    async listVersions(id: string): Promise<readonly string[]> {
+      const pinned = installedMap.get(id);
+      if (pinned !== undefined) return [pinned];
+      if (registryClient === undefined) {
+        // No registry — the solver will surface OfflineDependencyResolutionError.
+        return [];
+      }
+      const latest = await registryClient.fetchLatestVersion(id, "stable", signal);
+      if (latest === null) {
+        return [];
+      }
+      return [latest.version];
+    },
+    async fetchManifest(
+      id: string,
+      version: string,
+    ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }> {
+      const pinned = installedMap.get(id);
+      if (pinned === version) {
+        // Read from disk (local-first, same as createRegistryFetcher).
+        const extRow = listExtensions(options.db).find((r) => r.id === id);
+        if (extRow !== undefined) {
+          const mfPath = resolveExtensionManifestPath(extRow.install_path);
+          if (mfPath !== undefined) {
+            const raw = readFileSync(mfPath, "utf8");
+            const mf = parseExtensionManifestJson(raw);
+            return {
+              id: mf.id,
+              version: mf.version,
+              ...(mf.dependsOn !== undefined ? { dependsOn: mf.dependsOn } : {}),
+            };
+          }
+        }
+      }
+      if (registryClient === undefined) {
+        throw new Error(`registry unavailable: cannot fetch manifest for ${id}@${version}`);
+      }
+      const resp = await registryClient.fetchManifest(id, version, signal);
+      return {
+        id: resp.manifest.id,
+        version: resp.manifest.version,
+        ...(resp.manifest.dependsOn !== undefined ? { dependsOn: resp.manifest.dependsOn } : {}),
+      };
+    },
+  };
+
+  // Errors from the solver (DependencyConflictError / OfflineDependencyResolutionError)
+  // are thrown verbatim — no disk mutation has occurred at this point.
+  const plan = await resolveClosure(manifest, solverFetcher, {
+    installed: installedMap,
+    activeConstraints,
+  });
+
+  // ── Install loop ─────────────────────────────────────────────────────────────
+  //
+  // Iterate leaf-first (as returned by the solver). Track every directory we
+  // create so we can roll back on failure.
+  const createdDirs: string[] = [];
 
   try {
-    cpSync(sourceResolved, dest, { recursive: true, dereference: true });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`extension copy failed: ${msg}`);
-  }
+    for (const node of plan.nodes) {
+      if (!node.newlyInstalled) {
+        // Already installed at the satisfying version — skip.
+        continue;
+      }
 
-  try {
-    return await completeExtensionInstallAfterCopy({
-      db: options.db,
-      dest,
-      manifest,
-      ...(options.vault !== undefined && { vault: options.vault }),
-      ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
-      ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
-      ...(options.publisherKeyPath !== undefined && {
-        publisherKeyPath: options.publisherKeyPath,
-      }),
-    });
+      if (node.id === manifest.id) {
+        // Root extension: use the existing copy-from-source path.
+        const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
+        if (existsSync(dest)) {
+          throw new Error(`extension already installed at ${dest}`);
+        }
+
+        // S7-F5 — symlink sweep.
+        scanForSymlinks(sourceResolved);
+        mkdirSync(options.extensionsDir, { recursive: true });
+
+        try {
+          cpSync(sourceResolved, dest, { recursive: true, dereference: true });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          throw new Error(`extension copy failed: ${msg}`);
+        }
+        createdDirs.push(dest);
+
+        await completeExtensionInstallAfterCopy({
+          db: options.db,
+          dest,
+          manifest,
+          ...(options.vault !== undefined && { vault: options.vault }),
+          ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+          ...(options.publisherKeyPath !== undefined && {
+            publisherKeyPath: options.publisherKeyPath,
+          }),
+        });
+      } else {
+        // Dependency node: fetch from registry, extract, install.
+        if (registryClient === undefined) {
+          throw new Error(
+            `cannot install dependency ${node.id}@${node.version}: no registryClient provided`,
+          );
+        }
+        const { dest } = await installDepFromRegistry({
+          db: options.db,
+          extensionsDir: options.extensionsDir,
+          registryClient,
+          depId: node.id,
+          depVersion: node.version,
+          abortSignal: signal,
+          ...(options.vault !== undefined && { vault: options.vault }),
+          ...(options.fetcher !== undefined && { pubkeyFetcher: options.fetcher }),
+          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+        });
+        createdDirs.push(dest);
+      }
+    }
   } catch (e) {
-    try {
-      rmSync(dest, { recursive: true, force: true });
-    } catch {
-      /* best-effort rollback */
+    // Roll back every directory we created, in reverse order (leaf-first reversal = root-first).
+    for (let i = createdDirs.length - 1; i >= 0; i--) {
+      try {
+        rmSync(createdDirs[i] as string, { recursive: true, force: true });
+      } catch {
+        /* best-effort rollback */
+      }
     }
     throw e;
   }
+
+  // ── Persistence: record dependency edges in one transaction ─────────────────
+  const now = Date.now();
+  options.db.transaction(() => {
+    for (const node of plan.nodes) {
+      recordInstall(options.db, node.id, node.version, node.deps, now);
+    }
+  })();
+
+  // ── Audit row ────────────────────────────────────────────────────────────────
+  appendAuditEntry(options.db, {
+    actionType: "extension.install_complete",
+    hitlStatus: "approved",
+    actionJson: JSON.stringify({
+      root: manifest.id,
+      rootVersion: manifest.version,
+      installed: plan.nodes.map((n) => ({
+        id: n.id,
+        version: n.version,
+        newlyInstalled: n.newlyInstalled,
+        deps: Object.fromEntries(n.deps.map((d) => [d.id, d.range])),
+      })),
+    }),
+    timestamp: now,
+  });
+
+  // ── Assemble the result ──────────────────────────────────────────────────────
+  // Read the root's hashes from the DB (they were written by completeExtensionInstallAfterCopy).
+  const rootDest = extensionInstallDirectory(options.extensionsDir, manifest.id);
+  const rootManifestPath = resolveExtensionManifestPath(rootDest);
+  if (rootManifestPath === undefined) {
+    throw new Error("root extension manifest missing after install — install may be corrupt");
+  }
+  const rootManifestBytes = readFileSync(rootManifestPath);
+  const rootManifestHex = sha256HexOfBytes(rootManifestBytes);
+
+  const rootEntryRel =
+    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const rootEntryPath = join(rootDest, rootEntryRel);
+  const rootEntryHex = existsSync(rootEntryPath)
+    ? sha256HexOfBytes(readFileSync(rootEntryPath))
+    : "";
+
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    installPath: rootDest,
+    manifestHash: rootManifestHex,
+    entryHash: rootEntryHex,
+    installed: plan.nodes,
+  };
 }

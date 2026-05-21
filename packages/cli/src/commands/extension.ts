@@ -12,6 +12,7 @@ import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
 } from "./extension-sandbox-format.ts";
+import { type InstalledExtensionForTree, renderTree } from "./extension-tree.ts";
 
 export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
@@ -45,6 +46,10 @@ type ExtensionListEntry = {
   needs_reinstall?: boolean;
   disabled_reason?: string;
   publisher?: { id: string; key?: string };
+  // T2 PR 4 Task 15 — deps fields added by extension.info (Task 14).
+  // extension.list does NOT return these; they are fetched lazily for --tree.
+  forwardDeps?: Array<{ id: string; range: string }>;
+  reverseDeps?: Array<{ extensionId: string; range: string }>;
 };
 
 export interface ExtensionListTableRow {
@@ -95,6 +100,7 @@ export function formatExtensionListTable(
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
   const filter = takeFlagValue(args, "--filter");
   const json = hasFlag(args, "--json");
+  const tree = hasFlag(args, "--tree");
   const params: Record<string, unknown> = {};
   if (filter !== undefined) params["filter"] = filter;
   const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
@@ -107,6 +113,34 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     console.log("(no extensions installed)");
     return;
   }
+
+  if (tree) {
+    // N+1 calls — extension.list doesn't return forwardDeps, so we fetch
+    // extension.info for each installed extension individually. Acceptable for
+    // interactive CLI use (typically <50 extensions). A future optimisation
+    // could extend extension.list to return forwardDeps directly, but keeping
+    // the backend change small for this PR is intentional.
+    const installed: InstalledExtensionForTree[] = [];
+    for (const r of rows) {
+      try {
+        const info = await client.call<{
+          extension: { forwardDeps?: Array<{ id: string; range: string }> };
+        }>("extension.info", { id: r.id });
+        installed.push({
+          id: r.id,
+          version: r.version,
+          forwardDeps: info.extension.forwardDeps ?? [],
+        });
+      } catch {
+        // best-effort: an extension we can't info-query still appears in the
+        // tree as a leaf so the user at least sees it is installed.
+        installed.push({ id: r.id, version: r.version, forwardDeps: [] });
+      }
+    }
+    console.log(renderTree(installed));
+    return;
+  }
+
   const noColorEnv = process.env["NO_COLOR"];
   const noColor = noColorEnv !== undefined && noColorEnv !== "";
   const isTty = process.stdout.isTTY === true;
@@ -221,6 +255,30 @@ export async function runExtensionInfo(
     console.log("");
     console.log(out.message);
   }
+  // T2 PR 4 Task 15 — opt-in dependency section. The gateway extension.info
+  // response includes forwardDeps and reverseDeps after Task 14; they are
+  // absent (undefined) on pre-T2-PR4 gateways, which is handled gracefully.
+  if (hasFlag(args, "--deps")) {
+    const fwd = e.forwardDeps ?? [];
+    const rev = e.reverseDeps ?? [];
+    if (fwd.length > 0 || rev.length > 0) {
+      console.log("\nDependencies:");
+      if (fwd.length > 0) {
+        console.log("  Forward (this extension requires):");
+        for (const f of [...fwd].sort((a, b) => a.id.localeCompare(b.id))) {
+          console.log(`    ${f.id}  ${f.range}`);
+        }
+      }
+      if (rev.length > 0) {
+        console.log("  Reverse (required by):");
+        for (const r of [...rev].sort((a, b) => a.extensionId.localeCompare(b.extensionId))) {
+          console.log(`    ${r.extensionId}  ${r.range}`);
+        }
+      }
+    } else {
+      console.log("\nDependencies: (none)");
+    }
+  }
 }
 
 export async function runExtensionInstall(
@@ -290,9 +348,17 @@ export async function runExtensionRemove(
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension remove <id> [--yes]");
+    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force]");
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
+  const force = hasFlag(args, "--force");
+
+  if (force) {
+    process.stderr.write(
+      "--force: will remove even if other installed extensions depend on this.\n",
+    );
+  }
+
   if (!accept) {
     if (process.stdout.isTTY !== true) {
       throw new Error(
@@ -307,7 +373,24 @@ export async function runExtensionRemove(
       return;
     }
   }
-  const out = await client.call<{ ok: boolean }>("extension.remove", { id });
+
+  let out: { ok: boolean };
+  // Omit `force` from the payload when it's false so legacy callers (and
+  // the existing `--yes` happy-path test) keep observing the {id} shape.
+  // The gateway handler treats absent and `false` identically.
+  const payload: { id: string; force?: true } = force ? { id, force: true } : { id };
+  try {
+    out = await client.call<{ ok: boolean }>("extension.remove", payload);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("reverse_dep_blocked")) {
+      // Extract the human-readable part after the code prefix (if present) or
+      // surface the full message which already contains the blocker list.
+      process.stderr.write(`${msg}\nRe-run with --force to override.\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
   console.log(JSON.stringify(out, undefined, 2));
 }
 
@@ -544,7 +627,7 @@ export async function runExtension(args: string[]): Promise<void> {
     }
 
     throw new Error(
-      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
+      "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
     );
   } finally {
     await client.disconnect();

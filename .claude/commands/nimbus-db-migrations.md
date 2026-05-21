@@ -9,38 +9,45 @@ description: >
   a failed migration, asking why a migration cannot be rolled back, or adding a new
   table or column. Also trigger for questions like "what V<N> number do I use?", "can
   I drop this column?", "how do I backfill safely?", or "where does the pre-migration
-  backup live?". Consult before creating any file under packages/gateway/src/db/migrations/.
+  backup live?". Consult before creating any file under packages/gateway/src/index/.
 ---
 
 # Nimbus DB Migrations
 
 ## Migration Location
 
-All migrations live in `packages/gateway/src/db/migrations/`. Each migration is a numbered TypeScript file:
+Migrations are registered in a **single central runner** at `packages/gateway/src/index/migrations/runner.ts` via the `INDEXED_SCHEMA_STEPS` array. There is no directory of numbered migration files — each migration step is a function added to that array.
+
+The SQL for each step lives in a sibling constant file following the naming pattern:
 
 ```
-V<N>__<description>.ts
+packages/gateway/src/index/<topic>-v<N>-sql.ts
 ```
 
-Example: `V23__add_api_endpoint_items.ts`.
+Examples:
+- `packages/gateway/src/index/tool-call-log-v29-sql.ts` — V29 `tool_call_log` table
+- `packages/gateway/src/index/vec-items-1536-v30-sql.ts` — V30 `vec_items_1536` virtual table
+- `packages/gateway/src/index/extension-dependency-v31-sql.ts` — V31 `extension_dependency` table
 
-**Numbers are strictly sequential — never reuse or skip a number.**
+The SQL constant is exported from the file and consumed by the migration step function in `runner.ts`.
+
+**Version numbers are strictly sequential — never reuse or skip a number.**
 
 ## Migration Runner Contract
 
-The runner in `packages/gateway/src/db/migrate.ts`:
+The runner in `packages/gateway/src/index/migrations/runner.ts`:
 
-- Applies migrations in order.
-- Wraps each migration in **a single transaction**.
-- Writes a **pre-migration backup** before each migration runs.
-- Records each migration in `_schema_migrations` on success.
-- On a thrown migration: rolls back the transaction, restores the backup, marks the migration `failed` in the ledger, and exits with an error.
+- Applies each `INDEXED_SCHEMA_STEPS` entry in order via `applyIndexedSchemaStep`.
+- Wraps each step in **a single transaction**.
+- Writes a **pre-migration backup** via `applyIndexedSchemaStep` before each step runs.
+- Records each step in `_schema_migrations` on success via `recordMigration`.
+- On a thrown step: rolls back the transaction, restores the backup, marks the migration `failed` in the ledger, and exits with an error.
 
 **Never write a migration that cannot be safely rolled back within a transaction.**
 
 ## Pre-migration Backup Rule
 
-The backup is written by the runner automatically before every migration. **Never skip it.** If the backup write fails, the migration is **aborted** — this is intentional.
+The backup is written by `applyIndexedSchemaStep` automatically before every step. **Never skip it.** If the backup write fails, the migration is **aborted** — this is intentional.
 
 The backup lives at:
 
@@ -50,15 +57,32 @@ The backup lives at:
 
 ## Migration File Structure
 
-Every migration file must export exactly one function:
+Each migration step is a function added to `INDEXED_SCHEMA_STEPS` in `runner.ts`. The pattern follows:
 
 ```typescript
-export async function up(db: Database): Promise<void> {
-  // All SQL in one transaction — the runner wraps this call
-  db.run("CREATE TABLE ...");
-  db.run("CREATE INDEX ...");
+// In packages/gateway/src/index/<topic>-v<N>-sql.ts
+export const V<N>_SCHEMA_SQL = `
+  CREATE TABLE ...;
+  CREATE INDEX ...;
+`;
+
+// In packages/gateway/src/index/migrations/runner.ts — add the step:
+function migrateIndexedVNToVN(db: Database, now: number): void {
+  db.transaction(() => {
+    dbExec(db, V<N>_SCHEMA_SQL);
+    dbExec(db, "PRAGMA user_version = <N>");
+    recordMigration(db, <N>, "<description>", now);
+  })();
 }
+
+// Then add to INDEXED_SCHEMA_STEPS:
+export const INDEXED_SCHEMA_STEPS: IndexedSchemaStep[] = [
+  // ... existing steps ...
+  { version: <N>, apply: migrateIndexedVNToVN },
+];
 ```
+
+See `runner-v31.test.ts` as the canonical test pattern for new migration steps.
 
 **No `down()` function** — Nimbus migrations are append-only and forward-only. If you need to undo a migration, write a new migration that reverses it.
 
@@ -105,11 +129,11 @@ Columns:
 | Column | Type | Notes |
 |---|---|---|
 | `version` | integer | the `V<N>` number |
-| `description` | text | from the filename |
+| `description` | text | from the step definition |
 | `applied_at` | integer | unix ms |
 | `status` | `applied` \| `failed` | runner-managed |
 
-The runner inserts a row with `status = 'applied'` after each successful migration. **Never write to this table manually.**
+The runner inserts a row with `status = 'applied'` after each successful migration via `recordMigration`. **Never write to this table manually.**
 
 ## New Table Checklist
 
@@ -133,12 +157,13 @@ When deleting rows from a source table that has an FTS5 shadow:
 
 ## Coverage Gate
 
-`packages/gateway/src/db/` ≥ **85% line coverage**. Migration files are covered by the integration test suite which runs all migrations against a fresh in-memory SQLite instance on every CI run.
+`packages/gateway/src/index/migrations/` ≥ **85% line coverage**. Migration steps are covered by the integration test suite (e.g. `runner-v31.test.ts`) which applies all steps against a fresh in-memory SQLite instance on every CI run.
 
 ## Authoring Checklist
 
-- [ ] File created at `packages/gateway/src/db/migrations/V<N>__<description>.ts` with the next sequential number — no reuse, no gaps.
-- [ ] Exports a single `up(db: Database): Promise<void>` function — no `down()`.
+- [ ] SQL constant created at `packages/gateway/src/index/<topic>-v<N>-sql.ts` with the next sequential version number — no reuse, no gaps.
+- [ ] Migration step function `migrateIndexedV<prev>ToV<N>(db, now)` added to `runner.ts`; wraps in `db.transaction()`; calls `dbExec(db, V<N>_SCHEMA_SQL)`, `dbExec(db, "PRAGMA user_version = <N>")`, and `recordMigration(db, <N>, "description", now)`.
+- [ ] Step registered in `INDEXED_SCHEMA_STEPS` array in `runner.ts`.
 - [ ] All schema changes are additive (`CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE ADD COLUMN`, `CREATE VIRTUAL TABLE`); no drops or renames except for same-phase, no-data items.
 - [ ] Backfills process in 1 000-row batches inside `db.transaction()`.
 - [ ] No manual writes to `_schema_migrations`.
@@ -146,4 +171,4 @@ When deleting rows from a source table that has an FTS5 shadow:
 - [ ] FTS5 row deletes use targeted `DELETE FROM items_fts WHERE rowid = ?` — never the `'rebuild'` command.
 - [ ] Schema reference in `docs/architecture.md` updated for any new table.
 - [ ] All write statements go through `dbRun` / `dbExec` / `dbStmtRun` from `db/write.ts` — no direct `db.run(` / `db.exec(` (invariant `I14`; `bun run audit:invariants` fails on violations).
-- [ ] Integration tests covering the migration are green; `packages/gateway/src/db/` line coverage stays ≥ 85%.
+- [ ] Integration test added (pattern: `runner-v31.test.ts`) covering the new step; `packages/gateway/src/index/migrations/` line coverage stays ≥ 85%.

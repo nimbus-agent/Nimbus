@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T08:56:16.120Z",
+  "generated_at": "2026-05-21T12:26:50.821Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -38,8 +38,11 @@
     "packages/cli/src/commands/expert.ts": {
       "min_coverage_pct": 39.53
     },
+    "packages/cli/src/commands/extension-tree.ts": {
+      "min_coverage_pct": 0
+    },
     "packages/cli/src/commands/extension.ts": {
-      "min_coverage_pct": 69.03
+      "min_coverage_pct": 72.13
     },
     "packages/cli/src/commands/help.ts": {
       "min_coverage_pct": 0
@@ -179,20 +182,50 @@
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_coverage_pct": 73.82
     },
+    "packages/gateway/src/connectors/index.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/db/query-guard-worker.ts": {
+      "min_coverage_pct": 0
+    },
     "packages/gateway/src/db/verify.ts": {
       "min_coverage_pct": 78.44
     },
     "packages/gateway/src/embedding/create-embedding-runtime.ts": {
       "min_coverage_pct": 77.38
     },
+    "packages/gateway/src/embedding/embedding-runtime.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/embedding/embedding-worker.ts": {
+      "min_coverage_pct": 0
+    },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
+    },
+    "packages/gateway/src/extensions/dependency-errors.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/extensions/dependency-graph.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/extensions/dependency-store.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/extensions/missing-dependency-registry.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/extensions/registry-fetcher.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/gateway/src/index/ranked-item.ts": {
+      "min_coverage_pct": 0
     },
     "packages/gateway/src/ipc/http-server.ts": {
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/server/server.ts": {
-      "min_coverage_pct": 73.86
+      "min_coverage_pct": 76.27
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
       "min_coverage_pct": 49.32
@@ -201,13 +234,16 @@
       "min_coverage_pct": 77.75
     },
     "packages/gateway/src/platform/index.ts": {
-      "min_coverage_pct": 45.45
+      "min_coverage_pct": 63.64
     },
     "packages/gateway/src/platform/paths.ts": {
       "min_coverage_pct": 48.08
     },
     "packages/gateway/src/vault/factory.ts": {
-      "min_coverage_pct": 66.67
+      "min_coverage_pct": 75
+    },
+    "packages/gateway/src/vault/nimbus-vault.ts": {
+      "min_coverage_pct": 0
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0

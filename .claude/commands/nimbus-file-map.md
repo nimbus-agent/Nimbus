@@ -55,6 +55,18 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for first- and third-party connector authors. |
 | `docs/sandbox.md` | Operator-facing sandbox reference; `#platform-asymmetry` + `#windows-platform-status` anchors. |
 
+## Extensions — Dependency Resolution (T2 PR 4)
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/extensions/dependency-types.ts` | Solver type contracts: `ResolvedDep`, `ResolvedNode`, `InstallPlan`, `RegistryFetcher`, `ExtensionManifestForSolver`, `ResolveClosureOptions`, `DependencyConstraint`, `DependencyConflict` (T2 PR 4) |
+| `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` narrowing helpers (T2 PR 4) |
+| `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — custom backtracking DFS solver; `ancestors: Set` separate from `pinned` so diamond DAGs aren't false-positive cycles (T2 PR 4) |
+| `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` — `dbRun`-backed CRUD over V31 `extension_dependency` (T2 PR 4) |
+| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter; installed ids resolve from on-disk manifest without network (T2 PR 4) |
+| `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reason types (parallel to `PreT2DisabledRegistry` + `SignatureDisabledRegistry`, T2 PR 4) |
+| `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 SQL constant: `extension_dependency` table + `idx_extension_dependency_reverse` index (T2 PR 4) |
+
 ## Vault + Auth
 
 | File | Purpose |

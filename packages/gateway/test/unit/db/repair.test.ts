@@ -4,6 +4,21 @@ import { describe, expect, test } from "bun:test";
 import { formatRepairReport, repairIndex } from "../../../src/db/repair.ts";
 import { verifyIndex } from "../../../src/db/verify.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
+import { isVecLoaded, tryLoadSqliteVec } from "../../../src/index/sqlite-vec-load.ts";
+
+// Tests that insert directly into vec_items_384 need the sqlite-vec extension
+// loaded. macOS CI runners can't load the unsigned vec0.dylib in every job
+// (the strip-quarantine step is best-effort), so probe once at module load and
+// skip the vec-specific cases when the extension isn't available — mirrors the
+// VEC_AVAILABLE pattern in search/dual-search.test.ts.
+function vecAvailable(): boolean {
+  const probe = new Database(":memory:");
+  tryLoadSqliteVec(probe);
+  const ok = isVecLoaded(probe);
+  probe.close();
+  return ok;
+}
+const VEC_AVAILABLE = vecAvailable();
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -175,30 +190,33 @@ describe("formatRepairReport", () => {
 });
 
 describe("repairIndex — vec orphan repair", () => {
-  test("deletes orphaned vec_items_384 rows and reports affected count", () => {
-    const db = makeDb();
+  test.skipIf(!VEC_AVAILABLE)(
+    "deletes orphaned vec_items_384 rows and reports affected count",
+    () => {
+      const db = makeDb();
 
-    // Insert a vec row with no matching embedding_chunk vec_rowid — this creates
-    // the vec_rowid_mismatch condition that triggers repairVecOrphans.
-    insertVecRow(db, 7777);
+      // Insert a vec row with no matching embedding_chunk vec_rowid — this creates
+      // the vec_rowid_mismatch condition that triggers repairVecOrphans.
+      insertVecRow(db, 7777);
 
-    // Confirm verify detects the mismatch
-    const before = verifyIndex(db, LocalIndex.SCHEMA_VERSION);
-    const mismatch = before.findings.find((f) => f.label === "vec_rowid_mismatch");
-    expect(mismatch?.status).toBe("fail");
+      // Confirm verify detects the mismatch
+      const before = verifyIndex(db, LocalIndex.SCHEMA_VERSION);
+      const mismatch = before.findings.find((f) => f.label === "vec_rowid_mismatch");
+      expect(mismatch?.status).toBe("fail");
 
-    const report = repairIndex(db, LocalIndex.SCHEMA_VERSION);
+      const report = repairIndex(db, LocalIndex.SCHEMA_VERSION);
 
-    const outcome = report.outcomes.find((o) => o.action === "vec_orphan_delete");
-    expect(outcome?.status).toBe("applied");
-    expect(outcome?.detail).toContain("deleted 1 orphaned vec row(s)");
+      const outcome = report.outcomes.find((o) => o.action === "vec_orphan_delete");
+      expect(outcome?.status).toBe("applied");
+      expect(outcome?.detail).toContain("deleted 1 orphaned vec row(s)");
 
-    // Vec row should be gone after repair
-    const vecCount = db.query("SELECT COUNT(*) AS c FROM vec_items_384").get() as { c: number };
-    expect(vecCount.c).toBe(0);
+      // Vec row should be gone after repair
+      const vecCount = db.query("SELECT COUNT(*) AS c FROM vec_items_384").get() as { c: number };
+      expect(vecCount.c).toBe(0);
 
-    db.close();
-  });
+      db.close();
+    },
+  );
 
   test("skips vec orphan repair when no orphans exist (vec count matches chunk count)", () => {
     const db = makeDb();
@@ -276,46 +294,52 @@ describe("repairIndex — foreign-key cascade repair", () => {
 });
 
 describe("repairIndex — multi-action report shape", () => {
-  test("returns an outcome entry for every triggered repair action with valid status", () => {
-    const db = makeDb();
+  // This case seeds vec_items_384 rows to exercise the three-action path;
+  // skip on macOS CI runners where sqlite-vec can't load. The audit-log shape
+  // sibling test below doesn't need vec and continues to run.
+  test.skipIf(!VEC_AVAILABLE)(
+    "returns an outcome entry for every triggered repair action with valid status",
+    () => {
+      const db = makeDb();
 
-    // Trigger multiple repair conditions simultaneously:
-    // 1. Orphaned sync token → orphaned_sync_tokens_delete
-    db.run(
-      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token)
+      // Trigger multiple repair conditions simultaneously:
+      // 1. Orphaned sync token → orphaned_sync_tokens_delete
+      db.run(
+        `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token)
        VALUES ('ghost-connector', ${String(Date.now())}, 'tok')`,
-    );
-    // 2. FK violation → foreign_key_cascade_delete
-    //    Use vec_rowid=55 for this chunk (no vec row with rowid=55 inserted here)
-    insertChunkNoFk(db, "ghost-item:99", 55);
-    // 3. Vec orphan → vec_orphan_delete
-    //    Insert TWO vec rows so counts differ (1 chunk + 2 vec → mismatch)
-    insertVecRow(db, 8888);
-    insertVecRow(db, 8889);
+      );
+      // 2. FK violation → foreign_key_cascade_delete
+      //    Use vec_rowid=55 for this chunk (no vec row with rowid=55 inserted here)
+      insertChunkNoFk(db, "ghost-item:99", 55);
+      // 3. Vec orphan → vec_orphan_delete
+      //    Insert TWO vec rows so counts differ (1 chunk + 2 vec → mismatch)
+      insertVecRow(db, 8888);
+      insertVecRow(db, 8889);
 
-    // Sanity: verify detects mismatch (2 vec rows vs 1 chunk row)
-    const before = verifyIndex(db, LocalIndex.SCHEMA_VERSION);
-    const mismatch = before.findings.find((f) => f.label === "vec_rowid_mismatch");
-    expect(mismatch?.status).toBe("fail");
+      // Sanity: verify detects mismatch (2 vec rows vs 1 chunk row)
+      const before = verifyIndex(db, LocalIndex.SCHEMA_VERSION);
+      const mismatch = before.findings.find((f) => f.label === "vec_rowid_mismatch");
+      expect(mismatch?.status).toBe("fail");
 
-    const report = repairIndex(db, LocalIndex.SCHEMA_VERSION);
+      const report = repairIndex(db, LocalIndex.SCHEMA_VERSION);
 
-    // All triggered actions must be present
-    const seenActions = new Set(report.outcomes.map((o) => o.action));
-    expect(seenActions.has("orphaned_sync_tokens_delete")).toBe(true);
-    expect(seenActions.has("foreign_key_cascade_delete")).toBe(true);
-    expect(seenActions.has("vec_orphan_delete")).toBe(true);
+      // All triggered actions must be present
+      const seenActions = new Set(report.outcomes.map((o) => o.action));
+      expect(seenActions.has("orphaned_sync_tokens_delete")).toBe(true);
+      expect(seenActions.has("foreign_key_cascade_delete")).toBe(true);
+      expect(seenActions.has("vec_orphan_delete")).toBe(true);
 
-    // Every outcome must have a valid status
-    for (const o of report.outcomes) {
-      expect(["applied", "skipped", "error"]).toContain(o.status);
-    }
+      // Every outcome must have a valid status
+      for (const o of report.outcomes) {
+        expect(["applied", "skipped", "error"]).toContain(o.status);
+      }
 
-    // repairedAt is an ISO-8601 timestamp
-    expect(report.repairedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      // repairedAt is an ISO-8601 timestamp
+      expect(report.repairedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    db.close();
-  });
+      db.close();
+    },
+  );
 
   test("writes audit_log entry with all outcomes in action_json", () => {
     const db = makeDb();

@@ -26,6 +26,7 @@ import {
   EMBEDDING_V6_MIGRATION_SQL,
   EMBEDDING_V6_NO_VEC_MIGRATION_SQL,
 } from "../embedding-v6-sql.ts";
+import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
 import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
@@ -423,6 +424,14 @@ function migrateIndexedV29ToV30(db: Database, now: number): void {
   })();
 }
 
+function migrateIndexedV30ToV31(db: Database, now: number): void {
+  db.transaction(() => {
+    dbExec(db, V31_EXTENSION_DEPENDENCY_SQL);
+    dbExec(db, "PRAGMA user_version = 31");
+    recordMigration(db, 31, "extension_dependency table + reverse-dep index (T2 PR 4)", now);
+  })();
+}
+
 const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 0, toVersion: 1, apply: migrateIndexedV0ToV1 },
   { fromVersion: 1, toVersion: 2, apply: migrateIndexedV1ToV2 },
@@ -454,6 +463,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 27, toVersion: 28, apply: migrateIndexedV27ToV28 },
   { fromVersion: 28, toVersion: 29, apply: migrateIndexedV28ToV29 },
   { fromVersion: 29, toVersion: 30, apply: migrateIndexedV29ToV30 },
+  { fromVersion: 30, toVersion: 31, apply: migrateIndexedV30ToV31 },
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -487,6 +497,7 @@ const BACKFILL_LABELS: readonly string[] = [
   "deployment_items shadow table (T4 PR 3b) (backfilled)",
   "tool_call_log audit table (T6 PR 2) (backfilled)",
   "vec_items_1536 + dim-aware delete triggers (T6 PR 3) (backfilled)",
+  "extension_dependency table + reverse-dep index (T2 PR 4) (backfilled)",
 ];
 
 /**

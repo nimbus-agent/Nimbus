@@ -3,7 +3,7 @@
  * the Mastra path for high-confidence unknown intent when `conversationalAgent` is set.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 import type { ConnectorDispatcher } from "../../src/engine/types.ts";
@@ -14,6 +14,14 @@ import type { PlatformPaths } from "../../src/platform/paths.ts";
 /** Absolute path so `mock.module` matches the same specifier Bun uses for `./router.ts` from `run-ask.ts`. */
 const routerModuleAbs = join(import.meta.dir, "..", "..", "src", "engine", "router.ts");
 const runAskModuleAbs = join(import.meta.dir, "..", "..", "src", "engine", "run-ask.ts");
+
+// Captured BEFORE any test installs a `mock.module(routerModuleAbs, …)` override.
+// `bun:test` discovers and runs every *.test.ts in the package via one `bun test`
+// invocation, and `mock.restore()` does NOT undo `mock.module()` registrations —
+// only call counts and `mock(fn)` spies. Without the afterAll() below, the final
+// per-test mock leaks into sibling files (e.g. `engine/router.test.ts`), which
+// then receive this file's stubbed `classifyIntent` and fail in confusing ways.
+const realRouterExports: Record<string, unknown> = { ...(await import(routerModuleAbs)) };
 
 function baseParams(
   sendChunk: (t: string) => void,
@@ -56,6 +64,13 @@ describe("runAsk conversational routing (e2e-style)", () => {
 
   afterEach(() => {
     mock.restore();
+  });
+
+  afterAll(() => {
+    // Restore the real `router.ts` exports so sibling test files in the same
+    // `bun test` invocation get the genuine `classifyIntent`. See the
+    // `realRouterExports` comment near the top of this file for why.
+    mock.module(routerModuleAbs, () => realRouterExports);
   });
 
   test("high-confidence unknown + conversationalAgent calls agent.generate", async () => {

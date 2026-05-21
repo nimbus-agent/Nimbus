@@ -189,3 +189,29 @@ describe("parseExtensionManifestJson — updateChannel + changelog (T2 PR 3)", (
     );
   });
 });
+
+describe("parseExtensionManifestJson — dependsOn (T2 PR 4)", () => {
+  test("accepts manifest with valid dependsOn ranges", () => {
+    const m = parseExtensionManifestJson(
+      JSON.stringify({ id: "x", version: "1.0.0", dependsOn: { "com.shared.utils": "^1.0.0" } }),
+    );
+    expect(m.dependsOn?.["com.shared.utils"]).toBe("^1.0.0");
+  });
+
+  test("accepts manifest without dependsOn (legacy + zero-dep extensions)", () => {
+    const m = parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0" }));
+    expect(m.dependsOn).toBeUndefined();
+  });
+
+  test("rejects manifest with invalid semver range in dependsOn", () => {
+    expect(() =>
+      parseExtensionManifestJson(
+        JSON.stringify({
+          id: "x",
+          version: "1.0.0",
+          dependsOn: { "com.shared.utils": "not-a-range" },
+        }),
+      ),
+    ).toThrow(/semver/);
+  });
+});

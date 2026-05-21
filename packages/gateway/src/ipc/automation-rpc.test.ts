@@ -8,6 +8,7 @@ import {
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { writePublisherKey } from "../extensions/publisher-keys.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
@@ -540,6 +541,65 @@ describe("extension.info", () => {
       dispatchAutomationRpc({ method: "extension.info", params: {}, db }),
     ).rejects.toThrow(AutomationRpcError);
   });
+
+  test("returns forwardDeps + reverseDeps from extension_dependency table", async () => {
+    const db = seededDb();
+    // Seed two extensions
+    seedExtensionRow(db, "com.shared.A", "/p/a");
+    seedExtensionRow(db, "com.example.B", "/p/b");
+    // Record that B depends on A
+    recordInstall(
+      db,
+      "com.example.B",
+      "1.0.0",
+      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      Date.now(),
+    );
+
+    // Call extension.info for A (no forward deps, reverse dep from B)
+    const outA = await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.shared.A" },
+      db,
+    });
+    expect(outA.kind).toBe("hit");
+    if (outA.kind !== "hit") return;
+    const extA = (
+      outA as {
+        value: {
+          extension: {
+            id: string;
+            forwardDeps: Array<{ id: string; range: string }>;
+            reverseDeps: Array<{ extensionId: string; range: string }>;
+          };
+        };
+      }
+    ).value.extension;
+    expect(extA.forwardDeps).toEqual([]);
+    expect(extA.reverseDeps).toEqual([{ extensionId: "com.example.B", range: "^1.0.0" }]);
+
+    // Call extension.info for B (forward dep on A, no reverse deps)
+    const outB = await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.example.B" },
+      db,
+    });
+    expect(outB.kind).toBe("hit");
+    if (outB.kind !== "hit") return;
+    const extB = (
+      outB as {
+        value: {
+          extension: {
+            id: string;
+            forwardDeps: Array<{ id: string; range: string }>;
+            reverseDeps: Array<{ extensionId: string; range: string }>;
+          };
+        };
+      }
+    ).value.extension;
+    expect(extB.forwardDeps).toEqual([{ id: "com.shared.A", range: "^1.0.0" }]);
+    expect(extB.reverseDeps).toEqual([]);
+  });
 });
 
 describe("extension.enable / disable / remove", () => {
@@ -652,6 +712,73 @@ describe("extension.enable / disable / remove", () => {
       db,
     });
     expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
+  });
+
+  test("remove refuses when reverseDeps is non-empty and --force not set", async () => {
+    const db = seededDb();
+    // Install A (the shared dep) and B (the consumer).
+    seedExtensionRow(db, "com.shared.A", "/p/A");
+    seedExtensionRow(db, "com.example.B", "/p/B");
+    // Record that B depends on A.
+    recordInstall(
+      db,
+      "com.example.B",
+      "1.0.0",
+      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0" }],
+      Date.now(),
+    );
+
+    // Attempt to remove A without --force — must throw.
+    await expect(
+      dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "com.shared.A" },
+        db,
+      }),
+    ).rejects.toThrow(/reverse_dep_blocked/);
+
+    // A row must still be present.
+    expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.shared.A")).not.toBeNull();
+  });
+
+  test("remove with force:true removes the extension and clears its forward deps", async () => {
+    const db = seededDb();
+    const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-force-rm-"));
+    try {
+      // Install A (the shared dep — give it a real dir so rmSync succeeds) and B (consumer).
+      seedExtensionRow(db, "com.shared.A", tmpDir);
+      seedExtensionRow(db, "com.example.B", "/p/B");
+      // Record that B depends on A; give A its own (empty) dep set.
+      recordInstall(
+        db,
+        "com.example.B",
+        "1.0.0",
+        [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0" }],
+        Date.now(),
+      );
+      recordInstall(db, "com.shared.A", "1.0.0", [], Date.now());
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "com.shared.A", force: true },
+        db,
+      });
+      expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
+
+      // A must be gone from extension_state.
+      expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.shared.A")).toBeNull();
+
+      // A's forward deps (the empty set) are cleared — idempotent by design.
+      expect(forwardDeps(db, "com.shared.A")).toHaveLength(0);
+
+      // B's reverse dep edge (B → A) is NOT cleared by this path; B's manifest
+      // still claims A as a dep.  The startup completeness guard will hard-disable
+      // B on next start (Task 13 cascade).  We assert the edge is still present:
+      expect(reverseDeps(db, "com.shared.A")).toHaveLength(1);
+      expect(reverseDeps(db, "com.shared.A")[0]?.extensionId).toBe("com.example.B");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
