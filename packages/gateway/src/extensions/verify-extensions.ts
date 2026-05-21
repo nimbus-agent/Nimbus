@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
+import semver from "semver";
 
 import {
   type ExtensionRow,
@@ -17,12 +18,17 @@ import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { forwardDeps, recordInstall } from "./dependency-store.ts";
 import type { ResolvedDep } from "./dependency-types.ts";
-import { hardDisablePreT2Extensions, signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  hardDisablePreT2Extensions,
+  preT2DisabledRegistry,
+  signatureDisabledRegistry,
+} from "./hard-disable.ts";
 import {
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import {
   errorToHardDisableReason,
@@ -275,6 +281,85 @@ function backfillDependencyRowsBestEffort(
 }
 
 /**
+ * Startup completeness guard (Task 13 / spec §4.4 part 2). Iterates the
+ * `extension_dependency` rows; for each (dependent, dep, range) edge, marks
+ * the dependent in {@link missingDependencyRegistry} if the dep is:
+ *   - not installed,
+ *   - hard-disabled (pre-T2, signature, or already marked by this pass),
+ *   - installed at a version that no longer satisfies the recorded `range`.
+ *
+ * Iterates to fixed point so cascade-disable propagates: A removed → B
+ * disabled → C (which depends on B) disabled on the next iteration.
+ *
+ * Malformed semver ranges are treated as unsatisfied (defensive: a corrupt
+ * `range` column from a future schema must not crash the guard).
+ *
+ * Must run AFTER {@link backfillDependencyRowsBestEffort} (needs populated
+ * `extension_dependency` rows) and BEFORE the orphan sweep.
+ */
+function completenessGuard(
+  db: Database,
+  installed: ReadonlyMap<string, string>,
+  logger: Logger,
+): void {
+  missingDependencyRegistry.reset();
+
+  const isUsable = (id: string): boolean => {
+    if (!installed.has(id)) return false;
+    if (signatureDisabledRegistry.has(id)) return false;
+    if (preT2DisabledRegistry.has(id)) return false;
+    if (missingDependencyRegistry.has(id)) return false;
+    return true;
+  };
+
+  const rows = db
+    .query("SELECT extension_id, depends_on_id, range FROM extension_dependency")
+    .all() as Array<{ extension_id: string; depends_on_id: string; range: string }>;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const r of rows) {
+      if (missingDependencyRegistry.has(r.extension_id)) continue;
+      if (!isUsable(r.depends_on_id)) {
+        missingDependencyRegistry.mark({
+          extensionId: r.extension_id,
+          reason: "dependency_missing",
+          missingDepId: r.depends_on_id,
+          requiredRange: r.range,
+        });
+        changed = true;
+        continue;
+      }
+      const depVersion = installed.get(r.depends_on_id);
+      let satisfies = false;
+      try {
+        satisfies = depVersion !== undefined && semver.satisfies(depVersion, r.range);
+      } catch {
+        satisfies = false;
+      }
+      if (!satisfies) {
+        missingDependencyRegistry.mark({
+          extensionId: r.extension_id,
+          reason: "dependency_unsatisfied",
+          missingDepId: r.depends_on_id,
+          requiredRange: r.range,
+          ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
+        });
+        changed = true;
+      }
+    }
+  }
+
+  if (missingDependencyRegistry.count() > 0) {
+    logger.warn(
+      { count: missingDependencyRegistry.count() },
+      "extensions: dependency completeness guard found missing/unsatisfied dependencies",
+    );
+  }
+}
+
+/**
  * Defense-in-depth orphan-active sweep (Task 12 / review-fix #2).
  * Removes <extensionsRoot>/<id>/ subtrees where no `extension` row matches
  * the id. Per-node atomicity from Task 9 should make this impossible under
@@ -476,6 +561,8 @@ export async function verifyExtensionsBestEffort(
   }
 
   backfillDependencyRowsBestEffort(db, installedFinal, installPathByIdFinal, Date.now(), logger);
+
+  completenessGuard(db, installedFinal, logger);
 
   if (extensionsRoot !== undefined) {
     sweepOrphanActiveDirsBestEffort(db, extensionsRoot, logger);
