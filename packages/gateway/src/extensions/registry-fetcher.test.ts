@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRegistryFetcher } from "./registry-fetcher.ts";
@@ -7,7 +7,11 @@ import { createRegistryFetcher } from "./registry-fetcher.ts";
 let extRoot: string;
 
 beforeAll(async () => {
-  extRoot = join(tmpdir(), `nimbus-test-${Date.now()}`);
+  // Use mkdtemp for the atomic random-suffix temp dir — Date.now() in tmpdir is
+  // a predictable path (TOCTOU-able: an attacker with /tmp write access could
+  // pre-create a symlink at the predicted name before we mkdir). CodeQL flags
+  // the `tmpdir() + Date.now()` pattern as "insecure temporary file".
+  extRoot = await mkdtemp(join(tmpdir(), "nimbus-test-"));
   await mkdir(join(extRoot, "com.shared.utils", "active"), { recursive: true });
   await writeFile(
     join(extRoot, "com.shared.utils", "active", "nimbus.extension.json"),
@@ -79,7 +83,9 @@ describe("createRegistryFetcher (local-first)", () => {
 
   it("tampered on-disk manifest fails parseExtensionManifestJson (review-fix #3)", async () => {
     // Setup: a manifest with garbage in a typed field that the parser will reject.
-    const tamperedRoot = join(tmpdir(), `nimbus-test-tampered-${Date.now()}`);
+    // mkdtemp here for the same reason as the beforeAll above — predictable
+    // `tmpdir() + Date.now()` paths trip CodeQL's "insecure temporary file" rule.
+    const tamperedRoot = await mkdtemp(join(tmpdir(), "nimbus-test-tampered-"));
     await mkdir(join(tamperedRoot, "com.tampered", "active"), { recursive: true });
     await writeFile(
       join(tamperedRoot, "com.tampered", "active", "nimbus.extension.json"),
