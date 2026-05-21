@@ -209,7 +209,14 @@ describe("QueryInput — history cycling", () => {
         showCancelHint={false}
       />,
     );
-    await new Promise((r) => setTimeout(r, 20));
+    // The component reads `historyPath` from disk inside a useEffect — there
+    // is no re-render when the read resolves, so the frame is identical
+    // before and after hydration and we cannot poll for it. The only thing
+    // we can do is wait long enough for the read to land. macOS CI runners
+    // occasionally take much longer than the original 20ms here (this test
+    // intermittently failed on the macos-15 unit-test step), so allow 250ms.
+    // The test still completes in <500ms on local hosts.
+    await new Promise((r) => setTimeout(r, 250));
     stdin.write("\x1B[A"); // Up
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("three");
@@ -223,7 +230,6 @@ describe("QueryInput — history cycling", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");
     stdin.write("\r");
-    // Poll for submit callback rather than fixed wait — survives busy hosts.
     await waitFor(() => lastSubmitted === "one" || null, { timeout: 2000, interval: 10 });
     expect(lastSubmitted).toBe("one");
     unmount();
@@ -242,7 +248,8 @@ describe("QueryInput — history cycling", () => {
         showCancelHint={false}
       />,
     );
-    await new Promise((r) => setTimeout(r, 20));
+    // Same hydration race as the sibling "Up cycles" test — see comment there.
+    await new Promise((r) => setTimeout(r, 250));
     stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");

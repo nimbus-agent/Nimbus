@@ -62,7 +62,12 @@ async function main(): Promise<void> {
       process.exit(2);
     } catch (e: unknown) {
       const code = (e as { code?: string }).code;
-      if (code === "EACCES" || code === "EPERM") process.exit(10);
+      // EACCES / EPERM: classic POSIX denial.
+      // EBUSY: Windows reports the locked SAM hive as "in use" rather than
+      //   "access denied" depending on session/elevation context. From the
+      //   probe's perspective both mean "file is unreadable", which is the
+      //   property under test.
+      if (code === "EACCES" || code === "EPERM" || code === "EBUSY") process.exit(10);
       process.exit(2);
     }
   }

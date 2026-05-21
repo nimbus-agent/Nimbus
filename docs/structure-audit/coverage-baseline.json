@@ -225,10 +225,10 @@
       "min_coverage_pct": 34.62
     },
     "packages/gateway/src/connectors/user-mcp-store.ts": {
-      "min_coverage_pct": 57.63
+      "min_coverage_pct": 77.97
     },
     "packages/gateway/src/connectors/user-mcp-sync.ts": {
-      "min_coverage_pct": 5.26
+      "min_coverage_pct": 52.63
     },
     "packages/gateway/src/db/backups-list.ts": {
       "min_coverage_pct": 40.91
@@ -260,50 +260,17 @@
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
     },
-    "packages/gateway/src/ipc/agent-invoke.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/config.ts": {
-      "min_coverage_pct": 61.76
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/context.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/lifecycle.ts": {
-      "min_coverage_pct": 78.13
-    },
-    "packages/gateway/src/ipc/connector-rpc-handlers/status.ts": {
-      "min_coverage_pct": 25
-    },
-    "packages/gateway/src/ipc/connector-rpc.ts": {
-      "min_coverage_pct": 68.29
-    },
     "packages/gateway/src/ipc/http-server.ts": {
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/http-write-routes.ts": {
       "min_coverage_pct": 79.38
     },
-    "packages/gateway/src/ipc/people-rpc.ts": {
-      "min_coverage_pct": 57.04
-    },
-    "packages/gateway/src/ipc/server/dispatchers.ts": {
-      "min_coverage_pct": 78.23
-    },
-    "packages/gateway/src/ipc/server/inline-handlers.ts": {
-      "min_coverage_pct": 51.5
-    },
     "packages/gateway/src/ipc/server/server.ts": {
       "min_coverage_pct": 73.86
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
       "min_coverage_pct": 45.21
-    },
-    "packages/gateway/src/ipc/server/vault-dispatch.ts": {
-      "min_coverage_pct": 65.17
-    },
-    "packages/gateway/src/ipc/workflow-invoke.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/llm/registry.ts": {
       "min_coverage_pct": 0
@@ -331,9 +298,6 @@
     },
     "packages/gateway/src/platform/worker-security.ts": {
       "min_coverage_pct": 0
-    },
-    "packages/gateway/src/sync/scheduler-store.ts": {
-      "min_coverage_pct": 78.53
     },
     "packages/gateway/src/telemetry/flush-scheduler.ts": {
       "min_coverage_pct": 33.6
