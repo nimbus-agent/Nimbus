@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
-import { runImpact } from "./impact.ts";
+import { emitImpactBrief, runImpact } from "./impact.ts";
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -25,6 +25,61 @@ describe("runImpact", () => {
     expect(brief.gaps.some((g) => g.category === "empty_index")).toBe(true);
     // Latency captured.
     expect(typeof brief.latencyMs).toBe("number");
+  });
+
+  test("resolves a PR URL to a graph_entity and emits a downstream_repo finding", async () => {
+    const db = freshDb();
+    // Seed a `pr` graph_entity matching the PR URL → resolveStartEntity hits
+    // PR_URL_RE branch (Branch 1). Also seed a `repo` graph_entity so
+    // subDownstreamRepos returns a finding instead of an empty result.
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:pr:1', 'pr', 'github:acme/payment#501', 'acme/payment#501', 'github', '{}')",
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
+        "('graph:repo:1', 'repo', 'github:acme/payment', 'acme/payment', 'github', '{}')",
+    );
+    const brief = await runImpact(
+      { fileOrPrUrl: "https://github.com/acme/payment/pull/501", depth: 3 },
+      { db, sessionId: "t-pr", notify: () => {} },
+    );
+    expect(brief.startEntityId).toBe("graph:pr:1");
+    // subDownstreamRepos finds the linked repo (service-bucket finding).
+    const serviceFindings = brief.affected.filter((f) => f.category === "service");
+    expect(serviceFindings.length).toBe(1);
+    expect(serviceFindings[0]?.affectedItemId).toBe("graph:repo:1");
+  });
+
+  test("emitImpactBrief returns a sessionId and emits a Markdown brief via notify (LLM-disabled deterministic path)", async () => {
+    const db = freshDb();
+    const received: Array<{ method: string; params: unknown }> = [];
+    const handle = await emitImpactBrief(
+      { fileOrPrUrl: "src/missing.ts" },
+      {
+        db,
+        sessionId: "t-emit",
+        // No `llm` → synthesize() falls through to deterministicRender (the
+        // _lib/render.ts renderImpact path).
+        notify: (method, params) => {
+          received.push({ method, params });
+        },
+      },
+    );
+    expect(handle.sessionId).toBe("t-emit");
+    // Wait for the fire-and-forget async to land. Three short ticks is enough
+    // because runImpact on an empty DB performs only constant-time SQL.
+    for (let i = 0; i < 20 && received.length === 0; i += 1) {
+      await new Promise<void>((r) => setTimeout(r, 5));
+    }
+    expect(received.length).toBe(1);
+    const evt = received[0];
+    expect(evt?.method).toBe("impact.briefReady");
+    const params = evt?.params as { sessionId: string; brief: string };
+    expect(params.sessionId).toBe("t-emit");
+    // Deterministic Markdown header proves _lib/render.ts ran.
+    expect(params.brief).toContain("# Impact: src/missing.ts");
+    expect(typeof params.brief).toBe("string");
   });
 
   test("aggregates near-duplicate missing-entity gaps into one combined note", async () => {

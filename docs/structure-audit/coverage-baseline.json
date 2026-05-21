@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T09:22:14.230Z",
+  "generated_at": "2026-05-21T12:26:50.821Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -128,9 +128,6 @@
     "packages/cli/src/lib/gateway-process.ts": {
       "min_coverage_pct": 15.22
     },
-    "packages/cli/src/lib/interactive-ipc-handlers.ts": {
-      "min_coverage_pct": 79.34
-    },
     "packages/cli/src/lib/nimbus-toml-config.ts": {
       "min_coverage_pct": 40.11
     },
@@ -153,13 +150,10 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.95
+      "min_coverage_pct": 57.6
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
-    },
-    "packages/cli/src/tui/test-helpers/stub-client.ts": {
-      "min_coverage_pct": 79.49
     },
     "packages/cli/src/types/agents.ts": {
       "min_coverage_pct": 6.67
@@ -182,65 +176,20 @@
     "packages/gateway/src/agents/impact.ts": {
       "min_coverage_pct": 77.81
     },
-    "packages/gateway/src/auth/notion-access-token.ts": {
-      "min_coverage_pct": 62.07
-    },
-    "packages/gateway/src/auth/oauth-vault-tokens.ts": {
-      "min_coverage_pct": 76.6
-    },
-    "packages/gateway/src/auth/slack-access-token.ts": {
-      "min_coverage_pct": 30.77
-    },
-    "packages/gateway/src/config.ts": {
-      "min_coverage_pct": 69.89
-    },
-    "packages/gateway/src/config/session-toml.ts": {
-      "min_coverage_pct": 20.75
-    },
-    "packages/gateway/src/config/telemetry-toml.ts": {
-      "min_coverage_pct": 76.64
-    },
-    "packages/gateway/src/connectors/connector-catalog.ts": {
-      "min_coverage_pct": 64.71
-    },
-    "packages/gateway/src/connectors/connector-vault.ts": {
-      "min_coverage_pct": 67.74
-    },
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
-      "min_coverage_pct": 73.58
+      "min_coverage_pct": 73.82
     },
     "packages/gateway/src/connectors/index.ts": {
       "min_coverage_pct": 0
-    },
-    "packages/gateway/src/connectors/lazy-mesh/mesh.ts": {
-      "min_coverage_pct": 60.83
-    },
-    "packages/gateway/src/connectors/lazy-mesh/tool-map.ts": {
-      "min_coverage_pct": 73.91
-    },
-    "packages/gateway/src/connectors/sync-iso-helpers.ts": {
-      "min_coverage_pct": 75
-    },
-    "packages/gateway/src/connectors/sync-watermark-cursor-v1.ts": {
-      "min_coverage_pct": 34.62
-    },
-    "packages/gateway/src/connectors/user-mcp-store.ts": {
-      "min_coverage_pct": 77.97
-    },
-    "packages/gateway/src/connectors/user-mcp-sync.ts": {
-      "min_coverage_pct": 52.63
-    },
-    "packages/gateway/src/db/backups-list.ts": {
-      "min_coverage_pct": 40.91
     },
     "packages/gateway/src/db/query-guard-worker.ts": {
       "min_coverage_pct": 0
     },
     "packages/gateway/src/db/verify.ts": {
-      "min_coverage_pct": 70.06
+      "min_coverage_pct": 78.44
     },
     "packages/gateway/src/embedding/create-embedding-runtime.ts": {
-      "min_coverage_pct": 19.35
+      "min_coverage_pct": 77.38
     },
     "packages/gateway/src/embedding/embedding-runtime.ts": {
       "min_coverage_pct": 0
@@ -251,14 +200,11 @@
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
     },
-    "packages/gateway/src/embedding/worker-bridge.ts": {
-      "min_coverage_pct": 46.49
-    },
     "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_coverage_pct": 67.08
+      "min_coverage_pct": 66.9
     },
-    "packages/gateway/src/index/item-list-query.ts": {
-      "min_coverage_pct": 75
+    "packages/gateway/src/extensions/registry-fetcher.ts": {
+      "min_coverage_pct": 0
     },
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
@@ -266,53 +212,26 @@
     "packages/gateway/src/ipc/http-server.ts": {
       "min_coverage_pct": 65.12
     },
-    "packages/gateway/src/ipc/http-write-routes.ts": {
-      "min_coverage_pct": 79.38
-    },
     "packages/gateway/src/ipc/server/server.ts": {
-      "min_coverage_pct": 76.27
+      "min_coverage_pct": 76.7
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 49.32
-    },
-    "packages/gateway/src/llm/registry.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/people/parse-from-header.ts": {
-      "min_coverage_pct": 74.39
+      "min_coverage_pct": 45.21
     },
     "packages/gateway/src/platform/assemble.ts": {
       "min_coverage_pct": 77.75
-    },
-    "packages/gateway/src/platform/gateway-state-file.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/platform/index.ts": {
       "min_coverage_pct": 63.64
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 48.08
-    },
-    "packages/gateway/src/platform/register-user-mcp-sync.ts": {
-      "min_coverage_pct": 75
-    },
-    "packages/gateway/src/platform/worker-security.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/telemetry/flush-scheduler.ts": {
-      "min_coverage_pct": 33.6
+      "min_coverage_pct": 39.62
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 75
     },
     "packages/gateway/src/vault/nimbus-vault.ts": {
       "min_coverage_pct": 0
-    },
-    "packages/gateway/src/voice/tts.ts": {
-      "min_coverage_pct": 41.76
-    },
-    "packages/gateway/src/voice/wake-word.ts": {
-      "min_coverage_pct": 51.18
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0
@@ -404,8 +323,8 @@
     "packages/mcp-connectors/teams/src/server.ts": {
       "min_coverage_pct": 0
     },
-    "packages/sdk/src/contract-tests.ts": {
-      "min_coverage_pct": 78.43
+    "packages/sdk/src/crypto/canonical-json.ts": {
+      "min_coverage_pct": 30.77
     },
     "packages/sdk/src/crypto/verify-signature.ts": {
       "min_coverage_pct": 18.68

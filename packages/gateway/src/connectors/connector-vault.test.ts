@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
-
-import { createMemoryVault } from "../testing/bun-test-support.ts";
+import { dbRun } from "../db/write.ts";
+import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import {
+  ALL_GOOGLE_OAUTH_VAULT_KEYS,
   type ConnectorSecretKeyOf,
+  clearOAuthVaultIfProviderUnused,
   deleteConnectorSecret,
+  migrateToPerServiceOAuthKeys,
+  perServiceOAuthVaultKey,
   readConnectorSecret,
   sharedOAuthKey,
   writeConnectorSecret,
+  writePerServiceOAuthKey,
 } from "./connector-vault.ts";
 
 // Type-equality probe (Hilger). Two type parameters are equal iff both are
@@ -215,5 +220,223 @@ describe("deleteConnectorSecret", () => {
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
     await deleteConnectorSecret(vault, "google_drive", "oauth");
     expect(true).toBe(true);
+  });
+});
+
+describe("perServiceOAuthVaultKey", () => {
+  test("returns service-specific Google keys", () => {
+    expect(perServiceOAuthVaultKey("google_drive")).toBe("google_drive.oauth");
+    expect(perServiceOAuthVaultKey("gmail")).toBe("google_gmail.oauth");
+    expect(perServiceOAuthVaultKey("google_photos")).toBe("google_photos.oauth");
+  });
+
+  test("returns service-specific Microsoft keys", () => {
+    expect(perServiceOAuthVaultKey("onedrive")).toBe("onedrive.oauth");
+    expect(perServiceOAuthVaultKey("outlook")).toBe("outlook.oauth");
+    expect(perServiceOAuthVaultKey("teams")).toBe("teams.oauth");
+  });
+
+  test("returns undefined for non-Google/Microsoft services", () => {
+    expect(perServiceOAuthVaultKey("github")).toBeUndefined();
+    expect(perServiceOAuthVaultKey("slack")).toBeUndefined();
+    expect(perServiceOAuthVaultKey("notion")).toBeUndefined();
+    expect(perServiceOAuthVaultKey("datadog")).toBeUndefined();
+  });
+});
+
+describe("ALL_GOOGLE_OAUTH_VAULT_KEYS", () => {
+  test("includes the shared and all per-service Google OAuth keys", () => {
+    expect(ALL_GOOGLE_OAUTH_VAULT_KEYS).toContain("google.oauth");
+    expect(ALL_GOOGLE_OAUTH_VAULT_KEYS).toContain("google_drive.oauth");
+    expect(ALL_GOOGLE_OAUTH_VAULT_KEYS).toContain("google_gmail.oauth");
+    expect(ALL_GOOGLE_OAUTH_VAULT_KEYS).toContain("google_photos.oauth");
+  });
+});
+
+describe("writePerServiceOAuthKey", () => {
+  test("copies the value from the shared key under the per-service key", async () => {
+    const vault = createMemoryVault();
+    await vault.set("google.oauth", "shared-google-token");
+    await writePerServiceOAuthKey(vault, "google_drive", "google.oauth");
+    expect(await vault.get("google_drive.oauth")).toBe("shared-google-token");
+  });
+
+  test("is a no-op when the source shared key is missing (null)", async () => {
+    const vault = createMemoryVault();
+    await writePerServiceOAuthKey(vault, "google_drive", "google.oauth");
+    expect(await vault.get("google_drive.oauth")).toBeNull();
+  });
+
+  test("is a no-op when the source shared key is empty string", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "");
+    await writePerServiceOAuthKey(vault, "outlook", "microsoft.oauth");
+    expect(await vault.get("outlook.oauth")).toBeNull();
+  });
+
+  test("is a no-op for services without a per-service key", async () => {
+    const vault = createMemoryVault();
+    await vault.set("github.oauth", "ghp_test");
+    await writePerServiceOAuthKey(vault, "github", "github.oauth");
+    // No per-service Github OAuth key exists, so nothing else is written.
+    expect(await vault.get("github.oauth")).toBe("ghp_test");
+  });
+
+  test("idempotent: overwrites existing per-service value on second call", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "first");
+    await writePerServiceOAuthKey(vault, "outlook", "microsoft.oauth");
+    expect(await vault.get("outlook.oauth")).toBe("first");
+    await vault.set("microsoft.oauth", "second");
+    await writePerServiceOAuthKey(vault, "outlook", "microsoft.oauth");
+    expect(await vault.get("outlook.oauth")).toBe("second");
+  });
+});
+
+describe("migrateToPerServiceOAuthKeys", () => {
+  test("copies microsoft.oauth into empty per-service Microsoft keys", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "ms-shared-token");
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("onedrive.oauth")).toBe("ms-shared-token");
+    expect(await vault.get("outlook.oauth")).toBe("ms-shared-token");
+    expect(await vault.get("teams.oauth")).toBe("ms-shared-token");
+  });
+
+  test("does not overwrite existing per-service Microsoft keys", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "shared");
+    await vault.set("outlook.oauth", "outlook-specific");
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("outlook.oauth")).toBe("outlook-specific");
+    // Other per-service keys still get the shared value because they were empty.
+    expect(await vault.get("onedrive.oauth")).toBe("shared");
+    expect(await vault.get("teams.oauth")).toBe("shared");
+  });
+
+  test("overwrites an empty-string per-service Microsoft key", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "shared");
+    await vault.set("teams.oauth", "");
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("teams.oauth")).toBe("shared");
+  });
+
+  test("is a no-op when microsoft.oauth is absent", async () => {
+    const vault = createMemoryVault();
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("onedrive.oauth")).toBeNull();
+    expect(await vault.get("outlook.oauth")).toBeNull();
+    expect(await vault.get("teams.oauth")).toBeNull();
+  });
+
+  test("is a no-op when microsoft.oauth is empty string", async () => {
+    const vault = createMemoryVault();
+    await vault.set("microsoft.oauth", "");
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("onedrive.oauth")).toBeNull();
+  });
+
+  test("never touches Google keys (Google migration is intentionally omitted)", async () => {
+    const vault = createMemoryVault();
+    await vault.set("google.oauth", "google-shared");
+    await migrateToPerServiceOAuthKeys(vault);
+    expect(await vault.get("google_drive.oauth")).toBeNull();
+    expect(await vault.get("google_gmail.oauth")).toBeNull();
+    expect(await vault.get("google_photos.oauth")).toBeNull();
+  });
+});
+
+describe("clearOAuthVaultIfProviderUnused", () => {
+  function insertItemRow(
+    db: ReturnType<typeof openMemoryIndexDatabase>,
+    service: string,
+    externalId: string,
+  ): void {
+    dbRun(
+      db,
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?, ?, 'file', ?, 'test', 0, 0)`,
+      [`${service}:${externalId}`, service, externalId],
+    );
+  }
+
+  test("clears Google keys when no Google items remain", async () => {
+    const vault = createMemoryVault();
+    const db = openMemoryIndexDatabase();
+    await vault.set("google.oauth", "shared");
+    await vault.set("google_drive.oauth", "drive");
+    await vault.set("google_gmail.oauth", "gmail");
+    await vault.set("google_photos.oauth", "photos");
+
+    const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "google_drive");
+
+    expect(cleared).toContain("google.oauth");
+    expect(cleared).toContain("google_drive.oauth");
+    expect(cleared).toContain("google_gmail.oauth");
+    expect(cleared).toContain("google_photos.oauth");
+    expect(await vault.get("google.oauth")).toBeNull();
+    expect(await vault.get("google_drive.oauth")).toBeNull();
+    expect(await vault.get("google_gmail.oauth")).toBeNull();
+    expect(await vault.get("google_photos.oauth")).toBeNull();
+  });
+
+  test("retains Google keys when other Google services still have items", async () => {
+    const vault = createMemoryVault();
+    const db = openMemoryIndexDatabase();
+    await vault.set("google.oauth", "shared");
+    await vault.set("google_drive.oauth", "drive");
+    insertItemRow(db, "gmail", "msg-1");
+
+    const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "google_drive");
+
+    expect(cleared).toEqual([]);
+    expect(await vault.get("google.oauth")).toBe("shared");
+    expect(await vault.get("google_drive.oauth")).toBe("drive");
+  });
+
+  test("clears Microsoft keys when no Microsoft items remain", async () => {
+    const vault = createMemoryVault();
+    const db = openMemoryIndexDatabase();
+    await vault.set("microsoft.oauth", "shared");
+    await vault.set("onedrive.oauth", "od");
+    await vault.set("outlook.oauth", "ol");
+    await vault.set("teams.oauth", "tm");
+
+    const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "outlook");
+
+    expect(cleared).toContain("microsoft.oauth");
+    expect(cleared).toContain("onedrive.oauth");
+    expect(cleared).toContain("outlook.oauth");
+    expect(cleared).toContain("teams.oauth");
+    expect(await vault.get("microsoft.oauth")).toBeNull();
+    expect(await vault.get("onedrive.oauth")).toBeNull();
+    expect(await vault.get("outlook.oauth")).toBeNull();
+    expect(await vault.get("teams.oauth")).toBeNull();
+  });
+
+  test("retains Microsoft keys when other Microsoft services still have items", async () => {
+    const vault = createMemoryVault();
+    const db = openMemoryIndexDatabase();
+    await vault.set("microsoft.oauth", "shared");
+    insertItemRow(db, "teams", "channel-1");
+
+    const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "outlook");
+
+    expect(cleared).toEqual([]);
+    expect(await vault.get("microsoft.oauth")).toBe("shared");
+  });
+
+  test("returns empty list and writes nothing for non-provider-family services", async () => {
+    const vault = createMemoryVault();
+    const db = openMemoryIndexDatabase();
+    await vault.set("google.oauth", "shared");
+    await vault.set("microsoft.oauth", "ms");
+
+    const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "github");
+
+    expect(cleared).toEqual([]);
+    expect(await vault.get("google.oauth")).toBe("shared");
+    expect(await vault.get("microsoft.oauth")).toBe("ms");
   });
 });
