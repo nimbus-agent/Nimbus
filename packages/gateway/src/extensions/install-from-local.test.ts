@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -15,6 +16,7 @@ import {
   resolveSystemTarCommand,
 } from "./install-from-local.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
+import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -693,5 +695,453 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
 
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "missing.entry.ext"))).toBe(false);
+  });
+});
+
+// ─── Tier C-2 — dependency-install path through installDepFromRegistry ────────
+
+/**
+ * Helper: build a real .tar.gz containing a single extension package. Returns
+ * the tarball bytes and the entry-file SHA-256 the gateway will compute after
+ * extraction. We return a closure that builds the bytes on demand so each test
+ * controls the tmpdir lifecycle.
+ */
+function buildExtensionTarball(opts: {
+  id: string;
+  version: string;
+  entry?: string;
+  entryContents?: string;
+  dependsOn?: Record<string, string>;
+}): { bytes: Uint8Array; entryHash: string; manifestHash: string } {
+  const stage = mkdtempSync(join(tmpdir(), "nimbus-buildtgz-"));
+  try {
+    const pkgDir = join(stage, "pkg");
+    mkdirSync(join(pkgDir, "dist"), { recursive: true });
+    const entry = opts.entry ?? "dist/index.js";
+    const entryContents = opts.entryContents ?? "export default {};\n";
+    const manifest: Record<string, unknown> = {
+      id: opts.id,
+      version: opts.version,
+      entry,
+    };
+    if (opts.dependsOn !== undefined) {
+      manifest["dependsOn"] = opts.dependsOn;
+    }
+    const manifestJson = JSON.stringify(manifest);
+    writeFileSync(join(pkgDir, "nimbus.extension.json"), manifestJson);
+    writeFileSync(join(pkgDir, entry), entryContents);
+
+    const archive = join(stage, "out.tgz");
+    const tarBin = resolveSystemTarCommand();
+    const r = spawnSync(tarBin, ["-czf", archive, "-C", stage, "pkg"], {
+      windowsHide: true,
+    });
+    if (r.status !== 0) {
+      throw new Error(`tar pack failed: ${r.stderr?.toString() ?? `exit ${String(r.status)}`}`);
+    }
+    const bytes = new Uint8Array(readFileSync(archive));
+    const entryHash = createHash("sha256").update(entryContents).digest("hex");
+    const manifestHash = createHash("sha256").update(manifestJson).digest("hex");
+    return { bytes, entryHash, manifestHash };
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+/** Build a mock RegistryClient. fetchLatestVersion returns the dep version; fetchManifest returns a fixed response. */
+function makeMockRegistry(opts: {
+  depId: string;
+  depVersion: string;
+  manifestResponse?: Partial<FetchManifestResponse>;
+  fetchManifestThrows?: Error;
+  fetchLatestThrows?: Error;
+}): RegistryClient {
+  return {
+    fetchPublisherKey: async () => ({ kind: "not_found" }),
+    fetchLatestVersion: async (id, channel, _signal) => {
+      if (opts.fetchLatestThrows) throw opts.fetchLatestThrows;
+      if (id === opts.depId) {
+        return { version: opts.depVersion, channel };
+      }
+      return null;
+    },
+    fetchManifest: async (id, version, _signal) => {
+      if (opts.fetchManifestThrows) throw opts.fetchManifestThrows;
+      if (id !== opts.depId) {
+        throw new Error(`unexpected fetchManifest for ${id}`);
+      }
+      const base: FetchManifestResponse = {
+        manifest: {
+          id,
+          version,
+          entry: "dist/index.js",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+          updateChannel: "stable",
+        } as FetchManifestResponse["manifest"],
+        manifestRaw: { id, version },
+        manifestHash: "0".repeat(64),
+        entryHash: "0".repeat(64),
+        tarballUrl: "https://mock.example/tarball.tgz",
+      };
+      return { ...base, ...opts.manifestResponse };
+    },
+  };
+}
+
+const originalFetch = globalThis.fetch;
+
+describe("installDepFromRegistry — dependency install via registry (Tier C-2)", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("happy path: registry-resolved dep is fetched, extracted, installed", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-happy-",
+      "root-ext",
+    );
+    const depTarball = buildExtensionTarball({ id: "dep.fetched", version: "1.0.0" });
+
+    // Stub global fetch to return the tarball bytes when downloadTarball asks.
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url === "https://mock.example/tarball.tgz") {
+        return new Response(depTarball.bytes, { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const registryClient = makeMockRegistry({
+      depId: "dep.fetched",
+      depVersion: "1.0.0",
+      manifestResponse: { entryHash: depTarball.entryHash },
+    });
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.with.dep",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.fetched": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    const r = await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: src,
+      registryClient,
+    });
+    expect(r.id).toBe("root.with.dep");
+    expect(r.installed.length).toBe(2);
+    expect(listExtensions(db).find((e) => e.id === "dep.fetched")).toBeDefined();
+    expect(listExtensions(db).find((e) => e.id === "root.with.dep")).toBeDefined();
+  });
+
+  test("entry hash mismatch rolls back dep install (row + dir removed)", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-hashmismatch-",
+      "root-mismatch",
+    );
+    const depTarball = buildExtensionTarball({ id: "dep.hashmiss", version: "1.0.0" });
+
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url === "https://mock.example/tarball.tgz") {
+        return new Response(depTarball.bytes, { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    // Advertise a different entry hash than what the tarball actually contains.
+    const registryClient = makeMockRegistry({
+      depId: "dep.hashmiss",
+      depVersion: "1.0.0",
+      manifestResponse: { entryHash: "f".repeat(64) },
+    });
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.hashmiss",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.hashmiss": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        registryClient,
+      }),
+    ).rejects.toThrow(/entry hash mismatch/i);
+
+    // Roll-back: neither root nor dep should be in the DB.
+    expect(listExtensions(db).find((e) => e.id === "dep.hashmiss")).toBeUndefined();
+    expect(listExtensions(db).find((e) => e.id === "root.hashmiss")).toBeUndefined();
+    // Dep directory rolled back from disk.
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(extensionsDir, "dep.hashmiss"))).toBe(false);
+  });
+
+  test("fetchManifest failure during install (second call) produces 'could not fetch manifest' error", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-fetchfail-",
+      "root-fetchfail",
+    );
+
+    // The solver calls registryClient.fetchManifest once during planning to learn
+    // the dep's own transitive deps. Then installDepFromRegistry calls
+    // fetchManifest a SECOND time to learn the tarball URL. Fail only on the
+    // second call to drive the catch block at lines 438-443.
+    let callCount = 0;
+    const registryClient: RegistryClient = {
+      fetchPublisherKey: async () => ({ kind: "not_found" }),
+      fetchLatestVersion: async (_id, channel) => ({ version: "1.0.0", channel }),
+      fetchManifest: async (id, version) => {
+        callCount++;
+        if (callCount === 1) {
+          // Solver-time manifest fetch: succeed.
+          return {
+            manifest: { id, version, entry: "dist/index.js" } as FetchManifestResponse["manifest"],
+            manifestRaw: { id, version },
+            manifestHash: "0".repeat(64),
+            entryHash: "0".repeat(64),
+            tarballUrl: "https://mock.example/tarball.tgz",
+          };
+        }
+        // Install-time manifest fetch: fail.
+        throw new Error("network down");
+      },
+    };
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.fetchfail",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.fetchfail": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        registryClient,
+      }),
+    ).rejects.toThrow(/could not fetch manifest|network down/i);
+  });
+
+  test("tarball download failure produces 'could not download tarball' error", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-dlfail-",
+      "root-dlfail",
+    );
+
+    globalThis.fetch = (async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch;
+
+    const registryClient = makeMockRegistry({
+      depId: "dep.dlfail",
+      depVersion: "1.0.0",
+    });
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.dlfail",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.dlfail": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        registryClient,
+      }),
+    ).rejects.toThrow(/could not download tarball|connection refused/i);
+  });
+
+  test("dep id mismatch in extracted manifest is rejected", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-idmismatch-",
+      "root-idmismatch",
+    );
+    // Tarball has id "different.id" but registry says "dep.expected".
+    const depTarball = buildExtensionTarball({ id: "different.id", version: "1.0.0" });
+
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url === "https://mock.example/tarball.tgz") {
+        return new Response(depTarball.bytes, { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const registryClient = makeMockRegistry({
+      depId: "dep.expected",
+      depVersion: "1.0.0",
+      manifestResponse: { entryHash: depTarball.entryHash },
+    });
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.idmismatch",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.expected": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        registryClient,
+      }),
+    ).rejects.toThrow(/id mismatch|advertised/i);
+  });
+
+  test("dep version mismatch in extracted manifest is rejected", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-vermismatch-",
+      "root-vermismatch",
+    );
+    // Tarball has version 9.9.9 but registry advertised 1.0.0.
+    const depTarball = buildExtensionTarball({ id: "dep.ver", version: "9.9.9" });
+
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url === "https://mock.example/tarball.tgz") {
+        return new Response(depTarball.bytes, { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    // We need the solver to ask for 1.0.0, so listVersions must return 1.0.0
+    // and the manifest fetch must succeed with version 1.0.0 in the metadata.
+    const registryClient: RegistryClient = {
+      fetchPublisherKey: async () => ({ kind: "not_found" }),
+      fetchLatestVersion: async (_id, channel, _signal) => ({ version: "1.0.0", channel }),
+      fetchManifest: async (id, version, _signal) => ({
+        manifest: { id, version, entry: "dist/index.js" } as FetchManifestResponse["manifest"],
+        manifestRaw: { id, version },
+        manifestHash: "0".repeat(64),
+        entryHash: depTarball.entryHash,
+        tarballUrl: "https://mock.example/tarball.tgz",
+      }),
+    };
+
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.vermismatch",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.ver": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        registryClient,
+      }),
+    ).rejects.toThrow(/version mismatch/i);
+  });
+
+  test("root with dep but no registryClient errors out before any disk mutation", async () => {
+    // The solver tries to listVersions for the missing dep; with no registry
+    // and dep not installed, the solver should refuse (OfflineDependencyResolutionError-class).
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-dep-noregistry-",
+      "root-noreg",
+    );
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "root.noreg",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        dependsOn: { "dep.uninstalled": "^1.0.0" },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow();
+
+    // No disk mutation.
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(extensionsDir, "root.noreg"))).toBe(false);
+    expect(listExtensions(db).find((e) => e.id === "root.noreg")).toBeUndefined();
+  });
+
+  test("solverFetcher.fetchManifest reads installed dep from disk (pinned version path)", async () => {
+    // Pre-install dep A at 1.0.0 via the normal flow.
+    const {
+      extensionsDir,
+      src: srcA,
+      db,
+    } = createExtensionInstallFixture("nimbus-dep-fromdisk-", "ext-a-disk");
+    writeFileSync(
+      join(srcA, "nimbus.extension.json"),
+      JSON.stringify({ id: "disk.dep.a", version: "1.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(srcA, "dist", "index.js"), "export {}\n");
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
+
+    // Install root B requiring A — the solverFetcher.fetchManifest with the
+    // pinned version should hit the disk-read branch (lines 660-670).
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-fromdisk-root-"));
+    try {
+      const srcB = join(tmp, "ext-b-disk");
+      mkdirSync(join(srcB, "dist"), { recursive: true });
+      writeFileSync(
+        join(srcB, "nimbus.extension.json"),
+        JSON.stringify({
+          id: "disk.root.b",
+          version: "1.0.0",
+          entry: "dist/index.js",
+          dependsOn: { "disk.dep.a": "^1.0.0" },
+        }),
+      );
+      writeFileSync(join(srcB, "dist", "index.js"), "export {}\n");
+
+      const r = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: srcB,
+      });
+      expect(r.id).toBe("disk.root.b");
+      // Dep A was already installed (newlyInstalled=false in the closure).
+      const depNode = r.installed.find((n) => n.id === "disk.dep.a");
+      expect(depNode?.newlyInstalled).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
