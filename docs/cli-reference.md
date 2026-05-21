@@ -942,13 +942,28 @@ nimbus extension install https://example.com/nimbus-ext.tar.gz
 
 ---
 
-### `nimbus extension list`
+### `nimbus extension list [--tree] [--json]`
 
 List installed extensions with their status (enabled / disabled).
+
+`--tree` — print an ASCII dependency forest of installed extensions with their forward-dep edges; cycle-safe; NO_COLOR-aware (T2 PR 4).
 
 ```bash
 nimbus extension list
 nimbus extension list --json
+nimbus extension list --tree
+```
+
+---
+
+### `nimbus extension info <id> [--deps] [--json]`
+
+Show details for an installed extension. `--deps` appends a Dependencies section showing forward deps (extensions this one requires) and reverse deps (extensions that depend on this one) from the `extension_dependency` table (T2 PR 4).
+
+```bash
+nimbus extension info com.example.notion
+nimbus extension info com.example.notion --deps
+nimbus extension info com.example.notion --deps --json
 ```
 
 ---
@@ -962,12 +977,16 @@ nimbus extension disable nimbus-notion
 
 ---
 
-### `nimbus extension remove <name>`
+### `nimbus extension remove <name> [--yes] [--force] [--json]`
 
 Uninstall an extension and remove its process. Does not delete the extension's Vault entries automatically — use `nimbus connector remove` first if the extension registered connectors.
 
+If other installed extensions depend on this one, the remove is refused unless `--force` is passed. With `--force`, the removal proceeds after a warning listing the affected dependents; the startup completeness guard will hard-disable those dependents on the next Gateway start via `MissingDependencyRegistry` (T2 PR 4).
+
 ```bash
 nimbus extension remove nimbus-notion
+nimbus extension remove nimbus-notion --force
+nimbus extension remove nimbus-notion --yes --json
 ```
 
 ---
