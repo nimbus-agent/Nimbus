@@ -87,6 +87,9 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI / AsyncAPI spec indexer (Phase 5 Wave A PR 1); `getLastSyncStats()` exposes skipped-spec counters |
 | `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault connector (Phase 5 Wave A PR 2); emits `obsidian_note` items + `backlinks` graph edges |
 | `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP server — reads + HITL-gated `obsidian_append_to_daily_note` |
+| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulnerability connector (Phase 5 T2/Wave-A, 2026-05-21); walks `/v1/orgs → /v1/org/<id>/projects → aggregated-issues`; emits `snyk:vulnerability` items via `mapSnykAggregatedIssueToItem` |
+| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk aggregated-issue → `IndexedItem` mapper; surfaces `{ severity, cve_id, affected_package, fix_available, fix_version, project_url, ... }` in metadata. Unit-tested independently of the HTTP path |
+| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP server — read-only tools `snyk_list` / `snyk_get` / `snyk_search`. `hitlRequired: []` — `snyk.issue.ignore` is a deferred Phase 8 follow-up |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards the sync scheduler against consuming backoff on offline events |
 
 ## Local Index + Migrations + DB

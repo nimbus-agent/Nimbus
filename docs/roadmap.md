@@ -895,7 +895,7 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 
 #### Wave 1 — Code & Dependency Scanning
 
-- [ ] **Snyk** (Code + Open Source + Container) — SAST, SCA vulns, container scan; `snyk.issue.ignore` HITL
+- [x] **Snyk** (Code + Open Source + Container) — SAST, SCA vulns, container scan. Read-only read-tools landed early in Phase 5 (2026-05-21, T2/Wave-A connector Snyk) — `snyk:vulnerability` item type indexed via the gateway-side syncable at `packages/gateway/src/connectors/snyk-sync.ts` (walks `/v1/orgs` → `/v1/org/<id>/projects` → `/v1/org/<id>/project/<pid>/aggregated-issues`), with metadata `{ severity, cve_id, affected_package, affected_versions, fix_available, fix_version, project_url, project_id, org_id, type, disclosed_at, published_at }`; first-party MCP package at `packages/mcp-connectors/snyk/` hosts the three mandatory read tools (`snyk_list`, `snyk_get`, `snyk_search`); sandbox manifest pins `permissions.network` to `api.snyk.io`; `snyk:vulnerability` added to `PROSE_HEAVY_TYPES` (description field is paragraph-shaped). Write tool `snyk.issue.ignore` HITL deferred — when Phase 8 ships it, gate via `engine/executor.ts` `HITL_REQUIRED`.
 - [ ] **Semgrep** — SAST rules + custom packs; `semgrep.finding.suppress` HITL
 - [ ] **SonarQube** — code-quality + security hotspots; `sonar.hotspot.review` HITL
 - [ ] **GitGuardian** — secret findings, severity, validation; `gg.incident.resolve`, `gg.secret.invalidate` HITL
