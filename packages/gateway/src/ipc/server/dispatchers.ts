@@ -20,6 +20,7 @@ import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
 import { dispatchProfileRpc, ProfileRpcError } from "../profile-rpc.ts";
 import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
+import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
@@ -169,6 +170,26 @@ export async function tryDispatchAuditRpc(
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof AuditRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+export async function tryDispatchSecurityRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "security.scan" || ctx.options.localIndex === undefined) {
+    return phase4RpcSkipped;
+  }
+  try {
+    const out = await dispatchSecurityRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof SecurityRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;
@@ -478,6 +499,8 @@ export async function tryDispatchPhase4Rpc(
   if (updaterOutcome !== phase4RpcSkipped) return updaterOutcome;
   const auditOutcome = await tryDispatchAuditRpc(ctx, method, params);
   if (auditOutcome !== phase4RpcSkipped) return auditOutcome;
+  const securityOutcome = await tryDispatchSecurityRpc(ctx, method, params);
+  if (securityOutcome !== phase4RpcSkipped) return securityOutcome;
   const metricsOutcome = await tryDispatchMetricsRpc(ctx, method, params);
   if (metricsOutcome !== metricsRpcSkipped) return metricsOutcome;
   const preflightOutcome = await tryDispatchPreflightRpc(ctx, method, params);
