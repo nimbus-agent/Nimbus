@@ -75,7 +75,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     ).toBeNull();
   });
 
-  test("externalId is `${orgId}/${projectId}/${issueId}` for cross-project uniqueness", () => {
+  test("externalId joins orgId, projectId, and issueId with slashes for cross-project uniqueness", () => {
     const row = mapSnykAggregatedIssueToItem(makeIssue(), {
       orgId: ORG_ID,
       projectId: PROJECT_ID,

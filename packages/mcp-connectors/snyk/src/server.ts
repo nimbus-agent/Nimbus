@@ -20,6 +20,7 @@ import {
   createZodToolRegistrar,
   mcpJsonResult as jsonResult,
 } from "../../shared/mcp-tool-kit.ts";
+import { filterSnykAggregatedIssues } from "./search-filter.ts";
 
 const SNYK_API = "https://api.snyk.io";
 
@@ -159,35 +160,9 @@ reg(
     const path = `/v1/org/${encodeURIComponent(p.orgId)}/project/${encodeURIComponent(p.projectId)}/aggregated-issues`;
     const root = await snykPost(path, body);
     const issues = (root as { issues?: unknown[] } | null)?.issues;
-    const matches: unknown[] = [];
-    if (Array.isArray(issues)) {
-      const needle = p.query.toLowerCase();
-      const cap = p.limit ?? 50;
-      for (const it of issues) {
-        if (it === null || typeof it !== "object") {
-          continue;
-        }
-        const row = it as Record<string, unknown>;
-        const dataField = row["issueData"];
-        const data =
-          dataField !== null && typeof dataField === "object"
-            ? (dataField as Record<string, unknown>)
-            : {};
-        const title = typeof data["title"] === "string" ? (data["title"] as string) : "";
-        const cveField = data["cve"];
-        const cves = Array.isArray(cveField)
-          ? cveField.filter((c): c is string => typeof c === "string")
-          : [];
-        const pkg = typeof row["pkgName"] === "string" ? (row["pkgName"] as string) : "";
-        const hay = `${title} ${cves.join(" ")} ${pkg}`.toLowerCase();
-        if (hay.includes(needle)) {
-          matches.push(it);
-          if (matches.length >= cap) {
-            break;
-          }
-        }
-      }
-    }
+    const matches = Array.isArray(issues)
+      ? filterSnykAggregatedIssues(issues, { query: p.query, limit: p.limit })
+      : [];
     return jsonResult({ matches });
   },
 );
