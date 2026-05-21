@@ -1,6 +1,6 @@
 import { processEnvGet } from "./platform/env-access.ts";
 
-function parseSearchPriorityJson(): ReadonlyMap<string, number> {
+export function parseSearchPriorityJson(): ReadonlyMap<string, number> {
   const raw = processEnvGet("NIMBUS_SEARCH_PRIORITY_JSON");
   if (raw === undefined || raw.trim() === "") {
     return new Map();
@@ -22,7 +22,7 @@ function parseSearchPriorityJson(): ReadonlyMap<string, number> {
   }
 }
 
-function parseEngineContextWindowItems(): number {
+export function parseEngineContextWindowItems(): number {
   const raw = processEnvGet("NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS");
   if (raw === undefined || raw === "") {
     return 20;
@@ -31,7 +31,7 @@ function parseEngineContextWindowItems(): number {
   return Number.isFinite(n) && n >= 1 && n <= 200 ? n : 20;
 }
 
-function parseConversationalAgentMaxSteps(): number {
+export function parseConversationalAgentMaxSteps(): number {
   const raw = processEnvGet("NIMBUS_ASK_MAX_STEPS");
   if (raw === undefined || raw === "") {
     return 20;
@@ -40,7 +40,7 @@ function parseConversationalAgentMaxSteps(): number {
   return Number.isFinite(n) && n >= 1 && n <= 64 ? n : 20;
 }
 
-function parseMaxAgentDepth(): number {
+export function parseMaxAgentDepth(): number {
   const raw = processEnvGet("NIMBUS_MAX_AGENT_DEPTH");
   if (raw === undefined || raw === "") {
     return 3;
@@ -49,7 +49,7 @@ function parseMaxAgentDepth(): number {
   return Number.isFinite(n) && n >= 1 && n <= 10 ? n : 3;
 }
 
-function parseMaxToolCallsPerSession(): number {
+export function parseMaxToolCallsPerSession(): number {
   const raw = processEnvGet("NIMBUS_MAX_TOOL_CALLS_PER_SESSION");
   if (raw === undefined || raw === "") {
     return 20;
@@ -58,7 +58,7 @@ function parseMaxToolCallsPerSession(): number {
   return Number.isFinite(n) && n >= 1 && n <= 200 ? n : 20;
 }
 
-function parseEmbeddingsEnabled(): boolean {
+export function parseEmbeddingsEnabled(): boolean {
   const raw = processEnvGet("NIMBUS_EMBEDDINGS");
   if (raw === "0" || raw === "false") {
     return false;
