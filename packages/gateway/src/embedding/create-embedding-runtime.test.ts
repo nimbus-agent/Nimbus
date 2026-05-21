@@ -326,3 +326,62 @@ describe("createEmbeddingRuntime — provider 'openai'", () => {
     }
   });
 });
+
+describe("createEmbeddingRuntime — provider 'hybrid' fallback + provider 'local'", () => {
+  let originalOpenaiEnv: string | undefined;
+  let originalSkip: string | undefined;
+
+  beforeEach(() => {
+    originalOpenaiEnv = process.env["OPENAI_API_KEY"];
+    originalSkip = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
+    processEnvDelete("OPENAI_API_KEY");
+    processEnvDelete("NIMBUS_SKIP_EMBEDDING_RUNTIME");
+  });
+
+  afterEach(() => {
+    processEnvSet("OPENAI_API_KEY", originalOpenaiEnv);
+    processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", originalSkip);
+  });
+
+  test("provider='hybrid' with no OpenAI key falls through to a local runtime (line 97 + fallthrough at 106-111)", async () => {
+    // The hybrid factory warns and returns null when openai.api_key is
+    // missing. createEmbeddingRuntime then falls through to the worker /
+    // lazy in-process path and returns a non-null runtime.
+    const h = makeHarness({ migrateTo: 30, setOpenaiKey: false });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+      );
+      // Worker bridge attempt may succeed or fail (test env spawning is
+      // platform-dependent); either way we must end with a non-null runtime
+      // from the worker bridge or the lazy fallback.
+      expect(rt).not.toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("provider='local' builds a runtime via worker bridge or lazy fallback (lines 106-111)", async () => {
+    // The 'local' provider skips the hybrid + openai branches and falls
+    // through to the worker / lazy path. Always non-null in a healthy env.
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("local"),
+        true,
+        h.vault,
+      );
+      expect(rt).not.toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+});
