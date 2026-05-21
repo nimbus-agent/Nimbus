@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T12:26:50.821Z",
+  "generated_at": "2026-05-21T15:11:26.296Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -150,7 +150,7 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.6
+      "min_coverage_pct": 57.95
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
@@ -201,10 +201,7 @@
       "min_coverage_pct": 13.51
     },
     "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_coverage_pct": 66.9
-    },
-    "packages/gateway/src/extensions/registry-fetcher.ts": {
-      "min_coverage_pct": 0
+      "min_coverage_pct": 67.08
     },
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
@@ -213,10 +210,10 @@
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/server/server.ts": {
-      "min_coverage_pct": 76.7
+      "min_coverage_pct": 76.27
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 45.21
+      "min_coverage_pct": 49.32
     },
     "packages/gateway/src/platform/assemble.ts": {
       "min_coverage_pct": 77.75
@@ -225,7 +222,7 @@
       "min_coverage_pct": 63.64
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 39.62
+      "min_coverage_pct": 48.08
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 75
@@ -320,11 +317,11 @@
     "packages/mcp-connectors/slack/src/server.ts": {
       "min_coverage_pct": 0
     },
-    "packages/mcp-connectors/teams/src/server.ts": {
+    "packages/mcp-connectors/snyk/src/server.ts": {
       "min_coverage_pct": 0
     },
-    "packages/sdk/src/crypto/canonical-json.ts": {
-      "min_coverage_pct": 30.77
+    "packages/mcp-connectors/teams/src/server.ts": {
+      "min_coverage_pct": 0
     },
     "packages/sdk/src/crypto/verify-signature.ts": {
       "min_coverage_pct": 18.68
