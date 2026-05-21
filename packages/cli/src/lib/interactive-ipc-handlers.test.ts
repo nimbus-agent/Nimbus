@@ -19,8 +19,11 @@ import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
+  registerAgentChunkStdout,
   registerAutoApproveConsentHandler,
+  registerConsentPromptHandler,
   registerInteractiveCliIpcHandlers,
+  selectConsentHandler,
 } from "./interactive-ipc-handlers.ts";
 
 interface RecordedCall {
@@ -133,5 +136,149 @@ describe("registerInteractiveCliIpcHandlers env-var dispatch", () => {
     // prompt path is intentionally out of scope; this test only pins the
     // env-empty-string fallback contract.
     expect(() => registerInteractiveCliIpcHandlers(client)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-notification fake client
+// ---------------------------------------------------------------------------
+
+function makeMultiClient(): {
+  client: IPCClient;
+  fire: (method: string, params: unknown) => Promise<void>;
+  calls: RecordedCall[];
+} {
+  const calls: RecordedCall[] = [];
+  const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
+  const fake = {
+    onNotification: (method: string, handler: (params: unknown) => void | Promise<void>) => {
+      handlers.set(method, handler);
+    },
+    call: async (method: string, params: unknown): Promise<unknown> => {
+      calls.push({ method, params });
+      return undefined;
+    },
+  };
+  const fire = async (method: string, params: unknown): Promise<void> => {
+    const h = handlers.get(method);
+    if (h === undefined) throw new Error(`no handler for "${method}"`);
+    await h(params);
+  };
+  return { client: fake as unknown as IPCClient, fire, calls };
+}
+
+describe("registerAgentChunkStdout", () => {
+  test("writes text to stdout when agent.chunk arrives with text", async () => {
+    const { client, fire } = makeMultiClient();
+    registerAgentChunkStdout(client);
+
+    let captured = "";
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fire("agent.chunk", { text: "hello" });
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(captured).toBe("hello");
+  });
+
+  test("does not write when agent.chunk has no text field", async () => {
+    const { client, fire } = makeMultiClient();
+    registerAgentChunkStdout(client);
+
+    let captured = "";
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fire("agent.chunk", {});
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(captured).toBe("");
+  });
+
+  test("does not write when agent.chunk text is empty string", async () => {
+    const { client, fire } = makeMultiClient();
+    registerAgentChunkStdout(client);
+
+    let captured = "";
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fire("agent.chunk", { text: "" });
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(captured).toBe("");
+  });
+});
+
+describe("registerConsentPromptHandler — malformed payload early-return", () => {
+  test("ignores consent.request with no requestId (does not call consent.respond)", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    registerConsentPromptHandler(client);
+    // We fire with no requestId — the handler returns early without calling confirm.
+    // We do NOT fire a valid request because that would invoke @clack/prompts confirm()
+    // which blocks on a real TTY. The early-return branch is the coverage target.
+    await fire("consent.request", { prompt: "missing requestId" });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("selectConsentHandler", () => {
+  test("selects auto-approve handler when yes=true and no scriptConsentSource", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    selectConsentHandler(client, { yes: true });
+    await fire("consent.request", { requestId: "r-1", prompt: "p" });
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-1", approved: true } },
+    ]);
+  });
+
+  test("selects script handler when scriptConsentSource is set (overrides yes)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "select-consent-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":false}\n', "utf8");
+
+    let stderrCapture = "";
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      stderrCapture += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+
+    const { client, fire, calls } = makeMultiClient();
+    try {
+      selectConsentHandler(client, { yes: true, scriptConsentSource: source });
+      await fire("consent.request", { requestId: "r-2", prompt: "action" });
+    } finally {
+      process.stderr.write = origErr;
+      process.stdout.write = origOut;
+    }
+    // Script handler overrides yes; stderr warning issued
+    expect(stderrCapture).toContain("overrides");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-2", approved: false } },
+    ]);
+  });
+
+  test("falls through to consent prompt handler when yes=false and no scriptConsentSource", () => {
+    const { client } = makeMultiClient();
+    // Just verifies no throw — the clack confirm() prompt path is not exercised
+    // because it would block on a real TTY; this only covers registration.
+    expect(() => selectConsentHandler(client, { yes: false })).not.toThrow();
   });
 });
