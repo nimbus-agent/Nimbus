@@ -46,6 +46,7 @@
     "packages/mcp-connectors/datadog",
     "packages/mcp-connectors/obsidian",
     "packages/mcp-connectors/snyk",
+    "packages/mcp-connectors/bitrise",
     "packages/vscode-extension"
   ],
   "scripts": {
