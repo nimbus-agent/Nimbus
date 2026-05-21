@@ -45,6 +45,7 @@
     "packages/mcp-connectors/newrelic",
     "packages/mcp-connectors/datadog",
     "packages/mcp-connectors/obsidian",
+    "packages/mcp-connectors/snyk",
     "packages/vscode-extension"
   ],
   "scripts": {
