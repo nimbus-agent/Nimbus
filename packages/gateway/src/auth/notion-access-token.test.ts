@@ -55,7 +55,7 @@ describe("getValidNotionAccessToken", () => {
     globalThis.fetch = (async () => {
       fetchCalled = true;
       throw new Error("fetch should not be called on a cache hit");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const tok = await getValidNotionAccessToken(vault);
     expect(tok).toBe("cached-notion-access");
@@ -101,7 +101,7 @@ describe("getValidNotionAccessToken", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const tok = await getValidNotionAccessToken(vault);
     expect(tok).toBe("refreshed-notion-access");
@@ -126,7 +126,7 @@ describe("getValidNotionAccessToken", () => {
         JSON.stringify({ error: "invalid_grant", error_description: "Refresh token expired" }),
         { status: 400, headers: { "content-type": "application/json" } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(getValidNotionAccessToken(vault)).rejects.toThrow("Notion token refresh failed");
   });
