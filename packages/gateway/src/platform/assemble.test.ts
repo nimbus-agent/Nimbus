@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assemblePlatformServices } from "./assemble.ts";
@@ -36,13 +36,11 @@ describe("assemblePlatformServices (smoke)", () => {
 describe("assemblePlatformServices — in-process assembly", () => {
   let tmpDir: string;
   let originalSkipEmbed: string | undefined;
-  let originalDataExports: string | undefined;
   let services: PlatformServices | null = null;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-assemble-"));
     originalSkipEmbed = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
-    originalDataExports = process.env["NIMBUS_DATA_EXPORTS_ENABLED"];
     // Skip the heavy embedding runtime so the test doesn't try to download
     // MiniLM weights. The createLocalIndexWithEmbeddingRuntime branch still
     // runs (rt === null path).
@@ -62,14 +60,17 @@ describe("assemblePlatformServices — in-process assembly", () => {
         /* ignore */
       }
       try {
-        services.syncScheduler.stop();
+        // SyncScheduler.stop() returns a Promise (drain loop on
+        // runningGlobal); awaiting prevents a Windows handle race where the
+        // tick handle is still alive when rmSync(tmpDir, ...) tries to
+        // delete the data dir.
+        await services.syncScheduler.stop();
       } catch {
         /* ignore */
       }
       services = null;
     }
     processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", originalSkipEmbed);
-    processEnvSet("NIMBUS_DATA_EXPORTS_ENABLED", originalDataExports);
     try {
       rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -103,7 +104,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // Ensure config dir exists before writeFileSync — ensurePlatformDirectories
     // will create it but we want to write before that runs.
     rmSync(paths.configDir, { recursive: true, force: true });
-    require("node:fs").mkdirSync(paths.configDir, { recursive: true });
+    mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
       tomlPath,
       [
@@ -135,9 +136,28 @@ describe("assemblePlatformServices — in-process assembly", () => {
 
   it("collectSidecarsFromEnv attaches HTTP + metrics sidecars when ports are set", async () => {
     const paths = makePaths();
-    // Pick high ports unlikely to collide on CI; HTTP first.
-    const httpPort = String(20000 + (process.pid % 1000));
-    const metricsPort = String(21000 + (process.pid % 1000));
+    // Discover two free ports by letting the OS bind ephemeral ports via
+    // `Bun.serve({port: 0})`, then immediately stop those listeners and use
+    // the discovered numbers. This avoids the deterministic `pid % 1000`
+    // collision that occurred when two CI workers shared a modulus —
+    // `collectSidecarsFromEnv` skips port 0 (it gates on `hp > 0`), so we
+    // can't simply forward port 0 through the env var.
+    //
+    // There's a vanishingly small race window between stop() and assemble
+    // binding the same port. If that ever flakes we fall back to option (c)
+    // (stub Bun.serve), but in practice the OS keeps the freed port out of
+    // the ephemeral pool just long enough for the bind to land.
+    const discoverFreePort = (): number => {
+      const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+      const p = probe.port;
+      probe.stop();
+      if (typeof p !== "number") {
+        throw new Error("discoverFreePort: probe did not bind a TCP port");
+      }
+      return p;
+    };
+    const httpPort = String(discoverFreePort());
+    const metricsPort = String(discoverFreePort());
     const originalHttpPort = process.env["NIMBUS_HTTP_PORT"];
     const originalMetricsPort = process.env["NIMBUS_METRICS_PORT"];
     processEnvSet("NIMBUS_HTTP_PORT", httpPort);

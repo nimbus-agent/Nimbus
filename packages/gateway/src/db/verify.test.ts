@@ -2,12 +2,22 @@
  * Coverage Phase 4 — companion to `test/unit/db/verify.test.ts`, focused on the
  * branches that the unit suite does not exercise:
  *
- *  - integrity_check / fts5 / vec / orphan / fk catch paths (closed DB)
+ *  - fts5 / vec / orphan catch paths (broken schema)
  *  - skipped branches when prerequisite tables are absent
  *  - vec_rowid_mismatch (vec count != embedding_chunk count)
  *  - schema_version on a brand-new DB without `_schema_migrations`
  *  - foreign_key_integrity violation row
  *  - schema_version "fresh" branch where uv === 0 && expected === 0
+ *
+ * Watermark-deferred branches (intentionally NOT covered here):
+ *  - `checkIntegrity`'s catch block (verify.ts lines 49-54). The natural
+ *    forcing function is to close the DB and call `verifyIndex`, but
+ *    `checkFts5Consistency`'s `tableExists` call sits outside its own
+ *    try/catch and throws uncaught before any assertion can prove
+ *    `checkIntegrity`'s catch arm executed. Tightening would require
+ *    exporting `checkIntegrity` directly so it can be tested in isolation;
+ *    `verify.ts` doesn't currently support that, so the branch is left to a
+ *    future refactor.
  */
 
 import { Database } from "bun:sqlite";
@@ -171,30 +181,5 @@ describe("verifyIndex — catch-block coverage via broken queries", () => {
     expect(fts?.status).toBe("fail");
     expect(fts?.detail).toBeDefined();
     fresh.close();
-  });
-
-  test("integrity_check catch block fires on a closed DB", () => {
-    // Closing the DB makes `db.query("PRAGMA integrity_check").all()` throw
-    // — exercising lines 49-54. Other checks' tableExists() call (which
-    // sits outside their try/catch) also throws, but the call-order ensures
-    // checkIntegrity runs first inside verifyIndex's findings array
-    // construction, so its catch fires before any uncaught throw escapes.
-    const fresh = new Database(":memory:");
-    LocalIndex.ensureSchema(fresh);
-    fresh.close();
-    // verifyIndex itself doesn't try/catch around the whole list — the second
-    // helper (checkFts5Consistency) calls tableExists() outside its try and
-    // will throw uncaught. So we wrap the call.
-    let caught: unknown = null;
-    try {
-      verifyIndex(fresh, LocalIndex.SCHEMA_VERSION);
-    } catch (err) {
-      caught = err;
-    }
-    // The point of the assertion is just that integrity_check's catch path
-    // was reached (it ran before the uncaught throw from fts5_consistency).
-    // Coverage instrumentation marks the lines as hit even when the function
-    // ultimately throws from a later helper.
-    expect(caught).not.toBeNull();
   });
 });
