@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino, { type Logger } from "pino";
@@ -14,6 +14,7 @@ import { insertExtensionRow, listExtensions } from "../automation/extension-stor
 import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
+import { forwardDeps } from "./dependency-store.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
@@ -385,6 +386,134 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       expect(auditRow).toBeDefined();
       const parsed = JSON.parse(auditRow!.action_json) as { reason: string };
       expect(parsed.reason).toBe("auto_update_install_path_missing");
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});
+
+describe("verifyExtensionsBestEffort — dep-graph backfill (Task 12)", () => {
+  test("backfill populates forward dep edges from on-disk manifest when extension_dependency is empty", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const idA = "com.shared.A";
+      const idB = "com.example.B";
+
+      // Create on-disk layout for A (no deps).
+      const dirA = join(extensionsDir, idA);
+      mkdirSync(join(dirA, "dist"), { recursive: true });
+      const mfBytesA = Buffer.from(
+        JSON.stringify({ id: idA, version: "1.5.0", permissions: {} }),
+        "utf8",
+      );
+      writeFileSync(join(dirA, "nimbus.extension.json"), mfBytesA);
+      const entryTextA = "export default {};";
+      writeFileSync(join(dirA, "dist", "index.js"), entryTextA);
+
+      // Create on-disk layout for B (depends on A).
+      const dirB = join(extensionsDir, idB);
+      mkdirSync(join(dirB, "dist"), { recursive: true });
+      const mfBytesB = Buffer.from(
+        JSON.stringify({
+          id: idB,
+          version: "1.0.0",
+          permissions: {},
+          dependsOn: { [idA]: "^1.0.0" },
+        }),
+        "utf8",
+      );
+      writeFileSync(join(dirB, "nimbus.extension.json"), mfBytesB);
+      const entryTextB = "export default {};";
+      writeFileSync(join(dirB, "dist", "index.js"), entryTextB);
+
+      const now = Date.now();
+      insertExtensionRow(db, {
+        id: idA,
+        version: "1.5.0",
+        install_path: dirA,
+        manifest_hash: createHash("sha256").update(mfBytesA).digest("hex"),
+        entry_hash: createHash("sha256").update(entryTextA).digest("hex"),
+        enabled: 1,
+        installed_at: now,
+        last_verified_at: now,
+      });
+      insertExtensionRow(db, {
+        id: idB,
+        version: "1.0.0",
+        install_path: dirB,
+        manifest_hash: createHash("sha256").update(mfBytesB).digest("hex"),
+        entry_hash: createHash("sha256").update(entryTextB).digest("hex"),
+        enabled: 1,
+        installed_at: now,
+        last_verified_at: now,
+      });
+
+      // No rows in extension_dependency yet.
+      expect(forwardDeps(db, idB)).toHaveLength(0);
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      // After backfill, B should have a forward dep edge to A.
+      const deps = forwardDeps(db, idB);
+      expect(deps).toHaveLength(1);
+      expect(deps[0]?.id).toBe(idA);
+      expect(deps[0]?.range).toBe("^1.0.0");
+
+      // A has no dependsOn — its forward edges remain empty.
+      expect(forwardDeps(db, idA)).toHaveLength(0);
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});
+
+describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
+  test("removes dirs with no extension row, leaves dirs with a row intact", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      // Create an orphan dir (no DB row).
+      const orphanDir = join(extensionsDir, "com.orphan");
+      mkdirSync(join(orphanDir, "dist"), { recursive: true });
+      writeFileSync(
+        join(orphanDir, "nimbus.extension.json"),
+        JSON.stringify({ id: "com.orphan", version: "1.0.0", permissions: {} }),
+        "utf8",
+      );
+
+      // Create a real extension (has a DB row).
+      const realId = "com.real";
+      const realDir = join(extensionsDir, realId);
+      mkdirSync(join(realDir, "dist"), { recursive: true });
+      const mfBytes = Buffer.from(
+        JSON.stringify({ id: realId, version: "1.0.0", permissions: {} }),
+        "utf8",
+      );
+      const entryText = "export default {};";
+      writeFileSync(join(realDir, "nimbus.extension.json"), mfBytes);
+      writeFileSync(join(realDir, "dist", "index.js"), entryText);
+      const now = Date.now();
+      insertExtensionRow(db, {
+        id: realId,
+        version: "1.0.0",
+        install_path: realDir,
+        manifest_hash: createHash("sha256").update(mfBytes).digest("hex"),
+        entry_hash: createHash("sha256").update(entryText).digest("hex"),
+        enabled: 1,
+        installed_at: now,
+        last_verified_at: now,
+      });
+
+      // Pass extensionsRoot as 5th arg to trigger the orphan sweep.
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, extensionsDir);
+
+      // Orphan dir must be gone.
+      expect(existsSync(orphanDir)).toBe(false);
+      // Real extension dir must still exist.
+      expect(existsSync(realDir)).toBe(true);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
       db.close();

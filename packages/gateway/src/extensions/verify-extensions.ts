@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 
@@ -15,6 +15,8 @@ import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
+import { forwardDeps, recordInstall } from "./dependency-store.ts";
+import type { ResolvedDep } from "./dependency-types.ts";
 import { hardDisablePreT2Extensions, signatureDisabledRegistry } from "./hard-disable.ts";
 import {
   parseExtensionManifestForRegistry,
@@ -233,6 +235,85 @@ export function verifyOneExtensionStrict(row: ExtensionRow): boolean {
 }
 
 /**
+ * Offline-safe dep-graph backfill (Task 12 / spec §4.4 part 1).
+ * For every installed extension with no rows in `extension_dependency`,
+ * reads its on-disk manifest's `dependsOn` and records the forward edges.
+ * Trusts the on-disk manifest — PR 2's signature-verify already proved it
+ * authentic upstream. Per-row failures are swallowed (best-effort).
+ */
+function backfillDependencyRowsBestEffort(
+  db: Database,
+  installed: ReadonlyMap<string, string>,
+  installPathById: ReadonlyMap<string, string>,
+  now: number,
+  logger: Logger,
+): void {
+  for (const [id, version] of installed) {
+    if (forwardDeps(db, id).length > 0) continue; // already populated
+    const installPath = installPathById.get(id);
+    if (installPath === undefined) continue;
+    const manifestPath = resolveExtensionManifestPath(installPath);
+    if (manifestPath === undefined) continue;
+    try {
+      const raw = readFileSync(manifestPath, "utf8");
+      const parsed = parseExtensionManifestJson(raw);
+      const dependsOn = parsed.dependsOn;
+      if (dependsOn === undefined || Object.keys(dependsOn).length === 0) continue;
+      const deps: ResolvedDep[] = Object.entries(dependsOn).map(([depId, range]) => ({
+        id: depId,
+        range,
+        resolvedVersion: installed.get(depId) ?? "unknown",
+      }));
+      recordInstall(db, id, version, deps, now);
+    } catch (e) {
+      logger.warn(
+        { extensionId: id, error: e instanceof Error ? e.message : String(e) },
+        "extensions: backfill failed (skipping)",
+      );
+    }
+  }
+}
+
+/**
+ * Defense-in-depth orphan-active sweep (Task 12 / review-fix #2).
+ * Removes <extensionsRoot>/<id>/ subtrees where no `extension` row matches
+ * the id. Per-node atomicity from Task 9 should make this impossible under
+ * normal operation; this catches regressions and old crashes. Never throws.
+ */
+function sweepOrphanActiveDirsBestEffort(
+  db: Database,
+  extensionsRoot: string,
+  logger: Logger,
+): readonly string[] {
+  const removed: string[] = [];
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(extensionsRoot, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const id = entry.name;
+    const row = db.query("SELECT id FROM extension WHERE id = ?").get(id) as {
+      id: string;
+    } | null;
+    if (row !== null) continue;
+    try {
+      rmSync(join(extensionsRoot, id), { recursive: true, force: true });
+      removed.push(id);
+      logger.warn(
+        { orphanId: id },
+        "extensions: removed orphan extension directory (no extension row)",
+      );
+    } catch {
+      /* swallow */
+    }
+  }
+  return removed;
+}
+
+/**
  * T2 PR 2 / I16 — startup signature-verification options. When supplied,
  * `verifyExtensionsBestEffort` runs a second pass after the existing
  * hash-verify sweep that re-checks the Ed25519 manifest signature on every
@@ -258,12 +339,19 @@ export interface VerifyExtensionsSignatureOpts {
  * vault. Failures flip `enabled = 0`, mark
  * {@link signatureDisabledRegistry}, and emit a batched
  * `extension.startup_verification` audit entry summarising the run.
+ *
+ * When `extensionsRoot` is supplied (Task 12), an orphan-active sweep removes
+ * any `<extensionsRoot>/<id>/` subtrees whose id has no `extension` row.
+ * Additionally, a dep-graph backfill populates `extension_dependency` forward
+ * edges from on-disk manifests for any installed extension that has no rows
+ * yet. Both passes are network-free and run before the function returns.
  */
 export async function verifyExtensionsBestEffort(
   db: Database,
   logger: Logger,
   mesh?: ExtensionMeshHandle,
   signatureOpts?: VerifyExtensionsSignatureOpts,
+  extensionsRoot?: string,
 ): Promise<void> {
   if (readIndexedUserVersion(db) < 10) {
     return;
@@ -372,5 +460,24 @@ export async function verifyExtensionsBestEffort(
       }),
       timestamp: Date.now(),
     });
+  }
+
+  // Task 12 — dep-graph backfill + orphan-active sweep. Both are network-free
+  // and run AFTER all existing passes so only surviving (non-disabled) rows
+  // participate. Order matters: backfill first (needs on-disk active/ dirs to
+  // exist); sweep second (removes dirs with no row, which backfill skipped
+  // anyway since `installed` is keyed by extension rows).
+  const allRows = listExtensions(db);
+  const installedFinal: Map<string, string> = new Map();
+  const installPathByIdFinal: Map<string, string> = new Map();
+  for (const r of allRows) {
+    installedFinal.set(r.id, r.version);
+    installPathByIdFinal.set(r.id, r.install_path);
+  }
+
+  backfillDependencyRowsBestEffort(db, installedFinal, installPathByIdFinal, Date.now(), logger);
+
+  if (extensionsRoot !== undefined) {
+    sweepOrphanActiveDirsBestEffort(db, extensionsRoot, logger);
   }
 }
