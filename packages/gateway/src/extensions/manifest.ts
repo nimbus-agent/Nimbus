@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import semver from "semver";
+
 import {
   type SandboxPermissions,
   validateAndNormalizePermissions,
@@ -59,6 +61,12 @@ export type ExtensionManifest = {
    * (T2 PR 3). ≤ 4 KiB after NFC normalization.
    */
   changelog?: string;
+  /**
+   * Optional dependency map: { extensionId → semver range }. Consumed by the
+   * dependency-resolution solver (T2 PR 4). Absent on legacy + zero-dep
+   * extensions. Every range value must pass `semver.validRange`.
+   */
+  dependsOn?: Readonly<Record<string, string>>;
 };
 
 /** Allowed publisher id format. Matches the service-id pattern from CI/CD data layer. */
@@ -136,6 +144,30 @@ function parseChangelog(value: unknown): string | undefined {
   return normalized;
 }
 
+function parseDependsOn(value: unknown): Readonly<Record<string, string>> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("extension manifest dependsOn must be an object");
+  }
+  const o = value as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  for (const [depId, range] of Object.entries(o)) {
+    if (typeof depId !== "string" || depId.trim() === "") {
+      throw new Error("extension manifest dependsOn keys must be non-empty strings");
+    }
+    if (typeof range !== "string" || range.trim() === "") {
+      throw new Error(`extension manifest dependsOn.${depId} must be a non-empty string`);
+    }
+    if (semver.validRange(range) === null) {
+      throw new Error(
+        `extension manifest dependsOn.${depId} is not a valid semver range: ${range}`,
+      );
+    }
+    out[depId] = range;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
   return parseExtensionManifestForRegistry(text).manifest;
 }
@@ -183,6 +215,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
   const changelog = parseChangelog(o["changelog"]);
+  const dependsOn = parseDependsOn(o["dependsOn"]);
   // Pre-T2 detection MUST happen on the raw JSON value, before
   // `validateAndNormalizePermissions` collapses the legacy array form to
   // default-deny. After normalization the two cases are indistinguishable.
@@ -205,6 +238,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       ...(signature !== undefined ? { signature } : {}),
       updateChannel,
       ...(changelog !== undefined ? { changelog } : {}),
+      ...(dependsOn !== undefined ? { dependsOn } : {}),
     },
     isPreT2Legacy,
   };
