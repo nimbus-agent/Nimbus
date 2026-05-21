@@ -16,6 +16,10 @@ import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { forwardDeps } from "./dependency-store.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  _resetMissingDependencyRegistry,
+  missingDependencyRegistry,
+} from "./missing-dependency-registry.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { generateEd25519Keypair } from "./verify-signature.ts";
@@ -516,6 +520,185 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
       expect(existsSync(realDir)).toBe(true);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: stage a minimal on-disk extension layout (manifest + entry) and
+// insert the corresponding `extension` row with correct hashes.
+// Returns the install dir path.
+// ---------------------------------------------------------------------------
+function stageMinimalExtension(
+  db: Database,
+  extensionsDir: string,
+  id: string,
+  version: string,
+  manifestExtra: Record<string, unknown> = {},
+): string {
+  const dir = join(extensionsDir, id);
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  const mfBytes = Buffer.from(
+    JSON.stringify({ id, version, permissions: {}, ...manifestExtra }),
+    "utf8",
+  );
+  const entryText = "export default {};";
+  writeFileSync(join(dir, "nimbus.extension.json"), mfBytes);
+  writeFileSync(join(dir, "dist", "index.js"), entryText);
+  const now = Date.now();
+  insertExtensionRow(db, {
+    id,
+    version,
+    install_path: dir,
+    manifest_hash: createHash("sha256").update(mfBytes).digest("hex"),
+    entry_hash: createHash("sha256").update(entryText).digest("hex"),
+    enabled: 1,
+    installed_at: now,
+    last_verified_at: now,
+  });
+  return dir;
+}
+
+describe("verify-extensions — completeness guard (Task 13)", () => {
+  test("hard-disables dependent when its dep is missing from the installed set", async () => {
+    _resetMissingDependencyRegistry();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      // B is installed; A is NOT installed.
+      const idB = "com.example.B";
+      stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
+
+      // Pre-insert the dependency row (B → A, "^1.0.0").
+      const now = Date.now();
+      dbRun(
+        db,
+        `INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [idB, "com.shared.A", "^1.0.0", now],
+      );
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      expect(missingDependencyRegistry.has(idB)).toBe(true);
+      expect(missingDependencyRegistry.reasonFor(idB)?.reason).toBe("dependency_missing");
+      expect(missingDependencyRegistry.reasonFor(idB)?.missingDepId).toBe("com.shared.A");
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      dbRun(db, "DELETE FROM extension_dependency WHERE 1=1");
+      db.close();
+    }
+  });
+
+  test("hard-disables when installed dep version does not satisfy the declared range", async () => {
+    _resetMissingDependencyRegistry();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const idA = "com.shared.A";
+      const idB = "com.example.B";
+      // A is installed at 0.9.0 — does NOT satisfy "^1.0.0".
+      stageMinimalExtension(db, extensionsDir, idA, "0.9.0");
+      stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
+
+      // Pre-insert dependency row: B → A, "^1.0.0".
+      const now = Date.now();
+      dbRun(
+        db,
+        `INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [idB, idA, "^1.0.0", now],
+      );
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      expect(missingDependencyRegistry.has(idB)).toBe(true);
+      const entry = missingDependencyRegistry.reasonFor(idB);
+      expect(entry?.reason).toBe("dependency_unsatisfied");
+      expect(entry?.observedVersion).toBe("0.9.0");
+      expect(entry?.missingDepId).toBe(idA);
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      dbRun(db, "DELETE FROM extension_dependency WHERE 1=1");
+      db.close();
+    }
+  });
+
+  test("cascade: A missing → B disabled → C (depends on B) also disabled", async () => {
+    _resetMissingDependencyRegistry();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      // B and C are installed; A is NOT installed.
+      const idB = "com.example.B";
+      const idC = "com.example.C";
+      stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
+      stageMinimalExtension(db, extensionsDir, idC, "1.0.0");
+
+      // B depends on missing A; C depends on B.
+      const now = Date.now();
+      dbRun(
+        db,
+        `INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [idB, "com.shared.A", "^1.0.0", now],
+      );
+      dbRun(
+        db,
+        `INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [idC, idB, "^1.0.0", now],
+      );
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      // B is disabled because A is missing.
+      expect(missingDependencyRegistry.has(idB)).toBe(true);
+      expect(missingDependencyRegistry.reasonFor(idB)?.reason).toBe("dependency_missing");
+      expect(missingDependencyRegistry.reasonFor(idB)?.missingDepId).toBe("com.shared.A");
+
+      // C is disabled because B is now in the missing registry (cascade).
+      expect(missingDependencyRegistry.has(idC)).toBe(true);
+      const cEntry = missingDependencyRegistry.reasonFor(idC);
+      expect(cEntry?.reason).toBe("dependency_missing");
+      // C's missing dep is B (the proximate cause), not A.
+      expect(cEntry?.missingDepId).toBe(idB);
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      dbRun(db, "DELETE FROM extension_dependency WHERE 1=1");
+      db.close();
+    }
+  });
+
+  test("malformed semver range is treated as unsatisfied and does not throw", async () => {
+    _resetMissingDependencyRegistry();
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const idA = "com.shared.A";
+      const idB = "com.example.B";
+      // Both A and B are installed; range is intentionally malformed.
+      stageMinimalExtension(db, extensionsDir, idA, "1.0.0");
+      stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
+
+      const now = Date.now();
+      dbRun(
+        db,
+        `INSERT INTO extension_dependency (extension_id, depends_on_id, range, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [idB, idA, "not-a-range", now],
+      );
+
+      // Must not throw even with a corrupt range value.
+      await verifyExtensionsBestEffort(db, logger);
+
+      // B should be marked unsatisfied because semver.satisfies throws on the bad range.
+      expect(missingDependencyRegistry.has(idB)).toBe(true);
+      expect(missingDependencyRegistry.reasonFor(idB)?.reason).toBe("dependency_unsatisfied");
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      dbRun(db, "DELETE FROM extension_dependency WHERE 1=1");
       db.close();
     }
   });
