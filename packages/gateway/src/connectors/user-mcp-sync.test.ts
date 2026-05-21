@@ -93,8 +93,8 @@ describe("createUserMcpSyncable", () => {
 
     expect(warns).toHaveLength(1);
     const captured = warns[0];
-    expect(captured?.obj.serviceId).toBe("svc-c");
-    expect(captured?.obj.err).toBe("spawn failed: ENOENT");
+    expect(captured?.obj["serviceId"]).toBe("svc-c");
+    expect(captured?.obj["err"]).toBe("spawn failed: ENOENT");
     expect(captured?.msg).toBe("user_mcp: ensureRunning failed");
   });
 
@@ -110,8 +110,8 @@ describe("createUserMcpSyncable", () => {
     // The thrown literal must not propagate — sync resolves and preserves cursor.
     expect(result.cursor).toBe("keep-me");
     expect(warns).toHaveLength(1);
-    expect(warns[0]?.obj.err).toBe("boom-string");
-    expect(warns[0]?.obj.serviceId).toBe("svc-d");
+    expect(warns[0]?.obj["err"]).toBe("boom-string");
+    expect(warns[0]?.obj["serviceId"]).toBe("svc-d");
   });
 
   test("ensureRunning is invoked again on every sync call (no caching of success)", async () => {
