@@ -120,6 +120,8 @@ describe("individual pattern matches", () => {
   });
 
   test("slack_bot_token matches xoxb- shape", () => {
+    // gitleaks:allow — synthetic fixture; the xoxb-... shape is the literal
+    // string a real Slack bot token begins with, used here to verify the regex.
     expect(hasMatch("slack_bot_token", `t='xoxb-1234567890-1234567890-${"A".repeat(24)}'`)).toBe(
       true,
     );
@@ -168,12 +170,15 @@ describe("individual pattern matches", () => {
   });
 
   test("pem_private_key matches PRIVATE KEY block header", () => {
+    // gitleaks:allow — these are the canonical PEM block-header strings the
+    // regex is designed to detect; not real keys.
     expect(hasMatch("pem_private_key", "-----BEGIN PRIVATE KEY-----")).toBe(true);
     expect(hasMatch("pem_private_key", "-----BEGIN RSA PRIVATE KEY-----")).toBe(true);
     expect(hasMatch("pem_private_key", "-----BEGIN OPENSSH PRIVATE KEY-----")).toBe(true);
   });
 
   test("pgp_private_key matches PGP block header", () => {
+    // gitleaks:allow — canonical PGP block-header string; not a real key.
     expect(hasMatch("pgp_private_key", "-----BEGIN PGP PRIVATE KEY BLOCK-----")).toBe(true);
   });
 
