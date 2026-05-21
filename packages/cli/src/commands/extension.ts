@@ -12,6 +12,7 @@ import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
 } from "./extension-sandbox-format.ts";
+import { type InstalledExtensionForTree, renderTree } from "./extension-tree.ts";
 
 export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
@@ -45,6 +46,10 @@ type ExtensionListEntry = {
   needs_reinstall?: boolean;
   disabled_reason?: string;
   publisher?: { id: string; key?: string };
+  // T2 PR 4 Task 15 — deps fields added by extension.info (Task 14).
+  // extension.list does NOT return these; they are fetched lazily for --tree.
+  forwardDeps?: Array<{ id: string; range: string }>;
+  reverseDeps?: Array<{ extensionId: string; range: string }>;
 };
 
 export interface ExtensionListTableRow {
@@ -95,6 +100,7 @@ export function formatExtensionListTable(
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
   const filter = takeFlagValue(args, "--filter");
   const json = hasFlag(args, "--json");
+  const tree = hasFlag(args, "--tree");
   const params: Record<string, unknown> = {};
   if (filter !== undefined) params["filter"] = filter;
   const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
@@ -107,6 +113,34 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     console.log("(no extensions installed)");
     return;
   }
+
+  if (tree) {
+    // N+1 calls — extension.list doesn't return forwardDeps, so we fetch
+    // extension.info for each installed extension individually. Acceptable for
+    // interactive CLI use (typically <50 extensions). A future optimisation
+    // could extend extension.list to return forwardDeps directly, but keeping
+    // the backend change small for this PR is intentional.
+    const installed: InstalledExtensionForTree[] = [];
+    for (const r of rows) {
+      try {
+        const info = await client.call<{
+          extension: { forwardDeps?: Array<{ id: string; range: string }> };
+        }>("extension.info", { id: r.id });
+        installed.push({
+          id: r.id,
+          version: r.version,
+          forwardDeps: info.extension.forwardDeps ?? [],
+        });
+      } catch {
+        // best-effort: an extension we can't info-query still appears in the
+        // tree as a leaf so the user at least sees it is installed.
+        installed.push({ id: r.id, version: r.version, forwardDeps: [] });
+      }
+    }
+    console.log(renderTree(installed));
+    return;
+  }
+
   const noColorEnv = process.env["NO_COLOR"];
   const noColor = noColorEnv !== undefined && noColorEnv !== "";
   const isTty = process.stdout.isTTY === true;
@@ -220,6 +254,30 @@ export async function runExtensionInfo(
   if (e.needs_reinstall === true && out.message !== undefined) {
     console.log("");
     console.log(out.message);
+  }
+  // T2 PR 4 Task 15 — opt-in dependency section. The gateway extension.info
+  // response includes forwardDeps and reverseDeps after Task 14; they are
+  // absent (undefined) on pre-T2-PR4 gateways, which is handled gracefully.
+  if (hasFlag(args, "--deps")) {
+    const fwd = e.forwardDeps ?? [];
+    const rev = e.reverseDeps ?? [];
+    if (fwd.length > 0 || rev.length > 0) {
+      console.log("\nDependencies:");
+      if (fwd.length > 0) {
+        console.log("  Forward (this extension requires):");
+        for (const f of [...fwd].sort((a, b) => a.id.localeCompare(b.id))) {
+          console.log(`    ${f.id}  ${f.range}`);
+        }
+      }
+      if (rev.length > 0) {
+        console.log("  Reverse (required by):");
+        for (const r of [...rev].sort((a, b) => a.extensionId.localeCompare(b.extensionId))) {
+          console.log(`    ${r.extensionId}  ${r.range}`);
+        }
+      }
+    } else {
+      console.log("\nDependencies: (none)");
+    }
   }
 }
 
@@ -565,7 +623,7 @@ export async function runExtension(args: string[]): Promise<void> {
     }
 
     throw new Error(
-      "Usage: nimbus extension list [--filter needs-reinstall] [--json] | info <id> [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
+      "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
     );
   } finally {
     await client.disconnect();
