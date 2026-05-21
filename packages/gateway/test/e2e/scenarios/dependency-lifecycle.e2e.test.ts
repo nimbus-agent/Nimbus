@@ -248,14 +248,8 @@ describe("T2 PR 4 — dependency lifecycle (end-to-end in-process)", () => {
     expect(reason?.missingDepId).toBe("com.shared.A");
 
     // ── Step 7: Re-install A; verify pass clears B ──────────────────────────
-    // Build a fresh source directory for A (same id/version).
-    const aSource2Dir = buildExtensionDir({
-      baseDir: join(workDir, "sources2"),
-      id: "com.shared.A",
-      version: "1.5.0",
-    });
-    mkdirSync(join(workDir, "sources2"), { recursive: true });
-    // Recreate since buildExtensionDir expects the base dir to already exist.
+    // Fresh temp dir for the rebuilt source (buildExtensionDir wants the base
+    // dir to already exist; mkdtempSync provides that atomically).
     const aSource2DirActual = buildExtensionDir({
       baseDir: mkdtempSync(join(tmpdir(), "nimbus-dep-lc-a2-")),
       id: "com.shared.A",
