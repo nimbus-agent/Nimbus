@@ -362,6 +362,42 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ---
 
+## Security
+
+### `nimbus security scan`
+
+Local credential-hygiene scan over already-indexed content.
+
+```bash
+nimbus security scan         # pretty table
+nimbus security scan --json  # frozen JSON envelope (machine-readable)
+```
+
+**What it does.** Iterates every `item` row from connectors at `summary` or
+`full` depth, applies a curated set of high-precision regex patterns
+against `body_preview`, and reports likely secrets along with their
+connector, item id, and modification time. **Read-only** — the scan never
+fetches new content, never invokes a connector, never writes anything
+beyond a single summary audit row. Connectors at `metadata_only` depth
+are skipped and listed in the response.
+
+**Output safety.** The full secret value never appears in stdout, JSON,
+logs, or any audit row. Findings show:
+
+- `match_redacted` — first-4 + `****` + last-4 (e.g. `AKIA****MPLE`).
+- `context_snippet` — ±40 chars around the match, secret middle replaced
+  with the literal string `[REDACTED]`.
+
+**Posture.** CLI-only — not exposed to the Tauri renderer (not in
+`ALLOWED_METHODS`), not callable over LAN (in `FORBIDDEN_OVER_LAN` as
+exfiltration-class), not on the HTTP API.
+
+**Exit codes.** `0` on completion (with or without findings); `1` on
+usage error or gateway-not-running; `2` on IPC failure / malformed
+response.
+
+---
+
 ## Interactive Sessions
 
 ### `nimbus tui`

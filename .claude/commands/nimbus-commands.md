@@ -86,6 +86,7 @@ bun run test:coverage:perf            # ≥80% (perf bench harness)
 bun run test:coverage:metrics         # ≥80% (DORA calculators + IPC)
 bun run test:coverage:preflight       # ≥80% (preflight calculator + IPC + HTTP + github-sync mergeable enrichment)
 bun run test:coverage:deployment      # ≥80% (post-deploy annotation calculator + HTTP write surface)
+bun run test:coverage:security        # ≥80% (security/ + security-rpc + e2e)
 
 # UI Vitest gate
 cd packages/ui && bunx vitest run --coverage   # ≥80% lines / ≥75% branches
@@ -225,6 +226,14 @@ nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env>
 
 ```
 http_api.deployment_token   # Bearer token required for POST /v1/deployments; set via `nimbus vault set http_api.deployment_token <token>` (CLI-only). Without it, the HTTP write surface refuses all POSTs with 503 (write_surface_disabled).
+```
+
+### Phase 5 — security audit follow-ups
+
+```bash
+nimbus security scan [--json]   # local credential-hygiene scan over already-indexed content.
+# IPC: security.scan — CLI-only; NOT in Tauri ALLOWED_METHODS (I7); FORBIDDEN_OVER_LAN (I5).
+# Read-only; never fetches new content; emits no full secrets in output/logs/audit.
 ```
 
 ### Phase 5 T6 — Forensic + hybrid embedding
