@@ -17,8 +17,11 @@ describe("isExempt — platform-specific PAL files", () => {
       expect(isExempt(`packages/gateway/src/platform/${f}.ts`)).toBe(true);
     }
   });
-  test("vault/factory.ts is NOT exempt (it's the dispatcher, testable)", () => {
-    expect(isExempt("packages/gateway/src/vault/factory.ts")).toBe(false);
+  test("vault/factory.ts IS exempt (async per-OS dispatcher; only one switch arm reachable per CI run)", () => {
+    expect(isExempt("packages/gateway/src/vault/factory.ts")).toBe(true);
+  });
+  test("platform/index.ts IS exempt (async per-OS dispatcher; only one switch arm reachable per CI run)", () => {
+    expect(isExempt("packages/gateway/src/platform/index.ts")).toBe(true);
   });
 });
 
