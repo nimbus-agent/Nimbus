@@ -457,3 +457,241 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     expect(listExtensions(db).length).toBe(0);
   });
 });
+
+describe("install-from-local — early-rejection / error-handling branches (Tier C-1)", () => {
+  test("source path that does not exist throws", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-noent-"));
+    const extensionsDir = join(tmp, "extensions");
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: join(tmp, "does-not-exist"),
+        }),
+      ).rejects.toThrow(/source path does not exist/i);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("file source with wrong extension is rejected (not .tar.gz / .tgz)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-wrongext-"));
+    const extensionsDir = join(tmp, "extensions");
+    const filePath = join(tmp, "not-an-archive.zip");
+    writeFileSync(filePath, "not a tarball");
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: filePath,
+        }),
+      ).rejects.toThrow(/\.tar\.gz or \.tgz/i);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("directory without manifest is rejected", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-no-manifest-"));
+    const extensionsDir = join(tmp, "extensions");
+    const src = join(tmp, "src-empty");
+    mkdirSync(src, { recursive: true });
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src,
+        }),
+      ).rejects.toThrow(/manifest not found/i);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("install fails when destination directory already exists from a previous install at a different version", async () => {
+    // Install version 1.0.0 first, then try to install 2.0.0 with a fresh DB.
+    // The destination directory still exists from the prior install but the
+    // solver sees the root as newlyInstalled (no existing DB row), so the
+    // existsSync(dest) check on line 698 fires.
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-dest-exists-",
+      "src-v1",
+    );
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "dest.exists.ext", version: "1.0.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+
+    // Fresh DB so solver sees nothing installed, but the dir still exists on disk.
+    const db2 = new Database(":memory:");
+    LocalIndex.ensureSchema(db2);
+
+    const src2 = join(dirname(src), "src-v2");
+    mkdirSync(join(src2, "dist"), { recursive: true });
+    writeFileSync(
+      join(src2, "nimbus.extension.json"),
+      JSON.stringify({ id: "dest.exists.ext", version: "2.0.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
+
+    await expect(
+      installExtensionFromLocalDirectory({ db: db2, extensionsDir, sourcePath: src2 }),
+    ).rejects.toThrow(/already installed at/i);
+  });
+
+  test("manifest with absolute entry path is rejected", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-absentry-",
+      "src-abs",
+    );
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "abs.entry.ext", version: "1.0.0", entry: "/etc/passwd" }),
+      "utf8",
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow(/relative path/i);
+
+    // Rollback removed partial install.
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(extensionsDir, "abs.entry.ext"))).toBe(false);
+  });
+
+  test("manifest with entry that escapes install dir is rejected", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-escape-",
+      "src-escape",
+    );
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "escape.ext", version: "1.0.0", entry: "../../../escape.js" }),
+      "utf8",
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow(/escapes install directory/i);
+  });
+
+  test("corrupt .tgz file produces tar extraction error", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-badtgz-"));
+    const extensionsDir = join(tmp, "extensions");
+    const badArchive = join(tmp, "bad.tgz");
+    // Random non-gzip bytes — tar will refuse to extract.
+    writeFileSync(badArchive, "not a real gzip archive at all");
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: badArchive,
+        }),
+      ).rejects.toThrow(/failed to extract|extract|extension manifest|not found/i);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("archive without manifest at root or one-deep is rejected", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-nomf-arch-"));
+    const extensionsDir = join(tmp, "extensions");
+    const stage = join(tmp, "stage");
+    // Two levels deep so the one-deep lookup also fails.
+    mkdirSync(join(stage, "level1", "level2"), { recursive: true });
+    writeFileSync(join(stage, "level1", "level2", "nimbus.extension.json"), "{}");
+
+    const archive = join(tmp, "buried.tgz");
+    const tarBin = resolveSystemTarCommand();
+    const pack = spawnSync(tarBin, ["-czf", archive, "-C", stage, "level1"], {
+      windowsHide: true,
+    });
+    expect(pack.status).toBe(0);
+
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: archive,
+        }),
+      ).rejects.toThrow(/nimbus\.extension\.json|not contain/i);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("archive with manifest in subdirectory installs (one-deep fallback)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-onedeep-"));
+    const extensionsDir = join(tmp, "extensions");
+    const stage = join(tmp, "stage");
+    const pkgDir = join(stage, "pkg-inner");
+    mkdirSync(join(pkgDir, "dist"), { recursive: true });
+    writeFileSync(
+      join(pkgDir, "nimbus.extension.json"),
+      JSON.stringify({ id: "one.deep.ext", version: "1.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(pkgDir, "dist", "index.js"), "export {}\n");
+
+    const archive = join(tmp, "onedeep.tgz");
+    const tarBin = resolveSystemTarCommand();
+    const pack = spawnSync(tarBin, ["-czf", archive, "-C", stage, "pkg-inner"], {
+      windowsHide: true,
+    });
+    expect(pack.status).toBe(0);
+
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      const r = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: archive,
+      });
+      expect(r.id).toBe("one.deep.ext");
+      expect(listExtensions(db).length).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("manifest missing entry file rolls back install dir", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-missing-entry-",
+      "src-missing",
+    );
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      // entry points at a nonexistent path
+      JSON.stringify({ id: "missing.entry.ext", version: "1.0.0", entry: "dist/nope.js" }),
+      "utf8",
+    );
+    // intentionally NOT writing dist/nope.js
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow(/entry file missing/i);
+
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(extensionsDir, "missing.entry.ext"))).toBe(false);
+  });
+});
