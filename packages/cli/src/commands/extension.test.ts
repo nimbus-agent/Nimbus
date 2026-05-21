@@ -659,3 +659,156 @@ describe("runExtensionInfo publisher (T2 PR 2)", () => {
     expect(parsed.extension.publisher.key).toBe(fullKey);
   });
 });
+
+// ─────────────────────────── T2 PR 4 — --force / --deps / --tree ────────────
+
+// ----------------------------- runExtensionRemove --force (T2 PR 4) ---------
+
+describe("runExtensionRemove --force (T2 PR 4)", () => {
+  const origIsTty = process.stdout.isTTY;
+  let stderrOutput: string[] = [];
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: origIsTty,
+    });
+    process.stderr.write = origStderrWrite;
+    stderrOutput = [];
+  });
+
+  test("--force passes force:true in payload + writes warning to stderr", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    // Capture stderr
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrOutput.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    const { client, calls } = mockClient([{ ok: true }]);
+    await runExtensionRemove(client, ["remove", "my.ext", "--yes", "--force"], ["my.ext"]);
+    expect(calls[0]?.method).toBe("extension.remove");
+    expect(calls[0]?.params).toEqual({ id: "my.ext", force: true });
+    const errOut = stderrOutput.join("");
+    expect(errOut).toContain("--force");
+  });
+
+  test("prints actionable message on reverse_dep_blocked and exits 1", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    // Capture stderr before triggering the error path.
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrOutput.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    // Override process.exit so it throws instead of killing the process,
+    // which lets us assert on stderr output written before exit is called.
+    const origExit = process.exit.bind(process);
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    try {
+      const { client } = mockClient([new Error("reverse_dep_blocked: dep-a requires my.ext")]);
+      await expect(
+        runExtensionRemove(client, ["remove", "my.ext", "--yes"], ["my.ext"]),
+      ).rejects.toThrow("process.exit(1)");
+      const errOut = stderrOutput.join("");
+      expect(errOut).toContain("reverse_dep_blocked");
+      expect(errOut).toContain("--force");
+    } finally {
+      process.exit = origExit;
+    }
+  });
+});
+
+// ----------------------------- runExtensionInfo --deps (T2 PR 4) ------------
+
+describe("runExtensionInfo --deps (T2 PR 4)", () => {
+  test("--deps appends Dependencies section with forward + reverse deps", async () => {
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          forwardDeps: [
+            { id: "dep-x", range: "^1.0.0" },
+            { id: "dep-y", range: ">=2.0.0" },
+          ],
+          reverseDeps: [{ extensionId: "parent-a", range: "~0.5.0" }],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-a"], ["info", "ext-a", "--deps"]);
+    const out = captured.join("\n");
+    expect(out).toContain("Dependencies:");
+    expect(out).toContain("dep-x");
+    expect(out).toContain("dep-y");
+    expect(out).toContain("parent-a");
+    expect(out).toContain("Forward");
+    expect(out).toContain("Reverse");
+  });
+
+  test("--deps prints (none) when both arrays empty", async () => {
+    const { client } = mockClient([
+      {
+        extension: {
+          id: "ext-b",
+          version: "0.1.0",
+          enabled: 1,
+          forwardDeps: [],
+          reverseDeps: [],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-b"], ["info", "ext-b", "--deps"]);
+    const out = captured.join("\n");
+    expect(out).toContain("(none)");
+    // Neither Forward nor Reverse section should appear
+    expect(out).not.toContain("Forward");
+    expect(out).not.toContain("Reverse");
+  });
+});
+
+// ----------------------------- runExtensionList --tree (T2 PR 4) ------------
+
+describe("runExtensionList --tree (T2 PR 4)", () => {
+  test("--tree fetches per-extension info and renders via renderTree", async () => {
+    // extension.list → 2 rows; then extension.info for each row
+    const { client, calls } = mockClient([
+      {
+        extensions: [
+          { id: "ext-a", version: "1.0.0", enabled: 1 },
+          { id: "ext-b", version: "2.0.0", enabled: 1 },
+        ],
+      },
+      // extension.info for ext-a
+      { extension: { forwardDeps: [{ id: "ext-b", range: "^2.0.0" }] } },
+      // extension.info for ext-b
+      { extension: { forwardDeps: [] } },
+    ]);
+    await runExtensionList(client, ["list", "--tree"]);
+    // Should have made 3 calls: list + 2 info
+    expect(calls.length).toBe(3);
+    expect(calls[0]?.method).toBe("extension.list");
+    expect(calls[1]?.method).toBe("extension.info");
+    expect(calls[2]?.method).toBe("extension.info");
+    // renderTree output should contain both extension ids
+    const out = captured.join("\n");
+    expect(out).toContain("ext-a");
+    expect(out).toContain("ext-b");
+  });
+
+  test("--tree falls back to leaf node when extension.info throws", async () => {
+    const { client } = mockClient([
+      { extensions: [{ id: "ext-z", version: "0.1.0", enabled: 1 }] },
+      // extension.info throws
+      new Error("info unavailable"),
+    ]);
+    // Should not throw — best-effort leaf rendering
+    await runExtensionList(client, ["list", "--tree"]);
+    const out = captured.join("\n");
+    expect(out).toContain("ext-z");
+  });
+});
