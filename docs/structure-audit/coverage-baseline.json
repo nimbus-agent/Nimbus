@@ -209,9 +209,6 @@
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_coverage_pct": 73.58
     },
-    "packages/gateway/src/connectors/index.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/connectors/lazy-mesh/mesh.ts": {
       "min_coverage_pct": 60.83
     },
@@ -233,20 +230,11 @@
     "packages/gateway/src/db/backups-list.ts": {
       "min_coverage_pct": 40.91
     },
-    "packages/gateway/src/db/query-guard-worker.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/db/verify.ts": {
       "min_coverage_pct": 70.06
     },
     "packages/gateway/src/embedding/create-embedding-runtime.ts": {
       "min_coverage_pct": 19.35
-    },
-    "packages/gateway/src/embedding/embedding-runtime.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/embedding/embedding-worker.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
@@ -256,9 +244,6 @@
     },
     "packages/gateway/src/index/item-list-query.ts": {
       "min_coverage_pct": 75
-    },
-    "packages/gateway/src/index/ranked-item.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/ipc/http-server.ts": {
       "min_coverage_pct": 65.12
@@ -304,12 +289,6 @@
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 66.67
-    },
-    "packages/gateway/src/vault/ffi-ptr.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/gateway/src/vault/nimbus-vault.ts": {
-      "min_coverage_pct": 0
     },
     "packages/gateway/src/voice/tts.ts": {
       "min_coverage_pct": 41.76

@@ -25,6 +25,10 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/vault/win32.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/darwin.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/linux.ts" },
+  // Windows-only FFI pointer helper — imported only by vault/win32.ts, which is
+  // itself excluded above. On Linux/macOS CI the file is never loaded, so its
+  // lcov entry is always 0/0. Parallel to the vault/win32.ts exclusion rationale.
+  { kind: "exact", path: "packages/gateway/src/vault/ffi-ptr.ts" },
   { kind: "exact", path: "packages/gateway/src/platform/win32.ts" },
   { kind: "exact", path: "packages/gateway/src/platform/darwin.ts" },
   { kind: "exact", path: "packages/gateway/src/platform/linux.ts" },
@@ -50,12 +54,22 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // produces no executable code in TypeScript erasure. Bun's V8 coverage
   // emits no lcov entries for this file.
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/index.ts" },
+  // Pure re-export barrel — only `export { ... } from "./..."` statements;
+  // zero runtime emit after TypeScript erasure. Same rationale as
+  // platform/sandbox/index.ts above.
+  { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
 
   // Subprocess entry-point scripts — top-level `await main()` makes them
   // structurally untestable in-process (same shape as github-actions main.ts).
   // Invoked via `process.execPath <script>` from production code only.
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
   { kind: "exact", path: "packages/sdk/src/testing/sandbox-probe.ts" },
+  // Bun Worker entry points — top-level `onmessage = ...` handler; the module
+  // is loaded inside a `new Worker(...)` subprocess, not via `import`. Running
+  // it in-process during tests would bypass the Worker message boundary and
+  // produce no coverage anyway. Same shape as sandbox-wrapper.ts / sandbox-probe.ts.
+  { kind: "exact", path: "packages/gateway/src/db/query-guard-worker.ts" },
+  { kind: "exact", path: "packages/gateway/src/embedding/embedding-worker.ts" },
   // Gateway entry point — top-level `await main()` makes in-process testing
   // impossible (same exemption rationale as github-actions/*/src/main.ts).
   // Helpers like `emitSandboxPostureBannerIfDegraded` would need to be
@@ -67,6 +81,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // the same exemption rationale — zero executable statements.
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
+  // Interface-only / type-only files — no runtime-executable statements after
+  // TypeScript erasure. Bun's V8 coverage reports 0/0 lines for these.
+  // Parallel to lazy-mesh/slot.ts and ipc/server/options.ts above.
+  { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
+  { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
+  { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },
   // IPC invocation-context type aliases — `export type` declarations only.
   // The dispatchers (agents-rpc, automation-rpc, connector-rpc) consume
   // these contexts; the type files themselves emit nothing at runtime so
