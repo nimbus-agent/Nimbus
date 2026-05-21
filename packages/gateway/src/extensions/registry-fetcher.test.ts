@@ -81,6 +81,60 @@ describe("createRegistryFetcher (local-first)", () => {
     expect(remoteListCalled).toBe(true);
   });
 
+  it("fetchManifest falls through to remote when requested version does not match installed version", async () => {
+    let remoteFetchCalled = false;
+    const fetcher = createRegistryFetcher({
+      installed: new Map([["com.shared.utils", "1.5.0"]]),
+      extensionDir: (id) => join(extRoot, id, "active"),
+      remoteListVersions: async () => [],
+      remoteFetchManifest: async (id, version) => {
+        remoteFetchCalled = true;
+        return { id, version };
+      },
+    });
+    const m = await fetcher.fetchManifest("com.shared.utils", "2.0.0");
+    expect(m.version).toBe("2.0.0");
+    expect(remoteFetchCalled).toBe(true);
+  });
+
+  it("fetchManifest falls through to remote when id is not in installed map at all", async () => {
+    let remoteFetchCalled = false;
+    const fetcher = createRegistryFetcher({
+      installed: new Map(),
+      extensionDir: () => extRoot,
+      remoteListVersions: async () => [],
+      remoteFetchManifest: async (id, version) => {
+        remoteFetchCalled = true;
+        return { id, version };
+      },
+    });
+    const m = await fetcher.fetchManifest("com.never.installed", "1.0.0");
+    expect(m.id).toBe("com.never.installed");
+    expect(remoteFetchCalled).toBe(true);
+  });
+
+  it("fetchManifest throws on genuinely malformed JSON on disk", async () => {
+    const malformedRoot = await mkdtemp(join(tmpdir(), "nimbus-test-malformed-"));
+    await mkdir(join(malformedRoot, "com.malformed", "active"), { recursive: true });
+    await writeFile(
+      join(malformedRoot, "com.malformed", "active", "nimbus.extension.json"),
+      "{ not: valid json at all",
+      "utf8",
+    );
+    const fetcher = createRegistryFetcher({
+      installed: new Map([["com.malformed", "1.0.0"]]),
+      extensionDir: (id) => join(malformedRoot, id, "active"),
+      remoteListVersions: async () => [],
+      remoteFetchManifest: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    await expect(fetcher.fetchManifest("com.malformed", "1.0.0")).rejects.toThrow(
+      "extension manifest is not valid JSON",
+    );
+    await rm(malformedRoot, { recursive: true, force: true });
+  });
+
   it("tampered on-disk manifest fails parseExtensionManifestJson (review-fix #3)", async () => {
     // Setup: a manifest with garbage in a typed field that the parser will reject.
     // mkdtemp here for the same reason as the beforeAll above — predictable
