@@ -32,6 +32,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "datadog",
   "snyk",
   "bitrise",
+  "sonarqube",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -88,6 +89,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   datadog: MIN120,
   snyk: MIN10,
   bitrise: MIN10,
+  sonarqube: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -245,6 +247,8 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       return oauthUnsupported("snyk", "uses a REST API token (connector.auth snyk)");
     case "bitrise":
       return oauthUnsupported("bitrise", "uses a personal access token (connector.auth bitrise)");
+    case "sonarqube":
+      return oauthUnsupported("sonarqube", "uses an API token (connector.auth sonarqube)");
     default: {
       const _never: never = serviceId;
       return _never;

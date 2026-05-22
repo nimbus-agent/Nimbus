@@ -271,6 +271,36 @@ export async function phase3AddBitriseMcp(
   );
 }
 
+export async function phase3AddSonarqubeMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "sonarqube", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // SonarCloud requires `organization`; self-hosted SonarQube ignores it.
+  // We pass it through unconditionally — when unset, the connector's
+  // server.ts omits the query param.
+  const url = (await readConnectorSecret(vault, "sonarqube", "url"))?.trim() ?? "";
+  const organization =
+    (await readConnectorSecret(vault, "sonarqube", "organization"))?.trim() ?? "";
+  servers["sonarqube"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("sonarqube")],
+      env: extensionProcessEnv({
+        SONARQUBE_TOKEN: tok,
+        ...(url === "" ? {} : { SONARQUBE_URL: url }),
+        ...(organization === "" ? {} : { SONARQUBE_ORGANIZATION: organization }),
+      }),
+    },
+    "sonarqube",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -286,5 +316,6 @@ export async function buildPhase3Servers(
   await phase3AddDatadogMcp(vault, servers, sandboxCwd);
   await phase3AddSnykMcp(vault, servers, sandboxCwd);
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
+  await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
   return servers;
 }

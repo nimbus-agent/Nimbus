@@ -295,6 +295,16 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Code quality ---
+  sonarqube: baseManifest("com.nimbus.sonarqube", {
+    // SonarCloud SaaS by default. Self-hosted SonarQube users supply
+    // `sonarqube.url`; the runtime-merge follow-up that allows the
+    // sandbox network list to extend at runtime tracks the same Task 14
+    // queue as Sentry's `sentry.url`.
+    network: ["sonarcloud.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

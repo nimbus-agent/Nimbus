@@ -28,6 +28,7 @@ import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
+import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
@@ -191,6 +192,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createBitriseSyncable({
       ensureBitriseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSonarqubeSyncable({
+      ensureSonarqubeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

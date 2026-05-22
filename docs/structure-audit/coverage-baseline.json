@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-22T03:04:01.655Z",
+  "generated_at": "2026-05-22T05:25:35.230Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -264,6 +264,9 @@
       "min_coverage_pct": 0
     },
     "packages/mcp-connectors/snyk/src/server.ts": {
+      "min_coverage_pct": 0
+    },
+    "packages/mcp-connectors/sonarqube/src/server.ts": {
       "min_coverage_pct": 0
     },
     "packages/mcp-connectors/teams/src/server.ts": {

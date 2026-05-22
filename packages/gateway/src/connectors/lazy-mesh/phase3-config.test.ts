@@ -27,6 +27,7 @@ import {
   phase3AddNewrelicMcp,
   phase3AddSentryMcp,
   phase3AddSnykMcp,
+  phase3AddSonarqubeMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -369,6 +370,52 @@ describe("phase3AddSnykMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.snyk.io");
     expect(spec.env?.["SNYK_TOKEN"]).toBe("snyk-test-token");
+  });
+});
+
+// ─── phase3AddSonarqubeMcp ──────────────────────────────────────────────────
+
+describe("phase3AddSonarqubeMcp", () => {
+  test("no-op without sonarqube.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSonarqubeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["sonarqube"]).toBeUndefined();
+  });
+
+  test("no-op when sonarqube.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("sonarqube.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSonarqubeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["sonarqube"]).toBeUndefined();
+  });
+
+  test("spawns with SONARQUBE_TOKEN set + sonarcloud.io in manifest network list (SaaS default)", async () => {
+    const vault = createMockVault();
+    await vault.set("sonarqube.token", "sq-test-token");
+    await vault.set("sonarqube.organization", "acme");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSonarqubeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["sonarqube"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "sonarcloud.io");
+    expect(spec.env?.["SONARQUBE_TOKEN"]).toBe("sq-test-token");
+    expect(spec.env?.["SONARQUBE_ORGANIZATION"]).toBe("acme");
+    // No URL override → env var omitted.
+    expect(spec.env?.["SONARQUBE_URL"]).toBeUndefined();
+  });
+
+  test("URL override is propagated as SONARQUBE_URL env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("sonarqube.token", "sq");
+    await vault.set("sonarqube.url", "https://sonar.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSonarqubeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["sonarqube"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["SONARQUBE_URL"]).toBe("https://sonar.example.com");
   });
 });
 
