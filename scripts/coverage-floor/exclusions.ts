@@ -126,6 +126,15 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // GitHub Actions entry points — top-level `await main()` makes in-process
   // testing impossible; helpers extracted to siblings (precedent: PR #326).
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
+
+  // MCP connector entry-point scripts — each ends with top-level
+  // `await mcp.connect(new StdioServerTransport())`, which can only run
+  // under the sandbox harness (`NIMBUS_TEST_HARNESS=1`). The pure
+  // helpers the file imports (`search-filter.ts` et al.) are
+  // unit-tested separately, but the connect() site itself is
+  // structurally unreachable from the in-process test layer. Same
+  // shape as `github-actions/*/src/main.ts` (already excluded).
+  { kind: "pathRegex", re: /^packages\/mcp-connectors\/[^/]+\/src\/server\.ts$/ },
 ]);
 
 export function isExempt(relPath: string): boolean {

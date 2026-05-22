@@ -266,9 +266,6 @@
     "packages/mcp-connectors/snyk/src/server.ts": {
       "min_coverage_pct": 0
     },
-    "packages/mcp-connectors/sonarqube/src/server.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/mcp-connectors/teams/src/server.ts": {
       "min_coverage_pct": 0
     },
