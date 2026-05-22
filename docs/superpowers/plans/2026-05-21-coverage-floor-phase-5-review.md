@@ -49,9 +49,9 @@ This review surfaces 5 points the plan author should adopt before authoring the 
 
 **Evidence:** Found three precedent tests:
 
-- [`packages/gateway/test/integration/http/openapi-route.test.ts`](../../packages/gateway/test/integration/http/openapi-route.test.ts)
-- [`packages/gateway/test/integration/http/metrics-dora-route.test.ts`](../../packages/gateway/test/integration/http/metrics-dora-route.test.ts)
-- [`packages/gateway/test/integration/http/deployments-post-route.test.ts`](../../packages/gateway/test/integration/http/deployments-post-route.test.ts)
+- [`packages/gateway/test/integration/http/openapi-route.test.ts`](../../../packages/gateway/test/integration/http/openapi-route.test.ts)
+- [`packages/gateway/test/integration/http/metrics-dora-route.test.ts`](../../../packages/gateway/test/integration/http/metrics-dora-route.test.ts)
+- [`packages/gateway/test/integration/http/deployments-post-route.test.ts`](../../../packages/gateway/test/integration/http/deployments-post-route.test.ts)
 
 All three follow the same pattern: `startReadOnlyHttpServer(dbPath, 0)` → grab `handle.port` → `fetch(\`http://127.0.0.1:${port}/...\`)`. tmp-dir + empty SQLite per test.
 
