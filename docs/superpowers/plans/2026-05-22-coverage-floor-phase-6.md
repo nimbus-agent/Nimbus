@@ -1037,7 +1037,11 @@ For each: identify exported functions, parameter shapes, branches.
 
 - [ ] **Step 2: Create `packages/cli/src/paths.test.ts`**
 
-`paths.ts` is parameterized by env vars (`NIMBUS_GATEWAY_SOCKET`, `APPDATA`, `LOCALAPPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR`) read via `envGet` from `./env.ts`. Stub `./env.ts` to control the test inputs.
+`paths.ts` exports `resolveSocketPath()` and `getCliPlatformPaths()`. The OS-specific branches (Windows / darwin / Linux) live inline inside `getCliPlatformPaths()` and dispatch via `switch (process.platform)`. Env vars (`NIMBUS_GATEWAY_SOCKET`, `APPDATA`, `LOCALAPPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR`) are read via `envGet` from `./env.ts`.
+
+**Strategy:** stub `./env.ts` AND `process.platform` to exercise all three OS branches on a single machine. `Object.defineProperty(process, "platform", { value: "<os>", configurable: true })` is restored to the original descriptor in `afterEach`. This achieves >80% coverage without any source refactor.
+
+**Caveat:** `node:os.homedir()` and `node:os.tmpdir()` read the underlying OS at call time and do NOT change when `process.platform` is stubbed. On Linux CI, `homedir()` returns `/home/user` even when `platform` is stubbed to `"win32"`. Assertions therefore use `join(homedir(), ...)` against the same operands the source uses, never hardcoded paths (Phase 5 lesson 4).
 
 ```typescript
 // packages/cli/src/paths.test.ts
@@ -1054,11 +1058,24 @@ mock.module("./env.ts", () => ({
   envGet: (k: string): string | undefined => envStub[k],
 }));
 
-const { createWindowsPaths, createDarwinPaths, createLinuxPaths, getCliPlatformPaths, resolveSocketPath } =
-  await import("./paths.ts");
+const { getCliPlatformPaths, resolveSocketPath } = await import("./paths.ts");
 
 const out = captureOutput();
 afterAll(() => out.restore());
+
+let origPlatform: PropertyDescriptor | undefined;
+
+function setPlatform(value: NodeJS.Platform): void {
+  origPlatform ??= Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value, configurable: true });
+}
+
+function restorePlatform(): void {
+  if (origPlatform) {
+    Object.defineProperty(process, "platform", origPlatform);
+    origPlatform = undefined;
+  }
+}
 
 describe("resolveSocketPath", () => {
   beforeEach(() => {
@@ -1066,6 +1083,7 @@ describe("resolveSocketPath", () => {
   });
   afterEach(() => {
     envStub = {};
+    restorePlatform();
   });
 
   it("returns NIMBUS_GATEWAY_SOCKET override when set", () => {
@@ -1073,53 +1091,126 @@ describe("resolveSocketPath", () => {
     expect(resolveSocketPath()).toBe("/tmp/custom.sock");
   });
 
-  it("falls back to the platform default when override is unset", () => {
-    const path = resolveSocketPath();
-    if (process.platform === "linux") {
-      expect(path.endsWith("nimbus-gateway.sock")).toBe(true);
-    } else if (process.platform === "darwin") {
-      expect(path.endsWith("nimbus-gateway.sock")).toBe(true);
-    } else {
-      expect(path).toBe(String.raw`\\.\pipe\nimbus-gateway`);
-    }
+  it("treats empty NIMBUS_GATEWAY_SOCKET as unset (falls through to platform default)", () => {
+    envStub["NIMBUS_GATEWAY_SOCKET"] = "";
+    setPlatform("linux");
+    envStub["XDG_RUNTIME_DIR"] = "/run/user/1000";
+    expect(resolveSocketPath()).toBe("/run/user/1000/nimbus-gateway.sock");
   });
 
-  it("treats empty NIMBUS_GATEWAY_SOCKET as unset", () => {
-    envStub["NIMBUS_GATEWAY_SOCKET"] = "";
-    const path = resolveSocketPath();
-    // Falls through to platform default; assert it's not "".
-    expect(path).not.toBe("");
+  it("returns the Windows named-pipe path on win32", () => {
+    setPlatform("win32");
+    expect(resolveSocketPath()).toBe(String.raw`\\.\pipe\nimbus-gateway`);
+  });
+
+  it("returns a TMPDIR-based path on darwin", () => {
+    setPlatform("darwin");
+    envStub["TMPDIR"] = "/private/var/tmp";
+    expect(resolveSocketPath()).toBe("/private/var/tmp/nimbus-gateway.sock");
+  });
+
+  it("falls back to /tmp on darwin when TMPDIR is unset", () => {
+    setPlatform("darwin");
+    expect(resolveSocketPath()).toBe("/tmp/nimbus-gateway.sock");
+  });
+
+  it("uses XDG_RUNTIME_DIR on linux when set", () => {
+    setPlatform("linux");
+    envStub["XDG_RUNTIME_DIR"] = "/run/user/1000";
+    expect(resolveSocketPath()).toBe("/run/user/1000/nimbus-gateway.sock");
+  });
+
+  it("falls back to tmpdir() on linux when XDG_RUNTIME_DIR is unset", () => {
+    setPlatform("linux");
+    expect(resolveSocketPath()).toBe(join(tmpdir(), "nimbus-gateway.sock"));
   });
 });
 
-describe("getCliPlatformPaths (current platform)", () => {
+describe("getCliPlatformPaths — win32 branch", () => {
   beforeEach(() => {
     envStub = {};
+    setPlatform("win32");
   });
   afterEach(() => {
     envStub = {};
+    restorePlatform();
   });
 
-  it("returns a non-empty configDir, dataDir, logDir, extensionsDir, tempDir, socketPath", () => {
+  it("derives configDir from APPDATA + dataDir from LOCALAPPDATA", () => {
+    envStub["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
+    envStub["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
     const paths = getCliPlatformPaths();
-    expect(paths.configDir.length).toBeGreaterThan(0);
-    expect(paths.dataDir.length).toBeGreaterThan(0);
-    expect(paths.logDir.length).toBeGreaterThan(0);
-    expect(paths.extensionsDir.length).toBeGreaterThan(0);
-    expect(paths.tempDir.length).toBeGreaterThan(0);
-    expect(paths.socketPath.length).toBeGreaterThan(0);
+    expect(paths.configDir).toBe(join("C:\\Users\\Test\\AppData\\Roaming", "Nimbus"));
+    expect(paths.dataDir).toBe(join("C:\\Users\\Test\\AppData\\Local", "Nimbus", "data"));
+    expect(paths.extensionsDir).toBe(join("C:\\Users\\Test\\AppData\\Local", "Nimbus", "extensions"));
+    expect(paths.socketPath).toBe(String.raw`\\.\pipe\nimbus-gateway`);
   });
 
-  it("returns a logDir under dataDir", () => {
+  it("throws when APPDATA is missing or empty", () => {
+    envStub["LOCALAPPDATA"] = "C:\\x";
+    expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
+
+    envStub["APPDATA"] = "";
+    expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
+  });
+
+  it("throws when LOCALAPPDATA is missing or empty", () => {
+    envStub["APPDATA"] = "C:\\x";
+    expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
+
+    envStub["LOCALAPPDATA"] = "";
+    expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
+  });
+});
+
+describe("getCliPlatformPaths — darwin branch", () => {
+  beforeEach(() => {
+    envStub = {};
+    setPlatform("darwin");
+  });
+  afterEach(() => {
+    envStub = {};
+    restorePlatform();
+  });
+
+  it("places configDir and dataDir under Library/Application Support/Nimbus", () => {
     const paths = getCliPlatformPaths();
-    expect(paths.logDir.startsWith(paths.dataDir) || paths.logDir.includes("logs")).toBe(true);
+    const root = join(homedir(), "Library", "Application Support", "Nimbus");
+    expect(paths.configDir).toBe(root);
+    expect(paths.dataDir).toBe(root);
+    expect(paths.extensionsDir).toBe(join(root, "extensions"));
+    expect(paths.logDir).toBe(join(root, "logs"));
+  });
+});
+
+describe("getCliPlatformPaths — linux branch", () => {
+  beforeEach(() => {
+    envStub = {};
+    setPlatform("linux");
+  });
+  afterEach(() => {
+    envStub = {};
+    restorePlatform();
+  });
+
+  it("uses XDG_CONFIG_HOME + XDG_DATA_HOME when set", () => {
+    envStub["XDG_CONFIG_HOME"] = "/var/test/config";
+    envStub["XDG_DATA_HOME"] = "/var/test/data";
+    const paths = getCliPlatformPaths();
+    expect(paths.configDir).toBe(join("/var/test/config", "nimbus"));
+    expect(paths.dataDir).toBe(join("/var/test/data", "nimbus"));
+    expect(paths.extensionsDir).toBe(join("/var/test/data", "nimbus", "extensions"));
+  });
+
+  it("falls back to ~/.config and ~/.local/share when XDG vars are unset", () => {
+    const paths = getCliPlatformPaths();
+    expect(paths.configDir).toBe(join(homedir(), ".config", "nimbus"));
+    expect(paths.dataDir).toBe(join(homedir(), ".local", "share", "nimbus"));
   });
 });
 ```
 
-Note: `paths.ts` has only ONE exported entry point (`getCliPlatformPaths`) which dispatches by `process.platform`. The three OS-specific branches (`createWindowsPaths` / `createDarwinPaths` / `createLinuxPaths`) are internal. If they are NOT exported, the test above must adapt — cover only the current-platform path through `getCliPlatformPaths()`. Read the source in Step 1 to confirm.
-
-If only the current platform's branch is reachable, accept that coverage will top out near 50-60% (one OS arm out of three). For a >80% result, the source needs minor restructuring (export the three constructor functions individually so each can be tested directly with env stubs). If the source must change, mention it in the commit message — that's a **micro source refactor**, not test-only work.
+This covers all three OS branches on a single CI runner without any source refactor.
 
 - [ ] **Step 3: Create `packages/cli/src/lib/strip-trailing-slashes.test.ts`**
 
