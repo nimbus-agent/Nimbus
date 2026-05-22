@@ -34,6 +34,12 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "github:issue",
   "gitlab:issue",
   "bitbucket:issue",
+  // Snyk aggregated-issues carry a markdown `description` field that is
+  // genuinely paragraph-shaped (attack-surface explanation + remediation
+  // discussion). Hybrid-mode users opt in to OpenAI embeddings via the
+  // `openai.api_key` vault key; the MiniLM fallback kicks in automatically
+  // when the key is missing (see `nimbus-embedding-routing` skill).
+  "snyk:vulnerability",
 ]);
 
 export function routingKey(service: string, type: string): string {

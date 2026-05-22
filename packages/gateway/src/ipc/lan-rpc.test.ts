@@ -79,3 +79,14 @@ describe("extension.sync over LAN", () => {
     ).toThrow(LanError);
   });
 });
+
+describe("security namespace over LAN", () => {
+  test("rejected by checkLanMethodAllowed regardless of grant-write (I5)", () => {
+    expect(() =>
+      checkLanMethodAllowed("security.scan", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+    expect(() =>
+      checkLanMethodAllowed("security.scan", { peerId: "p", writeAllowed: false }),
+    ).toThrow(LanError);
+  });
+});

@@ -87,6 +87,12 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI / AsyncAPI spec indexer (Phase 5 Wave A PR 1); `getLastSyncStats()` exposes skipped-spec counters |
 | `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault connector (Phase 5 Wave A PR 2); emits `obsidian_note` items + `backlinks` graph edges |
 | `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP server — reads + HITL-gated `obsidian_append_to_daily_note` |
+| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulnerability connector (Phase 5 T2/Wave-A, 2026-05-21); walks `/v1/orgs → /v1/org/<id>/projects → aggregated-issues`; emits `snyk:vulnerability` items via `mapSnykAggregatedIssueToItem` |
+| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk aggregated-issue → `IndexedItem` mapper; surfaces `{ severity, cve_id, affected_package, fix_available, fix_version, project_url, ... }` in metadata. Unit-tested independently of the HTTP path |
+| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP server — read-only tools `snyk_list` / `snyk_get` / `snyk_search`. `hitlRequired: []` — `snyk.issue.ignore` is a deferred Phase 8 follow-up |
+| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI connector (Phase 5 Wave B, 2026-05-21); walks `/v0.1/me/apps → /v0.1/apps/<slug>/builds`; emits `bitrise:app` + `bitrise:build` items via `mapBitriseAppToItem` / `mapBitriseBuildToItem` |
+| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` mappers; surfaces `{ status, status_code, workflow_id, app_slug, branch, commit_hash, commit_message, triggered_by, pull_request_id, triggered_at, started_at, finished_at, duration_ms }` in metadata. Unit-tested independently of the HTTP path |
+| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP server — read-only tools `bitrise_list` / `bitrise_get` / `bitrise_search`. `hitlRequired: []` — trigger / abort writes are a deferred follow-up |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards the sync scheduler against consuming backoff on offline events |
 
 ## Local Index + Migrations + DB
@@ -255,6 +261,16 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (invariants `I1`, vault-key allow-list) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — compares `v1.yaml` paths against `READ_ONLY_HTTP_ROUTES`; powers `audit:openapi-drift` CI gate (Phase 5 T4 PR 1) |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
+
+## Security Scan (Phase 5)
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/security/secret-patterns.ts` | `SECRET_PATTERNS` (v1: 21 prefix-anchored patterns) + `redactSecret` (first-4/last-4) + `buildContextSnippet` (±40 chars, `[REDACTED]` middle). |
+| `packages/gateway/src/security/scan.ts` | `scanItemsForSecrets` — pure scanner over `Iterable<ScanItem>`. No DB, no audit, no I/O. |
+| `packages/gateway/src/ipc/security-rpc.ts` | `dispatchSecurityRpc` — `security.scan` handler. Builds depth map from `sync_state.depth`, skips `metadata_only` (reported), writes one `security.scan_completed` audit row. CLI-only — NOT in Tauri allowlist (I7); namespace `security` is in `FORBIDDEN_OVER_LAN` (I5). |
+| `packages/cli/src/commands/security.ts` | `runSecurity` — `nimbus security scan [--json]`. Respects `NO_COLOR` + `isTTY`. |
+| `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Phase 5 acceptance test — AWS public example key in a `summary`-depth filesystem item. |
 
 ## Top-level docs
 

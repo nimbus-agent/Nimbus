@@ -27,6 +27,7 @@ export { runRepl } from "./repl.ts";
 export { runWorkflowFromFile } from "./run-workflow.ts";
 export { runScaffold } from "./scaffold.ts";
 export { runSearch } from "./search.ts";
+export { runSecurity } from "./security.ts";
 export { runServe } from "./serve.ts";
 export { runSession } from "./session.ts";
 export { runStart } from "./start.ts";

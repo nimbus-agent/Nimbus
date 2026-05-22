@@ -31,6 +31,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   sentry: ["sentry.auth_token", "sentry.org_slug", "sentry.url"],
   newrelic: ["newrelic.api_key", "newrelic.account_id"],
   datadog: ["datadog.api_key", "datadog.app_key", "datadog.site"],
+  snyk: ["snyk.token"],
+  bitrise: ["bitrise.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

@@ -26,3 +26,17 @@ b37e8d4b0abf44f8cd60b187499acea7f21914a7:packages/gateway/src/platform/gateway-l
 # These were never real secrets; they were test fixtures matching the connector PAT shape.
 fe9279eb7a68194d4ff848d6893e8f394f7347c9:packages/gateway/test/unit/ipc/connector-rpc-handlers/auth.test.ts:generic-api-key:204
 cbc264f51fdc7082c86a4564ec37cfc9066ee260:packages/gateway/test/unit/ipc/connector-rpc-handlers/auth.test.ts:generic-api-key:216
+
+# Phase 5 `nimbus security scan` (2026-05-21) — secret-patterns.test.ts asserts that
+# the v1 PEM private-key header and Slack `xoxb-...` shape regexes fire on the
+# canonical public header strings. These are NOT real keys — they're the literal
+# string a real PEM/Slack value begins with, by design. HEAD carries inline
+# `gitleaks:allow` markers; the historical commit must be pinned separately.
+5f889abdbe5c795c94acffaf416e8dc83eb43adb:packages/gateway/src/security/secret-patterns.test.ts:slack-bot-token:123
+5f889abdbe5c795c94acffaf416e8dc83eb43adb:packages/gateway/src/security/secret-patterns.test.ts:private-key:171
+5f889abdbe5c795c94acffaf416e8dc83eb43adb:packages/gateway/src/security/secret-patterns.test.ts:private-key:173
+
+# Same fixtures quoted inside the implementation plan doc — embedded test source.
+317c6f12a4435a3497314d9a9ab8c8fc79d80819:docs/superpowers/plans/2026-05-21-nimbus-security-scan.md:slack-bot-token:185
+317c6f12a4435a3497314d9a9ab8c8fc79d80819:docs/superpowers/plans/2026-05-21-nimbus-security-scan.md:private-key:235
+317c6f12a4435a3497314d9a9ab8c8fc79d80819:docs/superpowers/plans/2026-05-21-nimbus-security-scan.md:private-key:237

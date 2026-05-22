@@ -117,6 +117,7 @@ function runCoverageGates(): void {
     { script: "test:coverage:lan" },
     { script: "test:coverage:perf" },
     { script: "test:coverage:sdk" },
+    { script: "test:coverage:security" },
   ];
 
   for (const { script, dbus } of gates) {
