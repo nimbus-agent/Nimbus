@@ -463,6 +463,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/semgrep": {
+      "name": "nimbus-mcp-semgrep",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/sentry": {
       "name": "nimbus-mcp-sentry",
       "version": "0.1.0",
@@ -2599,6 +2611,8 @@
     "nimbus-mcp-outlook": ["nimbus-mcp-outlook@workspace:packages/mcp-connectors/outlook"],
 
     "nimbus-mcp-pagerduty": ["nimbus-mcp-pagerduty@workspace:packages/mcp-connectors/pagerduty"],
+
+    "nimbus-mcp-semgrep": ["nimbus-mcp-semgrep@workspace:packages/mcp-connectors/semgrep"],
 
     "nimbus-mcp-sentry": ["nimbus-mcp-sentry@workspace:packages/mcp-connectors/sentry"],
 

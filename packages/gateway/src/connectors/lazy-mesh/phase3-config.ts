@@ -301,6 +301,33 @@ export async function phase3AddSonarqubeMcp(
   );
 }
 
+export async function phase3AddSemgrepMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "semgrep", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Semgrep's deployment_slug is required for any deployment-scoped
+  // read; the syncable discovers it from `/deployments` when unset, so
+  // we pass it through optionally to short-circuit that round-trip.
+  const slug = (await readConnectorSecret(vault, "semgrep", "deployment_slug"))?.trim() ?? "";
+  servers["semgrep"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("semgrep")],
+      env: extensionProcessEnv({
+        SEMGREP_TOKEN: tok,
+        ...(slug === "" ? {} : { SEMGREP_DEPLOYMENT_SLUG: slug }),
+      }),
+    },
+    "semgrep",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -317,5 +344,6 @@ export async function buildPhase3Servers(
   await phase3AddSnykMcp(vault, servers, sandboxCwd);
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
   await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
+  await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
   return servers;
 }

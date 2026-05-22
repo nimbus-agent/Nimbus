@@ -34,6 +34,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   snyk: ["snyk.token"],
   bitrise: ["bitrise.token"],
   sonarqube: ["sonarqube.token", "sonarqube.url", "sonarqube.organization"],
+  semgrep: ["semgrep.token", "semgrep.deployment_slug"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

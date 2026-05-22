@@ -25,6 +25,7 @@ import {
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
   phase3AddNewrelicMcp,
+  phase3AddSemgrepMcp,
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
@@ -416,6 +417,49 @@ describe("phase3AddSonarqubeMcp", () => {
     const spec = servers["sonarqube"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["SONARQUBE_URL"]).toBe("https://sonar.example.com");
+  });
+});
+
+// ─── phase3AddSemgrepMcp ────────────────────────────────────────────────────
+
+describe("phase3AddSemgrepMcp", () => {
+  test("no-op without semgrep.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["semgrep"]).toBeUndefined();
+  });
+
+  test("no-op when semgrep.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["semgrep"]).toBeUndefined();
+  });
+
+  test("spawns with SEMGREP_TOKEN set + semgrep.dev in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "semgrep-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["semgrep"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "semgrep.dev");
+    expect(spec.env?.["SEMGREP_TOKEN"]).toBe("semgrep-test-token");
+    expect(spec.env?.["SEMGREP_DEPLOYMENT_SLUG"]).toBeUndefined();
+  });
+
+  test("deployment_slug is propagated as SEMGREP_DEPLOYMENT_SLUG env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "sg");
+    await vault.set("semgrep.deployment_slug", "acme-corp");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["semgrep"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["SEMGREP_DEPLOYMENT_SLUG"]).toBe("acme-corp");
   });
 });
 

@@ -33,6 +33,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "snyk",
   "bitrise",
   "sonarqube",
+  "semgrep",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -90,6 +91,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   snyk: MIN10,
   bitrise: MIN10,
   sonarqube: MIN10,
+  semgrep: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -146,6 +148,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   snyk: "uses a REST API token (connector.auth snyk)",
   bitrise: "uses a personal access token (connector.auth bitrise)",
   sonarqube: "uses an API token (connector.auth sonarqube)",
+  semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

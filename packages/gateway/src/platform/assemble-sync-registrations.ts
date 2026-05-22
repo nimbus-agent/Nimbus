@@ -25,6 +25,7 @@ import { createNotionSyncable } from "../connectors/notion-sync.ts";
 import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
 import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
+import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
@@ -197,6 +198,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createSonarqubeSyncable({
       ensureSonarqubeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSemgrepSyncable({
+      ensureSemgrepMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

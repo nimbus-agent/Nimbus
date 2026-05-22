@@ -305,6 +305,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- SAST ---
+  semgrep: baseManifest("com.nimbus.semgrep", {
+    // Semgrep AppSec Platform SaaS. Self-hosted Semgrep Enterprise
+    // endpoints inherit the same Task 14 runtime-merge follow-up.
+    network: ["semgrep.dev"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
