@@ -281,7 +281,8 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `docs/SECURITY-INVARIANTS.md` | I1–I15 rationale + anti-patterns + audit cross-references (I15 = sandbox runner intrinsic to extension spawn, T2 PR 1) |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist for headless releases; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | Worked CI integration examples (GitHub Actions self-hosted, GitLab CI, Jenkins) using `nimbus query --json` (Phase 5 T4 PR 1) |
-| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1) |
+| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1). Install + extend recipes live in [`docs/cli/pre-commit.md`](../../docs/cli/pre-commit.md). |
+| `docs/cli/pre-commit.md` | User-facing pre-commit hook docs — install, env-var knobs (`NIMBUS_HOOK_BLOCK_ON_*`), exit codes, extension patterns (Phase 5 T4 PR 1 wrap-up). |
 | `docs/og-card.png` | OG social card PNG (1200×630, deterministic resvg-js render) |
 | `docs/assets/og-card.svg` | OG card source SVG |
 | `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular weight (SIL OFL 1.1) |
