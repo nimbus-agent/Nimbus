@@ -119,9 +119,6 @@
     "packages/cli/src/commands/workflow.ts": {
       "min_coverage_pct": 5.26
     },
-    "packages/cli/src/index.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/cli/src/lib/cli-logger.ts": {
       "min_coverage_pct": 18.18
     },

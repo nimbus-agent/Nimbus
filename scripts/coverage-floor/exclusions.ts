@@ -85,6 +85,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // Helpers like `emitSandboxPostureBannerIfDegraded` would need to be
   // extracted to a sibling to test, which is out of scope for this batch.
   { kind: "exact", path: "packages/gateway/src/index.ts" },
+  // CLI entry point — top-level `await main()` makes in-process testing
+  // impossible (same exemption rationale as gateway/src/index.ts above and
+  // github-actions/*/src/main.ts below). The CLI's argv-dispatch flow is
+  // covered indirectly by every command's per-sub-handler tests in
+  // packages/cli/src/commands/*.test.ts.
+  { kind: "exact", path: "packages/cli/src/index.ts" },
 
   // Type-only files whose runtime emit is empty after TypeScript erasure.
   // These don't match the `**/*types*.ts` basename regex below but follow
