@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+
+// IMPORTANT: capture the REAL env-access implementations BEFORE installing the
+// mock so we can restore them in `afterAll`. Bun's `mock.module(...)` is
+// process-global - if we don't restore, the stub returns `undefined` for every
+// env-var read in every subsequent test file that imports `processEnvGet`
+// from `./env-access.ts`. That caused ~40 unrelated cross-file test failures
+// on macOS CI when this file was first authored (Phase 5 commit f8305ba6);
+// the restore pattern mirrors `platform/index.test.ts` + `vault/factory.test.ts`.
+const realEnvAccess = await import("./env-access.ts");
 
 // Stubbable env access. Each test sets `envStub[key]` to control what
 // `processEnvGet(key)` returns inside paths.ts.
@@ -14,6 +23,13 @@ mock.module("./env-access.ts", () => ({
 // Import AFTER the mock is installed.
 const { createWindowsPaths, createDarwinPaths, createLinuxPaths } = await import("./paths.ts");
 const { PlatformInitError } = await import("./errors.ts");
+
+// Restore the real env-access implementations after this file finishes so that
+// subsequent test files in the same `bun test --coverage` process (one per
+// package, per `scripts/coverage-floor/build-lcov.sh`) are not contaminated.
+afterAll(() => {
+  mock.module("./env-access.ts", () => realEnvAccess);
+});
 
 describe("createWindowsPaths", () => {
   beforeEach(() => {
