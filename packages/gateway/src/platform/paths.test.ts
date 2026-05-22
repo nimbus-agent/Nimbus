@@ -1,47 +1,68 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { PlatformInitError } from "./errors.ts";
+import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
 
-// IMPORTANT: capture the REAL env-access implementations BEFORE installing the
-// mock so we can restore them in `afterAll`. Bun's `mock.module(...)` is
-// process-global - if we don't restore, the stub returns `undefined` for every
-// env-var read in every subsequent test file that imports `processEnvGet`
-// from `./env-access.ts`. That caused ~40 unrelated cross-file test failures
-// on macOS CI when this file was first authored (Phase 5 commit f8305ba6);
-// the restore pattern mirrors `platform/index.test.ts` + `vault/factory.test.ts`.
-const realEnvAccess = await import("./env-access.ts");
+// paths.ts reads env vars through `processEnvGet` (a 1-line wrapper around
+// `process.env[k]`). Instead of mocking that module via `mock.module(...)`
+// — which is process-global in bun and leaks to every later test that
+// imports `processEnvGet`, breaking ~40 unrelated cases on macOS CI when the
+// load order surfaces this file first — we mutate `process.env` directly
+// and restore the originals in `afterEach`. This is the same pattern Phase 4
+// auth tests use (e.g. `auth/notion-access-token.test.ts`).
+//
+// We touch the union of every env var read across the three `create<OS>Paths`
+// functions: Windows (APPDATA, LOCALAPPDATA), macOS (TMPDIR), Linux
+// (XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR).
+const TRACKED_ENV_KEYS = [
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TMPDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+] as const;
 
-// Stubbable env access. Each test sets `envStub[key]` to control what
-// `processEnvGet(key)` returns inside paths.ts.
-let envStub: Record<string, string | undefined> = {};
-mock.module("./env-access.ts", () => ({
-  processEnvGet: (k: string): string | undefined => envStub[k],
-  processEnvDelete: (_k: string): void => {},
-  processEnvSet: (_k: string, _v: string | undefined): void => {},
-}));
+function snapshotEnv(): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const k of TRACKED_ENV_KEYS) {
+    out[k] = process.env[k];
+  }
+  return out;
+}
 
-// Import AFTER the mock is installed.
-const { createWindowsPaths, createDarwinPaths, createLinuxPaths } = await import("./paths.ts");
-const { PlatformInitError } = await import("./errors.ts");
+function restoreEnv(snapshot: Record<string, string | undefined>): void {
+  for (const k of TRACKED_ENV_KEYS) {
+    const v = snapshot[k];
+    if (v === undefined) {
+      delete process.env[k];
+    } else {
+      process.env[k] = v;
+    }
+  }
+}
 
-// Restore the real env-access implementations after this file finishes so that
-// subsequent test files in the same `bun test --coverage` process (one per
-// package, per `scripts/coverage-floor/build-lcov.sh`) are not contaminated.
-afterAll(() => {
-  mock.module("./env-access.ts", () => realEnvAccess);
-});
+function clearEnv(): void {
+  for (const k of TRACKED_ENV_KEYS) {
+    delete process.env[k];
+  }
+}
 
 describe("createWindowsPaths", () => {
+  let snapshot: Record<string, string | undefined>;
+
   beforeEach(() => {
-    envStub = {};
+    snapshot = snapshotEnv();
+    clearEnv();
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv(snapshot);
   });
 
   it("derives configDir from APPDATA and dataDir from LOCALAPPDATA", () => {
-    envStub["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
-    envStub["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
+    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
     const paths = createWindowsPaths();
     expect(paths.configDir).toBe("C:\\Users\\Test\\AppData\\Roaming\\Nimbus");
     expect(paths.dataDir).toBe("C:\\Users\\Test\\AppData\\Local\\Nimbus\\data");
@@ -52,28 +73,31 @@ describe("createWindowsPaths", () => {
   });
 
   it("throws PlatformInitError when APPDATA is missing", () => {
-    envStub["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 
   it("throws PlatformInitError when LOCALAPPDATA is missing", () => {
-    envStub["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
+    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 
   it("throws PlatformInitError when APPDATA is empty string", () => {
-    envStub["APPDATA"] = "";
-    envStub["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["APPDATA"] = "";
+    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 });
 
 describe("createDarwinPaths", () => {
+  let snapshot: Record<string, string | undefined>;
+
   beforeEach(() => {
-    envStub = {};
+    snapshot = snapshotEnv();
+    clearEnv();
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv(snapshot);
   });
 
   it("places configDir + dataDir + logDir under Library/Application Support/Nimbus", () => {
@@ -88,31 +112,34 @@ describe("createDarwinPaths", () => {
   });
 
   it("uses TMPDIR for the socketPath base when set", () => {
-    envStub["TMPDIR"] = "/private/var/tmp/custom";
+    process.env["TMPDIR"] = "/private/var/tmp/custom";
     const paths = createDarwinPaths();
     // Use join so the assertion is cross-platform (Windows path.join converts separators)
     expect(paths.socketPath).toBe(join("/private/var/tmp/custom", "nimbus-gateway.sock"));
   });
 
   it("falls back to /tmp for the socketPath base when TMPDIR is unset", () => {
-    // envStub has no TMPDIR key — processEnvGet returns undefined → source uses "/tmp"
+    // env has no TMPDIR — processEnvGet returns undefined → source uses "/tmp"
     const paths = createDarwinPaths();
     expect(paths.socketPath).toBe(join("/tmp", "nimbus-gateway.sock"));
   });
 });
 
 describe("createLinuxPaths", () => {
+  let snapshot: Record<string, string | undefined>;
+
   beforeEach(() => {
-    envStub = {};
+    snapshot = snapshotEnv();
+    clearEnv();
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv(snapshot);
   });
 
   it("uses XDG_CONFIG_HOME + XDG_DATA_HOME + XDG_RUNTIME_DIR when set", () => {
-    envStub["XDG_CONFIG_HOME"] = "/var/test/config";
-    envStub["XDG_DATA_HOME"] = "/var/test/data";
-    envStub["XDG_RUNTIME_DIR"] = "/run/user/1000";
+    process.env["XDG_CONFIG_HOME"] = "/var/test/config";
+    process.env["XDG_DATA_HOME"] = "/var/test/data";
+    process.env["XDG_RUNTIME_DIR"] = "/run/user/1000";
     const paths = createLinuxPaths();
     // Use join so the assertion is cross-platform (Windows path.join converts separators)
     expect(paths.configDir).toBe(join("/var/test/config", "nimbus"));
