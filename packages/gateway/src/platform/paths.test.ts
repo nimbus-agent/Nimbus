@@ -61,14 +61,22 @@ describe("createWindowsPaths", () => {
   });
 
   it("derives configDir from APPDATA and dataDir from LOCALAPPDATA", () => {
-    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
-    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    const appData = "C:\\Users\\Test\\AppData\\Roaming";
+    const localAppData = "C:\\Users\\Test\\AppData\\Local";
+    process.env["APPDATA"] = appData;
+    process.env["LOCALAPPDATA"] = localAppData;
     const paths = createWindowsPaths();
-    expect(paths.configDir).toBe("C:\\Users\\Test\\AppData\\Roaming\\Nimbus");
-    expect(paths.dataDir).toBe("C:\\Users\\Test\\AppData\\Local\\Nimbus\\data");
-    expect(paths.logDir).toBe("C:\\Users\\Test\\AppData\\Local\\Nimbus\\data\\logs");
+    // `node:path.join` is platform-dependent — on macOS/Linux CI it uses `/`
+    // as the separator even when the operand strings contain backslashes.
+    // Compute expected values the same way the source does so the assertions
+    // match regardless of host OS.
+    expect(paths.configDir).toBe(join(appData, "Nimbus"));
+    expect(paths.dataDir).toBe(join(localAppData, "Nimbus", "data"));
+    expect(paths.logDir).toBe(join(localAppData, "Nimbus", "data", "logs"));
+    // The source builds the socketPath as a Windows named-pipe literal regardless
+    // of host OS — no `join` is involved, so the raw-string assertion is correct.
     expect(paths.socketPath).toBe(String.raw`\\.\pipe\nimbus-gateway`);
-    expect(paths.extensionsDir).toBe("C:\\Users\\Test\\AppData\\Local\\Nimbus\\extensions");
+    expect(paths.extensionsDir).toBe(join(localAppData, "Nimbus", "extensions"));
     expect(paths.tempDir).toBe(join(tmpdir(), "nimbus"));
   });
 
