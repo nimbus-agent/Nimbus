@@ -44,6 +44,11 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/gateway/src-native/sandbox-helper/main.c");
     return samples;
   }
+  if (pattern === "**/packages/mcp-connectors/*/src/server.ts") {
+    samples.push("packages/mcp-connectors/snyk/src/server.ts");
+    samples.push("packages/mcp-connectors/sonarqube/src/server.ts");
+    return samples;
+  }
   // Direct paths: treat the pattern itself as the sample.
   samples.push(pattern);
   return samples;

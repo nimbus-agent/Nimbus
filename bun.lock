@@ -502,6 +502,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/sonarqube": {
+      "name": "nimbus-mcp-sonarqube",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/teams": {
       "name": "nimbus-mcp-teams",
       "version": "0.1.0",
@@ -2593,6 +2605,8 @@
     "nimbus-mcp-slack": ["nimbus-mcp-slack@workspace:packages/mcp-connectors/slack"],
 
     "nimbus-mcp-snyk": ["nimbus-mcp-snyk@workspace:packages/mcp-connectors/snyk"],
+
+    "nimbus-mcp-sonarqube": ["nimbus-mcp-sonarqube@workspace:packages/mcp-connectors/sonarqube"],
 
     "nimbus-mcp-teams": ["nimbus-mcp-teams@workspace:packages/mcp-connectors/teams"],
 

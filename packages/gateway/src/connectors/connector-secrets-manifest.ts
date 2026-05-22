@@ -33,6 +33,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   datadog: ["datadog.api_key", "datadog.app_key", "datadog.site"],
   snyk: ["snyk.token"],
   bitrise: ["bitrise.token"],
+  sonarqube: ["sonarqube.token", "sonarqube.url", "sonarqube.organization"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
