@@ -44,6 +44,7 @@ The fix is structural, not procedural:
 - The mock implementations are **delegators**: they read from a per-process global slot (`globalThis.__nimbusCliFixture`) set fresh in each test's `beforeEach` and cleared in `afterEach`.
 - Test files import `cli-mocks.ts` for its **module-load side effect** (the `mock.module` calls). Test files do NOT call `mock.module` themselves.
 - IPC client mocking is NOT done via `mock.module`; sub-handler functions accept `client: IPCClient` directly, and tests pass a hand-rolled mock client built by `createMockIpcClient` in [`packages/cli/test/helpers/mock-ipc-client.ts`](../../../packages/cli/test/helpers/mock-ipc-client.ts).
+- **Serial-within-process is assumed.** Bun's default executes test files sequentially within a single `bun test` invocation, so the `globalThis.__nimbusCliFixture` slot is safe under that default. The CLI test harness MUST NOT be invoked with `--concurrent` (or any future option that runs test files in parallel within one process) — the global-slot delegation pattern depends on serial execution. Within a single test file, `beforeEach`/`afterEach` already enforce per-test isolation.
 
 ### Per-file source refactor
 
@@ -55,6 +56,20 @@ Most commands today either define their own private `withIpc()` helper (e.g. [`p
 Tests target the **sub-handlers**, passing the mock IPC client directly. The dispatcher's "Gateway not running" branch gets one small test per command via the shared `gateway-process.ts` mock.
 
 This refactor is mechanical (~10 lines per command) and lands in the **family commit** for that command, not in a separate pre-sweep commit. Same precedent as Phase 5 commit 12 (extract `load-transformer-pipeline.ts` + add `model.test.ts` together — causally coupled).
+
+**Sub-handler API surface convention.** Sub-handlers are exported by name (e.g. `runVaultSet`, `runVaultGet`) so test files can import them directly. They are **test-and-dispatcher-only entry points** — not a public surface for other parts of the CLI to consume. The convention is enforced by JSDoc on each sub-handler:
+
+```typescript
+/**
+ * Test entry point — invoked by the dispatcher `runVault(args)` and the
+ * colocated `vault.test.ts`. Do not call from other command files.
+ */
+export async function runVaultSet(client: IPCClient, key: string, value: string): Promise<void> {
+  ...
+}
+```
+
+Underscore prefixes (`_test_runVaultSet`) or `__testing` namespace objects were considered and rejected: they read oddly in production code paths, complicate the dispatcher's call site, and offer no real safety guarantee beyond the JSDoc. Dispatchers in other command files cannot import these without going through the test-helpers convention, and `knip` would flag any genuinely orphaned export.
 
 ### Hybrid: in-process for 46 files, real subprocess for 3
 
@@ -83,7 +98,7 @@ Files created under `packages/cli/test/helpers/`:
 |---|---|
 | `cli-mocks.ts` | Single `mock.module` site for `@clack/prompts` + `../lib/gateway-process.ts`. Reads from `globalThis.__nimbusCliFixture`. |
 | `mock-ipc-client.ts` | `createMockIpcClient(responseQueue, notificationHandlers?)` → `{ client, calls }`. Hand-rolled `IPCClient`-shaped object. |
-| `cli-output.ts` | `captureOutput()` stubs `process.stdout.write` + `process.stderr.write` + `console.log` per-test; restores in `afterEach`. |
+| `cli-output.ts` | `captureOutput()` stubs `process.stdout.write` + `process.stderr.write` + `console.{log,error,warn,info,debug}` per-test; restores in `afterEach`. |
 
 Plus the per-command refactor + test for `vault.ts` (4 sub-handlers: `vaultSet`, `vaultGet`, `vaultDelete`, `vaultList`).
 
@@ -256,6 +271,11 @@ export function createMockIpcClient(
   const client = {
     call: async <T>(method: string, params: unknown): Promise<T> => {
       calls.push({ method, params });
+      if (idx >= responseQueue.length) {
+        throw new Error(
+          `Unexpected IPC call: response queue exhausted (got ${method}; provide more entries to createMockIpcClient)`,
+        );
+      }
       const r = responseQueue[idx++];
       if (r instanceof Error) throw r;
       return r as T;
@@ -291,6 +311,9 @@ export function captureOutput(): CapturedOutput {
   const origStderrWrite = process.stderr.write.bind(process.stderr);
   const origConsoleLog = console.log;
   const origConsoleError = console.error;
+  const origConsoleWarn = console.warn;
+  const origConsoleInfo = console.info;
+  const origConsoleDebug = console.debug;
 
   process.stdout.write = ((data: string | Uint8Array): boolean => {
     stdout += typeof data === "string" ? data : new TextDecoder().decode(data);
@@ -300,12 +323,18 @@ export function captureOutput(): CapturedOutput {
     stderr += typeof data === "string" ? data : new TextDecoder().decode(data);
     return true;
   }) as typeof process.stderr.write;
-  console.log = (...args: unknown[]): void => {
+  const writeToStdout = (...args: unknown[]): void => {
     stdout += `${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}\n`;
   };
-  console.error = (...args: unknown[]): void => {
+  const writeToStderr = (...args: unknown[]): void => {
     stderr += `${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}\n`;
   };
+  // Node convention: log/info/debug go to stdout; warn/error go to stderr.
+  console.log = writeToStdout;
+  console.info = writeToStdout;
+  console.debug = writeToStdout;
+  console.warn = writeToStderr;
+  console.error = writeToStderr;
 
   return {
     get stdout() { return stdout; },
@@ -316,6 +345,9 @@ export function captureOutput(): CapturedOutput {
       process.stderr.write = origStderrWrite;
       console.log = origConsoleLog;
       console.error = origConsoleError;
+      console.warn = origConsoleWarn;
+      console.info = origConsoleInfo;
+      console.debug = origConsoleDebug;
     },
   };
 }
@@ -399,16 +431,24 @@ These are the lessons that emerged during Phase 5 PR #398's execution — each i
 
 4. **Never run `bun run audit:coverage-floor:update-baseline` mid-task.** The auto-updater uses LOCAL lcov measurements which diverge from CI Linux on pinned files. Phase 5 Task 9 implementer ran it and the resulting mass-baseline-edit had to be reverted in fixup `06628373`. Baseline edits belong in the FINAL Task (commit 14) only, hand-curated against CI-Linux-equivalent measurements. **Implementer prompts for commits 2-13 explicitly forbid this.**
 
-5. **TUI tests need explicit `process.stdout.isTTY` stubbing.** Headless CI has `isTTY=false`, which exercises the fallback render path, not the interactive surface. Pattern:
+5. **TUI tests need explicit `process.stdout.isTTY` + `.columns` + `.rows` stubbing.** Headless CI has `isTTY=false` (and `columns`/`rows` undefined), which exercises the fallback render path — not the interactive surface — and can also throw Ink layout errors when `columns` is `undefined`. All three properties must be stubbed together:
    ```typescript
    let origIsTty: PropertyDescriptor | undefined;
+   let origColumns: PropertyDescriptor | undefined;
+   let origRows: PropertyDescriptor | undefined;
    beforeEach(() => {
      origIsTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+     origColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+     origRows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+     Object.defineProperty(process.stdout, "columns", { value: 120, configurable: true });
+     Object.defineProperty(process.stdout, "rows", { value: 40, configurable: true });
    });
    afterEach(() => {
      if (origIsTty) Object.defineProperty(process.stdout, "isTTY", origIsTty);
      else delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+     if (origColumns) Object.defineProperty(process.stdout, "columns", origColumns);
+     if (origRows) Object.defineProperty(process.stdout, "rows", origRows);
    });
    ```
    Applies to commit 11 (`tui` command, plus any command that uses Ink rendering).
@@ -446,7 +486,7 @@ These are the lessons that emerged during Phase 5 PR #398's execution — each i
 | TUI command (`tui.tsx`) and TUI-using commands fail to reach 80% on headless CI | Carry-forward 5 (TTY stubbing) is the primary mitigation. If 80% remains out of reach for `tui.tsx` after the TTY stubs are applied, raise the watermark per spec rule 3 fallback. The TUI surface is React Ink rendering; some render branches may require involved child-component stubbing. |
 | `repl.ts` (10.77%) has interactive readline loop that may resist in-process testing | The repl command is an interactive REPL — testing the parse-and-execute step in-process is fine, but testing the readline event loop in-process is not. Cover the parse-and-execute helper functions; raise the watermark on the loop wiring if needed. |
 | `extension.ts` migration (commit 13) is the largest single-file investment — 4 existing test files to migrate | Late placement allows the harness to be fully validated by commits 2-12 first. Each existing extension test file migrates independently. If any one's migration is unexpectedly hard, split commit 13 into 13a / 13b / 13c / 13d (one per existing test file). |
-| `lib/gateway-process.ts` (commit 5) currently has process-management logic that touches real PID files | Use a tmp dir per test for the PID file location. The `Bun.spawn` target can be `["bun", "-e", "process.stdin.on('data', () => {}); console.log('alive')"]` — a no-op that the test cleans up with `proc.kill()`. |
+| `lib/gateway-process.ts` (commit 5) currently has process-management logic that touches real PID files | Use a tmp dir per test for the PID file location. The `Bun.spawn` target can be `["bun", "-e", "process.stdin.on('data', () => {}); console.log('alive')"]` — a no-op that the test cleans up with `proc.kill()`. **Orphan-reap pattern:** every test file that spawns subprocesses must maintain a file-level `const liveProcs = new Set<Bun.Subprocess>()`, add each spawn to the set, and call `for (const p of liveProcs) { try { p.kill(); } catch {} } liveProcs.clear();` in `afterEach` (and `afterAll` as a belt-and-braces). This guarantees orphan-free cleanup even when a test assertion fails before its inline `proc.kill()` is reached. |
 | Branch falls behind origin/main during the multi-day implementation | Phase 5 carry-forward 8: rebase or merge regularly. Status-row conflicts in CLAUDE.md / GEMINI.md merge clean if you preserve both rows. |
 | Coverage gate flakes on Windows lcov local vs CI Linux | Carry-forward 1: never lower a watermark to match local Windows. Run baseline verification on CI before merging. |
 | `update-baseline` accidentally run mid-task | Commit-message convention: every commit message includes "baseline updated only in commit 14" in its body. Implementer prompts for commits 2-13 explicitly forbid running `audit:coverage-floor:update-baseline`. |
@@ -485,3 +525,44 @@ Phase 7 (proposed): MCP connectors via the existing `@nimbus-dev/sdk/testing.run
 Phase 8: client + SDK final cleanup. Estimate: 3-4 commits.
 
 Phase 9: revisit gateway `embedding/model.ts` via routing-runtime DI refactor. Estimate: 1 commit (parallel to Phase 5 commit 12's pattern but for the routing runtime layer).
+
+---
+
+## Review & Suggestions (Antigravity)
+
+Self-review pass on this spec. Each numbered point shows the original observation/suggestion plus the **Disposition** applied in this revision. The canonical write-up of dispositions also lives in [`docs/superpowers/plans/2026-05-22-coverage-floor-phase-6-review.md`](../plans/2026-05-22-coverage-floor-phase-6-review.md).
+
+**1. Test Concurrency & Global State**
+- **Observation:** `globalThis.__nimbusCliFixture` is used to hold per-test state for the mock implementations.
+- **Risk/Question:** Bun's test runner can execute tests concurrently (if `--concurrent` is used or tests run in parallel). Since `globalThis` is shared across the entire V8 isolate, running tests concurrently would result in race conditions where one test overwrites the fixture of another.
+- **Suggestion:** Explicitly document that these tests **must** run serially (the default for tests in the same file, but ensure cross-file parallelization doesn't break this if Bun runs multiple files in the same isolate). Alternatively, use a context-based mocking approach if Bun ever supports it.
+- **Disposition:** Applied. The "Why a shared harness — and why mock isolation is load-bearing" section now contains an explicit "Serial-within-process is assumed" bullet stating the CLI test harness MUST NOT be invoked with `--concurrent` and that the global-slot delegation pattern depends on serial execution. Bun's default already gives serial-within-process semantics; the documented constraint locks that in.
+
+**2. Sub-handler API Surface**
+- **Observation:** 39 commands will be refactored to export their sub-handlers (e.g., `runVaultSet(client: IPCClient, ...)`).
+- **Question:** Are these sub-handlers intended to become public APIs for the CLI package, or are they exported *strictly* for testing?
+- **Suggestion:** If strictly for testing, consider adopting a naming convention (e.g., `_test_runVaultSet` or exporting them in a separate `export const __testing = { ... }` object) to prevent other parts of the codebase from accidentally consuming them as public APIs.
+- **Disposition:** Applied with a different mechanism. The "Per-file source refactor" section now documents the convention: sub-handlers are exported by name, each carries a JSDoc block flagging it as a test-and-dispatcher-only entry point, and other command files cannot import them by convention. The `_test_` prefix was rejected (non-idiomatic JS, reads oddly in production code paths); the `__testing` namespace object was rejected (complicates the dispatcher's call site, no real safety guarantee over JSDoc). `knip` will catch any genuinely orphaned export. Documented as the convention so reviewers can hold each family commit to it.
+
+**3. Output Capture Completeness**
+- **Observation:** `captureOutput` stubs `process.stdout.write`, `process.stderr.write`, `console.log`, and `console.error`.
+- **Improvement:** Many modern CLI tools (or transitive dependencies) may also log via `console.warn`, `console.info`, or `console.debug`.
+- **Suggestion:** Add stubs for `warn`, `info`, and `debug` to `captureOutput` to ensure test output remains completely silent and no logs leak into the test runner's console.
+- **Disposition:** Applied. The `cli-output.ts` reference implementation in the Test Infrastructure section now stubs `console.{log, error, warn, info, debug}`. Node convention routing applied: `log`/`info`/`debug` → stdout, `warn`/`error` → stderr.
+
+**4. `mock-ipc-client.ts` Queue Exhaustion**
+- **Observation:** `createMockIpcClient` uses an array `responseQueue` and tracks calls with `idx++`.
+- **Improvement:** If the code under test makes more IPC calls than expected, `idx++` will step out of bounds, silently returning `undefined` for the response, which could lead to confusing downstream type errors.
+- **Suggestion:** Add a bounds check in the mock client: `if (idx >= responseQueue.length) throw new Error("Unexpected IPC call: queue empty");` to fail fast and explicitly when tests under-mock the IPC surface.
+- **Disposition:** Applied. The `mock-ipc-client.ts` reference implementation now throws `"Unexpected IPC call: response queue exhausted (got <method>; provide more entries to createMockIpcClient)"` on queue exhaustion, surfacing the offending method name for fast debugging.
+
+**5. Orphaned Subprocesses in tests**
+- **Observation:** `lib/gateway-process.ts` tests will use `Bun.spawn` with a no-op loop and clean it up via `proc.kill()`.
+- **Risk:** If an assertion fails *before* `proc.kill()` is reached, the test throws, the block exits, and the spawned `bun -e` process may become an orphan, lingering in the background. Over multiple CI runs, this can cause out-of-memory or hanging issues.
+- **Suggestion:** Ensure subprocess handles are tracked at the file level (e.g., in a `Set<Subprocess>`) and killed defensively within an `afterEach` or `afterAll` block, regardless of test pass/fail state.
+- **Disposition:** Applied. The Risks table row for `lib/gateway-process.ts` (commit 5) now mandates the file-level `const liveProcs = new Set<Bun.Subprocess>()` pattern with `for (const p of liveProcs) { try { p.kill(); } catch {} } liveProcs.clear();` in `afterEach` and `afterAll` (belt-and-braces). Guarantees orphan-free cleanup even when assertions fail before the inline `proc.kill()`.
+
+**6. `process.stdout` TTY Stubbing & Term size**
+- **Observation:** The spec mentions `process.stdout.isTTY` stubbing.
+- **Suggestion:** Ink often needs `process.stdout.columns` and `process.stdout.rows` to render properly without throwing layout errors. The Reused Patterns table mentions them, but the code snippet in Carry-forward #5 does not. Make sure to define all three properties (`isTTY`, `columns`, `rows`) during the TTY stubbing setup.
+- **Disposition:** Applied. The Carry-forward #5 code snippet now stubs all three properties (`isTTY` + `columns: 120` + `rows: 40`) with matching `afterEach` restoration via captured `PropertyDescriptor` originals. The header text now also explicitly calls out that headless CI leaves `columns`/`rows` undefined and that Ink throws layout errors when `columns` is missing.
