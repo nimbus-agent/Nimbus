@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T18:05:17.064Z",
+  "generated_at": "2026-05-22T03:04:01.655Z",
   "files": {
     "packages/cli/src/commands/ask.ts": {
       "min_coverage_pct": 4.76
@@ -80,6 +80,9 @@
     "packages/cli/src/commands/search.ts": {
       "min_coverage_pct": 3.96
     },
+    "packages/cli/src/commands/security.ts": {
+      "min_coverage_pct": 50
+    },
     "packages/cli/src/commands/serve.ts": {
       "min_coverage_pct": 9.62
     },
@@ -150,7 +153,7 @@
       "min_coverage_pct": 46.48
     },
     "packages/cli/src/tui/App.tsx": {
-      "min_coverage_pct": 57.95
+      "min_coverage_pct": 57.6
     },
     "packages/cli/src/tui/detect-fallback.ts": {
       "min_coverage_pct": 69.23
@@ -201,7 +204,7 @@
       "min_coverage_pct": 13.51
     },
     "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_coverage_pct": 67.08
+      "min_coverage_pct": 66.9
     },
     "packages/gateway/src/index/ranked-item.ts": {
       "min_coverage_pct": 0
@@ -210,10 +213,10 @@
       "min_coverage_pct": 65.12
     },
     "packages/gateway/src/ipc/server/server.ts": {
-      "min_coverage_pct": 76.27
+      "min_coverage_pct": 76.7
     },
     "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 49.32
+      "min_coverage_pct": 45.21
     },
     "packages/gateway/src/platform/assemble.ts": {
       "min_coverage_pct": 77.75
@@ -222,7 +225,7 @@
       "min_coverage_pct": 63.64
     },
     "packages/gateway/src/platform/paths.ts": {
-      "min_coverage_pct": 48.08
+      "min_coverage_pct": 39.62
     },
     "packages/gateway/src/vault/factory.ts": {
       "min_coverage_pct": 75
