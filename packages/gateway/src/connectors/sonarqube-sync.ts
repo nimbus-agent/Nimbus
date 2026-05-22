@@ -28,7 +28,7 @@ import {
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
-import { mapSonarIssueToItem } from "./sonarqube-issue-mapping.ts";
+import { mapSonarIssueToItem, stripTrailingSlashes } from "./sonarqube-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "sonarqube";
@@ -125,7 +125,7 @@ async function loadSonarCreds(ctx: SyncContext): Promise<SonarCreds | null> {
     return null;
   }
   const urlRaw = await readConnectorSecret(ctx.vault, "sonarqube", "url");
-  const base = (urlRaw?.trim() ?? "").replace(/\/+$/, "") || DEFAULT_API;
+  const base = stripTrailingSlashes(urlRaw?.trim() ?? "") || DEFAULT_API;
   const organization = (
     (await readConnectorSecret(ctx.vault, "sonarqube", "organization")) ?? ""
   ).trim();

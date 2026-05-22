@@ -30,12 +30,20 @@ const DEFAULT_API = "https://sonarcloud.io";
 const ISSUE_TYPES = ["BUG", "VULNERABILITY", "CODE_SMELL"] as const;
 const OPEN_STATUSES = ["OPEN", "CONFIRMED", "REOPENED"] as const;
 
+// String-loop trailing-slash trim. Avoids `/\/+$/` which Sonar flags as
+// ReDoS-risk; non-regex form is uncontroversially safe.
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return s.slice(0, end);
+}
+
 function apiBase(): string {
   const raw = process.env["SONARQUBE_URL"]?.trim();
   if (raw === undefined || raw === "") {
     return DEFAULT_API;
   }
-  return raw.replace(/\/+$/, "");
+  return stripTrailingSlashes(raw);
 }
 
 function authHeader(): Record<string, string> {

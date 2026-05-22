@@ -52,8 +52,18 @@ export interface SonarMappedRow {
   readonly syncedAt: number;
 }
 
+// String-loop trailing-slash trim. Avoids `/\/+$/` which Sonar's static
+// analyzer flags as ReDoS-risk; on a sane regex engine the anchored `+`
+// is linear-time, but the non-regex form is uncontroversially safe and
+// equally clear.
+export function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return s.slice(0, end);
+}
+
 export function issueUrl(baseUrl: string, organization: string, issueKey: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = stripTrailingSlashes(baseUrl);
   if (organization !== "") {
     return `${base}/project/issues?id=${encodeURIComponent(organization)}&issues=${encodeURIComponent(issueKey)}&open=${encodeURIComponent(issueKey)}`;
   }
