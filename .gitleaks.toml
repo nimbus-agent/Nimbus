@@ -1,0 +1,31 @@
+# Gitleaks repo config.
+#
+# Inherits the default ruleset and adds a path-based allowlist for the two
+# locations that legitimately carry secret-shaped fixtures by design:
+#
+#   1. packages/gateway/src/security/secret-patterns.test.ts
+#      — unit-test fixtures that intentionally assert SECRET_PATTERNS regexes
+#        fire on canonical prefix strings (PEM headers, `xoxb-…`, `sk-…`, etc).
+#        Required for the Phase 5 `nimbus security scan` test suite.
+#
+#   2. docs/superpowers/plans/**/*.md
+#      — implementation plan docs frequently quote test source verbatim,
+#        so any plan covering security-adjacent work reproduces the same
+#        fixture strings. Plans never carry real credentials.
+#
+# Why path-based instead of fingerprint pins in `.gitleaksignore`:
+# fingerprints are `<commit-sha>:<path>:<rule>:<line>`. Squash-merges rewrite
+# the SHA, rebases shift line numbers, and the pin then misses the (now
+# rewritten) commit — which is exactly how PR #391 broke `main` CI: the
+# branch-SHA pins (5f889abd, 317c6f12) carried over but the squash-merge to
+# 77fefdb4 was unpinned, failing every downstream PR's gitleaks job.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures for the secret-pattern unit tests and committed planning docs"
+paths = [
+  '''packages/gateway/src/security/secret-patterns\.test\.ts''',
+  '''docs/superpowers/plans/.*\.md''',
+]
