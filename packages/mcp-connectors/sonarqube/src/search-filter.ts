@@ -11,6 +11,20 @@ export interface SonarSearchMatchOptions {
   readonly limit?: number | undefined;
 }
 
+function stringField(row: Record<string, unknown>, key: string): string {
+  const v = row[key];
+  return typeof v === "string" ? v : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((t): t is string => typeof t === "string") : [];
+}
+
+function buildHaystack(row: Record<string, unknown>): string {
+  const tags = stringArray(row["tags"]);
+  return `${stringField(row, "message")} ${stringField(row, "rule")} ${stringField(row, "component")} ${tags.join(" ")}`.toLowerCase();
+}
+
 export function filterSonarIssues(
   issues: readonly unknown[],
   options: SonarSearchMatchOptions,
@@ -23,19 +37,12 @@ export function filterSonarIssues(
       continue;
     }
     const row = it as Record<string, unknown>;
-    const message = typeof row["message"] === "string" ? (row["message"] as string) : "";
-    const rule = typeof row["rule"] === "string" ? (row["rule"] as string) : "";
-    const component = typeof row["component"] === "string" ? (row["component"] as string) : "";
-    const tagsField = row["tags"];
-    const tags = Array.isArray(tagsField)
-      ? tagsField.filter((t): t is string => typeof t === "string")
-      : [];
-    const hay = `${message} ${rule} ${component} ${tags.join(" ")}`.toLowerCase();
-    if (hay.includes(needle)) {
-      out.push(it);
-      if (out.length >= cap) {
-        break;
-      }
+    if (!buildHaystack(row).includes(needle)) {
+      continue;
+    }
+    out.push(it);
+    if (out.length >= cap) {
+      break;
     }
   }
   return out;

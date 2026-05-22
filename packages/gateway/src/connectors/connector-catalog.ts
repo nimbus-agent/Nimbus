@@ -113,7 +113,46 @@ function oauthUnsupported(serviceId: ConnectorServiceId, detail: string): never 
   throw new Error(`oauthProfileForService: ${serviceId} ${detail}`);
 }
 
+/**
+ * Services that authenticate via a PAT / API token / kubeconfig / service-account
+ * key rather than OAuth. Calling `oauthProfileForService` for one of these is a
+ * misuse — callers should read the connector's vault keys directly via
+ * `readConnectorSecret`. The detail string explains the correct auth shape.
+ *
+ * Adding a new non-OAuth connector: add an entry here. Adding a new OAuth
+ * connector: add a branch in the `switch` below.
+ */
+const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
+  github: "uses a PAT (connector.auth personalAccessToken)",
+  github_actions: "uses the same PAT as github (connector.auth github)",
+  gitlab: "uses a PAT (connector.auth personalAccessToken)",
+  bitbucket: "uses app password (connector.auth username + token)",
+  linear: "uses an API key (connector.auth personalAccessToken)",
+  jira: "uses email + API token + base URL (connector.auth)",
+  confluence: "uses email + API token + base URL (connector.auth)",
+  discord: "uses a bot token + opt-in (connector.auth --enable)",
+  jenkins: "uses base URL + username + API token (connector.auth)",
+  circleci: "uses a personal API token (connector.auth circleci)",
+  pagerduty: "uses a REST API token (connector.auth pagerduty)",
+  kubernetes: "uses a kubeconfig file path (connector.auth kubernetes)",
+  aws: "uses access key + secret + region or profile (connector.auth aws)",
+  azure: "uses service principal tenant + client id + secret (connector.auth azure)",
+  gcp: "uses a service account JSON key path (connector.auth gcp)",
+  iac: "is opt-in for local CLIs (connector.auth iac --enable)",
+  grafana: "uses base URL + API token (connector.auth grafana)",
+  sentry: "uses auth token + org slug (connector.auth sentry)",
+  newrelic: "uses a user API key (connector.auth newrelic)",
+  datadog: "uses API + application keys (connector.auth datadog)",
+  snyk: "uses a REST API token (connector.auth snyk)",
+  bitrise: "uses a personal access token (connector.auth bitrise)",
+  sonarqube: "uses an API token (connector.auth sonarqube)",
+};
+
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
+  const unsupported = OAUTH_UNSUPPORTED_DETAILS[serviceId];
+  if (unsupported !== undefined) {
+    oauthUnsupported(serviceId, unsupported);
+  }
   switch (serviceId) {
     case "google_drive":
       return {
@@ -189,69 +228,15 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
           "chat:write",
         ],
       };
-    case "github":
-      return oauthUnsupported("github", "uses a PAT (connector.auth personalAccessToken)");
-    case "github_actions":
-      return oauthUnsupported(
-        "github_actions",
-        "uses the same PAT as github (connector.auth github)",
-      );
-    case "gitlab":
-      return oauthUnsupported("gitlab", "uses a PAT (connector.auth personalAccessToken)");
-    case "bitbucket":
-      return oauthUnsupported("bitbucket", "uses app password (connector.auth username + token)");
-    case "linear":
-      return oauthUnsupported("linear", "uses an API key (connector.auth personalAccessToken)");
-    case "jira":
-      return oauthUnsupported("jira", "uses email + API token + base URL (connector.auth)");
     case "notion":
       return { provider: "notion", defaultScopes: [] };
-    case "confluence":
-      return oauthUnsupported("confluence", "uses email + API token + base URL (connector.auth)");
-    case "discord":
-      return oauthUnsupported("discord", "uses a bot token + opt-in (connector.auth --enable)");
-    case "jenkins":
-      return oauthUnsupported("jenkins", "uses base URL + username + API token (connector.auth)");
-    case "circleci":
-      return oauthUnsupported("circleci", "uses a personal API token (connector.auth circleci)");
-    case "pagerduty":
-      return oauthUnsupported("pagerduty", "uses a REST API token (connector.auth pagerduty)");
-    case "kubernetes":
+    default:
+      // All remaining ids are in `OAUTH_UNSUPPORTED_DETAILS` and threw above.
+      // The throw is the actual control-flow exit; this branch only exists so
+      // TypeScript's exhaustiveness check passes for the OAuth-supported switch.
       return oauthUnsupported(
-        "kubernetes",
-        "uses a kubeconfig file path (connector.auth kubernetes)",
+        serviceId,
+        "is missing both an OAuth branch and an unsupported entry",
       );
-    case "aws":
-      return oauthUnsupported(
-        "aws",
-        "uses access key + secret + region or profile (connector.auth aws)",
-      );
-    case "azure":
-      return oauthUnsupported(
-        "azure",
-        "uses service principal tenant + client id + secret (connector.auth azure)",
-      );
-    case "gcp":
-      return oauthUnsupported("gcp", "uses a service account JSON key path (connector.auth gcp)");
-    case "iac":
-      return oauthUnsupported("iac", "is opt-in for local CLIs (connector.auth iac --enable)");
-    case "grafana":
-      return oauthUnsupported("grafana", "uses base URL + API token (connector.auth grafana)");
-    case "sentry":
-      return oauthUnsupported("sentry", "uses auth token + org slug (connector.auth sentry)");
-    case "newrelic":
-      return oauthUnsupported("newrelic", "uses a user API key (connector.auth newrelic)");
-    case "datadog":
-      return oauthUnsupported("datadog", "uses API + application keys (connector.auth datadog)");
-    case "snyk":
-      return oauthUnsupported("snyk", "uses a REST API token (connector.auth snyk)");
-    case "bitrise":
-      return oauthUnsupported("bitrise", "uses a personal access token (connector.auth bitrise)");
-    case "sonarqube":
-      return oauthUnsupported("sonarqube", "uses an API token (connector.auth sonarqube)");
-    default: {
-      const _never: never = serviceId;
-      return _never;
-    }
   }
 }

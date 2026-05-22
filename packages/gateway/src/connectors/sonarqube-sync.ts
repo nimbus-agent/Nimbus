@@ -113,6 +113,98 @@ function extractTotal(parsed: unknown): number {
   return typeof total === "number" && Number.isFinite(total) ? Math.trunc(total) : 0;
 }
 
+interface SonarCreds {
+  readonly token: string;
+  readonly base: string;
+  readonly organization: string;
+}
+
+async function loadSonarCreds(ctx: SyncContext): Promise<SonarCreds | null> {
+  const token = (await readConnectorSecret(ctx.vault, "sonarqube", "token"))?.trim() ?? "";
+  if (token === "") {
+    return null;
+  }
+  const urlRaw = await readConnectorSecret(ctx.vault, "sonarqube", "url");
+  const base = (urlRaw?.trim() ?? "").replace(/\/+$/, "") || DEFAULT_API;
+  const organization = (
+    (await readConnectorSecret(ctx.vault, "sonarqube", "organization")) ?? ""
+  ).trim();
+  return { token, base, organization };
+}
+
+interface ProjectSyncOutcome {
+  readonly upserted: number;
+  readonly bytes: number;
+}
+
+async function syncOneProject(
+  ctx: SyncContext,
+  creds: SonarCreds,
+  projectKey: string,
+  now: number,
+): Promise<ProjectSyncOutcome> {
+  let upserted = 0;
+  let bytes = 0;
+  for (let page = 1; page <= MAX_PAGES_PER_PROJECT; page += 1) {
+    const issuesParams = new URLSearchParams({
+      componentKeys: projectKey,
+      types: ISSUE_TYPES,
+      statuses: OPEN_STATUSES,
+      ps: String(PAGE_SIZE),
+      p: String(page),
+    });
+    const outcome = await sonarGet(
+      ctx,
+      creds.token,
+      creds.base,
+      `/api/issues/search?${issuesParams.toString()}`,
+    );
+    bytes += outcome.bytes;
+    if (outcome.kind !== "ok") {
+      break;
+    }
+    const issues = extractIssues(outcome.parsed);
+    upserted += upsertSonarIssues(ctx, creds, issues, now);
+    const total = extractTotal(outcome.parsed);
+    if (issues.length < PAGE_SIZE || page * PAGE_SIZE >= total) {
+      break;
+    }
+  }
+  return { upserted, bytes };
+}
+
+function upsertSonarIssues(
+  ctx: SyncContext,
+  creds: SonarCreds,
+  issues: readonly unknown[],
+  now: number,
+): number {
+  let upserted = 0;
+  for (const issue of issues) {
+    const mapped = mapSonarIssueToItem(issue, {
+      baseUrl: creds.base,
+      organization: creds.organization,
+      syncedAt: now,
+    });
+    if (mapped === null) {
+      continue;
+    }
+    upsertIndexedItemForSync(ctx, mapped);
+    upserted += 1;
+  }
+  return upserted;
+}
+
+function buildComponentsPath(organization: string): string {
+  // The components endpoint accepts `organization` optionally; SonarCloud
+  // effectively requires it (returns empty otherwise), self-hosted ignores it.
+  const params = new URLSearchParams({ qualifiers: "TRK", ps: String(PAGE_SIZE) });
+  if (organization !== "") {
+    params.set("organization", organization);
+  }
+  return `/api/components/search?${params.toString()}`;
+}
+
 export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -121,31 +213,16 @@ export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Sync
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureSonarqubeMcpRunning();
-      const token = (await readConnectorSecret(ctx.vault, "sonarqube", "token"))?.trim() ?? "";
-      if (token === "") {
+      const creds = await loadSonarCreds(ctx);
+      if (creds === null) {
         return syncNoopResult(cursor, t0);
       }
-      const urlRaw = await readConnectorSecret(ctx.vault, "sonarqube", "url");
-      const base = (urlRaw?.trim() ?? "").replace(/\/+$/, "") || DEFAULT_API;
-      const organization = (
-        (await readConnectorSecret(ctx.vault, "sonarqube", "organization")) ?? ""
-      ).trim();
 
-      // The components endpoint accepts `organization` optionally;
-      // SonarCloud effectively requires it (returns empty otherwise),
-      // self-hosted ignores it. We send it when present.
-      const componentsParams = new URLSearchParams({
-        qualifiers: "TRK",
-        ps: String(PAGE_SIZE),
-      });
-      if (organization !== "") {
-        componentsParams.set("organization", organization);
-      }
       const projectsOutcome = await sonarGet(
         ctx,
-        token,
-        base,
-        `/api/components/search?${componentsParams.toString()}`,
+        creds.token,
+        creds.base,
+        buildComponentsPath(creds.organization),
       );
       if (projectsOutcome.kind === "http_error") {
         return syncPassCursorHttpEmpty(t0, projectsOutcome.bytes, cursor, pass1Cursor());
@@ -154,54 +231,16 @@ export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Sync
         return syncPassCursorParseEmpty(t0, projectsOutcome.bytes, pass1Cursor());
       }
 
-      const projectKeys = extractProjectKeys(projectsOutcome.parsed);
       const now = Date.now();
-      let upserted = 0;
+      let totalUpserted = 0;
       let totalBytes = projectsOutcome.bytes;
-
-      for (const projectKey of projectKeys) {
-        let page = 1;
-        while (page <= MAX_PAGES_PER_PROJECT) {
-          const issuesParams = new URLSearchParams({
-            componentKeys: projectKey,
-            types: ISSUE_TYPES,
-            statuses: OPEN_STATUSES,
-            ps: String(PAGE_SIZE),
-            p: String(page),
-          });
-          const issuesOutcome = await sonarGet(
-            ctx,
-            token,
-            base,
-            `/api/issues/search?${issuesParams.toString()}`,
-          );
-          totalBytes += issuesOutcome.bytes;
-          if (issuesOutcome.kind !== "ok") {
-            break;
-          }
-          const issues = extractIssues(issuesOutcome.parsed);
-          for (const issue of issues) {
-            const mapped = mapSonarIssueToItem(issue, {
-              baseUrl: base,
-              organization,
-              syncedAt: now,
-            });
-            if (mapped === null) {
-              continue;
-            }
-            upsertIndexedItemForSync(ctx, mapped);
-            upserted += 1;
-          }
-          const total = extractTotal(issuesOutcome.parsed);
-          const fetched = page * PAGE_SIZE;
-          if (issues.length < PAGE_SIZE || fetched >= total) {
-            break;
-          }
-          page += 1;
-        }
+      for (const projectKey of extractProjectKeys(projectsOutcome.parsed)) {
+        const projectOutcome = await syncOneProject(ctx, creds, projectKey, now);
+        totalUpserted += projectOutcome.upserted;
+        totalBytes += projectOutcome.bytes;
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);
+      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
     },
   };
 }

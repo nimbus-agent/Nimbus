@@ -162,7 +162,7 @@ export function mapSonarIssueToItem(raw: unknown, ctx: SonarMappingContext): Son
     creation_date: creationDate,
     update_date: updateDate,
     canonical_url: canonicalUrl,
-    organization: ctx.organization !== "" ? ctx.organization : null,
+    organization: ctx.organization === "" ? null : ctx.organization,
   };
 
   return {
