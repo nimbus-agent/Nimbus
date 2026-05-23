@@ -1,6 +1,6 @@
 # Nimbus SLO Sheet
 
-> **Status:** PR-C-1 — UX surfaces published with concrete thresholds; workload surfaces (S6, S7, S8 cells, S9, S10) are flagged `TBD (Phase 2)` and will be filled in once PR-C-2's M1 Air reference run lands.
+> **Status:** PR-C-1 — UX surfaces published with concrete thresholds; workload surfaces (S6, S7, S8 cells, S9, S10) are flagged `TBD (Phase 5)` and will be filled in once PR-C-2's M1 Air reference run lands.
 >
 > **Source spec:** Phase 4 perf audit design (B2), §3.
 
@@ -42,7 +42,7 @@ A bench fails when either:
 | S7-c | rss_bytes_p95 | n/a (reference only) | n/a (reference only) | 20 %, 50 MB |
 | S9 | tokens_per_sec | n/a (reference only) | n/a (reference only) | 30 %, 2 tps |
 | S10 | throughput_per_sec | n/a (reference only) | TBD — Phase 2 reference run (PR-C-2) | 25 %, 100 items/sec |
-| S8 (12 cells, see § Workload › S8 cells below) | throughput_per_sec | TBD | TBD — Phase 2 reference run (PR-C-2) | 25 %, 5 items/sec |
+| S8 (12 cells, see § Workload › S8 cells below) | throughput_per_sec | TBD | TBD — Phase 5 reference run (PR-C-2) | 25 %, 5 items/sec |
 
 ### S8 cells
 
