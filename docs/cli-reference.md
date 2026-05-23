@@ -488,6 +488,10 @@ nimbus connector auth aws
 nimbus connector auth azure
 nimbus connector auth gcp
 nimbus connector auth kubernetes
+nimbus connector auth snyk           # API token
+nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
+nimbus connector auth semgrep        # PAT
+nimbus connector auth bitrise        # PAT
 ```
 
 ---
@@ -814,15 +818,19 @@ nimbus serve --port 7474        # Default port: 7474
 
 | Endpoint | Description |
 |---|---|
+| `GET /v1/audit` | Recent audit log entries |
+| `GET /v1/connectors` | List connectors and health states |
+| `GET /v1/health` | Gateway health summary |
 | `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params) |
 | `GET /v1/items/:id` | Get a single item by ID |
+| `GET /v1/metrics/dora` | DORA metrics for a service (supports `service`, `since` query params) |
+| `GET /v1/openapi.json` | Machine-readable OpenAPI 3.1 schema for this API |
 | `GET /v1/people` | List people graph entries |
 | `GET /v1/people/:id` | Get a single person record |
-| `GET /v1/connectors` | List connectors and health states |
-| `GET /v1/audit` | Recent audit log entries |
-| `GET /v1/health` | Gateway health summary |
+| `GET /v1/preflight/deploy` | Pre-deploy check: active P1 incidents, failing CI, merge conflicts |
+| `POST /v1/deployments` | Record a deployment annotation (bearer-auth required via `http_api.deployment_token`) |
 
-All endpoints are `localhost`-only and read-only (`SQLITE_OPEN_READONLY` connection). There is no authentication required because the socket is owner-only at the OS level.
+All read endpoints are `localhost`-only and use `SQLITE_OPEN_READONLY`. The `POST /v1/deployments` write surface requires bearer authentication and is rate-limited (60 req/min). There is no authentication required for read endpoints because the socket is owner-only at the OS level.
 
 ---
 
@@ -1053,6 +1061,40 @@ nimbus extension downgrade com.example.notion --to 1.0.0 --json
 ```
 
 Fires the `extension.downgrade` HITL action type so the consent prompt clearly distinguishes the direction from a forward update.
+
+---
+
+### `nimbus extension keygen [--out <path>] [--force]`
+
+Generate a new Ed25519 keypair for signing extension manifests. The private key is saved to `~/.nimbus/publisher-key` (or `<path>`) with `0600` permissions. The public key (base64) is printed to stdout. Use `--force` to overwrite an existing key.
+
+```bash
+nimbus extension keygen
+nimbus extension keygen --out ./my-publisher-key
+```
+
+---
+
+### `nimbus extension sign <ext-dir> [--key <path>]`
+
+Sign an extension manifest (`nimbus.extension.json`) in the specified directory using the private key at `~/.nimbus/publisher-key` (or `<path>`). The `signature` field is injected directly into the manifest file.
+
+```bash
+nimbus extension sign ./nimbus-my-connector
+nimbus extension sign ./nimbus-my-connector --key ./my-publisher-key
+```
+
+---
+
+### `nimbus extension sync [--dry-run] [--json]`
+
+Poll the registry to check the status of installed publishers. Detects key rotations and revoked publishers, then triggers a re-verification of all installed extensions for affected publishers.
+
+```bash
+nimbus extension sync
+nimbus extension sync --dry-run
+nimbus extension sync --json
+```
 
 ---
 

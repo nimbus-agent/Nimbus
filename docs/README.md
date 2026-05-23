@@ -124,8 +124,8 @@ Nimbus is built for engineers and operators who run systems in production. If yo
 | Role | What Nimbus gives you |
 |---|---|
 | **On-call / SRE** | Instant incident context — last deploy, triggering commit, CI result, Slack thread — in one query, without seven browser tabs |
-| **Platform Engineer** | Drift detection, multi-cloud infra state, deployment correlation, consent-gated IaC apply and rollback |
-| **Security Engineer** | Alert-to-commit tracing, CVE-to-PR correlation, full audit log for every agent action, compliance posture queries |
+| **Platform Engineer** | Drift detection, multi-cloud infra state, deployment correlation, CI/CD and build pipeline monitoring (Bitrise), consent-gated IaC apply and rollback |
+| **Security Engineer** | Alert-to-commit tracing, CVE-to-PR correlation, vulnerability and code analysis insights (Snyk, Semgrep, SonarQube/SonarCloud), full audit log for every agent action, compliance posture queries |
 | **Senior Developer** | Cross-repo PR intelligence, release readiness checks, pipeline context, local-only credential storage; OpenAPI / AsyncAPI spec indexing for "which services expose this endpoint?" queries (Phase 5) |
 | **Team Lead / Engineering Manager** | Cross-service activity digest, changelog generation, expert routing, blast radius analysis — without asking anyone |
 | **Analytics Engineer / Data Scientist** | Cross-stack lineage from dashboard to dbt model to warehouse table to orchestration DAG — one local query instead of five consoles; metadata-only ingestion keeps row data on the warehouse |
@@ -174,7 +174,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 3 (shipped):** Jenkins, GitHub Actions, CircleCI, GitLab CI, AWS, Azure, GCP, Kubernetes, Terraform/Pulumi/CloudFormation, Datadog, Grafana, Sentry, PagerDuty, New Relic
 
-**Phase 5 (in flight):** Obsidian vault + OpenAPI / AsyncAPI spec indexer (Wave A, shipped). Planned: Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
+**Phase 5 (in flight):** Obsidian vault, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, and Semgrep connectors (Wave A & B, shipped). Planned: Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
 
 **Phase 6 (planned, Team tier):** Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye (SSO-gated warehouse, BI, and data-quality connectors; depends on Team Vault)
 
@@ -243,6 +243,25 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 *Extension sandbox (T2 PR 1, 2026-05-17):*
 
 - **Per-OS sandbox runner — invariant `I15`** — every lazy-mesh extension spawn is routed through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)`. Linux: bwrap user/PID/IPC/mount/network namespaces + seccomp BPF + per-host iptables via `nimbus-sandbox-helper`. macOS: `sandbox-exec` SBPL profile. Windows: AppContainer + `internetClient` capability + orphan-reap for leftover profiles. Manifest-declared `permissions.{network,filesystem}` define the allowed surface; everything else is kernel-denied. Static-audit rule `D10` catches missed wrapping at CI time. Pre-T2 extensions are hard-disabled until reinstalled.
+
+*Verified publisher signatures (T2 PR 2, 2026-05-18):*
+
+- **Ed25519-signed manifests — invariant `I16`** — extension manifests carry an optional `publisher: { id, key }` field + an embedded `signature` field. Ed25519 verification runs at install and startup; unverified or modified manifests are hard-disabled via the `SignatureDisabledRegistry` singleton. Cryptographic primitives (`canonical-json`, `verify-signature`) are bundled in `@nimbus-dev/sdk` (MIT) for easy publisher signing.
+
+*Auto-update with HITL (T2 PR 3, 2026-05-20):*
+
+- **Extension auto-update daemon** — checks the registry periodically for newer signed versions. Bumps require user consent via the `extension.autoUpdate` and `extension.downgrade` HITL action types. Supports two-version active/backup on-disk directories allowing instant rollback on failure or via CLI.
+
+*Dependency resolution (T2 PR 4, 2026-05-21):*
+
+- **DFS-based backtracking solver** — resolves extension dependencies declared in manifests via semver ranges. Tracks dependencies locally in a new `extension_dependency` table (V31 schema), gates installs and updates against conflict errors, and performs startup completeness checks via the `MissingDependencyRegistry`.
+
+*New connectors & tooling (Wave A & B, 2026-05-21 → 2026-05-22):*
+
+- **Snyk, Bitrise, SonarQube, and Semgrep connectors** — first-party security and CI/CD connectors indexing vulnerability scans, build statuses, and code analysis.
+- **Published OpenAPI spec** — interactive OpenAPI document exposing the gateway's read-only HTTP surface.
+- **Pre-commit hook documentation** — integration guidelines for deploying Nimbus queries as Git hooks.
+- **CI/CD integration recipes** — worked, copy-paste-ready examples in [use-in-ci.md](./cli/use-in-ci.md) for running `nimbus query` within GitHub Actions, GitLab CI, and Jenkins to gate deployments or generate release notes.
 
 See [`docs/roadmap.md`](./roadmap.md) for the full delivery list and [`docs/cli-reference.md`](./cli-reference.md) for the complete CLI command reference.
 
@@ -601,7 +620,7 @@ nimbus extension list
 - **Structural HITL gate** — every delete, send, and move is blocked at the executor by a compile-time constant set. The agent cannot reason around a function that doesn't exist.
 - **Extension isolation** — third-party extensions run as child processes, receive only their declared service's credentials, and cannot reach the Vault or other connectors. Manifest SHA-256 is verified on every Gateway startup.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local SQLite table before the action executes.
-- **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. Three Low items remain as Phase 4 polish; see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
+- **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.
 
@@ -705,11 +724,14 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 1 | Foundation | ✅ Complete |
 | 2 | The Bridge (15 connectors) | ✅ Complete |
 | 3 | Intelligence (semantic search, CI/CD, cloud) | ✅ Complete |
-| 3.5 | Observability (health model, query API, recovery, telemetry, docs) | ✅ Complete |
+| 3.5 | Observability & Developer Experience | ✅ Complete |
 | 4 | Presence (local LLM, multi-agent, voice, VS Code extension, TUI; desktop UI code-complete) | ✅ Complete |
 | 5 | The Extended Surface | 🔵 Active |
-| 6 | Team — *also ships `desktop-v0.1.0`* (Tauri installers + signing, deferred from `v0.1.0`) | Planned |
-| 7–9 | Autonomous Agent → Sovereign Mesh → Enterprise | Planned |
+| 6 | Team | Planned |
+| 7–9 | Engineering Excellence → Security Engineering → AI Engineering Loop | Planned |
+| 10–12 | Autonomous Agent → Sovereign Mesh → Enterprise | Planned |
+| 13 | Desktop Distribution (*ships `desktop-v0.1.0`* Tauri signed installers + auto-update) | Planned |
+| 14–15 | Agent Evolution (AI v2) → Cross-Organizational Federation (Global Mesh) | Planned |
 
 See [`roadmap.md`](./roadmap.md) for full acceptance criteria and sequencing.
 

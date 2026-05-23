@@ -34,7 +34,7 @@ Companion files:
 
 **How to comply:** every new IPC method that mutates state outside the index, deletes data, or reaches the network on the user's behalf is added to `HITL_REQUIRED_BACKING` *and* dispatched through `ToolExecutor`. There is no "trusted caller" exception.
 
-**T2 PR 3 additions (2026-MM-DD):** `extension.autoUpdate` (forward version bump) and `extension.downgrade` (revert to a cached `_prev/<v>/`) joined the frozen set. The RPC handler in `extensions/auto-update-rpc.ts` builds the `PlannedAction` and gates it through a per-client `ToolExecutor` constructed by the IPC dispatcher.
+**T2 PR 3 additions (2026-05-20):** `extension.autoUpdate` (forward version bump) and `extension.downgrade` (revert to a cached `_prev/<v>/`) joined the frozen set. The RPC handler in `extensions/auto-update-rpc.ts` builds the `PlannedAction` and gates it through a per-client `ToolExecutor` constructed by the IPC dispatcher.
 
 ---
 
@@ -96,7 +96,7 @@ Companion files:
 
 **How to comply:** when adding to `ALLOWED_METHODS`, verify the gateway handler exists, route any write through `HITL_REQUIRED`, and update the allowlist test that asserts every entry resolves to a real handler.
 
-**T2 PR 3 additions (2026-MM-DD):** `extension.checkForUpdates` (read-only cache surface) and `extension.update` (HITL-gated via `extension.autoUpdate` / `extension.downgrade`) joined the allowlist, bumping `allowlist_exact_size` from 60 to 62. `extension.install` stays absent — the marketplace install flow continues to use the Rust-native file picker so chain C1 cannot be reintroduced via the auto-update surface.
+**T2 PR 3 additions (2026-05-20):** `extension.checkForUpdates` (read-only cache surface) and `extension.update` (HITL-gated via `extension.autoUpdate` / `extension.downgrade`) joined the allowlist, bumping `allowlist_exact_size` from 60 to 62. `extension.install` stays absent — the marketplace install flow continues to use the Rust-native file picker so chain C1 cannot be reintroduced via the auto-update surface.
 
 ---
 
@@ -267,7 +267,7 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I16 — Sub-agent tool scope enforcement` section (the next free number after the current `I15`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I17 — Sub-agent tool scope enforcement` section (the next free number after the current `I16`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
