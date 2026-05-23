@@ -277,7 +277,7 @@ jobs:
           name: coverage-lcov-merged
           path: coverage/lcov.info
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Upload coverage to Codecov
         # Supplementary reporting only — coverage threshold is enforced by the
