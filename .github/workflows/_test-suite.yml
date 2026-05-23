@@ -181,7 +181,7 @@ jobs:
             run_pkg "${pkg}"
           done
 
-          for pkg in packages/mcp-connectors/*; do
+          for pkg in packages/mcp-connectors/* packages/github-actions/*; do
             if [ -f "${pkg}/package.json" ]; then
               run_pkg "${pkg}"
             fi
