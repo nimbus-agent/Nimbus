@@ -1,156 +1,39 @@
 {
   "version": 1,
-  "generated_at": "2026-05-22T05:25:35.230Z",
+  "generated_at": "2026-05-24T19:19:07.918Z",
   "files": {
-    "packages/cli/src/commands/ask.ts": {
-      "min_coverage_pct": 4.76
-    },
-    "packages/cli/src/commands/audit.ts": {
-      "min_coverage_pct": 4.21
-    },
-    "packages/cli/src/commands/catchup.ts": {
-      "min_coverage_pct": 45.45
-    },
-    "packages/cli/src/commands/config.ts": {
-      "min_coverage_pct": 5.19
-    },
     "packages/cli/src/commands/connector.ts": {
-      "min_coverage_pct": 9.23
-    },
-    "packages/cli/src/commands/data.ts": {
-      "min_coverage_pct": 9.65
-    },
-    "packages/cli/src/commands/db.ts": {
-      "min_coverage_pct": 4.79
-    },
-    "packages/cli/src/commands/deploy-annotate.ts": {
-      "min_coverage_pct": 69.14
-    },
-    "packages/cli/src/commands/deploy.ts": {
-      "min_coverage_pct": 37.06
-    },
-    "packages/cli/src/commands/diag.ts": {
-      "min_coverage_pct": 6.67
+      "min_coverage_pct": 40.5
     },
     "packages/cli/src/commands/doctor.ts": {
-      "min_coverage_pct": 18.62
-    },
-    "packages/cli/src/commands/expert.ts": {
-      "min_coverage_pct": 39.53
+      "min_coverage_pct": 46.22
     },
     "packages/cli/src/commands/extension.ts": {
       "min_coverage_pct": 72.13
     },
-    "packages/cli/src/commands/help.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/cli/src/commands/impact.ts": {
-      "min_coverage_pct": 45.1
-    },
-    "packages/cli/src/commands/index-cmd.ts": {
-      "min_coverage_pct": 55.45
-    },
-    "packages/cli/src/commands/lan.ts": {
-      "min_coverage_pct": 36.36
-    },
-    "packages/cli/src/commands/metrics.ts": {
-      "min_coverage_pct": 39.87
-    },
-    "packages/cli/src/commands/people.ts": {
-      "min_coverage_pct": 2.7
-    },
-    "packages/cli/src/commands/profile.ts": {
-      "min_coverage_pct": 5.97
-    },
-    "packages/cli/src/commands/query.ts": {
-      "min_coverage_pct": 1.85
-    },
-    "packages/cli/src/commands/registry.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/cli/src/commands/repl.ts": {
-      "min_coverage_pct": 10.77
-    },
-    "packages/cli/src/commands/run-workflow.ts": {
-      "min_coverage_pct": 7.78
-    },
-    "packages/cli/src/commands/scaffold.ts": {
-      "min_coverage_pct": 4.69
-    },
-    "packages/cli/src/commands/search.ts": {
-      "min_coverage_pct": 3.96
-    },
-    "packages/cli/src/commands/security.ts": {
-      "min_coverage_pct": 50
+      "min_coverage_pct": 75
     },
     "packages/cli/src/commands/serve.ts": {
-      "min_coverage_pct": 9.62
-    },
-    "packages/cli/src/commands/session.ts": {
-      "min_coverage_pct": 6.98
+      "min_coverage_pct": 68.63
     },
     "packages/cli/src/commands/start.ts": {
-      "min_coverage_pct": 7.57
-    },
-    "packages/cli/src/commands/status.ts": {
-      "min_coverage_pct": 3.6
-    },
-    "packages/cli/src/commands/stop.ts": {
-      "min_coverage_pct": 14.81
-    },
-    "packages/cli/src/commands/telemetry.ts": {
-      "min_coverage_pct": 13.33
+      "min_coverage_pct": 30.61
     },
     "packages/cli/src/commands/test.ts": {
-      "min_coverage_pct": 9.09
+      "min_coverage_pct": 76.47
     },
     "packages/cli/src/commands/tui.tsx": {
-      "min_coverage_pct": 12.35
+      "min_coverage_pct": 45.59
     },
     "packages/cli/src/commands/update.ts": {
-      "min_coverage_pct": 19.28
+      "min_coverage_pct": 34.18
     },
-    "packages/cli/src/commands/vault.ts": {
-      "min_coverage_pct": 7.04
-    },
-    "packages/cli/src/commands/watch.ts": {
-      "min_coverage_pct": 7.5
-    },
-    "packages/cli/src/commands/workflow.ts": {
-      "min_coverage_pct": 5.26
-    },
-    "packages/cli/src/lib/cli-logger.ts": {
-      "min_coverage_pct": 18.18
-    },
-    "packages/cli/src/lib/connector-oauth-env-help.ts": {
-      "min_coverage_pct": 31.25
-    },
-    "packages/cli/src/lib/gateway-process.ts": {
-      "min_coverage_pct": 15.22
-    },
-    "packages/cli/src/lib/nimbus-toml-config.ts": {
-      "min_coverage_pct": 40.11
-    },
-    "packages/cli/src/lib/restore-db-from-snapshot.ts": {
-      "min_coverage_pct": 25
-    },
-    "packages/cli/src/lib/spawn-gateway.ts": {
-      "min_coverage_pct": 23.4
-    },
-    "packages/cli/src/lib/strip-trailing-slashes.ts": {
+    "packages/cli/src/ipc-client/index.ts": {
       "min_coverage_pct": 0
     },
-    "packages/cli/src/lib/with-gateway-ipc.ts": {
-      "min_coverage_pct": 18.75
-    },
-    "packages/cli/src/lib/workflow-parse.ts": {
-      "min_coverage_pct": 9.09
-    },
-    "packages/cli/src/paths.ts": {
-      "min_coverage_pct": 46.48
-    },
-    "packages/cli/src/types/agents.ts": {
-      "min_coverage_pct": 6.67
+    "packages/cli/src/lib/gateway-process.ts": {
+      "min_coverage_pct": 0
     },
     "packages/client/src/index.ts": {
       "min_coverage_pct": 0
@@ -169,6 +52,9 @@
     },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
+    },
+    "packages/gateway/src/ipc/server/socket-listeners.ts": {
+      "min_coverage_pct": 62.16
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0

@@ -16,12 +16,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
+// Import the impl file (not the re-export) so this colocated unit test
+// exercises the REAL implementation under `bun test --coverage`, where
+// the shared `cli-mocks.ts` harness has already registered
+// `mock.module("../../src/lib/gateway-process.ts", ...)` against the
+// re-export path.
 import {
   ensureGatewayDirs,
   gatewayStatePath,
   isProcessAlive,
   readGatewayState,
-} from "./gateway-process.ts";
+} from "./gateway-process-impl.ts";
 
 const liveProcs = new Set<Bun.Subprocess>();
 

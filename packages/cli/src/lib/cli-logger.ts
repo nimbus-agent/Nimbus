@@ -3,7 +3,11 @@ import { join } from "node:path";
 import pino from "pino";
 
 import type { CliPlatformPaths } from "../paths.ts";
-import { ensureGatewayDirs } from "./gateway-process.ts";
+// Import from the impl file so this real-implementation helper is not
+// shadowed by the harness's `mock.module("../../src/lib/gateway-process.ts", ...)`
+// stub when cli-logger.test.ts runs in the combined `bun test --coverage`
+// process. Dispatchers under src/commands/ still use the mocked re-export.
+import { ensureGatewayDirs } from "./gateway-process-impl.ts";
 
 /** Local calendar date; same-day CLI runs append to one file. */
 function localLogDateStamp(): string {
