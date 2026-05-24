@@ -126,6 +126,49 @@ function upsertFlags(
   return upserted;
 }
 
+type ProjectKeysOutcome =
+  | { readonly keys: string[]; readonly bytes: number }
+  | { readonly error: "http_error" | "parse_error"; readonly bytes: number };
+
+/** Resolve the set of project keys to walk: the configured single project, or all projects. */
+async function resolveProjectKeys(
+  ctx: SyncContext,
+  creds: LaunchdarklyCreds,
+): Promise<ProjectKeysOutcome> {
+  if (creds.projectKey === null) {
+    const outcome = await ldGet(ctx, creds, "/projects");
+    if (outcome.kind === "ok") {
+      return { keys: extractProjectKeys(outcome.parsed), bytes: outcome.bytes };
+    }
+    return { error: outcome.kind, bytes: outcome.bytes };
+  }
+  return { keys: [creds.projectKey], bytes: 0 };
+}
+
+/** Walk one project's flags (offset-paged, capped) and upsert them. */
+async function syncProjectFlags(
+  ctx: SyncContext,
+  creds: LaunchdarklyCreds,
+  projectKey: string,
+  now: number,
+): Promise<{ upserted: number; bytes: number }> {
+  let upserted = 0;
+  let bytes = 0;
+  for (let page = 0; page < MAX_PAGES_PER_PROJECT; page += 1) {
+    const outcome = await ldGet(ctx, creds, flagsPath(projectKey, page * PAGE_SIZE));
+    bytes += outcome.bytes;
+    if (outcome.kind !== "ok") {
+      break;
+    }
+    const flags = extractItems(outcome.parsed);
+    upserted += upsertFlags(ctx, creds, projectKey, flags, now);
+    if (flags.length < PAGE_SIZE) {
+      break;
+    }
+  }
+  return { upserted, bytes };
+}
+
 export function createLaunchdarklySyncable(options: LaunchdarklySyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -139,37 +182,20 @@ export function createLaunchdarklySyncable(options: LaunchdarklySyncableOptions)
         return syncNoopResult(cursor, t0);
       }
 
-      let totalBytes = 0;
-      let projectKeys: string[];
-      if (creds.projectKey !== null) {
-        projectKeys = [creds.projectKey];
-      } else {
-        const outcome = await ldGet(ctx, creds, "/projects");
-        totalBytes += outcome.bytes;
-        if (outcome.kind === "http_error") {
-          return syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor());
-        }
-        if (outcome.kind === "parse_error") {
-          return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-        }
-        projectKeys = extractProjectKeys(outcome.parsed);
+      const resolved = await resolveProjectKeys(ctx, creds);
+      let totalBytes = resolved.bytes;
+      if ("error" in resolved) {
+        return resolved.error === "http_error"
+          ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
+          : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
       }
 
       const now = Date.now();
       let totalUpserted = 0;
-      for (const projectKey of projectKeys) {
-        for (let page = 0; page < MAX_PAGES_PER_PROJECT; page += 1) {
-          const outcome = await ldGet(ctx, creds, flagsPath(projectKey, page * PAGE_SIZE));
-          totalBytes += outcome.bytes;
-          if (outcome.kind !== "ok") {
-            break;
-          }
-          const flags = extractItems(outcome.parsed);
-          totalUpserted += upsertFlags(ctx, creds, projectKey, flags, now);
-          if (flags.length < PAGE_SIZE) {
-            break;
-          }
-        }
+      for (const projectKey of resolved.keys) {
+        const result = await syncProjectFlags(ctx, creds, projectKey, now);
+        totalUpserted += result.upserted;
+        totalBytes += result.bytes;
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);

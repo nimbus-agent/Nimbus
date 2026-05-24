@@ -69,7 +69,7 @@ function extractEnvironments(value: unknown): {
   if (root === undefined) {
     return { envKeys: [], states: {}, maxLastModified: null };
   }
-  const envKeys = Object.keys(root).sort();
+  const envKeys = Object.keys(root).sort((a, b) => a.localeCompare(b));
   const states: Record<string, boolean> = {};
   let maxLastModified: number | null = null;
   for (const k of envKeys) {
