@@ -25,12 +25,20 @@ function hasFlag(args: string[], flag: string): boolean {
   return true;
 }
 
-async function workflowCliList(client: IPCClient): Promise<void> {
+/**
+ * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
+ * the colocated `workflow.test.ts`. Do not call from other command files.
+ */
+export async function runWorkflowList(client: IPCClient): Promise<void> {
   const out = await client.call<{ workflows: unknown }>("workflow.list", {});
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function workflowCliDelete(client: IPCClient, rest: string[]): Promise<void> {
+/**
+ * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
+ * the colocated `workflow.test.ts`. Do not call from other command files.
+ */
+export async function runWorkflowDelete(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   if (name === "") {
     throw new Error("Usage: nimbus workflow delete <name>");
@@ -39,7 +47,11 @@ async function workflowCliDelete(client: IPCClient, rest: string[]): Promise<voi
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function workflowCliSave(client: IPCClient, rest: string[]): Promise<void> {
+/**
+ * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
+ * the colocated `workflow.test.ts`. Do not call from other command files.
+ */
+export async function runWorkflowSave(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   const tail = rest.slice(1);
   const file = shiftFlag(tail, "--file");
@@ -68,7 +80,11 @@ async function workflowCliSave(client: IPCClient, rest: string[]): Promise<void>
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-async function workflowCliRun(client: IPCClient, rest: string[]): Promise<void> {
+/**
+ * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
+ * the colocated `workflow.test.ts`. Do not call from other command files.
+ */
+export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   const tail = rest.slice(1);
   if (name === "") {
@@ -114,42 +130,43 @@ async function workflowCliRun(client: IPCClient, rest: string[]): Promise<void> 
   console.log(`\n${JSON.stringify(out, undefined, 2)}`);
 }
 
-export async function runWorkflowCli(args: string[]): Promise<void> {
-  const sub = args[0]?.trim() ?? "";
-  const rest = args.slice(1);
+async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
-
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
-    if (sub === "list" || sub === "") {
-      await workflowCliList(client);
-      return;
-    }
-
-    if (sub === "delete") {
-      await workflowCliDelete(client, rest);
-      return;
-    }
-
-    if (sub === "save") {
-      await workflowCliSave(client, rest);
-      return;
-    }
-
-    if (sub === "run") {
-      await workflowCliRun(client, rest);
-      return;
-    }
-
-    throw new Error(
-      "Usage: nimbus workflow list | save <name> --file <path> | run <name> | delete <name>",
-    );
+    return await fn(client);
   } finally {
     await client.disconnect();
   }
+}
+
+export async function runWorkflowCli(args: string[]): Promise<void> {
+  const sub = args[0]?.trim() ?? "";
+  const rest = args.slice(1);
+
+  if (sub === "list" || sub === "") {
+    await withIpc((c) => runWorkflowList(c));
+    return;
+  }
+  if (sub === "delete") {
+    await withIpc((c) => runWorkflowDelete(c, rest));
+    return;
+  }
+  if (sub === "save") {
+    await withIpc((c) => runWorkflowSave(c, rest));
+    return;
+  }
+  if (sub === "run") {
+    await withIpc((c) => runWorkflowRun(c, rest));
+    return;
+  }
+
+  throw new Error(
+    "Usage: nimbus workflow list | save <name> --file <path> | run <name> | delete <name>",
+  );
 }
