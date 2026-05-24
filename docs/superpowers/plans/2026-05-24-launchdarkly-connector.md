@@ -1018,6 +1018,11 @@ Expected: FAIL — `Cannot find module '.../launchdarkly-sync.ts'`.
  * `Authorization` header (NO `Bearer` prefix). Single-pass cursor model
  * (matches snyk/sonarqube/semgrep/wiz): every successful run emits a fresh
  * `nimbus-launchdarkly1:{pass: 1}` cursor.
+ *
+ * Deletion reconciliation: none. Flags deleted in LaunchDarkly linger in the
+ * local index until a future cross-connector full-set-diff/tombstone pass — an
+ * accepted Phase 5 limitation shared by the other REST upsert connectors
+ * (snyk/sonarqube/semgrep/wiz).
  */
 
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
@@ -1036,6 +1041,10 @@ const SERVICE_ID = "launchdarkly";
 const CURSOR_PREFIX = "nimbus-launchdarkly1:";
 const DEFAULT_BASE = "https://app.launchdarkly.com";
 const PAGE_SIZE = 100;
+// Per-cycle cost bound (2 000 flags/project), matching the sibling connectors'
+// MAX_PAGES_PER_CYCLE. A `[launchdarkly].max_pages_per_project` config knob is a
+// discrete follow-up (precedent: `[pagerduty].max_pages_per_sync`) if an
+// enterprise project ever genuinely exceeds this.
 const MAX_PAGES_PER_PROJECT = 20;
 
 type LaunchdarklyCursorV1 = { pass: number };
@@ -1823,6 +1832,21 @@ EOF
 Expected: prints the new PR URL.
 
 ---
+
+## Review disposition (2026-05-24)
+
+From `2026-05-24-launchdarkly-connector-review.md`. Guiding principle: connector
+#1 stays consistent with the proven Snyk/SonarQube/Semgrep/Wiz cohort; genuinely
+good cross-cutting ideas become cross-connector follow-ups rather than
+LaunchDarkly-specific bolt-ons.
+
+| # | Item | Disposition |
+|---|---|---|
+| Q1 | `MAX_PAGES_PER_PROJECT` cap | **Defer / comment added.** Matches sibling per-cycle bound; 2 000 flags/project is generous; `[launchdarkly].max_pages_per_project` knob is a follow-up if ever hit. |
+| Q2 | search cap numbers (50/200/500) | **Defer (no change).** Intentional sibling pattern — 500 haystack fetch, 50 default returned-match cap, 200 max. Not a discrepancy. |
+| S1 | deleted flags linger | **Defer mechanism / comment added.** Accepted Phase 5 limitation shared by all REST upsert connectors; general tombstone pass is a cross-connector follow-up. |
+| S2 | `ldGet` generic error / map 401·404 | **Defer (no change).** Status code already in the message; matches siblings; LD returns a native 404 (no custom "not found" needed, unlike Semgrep). |
+| S3 | `server.ts` 429 backoff/retry | **Defer (no change).** No sibling MCP server retries; a shared backoff wrapper in `mcp-tool-kit.ts` is the right cross-connector vehicle if desired. |
 
 ## Self-Review
 
