@@ -1,5 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { formatScanPretty, parseSecurityArgs } from "./security.ts";
+import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
+
+import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+
+const mod = await import("./security.ts");
+const { formatScanPretty, parseSecurityArgs, runSecurity } = mod;
 
 const RESULT_FIXTURE = {
   scanned_at_ms: 1_747_000_000_000,
@@ -99,5 +105,125 @@ describe("formatScanPretty", () => {
   test("does NOT leak the full secret in pretty output", () => {
     const out = formatScanPretty(RESULT_FIXTURE, { tty: false, noColor: true });
     expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
+  test("emits ANSI color codes when tty=true AND noColor=false", () => {
+    const out = formatScanPretty(RESULT_FIXTURE, { tty: true, noColor: false });
+    // Yellow (skipped) + red (pattern_name) escapes should appear.
+    expect(out.includes("\x1b[33m")).toBe(true);
+    expect(out.includes("\x1b[31m")).toBe(true);
+  });
+
+  test("clean message includes 'v1 pattern set' branding", () => {
+    const out = formatScanPretty(
+      {
+        ...RESULT_FIXTURE,
+        items_skipped_depth: 0,
+        findings_count: 0,
+        findings: [],
+        skipped_connectors: [],
+      },
+      { tty: false, noColor: true },
+    );
+    expect(out).toContain("v1 pattern set");
+  });
+});
+
+// ----------------------------------------------------------------------
+// runSecurity — dispatcher.
+// ----------------------------------------------------------------------
+
+const stdoutChunks: string[] = [];
+const stderrChunks: string[] = [];
+const origStdoutWrite = process.stdout.write.bind(process.stdout);
+const origStderrWrite = process.stderr.write.bind(process.stderr);
+const origExit = process.exit.bind(process);
+
+function installStreamCapture(): void {
+  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  process.exit = ((code?: number): never => {
+    throw new Error(`process.exit(${code ?? ""})`);
+  }) as typeof process.exit;
+}
+
+function restoreStreams(): void {
+  process.stdout.write = origStdoutWrite;
+  process.stderr.write = origStderrWrite;
+  process.exit = origExit;
+}
+
+afterAll(() => {
+  restoreStreams();
+});
+
+describe("runSecurity", () => {
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+  });
+
+  it("exits 1 on missing subcommand", async () => {
+    await expect(runSecurity([])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("Usage:");
+  });
+
+  it("exits 1 on unknown subcommand", async () => {
+    await expect(runSecurity(["bogus"])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("Unknown security subcommand");
+  });
+
+  it("prints help text and returns when subcommand is 'help'", async () => {
+    await runSecurity(["help"]);
+    expect(stdoutChunks.join("")).toContain("nimbus security");
+    expect(stdoutChunks.join("")).toContain("scan");
+  });
+
+  it("exits 1 when gateway state is undefined", async () => {
+    setFixture({});
+    await expect(runSecurity(["scan"])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("Gateway is not running");
+  });
+
+  it("renders pretty output on success", async () => {
+    const mock = createMockIpcClient([RESULT_FIXTURE]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runSecurity(["scan"]);
+    expect(mock.calls[0]?.method).toBe("security.scan");
+    expect(stdoutChunks.join("")).toContain("Nimbus security scan");
+    expect(stdoutChunks.join("")).toContain("aws_access_key");
+  });
+
+  it("emits JSON envelope when --json is passed", async () => {
+    const mock = createMockIpcClient([RESULT_FIXTURE]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runSecurity(["scan", "--json"]);
+    expect(stdoutChunks.join("")).toContain('"findings_count"');
+    expect(stdoutChunks.join("")).toContain('"pattern_name": "aws_access_key"');
+  });
+
+  it("exits 2 on malformed envelope", async () => {
+    const mock = createMockIpcClient([{ not: "a scan result" }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await expect(runSecurity(["scan"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("Malformed");
+  });
+
+  it("exits 2 on IPC error", async () => {
+    const mock = createMockIpcClient([new Error("scan failed")]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await expect(runSecurity(["scan"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("scan failed");
   });
 });
