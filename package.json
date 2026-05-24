@@ -50,6 +50,7 @@
     "packages/mcp-connectors/sonarqube",
     "packages/mcp-connectors/semgrep",
     "packages/mcp-connectors/wiz",
+    "packages/mcp-connectors/launchdarkly",
     "packages/vscode-extension"
   ],
   "scripts": {
