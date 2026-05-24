@@ -1,27 +1,57 @@
 // packages/cli/src/paths.test.ts
 //
 // Covers `resolveSocketPath` + `getCliPlatformPaths` across all three OS
-// branches on a single CI runner by stubbing both `./env.ts` (for env-var
-// reads) and `process.platform` (restored from a captured PropertyDescriptor
-// in afterEach).
+// branches on a single CI runner. We mutate `process.env` directly and
+// restore in `afterEach` (per-test scope, no cross-file contamination) —
+// `envGet` in `./env.ts` is a thin `process.env[NAME]` wrapper, so a
+// real env mutation exercises the same code path as a mock would.
 //
-// Caveat: `node:os.homedir()` and `node:os.tmpdir()` read the underlying OS
-// at call time and do NOT change when `process.platform` is stubbed. On
-// Linux CI, `homedir()` returns `/home/user` even when `platform` is stubbed
-// to `"win32"`. Assertions therefore use `join(homedir(), ...)` against the
-// same operands the source uses, never hardcoded paths.
+// We do NOT use `mock.module("./env.ts", ...)` because that is
+// process-global under Bun and would shadow every other test file in
+// the same `bun test packages/cli` invocation that imports paths.ts
+// transitively (Phase 5 lesson #1 in the plan).
+//
+// `process.platform` is stubbed via a captured PropertyDescriptor
+// restored in `afterEach`. `node:os.homedir()` and `tmpdir()` still
+// read the underlying OS — assertions therefore use `join(homedir(),
+// ...)` against the same operands the source uses, never hardcoded
+// paths (Phase 5 lesson 4).
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-let envStub: Record<string, string | undefined> = {};
+import { getCliPlatformPaths, resolveSocketPath } from "./paths.ts";
 
-mock.module("./env.ts", () => ({
-  envGet: (k: string): string | undefined => envStub[k],
-}));
+const ENV_KEYS = [
+  "NIMBUS_GATEWAY_SOCKET",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "APPDATA",
+  "LOCALAPPDATA",
+] as const;
 
-const { getCliPlatformPaths, resolveSocketPath } = await import("./paths.ts");
+const originalEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+
+function snapshotEnv(): void {
+  for (const k of ENV_KEYS) originalEnv[k] = process.env[k];
+}
+
+function restoreEnv(): void {
+  for (const k of ENV_KEYS) {
+    const orig = originalEnv[k];
+    if (orig === undefined) delete process.env[k];
+    else process.env[k] = orig;
+  }
+}
+
+function clearControlledEnv(): void {
+  for (const k of ENV_KEYS) delete process.env[k];
+}
+
+snapshotEnv();
 
 let origPlatform: PropertyDescriptor | undefined;
 
@@ -39,22 +69,22 @@ function restorePlatform(): void {
 
 describe("resolveSocketPath", () => {
   beforeEach(() => {
-    envStub = {};
+    clearControlledEnv();
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv();
     restorePlatform();
   });
 
   it("returns NIMBUS_GATEWAY_SOCKET override when set", () => {
-    envStub["NIMBUS_GATEWAY_SOCKET"] = "/tmp/custom.sock";
+    process.env["NIMBUS_GATEWAY_SOCKET"] = "/tmp/custom.sock";
     expect(resolveSocketPath()).toBe("/tmp/custom.sock");
   });
 
   it("treats empty NIMBUS_GATEWAY_SOCKET as unset (falls through to platform default)", () => {
-    envStub["NIMBUS_GATEWAY_SOCKET"] = "";
+    process.env["NIMBUS_GATEWAY_SOCKET"] = "";
     setPlatform("linux");
-    envStub["XDG_RUNTIME_DIR"] = "/run/user/1000";
+    process.env["XDG_RUNTIME_DIR"] = "/run/user/1000";
     expect(resolveSocketPath()).toBe(join("/run/user/1000", "nimbus-gateway.sock"));
   });
 
@@ -65,7 +95,7 @@ describe("resolveSocketPath", () => {
 
   it("returns a TMPDIR-based path on darwin", () => {
     setPlatform("darwin");
-    envStub["TMPDIR"] = "/private/var/tmp";
+    process.env["TMPDIR"] = "/private/var/tmp";
     expect(resolveSocketPath()).toBe(join("/private/var/tmp", "nimbus-gateway.sock"));
   });
 
@@ -76,7 +106,7 @@ describe("resolveSocketPath", () => {
 
   it("uses XDG_RUNTIME_DIR on linux when set", () => {
     setPlatform("linux");
-    envStub["XDG_RUNTIME_DIR"] = "/run/user/1000";
+    process.env["XDG_RUNTIME_DIR"] = "/run/user/1000";
     expect(resolveSocketPath()).toBe(join("/run/user/1000", "nimbus-gateway.sock"));
   });
 
@@ -88,17 +118,17 @@ describe("resolveSocketPath", () => {
 
 describe("getCliPlatformPaths — win32 branch", () => {
   beforeEach(() => {
-    envStub = {};
+    clearControlledEnv();
     setPlatform("win32");
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv();
     restorePlatform();
   });
 
   it("derives configDir from APPDATA + dataDir from LOCALAPPDATA", () => {
-    envStub["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
-    envStub["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
+    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
     const paths = getCliPlatformPaths();
     expect(paths.configDir).toBe(join("C:\\Users\\Test\\AppData\\Roaming", "Nimbus"));
     expect(paths.dataDir).toBe(join("C:\\Users\\Test\\AppData\\Local", "Nimbus", "data"));
@@ -111,35 +141,35 @@ describe("getCliPlatformPaths — win32 branch", () => {
   });
 
   it("throws when APPDATA is missing", () => {
-    envStub["LOCALAPPDATA"] = "C:\\x";
+    process.env["LOCALAPPDATA"] = "C:\\x";
     expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
   });
 
   it("throws when APPDATA is empty", () => {
-    envStub["APPDATA"] = "";
-    envStub["LOCALAPPDATA"] = "C:\\x";
+    process.env["APPDATA"] = "";
+    process.env["LOCALAPPDATA"] = "C:\\x";
     expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
   });
 
   it("throws when LOCALAPPDATA is missing", () => {
-    envStub["APPDATA"] = "C:\\x";
+    process.env["APPDATA"] = "C:\\x";
     expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
   });
 
   it("throws when LOCALAPPDATA is empty", () => {
-    envStub["APPDATA"] = "C:\\x";
-    envStub["LOCALAPPDATA"] = "";
+    process.env["APPDATA"] = "C:\\x";
+    process.env["LOCALAPPDATA"] = "";
     expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
   });
 });
 
 describe("getCliPlatformPaths — darwin branch", () => {
   beforeEach(() => {
-    envStub = {};
+    clearControlledEnv();
     setPlatform("darwin");
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv();
     restorePlatform();
   });
 
@@ -156,17 +186,17 @@ describe("getCliPlatformPaths — darwin branch", () => {
 
 describe("getCliPlatformPaths — linux branch", () => {
   beforeEach(() => {
-    envStub = {};
+    clearControlledEnv();
     setPlatform("linux");
   });
   afterEach(() => {
-    envStub = {};
+    restoreEnv();
     restorePlatform();
   });
 
   it("uses XDG_CONFIG_HOME + XDG_DATA_HOME when set", () => {
-    envStub["XDG_CONFIG_HOME"] = "/var/test/config";
-    envStub["XDG_DATA_HOME"] = "/var/test/data";
+    process.env["XDG_CONFIG_HOME"] = "/var/test/config";
+    process.env["XDG_DATA_HOME"] = "/var/test/data";
     const paths = getCliPlatformPaths();
     expect(paths.configDir).toBe(join("/var/test/config", "nimbus"));
     expect(paths.dataDir).toBe(join("/var/test/data", "nimbus"));
