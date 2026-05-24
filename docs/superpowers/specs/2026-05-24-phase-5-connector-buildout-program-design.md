@@ -46,8 +46,8 @@ SonarQube / Semgrep connectors established.
 roadmap already bundles on a single checkbox (e.g. Pocket/Readwise/Raindrop,
 Airflow/Prefect/Dagster) ship as one PR for that bundle. Opt-in batching of
 near-identical *separate* connectors (e.g. Vercel + Netlify) into one PR is
-offered at design-approval time — **pending the user's standing preference**
-(see Decision log).
+offered at design-approval time — **the user decides per case** (standing
+preference: opt-in pair-batching allowed; see Decision log).
 
 ## Per-connector template (the fixed shape)
 
@@ -190,5 +190,7 @@ From `2026-05-24-phase-5-connector-buildout-program-design-review.md`:
 - **2026-05-24** — Order: tiered easiest-template-first (Tier 1) → OAuth (Tier 2)
   → no-row-data warehouse (Tier 3) → email (Tier 4) → local (Tier 5) →
   Marketplace ratings (Tier 6) → Wave B stretch (Tier 7), approved by user.
-- **2026-05-24** — Review dispositions Q1–Q3, S2–S3 folded into the spec; S1
-  (opt-in pair-batching) pending user standing preference.
+- **2026-05-24** — Review dispositions Q1–Q3, S2–S3 folded into the spec.
+- **2026-05-24** — S1 resolved: opt-in pair-batching allowed (user choice).
+  Default remains one PR per connector; near-identical pairs may be batched on a
+  per-case basis at design-approval time.
