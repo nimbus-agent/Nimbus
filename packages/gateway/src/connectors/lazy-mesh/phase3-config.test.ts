@@ -21,6 +21,7 @@ import {
   phase3AddAwsMcp,
   phase3AddAzureMcp,
   phase3AddDatadogMcp,
+  phase3AddFlagsmithMcp,
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
@@ -564,6 +565,49 @@ describe("phase3AddLaunchdarklyMcp", () => {
     const spec = servers["launchdarkly"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["LAUNCHDARKLY_BASE_URL"]).toBe("https://app.launchdarkly.us");
+  });
+});
+
+// ─── phase3AddFlagsmithMcp ───────────────────────────────────────────────────
+
+describe("phase3AddFlagsmithMcp", () => {
+  test("no-op without flagsmith.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFlagsmithMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flagsmith"]).toBeUndefined();
+  });
+
+  test("no-op when flagsmith.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("flagsmith.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFlagsmithMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flagsmith"]).toBeUndefined();
+  });
+
+  test("spawns with FLAGSMITH_TOKEN set + api.flagsmith.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("flagsmith.token", "fs-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFlagsmithMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flagsmith"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.flagsmith.com");
+    expect(spec.env?.["FLAGSMITH_TOKEN"]).toBe("fs-test-token");
+    expect(spec.env?.["FLAGSMITH_API_BASE"]).toBeUndefined();
+  });
+
+  test("api_base override propagates as FLAGSMITH_API_BASE env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("flagsmith.token", "tok");
+    await vault.set("flagsmith.api_base", "https://flagsmith.internal.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFlagsmithMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flagsmith"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["FLAGSMITH_API_BASE"]).toBe("https://flagsmith.internal.example.com");
   });
 });
 

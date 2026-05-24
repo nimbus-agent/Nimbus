@@ -385,6 +385,32 @@ export async function phase3AddLaunchdarklyMcp(
   );
 }
 
+export async function phase3AddFlagsmithMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "flagsmith", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Optional regional / self-hosted override; passes through only when set so
+  // the connector falls back to the SaaS default api.flagsmith.com host.
+  const apiBase = (await readConnectorSecret(vault, "flagsmith", "api_base"))?.trim() ?? "";
+  servers["flagsmith"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("flagsmith")],
+      env: extensionProcessEnv({
+        FLAGSMITH_TOKEN: tok,
+        ...(apiBase === "" ? {} : { FLAGSMITH_API_BASE: apiBase }),
+      }),
+    },
+    "flagsmith",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -404,5 +430,6 @@ export async function buildPhase3Servers(
   await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
   await phase3AddWizMcp(vault, servers, sandboxCwd);
   await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
+  await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
   return servers;
 }

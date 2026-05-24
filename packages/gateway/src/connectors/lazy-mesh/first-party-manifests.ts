@@ -333,6 +333,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  flagsmith: baseManifest("com.nimbus.flagsmith", {
+    // Flagsmith SaaS API host. The app host (app.flagsmith.com) is only used
+    // to build canonical URL strings, never fetched, so it is NOT listed.
+    // Regional / self-hosted instances inherit the same Task 14 runtime-merge
+    // follow-up as Sentry's `sentry.url`; users supply `flagsmith.api_base`.
+    network: ["api.flagsmith.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

@@ -84,6 +84,7 @@ describe("manifestForFirstParty", () => {
       "semgrep",
       "wiz",
       "launchdarkly",
+      "flagsmith",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();
