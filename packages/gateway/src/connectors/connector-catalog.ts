@@ -36,6 +36,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "semgrep",
   "wiz",
   "launchdarkly",
+  "flagsmith",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -96,6 +97,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   semgrep: MIN10,
   wiz: MIN10,
   launchdarkly: MIN10,
+  flagsmith: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -155,6 +157,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
   wiz: "uses OAuth client_credentials (connector.auth wiz)",
   launchdarkly: "uses an API token (connector.auth launchdarkly)",
+  flagsmith: "uses an admin API token (connector.auth flagsmith)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
