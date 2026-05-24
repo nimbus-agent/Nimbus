@@ -272,7 +272,7 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
 ```typescript
-test("I16 — sub-agent dispatcher checks frozen tool scope", () => {
+test("I17 — sub-agent dispatcher checks frozen tool scope", () => {
   const source = readFileSync(
     join(REPO_ROOT, "packages/gateway/src/engine/sub-agent.ts"),
     "utf8"
