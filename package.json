@@ -51,6 +51,7 @@
     "packages/mcp-connectors/semgrep",
     "packages/mcp-connectors/wiz",
     "packages/mcp-connectors/launchdarkly",
+    "packages/mcp-connectors/flagsmith",
     "packages/vscode-extension"
   ],
   "scripts": {
