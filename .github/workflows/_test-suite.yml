@@ -181,7 +181,7 @@ jobs:
             run_pkg "${pkg}"
           done
 
-          for pkg in packages/mcp-connectors/*; do
+          for pkg in packages/mcp-connectors/* packages/github-actions/*; do
             if [ -f "${pkg}/package.json" ]; then
               run_pkg "${pkg}"
             fi
@@ -277,7 +277,7 @@ jobs:
           name: coverage-lcov-merged
           path: coverage/lcov.info
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Upload coverage to Codecov
         # Supplementary reporting only — coverage threshold is enforced by the

@@ -253,6 +253,8 @@ Nimbus is designed to support security-sensitive operational environments. The p
 
 **Credential isolation.** Connector credentials are injected at MCP server spawn time via environment variables scoped to that child process. They are never present in IPC messages, in the local index, in log output, or in the Engine's context. The `redact` configuration on the structured logger automatically censors any field matching `*.token`, `*.secret`, or `oauth.*`.
 
+**Integrated vulnerability scanning.** First-party connectors for Snyk, SonarQube / SonarCloud, and Semgrep bring vulnerability findings, code-quality issues, and static-analysis results into the local index, enabling CVE-to-repo-to-PR correlation queries without leaving the terminal. The `nimbus security scan` command runs a Gitleaks-compatible pattern set against already-indexed file content for local secret and credential hygiene.
+
 **Compliance tooling roadmap.** `nimbus compliance check` (Phase 12) will produce a machine-readable JSON report covering: credential storage status, audit log integrity, plaintext credential scan, connector scope minimization, and data residency posture. Structured for auditor consumption.
 
 ---
