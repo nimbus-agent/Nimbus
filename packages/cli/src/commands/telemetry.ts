@@ -1,32 +1,62 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-export async function runTelemetry(args: string[]): Promise<void> {
-  const sub = args[0];
-  if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
-    console.log(`nimbus telemetry — opt-in aggregate telemetry
+function printTelemetryHelp(): void {
+  console.log(`nimbus telemetry — opt-in aggregate telemetry
 
 Usage:
   nimbus telemetry show     Print sanitized preview payload (requires Gateway)
   nimbus telemetry disable  Write local disable marker under the data directory (no Gateway)
 `);
+}
+
+/**
+ * Test entry point — invoked by the dispatcher `runTelemetry(args)` and the
+ * colocated `telemetry.test.ts`. Do not call from other command files.
+ */
+export async function runTelemetryShow(client: IPCClient): Promise<void> {
+  const r = await client.call<unknown>("telemetry.preview", {});
+  console.log(JSON.stringify(r, null, 2));
+}
+
+/**
+ * Test entry point — invoked by the dispatcher `runTelemetry(args)` and the
+ * colocated `telemetry.test.ts`. Do not call from other command files.
+ *
+ * `writeFile` is a seam for tests so the dispatcher can pass `Bun.write` in
+ * production and a recorder stub in tests. `now` is also injectable for
+ * deterministic asserts.
+ */
+export async function runTelemetryDisable(
+  dataDir: string,
+  writeFile: (p: string, data: string) => Promise<unknown> = (p, d) =>
+    Bun.write(p, d) as Promise<unknown>,
+  now: () => number = Date.now,
+): Promise<void> {
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(join(dataDir, ".nimbus-telemetry-disabled"), `${String(now())}\n`);
+  console.log("Telemetry disabled (local marker written under the data directory).");
+}
+
+export async function runTelemetry(args: string[]): Promise<void> {
+  const sub = args[0];
+  if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
+    printTelemetryHelp();
     return;
   }
 
   if (sub === "show") {
-    const r = await withGatewayIpc((c) => c.call<unknown>("telemetry.preview", {}));
-    console.log(JSON.stringify(r, null, 2));
+    await withGatewayIpc((c) => runTelemetryShow(c));
     return;
   }
 
   if (sub === "disable") {
     const paths = getCliPlatformPaths();
-    await mkdir(paths.dataDir, { recursive: true });
-    await Bun.write(join(paths.dataDir, ".nimbus-telemetry-disabled"), `${String(Date.now())}\n`);
-    console.log("Telemetry disabled (local marker written under the data directory).");
+    await runTelemetryDisable(paths.dataDir);
     return;
   }
 
