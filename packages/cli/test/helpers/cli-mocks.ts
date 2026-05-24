@@ -21,6 +21,12 @@ import { mock } from "bun:test";
 
 export interface CliTestFixture {
   gatewayState?: { socketPath: string; pid?: number };
+  /**
+   * Controls the return value of the mocked `isProcessAlive(pid)` from
+   * `lib/gateway-process.ts`. Defaults to `true` when unset — i.e. the
+   * recorded gateway state is treated as live unless the test opts out.
+   */
+  processAlive?: boolean;
   clackAnswer?: boolean | symbol;
   /**
    * Optional IPCClient-shaped object the mocked
@@ -52,6 +58,11 @@ mock.module("@clack/prompts", () => ({
 mock.module("../../src/lib/gateway-process.ts", () => ({
   readGatewayState: async (): Promise<CliTestFixture["gatewayState"]> =>
     globalThis.__nimbusCliFixture?.gatewayState,
+  // Default: pretend the recorded pid is alive. Tests that need a stale
+  // state file should set fixture.processAlive = false.
+  isProcessAlive: (_pid: number): boolean => globalThis.__nimbusCliFixture?.processAlive ?? true,
+  gatewayStatePath: (_paths: { dataDir: string }): string => "/tmp/fake-gateway-state.json",
+  ensureGatewayDirs: async (_paths: unknown): Promise<void> => {},
 }));
 
 // Replace the IPCClient class so the dispatcher's `withIpc()` helper

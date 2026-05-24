@@ -93,20 +93,17 @@ function printDriftHints(lines: string[]): void {
   }
 }
 
-export async function runStatus(args: string[]): Promise<void> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    console.log("Gateway: not running (no state file)");
-    return;
-  }
-
-  const wantDrift = args.includes("--drift");
-  const verbose = args.includes("--verbose");
-
-  const client = new IPCClient(state.socketPath);
+/**
+ * Test entry point — invoked by the dispatcher `runStatus(args)` and the
+ * colocated `status.test.ts`. Do not call from other command files.
+ */
+export async function runStatusImpl(
+  client: IPCClient,
+  state: { pid?: number; socketPath: string; logPath?: string },
+  opts: { wantDrift: boolean; verbose: boolean },
+): Promise<void> {
+  const { wantDrift, verbose } = opts;
   try {
-    await client.connect();
     const ping = await client.call<{
       version: string;
       uptime: number;
@@ -142,6 +139,24 @@ export async function runStatus(args: string[]): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`Gateway: state exists but IPC failed — ${msg}`);
+  }
+}
+
+export async function runStatus(args: string[]): Promise<void> {
+  const paths = getCliPlatformPaths();
+  const state = await readGatewayState(paths);
+  if (state === undefined) {
+    console.log("Gateway: not running (no state file)");
+    return;
+  }
+
+  const wantDrift = args.includes("--drift");
+  const verbose = args.includes("--verbose");
+
+  const client = new IPCClient(state.socketPath);
+  try {
+    await client.connect();
+    await runStatusImpl(client, state, { wantDrift, verbose });
   } finally {
     await client.disconnect().catch(() => {});
   }

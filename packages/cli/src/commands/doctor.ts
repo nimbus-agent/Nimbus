@@ -27,7 +27,11 @@ type ConnectorHealthRow = {
   state?: unknown;
 };
 
-function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail" {
+/**
+ * Test entry point — invoked by helpers in `doctor.ts` and the colocated
+ * `doctor.test.ts`. Do not call from other command files.
+ */
+export function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail" {
   let worst: "ok" | "warn" | "fail" = "ok";
   for (const r of rows) {
     const st = typeof r.state === "string" ? r.state : "";
@@ -42,7 +46,11 @@ function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail"
   return worst;
 }
 
-function healthStateMark(st: string): string {
+/**
+ * Test entry point — invoked by helpers in `doctor.ts` and the colocated
+ * `doctor.test.ts`. Do not call from other command files.
+ */
+export function healthStateMark(st: string): string {
   if (st === "healthy" || st === "paused") {
     return "[ok]";
   }
@@ -77,7 +85,11 @@ function doctorPrintVaultCheck(): number {
   return 0;
 }
 
-function doctorPrintConfigValidation(val: {
+/**
+ * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
+ * `doctor.test.ts`. Do not call from other command files.
+ */
+export function doctorPrintConfigValidation(val: {
   ok: boolean;
   errors: string[];
   warnings: string[];
@@ -101,7 +113,11 @@ function doctorPrintConfigValidation(val: {
   return exit;
 }
 
-function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unknown } }): number {
+/**
+ * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
+ * `doctor.test.ts`. Do not call from other command files.
+ */
+export function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unknown } }): number {
   const total = snap.index?.totalItems;
   const nItems =
     typeof total === "number" && Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
@@ -113,7 +129,11 @@ function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unknown } }
   return 0;
 }
 
-function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {
+/**
+ * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
+ * `doctor.test.ts`. Do not call from other command files.
+ */
+export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {
   const healthRaw = snap.connectorHealth;
   const health: ConnectorHealthRow[] = Array.isArray(healthRaw)
     ? (healthRaw as ConnectorHealthRow[])
