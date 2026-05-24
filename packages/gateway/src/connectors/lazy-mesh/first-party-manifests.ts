@@ -324,6 +324,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Feature flags ---
+  launchdarkly: baseManifest("com.nimbus.launchdarkly", {
+    // LaunchDarkly SaaS. Regional / federal instances inherit the same
+    // Task 14 runtime-merge follow-up; the SaaS host is the only one in
+    // the static manifest today.
+    network: ["app.launchdarkly.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

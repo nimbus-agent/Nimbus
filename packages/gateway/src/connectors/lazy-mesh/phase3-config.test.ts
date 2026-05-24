@@ -24,6 +24,7 @@ import {
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
+  phase3AddLaunchdarklyMcp,
   phase3AddNewrelicMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -520,6 +521,49 @@ describe("phase3AddWizMcp", () => {
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["WIZ_API_URL"]).toBe("https://api.us2.app.wiz.io/graphql");
     expect(spec.env?.["WIZ_AUTH_URL"]).toBe("https://auth.us2.app.wiz.io/oauth/token");
+  });
+});
+
+// ─── phase3AddLaunchdarklyMcp ────────────────────────────────────────────────
+
+describe("phase3AddLaunchdarklyMcp", () => {
+  test("no-op without launchdarkly.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["launchdarkly"]).toBeUndefined();
+  });
+
+  test("no-op when launchdarkly.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["launchdarkly"]).toBeUndefined();
+  });
+
+  test("spawns with LAUNCHDARKLY_TOKEN set + app.launchdarkly.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "api-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["launchdarkly"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "app.launchdarkly.com");
+    expect(spec.env?.["LAUNCHDARKLY_TOKEN"]).toBe("api-test-token");
+    expect(spec.env?.["LAUNCHDARKLY_BASE_URL"]).toBeUndefined();
+  });
+
+  test("base_url override propagates as LAUNCHDARKLY_BASE_URL env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "tok");
+    await vault.set("launchdarkly.base_url", "https://app.launchdarkly.us");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["launchdarkly"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["LAUNCHDARKLY_BASE_URL"]).toBe("https://app.launchdarkly.us");
   });
 });
 
