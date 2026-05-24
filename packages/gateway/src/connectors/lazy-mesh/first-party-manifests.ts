@@ -313,6 +313,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Cloud security (CSPM) ---
+  wiz: baseManifest("com.nimbus.wiz", {
+    // Default tenant hosts. Wiz issues OAuth client_credentials tokens
+    // at `auth.app.wiz.io` and serves GraphQL at `api.app.wiz.io`.
+    // Regional tenants (`api.us2.app.wiz.io`, …) inherit the same
+    // Task 14 runtime-merge follow-up as Sentry's `sentry.url`; users
+    // supply explicit `wiz.api_url` / `wiz.auth_url` vault keys today.
+    network: ["api.app.wiz.io", "auth.app.wiz.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

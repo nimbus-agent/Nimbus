@@ -49,6 +49,7 @@
     "packages/mcp-connectors/bitrise",
     "packages/mcp-connectors/sonarqube",
     "packages/mcp-connectors/semgrep",
+    "packages/mcp-connectors/wiz",
     "packages/vscode-extension"
   ],
   "scripts": {
