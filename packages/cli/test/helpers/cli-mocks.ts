@@ -36,8 +36,19 @@ export interface CliTestFixture {
    * its `connect` / `call` / `disconnect` are no-ops — useful for
    * exercising the dispatcher's branch coverage without wiring up a real
    * response queue.
+   *
+   * Optional `onNotification` is consulted when the code under test
+   * subscribes to gateway notifications (`index.reembedProgress`,
+   * `index.reembedDone`, etc). When absent, the harness's
+   * `onNotification` is a no-op so callers that never subscribe stay
+   * branch-coverage-clean.
    */
-  ipcClient?: { call: unknown; connect: unknown; disconnect: unknown };
+  ipcClient?: {
+    call: unknown;
+    connect: unknown;
+    disconnect: unknown;
+    onNotification?: unknown;
+  };
 }
 
 declare global {
@@ -81,7 +92,15 @@ mock.module("../../src/ipc-client/index.ts", () => ({
       }
       return undefined as T;
     }
-    onNotification(_event: string, _handler: (params: unknown) => void): void {}
+    onNotification(event: string, handler: (params: unknown) => void): void {
+      const ipc = globalThis.__nimbusCliFixture?.ipcClient;
+      const on = ipc?.onNotification as
+        | undefined
+        | ((e: string, h: (params: unknown) => void) => void);
+      if (on !== undefined) {
+        on(event, handler);
+      }
+    }
   },
 }));
 
