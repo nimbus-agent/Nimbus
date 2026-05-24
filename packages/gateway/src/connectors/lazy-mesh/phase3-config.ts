@@ -328,6 +328,63 @@ export async function phase3AddSemgrepMcp(
   );
 }
 
+export async function phase3AddWizMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const clientId = (await readConnectorSecret(vault, "wiz", "client_id"))?.trim() ?? "";
+  const clientSecret = (await readConnectorSecret(vault, "wiz", "client_secret"))?.trim() ?? "";
+  if (clientId === "" || clientSecret === "") {
+    return;
+  }
+  // Optional regional override; passes through only when set, so the
+  // connector falls back to the SaaS default `api.app.wiz.io` /
+  // `auth.app.wiz.io` URLs encoded in server.ts.
+  const apiUrl = (await readConnectorSecret(vault, "wiz", "api_url"))?.trim() ?? "";
+  const authUrl = (await readConnectorSecret(vault, "wiz", "auth_url"))?.trim() ?? "";
+  servers["wiz"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("wiz")],
+      env: extensionProcessEnv({
+        WIZ_CLIENT_ID: clientId,
+        WIZ_CLIENT_SECRET: clientSecret,
+        ...(apiUrl === "" ? {} : { WIZ_API_URL: apiUrl }),
+        ...(authUrl === "" ? {} : { WIZ_AUTH_URL: authUrl }),
+      }),
+    },
+    "wiz",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddLaunchdarklyMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "launchdarkly", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Optional regional override; passes through only when set so the
+  // connector falls back to the SaaS default app.launchdarkly.com host.
+  const baseUrl = (await readConnectorSecret(vault, "launchdarkly", "base_url"))?.trim() ?? "";
+  servers["launchdarkly"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("launchdarkly")],
+      env: extensionProcessEnv({
+        LAUNCHDARKLY_TOKEN: tok,
+        ...(baseUrl === "" ? {} : { LAUNCHDARKLY_BASE_URL: baseUrl }),
+      }),
+    },
+    "launchdarkly",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -345,5 +402,7 @@ export async function buildPhase3Servers(
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
   await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
   await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
+  await phase3AddWizMcp(vault, servers, sandboxCwd);
+  await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
   return servers;
 }

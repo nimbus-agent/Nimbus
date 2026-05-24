@@ -31,7 +31,9 @@ export type Provider =
   | "snyk"
   | "bitrise"
   | "sonarqube"
-  | "semgrep";
+  | "semgrep"
+  | "wiz"
+  | "launchdarkly";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -68,6 +70,8 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   bitrise: { requestsPerMinute: 60, burstSize: 10 },
   sonarqube: { requestsPerMinute: 60, burstSize: 10 },
   semgrep: { requestsPerMinute: 60, burstSize: 10 },
+  wiz: { requestsPerMinute: 60, burstSize: 10 },
+  launchdarkly: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

@@ -18,6 +18,7 @@ import { createIacSyncable } from "../connectors/iac-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
+import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createNewrelicSyncable } from "../connectors/newrelic-sync.ts";
@@ -31,6 +32,7 @@ import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
+import { createWizSyncable } from "../connectors/wiz-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export type ConnectorMeshSyncableOptions = {
@@ -203,6 +205,16 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createSemgrepSyncable({
       ensureSemgrepMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createWizSyncable({
+      ensureWizMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createLaunchdarklySyncable({
+      ensureLaunchdarklyMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

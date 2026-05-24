@@ -10,6 +10,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial).
 
+### 2026-05-24
+- **Tier-2 connector — Wiz** ✅ — CSPM findings (Phase 8 security surface, delivered early).
+- **Tier-1 connector — LaunchDarkly** ✅ — feature flags / experiments (Phase 7 Wave 3, delivered early).
+
 ### 2026-05-22
 - **Tier-2 connector — Semgrep** ✅ — AppSec Platform SAST findings (`semgrep:finding`).
 - **Tier-2 connector — SonarQube / SonarCloud** ✅ — code-quality issues (`sonarqube:code_issue`).
