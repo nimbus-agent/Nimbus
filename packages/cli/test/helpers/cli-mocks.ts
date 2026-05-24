@@ -64,6 +64,18 @@ mock.module("@clack/prompts", () => ({
   confirm: async (): Promise<boolean | symbol> =>
     globalThis.__nimbusCliFixture?.clackAnswer ?? true,
   isCancel: (v: unknown): boolean => v === cancelSymbol,
+  // `spinner()` is used by lifecycle commands (start/stop/serve). The mock
+  // returns a no-op shim so the dispatcher's `s.start()` / `s.message()` /
+  // `s.stop()` calls do not write to stdout under test.
+  spinner: (): {
+    start: (msg?: string) => void;
+    message: (msg?: string) => void;
+    stop: (msg?: string) => void;
+  } => ({
+    start: (): void => {},
+    message: (): void => {},
+    stop: (): void => {},
+  }),
 }));
 
 mock.module("../../src/lib/gateway-process.ts", () => ({

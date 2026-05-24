@@ -5,10 +5,26 @@ import { spinner } from "@clack/prompts";
 import { gatewayStatePath, readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
+export type StopDecision =
+  | { action: "no-state"; reason: "no gateway state recorded" }
+  | { action: "signal"; pid: number };
+
+/**
+ * Pure decision: derives the action runStop should take given the recorded
+ * gateway state. Extracted for unit testing without touching real processes.
+ */
+export function decideStopAction(state: { pid: number } | undefined): StopDecision {
+  if (state === undefined) {
+    return { action: "no-state", reason: "no gateway state recorded" };
+  }
+  return { action: "signal", pid: state.pid };
+}
+
 export async function runStop(_args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
-  if (state === undefined) {
+  const decision = decideStopAction(state);
+  if (decision.action === "no-state") {
     console.log("No gateway state found (is it running?).");
     return;
   }
@@ -17,7 +33,7 @@ export async function runStop(_args: string[]): Promise<void> {
   s.start("Stopping Gateway");
 
   try {
-    process.kill(state.pid, "SIGTERM");
+    process.kill(decision.pid, "SIGTERM");
   } catch {
     /* process may already be gone */
   }

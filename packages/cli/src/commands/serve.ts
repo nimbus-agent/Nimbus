@@ -4,7 +4,7 @@ import { ensureGatewayDirs, isProcessAlive, readGatewayState } from "../lib/gate
 import { spawnGateway } from "../lib/spawn-gateway.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-function takeFlag(args: string[], flag: string): string | undefined {
+export function takeFlag(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
   if (i < 0 || i + 1 >= args.length) {
     return undefined;
@@ -12,11 +12,32 @@ function takeFlag(args: string[], flag: string): string | undefined {
   return args[i + 1];
 }
 
+export type ServeArgs = { kind: "help" } | { kind: "serve"; port: number };
+
+/**
+ * Pure parser for `nimbus serve` argv. Extracted for unit testing without
+ * touching the actual gateway spawn.
+ *
+ * Resolution order: --port flag > NIMBUS_HTTP_PORT env > default 7474.
+ */
+export function parseServeArgs(args: string[], envHttpPort?: string): ServeArgs {
+  if (args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
+    return { kind: "help" };
+  }
+  const portRaw = takeFlag(args, "--port") ?? envHttpPort?.trim() ?? "7474";
+  const port = Number.parseInt(portRaw, 10);
+  if (!Number.isFinite(port) || port <= 0 || port > 65_535) {
+    throw new Error(`Invalid port: ${portRaw}`);
+  }
+  return { kind: "serve", port };
+}
+
 /**
  * Starts the Gateway with `NIMBUS_HTTP_PORT` so the read-only HTTP sidecar is enabled.
  */
 export async function runServe(args: string[]): Promise<void> {
-  if (args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
+  const parsed = parseServeArgs(args, process.env["NIMBUS_HTTP_PORT"]);
+  if (parsed.kind === "help") {
     console.log(`nimbus serve — start Gateway with local read-only HTTP API
 
 Usage:
@@ -26,12 +47,7 @@ The HTTP server binds 127.0.0.1 only. Set a different port with --port or NIMBUS
 `);
     return;
   }
-
-  const portRaw = takeFlag(args, "--port") ?? process.env["NIMBUS_HTTP_PORT"]?.trim() ?? "7474";
-  const port = Number.parseInt(portRaw, 10);
-  if (!Number.isFinite(port) || port <= 0 || port > 65_535) {
-    throw new Error(`Invalid port: ${portRaw}`);
-  }
+  const port = parsed.port;
 
   const paths = getCliPlatformPaths();
   await ensureGatewayDirs(paths);
