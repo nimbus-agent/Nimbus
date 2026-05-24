@@ -35,6 +35,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "sonarqube",
   "semgrep",
   "wiz",
+  "launchdarkly",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -94,6 +95,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   sonarqube: MIN10,
   semgrep: MIN10,
   wiz: MIN10,
+  launchdarkly: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -152,6 +154,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   sonarqube: "uses an API token (connector.auth sonarqube)",
   semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
   wiz: "uses OAuth client_credentials (connector.auth wiz)",
+  launchdarkly: "uses an API token (connector.auth launchdarkly)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

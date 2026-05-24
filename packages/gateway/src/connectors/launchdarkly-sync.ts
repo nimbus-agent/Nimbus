@@ -1,0 +1,178 @@
+import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import {
+  syncPassCursorHttpEmpty,
+  syncPassCursorParseEmpty,
+  syncPassCursorSuccess,
+} from "../sync/pass-cursor-sync-result.ts";
+import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { readConnectorSecret } from "./connector-vault.ts";
+import { mapLaunchDarklyFlagToItem } from "./launchdarkly-flag-mapping.ts";
+import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { asRecord, stringField } from "./unknown-record.ts";
+
+const SERVICE_ID = "launchdarkly";
+const CURSOR_PREFIX = "nimbus-launchdarkly1:";
+const DEFAULT_BASE = "https://app.launchdarkly.com";
+const PAGE_SIZE = 100;
+const MAX_PAGES_PER_PROJECT = 20;
+
+type LaunchdarklyCursorV1 = { pass: number };
+
+function pass1Cursor(): string {
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies LaunchdarklyCursorV1);
+}
+
+export type LaunchdarklySyncableOptions = {
+  ensureLaunchdarklyMcpRunning: () => Promise<void>;
+};
+
+interface LaunchdarklyCreds {
+  readonly token: string;
+  readonly baseUrl: string;
+  readonly projectKey: string | null;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<LaunchdarklyCreds | null> {
+  const token = (await readConnectorSecret(ctx.vault, "launchdarkly", "token"))?.trim() ?? "";
+  if (token === "") {
+    return null;
+  }
+  const baseRaw = (await readConnectorSecret(ctx.vault, "launchdarkly", "base_url"))?.trim() ?? "";
+  const projectRaw =
+    (await readConnectorSecret(ctx.vault, "launchdarkly", "project_key"))?.trim() ?? "";
+  return {
+    token,
+    baseUrl: baseRaw === "" ? DEFAULT_BASE : baseRaw,
+    projectKey: projectRaw === "" ? null : projectRaw,
+  };
+}
+
+type FetchOutcome =
+  | { kind: "ok"; parsed: unknown; bytes: number }
+  | { kind: "http_error"; bytes: number }
+  | { kind: "parse_error"; bytes: number };
+
+async function ldGet(
+  ctx: SyncContext,
+  creds: LaunchdarklyCreds,
+  path: string,
+): Promise<FetchOutcome> {
+  await ctx.rateLimiter.acquire(SERVICE_ID);
+  const res = await fetch(`${creds.baseUrl}/api/v2${path}`, {
+    headers: { Authorization: creds.token, Accept: "application/json" },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "launchdarkly GET failed");
+    return { kind: "http_error", bytes: text.length };
+  }
+  try {
+    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
+  } catch {
+    return { kind: "parse_error", bytes: text.length };
+  }
+}
+
+function extractItems(parsed: unknown): unknown[] {
+  const root = asRecord(parsed) ?? {};
+  const items = root["items"];
+  return Array.isArray(items) ? items : [];
+}
+
+function extractProjectKeys(parsed: unknown): string[] {
+  const out: string[] = [];
+  for (const p of extractItems(parsed)) {
+    const row = asRecord(p);
+    if (row === undefined) {
+      continue;
+    }
+    const key = stringField(row, "key");
+    if (key !== undefined && key !== "") {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+function flagsPath(projectKey: string, offset: number): string {
+  const params = new URLSearchParams({
+    summary: "true",
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+  });
+  return `/flags/${encodeURIComponent(projectKey)}?${params.toString()}`;
+}
+
+function upsertFlags(
+  ctx: SyncContext,
+  creds: LaunchdarklyCreds,
+  projectKey: string,
+  flags: readonly unknown[],
+  now: number,
+): number {
+  let upserted = 0;
+  for (const f of flags) {
+    const mapped = mapLaunchDarklyFlagToItem(f, {
+      baseUrl: creds.baseUrl,
+      projectKey,
+      syncedAt: now,
+    });
+    if (mapped === null) {
+      continue;
+    }
+    upsertIndexedItemForSync(ctx, mapped);
+    upserted += 1;
+  }
+  return upserted;
+}
+
+export function createLaunchdarklySyncable(options: LaunchdarklySyncableOptions): Syncable {
+  return {
+    serviceId: SERVICE_ID,
+    defaultIntervalMs: 10 * 60 * 1000,
+    initialSyncDepthDays: 30,
+    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      const t0 = performance.now();
+      await options.ensureLaunchdarklyMcpRunning();
+      const creds = await loadCreds(ctx);
+      if (creds === null) {
+        return syncNoopResult(cursor, t0);
+      }
+
+      let totalBytes = 0;
+      let projectKeys: string[];
+      if (creds.projectKey !== null) {
+        projectKeys = [creds.projectKey];
+      } else {
+        const outcome = await ldGet(ctx, creds, "/projects");
+        totalBytes += outcome.bytes;
+        if (outcome.kind === "http_error") {
+          return syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor());
+        }
+        if (outcome.kind === "parse_error") {
+          return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
+        }
+        projectKeys = extractProjectKeys(outcome.parsed);
+      }
+
+      const now = Date.now();
+      let totalUpserted = 0;
+      for (const projectKey of projectKeys) {
+        for (let page = 0; page < MAX_PAGES_PER_PROJECT; page += 1) {
+          const outcome = await ldGet(ctx, creds, flagsPath(projectKey, page * PAGE_SIZE));
+          totalBytes += outcome.bytes;
+          if (outcome.kind !== "ok") {
+            break;
+          }
+          const flags = extractItems(outcome.parsed);
+          totalUpserted += upsertFlags(ctx, creds, projectKey, flags, now);
+          if (flags.length < PAGE_SIZE) {
+            break;
+          }
+        }
+      }
+
+      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+    },
+  };
+}
