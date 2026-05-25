@@ -70,15 +70,29 @@ export async function runReplTurn(
   return typeof result.reply === "string" ? result.reply : "";
 }
 
-export async function runRepl(args: string[]): Promise<void> {
+/**
+ * Test entry point — invoked by `runRepl(args)` and the colocated
+ * `repl.test.ts`. Performs only the parse + gateway-running check, so
+ * tests can verify the "Gateway is not running" branch without driving
+ * the readline event loop (which doesn't terminate cleanly under
+ * closed stdin on CI Linux + macOS).
+ */
+export async function loadReplPreconditions(
+  args: string[],
+): Promise<{ socketPath: string; sessionId: string | undefined }> {
   const { sessionId } = parseReplArgs(args);
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
+  return { socketPath: state.socketPath, sessionId };
+}
 
-  const client = new IPCClient(state.socketPath);
+export async function runRepl(args: string[]): Promise<void> {
+  const { socketPath, sessionId } = await loadReplPreconditions(args);
+
+  const client = new IPCClient(socketPath);
   await client.connect();
   registerInteractiveCliIpcHandlers(client);
 

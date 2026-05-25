@@ -15,7 +15,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const replMod = await import("./repl.ts");
-const { parseReplArgs, runRepl, runReplTurn } = replMod;
+const { loadReplPreconditions, parseReplArgs, runReplTurn } = replMod;
 
 const out = captureOutput();
 
@@ -107,7 +107,14 @@ describe("runReplTurn", () => {
   });
 });
 
-describe("runRepl — dispatcher gate", () => {
+// `runRepl(args)` is the full dispatcher — it gates on `readGatewayState`
+// and then drives the readline event loop. Testing the full dispatcher's
+// "Gateway is not running" branch via `expect(runRepl([])).rejects` is
+// flaky on CI Linux + macOS for reasons that we suspect involve readline
+// EOF handling interacting with the harness's mock-timing. We instead
+// test the smaller, pure-async `loadReplPreconditions(args)` helper that
+// performs only the parse + gate check.
+describe("loadReplPreconditions (REPL gate)", () => {
   beforeEach(() => {
     out.reset();
   });
@@ -117,6 +124,15 @@ describe("runRepl — dispatcher gate", () => {
 
   it("throws when gateway is not running", async () => {
     setFixture({});
-    await expect(runRepl([])).rejects.toThrow(/Gateway is not running\. Start with: nimbus start/);
+    await expect(loadReplPreconditions([])).rejects.toThrow(
+      /Gateway is not running\. Start with: nimbus start/,
+    );
+  });
+
+  it("returns the socketPath + parsed sessionId when gateway state is present", async () => {
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    const out = await loadReplPreconditions(["--session", "sess-9"]);
+    expect(out.socketPath).toBe("/tmp/fake.sock");
+    expect(out.sessionId).toBe("sess-9");
   });
 });
