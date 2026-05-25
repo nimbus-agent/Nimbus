@@ -18,6 +18,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
   buildPhase3Servers,
+  phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
   phase3AddDatadogMcp,
@@ -608,6 +609,69 @@ describe("phase3AddFlagsmithMcp", () => {
     const spec = servers["flagsmith"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["FLAGSMITH_API_BASE"]).toBe("https://flagsmith.internal.example.com");
+  });
+});
+
+// ─── phase3AddArgocdMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddArgocdMcp", () => {
+  test("no-op without argocd.url + argocd.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["argocd"]).toBeUndefined();
+  });
+
+  test("no-op when only argocd.url is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("argocd.url", "https://argocd.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["argocd"]).toBeUndefined();
+  });
+
+  test("no-op when only argocd.token is set (url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("argocd.token", "jwt-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["argocd"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("argocd.url", "   ");
+    await vault.set("argocd.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["argocd"]).toBeUndefined();
+  });
+
+  test("spawns with ARGOCD_URL/ARGOCD_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("argocd.url", "https://argocd.example.com");
+    await vault.set("argocd.token", "jwt-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["argocd"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "argocd.example.com");
+    expect(spec.env?.["ARGOCD_URL"]).toBe("https://argocd.example.com");
+    expect(spec.env?.["ARGOCD_TOKEN"]).toBe("jwt-test-token");
+  });
+
+  test("spawns even when argocd.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("argocd.url", "not a url");
+    await vault.set("argocd.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddArgocdMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["argocd"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["ARGOCD_URL"]).toBe("not a url");
   });
 });
 

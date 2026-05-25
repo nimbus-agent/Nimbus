@@ -411,6 +411,32 @@ export async function phase3AddFlagsmithMcp(
   );
 }
 
+export async function phase3AddArgocdMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "argocd", "url"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "argocd", "token"))?.trim() ?? "";
+  if (url === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — ArgoCD is always self-hosted; extend the static (empty)
+  // network list with the hostname parsed from ARGOCD_URL so the sandbox lets
+  // the connector reach the user's ArgoCD instance (Grafana pattern).
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host]);
+  servers["argocd"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("argocd")],
+      env: extensionProcessEnv({ ARGOCD_URL: url, ARGOCD_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -431,5 +457,6 @@ export async function buildPhase3Servers(
   await phase3AddWizMcp(vault, servers, sandboxCwd);
   await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
   await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
+  await phase3AddArgocdMcp(vault, servers, sandboxCwd);
   return servers;
 }

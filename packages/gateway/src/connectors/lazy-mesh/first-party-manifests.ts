@@ -342,6 +342,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- GitOps / continuous delivery ---
+  argocd: baseManifest("com.nimbus.argocd", {
+    // ArgoCD is always self-hosted; `phase3AddArgocdMcp` extends the empty
+    // static network list with the hostname parsed from ARGOCD_URL at spawn
+    // time (same runtime-merge pattern as grafana / jenkins). Without that
+    // merge ArgoCD would be unreachable under the sandbox; with it, the
+    // connector talks only to the user-configured server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

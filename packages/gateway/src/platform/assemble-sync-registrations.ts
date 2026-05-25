@@ -1,3 +1,4 @@
+import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
 import { createAzureSyncable } from "../connectors/azure-sync.ts";
 import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
@@ -221,6 +222,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createFlagsmithSyncable({
       ensureFlagsmithMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createArgocdSyncable({
+      ensureArgocdMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }
