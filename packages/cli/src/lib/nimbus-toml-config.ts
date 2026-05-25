@@ -56,8 +56,33 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, content, "utf8");
+  // O_EXCL via flag: "wx" — fails if the tmp path already exists (or is a
+  // pre-existing symlink). Combined with the randomUUID suffix, the
+  // probability of collision is negligible; on the off chance it fires
+  // (or an attacker pre-creates a same-name symlink), retry with a fresh
+  // UUID. Without "wx" the write would silently follow a malicious
+  // symlink (CodeQL js/file-system-race).
+  let tmp = "";
+  let attempts = 0;
+  for (;;) {
+    tmp = `${path}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(tmp, content, { encoding: "utf8", flag: "wx" });
+      break;
+    } catch (e: unknown) {
+      if (
+        e !== null &&
+        typeof e === "object" &&
+        "code" in e &&
+        (e as { code: unknown }).code === "EEXIST" &&
+        attempts < 8
+      ) {
+        attempts += 1;
+        continue;
+      }
+      throw e;
+    }
+  }
   try {
     renameSync(tmp, path);
   } catch {
