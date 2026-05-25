@@ -29,6 +29,7 @@ import {
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
+  phase3AddMetabaseMcp,
   phase3AddNewrelicMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -780,6 +781,69 @@ describe("phase3AddDbtMcp", () => {
     const spec = servers["dbt"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["DBT_API_BASE"]).toBe("https://emea.dbt.com");
+  });
+});
+
+// ─── phase3AddMetabaseMcp ────────────────────────────────────────────────────
+
+describe("phase3AddMetabaseMcp", () => {
+  test("no-op without metabase.url + metabase.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when only metabase.url is set (api_key missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "https://acme.metabaseapp.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when only metabase.api_key is set (url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.api_key", "mb-key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "   ");
+    await vault.set("metabase.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("spawns with METABASE_URL/METABASE_API_KEY env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "https://acme.metabaseapp.com");
+    await vault.set("metabase.api_key", "mb-key-test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["metabase"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "acme.metabaseapp.com");
+    expect(spec.env?.["METABASE_URL"]).toBe("https://acme.metabaseapp.com");
+    expect(spec.env?.["METABASE_API_KEY"]).toBe("mb-key-test");
+  });
+
+  test("spawns even when metabase.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "not a url");
+    await vault.set("metabase.api_key", "k");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["metabase"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["METABASE_URL"]).toBe("not a url");
   });
 });
 

@@ -490,6 +490,35 @@ export async function phase3AddDbtMcp(
   );
 }
 
+export async function phase3AddMetabaseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "metabase", "url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "metabase", "api_key"))?.trim() ?? "";
+  if (url === "" || apiKey === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Metabase has no universal SaaS host (self-hosted or a
+  // per-org subdomain); extend the empty static network list with the
+  // hostname parsed from METABASE_URL so the sandbox lets the connector reach
+  // the user's Metabase instance (same runtime-merge pattern as grafana /
+  // argocd / flux). The API key is sent by the connector as the `x-api-key`
+  // header.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("metabase", host === null ? [] : [host]);
+  servers["metabase"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("metabase")],
+      env: extensionProcessEnv({ METABASE_URL: url, METABASE_API_KEY: apiKey }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -513,5 +542,6 @@ export async function buildPhase3Servers(
   await phase3AddArgocdMcp(vault, servers, sandboxCwd);
   await phase3AddFluxMcp(vault, servers, sandboxCwd);
   await phase3AddDbtMcp(vault, servers, sandboxCwd);
+  await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
   return servers;
 }

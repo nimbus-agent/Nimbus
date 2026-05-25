@@ -376,6 +376,19 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Business intelligence (Metabase) ---
+  metabase: baseManifest("com.nimbus.metabase", {
+    // Metabase has no universal SaaS host (each org runs its own
+    // self-hosted instance or per-org *.metabaseapp.com subdomain).
+    // `phase3AddMetabaseMcp` extends the empty static network list with the
+    // hostname parsed from METABASE_URL at spawn time (same runtime-merge
+    // pattern as grafana / jenkins / argocd / flux). Without that merge
+    // Metabase would be unreachable under the sandbox; with it, the
+    // connector talks only to the user-configured server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
