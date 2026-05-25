@@ -553,6 +553,35 @@ export async function phase3AddSupersetMcp(
   );
 }
 
+export async function phase3AddDatabricksMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const hostUrl = (await readConnectorSecret(vault, "databricks", "host"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "databricks", "token"))?.trim() ?? "";
+  if (hostUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Databricks has no universal SaaS host (every workspace is a
+  // distinct per-org URL); extend the empty static network list with the
+  // hostname parsed from DATABRICKS_HOST so the sandbox lets the connector
+  // reach the user's workspace (same runtime-merge pattern as grafana /
+  // argocd / flux / metabase / superset). The PAT is sent by the connector as
+  // an `Authorization: Bearer` header.
+  const host = hostnameFromUrl(hostUrl);
+  const manifest = manifestWithExtraNetworkHosts("databricks", host === null ? [] : [host]);
+  servers["databricks"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("databricks")],
+      env: extensionProcessEnv({ DATABRICKS_HOST: hostUrl, DATABRICKS_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -578,5 +607,6 @@ export async function buildPhase3Servers(
   await phase3AddDbtMcp(vault, servers, sandboxCwd);
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
+  await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   return servers;
 }

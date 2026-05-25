@@ -21,6 +21,7 @@ import {
   phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
+  phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
   phase3AddDbtMcp,
   phase3AddFlagsmithMcp,
@@ -923,6 +924,69 @@ describe("phase3AddSupersetMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["SUPERSET_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddDatabricksMcp ──────────────────────────────────────────────────
+
+describe("phase3AddDatabricksMcp", () => {
+  test("no-op without databricks.host + databricks.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when only databricks.host is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "https://dbc-abc123.cloud.databricks.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when only databricks.token is set (host missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.token", "dapi-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "   ");
+    await vault.set("databricks.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("spawns with DATABRICKS_HOST/DATABRICKS_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "https://dbc-abc123.cloud.databricks.com");
+    await vault.set("databricks.token", "dapi-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["databricks"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "dbc-abc123.cloud.databricks.com");
+    expect(spec.env?.["DATABRICKS_HOST"]).toBe("https://dbc-abc123.cloud.databricks.com");
+    expect(spec.env?.["DATABRICKS_TOKEN"]).toBe("dapi-test-token");
+  });
+
+  test("spawns even when databricks.host is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "not a url");
+    await vault.set("databricks.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["databricks"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["DATABRICKS_HOST"]).toBe("not a url");
   });
 });
 

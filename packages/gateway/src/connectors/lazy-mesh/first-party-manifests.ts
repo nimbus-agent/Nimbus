@@ -402,6 +402,19 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Data orchestration (Databricks) ---
+  databricks: baseManifest("com.nimbus.databricks", {
+    // Databricks has no universal SaaS host — every workspace is a distinct
+    // per-org URL (`dbc-*.cloud.databricks.com`, `adb-*.azuredatabricks.net`,
+    // GCP variants). `phase3AddDatabricksMcp` extends the empty static network
+    // list with the hostname parsed from DATABRICKS_HOST at spawn time (same
+    // runtime-merge pattern as grafana / argocd / flux / metabase / superset).
+    // Without that merge Databricks would be unreachable under the sandbox;
+    // with it, the connector talks only to the user-configured workspace.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
