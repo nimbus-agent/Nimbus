@@ -209,6 +209,12 @@ In addition to the textual labeling, MCP tool results are returned to the agent 
 
 ---
 
+### Local Model Supply Chain
+
+Nimbus verifies its own binaries (Ed25519 updater), extensions (`I16`), and extension manifests (SHA-256) — but **local model weights (GGUF files) pulled via Ollama or llama.cpp are not integrity-verified today.** A poisoned or substituted local model is an attack on the agent's *reasoning* — it can bias plans, fabricate tool arguments, or steer a user toward approving a harmful action — and it is not covered by the credential boundary above. This is an acknowledged residual risk pending the hardening item on the [Phase 9 roadmap](./roadmap.md#phase-9--ai-engineering-loop): optional digest pinning / signature verification reusing the existing SHA-256 + Ed25519 machinery (`nimbus llm verify`), with a fail-closed **`strict`** mode that refuses inference on a verification mismatch. It becomes a structural invariant — production wiring + a `SECURITY-INVARIANTS.md` row + an enforcement test — only once that work is wired, never before.
+
+---
+
 ### Audit Log
 
 Every action the agent takes — including every HITL decision — is recorded in a local SQLite `audit_log` table before the action executes. You can reconstruct exactly what Nimbus did on your behalf at any time via `nimbus audit` or the desktop audit log viewer.

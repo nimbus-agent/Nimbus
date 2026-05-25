@@ -980,6 +980,7 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 - [ ] **Promptfoo** (open source CLI) — eval-run state from `promptfoo.yaml` runs in CI; read-only
 - [ ] **Prompt-regression watcher** — fires when an eval-suite pass-rate drops below threshold (configurable; default 95% of trailing 7-day mean)
 - [ ] **AI context minimizer** — periodic agent over Helicone / Langfuse / LangSmith trace ingestion; analyses prompt traces, identifies context segments the LLM didn't materially use, and surfaces removal suggestions; directly reduces token cost and latency on the user's own prompts
+- [ ] **Model-weight integrity** — optional digest pinning / signature verification of local GGUF weights, reusing the existing SHA-256 / Ed25519 machinery; `nimbus llm verify`; pin known-good digests in config. Two modes: **`warn`** (default — log drift, continue) and **`strict`** (fail-closed — refuse to load the model / run inference on a verification mismatch). Because a substituted model is a total compromise of the agent's reasoning, `strict` is the recommended posture for security-sensitive deployments and can be pinned fleet-wide via the Phase 16 team baseline / Phase 12 org policy. Closes the "Local model supply chain" residual risk in [`SECURITY.md`](./SECURITY.md); becomes a structural invariant (wiring + invariants-file row + enforcement test) only once wired.
 
 #### Wave 2 — ML Model Lifecycle
 
