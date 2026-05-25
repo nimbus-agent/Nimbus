@@ -544,7 +544,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 ##### GitOps & Deployment
 
-- [ ] **ArgoCD** (read-only) — applications, sync status, rollout history, health state, manifests; API token or kubeconfig; `gitops_app` item type indexed with repo, target revision, sync status, health; enables deployment correlation without Jenkins for k8s-first teams. Write tools (`sync`, `rollback`) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+- [x] **ArgoCD** (2026-05-25, Phase 5 Tier 1) — `argocd:application` items via `mapArgocdApplicationToItem`; metadata name/namespace/project/sync_status/health_status/repo_url/path/target_revision/dest_server/dest_namespace/revision/created_at/canonical_url; vault keys `argocd.url` + `argocd.token` (Bearer); single `GET /api/v1/applications` walk (no pagination); self-hosted host extended into the sandbox network list from `argocd.url` (Grafana pattern); three read tools (`argocd_list` / `argocd_get` / `argocd_search`); `hitlRequired: []`; applications-only — AppProjects + per-app sync history deferred; `argocd.app.sync` / `argocd.app.rollback` writes deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
 - [ ] **Flux** (read-only) — kustomizations, helm releases, sources, image automations; kubeconfig; read-only health and history index; complements ArgoCD coverage for teams mixing both. Write tools (`reconcile`) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
 
 ##### Data Warehouses, Orchestration & BI (Personal-Auth)

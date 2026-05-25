@@ -10,6 +10,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial).
 
+### 2026-05-25
+
+- **Tier-1 connector — ArgoCD** ✅ — GitOps application sync/health (`argocd:application`); self-hosted Bearer auth, single GET /api/v1/applications walk; sandbox host extended from `argocd.url` (Grafana pattern). Applications-only (AppProjects + sync history deferred).
+
 ### 2026-05-24
 
 - **Tier-2 connector — Wiz** ✅ — CSPM findings (Phase 8 security surface, delivered early).
