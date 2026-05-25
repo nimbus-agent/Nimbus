@@ -187,6 +187,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/databricks": {
+      "name": "nimbus-mcp-databricks",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/datadog": {
       "name": "nimbus-mcp-datadog",
       "version": "0.1.0",
@@ -2667,6 +2679,8 @@
     "nimbus-mcp-circleci": ["nimbus-mcp-circleci@workspace:packages/mcp-connectors/circleci"],
 
     "nimbus-mcp-confluence": ["nimbus-mcp-confluence@workspace:packages/mcp-connectors/confluence"],
+
+    "nimbus-mcp-databricks": ["nimbus-mcp-databricks@workspace:packages/mcp-connectors/databricks"],
 
     "nimbus-mcp-datadog": ["nimbus-mcp-datadog@workspace:packages/mcp-connectors/datadog"],
 

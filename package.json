@@ -57,6 +57,7 @@
     "packages/mcp-connectors/dbt",
     "packages/mcp-connectors/metabase",
     "packages/mcp-connectors/superset",
+    "packages/mcp-connectors/databricks",
     "packages/vscode-extension"
   ],
   "scripts": {
