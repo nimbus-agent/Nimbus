@@ -217,6 +217,8 @@ Every action the agent takes — including every HITL decision — is recorded i
 
 Migration V18 (`packages/gateway/src/index/audit-chain-v18-sql.ts`) added `row_hash` and `prev_hash` columns to `audit_log`, implementing a BLAKE3-chained tamper-evident log. Verify with `nimbus audit verify` (see `packages/cli/src/commands/audit.ts`).
 
+The chain is tamper-**evident**, not tamper-**proof**: a process running at the user's own UID can truncate the SQLite file and regenerate the chain, since the chain has no external anchor. Closing that window is the job of **scheduled, externally-anchored export** — periodically signing the chain head and the egress ledger to an external append-only sink (Phase 12 audit-log shipping / SIEM). See the North-Star **M7 (Provable Locality)** capability in [`roadmap.md`](./roadmap.md#north-star-capabilities-cross-phase).
+
 ---
 
 ### Standing Approvals (design for a future phase)
