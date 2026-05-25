@@ -35,6 +35,7 @@ import {
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddSupersetMcp,
   phase3AddWizMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -844,6 +845,84 @@ describe("phase3AddMetabaseMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["METABASE_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddSupersetMcp ────────────────────────────────────────────────────
+
+describe("phase3AddSupersetMcp", () => {
+  test("no-op without any of url / username / password", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when password is missing (url + username only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.username", "reader");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when username is missing (url + password only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when url is missing (username + password only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "   ");
+    await vault.set("superset.username", "   ");
+    await vault.set("superset.password", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("spawns with all three env vars + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["superset"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "superset.acme.com");
+    expect(spec.env?.["SUPERSET_URL"]).toBe("https://superset.acme.com");
+    expect(spec.env?.["SUPERSET_USERNAME"]).toBe("reader");
+    expect(spec.env?.["SUPERSET_PASSWORD"]).toBe("pw-secret");
+  });
+
+  test("spawns even when superset.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "not a url");
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["superset"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["SUPERSET_URL"]).toBe("not a url");
   });
 });
 

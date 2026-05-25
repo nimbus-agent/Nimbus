@@ -89,6 +89,7 @@ describe("manifestForFirstParty", () => {
       "flux",
       "dbt",
       "metabase",
+      "superset",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();

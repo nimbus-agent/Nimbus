@@ -519,6 +519,40 @@ export async function phase3AddMetabaseMcp(
   );
 }
 
+export async function phase3AddSupersetMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "superset", "url"))?.trim() ?? "";
+  const user = (await readConnectorSecret(vault, "superset", "username"))?.trim() ?? "";
+  const pass = (await readConnectorSecret(vault, "superset", "password"))?.trim() ?? "";
+  if (url === "" || user === "" || pass === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Apache Superset is always self-hosted (no universal SaaS
+  // host); extend the empty static network list with the hostname parsed from
+  // SUPERSET_URL so the sandbox lets the connector reach the user's Superset
+  // instance (same runtime-merge pattern as grafana / argocd / flux /
+  // metabase). The connector mints a JWT from these credentials at login and
+  // then calls with a Bearer token; both hit this one host.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
+  servers["superset"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("superset")],
+      env: extensionProcessEnv({
+        SUPERSET_URL: url,
+        SUPERSET_USERNAME: user,
+        SUPERSET_PASSWORD: pass,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -543,5 +577,6 @@ export async function buildPhase3Servers(
   await phase3AddFluxMcp(vault, servers, sandboxCwd);
   await phase3AddDbtMcp(vault, servers, sandboxCwd);
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
+  await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   return servers;
 }

@@ -389,6 +389,19 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Business intelligence (Superset) ---
+  superset: baseManifest("com.nimbus.superset", {
+    // Apache Superset is always self-hosted (no universal SaaS host).
+    // `phase3AddSupersetMcp` extends the empty static network list with the
+    // hostname parsed from SUPERSET_URL at spawn time (same runtime-merge
+    // pattern as grafana / jenkins / argocd / flux / metabase). Superset has
+    // no static API key — the connector logs in with username/password to
+    // mint a JWT, then calls with a Bearer token; both the login and the
+    // dashboard reads go to this one user-configured host.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
