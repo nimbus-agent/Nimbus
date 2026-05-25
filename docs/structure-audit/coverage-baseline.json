@@ -32,9 +32,6 @@
     "packages/cli/src/lib/gateway-process.ts": {
       "min_coverage_pct": 15.22
     },
-    "packages/client/src/index.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/client/src/ipc-transport.ts": {
       "min_coverage_pct": 10.81
     },
@@ -44,113 +41,14 @@
     "packages/client/src/nimbus-client.ts": {
       "min_coverage_pct": 8.05
     },
-    "packages/client/src/stream-events.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
-    },
-    "packages/mcp-connectors/aws/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/azure/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/bitbucket/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/bitrise/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/circleci/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/confluence/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/datadog/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/discord/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/gcp/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/github-actions/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/github/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/gitlab/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/gmail/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/google-drive/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/google-photos/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/grafana/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/iac/src/server.ts": {
-      "min_coverage_pct": 0
     },
     "packages/mcp-connectors/jenkins/src/jenkins-api.ts": {
       "min_coverage_pct": 17.89
     },
-    "packages/mcp-connectors/jenkins/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/jira/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/kubernetes/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/linear/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/newrelic/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/notion/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/obsidian/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/onedrive/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/outlook/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/pagerduty/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/sentry/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/slack/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/snyk/src/server.ts": {
-      "min_coverage_pct": 0
-    },
-    "packages/mcp-connectors/teams/src/server.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/sdk/src/crypto/verify-signature.ts": {
       "min_coverage_pct": 18.68
-    },
-    "packages/sdk/src/ipc/index.ts": {
-      "min_coverage_pct": 0
     },
     "packages/sdk/src/ipc/ndjson-line-reader.ts": {
       "min_coverage_pct": 2.94

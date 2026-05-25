@@ -68,6 +68,14 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // zero runtime emit after TypeScript erasure. Same rationale as
   // platform/sandbox/index.ts above.
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
+  // Client package re-export barrel + the askStream type union — pure
+  // `export … from` / `export type` with zero runtime emit after TS erasure.
+  // Same rationale as connectors/index.ts. `stream-events.ts` does not match
+  // the types.ts/-types.ts basename regexes, so it needs an exact entry.
+  { kind: "exact", path: "packages/client/src/index.ts" },
+  { kind: "exact", path: "packages/client/src/stream-events.ts" },
+  // SDK ipc barrel — re-exports ndjson-line-reader.js only; zero runtime emit.
+  { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
 
   // Subprocess entry-point scripts — top-level `await main()` makes them
   // structurally untestable in-process (same shape as github-actions main.ts).
