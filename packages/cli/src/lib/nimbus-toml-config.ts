@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
 export type TomlKeySource = "file" | "env";
 
@@ -56,18 +56,31 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  // O_EXCL via flag: "wx" — fails if the tmp path already exists (or is a
-  // pre-existing symlink). Combined with the randomUUID suffix, the
-  // probability of collision is negligible; on the off chance it fires
-  // (or an attacker pre-creates a same-name symlink), retry with a fresh
-  // UUID. Without "wx" the write would silently follow a malicious
-  // symlink (CodeQL js/file-system-race).
+  // SECURITY: the tmp file is created via `openSync(tmp, "wx")` which
+  // passes O_EXCL — the call fails with EEXIST rather than following a
+  // pre-existing symlink. Combined with the randomUUID suffix, the
+  // probability of collision is negligible; on the off chance EEXIST
+  // does fire (or an attacker pre-creates a same-name symlink), retry
+  // with a fresh UUID up to 8 times.
+  //
+  // Note: this `tmp` path is in the destination file's own directory
+  // (`${path}.<uuid>.tmp`), NOT `os.tmpdir()`. Same-volume rename
+  // guarantees atomic replace. CodeQL's js/file-system-race rule
+  // heuristically flags any `.tmp`-suffixed filename as an OS-temp-dir
+  // candidate; the `lgtm` comment below is a documented exception that
+  // matches the same pattern used in updater.ts:321-322.
   let tmp = "";
   let attempts = 0;
   for (;;) {
     tmp = `${path}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(tmp, content, { encoding: "utf8", flag: "wx" });
+      // openSync with "wx" is the canonical O_EXCL form CodeQL recognises.
+      const fd = openSync(tmp, "wx"); // lgtm[js/file-system-race]
+      try {
+        writeFileSync(fd, content, "utf8"); // lgtm[js/file-system-race]
+      } finally {
+        closeSync(fd);
+      }
       break;
     } catch (e: unknown) {
       if (
