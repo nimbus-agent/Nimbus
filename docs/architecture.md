@@ -1160,6 +1160,35 @@ The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / 
 
 Planned Phase 6+ tables (`service` / `scorecard` / `security_finding` / `llm_trace` / …) are tracked in [`roadmap.md` § Planned](./roadmap.md#planned).
 
+### Concurrency & Consistency Model
+
+The Gateway is a single OS process, but several SQLite handles are open against the one `nimbus.db` file at once:
+
+| Handle | Opened at | Mode |
+|---|---|---|
+| Main writer | `platform/assemble.ts` | read-write; `PRAGMA busy_timeout = 8000` |
+| Embedding worker | `embedding/embedding-worker.ts` | its **own** connection; `busy_timeout = 8000`; `foreign_keys = ON` |
+| Read-only HTTP API | `ipc/http-server.ts` | `SQLITE_OPEN_READONLY` + `PRAGMA query_only = ON` |
+| HTTP write surface (`I13`) | `ipc/http-write-routes.ts` | dedicated read-write handle; the single allowlisted `POST /v1/deployments` route only |
+| Raw-SQL guard | `db/query-guard.ts` | separate handle (Layer-2 isolation for `nimbus query --sql`) |
+
+The intended model is **WAL journaling** (so readers never block the writer and vice versa), with `busy_timeout = 8000` as the contention backstop when two write paths (delta sync, embedding backfill, the `I13` deploy-annotation route) briefly compete. Every write goes through `dbRun` / `dbExec` / `dbStmtRun` (invariant `I14`), which translates `SQLITE_FULL` into a typed `DiskFullError` rather than a silently swallowed write. On clean shutdown the index issues `PRAGMA wal_checkpoint(TRUNCATE)` to fold the WAL back into the main file.
+
+> **Status note (2026-05-25):** `PRAGMA journal_mode = WAL` is not currently set explicitly at any production open site. Until it is, the handles fall back to SQLite's default rollback journal — where readers and the writer block each other and the shutdown `wal_checkpoint(TRUNCATE)` is a no-op — and the 8 s busy-timeout is the only thing preventing immediate `SQLITE_BUSY` under contention. Enabling WAL explicitly, plus a regression guard that asserts it across every write handle, is tracked as **B5** in [`roadmap.md`](./roadmap.md#maintenance-initiative-follow-ups-b-series). This note documents the gap honestly rather than asserting a concurrency property the code does not yet guarantee.
+
+### Scaling Limits
+
+The index is designed for a single engineer's working set, not a data warehouse. Honest ceilings and what degrades first:
+
+| Index size | Expected behaviour |
+|---|---|
+| ≤ 50k items | Comfortable; structured `nimbus query` p95 well under the 500 ms gate (measured: p95 < 500 ms at 8k rows). |
+| 50k–250k items | Hybrid search (FTS5 BM25 + dual-vec KNN over `vec_items_384` + `vec_items_1536`) stays interactive; embedding backfill is the slow path on first sync. *(target)* |
+| 250k–1M items | KNN latency and FTS5 index size become the first constraints; prune via `retentionDays` / `nimbus connector reindex --depth` to stay responsive. *(target)* |
+| > 1M items | Beyond the single-Gateway design point; partition by profile or shorten retention. *(design ceiling, not benchmarked)* |
+
+Embedding storage is the dominant on-disk cost at scale: each item contributes one or more chunk vectors to a `vec_items_*` table (384 floats local MiniLM, 1536 floats for prose-heavy types routed to OpenAI). Rows marked *(target)* / *(design ceiling)* are estimates pending a dedicated scaling benchmark; only the 8k-row figure is measured (the `nimbus query` latency harness, `NIMBUS_RUN_QUERY_BENCH=1`).
+
 ---
 
 ## Testing Architecture
