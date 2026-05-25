@@ -20,13 +20,15 @@ import type { CliPlatformPaths } from "../paths.ts";
 // exercises the REAL implementation under `bun test --coverage`, where
 // the shared `cli-mocks.ts` harness has already registered
 // `mock.module("../../src/lib/gateway-process.ts", ...)` against the
-// re-export path.
+// re-export path. The impl file's name (`gw-state-helpers.ts`) has no
+// prefix overlap with `gateway-process.ts` so Bun's mock-resolution
+// cannot conflate them.
 import {
   ensureGatewayDirs,
   gatewayStatePath,
   isProcessAlive,
   readGatewayState,
-} from "./gateway-process-impl.ts";
+} from "./gw-state-helpers.ts";
 
 const liveProcs = new Set<Bun.Subprocess>();
 

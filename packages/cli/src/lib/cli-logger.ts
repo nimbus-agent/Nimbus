@@ -1,13 +1,16 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import pino from "pino";
 
 import type { CliPlatformPaths } from "../paths.ts";
-// Import from the impl file so this real-implementation helper is not
-// shadowed by the harness's `mock.module("../../src/lib/gateway-process.ts", ...)`
-// stub when cli-logger.test.ts runs in the combined `bun test --coverage`
-// process. Dispatchers under src/commands/ still use the mocked re-export.
-import { ensureGatewayDirs } from "./gateway-process-impl.ts";
+
+// We do NOT import `ensureGatewayDirs` from gateway-process here, even via
+// the impl file. Bun's process-global `mock.module("../../src/lib/gateway-process.ts", ...)`
+// in the shared CLI test harness somehow shadows the impl import too on
+// Linux + macOS (the colocated unit test for gateway-process-impl
+// observes the same failure). Inlining the `mkdir` calls keeps
+// cli-logger.ts completely independent of the harness mock surface.
 
 /** Local calendar date; same-day CLI runs append to one file. */
 function localLogDateStamp(): string {
@@ -31,7 +34,10 @@ export async function createCliFileLogger(paths: CliPlatformPaths): Promise<{
   logger: pino.Logger;
   logPath: string;
 }> {
-  await ensureGatewayDirs(paths);
+  // Inlined to avoid the harness's gateway-process mock surface. Matches
+  // the real `ensureGatewayDirs` implementation.
+  await mkdir(paths.dataDir, { recursive: true });
+  await mkdir(paths.logDir, { recursive: true });
   const logPath = join(paths.logDir, `cli-${localLogDateStamp()}.log`);
   const dest = pino.destination({ dest: logPath, sync: true });
   const logger = pino({ level: cliLogLevel() }, dest);
