@@ -550,7 +550,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 ##### Data Warehouses, Orchestration & BI (Personal-Auth)
 
 - [ ] **Databricks** (PAT) — workspaces, notebooks (metadata only), jobs, clusters, SQL warehouses; `data_pipeline` item type indexed with job name, status, triggering user, cluster id, started_at, duration; `job.trigger`, `job.cancel`, `cluster.restart` behind HITL
-- [ ] **Metabase** (API key) — saved questions, dashboards, collections; `dashboard` item type; read-only index
+- [x] **Metabase** (2026-05-25, Phase 5 Tier 1) — `metabase:dashboard` items via `mapMetabaseDashboardToItem` (`GET /api/dashboard` + `/api/collection` for collection-name resolution); metadata dashboard_id/name/description/collection_id/collection_name/creator_id/archived/card_count/created_at/updated_at/canonical_url; vault keys `metabase.url` + `metabase.api_key`; API-key auth via the `x-api-key` header (NOT `Authorization`); three read tools (`metabase_list` / `metabase_get` / `metabase_search`); `hitlRequired: []`; **v1 dashboards only — saved questions/cards deferred**; self-hosted host extended into the sandbox from `metabase.url` (Grafana pattern)
 - [ ] **Superset** (API key) — saved queries, dashboards, charts, datasets; `dashboard` item type; read-only index
 - [ ] **Apache Airflow (OSS) / Prefect / Dagster** (API token) — DAGs/flows, tasks, task groups, run statuses, logs; `data_pipeline` item type; `orchestration.run.trigger` / `orchestration.run.cancel` behind HITL
 - [ ] **Kibana / Elasticsearch** — saved searches, dashboards, Watcher alerts; `log_alarm` item type; read-only index; agent can query specific indices for error patterns during incident correlation
