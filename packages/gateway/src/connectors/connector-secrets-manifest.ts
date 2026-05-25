@@ -39,6 +39,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   launchdarkly: ["launchdarkly.token", "launchdarkly.base_url", "launchdarkly.project_key"],
   flagsmith: ["flagsmith.token", "flagsmith.api_base"],
   argocd: ["argocd.url", "argocd.token"],
+  flux: ["flux.api_url", "flux.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

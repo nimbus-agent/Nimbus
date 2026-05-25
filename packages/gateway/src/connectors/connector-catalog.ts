@@ -38,6 +38,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "launchdarkly",
   "flagsmith",
   "argocd",
+  "flux",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -100,6 +101,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   launchdarkly: MIN10,
   flagsmith: MIN10,
   argocd: MIN10,
+  flux: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -161,6 +163,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   launchdarkly: "uses an API token (connector.auth launchdarkly)",
   flagsmith: "uses an admin API token (connector.auth flagsmith)",
   argocd: "uses a bearer API token (connector.auth argocd)",
+  flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

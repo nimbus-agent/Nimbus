@@ -8,6 +8,7 @@ import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
+import { createFluxSyncable } from "../connectors/flux-sync.ts";
 import { createGcpSyncable } from "../connectors/gcp-sync.ts";
 import { createGithubActionsSyncable } from "../connectors/github-actions-sync.ts";
 import { createGithubSyncable } from "../connectors/github-sync.ts";
@@ -227,6 +228,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createArgocdSyncable({
       ensureArgocdMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createFluxSyncable({
+      ensureFluxMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }
