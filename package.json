@@ -52,6 +52,7 @@
     "packages/mcp-connectors/wiz",
     "packages/mcp-connectors/launchdarkly",
     "packages/mcp-connectors/flagsmith",
+    "packages/mcp-connectors/argocd",
     "packages/vscode-extension"
   ],
   "scripts": {
