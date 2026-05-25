@@ -54,6 +54,7 @@
     "packages/mcp-connectors/flagsmith",
     "packages/mcp-connectors/argocd",
     "packages/mcp-connectors/flux",
+    "packages/mcp-connectors/dbt",
     "packages/vscode-extension"
   ],
   "scripts": {
