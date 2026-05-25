@@ -40,6 +40,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "argocd",
   "flux",
   "dbt",
+  "metabase",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -104,6 +105,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   argocd: MIN10,
   flux: MIN10,
   dbt: MIN10,
+  metabase: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -167,6 +169,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   argocd: "uses a bearer API token (connector.auth argocd)",
   flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
   dbt: "uses a dbt Cloud API token (connector.auth dbt)",
+  metabase: "uses a Metabase API key (connector.auth metabase)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

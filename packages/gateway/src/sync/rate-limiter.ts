@@ -37,7 +37,8 @@ export type Provider =
   | "flagsmith"
   | "argocd"
   | "flux"
-  | "dbt";
+  | "dbt"
+  | "metabase";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -80,6 +81,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   argocd: { requestsPerMinute: 60, burstSize: 10 },
   flux: { requestsPerMinute: 60, burstSize: 10 },
   dbt: { requestsPerMinute: 60, burstSize: 10 },
+  metabase: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

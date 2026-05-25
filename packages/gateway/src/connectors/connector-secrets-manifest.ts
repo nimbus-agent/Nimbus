@@ -41,6 +41,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   argocd: ["argocd.url", "argocd.token"],
   flux: ["flux.api_url", "flux.token"],
   dbt: ["dbt.token", "dbt.api_base", "dbt.account_id"],
+  metabase: ["metabase.url", "metabase.api_key"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

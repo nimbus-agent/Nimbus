@@ -25,6 +25,7 @@ import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
 import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
+import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createNewrelicSyncable } from "../connectors/newrelic-sync.ts";
 import { createNotionSyncable } from "../connectors/notion-sync.ts";
 import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
@@ -239,6 +240,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createDbtSyncable({
       ensureDbtMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMetabaseSyncable({
+      ensureMetabaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }
