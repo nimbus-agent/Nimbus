@@ -55,6 +55,7 @@
     "packages/mcp-connectors/argocd",
     "packages/mcp-connectors/flux",
     "packages/mcp-connectors/dbt",
+    "packages/mcp-connectors/metabase",
     "packages/vscode-extension"
   ],
   "scripts": {
