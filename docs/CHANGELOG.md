@@ -16,6 +16,7 @@ Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T
 - **Tier-1 connector — Flux** ✅ — GitOps Toolkit CRs (kustomizations, helm releases, sources, image automations) read from the Kubernetes API (`flux:resource`); self-hosted SA-bearer auth, status.conditions Ready health. Writes (reconcile/suspend) deferred to Phase 6.
 - **Tier-1 connector — dbt Cloud** ✅ — Administrative-API jobs + run status (`dbt:job`); `Authorization: Token` auth. Model-lineage (Discovery API) + `dbt.job.trigger` HITL deferred.
 - **Tier-1 connector — Metabase** ✅ — dashboards (`metabase:dashboard`) via the Metabase API (`x-api-key`); self-hosted host via `metabase.url`. Saved-questions/cards deferred.
+- **Tier-1 connector — Superset** ✅ — dashboards (`superset:dashboard`) via the Superset API (username/password → JWT); self-hosted host via `superset.url`. Charts/datasets/saved-queries deferred.
 
 ### 2026-05-24
 
