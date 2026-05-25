@@ -205,7 +205,7 @@ The bare result still flows through the planner path (`ConnectorDispatcher` → 
 
 The hard structural barrier is the **HITL consent gate** in `executor.ts`: every action type in `HITL_REQUIRED` requires explicit user approval before the connector executes, regardless of what the LLM or an injected tool result requests. A malicious tool result cannot remove an action type from `HITL_REQUIRED`.
 
-In addition to the textual labeling, MCP tool results are returned to the agent via the LLM-provider SDK's typed message channel (`tool_result` for Anthropic, `function_call_response` for OpenAI). The provider SDK structurally labels these as tool output — not as system instructions — which is the primary soft barrier against prompt injection.
+In addition to the textual labeling, MCP tool results are returned to the agent via the LLM-provider SDK's typed message channel (`tool_result` for Anthropic, `function_call_response` for OpenAI). The provider SDK structurally labels these as tool output — not as system instructions — which is the primary soft barrier against prompt injection. For the autonomous and standing-approval flows arriving in later phases, this soft read-surface barrier is backed by a second structural defense — the proposed taint barrier (**I17**, see § Standing Approvals) — so attacker-influenceable content can never satisfy an auto-approve path; until then, the HITL gate fires on every destructive action regardless of provenance.
 
 ---
 
@@ -246,6 +246,7 @@ A future phase will introduce standing approvals: pre-authorized patterns that a
 - Standing rules are stored in SQLite, not in config files — they are subject to the same integrity checks as the rest of the local index.
 - No standing rule may cover `vault.*` or `db.*` tool calls.
 - The rule editor in the UI must show a diff preview of the scope before saving.
+- **Taint barrier (proposed invariant I17).** Attacker-influenceable tool output — any MCP/connector result, any indexed content, any federated-peer response — may **never** satisfy a standing-approval match, a skill-pack auto-approve, or a template auto-adopt. The mechanism is a **metadata-driven provenance tag**, not dynamic runtime taint tracking: every indexed row already carries its origin (`<service>:<native_id>`) and every LLM-facing tool result already rides the `<tool_output service tool>` envelope (`I11`), so a two-class origin label is computed at that boundary and checked by the standing-approval matcher, which falls back to interactive HITL when the trigger is `untrusted`. The classes are drawn **conservatively**: `trusted` is *only* the user's direct, interactive CLI/UI input and the signed `nimbus.toml` / team baseline; `untrusted` is everything else — **including the output of executed scripts, `nimbus run` workflows, and any local process**, since a local script can fetch attacker-controlled content and local execution must not be a path to launder it into a trusted tag. I17 lands as a full invariant triple (production wiring + a `SECURITY-INVARIANTS.md` row + an enforcement test) when standing approvals are built; it unifies this section with Phase 16's "team skill packs cannot loosen HITL" guardrail and the Phase 16 federated-Q&A (M4) injection risk.
 
 ---
 
