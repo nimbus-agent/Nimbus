@@ -1,17 +1,19 @@
-// Real implementation of the gateway-process helpers.
+// Real implementation of the gateway-state helpers, owned independently
+// from `gateway-process.ts`.
 //
-// The colocated unit test imports from THIS file so it bypasses the
-// process-global `mock.module("../../src/lib/gateway-process.ts", ...)`
-// registered by `packages/cli/test/helpers/cli-mocks.ts`. Application
-// code imports from `./gateway-process.ts` (a thin re-export of this
-// file) so the harness mock continues to control dispatcher behaviour.
+// The colocated unit test (`gateway-process.test.ts`) imports from THIS
+// file so it exercises the real implementation regardless of the harness
+// state. `gateway-process.ts` declares its own copy of these functions
+// (NOT a re-export from this file) so the harness's
+// `mock.module("../../src/lib/gateway-process.ts", ...)` cannot reach
+// the bindings here via ESM re-export live-binding propagation.
 //
-// This split is the structural answer to the test-vs-mock conflict
-// described in Phase 6 commit 14's design: `bun test --coverage` loads
-// every test file in the same process, and once any test imports the
-// harness, the mock for `gateway-process.ts` is registered for the
-// remainder of the process. Tests for the real implementation must
-// therefore import a different absolute path.
+// The duplication is small (≈80 lines) and the cost of keeping the two
+// files in sync is recouped by structural isolation: the file the test
+// targets and the file the harness mocks are independent module records
+// with independent export bindings. If either implementation diverges in
+// behaviour, the unit test catches it (`gateway-process.test.ts` covers
+// every branch).
 
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
