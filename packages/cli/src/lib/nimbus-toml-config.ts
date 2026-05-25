@@ -1,5 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 export type TomlKeySource = "file" | "env";
 
@@ -56,55 +63,39 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  // SECURITY: the tmp file is created via `openSync(tmp, "wx")` which
-  // passes O_EXCL — the call fails with EEXIST rather than following a
-  // pre-existing symlink. Combined with the randomUUID suffix, the
-  // probability of collision is negligible; on the off chance EEXIST
-  // does fire (or an attacker pre-creates a same-name symlink), retry
-  // with a fresh UUID up to 8 times.
+  // SECURITY: use `mkdtempSync(prefix)` to create a unique sibling
+  // directory in the destination's own directory. `mkdtempSync` is the
+  // canonical Node sanitizer CodeQL recognises for the js/file-system-race
+  // rule — it creates the directory atomically with a random suffix,
+  // mode 0o700, and O_EXCL behavior under the hood.
   //
-  // Note: this `tmp` path is in the destination file's own directory
-  // (`${path}.<uuid>.tmp`), NOT `os.tmpdir()`. Same-volume rename
-  // guarantees atomic replace. CodeQL's js/file-system-race rule
-  // heuristically flags any `.tmp`-suffixed filename as an OS-temp-dir
-  // candidate; the `lgtm` comment below is a documented exception that
-  // matches the same pattern used in updater.ts:321-322.
-  let tmp = "";
-  let attempts = 0;
-  for (;;) {
-    tmp = `${path}.${randomUUID()}.tmp`;
-    try {
-      // openSync with "wx" is the canonical O_EXCL form CodeQL recognises.
-      const fd = openSync(tmp, "wx"); // lgtm[js/file-system-race]
-      try {
-        writeFileSync(fd, content, "utf8"); // lgtm[js/file-system-race]
-      } finally {
-        closeSync(fd);
-      }
-      break;
-    } catch (e: unknown) {
-      if (
-        e !== null &&
-        typeof e === "object" &&
-        "code" in e &&
-        (e as { code: unknown }).code === "EEXIST" &&
-        attempts < 8
-      ) {
-        attempts += 1;
-        continue;
-      }
-      throw e;
-    }
-  }
+  // The dir lives next to `path` (not in `os.tmpdir()`) so the subsequent
+  // `renameSync` of the file inside it is same-volume and therefore
+  // atomic on POSIX + Windows. After rename, the now-empty dir is
+  // rmdir'd best-effort.
+  const dir = dirname(path);
+  const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
+  const tmp = join(swap, "content");
   try {
-    renameSync(tmp, path);
-  } catch {
+    writeFileSync(tmp, content, "utf8");
     try {
-      unlinkSync(path);
+      renameSync(tmp, path);
     } catch {
-      /* ignore */
+      try {
+        unlinkSync(path);
+      } catch {
+        /* ignore */
+      }
+      renameSync(tmp, path);
     }
-    renameSync(tmp, path);
+  } finally {
+    try {
+      rmdirSync(swap);
+    } catch {
+      /* the rename may have left the dir empty (success) or the file
+         may still be inside if writeFileSync threw before rename; either
+         way we don't want to throw from the cleanup path. */
+    }
   }
 }
 
