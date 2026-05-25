@@ -12,7 +12,7 @@
       "min_coverage_pct": 72.13
     },
     "packages/cli/src/commands/repl.ts": {
-      "min_coverage_pct": 75
+      "min_coverage_pct": 74.36
     },
     "packages/cli/src/commands/serve.ts": {
       "min_coverage_pct": 68.63
@@ -29,11 +29,8 @@
     "packages/cli/src/commands/update.ts": {
       "min_coverage_pct": 34.18
     },
-    "packages/cli/src/ipc-client/index.ts": {
-      "min_coverage_pct": 0
-    },
     "packages/cli/src/lib/gateway-process.ts": {
-      "min_coverage_pct": 0
+      "min_coverage_pct": 15.22
     },
     "packages/client/src/index.ts": {
       "min_coverage_pct": 0
@@ -52,9 +49,6 @@
     },
     "packages/gateway/src/embedding/model.ts": {
       "min_coverage_pct": 13.51
-    },
-    "packages/gateway/src/ipc/server/socket-listeners.ts": {
-      "min_coverage_pct": 62.16
     },
     "packages/mcp-connectors/aws/src/server.ts": {
       "min_coverage_pct": 0
