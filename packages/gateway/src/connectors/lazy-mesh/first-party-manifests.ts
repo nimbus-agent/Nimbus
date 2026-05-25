@@ -365,6 +365,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Data transformation (dbt Cloud) ---
+  dbt: baseManifest("com.nimbus.dbt", {
+    // dbt Cloud SaaS Administrative-API host. Regional / custom-access-URL
+    // instances (emea.dbt.com, au.dbt.com, …) inherit the same Task 14
+    // runtime-merge follow-up as Sentry's `sentry.url`; users supply
+    // `dbt.api_base`. The SaaS default host is the only one in the static
+    // manifest today.
+    network: ["cloud.getdbt.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

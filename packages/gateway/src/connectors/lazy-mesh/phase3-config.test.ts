@@ -22,6 +22,7 @@ import {
   phase3AddAwsMcp,
   phase3AddAzureMcp,
   phase3AddDatadogMcp,
+  phase3AddDbtMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
@@ -736,6 +737,49 @@ describe("phase3AddFluxMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["FLUX_API_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddDbtMcp ─────────────────────────────────────────────────────────
+
+describe("phase3AddDbtMcp", () => {
+  test("no-op without dbt.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dbt"]).toBeUndefined();
+  });
+
+  test("no-op when dbt.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dbt"]).toBeUndefined();
+  });
+
+  test("spawns with DBT_TOKEN set + cloud.getdbt.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "dbt-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dbt"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "cloud.getdbt.com");
+    expect(spec.env?.["DBT_TOKEN"]).toBe("dbt-test-token");
+    expect(spec.env?.["DBT_API_BASE"]).toBeUndefined();
+  });
+
+  test("api_base override propagates as DBT_API_BASE env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "tok");
+    await vault.set("dbt.api_base", "https://emea.dbt.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dbt"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["DBT_API_BASE"]).toBe("https://emea.dbt.com");
   });
 });
 

@@ -464,6 +464,32 @@ export async function phase3AddFluxMcp(
   );
 }
 
+export async function phase3AddDbtMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "dbt", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Optional regional / custom-access-URL override; passes through only when
+  // set so the connector falls back to the SaaS default cloud.getdbt.com host.
+  const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
+  servers["dbt"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("dbt")],
+      env: extensionProcessEnv({
+        DBT_TOKEN: tok,
+        ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
+      }),
+    },
+    "dbt",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -486,5 +512,6 @@ export async function buildPhase3Servers(
   await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
   await phase3AddArgocdMcp(vault, servers, sandboxCwd);
   await phase3AddFluxMcp(vault, servers, sandboxCwd);
+  await phase3AddDbtMcp(vault, servers, sandboxCwd);
   return servers;
 }
