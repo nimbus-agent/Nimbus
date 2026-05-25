@@ -26,6 +26,11 @@ export type JenkinsCrumb = { field: string; value: string };
 
 let crumbCache: JenkinsCrumb | null | undefined;
 
+/** Test-only: reset the module-level crumb cache so each test starts clean. */
+export function __resetJenkinsCrumbCacheForTests(): void {
+  crumbCache = undefined;
+}
+
 export async function getJenkinsCrumb(
   base: string,
   authHeader: string,
