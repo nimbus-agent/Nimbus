@@ -1169,7 +1169,7 @@ The Gateway is a single OS process, but several SQLite handles are open against 
 | Main writer | `platform/assemble.ts` | read-write; `PRAGMA busy_timeout = 8000` |
 | Embedding worker | `embedding/embedding-worker.ts` | its **own** connection; `busy_timeout = 8000`; `foreign_keys = ON` |
 | Read-only HTTP API | `ipc/http-server.ts` | `SQLITE_OPEN_READONLY` + `PRAGMA query_only = ON` |
-| HTTP write surface (`I13`) | `ipc/http-write-routes.ts` | dedicated read-write handle; the single allowlisted `POST /v1/deployments` route only |
+| HTTP write surface (`I13`) | `ipc/http-server.ts` | dedicated read-write handle; the single allowlisted `POST /v1/deployments` route only |
 | Raw-SQL guard | `db/query-guard.ts` | separate handle (Layer-2 isolation for `nimbus query --sql`) |
 
 The intended model is **WAL journaling** (so readers never block the writer and vice versa), with `busy_timeout = 8000` as the contention backstop when two write paths (delta sync, embedding backfill, the `I13` deploy-annotation route) briefly compete. Every write goes through `dbRun` / `dbExec` / `dbStmtRun` (invariant `I14`), which translates `SQLITE_FULL` into a typed `DiskFullError` rather than a silently swallowed write. On clean shutdown the index issues `PRAGMA wal_checkpoint(TRUNCATE)` to fold the WAL back into the main file.
