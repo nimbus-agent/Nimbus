@@ -6,6 +6,7 @@ import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
 import { createCircleciSyncable } from "../connectors/circleci-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
+import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -233,6 +234,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createFluxSyncable({
       ensureFluxMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createDbtSyncable({
+      ensureDbtMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

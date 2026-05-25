@@ -36,7 +36,8 @@ export type Provider =
   | "launchdarkly"
   | "flagsmith"
   | "argocd"
-  | "flux";
+  | "flux"
+  | "dbt";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -78,6 +79,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   flagsmith: { requestsPerMinute: 60, burstSize: 10 },
   argocd: { requestsPerMinute: 60, burstSize: 10 },
   flux: { requestsPerMinute: 60, burstSize: 10 },
+  dbt: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

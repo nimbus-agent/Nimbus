@@ -40,6 +40,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   flagsmith: ["flagsmith.token", "flagsmith.api_base"],
   argocd: ["argocd.url", "argocd.token"],
   flux: ["flux.api_url", "flux.token"],
+  dbt: ["dbt.token", "dbt.api_base", "dbt.account_id"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
