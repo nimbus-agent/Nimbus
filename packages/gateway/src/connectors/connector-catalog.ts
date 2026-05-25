@@ -37,6 +37,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "wiz",
   "launchdarkly",
   "flagsmith",
+  "argocd",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -98,6 +99,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   wiz: MIN10,
   launchdarkly: MIN10,
   flagsmith: MIN10,
+  argocd: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -158,6 +160,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   wiz: "uses OAuth client_credentials (connector.auth wiz)",
   launchdarkly: "uses an API token (connector.auth launchdarkly)",
   flagsmith: "uses an admin API token (connector.auth flagsmith)",
+  argocd: "uses a bearer API token (connector.auth argocd)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

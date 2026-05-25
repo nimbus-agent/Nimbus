@@ -38,6 +38,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   wiz: ["wiz.client_id", "wiz.client_secret", "wiz.api_url", "wiz.auth_url"],
   launchdarkly: ["launchdarkly.token", "launchdarkly.base_url", "launchdarkly.project_key"],
   flagsmith: ["flagsmith.token", "flagsmith.api_base"],
+  argocd: ["argocd.url", "argocd.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

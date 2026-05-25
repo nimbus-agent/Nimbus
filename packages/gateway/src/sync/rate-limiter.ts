@@ -34,7 +34,8 @@ export type Provider =
   | "semgrep"
   | "wiz"
   | "launchdarkly"
-  | "flagsmith";
+  | "flagsmith"
+  | "argocd";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -74,6 +75,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   wiz: { requestsPerMinute: 60, burstSize: 10 },
   launchdarkly: { requestsPerMinute: 60, burstSize: 10 },
   flagsmith: { requestsPerMinute: 60, burstSize: 10 },
+  argocd: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
