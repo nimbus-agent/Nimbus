@@ -42,6 +42,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "dbt",
   "metabase",
   "superset",
+  "databricks",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -108,6 +109,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   dbt: MIN10,
   metabase: MIN10,
   superset: MIN10,
+  databricks: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -173,6 +175,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   dbt: "uses a dbt Cloud API token (connector.auth dbt)",
   metabase: "uses a Metabase API key (connector.auth metabase)",
   superset: "uses Superset username/password (connector.auth superset)",
+  databricks: "uses a Databricks PAT (connector.auth databricks)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

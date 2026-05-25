@@ -5,6 +5,7 @@ import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
 import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
 import { createCircleciSyncable } from "../connectors/circleci-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
+import { createDatabricksSyncable } from "../connectors/databricks-sync.ts";
 import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
 import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
@@ -251,6 +252,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createSupersetSyncable({
       ensureSupersetMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createDatabricksSyncable({
+      ensureDatabricksMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }
