@@ -1,5 +1,12 @@
 # @nimbus-dev/sdk — Changelog
 
+## [1.1.1](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.0...sdk-v1.1.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **ci:** unblock cross-platform test suite + SonarCloud reliability gate ([c75dbab](https://github.com/nimbus-agent/Nimbus/commit/c75dbab037d98b9c51df38b0ea7769089c52418a))
+
 ## [1.1.0](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.0.0...sdk-v1.1.0) (2026-05-17)
 
 

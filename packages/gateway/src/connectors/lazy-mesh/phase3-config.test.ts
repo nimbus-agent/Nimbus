@@ -24,10 +24,13 @@ import {
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
+  phase3AddLaunchdarklyMcp,
   phase3AddNewrelicMcp,
+  phase3AddSemgrepMcp,
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddWizMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -416,6 +419,151 @@ describe("phase3AddSonarqubeMcp", () => {
     const spec = servers["sonarqube"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["SONARQUBE_URL"]).toBe("https://sonar.example.com");
+  });
+});
+
+// ─── phase3AddSemgrepMcp ────────────────────────────────────────────────────
+
+describe("phase3AddSemgrepMcp", () => {
+  test("no-op without semgrep.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["semgrep"]).toBeUndefined();
+  });
+
+  test("no-op when semgrep.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["semgrep"]).toBeUndefined();
+  });
+
+  test("spawns with SEMGREP_TOKEN set + semgrep.dev in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "semgrep-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["semgrep"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "semgrep.dev");
+    expect(spec.env?.["SEMGREP_TOKEN"]).toBe("semgrep-test-token");
+    expect(spec.env?.["SEMGREP_DEPLOYMENT_SLUG"]).toBeUndefined();
+  });
+
+  test("deployment_slug is propagated as SEMGREP_DEPLOYMENT_SLUG env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("semgrep.token", "sg");
+    await vault.set("semgrep.deployment_slug", "acme-corp");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSemgrepMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["semgrep"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["SEMGREP_DEPLOYMENT_SLUG"]).toBe("acme-corp");
+  });
+});
+
+// ─── phase3AddWizMcp ─────────────────────────────────────────────────────────
+
+describe("phase3AddWizMcp", () => {
+  test("no-op without wiz.client_id / wiz.client_secret", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddWizMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["wiz"]).toBeUndefined();
+  });
+
+  test("no-op when only wiz.client_id is set (secret missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("wiz.client_id", "client-abc");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddWizMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["wiz"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("wiz.client_id", "   ");
+    await vault.set("wiz.client_secret", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddWizMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["wiz"]).toBeUndefined();
+  });
+
+  test("spawns with WIZ_CLIENT_ID/SECRET set + api.app.wiz.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("wiz.client_id", "client-abc");
+    await vault.set("wiz.client_secret", "secret-xyz");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddWizMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["wiz"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.app.wiz.io");
+    expect(spec.env?.["WIZ_CLIENT_ID"]).toBe("client-abc");
+    expect(spec.env?.["WIZ_CLIENT_SECRET"]).toBe("secret-xyz");
+    // Regional override env vars are absent unless explicitly configured.
+    expect(spec.env?.["WIZ_API_URL"]).toBeUndefined();
+    expect(spec.env?.["WIZ_AUTH_URL"]).toBeUndefined();
+  });
+
+  test("regional api_url / auth_url propagate as WIZ_API_URL / WIZ_AUTH_URL env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("wiz.client_id", "c");
+    await vault.set("wiz.client_secret", "s");
+    await vault.set("wiz.api_url", "https://api.us2.app.wiz.io/graphql");
+    await vault.set("wiz.auth_url", "https://auth.us2.app.wiz.io/oauth/token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddWizMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["wiz"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["WIZ_API_URL"]).toBe("https://api.us2.app.wiz.io/graphql");
+    expect(spec.env?.["WIZ_AUTH_URL"]).toBe("https://auth.us2.app.wiz.io/oauth/token");
+  });
+});
+
+// ─── phase3AddLaunchdarklyMcp ────────────────────────────────────────────────
+
+describe("phase3AddLaunchdarklyMcp", () => {
+  test("no-op without launchdarkly.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["launchdarkly"]).toBeUndefined();
+  });
+
+  test("no-op when launchdarkly.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["launchdarkly"]).toBeUndefined();
+  });
+
+  test("spawns with LAUNCHDARKLY_TOKEN set + app.launchdarkly.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "api-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["launchdarkly"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "app.launchdarkly.com");
+    expect(spec.env?.["LAUNCHDARKLY_TOKEN"]).toBe("api-test-token");
+    expect(spec.env?.["LAUNCHDARKLY_BASE_URL"]).toBeUndefined();
+  });
+
+  test("base_url override propagates as LAUNCHDARKLY_BASE_URL env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("launchdarkly.token", "tok");
+    await vault.set("launchdarkly.base_url", "https://app.launchdarkly.us");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLaunchdarklyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["launchdarkly"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["LAUNCHDARKLY_BASE_URL"]).toBe("https://app.launchdarkly.us");
   });
 });
 

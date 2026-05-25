@@ -305,6 +305,34 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- SAST ---
+  semgrep: baseManifest("com.nimbus.semgrep", {
+    // Semgrep AppSec Platform SaaS. Self-hosted Semgrep Enterprise
+    // endpoints inherit the same Task 14 runtime-merge follow-up.
+    network: ["semgrep.dev"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Cloud security (CSPM) ---
+  wiz: baseManifest("com.nimbus.wiz", {
+    // Default tenant hosts. Wiz issues OAuth client_credentials tokens
+    // at `auth.app.wiz.io` and serves GraphQL at `api.app.wiz.io`.
+    // Regional tenants (`api.us2.app.wiz.io`, …) inherit the same
+    // Task 14 runtime-merge follow-up as Sentry's `sentry.url`; users
+    // supply explicit `wiz.api_url` / `wiz.auth_url` vault keys today.
+    network: ["api.app.wiz.io", "auth.app.wiz.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Feature flags ---
+  launchdarkly: baseManifest("com.nimbus.launchdarkly", {
+    // LaunchDarkly SaaS. Regional / federal instances inherit the same
+    // Task 14 runtime-merge follow-up; the SaaS host is the only one in
+    // the static manifest today.
+    network: ["app.launchdarkly.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

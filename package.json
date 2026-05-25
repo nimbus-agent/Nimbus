@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "overrides": {
     "sharp": "0.34.5",
@@ -48,6 +48,9 @@
     "packages/mcp-connectors/snyk",
     "packages/mcp-connectors/bitrise",
     "packages/mcp-connectors/sonarqube",
+    "packages/mcp-connectors/semgrep",
+    "packages/mcp-connectors/wiz",
+    "packages/mcp-connectors/launchdarkly",
     "packages/vscode-extension"
   ],
   "scripts": {

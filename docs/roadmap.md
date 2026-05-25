@@ -4,8 +4,7 @@ This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 
-> **Last updated:** 2026-05-21 — Phase 5 **T4 wrap-up: `nimbus query` in CI worked examples ✅ (2026-05-21)** — five copy-paste-ready CI examples in [`docs/cli/use-in-ci.md`](./cli/use-in-ci.md) covering GH-Actions P1-incident gate, GitLab CI gate + stale-PR warning, Jenkins (declarative + scripted), PR-comment incident context, and release-notes generation; flags verified against `packages/cli/src/commands/query.ts` (no invented flags). Phase 5 **T2 PR 4 ✅ (2026-05-21)** — manifest `dependsOn` + custom backtracking solver (recursive DFS, `ancestors` Set for cycle detection — diamond DAGs OK), V31 `extension_dependency` table + reverse-dep index, reverse-dep guard on `nimbus extension remove` (`--force` overrides), `conflicts` field on `AvailableUpdate` from auto-update poll, startup offline-safe dep-graph backfill + completeness guard via new `MissingDependencyRegistry` (parallel to PR 1's `PreT2DisabledRegistry` and PR 2's `SignatureDisabledRegistry`), local-first `RegistryFetcher` (installed ids resolve from on-disk manifest without network), `extension.info` returns forwardDeps + reverseDeps, new CLI flags `nimbus extension info --deps` + `nimbus extension list --tree`, `extension.install_complete` audit row carries the full version map. No new structural invariant — composes on I9 / I14 / I16. 2026-05-17 — Phase 5 **T2 PR 1 ✅ (2026-05-17)** — sandbox PAL + 3-OS isolation + permissions.{network,filesystem} schema + I15 + D10 + `@nimbus-dev/sdk` contract tests + pre-T2 extension reinstall flow. 2026-05-16 — Phase 5 **T6 ✅ (2026-05-16)** — all four PRs landed: PR 1 I10 timing-safe helper consolidation, PR 2 `tool_call_log` V29 audit table, PR 3 `vec_items_1536` V30 + reembed CLI, PR 4 typed `dbRun`/`dbExec` I14 migration (163 sites); T6 sequencing spec complete. 2026-05-15 — **Sub-project A ✅** (PR #297; README hero redesign with light/dark asciinema casts, OG social card with JetBrains Mono fonts + deterministic resvg-js renderer, OG render-and-diff CI gate, plus the `docs/superpowers/` plans directory pruned to keep only future + in-flight items) and the docs site **expanded with 29 first-party connector pages** (PR #243, merged 2026-05-15 20:00 +0300) and the **roadmap restructured into Shipped / Active / Planned** (PR #247, merged 2026-05-15 19:19 +0300). 2026-05-14 — Phase 5 T4 wrap-up: **PagerDuty connector enrichment ✅** (`pagerduty-sync.ts` now writes `metadata.opened_at_ms` / `pagerduty_service_id` / `severity`; `initialSyncDepthDays` bumped 14 → 30 so a fresh install's first `nimbus metrics dora --since 30d` window is fully populated; DORA + Preflight fixtures re-shaped through the production parser via the shared `buildPagerdutyIncident` helper; two new follow-ups opened — sync pagination + `[pagerduty].severity_strategy` config knob). 2026-05-13 — folded 16 expansion ideas (Phases 6 / 7 / 8 / 9 / 10 / 11 / 12 / 15) plus 6 subsumed clarifications (Phase 6 Decentralized Key Custody → Phase 11 Threshold Secret Sharing; Phase 10 Proactive PR Generation → Phase 10 Standing Approval Rules; Phase 10 "Time Travel" / "Follow the Sun" → existing Phase 10 entries; Phase 9 Zero-Shot BYOM + Prompt A/B → Phase 9 Stretch Eval-as-a-watcher) from the prior `future-roadmap-ideas.md` brainstorm; added a new **Phase 15 (Cross-Organizational Federation)**. 2026-05-10 — Phase 4 complete on `main`; **Phase 5 (The Extended Surface)** in flight. **T3 (Team Intelligence) epic complete:** `AgentCoordinator.executeAll` parallel sub-agent dispatch + `nimbus expert` (PR 1, 2026-05-09), `nimbus impact` (PR 2, 2026-05-09), and `nimbus catchup` (PR 3, 2026-05-10). `v0.1.0` ships only the headless Gateway + CLI + VS Code extension; the Tauri desktop UI is code-complete in Phase 4 but its release vehicle (signed installers) is deferred to Phase 13 as the separate `desktop-v0.1.0` tag — see [§ Phase 13 → Desktop Release Vehicle](#desktop-release-vehicle). The Phase 5 order, scope cuts, and re-planning checkpoints are locked in the T1 sequencing spec (Core: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B). Phase 4 delivered the Tauri UI, VS Code extension (`packages/vscode-extension`), voice interface, and local LLM backbone. Pass 2 adds MLflow / SageMaker / Vertex AI / Great Expectations / local data profiling to Phase 5, Monte Carlo / Bigeye to Phase 6, Data FinOps attribution and Data Incident Brief to Phase 10 (post-shift). The 2026-05-10 phase reorganisation inserted three new phases (7 Engineering Excellence, 8 Security Engineering, 9 AI Engineering Loop) before the Autonomous Agent, and added a final Phase 14 (Agent Evolution / AI v2) — see [§ How to Update This Document](#how-to-update-this-document).
- Per-connector OAuth vault keys landed. **WS1 (Local LLM + Multi-Agent) complete:** LLM provider layer, multi-agent infrastructure. **WS2 (Voice Interface) complete:** Gateway-based voice service. **WS3 (Data Sovereignty) complete:** BLAKE3-chained audit log, portable encrypted backups. **WS4 (Release Infrastructure) complete:** Ed25519 signing plumbing, `Updater` state machine. **WS5 (App Shell & UI) complete:** React 19 Tauri UI, Dashboard, Settings, Marketplace. **WS6 (Presence & Rehydration) complete:** VS Code extension, session transcript rehydration (V24 migration). **B2 (Perf bench) Phase 1 complete.** **WS5-C (Settings Shell — Plans 1–3) merged to `main`:** Settings shell (`/settings/*` nested routes, `SettingsSidebar`), Profiles panel (list/create/switch/delete with typed-name confirm), Telemetry panel (toggle + counter cards + payload expander), Connectors panel (per-service interval editor with 60 s minimum inline-validated, depth selector, enable toggle, cross-window `connector.configChanged` reconcile, Dashboard deep-link highlight via `useSearchParams`), Model panel (`RouterStatus` per-task default pickers, load/unload row actions, streaming `PullDialog` with provider-availability filter, 15 s stall detection, cancel via `llm.cancelPull`, re-attach to in-flight pull on UI reload via persisted `activePullId`). `ALLOWED_METHODS` grown to 38 (Plans 2–3 added `llm.getStatus` + 7 other read/write methods), `NO_TIMEOUT_METHODS` (4 long-running ops), `profile.switched` global Tauri rebroadcast → `app.restart()`, Zustand `persist` middleware with 5-key whitelist + forbidden-key deep-scrub, expanded `connectors` and `model` slices (transient `pullProgress` / `pullStalled` / `loadedKeys` / `routerStatus` / `perServiceInFlight` / `highlightService`). Plans 4–5 add Audit / Updates / Data panels. **WS5-C (Settings Shell — Plans 4–5) merged to `main`:** Audit panel (summary cards, verify-chain, CSV/JSON export), Updates panel (state machine display, check-now, apply/rollback, download progress, `UpdaterRestartChrome` overlay), Data panel (Export wizard with passphrase gate + zxcvbn + overwrite confirm + BIP39 seed display + clipboard countdown, Import wizard with passphrase + 12-word recovery-seed auth + version-compat error handling + typed-confirm gate, Delete service dialog with preflight preview + typed-name confirm), `data.*` IPC wrappers, `DataSlice` Zustand store slice. **WS5-D (Polish) merged to `main`:** Watcher history-of-fires drawer, workflow run history drawer with audit deep-link, "Run with params…" one-shot parameter override, connector-remove integration test fixes. **WS6 (Rich TUI) merged to `main`:** Ink-based TUI (`nimbus tui`) with pane layout (query input, result stream, connector health sidebar, active watcher list), keyboard navigation, SSH-safe, real-time inline HITL consent. **S2 (Graph-Aware Watchers) merged to `main`:** `graph_predicate_json` watcher conditions, `parseGraphPredicate` / `itemMatchesGraphPredicate` / `countItemsMatchingGraphPredicate` / `listCandidateGraphRelations`, `[automation].graph_conditions` feature flag, V22 migration.
+> **Last updated:** 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
 ---
 
@@ -16,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
 - [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 6 through 15
+- [Planned](#planned) — Phases 6 through 17, plus near-term & cross-phase initiatives
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -56,7 +55,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3 | Intelligence | ✅ Complete |
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
-| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ |
+| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial) |
 | Phase 6 | Team | Planned |
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
@@ -67,6 +66,8 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 13 | Desktop Distribution | Planned |
 | Phase 14 | Agent Evolution / AI v2 | Planned |
 | Phase 15 | Cross-Organizational Federation | Planned |
+| Phase 16 | The Platform Layer | Planned |
+| Phase 17 | The On-Call Copilot | Planned |
 
 ---
 
@@ -399,7 +400,7 @@ These items resolve deferred decisions from Phase 3.
 #### Release Infrastructure
 
 - [x] **Linux GPG-signed binaries + `SHA256SUMS.asc`** — signing scripts + `release.yml` workflow live; `nimbus-verify.{sh,ps1}` helpers cross-check fingerprint; `release` GitHub Environment gates the publish job
-- [ ] **macOS Gatekeeper notarization + Windows Authenticode signing** — **explicitly deferred to a later point release (NOT `v0.1.1`)**, gated on a maintainer decision to fund recurring procurement (Apple Developer Program $99/yr + Windows EV cert ~$470–$840/yr). For `v0.1.0`, macOS and Windows binaries ship **unsigned**; the GPG-signed `SHA256SUMS.asc` is the canonical integrity boundary, and one-time bypass is documented in [`install-macos-unsigned.md`](./install-macos-unsigned.md) / [`install-windows-unsigned.md`](./install-windows-unsigned.md). See [`SECURITY.md` §"v0.1.0 signing cut-line"](./SECURITY.md#v010-signing-cut-line) for the full rationale.
+- [ ] **macOS Gatekeeper notarization + Windows Authenticode signing** — **explicitly deferred to a later point release (NOT `v0.1.1`)**, gated on a maintainer decision to fund recurring procurement (Apple Developer Program $99/yr + Windows EV cert ~$470–$840/yr). For `v0.1.0`, macOS and Windows binaries ship **unsigned**; the GPG-signed `SHA256SUMS.asc` is the canonical integrity boundary, and one-time bypass is documented in [`install-macos-unsigned.md`](./install-macos-unsigned.md) / [`install-windows-unsigned.md`](./install-windows-unsigned.md). See [`release/signing-keys.md` §"v0.1.0 signing cut-line"](./release/signing-keys.md#v010-signing-cut-line) for the full rationale.
 - [x] Auto-update — Ed25519-signed binary manifest (`latest.json`); `Updater` state machine verifies signature before install; `nimbus update --check` / `nimbus update`; Gateway emits `updater.updateAvailable` on startup
 - [x] Plugin API v1 — `@nimbus-dev/sdk` frozen at v1.0.0; `AuditLogger`, `HitlRequest`, `runContractTests` stable surface; `CHANGELOG.md` documents breaking-change policy
 
@@ -538,7 +539,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 ##### Feature Flags
 
-- [ ] **LaunchDarkly** — flags, environments, targeting rules, flag evaluation history; API key; flag toggle behind HITL; `feature_flag` item type indexed with name, state, environments, last modified; critical for incident correlation ("was this flag enabled when the alert fired?")
+- [x] **LaunchDarkly** (2026-05-24, Phase 5 Tier 1) — first-party MCP connector `nimbus-mcp-launchdarkly` + gateway-side syncable. Walks `GET /api/v2/projects → GET /api/v2/flags/{projectKey}` (offset-paged 100/page, 20 pages per project cap) and upserts feature flags as `launchdarkly:feature_flag` items via `mapLaunchDarklyFlagToItem`. Metadata exposed: `key`, `name`, `kind` (boolean/multivariate), `project_key`, `tags`, `temporary`, `archived`, `maintainer`, `maintainer_id`, `description`, `variation_count`, `environments`, `env_states` (per-env on/off), `created_at`, `updated_at`, `canonical_url` — critical for incident correlation ("was this flag enabled when the alert fired?"). API-token auth (raw `Authorization` header). Vault keys: `launchdarkly.token` (required API access token), `launchdarkly.base_url` (optional regional override → default `https://app.launchdarkly.com`; sandbox runtime-merge for regional/federal hosts inherits the same Task 14 follow-up as `sentry.url`), `launchdarkly.project_key` (optional single-project restriction). Three read-only MCP tools: `launchdarkly_list` / `launchdarkly_get` / `launchdarkly_search`. `hitlRequired: []` — `launchdarkly.flag.toggle` is a deferred Phase 8 follow-up.
 - [ ] **Flagsmith** — flags, segments, environments; API key; read-only index + toggle behind HITL; self-hosted `flagsmith.api_base` support for on-premise deployments
 
 ##### GitOps & Deployment
@@ -565,10 +566,10 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 ##### Security & Vulnerability Tooling
 
-- [ ] **Snyk** — open source vulnerabilities, licence issues, container scan results, IaC misconfigs; API token; `vulnerability` item type indexed with severity, CVE ID, affected package, fix availability; enables CVE-to-repo-to-open-PR correlation queries from the local index
+- [x] **Snyk** (2026-05-21, Phase 5 Wave A) — first-party MCP connector `nimbus-mcp-snyk` + gateway-side syncable; open source vulnerabilities, licence issues, container scan results, IaC misconfigs; API token; `vulnerability` item type indexed with severity, CVE ID, affected package, fix availability; enables CVE-to-repo-to-open-PR correlation queries from the local index
 - [x] **SonarQube / SonarCloud** (2026-05-22, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-sonarqube` + gateway-side syncable. Walks `GET /api/components/search?qualifiers=TRK` → `GET /api/issues/search` (paged 100/page, capped 20 pages per project) and upserts open issues (status `OPEN`/`CONFIRMED`/`REOPENED`; types `BUG`/`VULNERABILITY`/`CODE_SMELL`) as `sonarqube:code_issue` items via `mapSonarIssueToItem`. Metadata exposed: `severity` (5-tier `BLOCKER`→`INFO`), `type`, `status`, `rule`, `component`, `project_key`, `file_path`, `line`, `tags`, `effort`, `debt`, `author`, `message`, `creation_date`, `update_date`, `canonical_url`, `organization`. Vault keys: `sonarqube.token` (required), `sonarqube.organization` (required for SonarCloud SaaS), `sonarqube.url` (optional override → default `https://sonarcloud.io`; sandbox runtime-merge for arbitrary self-hosted hostnames inherits the same Task 14 follow-up as `sentry.url`). Three read-only MCP tools: `sonarqube_list` / `sonarqube_get` / `sonarqube_search`. `hitlRequired: []` — `sonarqube.hotspot.review` + `sonarqube.issue.transition` are deferred Phase 8 follow-ups.
-- [ ] **Semgrep** — SAST findings, rule matches, triage status; API token or CI output parsing; `sast_finding` item type indexed with rule ID, severity, file, line; read-only
-- [ ] **Wiz** — cloud security posture findings, misconfigurations, toxic combinations, asset inventory; API token; read-only index; `cloud_finding` item type; enables "show me all critical Wiz findings for the services that paged last week" queries
+- [x] **Semgrep** (2026-05-22, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-semgrep` + gateway-side syncable. Walks `GET /api/v1/deployments → /api/v1/deployments/<slug>/findings` (paged 100/page, capped 20 pages per cycle) and upserts open findings as `semgrep:finding` items via `mapSemgrepFindingToItem`. Metadata exposed: `severity` (5-tier critical→info), `confidence` (high/medium/low), `rule_name`, `rule_message`, `categories`, `file_path`, `line`, `end_line`, `column`, `repository`, `repository_url`, `branch`, `triage_state` (untriaged/triaged/ignored/muted), `status` (open/fixed/removed/ignored), `created_at`, `relevant_since`, `line_of_code_url`. Vault keys: `semgrep.token` (required PAT), `semgrep.deployment_slug` (optional — auto-discovered from `/deployments` when unset). Three read-only MCP tools: `semgrep_list` / `semgrep_get` / `semgrep_search`. `hitlRequired: []` — `semgrep.finding.triage` (ignore/suppress/accept-risk) is a deferred Phase 8 follow-up.
+- [x] **Wiz** (2026-05-24, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-wiz` + gateway-side syncable. Authenticates via OAuth `client_credentials` at `https://auth.app.wiz.io/oauth/token`, then walks the `issues(first, after, filterBy)` GraphQL query at `https://api.app.wiz.io/graphql` (paged 100/page, capped 20 pages per cycle) and upserts open issues (CSPM findings, misconfigurations, toxic combinations) as `wiz:issue` items via `mapWizIssueToItem`. Metadata exposed: `severity` (5-tier `CRITICAL`→`INFORMATIONAL`), `status` (`OPEN`/`IN_PROGRESS`/`RESOLVED`/`REJECTED`), `type`, `source_rule_id`, `source_rule_name`, `entity_id`, `entity_name`, `entity_type`, `project_ids`, `project_names`, `description`, `remediation`, `created_at`, `updated_at`, `resolved_at`, `canonical_url`. Vault keys: `wiz.client_id` + `wiz.client_secret` (required), `wiz.api_url` + `wiz.auth_url` (optional regional overrides → default to the US-east SaaS tenant; sandbox runtime-merge for arbitrary regional/self-hosted hostnames inherits the same Task 14 follow-up as `sentry.url`). Three read-only MCP tools: `wiz_list` / `wiz_get` / `wiz_search`. `hitlRequired: []` — `wiz.issue.resolve` + `wiz.issue.assign` are deferred Phase 8 follow-ups.
 - [ ] **SBOM / supply chain tracking** — ingests CycloneDX or SPDX SBOMs from CI artefacts or GitHub Dependency Graph; indexes component → repo → version relationships; enables queries like "which of my services ship lodash <4.17.21?" without touching each repo; no auth required beyond existing GitHub/GitLab connectors
 - [x] **`nimbus security scan`** (2026-05-21) — local secret and credential hygiene scan across indexed filesystem roots and repository content. Runs a Gitleaks-compatible pattern set against already-indexed file content (requires `[indexing.depth] = "full"` or `"summary"` for the relevant connector); never fetches new content for the scan — only what is already in the local index. Reports: files containing high-confidence secret patterns (API keys, tokens, private keys), which connector/service they belong to, and whether the file has been modified since the secret was introduced (via git metadata already indexed). Output: `nimbus security scan --json` for machine-readable results; plain text table by default. Write operations: none — purely read. HITL: not triggered. Fits naturally into the existing `nimbus doctor` / `nimbus diag` diagnostic family. New CLI command at `packages/cli/src/commands/security.ts`; pattern definitions at `packages/gateway/src/security/secret-patterns.ts`.
 
@@ -620,7 +621,7 @@ These items resolve deferred decisions from Phase 3.
 - [ ] **Multi-model embedding** — add `vec_items_1536` virtual table for OpenAI `text-embedding-3-small` (and compatible) embeddings alongside the existing `vec_items_384` (`all-MiniLM-L6-v2`); `embedding_chunk.dims` and `embedding_chunk.model` are already recorded — schema is pre-positioned (Phase 3); per-item-type model routing: code symbols use local MiniLM by default; prose items use the configured model; `nimbus index reembed --model <id>` triggers selective backfill; multiple models can be active simultaneously with queries fan-out across matching vec tables and RRF-merged
 - [x] **T2 PR 1 — Sandbox PAL + 3-OS isolation** (2026-05-17, Phase 5 T2 PR 1) — enforce full syscall/network isolation for extension child processes: seccomp BPF filter + bwrap + nimbus-sandbox-helper (`cap_net_admin+ep`) + per-host iptables on Linux, sandbox-exec SBPL profile on macOS, AppContainer + `internetClient` capability + orphan-reap on Windows; network access and filesystem read/write paths must be declared in `nimbus.extension.json` under `permissions.{network,filesystem}` and enforced at the kernel level; replaces the Phase 3 honour-system env restriction; extensions without `permissions.network` run fully offline; new security invariant **I15** wires `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` as the single sandbox-execution boundary, enforced statically by `D10` in `check-nimbus-invariants.ts` and at runtime by `security-invariants.test.ts`; `runSandboxContractTests()` ships in `@nimbus-dev/sdk` for first- and third-party connector authors; pre-T2 extensions hard-disabled until reinstall. **Merged 2026-05-17.**
 - [x] **T2 PR 2 — Verified publisher (Ed25519-signed manifests)** (2026-05-18, PR #343, Phase 5 T2 PR 2) — extension manifests carry an optional `publisher: { id, key }` field + an embedded `signature` field; Ed25519 verification fires at install AND every Gateway startup before the extension is allowed to spawn; new structural security invariant **I16** wires `verifyManifestSignature(...)` at `extensions/install-from-local.ts` + `extensions/verify-extensions.ts` (signature pass added to `verifyExtensionsBestEffort`); hard-disable on failure via the new `SignatureDisabledRegistry` singleton (parallel to PR 1's `PreT2DisabledRegistry`); new CLI: `nimbus extension keygen`, `nimbus extension sign`, `nimbus extension sync`, `nimbus extension install --publisher-key`; tabular `nimbus extension list` with a Publisher column and dim-yellow `(unverified)` rendering on TTY when `NO_COLOR` is unset; publisher pubkeys cached at `extension.publisher_key.<id>` (D11 vault-key allow-list extended); IPC `extension.sync` is CLI-only — added to `FORBIDDEN_OVER_LAN` per `I5`, NOT in Tauri allowlist per `I7`; crypto primitives (`canonical-json`, `verify-signature`) moved into `@nimbus-dev/sdk` (MIT) so connector authors can sign manifests without an AGPL dep; gateway re-exports through thin shims at the old paths.
-- [x] **T2 PR 3 — Auto-update with per-bump HITL** (2026-MM-DD, PR #TBD, Phase 5 T2 PR 3) — in-process polling daemon (`ExtensionAutoUpdater`, default 24h via `[extensions].update_check_interval_hours` 1..168, 30–300s startup jitter, air-gap-aware) that calls the registry to detect newer versions of installed signed extensions and writes them into an in-memory `AutoUpdateCache` keyed by extension id (no DB persistence — recovered on next poll); two new HITL action types `extension.autoUpdate` (forward) and `extension.downgrade` (backward) added to `HITL_REQUIRED_BACKING`; two new IPC methods `extension.checkForUpdates` + `extension.update` are CLI/UI-only — added to `FORBIDDEN_OVER_LAN` per `I5` and alphabetically inserted into Tauri `ALLOWED_METHODS` (60 → 62) per `I7`; three new CLI verbs `nimbus extension update [<id>] [--check] [--to <version>] [--json]`, `nimbus extension downgrade <id> --to <version>`, and `extension.info` extended with `prevVersion` + `cachedUpdate`; two-version on-disk directory layout `<extRoot>/<id>/{active,_prev/<v>}` enables `nimbus extension downgrade` as a thin `fs.rename` swap; atomic upgrade swap with revert-on-failure (older `_prev/*` move aside to a holding dir, restore on swap failure); startup crash recovery in `verify-extensions.ts` promotes the most-recent `_prev/<v>/` when `active/` is missing and audits `extension.autoUpdate.crash_recovered`; tarball download enforces a 50 MiB content-length + body cap with `AbortSignal` plumbing; manifest schema gains optional `updateChannel: "stable" | "beta"` (default `"stable"`) and `changelog?: string` (≤ 4 KiB after NFC) — both absent on disk by default so pre-PR-3 signed manifests verify unchanged. No new structural invariant — composes on top of I2/I3/I4/I5/I7/I14/I16.
+- [x] **T2 PR 3 — Auto-update with per-bump HITL** (2026-05-20, PR #367, Phase 5 T2 PR 3) — in-process polling daemon (`ExtensionAutoUpdater`, default 24h via `[extensions].update_check_interval_hours` 1..168, 30–300s startup jitter, air-gap-aware) that calls the registry to detect newer versions of installed signed extensions and writes them into an in-memory `AutoUpdateCache` keyed by extension id (no DB persistence — recovered on next poll); two new HITL action types `extension.autoUpdate` (forward) and `extension.downgrade` (backward) added to `HITL_REQUIRED_BACKING`; two new IPC methods `extension.checkForUpdates` + `extension.update` are CLI/UI-only — added to `FORBIDDEN_OVER_LAN` per `I5` and alphabetically inserted into Tauri `ALLOWED_METHODS` (60 → 62) per `I7`; three new CLI verbs `nimbus extension update [<id>] [--check] [--to <version>] [--json]`, `nimbus extension downgrade <id> --to <version>`, and `extension.info` extended with `prevVersion` + `cachedUpdate`; two-version on-disk directory layout `<extRoot>/<id>/{active,_prev/<v>}` enables `nimbus extension downgrade` as a thin `fs.rename` swap; atomic upgrade swap with revert-on-failure (older `_prev/*` move aside to a holding dir, restore on swap failure); startup crash recovery in `verify-extensions.ts` promotes the most-recent `_prev/<v>/` when `active/` is missing and audits `extension.autoUpdate.crash_recovered`; tarball download enforces a 50 MiB content-length + body cap with `AbortSignal` plumbing; manifest schema gains optional `updateChannel: "stable" | "beta"` (default `"stable"`) and `changelog?: string` (≤ 4 KiB after NFC) — both absent on disk by default so pre-PR-3 signed manifests verify unchanged. No new structural invariant — composes on top of I2/I3/I4/I5/I7/I14/I16.
 - [x] **T2 PR 4 — Dependency resolution + V31 `extension_dependency`** (2026-05-21, PR #374, Phase 5 T2 PR 4) — manifest `dependsOn: Record<string, string>` (semver ranges) + custom backtracking solver in `extensions/dependency-graph.ts` (recursive DFS with per-frame `pinned` / `ranges` and an explicit `ancestors: Set` so diamond DAGs never false-positive as cycles), V31 `extension_dependency` table + `idx_extension_dependency_reverse` index, install path runs `resolveClosure` after signature verify and refuses with `DependencyConflictError` / `OfflineDependencyResolutionError` before any disk mutation, install closure unpacked leaf-first with per-session `createdDirs` cleanup on failure, `recordInstall` writes forward edges in one transaction, `extension.install_complete` audit row carries the full version map; remove path consults `reverseDeps` and refuses unless `--force`; auto-update daemon runs the solver per detected bump with `activeConstraints` covering every installed extension and surfaces a new `conflicts?: DependencyConflict[]` field on `AvailableUpdate`; startup integrity adds two new offline-safe passes — backfill `extension_dependency` rows from on-disk manifests, then completeness guard (iterates to fixed point, marks dependent extensions whose deps are missing or unsatisfied via new `MissingDependencyRegistry` singleton parallel to PR 1's `PreT2DisabledRegistry` and PR 2's `SignatureDisabledRegistry`; cascade-disables transitively); new CLI: `nimbus extension info --deps`, `nimbus extension list --tree` (NO_COLOR-aware, cycle-safe ASCII renderer), `nimbus extension remove --force` (HITL preview surfaces danglingDeps via existing `extension.uninstall` confirmation flow); `extension.info` IPC returns `forwardDeps` + `reverseDeps`; local-first `RegistryFetcher` ensures installed ids resolve from on-disk manifest without a network call. No new structural invariant — composes on `I9` (bound parameters for `extension_dependency` writes), `I14` (`dbRun` / `dbExec` for every write), `I16` (solver runs after signature verify on every closure node). `fast-check` property tests gate cycle / satisfiability correctness over random DAGs ≤ 12 nodes.
 
 #### T6 — B1 hardening + semantic layer prep
@@ -643,7 +644,7 @@ Items deferred from the Phase 4 internal security audit (B1, 2026-04-25) that fi
 
 - [ ] Community ratings and reviews per extension
 - [x] Verified publisher badges (Ed25519-signed manifest from a registered publisher) (2026-05-18, PR #343, Phase 5 T2 PR 2)
-- [x] Auto-update with changelog preview; user approves each version bump (2026-MM-DD, PR #TBD, Phase 5 T2 PR 3)
+- [x] Auto-update with changelog preview; user approves each version bump (2026-05-20, PR #367, Phase 5 T2 PR 3)
 - [x] Extension dependency resolution (one extension can depend on another) (2026-05-21, PR #374, Phase 5 T2 PR 4)
 - Extension monetization (paid extensions, license key enforcement, revenue sharing) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
 
@@ -1383,6 +1384,168 @@ Native package-manager distribution; gated independently of the desktop tag, may
 - A revocation issued from org A purges all leased rows on org B's machine within one sync cycle; a subsequent query for any leased item returns empty; revocation appears in both audit logs with matching signatures.
 - A lease that expires (wall-clock past `expires_at`) is treated as revoked on both sides without an explicit revocation event; expiry is enforced locally without a central broker.
 - Privacy contract: a leased namespace is strictly a Phase 6 namespace-export; no data outside the lease scope is ever queryable by the lessee; verified by an integration test that issues a narrow lease and asserts the lessee's `index.query` calls outside scope return empty.
+
+---
+
+### Phase 16 — The Platform Layer
+
+**Goal:** Turn Nimbus from a personal agent each engineer configures individually into a **team operating system** a platform engineer curates **once** and rolls out to the whole team — connectors, automations, conventions, and golden paths reconciled to every Gateway, plus a lead's-eye view of team health no dashboard shows. No relay server, no surveillance, no surrender of local sovereignty.
+
+> **Composes-with Phase 6** (federation channel, Team Vault, org policy engine, shared namespaces) and **Phase 7** (service catalog, automation-template library, ownership graph). Phase 16 is the *distribution + curation* layer those phases lacked.
+
+#### Dependencies
+
+- Phase 6 federation + Team Vault + org policy engine + shared namespaces
+- Phase 7 service catalog + automation-template library + ownership graph
+- Phase 4 multi-agent + LLM router (the `onboard` / `risk` built-ins)
+- Phase 10 scheduled workflows (the ROI report + huddle); standing approvals (W4 templates)
+- Phase 3 relationship graph + tamper-evident audit log (the W3 lead-intelligence built-ins run on these alone — see the W3 note)
+
+#### Non-negotiable guardrails
+
+- Team config repo holds **references to vault keys, never secrets**; the Gateway scans the baseline on every apply/reconcile and refuses literal secrets (defense in depth beyond the team's CI).
+- The team baseline is **Ed25519-signed** (reuses the `I16` machinery); `nimbus apply`/reconcile verify against the team key (via the Phase 6 Team Vault trust anchor) before applying — a compromised git host cannot push malicious config to the fleet.
+- `nimbus apply` is HITL-gated with a preview. **Reconcile boundary:** unattended reconcile applies only enforcement policy + read-only config; anything adding a write-capable surface (write-action watcher, workflow, skill pack, standing-approval template) requires a preview even on reconcile.
+- **New invariant proposal — team skill packs cannot loosen HITL** (they may tighten, never remove an action from `HITL_REQUIRED` or auto-approve; rejected at load if they try). Lands as a full invariant triple when W2 is built.
+- Radar / ROI / fleet views are **aggregate, risk-framed, opt-in** — they name services/areas at risk and config/health state, never rank or surveil individuals.
+- **Offline is normal:** a Gateway runs fully on its last-applied baseline; a standing rule that expires offline fails safe to HITL, never locking the agent out.
+
+#### Wave 1 — Fleet Foundation *(distribution substrate)*
+
+- [ ] **`nimbus.team.toml` + team config repo** — declarative, version-controlled team baseline (connectors as vault-key references, sync intervals/depths, watchers, workflows, automation templates, dashboard presets, model-policy defaults, policy pointer).
+- [ ] **Signed team baseline** — `nimbus team sign`; verified on every apply/reconcile; unsigned/mis-signed refused.
+- [ ] **`nimbus apply` + reconciliation loop** — verify signature → diff → preview → HITL apply; idempotent; reconcile boundary (above) enforced.
+- [ ] **`nimbus team join <repo>`** — one-command onboarding: clone → apply config → auth only the connectors needing per-user identity (Team-Vault service accounts need none); creds land in the local/Team Vault, never the repo.
+- [ ] **`nimbus team leave`** — clean detach: stop reconcile, revoke federation grants, remove team-applied content; auditable.
+- [ ] **Layered precedence** — `team baseline → profile → user overrides`, org policy as a hard ceiling; `nimbus config explain <key>`.
+- [ ] **Secrets discipline (defense in depth)** — team CI contract test **and** Gateway-side payload scan refusing literal secrets.
+- [ ] **Team-server tier** — `nimbus serve --team`: always-on team Gateway (shared namespaces + Team Vault anchor + reconcile source) without enterprise Helm; the on-ramp to Phase 12.
+- [ ] **Overlay-mesh federation** — federation over a user-run WireGuard/Tailscale overlay, not just same-LAN mDNS; **no Nimbus relay**.
+- [ ] **Fleet health view** — `nimbus team fleet`: config version + reconcile/drift state + reachability across the team (no index content; aggregate; opt-in).
+- [ ] **Staged / canary config rollout** + **fleet rollback** (`nimbus team rollback <version>`, atomic over the whole baseline — skill packs/watchers/workflows/config pinned by version).
+
+#### Wave 2 — Paved Roads *(curated agent + golden paths)*
+
+- [ ] **Team skill packs** — versioned, team-authored packs shaping the agent's reasoning (incident response, PR-review standards, deploy checklist, house rules); distributed via the W1 repo.
+- [ ] **🔒 Skill-pack HITL invariant** — a pack can tighten but never loosen the HITL gate; rejected at load if it tries.
+- [ ] **Golden-path scaffolding** — `nimbus scaffold service <name>` (**HITL**): reads the team IDP + skill packs, generates the team-standard skeleton (repo layout, required checks, ownership + on-call, dashboard), files the catalog entry.
+- [ ] **New-hire onboarding agent** — `nimbus onboard <service|team>`: read-only brief (architecture, owners, recent incidents, golden path, who-to-ask); emits `agents.onboard.briefReady`.
+- [ ] **Convention-drift detector** — flags services diverging from the golden path; feeds W3.
+- [ ] **"Ask the team" federated Q&A** — `nimbus ask --team`: scope-permissioned fan-out across teammates' indexes with provenance. **Highest-risk item; ships experimental, opt-in, behind a dedicated security/privacy sub-spec** (query-text minimization, peer-side logging policy, cross-federation injection via `I11`, fan-out cap).
+- [ ] **Team-standard PR-review agent** — Phase 10 pre-review driven by the team skill-pack standards.
+- [ ] **Runbook-as-agent execution** — team-distributed runbooks, **HITL per step**.
+- [ ] **Skill-pack feedback loop** — engineers flag unhelpful packs; routes to the lead dashboard (W3).
+
+#### Wave 3 — The Lead's-Eye View *(team intelligence; can parallel W2)*
+
+> The bus-factor radar, toil heatmap (per-user mode), and onboarding agent run on a **single Gateway's already-indexed data** (Phase 3 graph + audit log) — the lightest deps in the phase; they could be pulled forward as standalone built-ins (even early), with federation only enriching them.
+
+- [ ] **Knowledge-risk / bus-factor radar** — `nimbus risk [--team|--service]`: single-points-of-knowledge, review bottlenecks (sole reviewer OOO — joins on-call/calendar + review history), undocumented-critical surfaces. **Names services at risk, never ranks individuals**; opt-in; privacy contract test.
+- [ ] **Team value/ROI report** — `nimbus team report [--since 7d]`: aggregate (incidents surfaced, time-to-context, HITL actions, stale flags caught, post-mortems drafted, onboarding briefs) — **no per-engineer attribution**.
+- [ ] **Toil heatmap** — mines the audit log for repeated action types / workflows / incident patterns → what to automate next; per-user mode (single index) + team-aggregate (counts of action types only, opt-in, raw logs never leave a machine); `nimbus toil flag` for explicit signals.
+- [ ] **Onboarding-readiness score per service** + **golden-path compliance scorecard** (feeds Phase 7 scorecards).
+- [ ] **Team huddle briefing** (formalizes Phase 6's stub) + **lead dashboard** (radar + ROI + toil + drift/compliance + skill-pack feedback queue).
+
+#### Wave 4 — Team Automation Governance
+
+- [ ] **Team standing-approval templates** — lead-curated, distributed via W1; a template **proposes**, each engineer must confirm adoption (never force-granted); inherits Phase 10 scope/expiry/ceiling/confidence constraints.
+- [ ] **"What changed in our Nimbus" digest** — auto-changelog when the team baseline changes.
+
+#### Acceptance Criteria
+
+- `nimbus team join <repo>` applies all team config in under 2 minutes (zero secrets from the repo); per-user OAuth/PAT is the only remaining step; a missing/invalid baseline signature is refused on every machine.
+- A baseline edit reconciles to a subscribed Gateway within one cycle after an approved preview; a policy-violating connector is refused fleet-wide; a canary rollout updates only the canary subset; `nimbus team rollback` reverts atomically.
+- A skill pack shapes agent behavior on every subscribed machine; a pack attempting to auto-approve a HITL action is rejected at load.
+- `nimbus risk --team` flags a bus-factor-1 service + a review bottleneck in <15s, naming services not individuals; `nimbus team report` produces an aggregate report with zero per-engineer attribution.
+
+---
+
+### Phase 17 — The On-Call Copilot
+
+**Goal:** The individual on-call engineer's real-time copilot — **predict → understand → mitigate → coordinate.** Distinct from Phase 10's *autonomous* SRE loop (standing automation) and Phase 8's *security* `nimbus incident` (attacker-shaped); this is interactive, HITL, incident-time. The roadmap already does reactive *assembly* well (Phase 10); Phase 17 adds the proactive, mitigation, coordination, and deep-first-response layers.
+
+> **Composes-with Phase 16** → **Team Incident Command**: the copilot pulls in who knows the code (bus-factor radar), who's on call (schedule), runs the team channel (scribe), and drives the team's runbooks (skill packs) — collaborative incident command with no war-room.
+
+#### Dependencies
+
+- Phase 10 incident correlation engine + post-mortem drafter + on-call schedule + anomaly baseline
+- Phase 4 multi-agent (deep parallel investigation) + LLM router
+- Phase 3 relationship graph (cascade root-cause) + tamper-evident audit log (replay)
+- Phase 11 mobile + push transport; Phase 5 PagerDuty/CI/deploy connectors; Phase 16 skill-pack runbooks + bus-factor radar
+
+#### Non-negotiable guardrails
+
+- Every mitigation is HITL with a **dry-run + blast-radius preview**; no auto-remediation (that's Phase 10 standing approvals, opt-in, separate).
+- **Reversibility is classified, never assumed** (reversible / irreversible / unknown), surfaced prominently; the copilot never claims "reversible" it can't prove.
+- **Accountable:** `nimbus audit replay <incident-id>` reconstructs what the copilot saw + did. **Engineer stays in command:** disengage to advisory-only at any point.
+- Local-first (logs/metrics/traces correlated locally; incident data never leaves). Detection ≠ action (radar/advisor surface, never act). Scribe drafts, never sends without consent.
+
+#### Wave 1 — Predict & Prevent
+
+- [ ] **Silent-degradation radar** — detects the *absence* of expected events + sub-threshold drift; baselines from explicit `nimbus.team.toml` declarations (primary) + learned patterns (secondary). Detection only.
+- [ ] **Deploy-risk advisor** — an enrichment of Phase 5 `deploy preflight` (system state × change velocity × on-call coverage × time-of-week → risk score + the why).
+- [ ] **Anomaly → proactive heads-up** — Phase 10 anomaly surfaced to the on-call engineer ("this looks about to page"), not a silent log.
+
+#### Wave 2 — Page → Instant Understanding
+
+- [ ] **Pushed incident brief** — assembled brief pushed to where the engineer is (terminal/Slack/mobile) the instant it fires. **Approve-from-push** for a reversible, high-confidence mitigation via Phase 11 biometric/secure-enclave-signed HITL.
+- [ ] **Deep automated investigation** — multi-agent fan-out: correlates logs/metrics/traces, snapshots dashboards, diffs the deploy. **Cost discipline:** pushes query computation down to the backend, pulls only correlated results (no raw firehose).
+- [ ] **Cascade root-cause ranking** — ranks root vs. downstream via the dependency graph + timing when many alerts fire.
+
+#### Wave 3 — Mitigate with Confidence
+
+- [ ] **Confidence + evidence + dry-run remediation** — confidence score + cited evidence + blast-radius preview + reversibility classification; HITL.
+- [ ] **Live runbook driving** — executes the team's Phase 16 skill-pack runbook step-by-step, HITL per step.
+- [ ] **One-tap rollback** (blast-radius preview inline) + **undo the copilot's own action** (one keystroke where the action class supports it; audit-logged).
+
+#### Wave 4 — Coordinate & Close
+
+- [ ] **Live incident scribe + comms** — maintains the timeline, drafts stakeholder/status-page updates (**HITL to send**), keeps the channel current; tone/templates from Phase 16 skill packs.
+- [ ] **On-call handoff brief** — `nimbus oncall handoff`: shift events, open/smoldering items, watch-list.
+- [ ] **Auto post-mortem** — composes Phase 10's draft from the richer incident record; HITL-gated push.
+
+#### Acceptance Criteria
+
+- On a seeded multi-alert cascade, the pushed brief names the single root and marks the rest downstream in <15s, delivered without a query (measured mean-time-to-context).
+- For a seeded bad-deploy incident, the copilot proposes a rollback with confidence + cited evidence + dry-run blast radius + reversibility label; approving executes through the HITL gate (action + preview in the audit chain); `nimbus audit replay <id>` reconstructs the steps deterministically.
+- A mitigation that makes things worse can be undone in one keystroke (where reversible); irreversible actions are flagged before approval.
+- `nimbus oncall handoff` returns a shift brief in <15s, zero HITL.
+
+---
+
+### North-Star Capabilities (cross-phase)
+
+Audience-agnostic "no other tool does this" pillars, each enabled **because** of local-first / no-relay / HITL / audit. They thread through several phases rather than living in one; M1 and M3 are each strong enough to anchor a late phase.
+
+- [ ] **M1 — The Org's Living Memory** — the org's permanent, queryable institutional memory (*"why did we choose Kafka in 2024?"*, *"we tried this migration before — why did it fail?"*). Extends Phase 7 ADR drafter + Phase 10 episodic/point-in-time + Phase 16 collective Q&A.
+- [ ] **M2 — Preventive Ops** — learns from *your own* incident history the patterns that precede outages and warns at change time; headline signal **incidents prevented** (a heuristic — pattern-match + engineer-acted-on-warning — not a provable counterfactual). Extends Phase 17 W1 + Phase 9 local fine-tune.
+- [ ] **M3 — Accountable Autonomy** — multi-step loops end-to-end, HITL only at irreversible steps, **every decision replayable** (`nimbus audit replay`). *(Substrate: faithful replay needs the agent's reasoning/evidence trace captured, not just actions + HITL status — an extension beyond `audit_log` + `tool_call_log`, designed with the replay feature.)* Extends Phase 10 + Phase 14.
+- [ ] **M4 — Surveillance-Free Collective Intelligence** — cross-team/cross-org benchmarking + shared incident-pattern learning via secure aggregation over the relay-free mesh, **with nobody's data leaving their machine. Opt-in at the team/org level via `nimbus.policy.toml`, off by default, never per-engineer.** Extends Phase 6/11/15.
+- [ ] **M5 — Counterfactual / Time-Travel Ops** — v1 is *static/causal analysis* (config + code paths + dependency graph + indexed integration-test history); live simulation of stateful external systems is out of scope. Extends Phase 10 point-in-time + Phase 14.
+- [ ] **M6 — The Self-Extending Agent** — notices its own gaps (toil heatmap) and **drafts its own connector/automation**: read-only by default, contract-tested against the SDK, generated only against an authoritative published spec (never hallucinated), sandboxed (`I15`), HITL-installed + `I16`-signed; never auto-tests writes against a live API. Extends Phase 14 + Phase 16.
+
+**Connective tissue** (the substrates that make the above one product): the **proactive meta-agent** ("what should I look at right now?" — routes to the right brief by context across ~15 built-in agents); the **Impact Ledger** (one tamper-evident measurement spine feeding the team ROI report, the evaluator "look what it did this week," and M2); a **causal/temporal event spine** (under M1/M2/M5); a first-class **transparency surface** (always-visible "Local Only" egress indicator + inspect/delete-everything + decision replay); and the **"when the agent is wrong" backbone** (calibrated confidence with the humility to say "I'm not sure," one-keystroke undo, wrong-recommendation feedback that lowers future confidence — shared with Phase 17's remediation).
+
+---
+
+### First-Run & Time-to-Wow (near-term initiative)
+
+Defeating the cold start — Nimbus's wow is proportional to how much it has indexed, but at minute one the index is empty. This **gates adoption, so the cheap pieces should ship early — not be deferred to a late phase.**
+
+- [ ] **`nimbus demo` — seeded sandbox** — loads a realistic synthetic org so an evaluator experiences incident assembly / `impact` / `expert` / the bus-factor radar in 30 seconds, zero connect, zero wait (repurpose the perf-bench synthetic corpora; shift all timestamps relative to "now" so it always looks like today). Also the host for the killer demo.
+- [ ] **Detect-and-reuse existing local auth** — notice the user is already logged into `gh` / `aws` / `gcloud` / `kubectl` and offer to use those credentials — one keypress instead of N OAuth flows (uniquely possible because Nimbus is local).
+- [ ] **Zero-auth local-first wow** — point it at `~/code` (filesystem + git, no OAuth) → value on the user's own work in 60s.
+- [ ] **"Prove it's local" demonstration** — first-run + always-visible: loopback-only socket, everything indexed (inspect/delete), audit log proving **zero outbound calls**.
+- [ ] **`nimbus wow` guided tour** — runs the 3 most impressive queries based on what's indexed; no blank-prompt paralysis.
+- [ ] **Screenshot-worthy output** + re-weight **signed installers / one-liner install** (Phase 13) for the adoption reason, not just enterprise.
+
+---
+
+### The Killer Demo (north-star milestone)
+
+**"The page that answered itself"** — runs on `nimbus demo`: a P1 fires → the assembled brief is already there (cause, the deploy 8 min ago, the PR, cascade root) → *"95% confidence, rollback dry-run affects payment-service only, reversible — approve?"* → resolved, mean-time-to-context 22s → post-mortem + status-page drafted → `nimbus audit replay` shows every decision and **"0 outbound network calls."** Tagline: *"Your systems just had an incident. Nimbus already handled the first 30 minutes — locally, and it can prove it."*
+
+This is **not a feature — it's a cross-phase milestone that proves the thesis**, and reverse-engineering it yields the minimal first slice to build: `nimbus demo` sandbox → Phase 17 W2 (pushed brief + deep investigation + cascade) → Phase 17 W3 (confidence/dry-run remediation) + the "when the agent is wrong" mechanism → `nimbus audit replay` + transparency surface (M3) → the Impact Ledger. *(The production version needs a minimal cut of the Phase 10 + Phase 4 substrate; the demo sandbox seeds it.)* **Declare "ship the killer demo" an explicit prioritization spine.** Alternate cuts: *"Ask your entire org anything"* (data-eng/lineage; M1) and *"Watch it run and never phone home"* (security buyer; M3/M4).
 
 ---
 

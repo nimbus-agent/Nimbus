@@ -28,6 +28,10 @@ on:
       - "packages/cli/package.json"
       - "docs/demos/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

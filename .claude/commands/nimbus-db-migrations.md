@@ -143,7 +143,7 @@ When adding a new table, always include:
 - `created_at INTEGER NOT NULL` (unix ms).
 - Appropriate indexes for the expected query patterns.
 - A `CHECK` constraint on any enum-like column.
-- An entry in the schema reference in `docs/architecture.md` under "Local Database Schema".
+- An entry in the schema reference at [`docs/schema-reference.md`](../../docs/schema-reference.md) (the canonical table-by-table reference, extracted from `architecture.md`).
 - All write statements (`INSERT` / `UPDATE` / `DELETE` / `CREATE TABLE` / `CREATE INDEX`) go through `dbRun` / `dbExec` / `dbStmtRun` from `db/write.ts` (invariant `I14`). Direct `db.run(` / `db.exec(` outside the wrapper fails `bun run audit:invariants`.
 
 ## Virtual Table Caution
@@ -169,6 +169,6 @@ When deleting rows from a source table that has an FTS5 shadow:
 - [ ] No manual writes to `_schema_migrations`.
 - [ ] New tables include primary key, `created_at INTEGER NOT NULL`, query-pattern indexes, and `CHECK` constraints on enum columns.
 - [ ] FTS5 row deletes use targeted `DELETE FROM items_fts WHERE rowid = ?` — never the `'rebuild'` command.
-- [ ] Schema reference in `docs/architecture.md` updated for any new table.
+- [ ] Schema reference in [`docs/schema-reference.md`](../../docs/schema-reference.md) updated for any new table.
 - [ ] All write statements go through `dbRun` / `dbExec` / `dbStmtRun` from `db/write.ts` — no direct `db.run(` / `db.exec(` (invariant `I14`; `bun run audit:invariants` fails on violations).
 - [ ] Integration test added (pattern: `runner-v31.test.ts`) covering the new step; `packages/gateway/src/index/migrations/` line coverage stays ≥ 85%.
