@@ -23,6 +23,7 @@ import {
   phase3AddAzureMcp,
   phase3AddDatadogMcp,
   phase3AddFlagsmithMcp,
+  phase3AddFluxMcp,
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
@@ -672,6 +673,69 @@ describe("phase3AddArgocdMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["ARGOCD_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddFluxMcp ────────────────────────────────────────────────────────
+
+describe("phase3AddFluxMcp", () => {
+  test("no-op without flux.api_url + flux.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when only flux.api_url is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "https://k8s.example.com:6443");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when only flux.token is set (api_url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.token", "sa-jwt");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "   ");
+    await vault.set("flux.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("spawns with FLUX_API_URL/FLUX_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "https://k8s.example.com:6443");
+    await vault.set("flux.token", "sa-jwt-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flux"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "k8s.example.com");
+    expect(spec.env?.["FLUX_API_URL"]).toBe("https://k8s.example.com:6443");
+    expect(spec.env?.["FLUX_TOKEN"]).toBe("sa-jwt-token");
+  });
+
+  test("spawns even when flux.api_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "not a url");
+    await vault.set("flux.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flux"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["FLUX_API_URL"]).toBe("not a url");
   });
 });
 

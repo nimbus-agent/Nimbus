@@ -437,6 +437,33 @@ export async function phase3AddArgocdMcp(
   );
 }
 
+export async function phase3AddFluxMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiUrl = (await readConnectorSecret(vault, "flux", "api_url"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "flux", "token"))?.trim() ?? "";
+  if (apiUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Flux is always self-hosted (the Kubernetes API server);
+  // extend the static (empty) network list with the hostname parsed from
+  // FLUX_API_URL so the sandbox lets the connector reach the user's cluster
+  // (same runtime-merge pattern as grafana / argocd).
+  const host = hostnameFromUrl(apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
+  servers["flux"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("flux")],
+      env: extensionProcessEnv({ FLUX_API_URL: apiUrl, FLUX_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -458,5 +485,6 @@ export async function buildPhase3Servers(
   await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
   await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
   await phase3AddArgocdMcp(vault, servers, sandboxCwd);
+  await phase3AddFluxMcp(vault, servers, sandboxCwd);
   return servers;
 }

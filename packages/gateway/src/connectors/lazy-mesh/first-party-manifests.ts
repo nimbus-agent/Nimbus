@@ -353,6 +353,18 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- GitOps / continuous delivery (Flux) ---
+  flux: baseManifest("com.nimbus.flux", {
+    // Flux is always self-hosted (the Kubernetes API server); there is no
+    // central Flux API and no SaaS host. `phase3AddFluxMcp` extends the empty
+    // static network list with the hostname parsed from FLUX_API_URL at spawn
+    // time (same runtime-merge pattern as grafana / jenkins / argocd). Without
+    // that merge Flux would be unreachable under the sandbox; with it, the
+    // connector talks only to the user-configured API server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
