@@ -36,6 +36,7 @@ import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
+import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
@@ -245,6 +246,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMetabaseSyncable({
       ensureMetabaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSupersetSyncable({
+      ensureSupersetMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

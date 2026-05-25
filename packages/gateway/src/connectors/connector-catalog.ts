@@ -41,6 +41,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "flux",
   "dbt",
   "metabase",
+  "superset",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -106,6 +107,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   flux: MIN10,
   dbt: MIN10,
   metabase: MIN10,
+  superset: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -170,6 +172,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
   dbt: "uses a dbt Cloud API token (connector.auth dbt)",
   metabase: "uses a Metabase API key (connector.auth metabase)",
+  superset: "uses Superset username/password (connector.auth superset)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

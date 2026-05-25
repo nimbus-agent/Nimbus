@@ -42,6 +42,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   flux: ["flux.api_url", "flux.token"],
   dbt: ["dbt.token", "dbt.api_base", "dbt.account_id"],
   metabase: ["metabase.url", "metabase.api_key"],
+  superset: ["superset.url", "superset.username", "superset.password"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

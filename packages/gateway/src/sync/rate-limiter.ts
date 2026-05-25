@@ -38,7 +38,8 @@ export type Provider =
   | "argocd"
   | "flux"
   | "dbt"
-  | "metabase";
+  | "metabase"
+  | "superset";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -82,6 +83,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   flux: { requestsPerMinute: 60, burstSize: 10 },
   dbt: { requestsPerMinute: 60, burstSize: 10 },
   metabase: { requestsPerMinute: 60, burstSize: 10 },
+  superset: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
