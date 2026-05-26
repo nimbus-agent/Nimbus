@@ -47,6 +47,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "vercel",
   "netlify",
   "stripe",
+  "mercury",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -118,6 +119,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   vercel: MIN10,
   netlify: MIN10,
   stripe: MIN10,
+  mercury: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -188,6 +190,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   vercel: "uses an access token + optional team id (connector.auth vercel)",
   netlify: "uses a personal access token (connector.auth netlify)",
   stripe: "uses a secret API key (connector.auth stripe)",
+  mercury: "uses a Mercury API token (connector.auth mercury)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

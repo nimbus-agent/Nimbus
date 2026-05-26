@@ -26,6 +26,7 @@ import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
 import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
+import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMlflowSyncable } from "../connectors/mlflow-sync.ts";
 import { createNetlifySyncable } from "../connectors/netlify-sync.ts";
@@ -281,6 +282,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createStripeSyncable({
       ensureStripeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMercurySyncable({
+      ensureMercuryMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

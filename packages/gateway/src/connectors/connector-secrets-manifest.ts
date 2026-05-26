@@ -48,6 +48,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   vercel: ["vercel.token", "vercel.team_id"],
   netlify: ["netlify.token"],
   stripe: ["stripe.api_key"],
+  mercury: ["mercury.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
