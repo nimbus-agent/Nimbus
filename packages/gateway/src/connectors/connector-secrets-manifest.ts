@@ -46,6 +46,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   databricks: ["databricks.host", "databricks.token"],
   mlflow: ["mlflow.host", "mlflow.token"],
   vercel: ["vercel.token", "vercel.team_id"],
+  netlify: ["netlify.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
