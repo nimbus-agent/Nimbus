@@ -34,24 +34,6 @@
     },
     "packages/client/src/ipc-transport.ts": {
       "min_coverage_pct": 10.81
-    },
-    "packages/client/src/mock-client.ts": {
-      "min_coverage_pct": 15.71
-    },
-    "packages/client/src/nimbus-client.ts": {
-      "min_coverage_pct": 8.05
-    },
-    "packages/gateway/src/embedding/model.ts": {
-      "min_coverage_pct": 13.51
-    },
-    "packages/mcp-connectors/jenkins/src/jenkins-api.ts": {
-      "min_coverage_pct": 17.89
-    },
-    "packages/sdk/src/crypto/verify-signature.ts": {
-      "min_coverage_pct": 18.68
-    },
-    "packages/sdk/src/ipc/ndjson-line-reader.ts": {
-      "min_coverage_pct": 2.94
     }
   }
 }
