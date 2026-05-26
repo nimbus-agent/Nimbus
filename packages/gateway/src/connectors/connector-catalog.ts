@@ -48,6 +48,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "netlify",
   "stripe",
   "mercury",
+  "readwise",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -120,6 +121,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   netlify: MIN10,
   stripe: MIN10,
   mercury: MIN10,
+  readwise: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -191,6 +193,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   netlify: "uses a personal access token (connector.auth netlify)",
   stripe: "uses a secret API key (connector.auth stripe)",
   mercury: "uses a Mercury API token (connector.auth mercury)",
+  readwise: "uses a Readwise API token (connector.auth readwise)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

@@ -35,6 +35,7 @@ import { createNotionSyncable } from "../connectors/notion-sync.ts";
 import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
 import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
+import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
@@ -287,6 +288,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMercurySyncable({
       ensureMercuryMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createReadwiseSyncable({
+      ensureReadwiseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

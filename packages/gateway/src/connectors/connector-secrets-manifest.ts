@@ -49,6 +49,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   netlify: ["netlify.token"],
   stripe: ["stripe.api_key"],
   mercury: ["mercury.token"],
+  readwise: ["readwise.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

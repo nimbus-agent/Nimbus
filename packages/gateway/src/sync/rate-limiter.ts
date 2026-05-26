@@ -45,7 +45,8 @@ export type Provider =
   | "vercel"
   | "netlify"
   | "stripe"
-  | "mercury";
+  | "mercury"
+  | "readwise";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -96,6 +97,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   netlify: { requestsPerMinute: 60, burstSize: 10 },
   stripe: { requestsPerMinute: 60, burstSize: 10 },
   mercury: { requestsPerMinute: 60, burstSize: 10 },
+  readwise: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
