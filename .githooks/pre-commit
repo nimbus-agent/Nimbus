@@ -1,0 +1,24 @@
+#!/bin/sh
+# Block commits on the default branches; branch first. Override:
+#   NIMBUS_ALLOW_DEFAULT_BRANCH_COMMIT=1 git commit ...
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+if [ "$branch" = "main" ] || [ "$branch" = "develop" ]; then
+  if [ "$NIMBUS_ALLOW_DEFAULT_BRANCH_COMMIT" != "1" ]; then
+    echo "✗ Refusing to commit on '$branch'. Create a feature branch first:" >&2
+    echo "    git switch -c dev/<you>/<topic>" >&2
+    echo "  (override: NIMBUS_ALLOW_DEFAULT_BRANCH_COMMIT=1)" >&2
+    exit 1
+  fi
+fi
+# GUI git clients often don't load your shell profile, so bun may be off PATH.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "✗ 'bun' not found on PATH. If committing from a GUI/IDE, ensure your shell" >&2
+  echo "  profile is loaded for git, or commit from a terminal." >&2
+  exit 1
+fi
+# Fast formatting/lint check on staged files (non-fatal hint if biome missing).
+bun run lint >/dev/null 2>&1 || {
+  echo "✗ Biome check failed. Run 'bun run lint:fix' and re-stage." >&2
+  exit 1
+}
+exit 0
