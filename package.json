@@ -61,6 +61,7 @@
     "packages/mcp-connectors/mlflow",
     "packages/mcp-connectors/vercel",
     "packages/mcp-connectors/netlify",
+    "packages/mcp-connectors/stripe",
     "packages/vscode-extension"
   ],
   "scripts": {
