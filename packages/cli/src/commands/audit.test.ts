@@ -135,7 +135,7 @@ describe("runAuditExport", () => {
     await runAuditExport(client, "/tmp/out.json", writeFile);
     expect(calls[0]).toEqual({ method: "audit.exportAll", params: {} });
     expect(writes).toHaveLength(1);
-    expect(writes[0]?.path).toBe("/tmp/out.json");
+    expect(writes[0]?.path).toBe("/tmp/out.json"); // cross-platform-ok — output-path arg echoed into the mock writeFile capture, not an OS-resolved path
     expect(writes[0]?.data).toContain('"id": 1');
     expect(out.stdout).toContain("wrote 2 audit rows to /tmp/out.json");
   });

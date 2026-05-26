@@ -55,7 +55,7 @@ describe("wrapServerSpec", () => {
     );
     expect(wrapped.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(wrapped.env["EXTRA"]).toBe("value");
-    expect(wrapped.env["PATH"]).toBe("/usr/bin");
+    expect(wrapped.env["PATH"]).toBe("/usr/bin"); // cross-platform-ok — env-value fixture passed through verbatim, not an OS-resolved path
   });
 
   test("adds NIMBUS_SANDBOX_MANIFEST_JSON env carrying the JSON-stringified manifest", () => {
@@ -70,7 +70,7 @@ describe("wrapServerSpec", () => {
 
   test("adds NIMBUS_SANDBOX_CWD env from the cwd argument", () => {
     const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/home/user/data");
-    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/data");
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/data"); // cross-platform-ok — cwd-argument fixture passed through verbatim, not an OS-resolved path
   });
 
   test("does not mutate the input spec", () => {
@@ -103,7 +103,7 @@ describe("wrapServerSpec", () => {
     ) as ExtensionManifest;
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
-    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/tmp/legitimate");
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/tmp/legitimate"); // cross-platform-ok — cwd-argument fixture passed through verbatim, not an OS-resolved path
   });
 });
 

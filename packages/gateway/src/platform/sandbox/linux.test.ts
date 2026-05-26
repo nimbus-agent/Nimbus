@@ -53,8 +53,8 @@ describe("buildBwrapArgv", () => {
     const argv = buildBwrapArgv(baseManifest(), { mode: "no-net", cwd: "/tmp/cwd" });
     const bindIdx = argv.indexOf("--bind");
     expect(bindIdx).toBeGreaterThanOrEqual(0);
-    expect(argv[bindIdx + 1]).toBe("/tmp/cwd");
-    expect(argv[bindIdx + 2]).toBe("/tmp/cwd");
+    expect(argv[bindIdx + 1]).toBe("/tmp/cwd"); // cross-platform-ok — Linux-only bwrap sandbox; POSIX fixture input echoed into argv
+    expect(argv[bindIdx + 2]).toBe("/tmp/cwd"); // cross-platform-ok — Linux-only bwrap sandbox; POSIX fixture input echoed into argv
   });
   it("ro-binds filesystem.read entries", () => {
     const argv = buildBwrapArgv(

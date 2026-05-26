@@ -279,7 +279,7 @@ describe("runExtensionInstall", () => {
     await runExtensionInstall(client, ["install", "./ext", "--yes"], ["./ext"]);
     expect(calls[0]?.method).toBe("extension.install");
     expect(out.stdout).toContain("new.ext");
-    expect(out.stdout).toContain("/somewhere");
+    expect(out.stdout).toContain("/somewhere"); // cross-platform-ok — mocked IPC installPath echoed to stdout, not an OS-resolved path
   });
 
   test("propagates IPC errors with --yes", async () => {

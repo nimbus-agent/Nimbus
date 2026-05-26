@@ -66,7 +66,7 @@ describe("writeGatewayStateFile", () => {
     const raw = readFileSync(gatewayStateFilePath(paths), "utf8");
     const obj = JSON.parse(raw) as Record<string, unknown>;
     expect(obj["pid"]).toBe(12345);
-    expect(obj["socketPath"]).toBe("/tmp/sock");
+    expect(obj["socketPath"]).toBe("/tmp/sock"); // cross-platform-ok — fixture input round-tripped through JSON, not an OS-resolved path
     // logPath omitted because no opts.logPath and no env var.
     expect("logPath" in obj).toBe(false);
     expect(raw.endsWith("\n")).toBe(true);
@@ -83,7 +83,7 @@ describe("writeGatewayStateFile", () => {
       string,
       unknown
     >;
-    expect(obj["logPath"]).toBe("/var/log/nimbus.log");
+    expect(obj["logPath"]).toBe("/var/log/nimbus.log"); // cross-platform-ok — fixture input round-tripped through JSON, not an OS-resolved path
   });
 
   test("falls back to NIMBUS_GATEWAY_LOG_PATH env var when opts.logPath is absent", () => {
@@ -94,7 +94,7 @@ describe("writeGatewayStateFile", () => {
       string,
       unknown
     >;
-    expect(obj["logPath"]).toBe("/from/env.log");
+    expect(obj["logPath"]).toBe("/from/env.log"); // cross-platform-ok — env-var fixture round-tripped through JSON, not an OS-resolved path
   });
 
   test("empty env var does not surface as logPath", () => {
@@ -120,7 +120,7 @@ describe("writeGatewayStateFile", () => {
       string,
       unknown
     >;
-    expect(obj["logPath"]).toBe("/explicit/opts.log");
+    expect(obj["logPath"]).toBe("/explicit/opts.log"); // cross-platform-ok — fixture input round-tripped through JSON, not an OS-resolved path
   });
 });
 

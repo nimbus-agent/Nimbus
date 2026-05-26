@@ -99,7 +99,7 @@ describe("renderHitlCard", () => {
       details: { file: "/etc/passwd" },
     });
     expect(withDetails).toContain('class="hitl-details"');
-    expect(withDetails).toContain("/etc/passwd");
+    expect(withDetails).toContain("/etc/passwd"); // cross-platform-ok — fixture string rendered into HTML, not an OS-resolved path
     const withoutDetails = renderHitlCard({ requestId: "r", prompt: "p" });
     expect(withoutDetails).not.toContain("hitl-details");
   });

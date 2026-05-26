@@ -6,7 +6,7 @@ import { stripTrailingSlashes } from "./strip-trailing-slashes.ts";
 describe("stripTrailingSlashes", () => {
   it("returns the input unchanged when it has no trailing slash", () => {
     expect(stripTrailingSlashes("foo")).toBe("foo");
-    expect(stripTrailingSlashes("/foo/bar")).toBe("/foo/bar");
+    expect(stripTrailingSlashes("/foo/bar")).toBe("/foo/bar"); // cross-platform-ok — forward-slash string-normalization fixture, not an OS-resolved path
   });
 
   it("strips a single trailing slash", () => {
@@ -33,7 +33,7 @@ describe("stripTrailingSlashes", () => {
   });
 
   it("does not touch a leading slash", () => {
-    expect(stripTrailingSlashes("/foo")).toBe("/foo");
+    expect(stripTrailingSlashes("/foo")).toBe("/foo"); // cross-platform-ok — forward-slash string-normalization fixture, not an OS-resolved path
     expect(stripTrailingSlashes("/")).toBe("");
   });
 });

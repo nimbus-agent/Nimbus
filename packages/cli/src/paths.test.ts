@@ -78,7 +78,7 @@ describe("resolveSocketPath", () => {
 
   it("returns NIMBUS_GATEWAY_SOCKET override when set", () => {
     process.env["NIMBUS_GATEWAY_SOCKET"] = "/tmp/custom.sock";
-    expect(resolveSocketPath()).toBe("/tmp/custom.sock");
+    expect(resolveSocketPath()).toBe("/tmp/custom.sock"); // cross-platform-ok — env-var override echoed back verbatim, not an OS-resolved path
   });
 
   it("treats empty NIMBUS_GATEWAY_SOCKET as unset (falls through to platform default)", () => {

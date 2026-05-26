@@ -659,7 +659,7 @@ describe("ensureKubernetesMcp", () => {
     await vault.set("kubernetes.kubeconfig", "/home/u/.kube/config");
     await ensureKubernetesMcp(ctx);
     const env = capturedClients[0]?.servers["kubernetes"]?.env;
-    expect(env?.["KUBECONFIG"]).toBe("/home/u/.kube/config");
+    expect(env?.["KUBECONFIG"]).toBe("/home/u/.kube/config"); // cross-platform-ok — vault value injected into child env verbatim, not an OS-resolved path
     expect(env).not.toHaveProperty("KUBE_CONTEXT");
     expectNoProcessEnvLeak(env ?? {});
   });
@@ -670,7 +670,7 @@ describe("ensureKubernetesMcp", () => {
     await vault.set("kubernetes.context", "prod-cluster");
     await ensureKubernetesMcp(ctx);
     const env = capturedClients[0]?.servers["kubernetes"]?.env;
-    expect(env?.["KUBECONFIG"]).toBe("/home/u/.kube/config");
+    expect(env?.["KUBECONFIG"]).toBe("/home/u/.kube/config"); // cross-platform-ok — vault value injected into child env verbatim, not an OS-resolved path
     expect(env?.["KUBE_CONTEXT"]).toBe("prod-cluster");
   });
 
@@ -681,7 +681,7 @@ describe("ensureKubernetesMcp", () => {
     const env = capturedClients[0]?.servers["kubernetes"]?.env;
     // The trim happens via .trim() === "" guard; the stored value with whitespace
     // is forwarded as-is to KUBECONFIG (no implicit trimming for the value itself).
-    expect(env?.["KUBECONFIG"]?.trim()).toBe("/home/u/.kube/config");
+    expect(env?.["KUBECONFIG"]?.trim()).toBe("/home/u/.kube/config"); // cross-platform-ok — vault value injected into child env verbatim, not an OS-resolved path
   });
 
   test("already running → no double-spawn", async () => {

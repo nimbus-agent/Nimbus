@@ -189,7 +189,7 @@ describe("readGatewayState", () => {
     );
     const state = await readGatewayState(paths);
     expect(state?.pid).toBe(process.pid);
-    expect(state?.socketPath).toBe("/tmp/no-log.sock");
+    expect(state?.socketPath).toBe("/tmp/no-log.sock"); // cross-platform-ok — state-file fixture round-tripped through JSON, not an OS-resolved path
     expect(state?.logPath).toBeUndefined();
   });
 

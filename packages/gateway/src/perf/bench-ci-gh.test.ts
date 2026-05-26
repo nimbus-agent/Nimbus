@@ -134,7 +134,7 @@ describe("GhCli", () => {
       const gh = new GhCli({ spawn });
       await gh.prCommentEdit({ commentId: "42", bodyFile, repo: "owner/repo" });
       expect(calls[0]?.args[0]).toBe("api");
-      expect(calls[0]?.args).toContain("/repos/owner/repo/issues/comments/42");
+      expect(calls[0]?.args).toContain("/repos/owner/repo/issues/comments/42"); // cross-platform-ok — GitHub API URL path passed as a gh arg, always forward-slash
       expect(calls[0]?.args).toContain("--method");
       expect(calls[0]?.args).toContain("PATCH");
     } finally {

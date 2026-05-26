@@ -74,7 +74,7 @@ test("unresolvable internal $ref does not crash; broken endpoints still surface"
   // never read, so the doc parses and yields one endpoint.
   if (r.kind === "skipped") throw new Error(`should not skip: ${r.reason}`);
   expect(r.endpoints.length).toBe(1);
-  expect(r.endpoints[0]?.path).toBe("/broken");
+  expect(r.endpoints[0]?.path).toBe("/broken"); // cross-platform-ok — OpenAPI endpoint route from the spec, not a filesystem path
 });
 
 test("webhook-only OpenAPI 3.1 yields zero endpoints (paths missing) but does not throw", async () => {

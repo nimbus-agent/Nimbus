@@ -41,7 +41,7 @@ describe("Settings", () => {
         logLevel: "debug",
       }),
     );
-    expect(s.socketPath()).toBe("/run/nimbus-test/custom.sock");
+    expect(s.socketPath()).toBe("/run/nimbus-test/custom.sock"); // cross-platform-ok — POSIX socket-path fixture echoed verbatim, not an OS-resolved path
     expect(s.autoStartGateway()).toBe(true);
     expect(s.statusBarPollMs()).toBe(5000);
     expect(s.transcriptHistoryLimit()).toBe(200);

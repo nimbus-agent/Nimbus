@@ -86,7 +86,7 @@ describe("GatewayConnectionProvider", () => {
       throw new Error(`unexpected method ${method}`);
     });
     const { seen, rerender } = await renderAndConnect("/");
-    await waitFor(() => expect(seen.at(-1)).toBe("/onboarding/welcome"));
+    await waitFor(() => expect(seen.at(-1)).toBe("/onboarding/welcome")); // cross-platform-ok — React Router route, not a filesystem path
     rerender(<div />);
   });
 

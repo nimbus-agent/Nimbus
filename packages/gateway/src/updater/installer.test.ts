@@ -52,7 +52,7 @@ describe("buildInstallerCommand", () => {
     expect(cmd.kind).toBe("subprocess");
     const subprocess = cmd as InstallerCommandSubprocess;
     expect(subprocess.argv[0]).toBe(exe);
-    expect(subprocess.argv).toContain("/S");
+    expect(subprocess.argv).toContain("/S"); // cross-platform-ok — NSIS silent-install flag, not a path
   });
 
   test("unknown extension throws", () => {

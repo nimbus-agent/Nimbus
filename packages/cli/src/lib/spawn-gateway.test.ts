@@ -29,7 +29,7 @@ describe("stripInspectorEnv", () => {
       NODE_OPTIONS: "--inspect=63855",
     };
     const out = stripInspectorEnv(env);
-    expect(out["PATH"]).toBe("/usr/bin");
+    expect(out["PATH"]).toBe("/usr/bin"); // cross-platform-ok — PATH env-value fixture preserved verbatim, not an OS-resolved path
     expect(out["BUN_INSPECT"]).toBeUndefined();
     expect(out["BUN_INSPECT_BRK"]).toBeUndefined();
     expect(out["BUN_INSPECT_NOTIFY"]).toBeUndefined();

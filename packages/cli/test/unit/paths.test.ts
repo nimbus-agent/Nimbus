@@ -7,7 +7,7 @@ describe("resolveSocketPath", () => {
     const prev = process.env["NIMBUS_GATEWAY_SOCKET"];
     process.env["NIMBUS_GATEWAY_SOCKET"] = "/tmp/override.sock";
     try {
-      expect(resolveSocketPath()).toBe("/tmp/override.sock");
+      expect(resolveSocketPath()).toBe("/tmp/override.sock"); // cross-platform-ok — env-var override echoed back verbatim, not an OS-resolved path
     } finally {
       if (prev === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
       else process.env["NIMBUS_GATEWAY_SOCKET"] = prev;

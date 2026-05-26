@@ -294,7 +294,7 @@ describe("bitbucket-sync — HTTP request paths", () => {
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     const prCalls = fixture.fetchMock.calls.filter((c) => PR_LIST_RE_ANY.test(c.url));
     expect(prCalls).toHaveLength(1);
-    expect(prCalls[0].url).toContain("/repositories/my-team/my-repo/pullrequests");
+    expect(prCalls[0].url).toContain("/repositories/my-team/my-repo/pullrequests"); // cross-platform-ok — HTTP request URL path, always forward-slash
   });
 
   test("429 with Retry-After header → penalises rate limiter and throws", async () => {
@@ -401,7 +401,7 @@ describe("bitbucket-sync — indexing skip paths", () => {
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     const prCalls = fixture.fetchMock.calls.filter((c) => PR_LIST_RE_ANY.test(c.url));
     expect(prCalls).toHaveLength(1);
-    expect(prCalls[0].url).toContain("/repositories/acme/app/pullrequests");
+    expect(prCalls[0].url).toContain("/repositories/acme/app/pullrequests"); // cross-platform-ok — HTTP request URL path, always forward-slash
   });
 
   test("pull request with missing author still upserts; row has author_id null", async () => {

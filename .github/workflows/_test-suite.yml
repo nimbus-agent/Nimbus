@@ -114,6 +114,9 @@ jobs:
       - name: OpenAPI drift check
         run: bun run audit:openapi-drift
 
+      - name: Cross-platform audit (test path assertions)
+        run: bun run audit:cross-platform
+
       - name: regen-slo drift check
         run: bun run regen-slo:check
 
