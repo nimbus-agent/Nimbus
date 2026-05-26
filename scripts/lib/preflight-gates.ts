@@ -81,6 +81,16 @@ export const CI_ONLY_GATES: readonly string[] = [
   "package:headless",
   "package:installers:linux",
   "docs:build",
+  "tauri", // bunx tauri build — desktop app build (needs Rust); not part of local static/test parity
+  "playwright", // bunx playwright install — E2E desktop browsers; E2E desktop runs on push-to-main only
+  "render:og-card", // OG-card PNG render check — doc-asset generation, regenerated + committed separately
+  "record-casts", // asciinema cast recording check — doc-asset generation, regenerated separately
+  "test", // `bun run test` (publish-vscode) — VS Code extension's own test suite, run in the publish workflow
+  "vsce", // bunx vsce — VS Code Marketplace publish tooling
+  "ovsx", // bunx ovsx — Open VSX publish tooling
+  "regen-slo:check", // SLO doc regeneration check — doc-gen check run separately, not a code gate
+  "build:sandbox-helper", // make native C helper — platform-specific (Linux) native build, not a portable gate
+  "vitest", // bunx vitest — UI component tests (packages/ui), run via the separate Vitest runner
 ];
 
 /** Pure: fast → [fast...]; full → [fast..., full...]. */
