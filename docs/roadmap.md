@@ -508,7 +508,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 - [ ] **Expensify** — expense reports, receipts, reimbursement status; read-only index; submit behind HITL
 - [ ] **Ramp** — transactions, receipts, budgets, vendor spend; read-only index
 - [ ] **Mercury** — business banking; balances, transactions, bills; read-only; wire/ACH behind HITL
-- [ ] **Stripe** — invoices, payments, customers, disputes, subscription events; read-only; refund behind HITL
+- [x] **Stripe** (2026-05-25, Phase 5 Tier 1) — `stripe:invoice` items via `mapStripeInvoiceToItem` (`GET /v1/invoices?limit=100`, `starting_after` + `has_more` cursor walk, `MAX_PAGES=20`); `external_id` = the invoice `id` (e.g. `in_1A2b...`); metadata invoice_id/number/customer_id/customer_name/customer_email/status/amount_due/amount_paid/currency/subscription_id/hosted_invoice_url/invoice_pdf/created_at/due_date/period_start/period_end/canonical_url (canonical prefers `hosted_invoice_url`, else `invoice_pdf`, else null); `Authorization: Bearer <secret key>` auth (the `sk_live_`/`sk_test_` key is never logged); vault key `stripe.api_key` (required); fixed SaaS host `api.stripe.com` (static sandbox network, no host override); Stripe timestamps are epoch SECONDS converted to epoch-ms via `secondsToMs` (×1000, NOT `Date.parse`); amounts are integer minor units (cents); three read tools (`stripe_list` / `stripe_get` / `stripe_search`); `hitlRequired: []`; **v1 invoices only — payments / customers / disputes / subscription events deferred; `stripe.refund` (HITL) deferred to Phase 6**
 
 ##### CRM & Sales
 
