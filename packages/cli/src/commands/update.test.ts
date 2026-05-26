@@ -12,7 +12,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./update.ts");
-const { parseUpdateArgs, runUpdateApply, runUpdateCheck } = mod;
+const { parseUpdateArgs, runUpdate, runUpdateApply, runUpdateCheck } = mod;
 
 const out = captureOutput();
 
@@ -129,5 +129,66 @@ describe("runUpdateApply", () => {
   it("propagates IPC errors from updater.applyUpdate", async () => {
     const { client } = createMockIpcClient([new Error("signature verification failed")]);
     await expect(runUpdateApply(client)).rejects.toThrow(/signature verification failed/);
+  });
+});
+
+describe("runUpdate dispatcher", () => {
+  let origExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    out.reset();
+    origExitCode = process.exitCode;
+    process.exitCode = 0;
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+  });
+  afterEach(() => {
+    process.exitCode = origExitCode;
+    clearFixture();
+  });
+
+  it("--check routes through withGatewayIpc to updater.checkNow", async () => {
+    const mock = createMockIpcClient([
+      { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runUpdate(["--check"]);
+    expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow"]);
+    expect(out.stdout).toContain("current: 0.1.0");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("--yes applies without prompting", async () => {
+    const mock = createMockIpcClient([null]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runUpdate(["--yes"]);
+    expect(mock.calls.map((c) => c.method)).toEqual(["updater.applyUpdate"]);
+    expect(out.stdout).toContain("Update applied. Gateway will restart.");
+  });
+
+  it("bare invocation with no update available prints No update available.", async () => {
+    const mock = createMockIpcClient([
+      { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runUpdate([]);
+    expect(out.stdout).toContain("No update available.");
+  });
+
+  it("bare invocation with update available aborts under non-TTY stdin", async () => {
+    // The interactive prompt at update.ts:85 (`process.stdout.write`) executes
+    // here (so it is covered) but is NOT captured by captureOutput(); assert on
+    // the console.log("Aborted.") line, not the prompt text. Under `bun test`
+    // stdin is non-TTY, so readLine() returns "" and the abort path runs.
+    const mock = createMockIpcClient([
+      {
+        currentVersion: "0.1.0",
+        latestVersion: "0.1.1",
+        updateAvailable: true,
+        notes: "Bug fixes",
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runUpdate([]);
+    expect(out.stdout).toContain("Aborted.");
   });
 });
