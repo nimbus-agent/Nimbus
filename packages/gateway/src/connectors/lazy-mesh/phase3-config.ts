@@ -639,6 +639,31 @@ export async function phase3AddVercelMcp(
   );
 }
 
+export async function phase3AddNetlifyMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "netlify", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Netlify's API host is fixed (api.netlify.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["netlify"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("netlify")],
+      env: extensionProcessEnv({
+        NETLIFY_TOKEN: tok,
+      }),
+    },
+    "netlify",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -667,5 +692,6 @@ export async function buildPhase3Servers(
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);
   await phase3AddVercelMcp(vault, servers, sandboxCwd);
+  await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
   return servers;
 }

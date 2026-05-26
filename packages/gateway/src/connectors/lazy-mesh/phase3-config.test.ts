@@ -32,6 +32,7 @@ import {
   phase3AddLaunchdarklyMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
+  phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -1095,6 +1096,37 @@ describe("phase3AddVercelMcp", () => {
     const spec = servers["vercel"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["VERCEL_TEAM_ID"]).toBe("team_xyz");
+  });
+});
+
+// ─── phase3AddNetlifyMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddNetlifyMcp", () => {
+  test("no-op without netlify.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["netlify"]).toBeUndefined();
+  });
+
+  test("no-op when netlify.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("netlify.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["netlify"]).toBeUndefined();
+  });
+
+  test("spawns with NETLIFY_TOKEN set + api.netlify.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("netlify.token", "nf-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["netlify"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.netlify.com");
+    expect(spec.env?.["NETLIFY_TOKEN"]).toBe("nf-test-token");
   });
 });
 
