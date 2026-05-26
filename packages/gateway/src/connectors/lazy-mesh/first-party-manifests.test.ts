@@ -92,6 +92,7 @@ describe("manifestForFirstParty", () => {
       "superset",
       "databricks",
       "mlflow",
+      "vercel",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();

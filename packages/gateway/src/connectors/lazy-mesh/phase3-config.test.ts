@@ -38,6 +38,7 @@ import {
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
   phase3AddSupersetMcp,
+  phase3AddVercelMcp,
   phase3AddWizMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -1051,6 +1052,49 @@ describe("phase3AddMlflowMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["MLFLOW_HOST"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddVercelMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddVercelMcp", () => {
+  test("no-op without vercel.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vercel"]).toBeUndefined();
+  });
+
+  test("no-op when vercel.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vercel"]).toBeUndefined();
+  });
+
+  test("spawns with VERCEL_TOKEN set + api.vercel.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "vc-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vercel"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.vercel.com");
+    expect(spec.env?.["VERCEL_TOKEN"]).toBe("vc-test-token");
+    expect(spec.env?.["VERCEL_TEAM_ID"]).toBeUndefined();
+  });
+
+  test("team_id propagates as VERCEL_TEAM_ID env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "tok");
+    await vault.set("vercel.team_id", "team_xyz");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vercel"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["VERCEL_TEAM_ID"]).toBe("team_xyz");
   });
 });
 

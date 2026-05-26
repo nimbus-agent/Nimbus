@@ -611,6 +611,34 @@ export async function phase3AddMlflowMcp(
   );
 }
 
+export async function phase3AddVercelMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "vercel", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Vercel's API host is fixed (api.vercel.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge. The optional team id passes through only when set; the
+  // connector omits the `teamId` query param when VERCEL_TEAM_ID is absent.
+  const teamId = (await readConnectorSecret(vault, "vercel", "team_id"))?.trim() ?? "";
+  servers["vercel"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("vercel")],
+      env: extensionProcessEnv({
+        VERCEL_TOKEN: tok,
+        ...(teamId === "" ? {} : { VERCEL_TEAM_ID: teamId }),
+      }),
+    },
+    "vercel",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -638,5 +666,6 @@ export async function buildPhase3Servers(
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);
+  await phase3AddVercelMcp(vault, servers, sandboxCwd);
   return servers;
 }
