@@ -12,9 +12,9 @@ import { REPO_ROOT } from "./structure-audit/lib.ts";
 export function extractWorkflowGates(yaml: string): string[] {
   const gates = new Set<string>();
   for (const m of yaml.matchAll(/\bbun(?:\s+--?[\w-]+)*\s+run\s+([a-z][\w:-]+)/g))
-    gates.add(m[1] as string);
+    if (m[1]) gates.add(m[1]);
   for (const m of yaml.matchAll(/\bbunx(?:\s+--?[\w-]+)*\s+([a-z][\w@/-]+)/g))
-    gates.add(m[1] as string);
+    if (m[1]) gates.add(m[1]);
   return [...gates];
 }
 

@@ -78,9 +78,9 @@ export const PREFLIGHT_GATES: readonly Gate[] = [...FAST, ...FULL];
 export const CI_ONLY_GATES: readonly string[] = [
   "test:scripts", // run by `bun test scripts` separately
   "audit:coverage-floor:build-lcov", // composed into the full-tier gate above
-  "package:headless",
-  "package:installers:linux",
-  "docs:build",
+  "package:headless", // headless gateway+CLI bundle — packaging step, not a local correctness gate
+  "package:installers:linux", // Linux .deb/tarball build — packaging step, not a local correctness gate
+  "docs:build", // Astro Starlight docs site build — run via workspace filter in CI, not a code gate
   "tauri", // bunx tauri build — desktop app build (needs Rust); not part of local static/test parity
   "playwright", // bunx playwright install — E2E desktop browsers; E2E desktop runs on push-to-main only
   "render:og-card", // OG-card PNG render check — doc-asset generation, regenerated + committed separately
