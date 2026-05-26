@@ -46,6 +46,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "mlflow",
   "vercel",
   "netlify",
+  "stripe",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -116,6 +117,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   mlflow: MIN10,
   vercel: MIN10,
   netlify: MIN10,
+  stripe: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -185,6 +187,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   mlflow: "uses an MLflow API token (connector.auth mlflow)",
   vercel: "uses an access token + optional team id (connector.auth vercel)",
   netlify: "uses a personal access token (connector.auth netlify)",
+  stripe: "uses a secret API key (connector.auth stripe)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

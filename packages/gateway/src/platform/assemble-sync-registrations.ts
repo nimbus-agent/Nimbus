@@ -39,6 +39,7 @@ import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
+import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
@@ -275,6 +276,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createNetlifySyncable({
       ensureNetlifyMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createStripeSyncable({
+      ensureStripeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

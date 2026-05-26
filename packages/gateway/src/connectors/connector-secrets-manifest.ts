@@ -47,6 +47,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   mlflow: ["mlflow.host", "mlflow.token"],
   vercel: ["vercel.token", "vercel.team_id"],
   netlify: ["netlify.token"],
+  stripe: ["stripe.api_key"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

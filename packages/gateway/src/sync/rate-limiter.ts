@@ -43,7 +43,8 @@ export type Provider =
   | "databricks"
   | "mlflow"
   | "vercel"
-  | "netlify";
+  | "netlify"
+  | "stripe";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -92,6 +93,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   mlflow: { requestsPerMinute: 60, burstSize: 10 },
   vercel: { requestsPerMinute: 60, burstSize: 10 },
   netlify: { requestsPerMinute: 60, burstSize: 10 },
+  stripe: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
