@@ -58,6 +58,7 @@
     "packages/mcp-connectors/metabase",
     "packages/mcp-connectors/superset",
     "packages/mcp-connectors/databricks",
+    "packages/mcp-connectors/mlflow",
     "packages/vscode-extension"
   ],
   "scripts": {
