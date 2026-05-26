@@ -63,6 +63,7 @@
     "packages/mcp-connectors/netlify",
     "packages/mcp-connectors/stripe",
     "packages/mcp-connectors/mercury",
+    "packages/mcp-connectors/readwise",
     "packages/vscode-extension"
   ],
   "scripts": {
