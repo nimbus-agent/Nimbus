@@ -714,6 +714,31 @@ export async function phase3AddMercuryMcp(
   );
 }
 
+export async function phase3AddReadwiseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "readwise", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Readwise's API host is fixed (readwise.io — a static-network SaaS host), so
+  // this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["readwise"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("readwise")],
+      env: extensionProcessEnv({
+        READWISE_TOKEN: key,
+      }),
+    },
+    "readwise",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -745,5 +770,6 @@ export async function buildPhase3Servers(
   await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
   await phase3AddStripeMcp(vault, servers, sandboxCwd);
   await phase3AddMercuryMcp(vault, servers, sandboxCwd);
+  await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
   return servers;
 }

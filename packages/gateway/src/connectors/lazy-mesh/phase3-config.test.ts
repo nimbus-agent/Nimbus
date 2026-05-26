@@ -35,6 +35,7 @@ import {
   phase3AddMlflowMcp,
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
+  phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
   phase3AddSnykMcp,
@@ -1191,6 +1192,37 @@ describe("phase3AddMercuryMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.mercury.com");
     expect(spec.env?.["MERCURY_TOKEN"]).toBe("mercury_test_token");
+  });
+});
+
+// ─── phase3AddReadwiseMcp ────────────────────────────────────────────────────
+
+describe("phase3AddReadwiseMcp", () => {
+  test("no-op without readwise.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["readwise"]).toBeUndefined();
+  });
+
+  test("no-op when readwise.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("readwise.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["readwise"]).toBeUndefined();
+  });
+
+  test("spawns with READWISE_TOKEN set + readwise.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("readwise.token", "readwise_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["readwise"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "readwise.io");
+    expect(spec.env?.["READWISE_TOKEN"]).toBe("readwise_test_token");
   });
 });
 
