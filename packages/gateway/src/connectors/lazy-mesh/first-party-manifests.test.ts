@@ -94,6 +94,7 @@ describe("manifestForFirstParty", () => {
       "mlflow",
       "vercel",
       "netlify",
+      "stripe",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();

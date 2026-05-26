@@ -450,6 +450,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Payments / billing (Stripe) ---
+  stripe: baseManifest("com.nimbus.stripe", {
+    // Stripe REST API. The API host is fixed (api.stripe.com) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts. The pay.stripe.com hosted-invoice /
+    // PDF URLs are only used to build canonical URL strings, never fetched, so
+    // they are NOT listed.
+    network: ["api.stripe.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

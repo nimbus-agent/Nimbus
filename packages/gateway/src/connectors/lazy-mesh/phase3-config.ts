@@ -664,6 +664,31 @@ export async function phase3AddNetlifyMcp(
   );
 }
 
+export async function phase3AddStripeMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "stripe", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Stripe's API host is fixed (api.stripe.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["stripe"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("stripe")],
+      env: extensionProcessEnv({
+        STRIPE_API_KEY: key,
+      }),
+    },
+    "stripe",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -693,5 +718,6 @@ export async function buildPhase3Servers(
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);
   await phase3AddVercelMcp(vault, servers, sandboxCwd);
   await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
+  await phase3AddStripeMcp(vault, servers, sandboxCwd);
   return servers;
 }

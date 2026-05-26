@@ -38,6 +38,7 @@ import {
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddStripeMcp,
   phase3AddSupersetMcp,
   phase3AddVercelMcp,
   phase3AddWizMcp,
@@ -1127,6 +1128,37 @@ describe("phase3AddNetlifyMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.netlify.com");
     expect(spec.env?.["NETLIFY_TOKEN"]).toBe("nf-test-token");
+  });
+});
+
+// ─── phase3AddStripeMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddStripeMcp", () => {
+  test("no-op without stripe.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stripe"]).toBeUndefined();
+  });
+
+  test("no-op when stripe.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("stripe.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stripe"]).toBeUndefined();
+  });
+
+  test("spawns with STRIPE_API_KEY set + api.stripe.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("stripe.api_key", "sk_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["stripe"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.stripe.com");
+    expect(spec.env?.["STRIPE_API_KEY"]).toBe("sk_test_token");
   });
 });
 
