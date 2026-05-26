@@ -415,6 +415,19 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- ML model registry (MLflow) ---
+  mlflow: baseManifest("com.nimbus.mlflow", {
+    // MLflow has no universal SaaS host — every tracking server is a distinct
+    // per-org URL (self-hosted or managed). `phase3AddMlflowMcp` extends the
+    // empty static network list with the hostname parsed from MLFLOW_HOST at
+    // spawn time (same runtime-merge pattern as grafana / argocd / flux /
+    // metabase / superset / databricks). Without that merge MLflow would be
+    // unreachable under the sandbox; with it, the connector talks only to the
+    // user-configured tracking server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

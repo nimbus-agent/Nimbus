@@ -582,6 +582,35 @@ export async function phase3AddDatabricksMcp(
   );
 }
 
+export async function phase3AddMlflowMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const hostUrl = (await readConnectorSecret(vault, "mlflow", "host"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "mlflow", "token"))?.trim() ?? "";
+  if (hostUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — MLflow has no universal SaaS host (every tracking server is
+  // a distinct per-org URL); extend the empty static network list with the
+  // hostname parsed from MLFLOW_HOST so the sandbox lets the connector reach
+  // the user's tracking server (same runtime-merge pattern as grafana /
+  // argocd / flux / metabase / superset / databricks). The API token is sent
+  // by the connector as an `Authorization: Bearer` header.
+  const host = hostnameFromUrl(hostUrl);
+  const manifest = manifestWithExtraNetworkHosts("mlflow", host === null ? [] : [host]);
+  servers["mlflow"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("mlflow")],
+      env: extensionProcessEnv({ MLFLOW_HOST: hostUrl, MLFLOW_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -608,5 +637,6 @@ export async function buildPhase3Servers(
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
+  await phase3AddMlflowMcp(vault, servers, sandboxCwd);
   return servers;
 }

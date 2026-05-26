@@ -31,6 +31,7 @@ import {
   phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddMetabaseMcp,
+  phase3AddMlflowMcp,
   phase3AddNewrelicMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -987,6 +988,69 @@ describe("phase3AddDatabricksMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["DATABRICKS_HOST"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddMlflowMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddMlflowMcp", () => {
+  test("no-op without mlflow.host + mlflow.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when only mlflow.host is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "https://mlflow.acme.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when only mlflow.token is set (host missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.token", "mlflow-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "   ");
+    await vault.set("mlflow.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("spawns with MLFLOW_HOST/MLFLOW_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "https://mlflow.acme.com");
+    await vault.set("mlflow.token", "mlflow-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mlflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "mlflow.acme.com");
+    expect(spec.env?.["MLFLOW_HOST"]).toBe("https://mlflow.acme.com");
+    expect(spec.env?.["MLFLOW_TOKEN"]).toBe("mlflow-test-token");
+  });
+
+  test("spawns even when mlflow.host is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "not a url");
+    await vault.set("mlflow.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mlflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["MLFLOW_HOST"]).toBe("not a url");
   });
 });
 
