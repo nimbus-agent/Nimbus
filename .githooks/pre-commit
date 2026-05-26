@@ -16,9 +16,12 @@ if ! command -v bun >/dev/null 2>&1; then
   echo "  profile is loaded for git, or commit from a terminal." >&2
   exit 1
 fi
-# Fast formatting/lint check on staged files (non-fatal hint if biome missing).
-bun run lint >/dev/null 2>&1 || {
-  echo "✗ Biome check failed. Run 'bun run lint:fix' and re-stage." >&2
+# Fast formatting/lint check. Capture output so a failure shows WHICH files are
+# broken (suppressing it would leave the developer with no diagnostic).
+lint_out="$(bun run lint 2>&1)"
+if [ $? -ne 0 ]; then
+  printf '%s\n' "$lint_out" >&2
+  echo "✗ Biome check failed (see above). Run 'bun run lint:fix' and re-stage." >&2
   exit 1
-}
+fi
 exit 0

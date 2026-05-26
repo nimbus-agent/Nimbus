@@ -8,6 +8,9 @@ describe("decideHookInstall", () => {
   test("no-op when already .githooks", () => {
     expect(decideHookInstall(".githooks", false)).toEqual({ action: "noop" });
   });
+  test("no-op when already .githooks even with --force (nothing to re-install)", () => {
+    expect(decideHookInstall(".githooks", true)).toEqual({ action: "noop" });
+  });
   test("warns when set elsewhere without --force", () => {
     expect(decideHookInstall(".husky", false)).toEqual({ action: "warn", current: ".husky" });
   });

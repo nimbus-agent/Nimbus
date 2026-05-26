@@ -6,7 +6,13 @@ export type InstallDecision =
   | { action: "noop" }
   | { action: "warn"; current: string };
 
-/** Pure decision: what to do given the current core.hooksPath and --force. */
+/**
+ * Pure decision: what to do given the current core.hooksPath and --force.
+ *
+ * Already-`.githooks` is a no-op even with --force — there is nothing to
+ * (re)install, and --force exists specifically to supersede a *different*
+ * hooksPath (e.g. `.husky`), not to re-point an already-correct one.
+ */
 export function decideHookInstall(current: string | null, force: boolean): InstallDecision {
   if (current === ".githooks") return { action: "noop" };
   if (current === null || current === "" || force) return { action: "install" };
@@ -18,9 +24,11 @@ async function gitConfigGet(key: string): Promise<string | null> {
     stdout: "pipe",
     stderr: "ignore",
   });
-  const out = (await new Response(p.stdout).text()).trim();
-  await p.exited;
-  return out.length > 0 ? out : null;
+  // Resolve stdout and exit together so intent is explicit (a missing key exits
+  // non-zero with empty stdout, which we map to null).
+  const [out] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+  const trimmed = out.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 async function main(): Promise<void> {
