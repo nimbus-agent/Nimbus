@@ -44,6 +44,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   metabase: ["metabase.url", "metabase.api_key"],
   superset: ["superset.url", "superset.username", "superset.password"],
   databricks: ["databricks.host", "databricks.token"],
+  mlflow: ["mlflow.host", "mlflow.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

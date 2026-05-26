@@ -27,6 +27,7 @@ import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
+import { createMlflowSyncable } from "../connectors/mlflow-sync.ts";
 import { createNewrelicSyncable } from "../connectors/newrelic-sync.ts";
 import { createNotionSyncable } from "../connectors/notion-sync.ts";
 import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
@@ -257,6 +258,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createDatabricksSyncable({
       ensureDatabricksMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMlflowSyncable({
+      ensureMlflowMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

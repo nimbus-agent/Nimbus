@@ -40,7 +40,8 @@ export type Provider =
   | "dbt"
   | "metabase"
   | "superset"
-  | "databricks";
+  | "databricks"
+  | "mlflow";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -86,6 +87,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   metabase: { requestsPerMinute: 60, burstSize: 10 },
   superset: { requestsPerMinute: 60, burstSize: 10 },
   databricks: { requestsPerMinute: 60, burstSize: 10 },
+  mlflow: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
