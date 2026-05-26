@@ -30,6 +30,7 @@ import {
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
+  phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
   phase3AddNetlifyMcp,
@@ -1159,6 +1160,37 @@ describe("phase3AddStripeMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.stripe.com");
     expect(spec.env?.["STRIPE_API_KEY"]).toBe("sk_test_token");
+  });
+});
+
+// ─── phase3AddMercuryMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddMercuryMcp", () => {
+  test("no-op without mercury.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mercury"]).toBeUndefined();
+  });
+
+  test("no-op when mercury.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("mercury.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mercury"]).toBeUndefined();
+  });
+
+  test("spawns with MERCURY_TOKEN set + api.mercury.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("mercury.token", "mercury_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mercury"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.mercury.com");
+    expect(spec.env?.["MERCURY_TOKEN"]).toBe("mercury_test_token");
   });
 });
 

@@ -689,6 +689,31 @@ export async function phase3AddStripeMcp(
   );
 }
 
+export async function phase3AddMercuryMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "mercury", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Mercury's API host is fixed (api.mercury.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["mercury"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("mercury")],
+      env: extensionProcessEnv({
+        MERCURY_TOKEN: key,
+      }),
+    },
+    "mercury",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -719,5 +744,6 @@ export async function buildPhase3Servers(
   await phase3AddVercelMcp(vault, servers, sandboxCwd);
   await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
   await phase3AddStripeMcp(vault, servers, sandboxCwd);
+  await phase3AddMercuryMcp(vault, servers, sandboxCwd);
   return servers;
 }
