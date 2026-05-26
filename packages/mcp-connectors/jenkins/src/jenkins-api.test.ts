@@ -77,7 +77,7 @@ describe("getJenkinsCrumb", () => {
     globalThis.fetch = (async () => {
       calls += 1;
       return jsonResponse({ crumb: "abc", crumbRequestField: "Jenkins-Crumb" });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const first = await getJenkinsCrumb("https://ci", "Basic x");
     expect(first).toEqual({ field: "Jenkins-Crumb", value: "abc" });
     const second = await getJenkinsCrumb("https://ci", "Basic x");
@@ -85,7 +85,7 @@ describe("getJenkinsCrumb", () => {
     expect(calls).toBe(1);
   });
   test("caches null on non-ok response", async () => {
-    globalThis.fetch = (async () => jsonResponse({}, false, 403)) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({}, false, 403)) as unknown as typeof fetch;
     expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
   });
   test("caches null when JSON is not an object", async () => {
@@ -95,11 +95,11 @@ describe("getJenkinsCrumb", () => {
         status: 200,
         json: async () => [1, 2, 3],
         text: async () => "[1,2,3]",
-      }) as Response) as typeof fetch;
+      }) as unknown as Response) as unknown as typeof fetch;
     expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
   });
   test("caches null when crumb fields are missing", async () => {
-    globalThis.fetch = (async () => jsonResponse({ crumb: "" })) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ crumb: "" })) as unknown as typeof fetch;
     expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
   });
   test("caches null when json() throws", async () => {
@@ -111,7 +111,7 @@ describe("getJenkinsCrumb", () => {
           throw new Error("bad json");
         },
         text: async () => "x",
-      }) as Response) as typeof fetch;
+      }) as unknown as Response) as unknown as typeof fetch;
     expect(await getJenkinsCrumb("https://ci", "Basic x")).toBeNull();
   });
 });
@@ -119,13 +119,21 @@ describe("getJenkinsCrumb", () => {
 describe("jenkinsFetchJson", () => {
   test("returns parsed JSON on 200", async () => {
     globalThis.fetch = (async () =>
-      ({ ok: true, status: 200, text: async () => '{"k":1}' }) as Response) as typeof fetch;
+      ({
+        ok: true,
+        status: 200,
+        text: async () => '{"k":1}',
+      }) as unknown as Response) as unknown as typeof fetch;
     const r = await jenkinsFetchJson("https://ci/api", { authHeader: "Basic x" });
     expect(r).toEqual({ ok: true, status: 200, text: '{"k":1}', json: { k: 1 } });
   });
   test("returns json:null on an unparseable body", async () => {
     globalThis.fetch = (async () =>
-      ({ ok: false, status: 500, text: async () => "<html>" }) as Response) as typeof fetch;
+      ({
+        ok: false,
+        status: 500,
+        text: async () => "<html>",
+      }) as unknown as Response) as unknown as typeof fetch;
     const r = await jenkinsFetchJson("https://ci/api", { authHeader: "Basic x" });
     expect(r.ok).toBe(false);
     expect(r.json).toBeNull();
