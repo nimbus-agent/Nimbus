@@ -488,6 +488,16 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Support / helpdesk (Intercom) ---
+  intercom: baseManifest("com.nimbus.intercom", {
+    // Intercom REST API. The API host is fixed (api.intercom.io — the US host).
+    // EU/AU regional hosts (api.eu.intercom.io / api.au.intercom.io) are a
+    // deferred follow-up, so the static list is the only host this connector
+    // ever contacts today — there is no host override.
+    network: ["api.intercom.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

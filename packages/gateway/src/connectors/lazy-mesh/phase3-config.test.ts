@@ -29,6 +29,7 @@ import {
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
   phase3AddIacMcp,
+  phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
@@ -1255,6 +1256,37 @@ describe("phase3AddRaindropMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.raindrop.io");
     expect(spec.env?.["RAINDROP_TOKEN"]).toBe("raindrop_test_token");
+  });
+});
+
+// ─── phase3AddIntercomMcp ────────────────────────────────────────────────────
+
+describe("phase3AddIntercomMcp", () => {
+  test("no-op without intercom.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["intercom"]).toBeUndefined();
+  });
+
+  test("no-op when intercom.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("intercom.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["intercom"]).toBeUndefined();
+  });
+
+  test("spawns with INTERCOM_TOKEN set + api.intercom.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("intercom.token", "intercom_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["intercom"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.intercom.io");
+    expect(spec.env?.["INTERCOM_TOKEN"]).toBe("intercom_test_token");
   });
 });
 

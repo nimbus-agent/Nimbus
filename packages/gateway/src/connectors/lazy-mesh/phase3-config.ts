@@ -764,6 +764,32 @@ export async function phase3AddRaindropMcp(
   );
 }
 
+export async function phase3AddIntercomMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "intercom", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Intercom's API host is fixed (api.intercom.io — the US host, a
+  // static-network SaaS host; EU/AU regional hosts are deferred), so this uses
+  // the `wrap(...)` helper with the static manifest rather than a runtime host
+  // merge.
+  servers["intercom"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("intercom")],
+      env: extensionProcessEnv({
+        INTERCOM_TOKEN: key,
+      }),
+    },
+    "intercom",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -797,5 +823,6 @@ export async function buildPhase3Servers(
   await phase3AddMercuryMcp(vault, servers, sandboxCwd);
   await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
   await phase3AddRaindropMcp(vault, servers, sandboxCwd);
+  await phase3AddIntercomMcp(vault, servers, sandboxCwd);
   return servers;
 }
