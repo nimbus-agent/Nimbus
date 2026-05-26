@@ -50,6 +50,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   stripe: ["stripe.api_key"],
   mercury: ["mercury.token"],
   readwise: ["readwise.token"],
+  raindrop: ["raindrop.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

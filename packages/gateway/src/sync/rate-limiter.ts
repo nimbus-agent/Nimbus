@@ -46,7 +46,8 @@ export type Provider =
   | "netlify"
   | "stripe"
   | "mercury"
-  | "readwise";
+  | "readwise"
+  | "raindrop";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -98,6 +99,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   stripe: { requestsPerMinute: 60, burstSize: 10 },
   mercury: { requestsPerMinute: 60, burstSize: 10 },
   readwise: { requestsPerMinute: 60, burstSize: 10 },
+  raindrop: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

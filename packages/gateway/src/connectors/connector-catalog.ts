@@ -49,6 +49,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "stripe",
   "mercury",
   "readwise",
+  "raindrop",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -122,6 +123,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   stripe: MIN10,
   mercury: MIN10,
   readwise: MIN10,
+  raindrop: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -194,6 +196,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   stripe: "uses a secret API key (connector.auth stripe)",
   mercury: "uses a Mercury API token (connector.auth mercury)",
   readwise: "uses a Readwise API token (connector.auth readwise)",
+  raindrop: "uses a Raindrop.io API token (connector.auth raindrop)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
