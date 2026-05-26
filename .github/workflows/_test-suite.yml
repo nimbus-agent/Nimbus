@@ -349,6 +349,9 @@ jobs:
         # action directly so its SHA pin is visible (the repo enforces
         # sha_pinning_required=true, which blocks transitively-unpinned actions).
         if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
+        # Advisory, not a gate: an external sonar-scanner failure (e.g. exit 3) must
+        # not fail the build. Analysis still uploads to the SonarCloud dashboard.
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
