@@ -213,7 +213,7 @@ jobs:
         # e2f4ede (v2.0.4) bundled a cargo-deny version that couldn't
         # parse CVSS 4.0 vectors, causing advisory-db sync to fail on
         # e.g. RUSTSEC-2025-0138.
-        uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2.0.18
+        uses: EmbarkStudios/cargo-deny-action@a531616d8ce3b9177443e48a1159bc945a099823 # v2.0.19
         with:
           manifest-path: packages/ui/src-tauri/Cargo.toml
           # `all` = check advisories, bans, licenses, sources.
