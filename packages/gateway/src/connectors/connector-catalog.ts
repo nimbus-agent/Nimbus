@@ -44,6 +44,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "superset",
   "databricks",
   "mlflow",
+  "vercel",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -112,6 +113,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   superset: MIN10,
   databricks: MIN10,
   mlflow: MIN10,
+  vercel: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -179,6 +181,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   superset: "uses Superset username/password (connector.auth superset)",
   databricks: "uses a Databricks PAT (connector.auth databricks)",
   mlflow: "uses an MLflow API token (connector.auth mlflow)",
+  vercel: "uses an access token + optional team id (connector.auth vercel)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
