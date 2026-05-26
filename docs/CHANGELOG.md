@@ -17,6 +17,7 @@ Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T
 - **Tier-1 connector — dbt Cloud** ✅ — Administrative-API jobs + run status (`dbt:job`); `Authorization: Token` auth. Model-lineage (Discovery API) + `dbt.job.trigger` HITL deferred.
 - **Tier-1 connector — Metabase** ✅ — dashboards (`metabase:dashboard`) via the Metabase API (`x-api-key`); self-hosted host via `metabase.url`. Saved-questions/cards deferred.
 - **Tier-1 connector — Superset** ✅ — dashboards (`superset:dashboard`) via the Superset API (username/password → JWT); self-hosted host via `superset.url`. Charts/datasets/saved-queries deferred.
+- **Tier-1 connector — Databricks** ✅ — jobs + latest run status (`data_pipeline`) via the Jobs API 2.1 (Bearer PAT); per-workspace host via `databricks.host`. Clusters/SQL-warehouses/notebooks + write tools deferred.
 
 ### 2026-05-24
 
