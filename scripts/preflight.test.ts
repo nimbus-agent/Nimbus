@@ -8,13 +8,17 @@ import { REPO_ROOT } from "./structure-audit/lib.ts";
  * Extract `bun run <script>` and `bunx <tool>` gate ids from a workflow file.
  * Flag-tolerant: matches `bun run X`, `bun --bun run X`, `bunx X`, `bunx --bun X`
  * so an intervening runtime flag can't silently hide a gate (review Q1).
+ *
+ * Each intervening-flag group is `\s+-\S+` (whitespace, then a dash-led token).
+ * `\s`/`\S` are disjoint so the input partitions exactly one way — this avoids
+ * the exponential backtracking a `(?:\s+--?[\w-]+)*` form would have on inputs
+ * like `-- -- --` (CodeQL js/redos).
  */
 export function extractWorkflowGates(yaml: string): string[] {
   const gates = new Set<string>();
-  for (const m of yaml.matchAll(/\bbun(?:\s+--?[\w-]+)*\s+run\s+([a-z][\w:-]+)/g))
+  for (const m of yaml.matchAll(/\bbun(?:\s+-\S+)*\s+run\s+([a-z][\w:-]+)/g))
     if (m[1]) gates.add(m[1]);
-  for (const m of yaml.matchAll(/\bbunx(?:\s+--?[\w-]+)*\s+([a-z][\w@/-]+)/g))
-    if (m[1]) gates.add(m[1]);
+  for (const m of yaml.matchAll(/\bbunx(?:\s+-\S+)*\s+([a-z][\w@/-]+)/g)) if (m[1]) gates.add(m[1]);
   return [...gates];
 }
 
