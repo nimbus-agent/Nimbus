@@ -88,6 +88,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // produce no coverage anyway. Same shape as sandbox-wrapper.ts / sandbox-probe.ts.
   { kind: "exact", path: "packages/gateway/src/db/query-guard-worker.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-worker.ts" },
+  // The @xenova/transformers dynamic-import boundary — onnxruntime-node cannot
+  // load under `bun test`. model.ts is unit-tested by mocking this shim's path.
+  {
+    kind: "exact",
+    path: "packages/gateway/src/embedding/load-feature-extraction-pipeline.ts",
+  },
   // Gateway entry point — top-level `await main()` makes in-process testing
   // impossible (same exemption rationale as github-actions/*/src/main.ts).
   // Helpers like `emitSandboxPostureBannerIfDegraded` would need to be

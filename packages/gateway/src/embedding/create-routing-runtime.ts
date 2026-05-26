@@ -9,7 +9,7 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
-import { createLocalEmbedder } from "./model.ts";
+import { type CreateLocalEmbedderOptions, createLocalEmbedder } from "./model.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import { EMBEDDING_DIM_LOCAL, EMBEDDING_DIM_OPENAI } from "./routing.ts";
@@ -37,6 +37,10 @@ export async function tryCreateRoutingEmbeddingRuntime(
   logger: Logger,
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   vault: NimbusVault,
+  // Injected for tests only — production passes nothing and gets the real
+  // MiniLM loader. Injection (not `mock.module`) avoids leaking a process-global
+  // model.ts fake into sibling embedding tests (e.g. model.test.ts).
+  createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
 ): Promise<EmbeddingRuntime | null> {
   const apiKey = await resolveOpenAIApiKey(vault);
   if (apiKey === "") {
@@ -47,7 +51,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
   let localEmbedder: Embedder;
   let openaiEmbedder: Embedder;
   try {
-    localEmbedder = await createLocalEmbedder({ cacheDir: join(paths.dataDir, "models") });
+    localEmbedder = await createEmbedder({ cacheDir: join(paths.dataDir, "models") });
     openaiEmbedder = await createOpenAIEmbedder({
       apiKey,
       model: "text-embedding-3-small",
