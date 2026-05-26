@@ -32,14 +32,17 @@ export interface CrossPlatformIssue {
 const ASSERTION_RE = /\.(toBe|toEqual|toStrictEqual|toContain)\(\s*(['"`])((?:\\.|(?!\2).)*)\2/g;
 
 function looksLikeWindowsPath(literal: string): boolean {
-  // `literal` is the raw source between the quotes; a Windows separator is
-  // written `\\` in source, so collapse escaped pairs to single backslashes.
-  const s = literal.replace(/\\\\/g, "\\");
-  if (!s.includes("\\")) return false; // no backslash → not a Windows-separator path
-  if (/^[A-Za-z]:\\/.test(s)) return true; // drive-letter absolute: C:\...
-  if (/^\\\\[^\\]/.test(s)) return true; // UNC: \\server\share
-  if (/^\.\.?\\/.test(s)) return true; // explicit relative: .\x or ..\x
-  if (/\\[\w.-]+\.[A-Za-z0-9]{1,6}(?:$|["'`])/.test(s)) return true; // ...\file.ext
+  // `literal` is the RAW source between the quotes. A Windows separator inside a
+  // string literal is ALWAYS written as an escaped backslash `\\` (two chars in
+  // source); a lone backslash is an escape sequence (\t, \n, \r, …), never a path
+  // separator. So we match on `\\` pairs and never collapse — this structurally
+  // excludes the \t/\n false-positive class (e.g. "config\t1.yaml" has a single
+  // backslash and is correctly ignored, while "data\\nimbus.db" is flagged).
+  if (!literal.includes("\\\\")) return false; // no escaped backslash → not a Windows path
+  if (/^[A-Za-z]:\\\\/.test(literal)) return true; // drive-letter absolute: C:\\...
+  if (/^\\\\\\\\/.test(literal)) return true; // UNC root: \\\\server (escaped \\)
+  if (/^\.\.?\\\\/.test(literal)) return true; // explicit relative: .\\x or ..\\x
+  if (/\\\\[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(literal)) return true; // ...\\file.ext
   return false;
 }
 
