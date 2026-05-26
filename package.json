@@ -62,6 +62,7 @@
     "packages/mcp-connectors/vercel",
     "packages/mcp-connectors/netlify",
     "packages/mcp-connectors/stripe",
+    "packages/mcp-connectors/mercury",
     "packages/vscode-extension"
   ],
   "scripts": {
