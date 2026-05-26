@@ -18,6 +18,7 @@ Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T
 - **Tier-1 connector — Metabase** ✅ — dashboards (`metabase:dashboard`) via the Metabase API (`x-api-key`); self-hosted host via `metabase.url`. Saved-questions/cards deferred.
 - **Tier-1 connector — Superset** ✅ — dashboards (`superset:dashboard`) via the Superset API (username/password → JWT); self-hosted host via `superset.url`. Charts/datasets/saved-queries deferred.
 - **Tier-1 connector — Databricks** ✅ — jobs + latest run status (`data_pipeline`) via the Jobs API 2.1 (Bearer PAT); per-workspace host via `databricks.host`. Clusters/SQL-warehouses/notebooks + write tools deferred.
+- **Tier-1 connector — MLflow** ✅ — registered models (`ml_model`) via the Model Registry API (`GET /api/2.0/mlflow/registered-models/search`, Bearer token); tracking-server host via `mlflow.host`. Registered-models-only (experiments/runs/metrics/params/artifacts deferred); `ml.model.promote` / `ml.model.transition-stage` (HITL) writes deferred to Phase 6.
 
 ### 2026-05-24
 
