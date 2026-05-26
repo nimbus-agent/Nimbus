@@ -366,7 +366,7 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
     const pipelineCalls = fixture.fetchMock.calls.filter((c) => PIPELINES_RE_ANY.test(c.url));
     expect(pipelineCalls).toHaveLength(1);
     // URL-encoded path component: slash becomes %2F.
-    expect(pipelineCalls[0].url).toContain("/projects/acme%2Fapp/pipelines?"); // cross-platform-ok — HTTP request URL path, always forward-slash
+    expect(pipelineCalls[0].url).toContain("/projects/acme%2Fapp/pipelines?");
     // Plain slash should NOT appear inside the project path segment.
     expect(/\/projects\/acme\/app\/pipelines/.test(pipelineCalls[0].url)).toBe(false);
   });

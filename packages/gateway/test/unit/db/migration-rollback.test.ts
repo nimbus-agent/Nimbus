@@ -22,9 +22,9 @@ describe("MigrationRollbackError", () => {
   test("carries version and backup path", () => {
     const err = new MigrationRollbackError(7, "/some/backup.db.gz", new Error("inner"));
     expect(err.migrationVersion).toBe(7);
-    expect(err.backupPath).toBe("/some/backup.db.gz"); // cross-platform-ok — error-constructor input echoed verbatim, not an OS-resolved path
+    expect(err.backupPath).toBe("/some/backup.db.gz");
     expect(err.message).toContain("v7");
-    expect(err.message).toContain("/some/backup.db.gz"); // cross-platform-ok — error-constructor input echoed into the message, not an OS-resolved path
+    expect(err.message).toContain("/some/backup.db.gz");
     expect(err.name).toBe("MigrationRollbackError");
   });
 

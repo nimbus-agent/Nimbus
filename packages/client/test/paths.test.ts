@@ -61,13 +61,13 @@ describe("getNimbusPaths per platform", () => {
     // path so the test does not resemble a writable-directory usage.
     process.env.TMPDIR = "/synthetic-tmpdir-test/";
     const p = getNimbusPaths();
-    expect(p.socketPath).toBe("/synthetic-tmpdir-test/nimbus-gateway.sock"); // cross-platform-ok — darwin-forced branch; POSIX socket path is the intended OS-specific result
+    expect(p.socketPath).toBe("/synthetic-tmpdir-test/nimbus-gateway.sock");
   });
 
   test("linux honors XDG_RUNTIME_DIR", () => {
     setPlatform("linux");
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
     const p = getNimbusPaths();
-    expect(p.socketPath).toBe("/run/user/1000/nimbus-gateway.sock"); // cross-platform-ok — linux-forced branch; POSIX socket path is the intended OS-specific result
+    expect(p.socketPath).toBe("/run/user/1000/nimbus-gateway.sock");
   });
 });

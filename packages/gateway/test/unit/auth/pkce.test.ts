@@ -748,7 +748,7 @@ describe("runPKCEFlow", () => {
 
     const authUrlParsed = new URL(capturedAuthUrl);
     expect(authUrlParsed.hostname).toBe("slack.com");
-    expect(authUrlParsed.pathname).toBe("/oauth/v2/authorize"); // cross-platform-ok — parsed URL pathname, always forward-slash
+    expect(authUrlParsed.pathname).toBe("/oauth/v2/authorize");
 
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
     const state = authUrlParsed.searchParams.get("state");

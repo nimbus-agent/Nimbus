@@ -35,12 +35,12 @@ describe("extension-store", () => {
       last_verified_at: t,
     });
     expect(listExtensions(db).length).toBe(1);
-    expect(selectExtensionInstallPath(db, "ext.a")).toBe("/e/ext.a"); // cross-platform-ok — install-path fixture stored + read back verbatim, not an OS-resolved path
+    expect(selectExtensionInstallPath(db, "ext.a")).toBe("/e/ext.a");
     expect(setExtensionEnabled(db, "ext.a", false)).toBe(true);
     expect(listExtensions(db)[0]?.enabled).toBe(0);
     touchExtensionVerifiedAt(db, "ext.a", t + 1);
     expect(listExtensions(db)[0]?.last_verified_at).toBe(t + 1);
-    expect(deleteExtensionById(db, "ext.a")).toBe("/e/ext.a"); // cross-platform-ok — install-path fixture stored + read back verbatim, not an OS-resolved path
+    expect(deleteExtensionById(db, "ext.a")).toBe("/e/ext.a");
     expect(listExtensions(db).length).toBe(0);
   });
 

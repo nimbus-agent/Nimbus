@@ -76,7 +76,7 @@ describe("parseScriptConsentSource", () => {
 
   test("flag present with a path → returns the path", () => {
     const result = parseScriptConsentSource(["--script-consent-source", "/tmp/decisions.jsonl"]);
-    expect(result).toBe("/tmp/decisions.jsonl"); // cross-platform-ok — CLI-arg value echoed back verbatim, not an OS-resolved path
+    expect(result).toBe("/tmp/decisions.jsonl");
   });
 
   test("flag present without a path (last arg) → throws", () => {
@@ -99,7 +99,7 @@ describe("parseScriptConsentSource", () => {
   test("flag absent, env set → returns the env value", () => {
     process.env[ENV_KEY] = "/tmp/env-decisions.jsonl";
     const result = parseScriptConsentSource([]);
-    expect(result).toBe("/tmp/env-decisions.jsonl"); // cross-platform-ok — env-var value echoed back verbatim, not an OS-resolved path
+    expect(result).toBe("/tmp/env-decisions.jsonl");
   });
 
   test("flag absent, env empty string → returns undefined", () => {

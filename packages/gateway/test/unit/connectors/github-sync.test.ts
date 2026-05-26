@@ -349,7 +349,7 @@ describe("github-sync — login resolution", () => {
 
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
-    expect(fixture.fetchMock.calls[1].url).toContain("/users/octocat/events"); // cross-platform-ok — HTTP request URL path, always forward-slash
+    expect(fixture.fetchMock.calls[1].url).toContain("/users/octocat/events");
   });
 
   test("subsequent sync with cached login skips /user", async () => {

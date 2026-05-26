@@ -87,7 +87,7 @@ describe("ConnectionManager", () => {
     const last = states.at(-1);
     expect(last?.kind).toBe("permission-denied");
     if (last?.kind === "permission-denied") {
-      expect(last.socketPath).toBe("/run/nimbus-test/x.sock"); // cross-platform-ok — POSIX socket-path fixture echoed verbatim, not an OS-resolved path
+      expect(last.socketPath).toBe("/run/nimbus-test/x.sock");
     }
     await mgr.dispose();
   });

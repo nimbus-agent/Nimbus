@@ -1047,7 +1047,7 @@ describe("formatConsentPrompt", () => {
       payload: { path: "/p" },
     });
     expect(withPayload).toContain("Details:");
-    expect(withPayload).toContain("/p"); // cross-platform-ok — opaque consent-payload fixture rendered into a display string, not an OS-resolved path
+    expect(withPayload).toContain("/p");
   });
 });
 

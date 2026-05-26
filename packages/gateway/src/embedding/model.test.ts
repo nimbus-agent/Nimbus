@@ -84,7 +84,7 @@ describe("createLocalEmbedder body (isolated-mode)", () => {
     const e = await createLocalEmbedder({ cacheDir: "/tmp/cache" });
     expect(e.model).toBe("all-MiniLM-L6-v2");
     expect(e.dims).toBe(384);
-    expect(fakeEnv.cacheDir).toBe("/tmp/cache"); // cross-platform-ok — cacheDir fixture input echoed back, not an OS-resolved path
+    expect(fakeEnv.cacheDir).toBe("/tmp/cache");
 
     const out = await e.embed([]);
     expect(out).toEqual([]);

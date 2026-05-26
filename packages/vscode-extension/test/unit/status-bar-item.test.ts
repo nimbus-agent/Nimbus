@@ -37,7 +37,7 @@ describe("formatStatusBar", () => {
       inputs({ connection: { kind: "permission-denied", socketPath: "/sock" } }),
     );
     expect(r.text).toMatch(/Socket permission denied/);
-    expect(r.tooltip).toContain("/sock"); // cross-platform-ok — opaque socket-path token in a tooltip substring, not an OS-resolved path
+    expect(r.tooltip).toContain("/sock");
     expect(r.backgroundColor?.id).toMatch(/errorBackground/);
   });
 

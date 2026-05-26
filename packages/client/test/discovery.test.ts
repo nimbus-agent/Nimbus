@@ -33,8 +33,8 @@ describe("readGatewayState", () => {
     );
     const r = await readGatewayState(paths);
     expect(r?.pid).toBe(1234);
-    expect(r?.socketPath).toBe("/run/sock"); // cross-platform-ok — state-file fixture round-tripped through JSON, not an OS-resolved path
-    expect(r?.logPath).toBe("/log"); // cross-platform-ok — state-file fixture round-tripped through JSON, not an OS-resolved path
+    expect(r?.socketPath).toBe("/run/sock");
+    expect(r?.logPath).toBe("/log");
     rmSync(paths.dataDir, { recursive: true, force: true });
   });
 
@@ -75,7 +75,7 @@ describe("discoverSocketPath precedence", () => {
     );
     const r = await discoverSocketPath({ override: "/forced/sock", paths });
     expect(r.source).toBe("override");
-    expect(r.socketPath).toBe("/forced/sock"); // cross-platform-ok — override-option fixture echoed back, not an OS-resolved path
+    expect(r.socketPath).toBe("/forced/sock");
     rmSync(paths.dataDir, { recursive: true, force: true });
   });
 
@@ -87,7 +87,7 @@ describe("discoverSocketPath precedence", () => {
     );
     const r = await discoverSocketPath({ paths });
     expect(r.source).toBe("stateFile");
-    expect(r.socketPath).toBe("/state/sock"); // cross-platform-ok — state-file fixture round-tripped through JSON, not an OS-resolved path
+    expect(r.socketPath).toBe("/state/sock");
     expect(r.pid).toBe(7);
     rmSync(paths.dataDir, { recursive: true, force: true });
   });

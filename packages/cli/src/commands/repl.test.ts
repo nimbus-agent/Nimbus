@@ -132,7 +132,7 @@ describe("loadReplPreconditions (REPL gate)", () => {
   it("returns the socketPath + parsed sessionId when gateway state is present", async () => {
     setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
     const out = await loadReplPreconditions(["--session", "sess-9"]);
-    expect(out.socketPath).toBe("/tmp/fake.sock"); // cross-platform-ok — fixture socketPath echoed back, not an OS-resolved path
+    expect(out.socketPath).toBe("/tmp/fake.sock");
     expect(out.sessionId).toBe("sess-9");
   });
 });

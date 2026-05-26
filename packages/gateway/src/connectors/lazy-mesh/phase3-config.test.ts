@@ -166,7 +166,7 @@ describe("phase3AddGcpMcp", () => {
     expect(spec).toBeDefined();
     if (spec === undefined) return;
     expectSandboxed(spec);
-    expect(spec.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/etc/gcp.json"); // cross-platform-ok — vault value injected into child env verbatim, not an OS-resolved path
+    expect(spec.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/etc/gcp.json");
   });
 });
 

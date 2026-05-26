@@ -125,7 +125,7 @@ describe("runDb snapshot", () => {
     });
     await runDb(["snapshot"]);
     expect(ipc.calls[0]).toEqual({ method: "db.snapshot.take", params: {} });
-    expect(out.stdout).toContain("/data/snapshots/snap-1.db.gz"); // cross-platform-ok — mocked IPC return value echoed to stdout, not an OS-resolved path
+    expect(out.stdout).toContain("/data/snapshots/snap-1.db.gz");
   });
 });
 
@@ -259,7 +259,7 @@ describe("runDb restore", () => {
     setFixture({}); // gateway not running → state === undefined; restore proceeds with hint
     await runDb(["restore", "/tmp/x.db.gz"]);
     expect(out.stdout).toContain("Restoring overwrites");
-    expect(out.stdout).toContain("/tmp/x.db.gz"); // cross-platform-ok — restore-arg echoed into a stdout hint, not an OS-resolved path
+    expect(out.stdout).toContain("/tmp/x.db.gz");
   });
 });
 

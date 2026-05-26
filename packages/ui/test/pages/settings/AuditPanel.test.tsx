@@ -150,7 +150,7 @@ describe("AuditPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Export…" }));
     await waitFor(() => expect(writeTextFileMock).toHaveBeenCalled());
     const [path, contents] = writeTextFileMock.mock.calls[0]!;
-    expect(path).toBe("/mock-export/audit-test.json"); // cross-platform-ok — mocked Tauri save-dialog return value, not an OS-resolved path
+    expect(path).toBe("/mock-export/audit-test.json");
     const parsed = JSON.parse(contents as string) as Array<{ service: string; actor: string }>;
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.service).toBe("github");
