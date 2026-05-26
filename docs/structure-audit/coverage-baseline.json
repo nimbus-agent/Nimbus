@@ -17,20 +17,11 @@
     "packages/cli/src/commands/serve.ts": {
       "min_coverage_pct": 68.63
     },
-    "packages/cli/src/commands/start.ts": {
-      "min_coverage_pct": 30.61
-    },
     "packages/cli/src/commands/test.ts": {
       "min_coverage_pct": 76.47
     },
-    "packages/cli/src/commands/tui.tsx": {
-      "min_coverage_pct": 45.59
-    },
     "packages/cli/src/commands/update.ts": {
       "min_coverage_pct": 34.18
-    },
-    "packages/cli/src/lib/gateway-process.ts": {
-      "min_coverage_pct": 15.22
     }
   }
 }

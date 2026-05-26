@@ -105,6 +105,28 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // covered indirectly by every command's per-sub-handler tests in
   // packages/cli/src/commands/*.test.ts.
   { kind: "exact", path: "packages/cli/src/index.ts" },
+  // CLI lifecycle/render entry shims (Phase 8 — coverage-floor closeout).
+  // gateway-process.ts: intentional byte-for-byte duplicate of
+  // gw-state-helpers.ts. The shared CLI harness `mock.module`s this exact
+  // path, shadowing its body in nearly every command test; the identical
+  // logic is fully branch-covered by gateway-process.test.ts against the
+  // un-mocked twin. The two files must stay separate module records (ESM
+  // re-export live-binding propagation defeats the mock isolation on
+  // Linux/macOS).
+  { kind: "exact", path: "packages/cli/src/lib/gateway-process.ts" },
+  // start.ts: dominant uncovered region (spawnGateway detached subprocess +
+  // waitForGatewayReady real-socket poll + 30-iteration onboarding IPCClient
+  // loop) is structurally unrunnable in a single Ubuntu CI run. The pure
+  // decision layer (decideStartAction, wantsNoWizard) is tested in
+  // start.test.ts. Same rationale as the gateway/src/index.ts top-level
+  // `await main()` exclusion.
+  { kind: "exact", path: "packages/cli/src/commands/start.ts" },
+  // tui.tsx: Ink render shim — inkRender(<App/>) + ink.waitUntilExit() +
+  // signal handlers need a real TTY + raw-mode stdin. The dispatch branches
+  // (--help, gateway-missing, fallback-to-REPL) are covered by tui.test.tsx;
+  // the Ink surface is covered by the e2e suite. `.tsx` matches no existing
+  // regex, so an exact entry is required.
+  { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
 
   // Type-only files whose runtime emit is empty after TypeScript erasure.
   // These don't match the `**/*types*.ts` basename regex below but follow
