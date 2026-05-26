@@ -19,11 +19,12 @@ describe("preflight gate manifest", () => {
     expect(selectGates("fast").every((g) => g.tier === "fast")).toBe(true);
   });
 
-  test("selectGates('full') returns fast THEN full, fast-tier first", () => {
+  test("selectGates('full') returns every fast gate as a contiguous prefix, then full", () => {
     const full = selectGates("full");
-    const firstFullIdx = full.findIndex((g) => g.tier === "full");
-    const lastFastIdx = full.map((g) => g.tier).lastIndexOf("fast");
-    expect(lastFastIdx).toBeLessThan(firstFullIdx);
+    const fastCount = full.filter((g) => g.tier === "fast").length;
+    // Fast gates must occupy exactly indices [0, fastCount); full gates the rest.
+    expect(full.slice(0, fastCount).every((g) => g.tier === "fast")).toBe(true);
+    expect(full.slice(fastCount).every((g) => g.tier === "full")).toBe(true);
   });
 
   test("CI_ONLY_GATES is a non-empty list of strings", () => {
