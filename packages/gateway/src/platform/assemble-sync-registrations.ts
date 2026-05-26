@@ -20,6 +20,7 @@ import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
 import { createGrafanaSyncable } from "../connectors/grafana-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
+import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
@@ -299,6 +300,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createRaindropSyncable({
       ensureRaindropMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createIntercomSyncable({
+      ensureIntercomMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

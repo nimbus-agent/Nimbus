@@ -51,6 +51,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   mercury: ["mercury.token"],
   readwise: ["readwise.token"],
   raindrop: ["raindrop.token"],
+  intercom: ["intercom.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
