@@ -64,6 +64,7 @@
     "packages/mcp-connectors/stripe",
     "packages/mcp-connectors/mercury",
     "packages/mcp-connectors/readwise",
+    "packages/mcp-connectors/raindrop",
     "packages/vscode-extension"
   ],
   "scripts": {
