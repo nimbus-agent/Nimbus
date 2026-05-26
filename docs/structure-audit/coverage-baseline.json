@@ -31,9 +31,6 @@
     },
     "packages/cli/src/lib/gateway-process.ts": {
       "min_coverage_pct": 15.22
-    },
-    "packages/client/src/ipc-transport.ts": {
-      "min_coverage_pct": 10.81
     }
   }
 }
