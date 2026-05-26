@@ -479,6 +479,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Bookmarking apps (Raindrop) ---
+  raindrop: baseManifest("com.nimbus.raindrop", {
+    // Raindrop.io REST API. The API host is fixed (api.raindrop.io) — there is
+    // no self-hosted variant and no host override, so the static list is the
+    // only host this connector ever contacts.
+    network: ["api.raindrop.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

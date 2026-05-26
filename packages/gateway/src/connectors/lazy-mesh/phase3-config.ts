@@ -739,6 +739,31 @@ export async function phase3AddReadwiseMcp(
   );
 }
 
+export async function phase3AddRaindropMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "raindrop", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Raindrop's API host is fixed (api.raindrop.io — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["raindrop"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("raindrop")],
+      env: extensionProcessEnv({
+        RAINDROP_TOKEN: key,
+      }),
+    },
+    "raindrop",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -771,5 +796,6 @@ export async function buildPhase3Servers(
   await phase3AddStripeMcp(vault, servers, sandboxCwd);
   await phase3AddMercuryMcp(vault, servers, sandboxCwd);
   await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
+  await phase3AddRaindropMcp(vault, servers, sandboxCwd);
   return servers;
 }

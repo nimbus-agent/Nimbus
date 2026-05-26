@@ -35,6 +35,7 @@ import {
   phase3AddMlflowMcp,
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
+  phase3AddRaindropMcp,
   phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -1223,6 +1224,37 @@ describe("phase3AddReadwiseMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "readwise.io");
     expect(spec.env?.["READWISE_TOKEN"]).toBe("readwise_test_token");
+  });
+});
+
+// ─── phase3AddRaindropMcp ────────────────────────────────────────────────────
+
+describe("phase3AddRaindropMcp", () => {
+  test("no-op without raindrop.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["raindrop"]).toBeUndefined();
+  });
+
+  test("no-op when raindrop.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("raindrop.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["raindrop"]).toBeUndefined();
+  });
+
+  test("spawns with RAINDROP_TOKEN set + api.raindrop.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("raindrop.token", "raindrop_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["raindrop"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.raindrop.io");
+    expect(spec.env?.["RAINDROP_TOKEN"]).toBe("raindrop_test_token");
   });
 });
 

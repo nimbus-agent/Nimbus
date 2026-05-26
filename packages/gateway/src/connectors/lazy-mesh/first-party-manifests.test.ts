@@ -97,6 +97,7 @@ describe("manifestForFirstParty", () => {
       "stripe",
       "mercury",
       "readwise",
+      "raindrop",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();
