@@ -15,10 +15,39 @@ const {
   doctorPrintConfigValidation,
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexFromSnapshot,
+  doctorVoiceLines,
   healthStateMark,
   runDoctor,
   worstHealthSeverity,
 } = doctorMod;
+
+// ─── Voice helper fixture factory ───────────────────────────────────────────
+
+type WhichMap = Record<string, string | null>;
+
+function makeEnv(whichMap: WhichMap, platform: "win32" | "darwin" | "linux" = "linux") {
+  return {
+    which: (name: string) => whichMap[name] ?? null,
+    platform,
+  };
+}
+
+function makeVoiceCfg(
+  overrides: Partial<{
+    enabled: boolean;
+    whisperPath: string;
+    piperPath: string;
+    piperModel: string;
+  }> = {},
+) {
+  return {
+    enabled: true,
+    whisperPath: "",
+    piperPath: "",
+    piperModel: "",
+    ...overrides,
+  };
+}
 
 const out = captureOutput();
 
@@ -204,5 +233,225 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     await runDoctor([]);
     expect(out.stdout).toContain("[fail] Gateway: IPC failed");
     expect(process.exitCode).toBe(2);
+  });
+});
+
+describe("doctorVoiceLines", () => {
+  // ── disabled ────────────────────────────────────────────────────────────────
+
+  it("returns [] when voice is disabled", () => {
+    const lines = doctorVoiceLines(makeVoiceCfg({ enabled: false }), makeEnv({}));
+    expect(lines).toHaveLength(0);
+  });
+
+  // ── whisper detection ───────────────────────────────────────────────────────
+
+  it("reports whisper ok when whisperPath is explicitly set", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/usr/local/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
+  });
+
+  it("reports whisper ok when whisper-cli is on PATH", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg(),
+      makeEnv({
+        "whisper-cli": "/usr/bin/whisper-cli",
+        ffmpeg: "/usr/bin/ffmpeg",
+        "espeak-ng": "/usr/bin/espeak-ng",
+      }),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
+  });
+
+  it("reports whisper ok when 'main' binary is on PATH (llama.cpp fallback)", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg(),
+      makeEnv({
+        main: "/usr/local/bin/main",
+        ffmpeg: "/usr/bin/ffmpeg",
+        "espeak-ng": "/usr/bin/espeak-ng",
+      }),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
+  });
+
+  it("warns when whisper not found anywhere", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg(),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "[warn] Voice: whisper-cli not found on PATH and voice.whisper_path is unset — STT will not work.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  // ── ffmpeg detection ────────────────────────────────────────────────────────
+
+  it("reports ffmpeg ok when it is on PATH", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: ffmpeg is on PATH."))).toBe(true);
+  });
+
+  it("warns when ffmpeg is absent", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "[warn] Voice: ffmpeg not found on PATH — wake word detection requires ffmpeg for audio capture.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  // ── platform TTS ────────────────────────────────────────────────────────────
+
+  it("reports macOS say always available on darwin", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "darwin"),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: macOS `say` is always available."))).toBe(
+      true,
+    );
+  });
+
+  it("reports Windows SAPI always available on win32", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "win32"),
+    );
+    expect(
+      lines.some((l) => l.includes("[ok] Voice: Windows SAPI via PowerShell is always available.")),
+    ).toBe(true);
+  });
+
+  it("reports espeak-ng on Linux when present", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }, "linux"),
+    );
+    expect(lines.some((l) => l.includes("[ok] Voice: Linux TTS via espeak-ng."))).toBe(true);
+  });
+
+  it("falls back to spd-say on Linux when espeak-ng absent", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "spd-say": "/usr/bin/spd-say" }, "linux"),
+    );
+    expect(
+      lines.some((l) => l.includes("[ok] Voice: Linux TTS via spd-say (espeak-ng preferred).")),
+    ).toBe(true);
+  });
+
+  it("warns when neither espeak-ng nor spd-say found on Linux", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "linux"),
+    );
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "[warn] Voice: neither espeak-ng nor spd-say found on PATH — install one to enable TTS on Linux.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  // ── piper branches (doctorPiperLines) ───────────────────────────────────────
+
+  it("emits no piper lines when piperPath and piperModel are both empty", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(lines.every((l) => !l.toLowerCase().includes("piper"))).toBe(true);
+  });
+
+  it("warns when piperPath is set but binary is not found (relative, not on PATH)", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({
+        whisperPath: "/bin/whisper-cli",
+        piperPath: "piper",
+        piperModel: "model.onnx",
+      }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(
+      lines.some((l) =>
+        l.includes("[warn] Voice: piper_path is set but the binary was not found: piper"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not warn about binary when piperPath contains a slash (absolute path)", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({
+        whisperPath: "/bin/whisper-cli",
+        piperPath: "/usr/local/bin/piper",
+        piperModel: "model.onnx",
+      }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(lines.every((l) => !l.includes("binary was not found"))).toBe(true);
+  });
+
+  it("warns when piperPath is set but piperModel is empty", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({
+        whisperPath: "/bin/whisper-cli",
+        piperPath: "/usr/local/bin/piper",
+        piperModel: "",
+      }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "[warn] Voice: piper_path is set but piper_model is empty — Piper TTS will not run.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("emits no warnings when piperPath is absolute and piperModel is set", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({
+        whisperPath: "/bin/whisper-cli",
+        piperPath: "/usr/local/bin/piper",
+        piperModel: "en_US-amy-medium.onnx",
+      }),
+      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
+    );
+    expect(lines.every((l) => !l.startsWith("[warn]"))).toBe(true);
+  });
+
+  it("finds piper via which() when piperPath is a bare binary name on PATH", () => {
+    const lines = doctorVoiceLines(
+      makeVoiceCfg({
+        whisperPath: "/bin/whisper-cli",
+        piperPath: "piper",
+        piperModel: "en_US-amy-medium.onnx",
+      }),
+      makeEnv({
+        ffmpeg: "/usr/bin/ffmpeg",
+        "espeak-ng": "/usr/bin/espeak-ng",
+        piper: "/usr/local/bin/piper",
+      }),
+    );
+    // piperBinOk = true (found via which), piperModel set → no piper warns
+    expect(lines.every((l) => !l.includes("[warn] Voice: piper_path"))).toBe(true);
   });
 });
