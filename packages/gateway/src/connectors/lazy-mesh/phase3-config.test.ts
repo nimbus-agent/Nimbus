@@ -38,6 +38,7 @@ import {
   phase3AddMlflowMcp,
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
+  phase3AddPipedriveMcp,
   phase3AddRaindropMcp,
   phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
@@ -1430,6 +1431,37 @@ describe("phase3AddGreenhouseMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "harvest.greenhouse.io");
     expect(spec.env?.["GREENHOUSE_API_KEY"]).toBe("greenhouse_test_key");
+  });
+});
+
+// ─── phase3AddPipedriveMcp ───────────────────────────────────────────────────
+
+describe("phase3AddPipedriveMcp", () => {
+  test("no-op without pipedrive.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["pipedrive"]).toBeUndefined();
+  });
+
+  test("no-op when pipedrive.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("pipedrive.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["pipedrive"]).toBeUndefined();
+  });
+
+  test("spawns with PIPEDRIVE_TOKEN set + api.pipedrive.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("pipedrive.token", "pipedrive_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["pipedrive"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.pipedrive.com");
+    expect(spec.env?.["PIPEDRIVE_TOKEN"]).toBe("pipedrive_test_token");
   });
 });
 

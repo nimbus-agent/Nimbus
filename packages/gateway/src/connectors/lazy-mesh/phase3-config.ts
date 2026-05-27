@@ -878,6 +878,33 @@ export async function phase3AddGreenhouseMcp(
   );
 }
 
+export async function phase3AddPipedriveMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "pipedrive", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Pipedrive's API host is fixed (api.pipedrive.com — a static-network SaaS
+  // host), so this uses the `wrap(...)` helper with the static manifest rather
+  // than a runtime host merge. The connector authenticates with the token in
+  // the query string (?api_token=<token>) — the token passes through as env and
+  // is never logged.
+  servers["pipedrive"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("pipedrive")],
+      env: extensionProcessEnv({
+        PIPEDRIVE_TOKEN: key,
+      }),
+    },
+    "pipedrive",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -915,5 +942,6 @@ export async function buildPhase3Servers(
   await phase3AddZendeskMcp(vault, servers, sandboxCwd);
   await phase3AddLeverMcp(vault, servers, sandboxCwd);
   await phase3AddGreenhouseMcp(vault, servers, sandboxCwd);
+  await phase3AddPipedriveMcp(vault, servers, sandboxCwd);
   return servers;
 }

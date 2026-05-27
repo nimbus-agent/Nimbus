@@ -528,6 +528,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- CRM (Pipedrive) ---
+  pipedrive: baseManifest("com.nimbus.pipedrive", {
+    // Pipedrive REST API. The API host is fixed (api.pipedrive.com) — there is
+    // no self-hosted variant and no host override, so the static list is the
+    // only host this connector ever contacts. (The company-specific
+    // <company>.pipedrive.com UI domain is not contacted — deep links are
+    // deferred.) Auth is via the ?api_token= query parameter, not a header.
+    network: ["api.pipedrive.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
