@@ -68,6 +68,7 @@
     "packages/mcp-connectors/intercom",
     "packages/mcp-connectors/zendesk",
     "packages/mcp-connectors/lever",
+    "packages/mcp-connectors/greenhouse",
     "packages/vscode-extension"
   ],
   "scripts": {
