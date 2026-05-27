@@ -52,6 +52,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   readwise: ["readwise.token"],
   raindrop: ["raindrop.token"],
   intercom: ["intercom.token"],
+  zendesk: ["zendesk.url", "zendesk.email", "zendesk.api_token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

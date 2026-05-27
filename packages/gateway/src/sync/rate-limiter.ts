@@ -48,7 +48,8 @@ export type Provider =
   | "mercury"
   | "readwise"
   | "raindrop"
-  | "intercom";
+  | "intercom"
+  | "zendesk";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -102,6 +103,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   readwise: { requestsPerMinute: 60, burstSize: 10 },
   raindrop: { requestsPerMinute: 60, burstSize: 10 },
   intercom: { requestsPerMinute: 60, burstSize: 10 },
+  zendesk: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

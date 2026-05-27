@@ -48,6 +48,7 @@ import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
+import { createZendeskSyncable } from "../connectors/zendesk-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export type ConnectorMeshSyncableOptions = {
@@ -305,6 +306,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createIntercomSyncable({
       ensureIntercomMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createZendeskSyncable({
+      ensureZendeskMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

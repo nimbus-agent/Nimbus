@@ -51,6 +51,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "readwise",
   "raindrop",
   "intercom",
+  "zendesk",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -126,6 +127,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   readwise: MIN10,
   raindrop: MIN10,
   intercom: MIN10,
+  zendesk: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -200,6 +202,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   readwise: "uses a Readwise API token (connector.auth readwise)",
   raindrop: "uses a Raindrop.io API token (connector.auth raindrop)",
   intercom: "uses an Intercom access token (connector.auth intercom)",
+  zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
