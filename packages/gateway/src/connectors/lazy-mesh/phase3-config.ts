@@ -824,6 +824,33 @@ export async function phase3AddZendeskMcp(
   );
 }
 
+export async function phase3AddLeverMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "lever", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Lever's API host is fixed (api.lever.co — a static-network SaaS host), so
+  // this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge. The connector builds a Basic auth header from the API
+  // key as the username with an empty password; the key passes through as env
+  // and is never logged.
+  servers["lever"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("lever")],
+      env: extensionProcessEnv({
+        LEVER_API_KEY: key,
+      }),
+    },
+    "lever",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -859,5 +886,6 @@ export async function buildPhase3Servers(
   await phase3AddRaindropMcp(vault, servers, sandboxCwd);
   await phase3AddIntercomMcp(vault, servers, sandboxCwd);
   await phase3AddZendeskMcp(vault, servers, sandboxCwd);
+  await phase3AddLeverMcp(vault, servers, sandboxCwd);
   return servers;
 }

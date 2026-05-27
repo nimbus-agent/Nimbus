@@ -510,6 +510,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Recruiting / ATS (Lever) ---
+  lever: baseManifest("com.nimbus.lever", {
+    // Lever Data API. The API host is fixed (api.lever.co) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts.
+    network: ["api.lever.co"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

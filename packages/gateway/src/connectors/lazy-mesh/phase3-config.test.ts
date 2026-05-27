@@ -31,6 +31,7 @@ import {
   phase3AddIacMcp,
   phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
+  phase3AddLeverMcp,
   phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
@@ -1366,6 +1367,37 @@ describe("phase3AddZendeskMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["ZENDESK_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddLeverMcp ───────────────────────────────────────────────────────
+
+describe("phase3AddLeverMcp", () => {
+  test("no-op without lever.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["lever"]).toBeUndefined();
+  });
+
+  test("no-op when lever.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("lever.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["lever"]).toBeUndefined();
+  });
+
+  test("spawns with LEVER_API_KEY set + api.lever.co in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("lever.api_key", "lever_test_key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["lever"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.lever.co");
+    expect(spec.env?.["LEVER_API_KEY"]).toBe("lever_test_key");
   });
 });
 
