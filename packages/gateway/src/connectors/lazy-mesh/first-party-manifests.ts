@@ -539,6 +539,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Team knowledge / Q&A (Stack Overflow for Teams) ---
+  stackoverflow: baseManifest("com.nimbus.stackoverflow", {
+    // Stack Overflow for Teams v3 REST API. The API host is fixed
+    // (api.stackoverflowteams.com) — there is no self-hosted variant and no
+    // host override, so the static list is the only host this connector ever
+    // contacts. (The team slug is URL-encoded into the request PATH, not a
+    // separate host.)
+    network: ["api.stackoverflowteams.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

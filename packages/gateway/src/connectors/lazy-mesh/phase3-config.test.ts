@@ -45,6 +45,7 @@ import {
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddStackoverflowMcp,
   phase3AddStripeMcp,
   phase3AddSupersetMcp,
   phase3AddVercelMcp,
@@ -1462,6 +1463,56 @@ describe("phase3AddPipedriveMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.pipedrive.com");
     expect(spec.env?.["PIPEDRIVE_TOKEN"]).toBe("pipedrive_test_token");
+  });
+});
+
+// ─── phase3AddStackoverflowMcp ───────────────────────────────────────────────
+
+describe("phase3AddStackoverflowMcp", () => {
+  test("no-op without either stackoverflow key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when only stackoverflow.token is set (team required)", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when only stackoverflow.team is set (token required)", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.team", "acme");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when either key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    await vault.set("stackoverflow.team", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("spawns with both env vars set + api.stackoverflowteams.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    await vault.set("stackoverflow.team", "acme");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["stackoverflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.stackoverflowteams.com");
+    expect(spec.env?.["STACKOVERFLOW_TOKEN"]).toBe("so_test_token");
+    expect(spec.env?.["STACKOVERFLOW_TEAM"]).toBe("acme");
   });
 });
 

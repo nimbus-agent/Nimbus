@@ -905,6 +905,38 @@ export async function phase3AddPipedriveMcp(
   );
 }
 
+export async function phase3AddStackoverflowMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const token = (await readConnectorSecret(vault, "stackoverflow", "token"))?.trim() ?? "";
+  const team = (await readConnectorSecret(vault, "stackoverflow", "team"))?.trim() ?? "";
+  // Both keys are required — no-op unless BOTH are present (the team slug is
+  // mandatory because it is URL-encoded into the request path).
+  if (token === "" || team === "") {
+    return;
+  }
+  // Stack Overflow for Teams' API host is fixed (api.stackoverflowteams.com — a
+  // static-network SaaS host; the team slug lives in the request PATH, not as a
+  // separate host), so this uses the `wrap(...)` helper with the static
+  // manifest rather than a runtime host merge. The connector builds a Bearer
+  // header from the PAT; both the token and the team slug pass through as env
+  // and the token is never logged.
+  servers["stackoverflow"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("stackoverflow")],
+      env: extensionProcessEnv({
+        STACKOVERFLOW_TOKEN: token,
+        STACKOVERFLOW_TEAM: team,
+      }),
+    },
+    "stackoverflow",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -943,5 +975,6 @@ export async function buildPhase3Servers(
   await phase3AddLeverMcp(vault, servers, sandboxCwd);
   await phase3AddGreenhouseMcp(vault, servers, sandboxCwd);
   await phase3AddPipedriveMcp(vault, servers, sandboxCwd);
+  await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   return servers;
 }
