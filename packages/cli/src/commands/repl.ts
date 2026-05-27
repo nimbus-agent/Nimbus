@@ -89,14 +89,23 @@ export async function loadReplPreconditions(
   return { socketPath: state.socketPath, sessionId };
 }
 
-export async function runRepl(args: string[]): Promise<void> {
+/**
+ * `makeInterface` is a seam for tests: the dispatcher calls `runRepl(args)` and
+ * gets the real `node:readline/promises` `createInterface`; tests inject a stub
+ * so the readline loop is driven deterministically without a process-global
+ * `mock.module` (which is unreliable in the combined CI test process).
+ */
+export async function runRepl(
+  args: string[],
+  makeInterface: typeof createInterface = createInterface,
+): Promise<void> {
   const { socketPath, sessionId } = await loadReplPreconditions(args);
 
   const client = new IPCClient(socketPath);
   await client.connect();
   registerInteractiveCliIpcHandlers(client);
 
-  const rl = createInterface({ input, output, terminal: true });
+  const rl = makeInterface({ input, output, terminal: true });
   try {
     output.write("Nimbus REPL — type a message, or exit / quit to leave.\n");
     for (;;) {
