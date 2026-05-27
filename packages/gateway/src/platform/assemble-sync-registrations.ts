@@ -19,6 +19,7 @@ import { createGmailSyncable } from "../connectors/gmail-sync.ts";
 import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
 import { createGrafanaSyncable } from "../connectors/grafana-sync.ts";
+import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
 import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
@@ -317,6 +318,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLeverSyncable({
       ensureLeverMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createGreenhouseSyncable({
+      ensureGreenhouseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

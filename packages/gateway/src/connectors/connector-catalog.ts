@@ -53,6 +53,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "intercom",
   "zendesk",
   "lever",
+  "greenhouse",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -130,6 +131,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   intercom: MIN10,
   zendesk: MIN10,
   lever: MIN10,
+  greenhouse: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -206,6 +208,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   intercom: "uses an Intercom access token (connector.auth intercom)",
   zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
   lever: "uses a Lever API key (connector.auth lever)",
+  greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

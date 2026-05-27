@@ -50,7 +50,8 @@ export type Provider =
   | "raindrop"
   | "intercom"
   | "zendesk"
-  | "lever";
+  | "lever"
+  | "greenhouse";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -106,6 +107,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   intercom: { requestsPerMinute: 60, burstSize: 10 },
   zendesk: { requestsPerMinute: 60, burstSize: 10 },
   lever: { requestsPerMinute: 60, burstSize: 10 },
+  greenhouse: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

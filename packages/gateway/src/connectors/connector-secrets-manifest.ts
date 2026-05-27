@@ -54,6 +54,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   intercom: ["intercom.token"],
   zendesk: ["zendesk.url", "zendesk.email", "zendesk.api_token"],
   lever: ["lever.api_key"],
+  greenhouse: ["greenhouse.api_key"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
