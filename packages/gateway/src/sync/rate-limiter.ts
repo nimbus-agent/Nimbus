@@ -51,7 +51,8 @@ export type Provider =
   | "intercom"
   | "zendesk"
   | "lever"
-  | "greenhouse";
+  | "greenhouse"
+  | "pipedrive";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -108,6 +109,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   zendesk: { requestsPerMinute: 60, burstSize: 10 },
   lever: { requestsPerMinute: 60, burstSize: 10 },
   greenhouse: { requestsPerMinute: 60, burstSize: 10 },
+  pipedrive: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

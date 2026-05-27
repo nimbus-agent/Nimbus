@@ -38,6 +38,7 @@ import { createNotionSyncable } from "../connectors/notion-sync.ts";
 import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
 import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
+import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
@@ -323,6 +324,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGreenhouseSyncable({
       ensureGreenhouseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createPipedriveSyncable({
+      ensurePipedriveMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

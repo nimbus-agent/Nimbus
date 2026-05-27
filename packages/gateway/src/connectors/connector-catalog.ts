@@ -54,6 +54,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "zendesk",
   "lever",
   "greenhouse",
+  "pipedrive",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -132,6 +133,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   zendesk: MIN10,
   lever: MIN10,
   greenhouse: MIN10,
+  pipedrive: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -209,6 +211,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
   lever: "uses a Lever API key (connector.auth lever)",
   greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
+  pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

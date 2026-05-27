@@ -55,6 +55,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   zendesk: ["zendesk.url", "zendesk.email", "zendesk.api_token"],
   lever: ["lever.api_key"],
   greenhouse: ["greenhouse.api_key"],
+  pipedrive: ["pipedrive.token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
