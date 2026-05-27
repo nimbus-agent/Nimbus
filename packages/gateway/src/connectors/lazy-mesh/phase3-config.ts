@@ -851,6 +851,33 @@ export async function phase3AddLeverMcp(
   );
 }
 
+export async function phase3AddGreenhouseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "greenhouse", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Greenhouse's Harvest API host is fixed (harvest.greenhouse.io — a
+  // static-network SaaS host), so this uses the `wrap(...)` helper with the
+  // static manifest rather than a runtime host merge. The connector builds a
+  // Basic auth header from the API key as the username with an empty password;
+  // the key passes through as env and is never logged.
+  servers["greenhouse"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("greenhouse")],
+      env: extensionProcessEnv({
+        GREENHOUSE_API_KEY: key,
+      }),
+    },
+    "greenhouse",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -887,5 +914,6 @@ export async function buildPhase3Servers(
   await phase3AddIntercomMcp(vault, servers, sandboxCwd);
   await phase3AddZendeskMcp(vault, servers, sandboxCwd);
   await phase3AddLeverMcp(vault, servers, sandboxCwd);
+  await phase3AddGreenhouseMcp(vault, servers, sandboxCwd);
   return servers;
 }

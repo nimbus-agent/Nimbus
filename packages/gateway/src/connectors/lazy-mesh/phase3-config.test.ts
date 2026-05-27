@@ -28,6 +28,7 @@ import {
   phase3AddFluxMcp,
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
+  phase3AddGreenhouseMcp,
   phase3AddIacMcp,
   phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
@@ -1398,6 +1399,37 @@ describe("phase3AddLeverMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.lever.co");
     expect(spec.env?.["LEVER_API_KEY"]).toBe("lever_test_key");
+  });
+});
+
+// ─── phase3AddGreenhouseMcp ──────────────────────────────────────────────────
+
+describe("phase3AddGreenhouseMcp", () => {
+  test("no-op without greenhouse.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["greenhouse"]).toBeUndefined();
+  });
+
+  test("no-op when greenhouse.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("greenhouse.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["greenhouse"]).toBeUndefined();
+  });
+
+  test("spawns with GREENHOUSE_API_KEY set + harvest.greenhouse.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("greenhouse.api_key", "greenhouse_test_key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["greenhouse"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "harvest.greenhouse.io");
+    expect(spec.env?.["GREENHOUSE_API_KEY"]).toBe("greenhouse_test_key");
   });
 });
 
