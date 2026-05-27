@@ -46,6 +46,7 @@ import {
   phase3AddSupersetMcp,
   phase3AddVercelMcp,
   phase3AddWizMcp,
+  phase3AddZendeskMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -1287,6 +1288,84 @@ describe("phase3AddIntercomMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec, "api.intercom.io");
     expect(spec.env?.["INTERCOM_TOKEN"]).toBe("intercom_test_token");
+  });
+});
+
+// ─── phase3AddZendeskMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddZendeskMcp", () => {
+  test("no-op without any of url / email / api_token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when api_token is missing (url + email only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.email", "agent@acme.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when email is missing (url + api_token only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when url is missing (email + api_token only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "   ");
+    await vault.set("zendesk.email", "   ");
+    await vault.set("zendesk.api_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("spawns with the three env vars + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["zendesk"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "acme.zendesk.com");
+    expect(spec.env?.["ZENDESK_URL"]).toBe("https://acme.zendesk.com");
+    expect(spec.env?.["ZENDESK_EMAIL"]).toBe("agent@acme.com");
+    expect(spec.env?.["ZENDESK_API_TOKEN"]).toBe("zd-test-token");
+  });
+
+  test("spawns even when zendesk.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "not a url");
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["zendesk"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["ZENDESK_URL"]).toBe("not a url");
   });
 });
 

@@ -498,6 +498,18 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Support / helpdesk (Zendesk) ---
+  zendesk: baseManifest("com.nimbus.zendesk", {
+    // Zendesk is per-tenant — every instance is a distinct
+    // `https://<subdomain>.zendesk.com` host. `phase3AddZendeskMcp` extends the
+    // empty static network list with the hostname parsed from ZENDESK_URL at
+    // spawn time (same runtime-merge pattern as grafana / argocd / metabase).
+    // Without that merge Zendesk would be unreachable under the sandbox; with
+    // it, the connector talks only to the user-configured instance.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML

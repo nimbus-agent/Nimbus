@@ -790,6 +790,40 @@ export async function phase3AddIntercomMcp(
   );
 }
 
+export async function phase3AddZendeskMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "zendesk", "url"))?.trim() ?? "";
+  const email = (await readConnectorSecret(vault, "zendesk", "email"))?.trim() ?? "";
+  const apiToken = (await readConnectorSecret(vault, "zendesk", "api_token"))?.trim() ?? "";
+  if (url === "" || email === "" || apiToken === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Zendesk is per-tenant (every instance is a distinct
+  // `https://<subdomain>.zendesk.com` host); extend the empty static network
+  // list with the hostname parsed from ZENDESK_URL at spawn time (same
+  // runtime-merge pattern as grafana / argocd / metabase). The connector builds
+  // a Basic auth header from the email + api_token (username `<email>/token`);
+  // both are passed through as env and never logged.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
+  servers["zendesk"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("zendesk")],
+      env: extensionProcessEnv({
+        ZENDESK_URL: url,
+        ZENDESK_EMAIL: email,
+        ZENDESK_API_TOKEN: apiToken,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -824,5 +858,6 @@ export async function buildPhase3Servers(
   await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
   await phase3AddRaindropMcp(vault, servers, sandboxCwd);
   await phase3AddIntercomMcp(vault, servers, sandboxCwd);
+  await phase3AddZendeskMcp(vault, servers, sandboxCwd);
   return servers;
 }
