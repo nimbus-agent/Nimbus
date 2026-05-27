@@ -46,6 +46,7 @@ import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
+import { createStackOverflowSyncable } from "../connectors/stackoverflow-sync.ts";
 import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
@@ -329,6 +330,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createPipedriveSyncable({
       ensurePipedriveMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createStackOverflowSyncable({
+      ensureStackOverflowMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

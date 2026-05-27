@@ -55,6 +55,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "lever",
   "greenhouse",
   "pipedrive",
+  "stackoverflow",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -134,6 +135,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   lever: MIN10,
   greenhouse: MIN10,
   pipedrive: MIN10,
+  stackoverflow: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -212,6 +214,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   lever: "uses a Lever API key (connector.auth lever)",
   greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
   pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
+  stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

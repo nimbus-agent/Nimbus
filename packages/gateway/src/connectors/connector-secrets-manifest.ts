@@ -56,6 +56,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   lever: ["lever.api_key"],
   greenhouse: ["greenhouse.api_key"],
   pipedrive: ["pipedrive.token"],
+  stackoverflow: ["stackoverflow.token", "stackoverflow.team"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
