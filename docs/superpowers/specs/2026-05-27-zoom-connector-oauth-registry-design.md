@@ -127,6 +127,24 @@ functions:
   `microsoftOAuthAccessFromConfig`) **keep their signatures** and delegate to it.
   Google keeps its own `resolveGoogleOAuthVaultKey` (per-service-key logic stays
   google-specific; only token validity delegates).
+  - **Single-flight refresh lock (critical for rotating tokens).** A module-level
+    in-memory `Map<vaultKey, Promise<string>>` coalesces concurrent near-expiry
+    refreshes for the *same* token: the first caller performs the HTTP refresh +
+    persist; concurrent callers await the same in-flight promise instead of issuing a
+    second refresh. This prevents refresh-token reuse, which Zoom punishes by
+    invalidating the entire token chain (forcing manual re-auth). The two concurrent
+    paths that motivate it are the gateway-side sync cycle and spawn-time token
+    injection both calling `getValid<Provider>AccessToken`. The lock lives in the
+    generic resolver so **all five providers** benefit (it's a latent gap for
+    Microsoft/Slack/Notion rotation too, just less punishing than Zoom). Net-new code,
+    transparent to the single-threaded existing tests; lands in PR-1 with the resolver.
+  - **Uniform refresh; no `hasRefreshFlow` flag.** All five providers have a refresh
+    flow today (Notion rotates too via `refreshNotionToken`; its missing `expires_in`
+    is handled as a synthetic 24 h expiry in its `parseTokenResponse`). Refresh
+    persistence is `refresh_token ?? old` (a provider that omits a new refresh token
+    keeps the existing one); `parseStoredOAuthTokens` already requires a stored refresh
+    token. A `hasRefreshFlow` descriptor flag would be `true` for all five — speculative
+    — so it is **deferred** until a genuinely non-refreshable provider is added.
 
 **Behavior-preservation specifics**
 - Slack `ok:true` success → `isTokenSuccess` hook (default = HTTP ok).
@@ -190,15 +208,34 @@ interval, and `"zoom"` to the `ConnectorServiceId` union.
    Endpoint requires `from`/`to`, ≤1-month window: initial sync walks back
    `initialSyncDepthDays` (default 30) in ≤30-day windows; incremental syncs one
    window since the last cursor. For each `meetings[].recording_files[]` with
-   `file_type==="TRANSCRIPT"`: second fetch of `download_url` with
-   `Authorization: Bearer <token>` (**header only — never `?access_token=` in the
-   URL; no token-bearing URL is ever logged**), VTT→plaintext, map via
-   `mapZoomTranscriptToItem`. **Dedupe:** a recording's parent meeting also upserts a
-   `zoom:meeting` row under the same `external_id = String(id)`, so past recorded
-   meetings (missed by the scheduled-only Walk A) still get a meeting row.
-4. Single-pass `nimbus-zoom1:` cursor encoding the windowing state. First-page
+   `file_type==="TRANSCRIPT"`:
+   - **Skip-if-exists (avoid re-downloading immutable VTTs).** Transcripts are
+     immutable once generated, so before the second fetch, check whether a
+     `zoom:transcript` row with `external_id = <meeting_uuid>:<recording_file_id>`
+     already exists — a one-line read via `itemPrimaryKey("zoom", externalId)` +
+     `SELECT id FROM item WHERE id = ?` (reads are not subject to I14). If present,
+     skip the download. This makes the window-replay-on-error case cheap, not just
+     correct.
+   - **Download + parse.** Otherwise second fetch of `download_url` with
+     `Authorization: Bearer <token>` (**header only — never `?access_token=` in the
+     URL; no token-bearing URL is ever logged**), VTT→plaintext, map via
+     `mapZoomTranscriptToItem`.
+   **Dedupe:** a recording's parent meeting also upserts a `zoom:meeting` row under the
+   same `external_id = String(id)`, so past recorded meetings (missed by the
+   scheduled-only Walk A) still get a meeting row.
+4. **Rate limiting.** Every Zoom HTTP call — the meetings list, the recordings list,
+   *and* each per-file transcript `download_url` fetch — goes through
+   `ctx.rateLimiter.acquire("zoom")` first (the wiz-sync convention). A `429 Too Many
+   Requests` mid-walk (including mid-download) is a **graceful break**: stop the walk,
+   keep the cursor unadvanced, and let the next sync cycle re-window from where it left
+   off — never a hard sync failure. Per-request exponential backoff / `Retry-After`
+   honoring is **deferred** (no existing connector does it; a cross-connector
+   429/`Retry-After` policy is a separate enhancement).
+5. Single-pass `nimbus-zoom1:` cursor encoding the windowing state. First-page
    http/parse error → pass-cursor-empty (keep prior cursor); later-page errors break
-   — standard convention.
+   — standard convention. Because the cursor is not advanced on a mid-window break, the
+   next cycle replays that window; the `external_id` dedupe makes replay idempotent and
+   the skip-if-exists check makes it cheap.
 
 **Mappers (pure, unit-tested without HTTP):**
 - `zoom-meeting-mapping.ts` `mapZoomMeetingToItem`: `external_id = String(id)` (skip
@@ -212,7 +249,9 @@ interval, and `"zoom"` to the `ConnectorServiceId` union.
   **full transcript text stored**; links via `meeting_id`/`meeting_uuid` in metadata;
   `recording_start` ISO→epoch-ms; `canonical_url = play_url` else null. The VTT→text
   helper (strip `WEBVTT` header, cue indices, `HH:MM:SS.mmm --> …` lines, blanks;
-  collapse whitespace) is a small pure function, fixture-tested.
+  **strip inline tags via `/<[^>]+>/g` — covers `<v Speaker>` voice tags, `<b>`/`<i>`/`<c>`
+  styling; merge multi-line cue text into a single block**; collapse whitespace) is a
+  small pure function, fixture-tested with a tags + multi-line-cue VTT sample.
 
 **MCP server `packages/mcp-connectors/zoom/src/server.ts`:** read-only
 `zoom_list`/`zoom_get`/`zoom_search` over meetings + recordings; Bearer auth via
@@ -223,16 +262,23 @@ injected `ZOOM_TOKEN`; `hitlRequired: []`.
 - `oauth-registry.test.ts` — per-descriptor: authorize-URL params, exchange request
   shape (form vs JSON, Basic-header vs body secret), refresh, `parseTokenResponse`
   (Slack `authed_user`/`ok`; Notion synthetic expiry) + a "no secret in thrown error"
-  assertion mirrored from `pkce.test.ts`.
+  assertion mirrored from `pkce.test.ts`. Plus a **single-flight test**: two concurrent
+  near-expiry `getValidVaultAccessToken` calls for the same `vaultKey` trigger exactly
+  one refresh HTTP call (asserts the coalescing lock).
 - The six existing `auth/*.test.ts` stay green unchanged = behavior-preservation net.
 - `zoom-access-token.test.ts` — valid passthrough, near-expiry refresh, **rotating
-  refresh-token persistence**, missing-config error.
-- `zoom-meeting-mapping.test.ts`, `zoom-transcript-mapping.test.ts` (VTT fixture,
+  refresh-token persistence** (new refresh token written back, old discarded),
+  missing-config error.
+- `zoom-meeting-mapping.test.ts`, `zoom-transcript-mapping.test.ts` (VTT fixture
+  **including `<v Speaker>` voice tags, inline styling, and a multi-line cue**,
   missing-id skip, dedupe external_id stability).
 - `zoom-sync` integration (fake server): meetings pagination, recordings
   date-windowing, transcript second-fetch via Bearer **header**, "no transcript
-  files" → zero transcript items, http-error→pass-cursor-empty, and an assertion that
-  no logged line contains a token-bearing URL.
+  files" → zero transcript items, http-error→pass-cursor-empty, an assertion that no
+  logged line contains a token-bearing URL, **skip-if-exists** (a pre-seeded
+  `zoom:transcript` row suppresses the download fetch), **429 graceful break** (a 429
+  mid-walk stops the walk without advancing the cursor and without throwing), and that
+  the download fetch is gated by `ctx.rateLimiter.acquire("zoom")`.
 - routing test: `isProseHeavy("zoom","transcript") === true`.
 - D11: add `auth/oauth-registry.ts` + `auth/zoom-access-token.ts` to
   `VAULT_KEY_ALLOW_LIST`. Sandbox manifest I15 covered by the first-party-manifests
@@ -276,3 +322,23 @@ CLAUDE.md/GEMINI.md status-line edits (connector-docs convention).
   regression net, landing the refactor with no Zoom code.
 - **Transcript availability:** only cloud-recorded + transcribed meetings produce
   `zoom:transcript`; "none" is normal, not an error.
+
+## Review dispositions (2026-05-27)
+
+Design review (`…-design-review.md`) raised five points; dispositions:
+
+1. **Single-flight refresh lock** — ✅ fixed. Coalescing lock in the generic
+   `getValidVaultAccessToken` keyed by `vaultKey` (§1); the critical safeguard for
+   Zoom's chain-invalidating rotation; lands in PR-1, benefits all five providers.
+2. **`hasRefreshFlow` flag** — ⛔ deferred (YAGNI: all five providers refresh today);
+   the underlying missing/rotated-refresh handling is now stated explicitly in §1
+   (`refresh_token ?? old`; `parseStoredOAuthTokens` requires a stored refresh token).
+3. **VTT inline tags + multi-line cues** — ✅ fixed. Parser strips `/<[^>]+>/g`
+   (incl. `<v Speaker>`) and merges multi-line cues (§3 mapper + fixture in §4).
+4. **Download rate limiting** — ◐ partial. Fixed: every Zoom fetch incl. the per-file
+   download goes through `ctx.rateLimiter.acquire("zoom")`, and a 429 is a graceful
+   break (§3). Deferred: bespoke per-request backoff/`Retry-After` (no connector does
+   it; cross-connector policy is a separate enhancement).
+5. **Re-downloading unchanged VTTs on window replay** — ✅ fixed. Skip-if-exists check
+   on the transcript `external_id` before the download (§3), exploiting transcript
+   immutability; makes the (correct-by-dedupe) replay path cheap.
