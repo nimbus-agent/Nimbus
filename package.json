@@ -70,6 +70,7 @@
     "packages/mcp-connectors/lever",
     "packages/mcp-connectors/greenhouse",
     "packages/mcp-connectors/pipedrive",
+    "packages/mcp-connectors/stackoverflow",
     "packages/vscode-extension"
   ],
   "scripts": {
