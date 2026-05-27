@@ -26,6 +26,7 @@ import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
 import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
@@ -311,6 +312,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createZendeskSyncable({
       ensureZendeskMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createLeverSyncable({
+      ensureLeverMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }
