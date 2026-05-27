@@ -41,6 +41,50 @@ export interface OAuthProviderDescriptor {
   isTokenSuccess?(json: unknown, httpOk: boolean): boolean;
 }
 
+type OAuthTokenJson = {
+  access_token?: unknown;
+  expires_in?: unknown;
+  refresh_token?: unknown;
+  scope?: unknown;
+};
+
+function parseExpiresInSeconds(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") return Number.parseInt(raw, 10);
+  return Number.NaN;
+}
+
+function scopesFromTokenResponse(scopeField: string | undefined, requested: string[]): string[] {
+  if (scopeField !== undefined && scopeField.trim() !== "") {
+    return scopeField.split(/\s+/).filter((s) => s.length > 0);
+  }
+  return requested;
+}
+
+/** Standard OAuth2 form-token response → PKCEResult (google/microsoft/zoom). */
+export function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object") {
+    throw new Error("Token response was not valid JSON");
+  }
+  const o = json as OAuthTokenJson;
+  const access = o.access_token;
+  if (typeof access !== "string" || access.length === 0) {
+    throw new Error("Token response missing access_token");
+  }
+  const expiresIn = parseExpiresInSeconds(o.expires_in);
+  if (!Number.isFinite(expiresIn) || expiresIn < 0) {
+    throw new Error("Token response missing expires_in");
+  }
+  const refresh = o.refresh_token;
+  const scope = typeof o.scope === "string" ? o.scope : undefined;
+  return {
+    accessToken: access,
+    refreshToken: typeof refresh === "string" ? refresh : "",
+    expiresAt: Date.now() + Math.floor(expiresIn * 1000),
+    scopes: scopesFromTokenResponse(scope, requested),
+  };
+}
+
 const STUB = (): never => {
   throw new Error("descriptor hook not yet implemented");
 };
@@ -56,8 +100,19 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: true,
-    buildAuthorizeParams: STUB,
-    parseTokenResponse: STUB,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+      access_type: "offline",
+      prompt: "consent",
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
   },
   microsoft: {
     id: "microsoft",
@@ -69,8 +124,17 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: true,
-    buildAuthorizeParams: STUB,
-    parseTokenResponse: STUB,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
   },
   slack: {
     id: "slack",
