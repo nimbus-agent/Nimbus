@@ -13,9 +13,22 @@ import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
-
-const replMod = await import("./repl.ts");
-const { loadReplPreconditions, parseReplArgs, runRepl, runReplTurn } = replMod;
+// STATIC import — deliberately NOT `const replMod = await import("./repl.ts")`.
+// The cli-mocks side-effect import above installs the gateway-process /
+// ipc-client `mock.module` registrations during its module-load; per ESM
+// depth-first evaluation order that runs before this module is evaluated, so
+// repl.ts still binds to the mocks (verified: Bun applies a mock.module made
+// before a dependency's first import to a static importer too).
+//
+// Why this matters: a top-level `await import("./repl.ts")` was order-fragile
+// in the combined CI test process. Under some file-collection orderings Bun
+// resolved the dynamic import to an incompletely-populated namespace, so every
+// captured export (parseReplArgs, runReplTurn, loadReplPreconditions, runRepl)
+// read back `undefined` — the whole file failed on macOS, and on Linux the
+// dropped repl.ts line coverage tripped the 80% coverage-floor (71.6%). A
+// static import links deterministically or fails the file load loudly; it can
+// never silently yield an empty namespace.
+import { loadReplPreconditions, parseReplArgs, runRepl, runReplTurn } from "./repl.ts";
 
 const out = captureOutput();
 
