@@ -963,6 +963,10 @@ export async function getValidVaultAccessToken(a: GetValidArgs): Promise<string>
 
 > The `inFlightRefresh` map keys by `vaultKey`, so Google's per-service keys (`google_drive.oauth`, …) each get their own single-flight slot — correct, since they hold distinct tokens.
 
+> **Single-process invariant (why an in-memory lock is sufficient).** `getValidVaultAccessToken` runs **only in the primary Gateway process** — the gateway-side `*-sync.ts` handlers and the spawn-time token injection in `connectors/lazy-mesh/connector-spawns.ts` both execute in-process, and **no connector sub-process ever imports it**: connectors read the token the Gateway injects as an env var at spawn and have no Vault access by design (see `nimbus-connector-authoring`). Therefore only the Gateway refreshes, there is no cross-process refresh race, and the in-memory `Map` fully coalesces it. **Do not** add a Vault refresh call inside a connector — that would break this invariant and reintroduce the token-chain-invalidation race the lock prevents. A multi-process IPC/file lock is deliberately **not** implemented (unnecessary under this invariant).
+
+> **Ordering is intentional — do not "optimize" it.** The lock is consulted **only on the refresh path**, *after* the cheap vault read + parse + expiry check. A cache-hit caller (token not near expiry) returns its still-valid token immediately and never touches the lock. Checking the lock *before* the read would force cache hits to block on an unrelated in-flight refresh — strictly worse for the common case. The only "wasted" work in the rare double-refresh window is one cheap vault read + `JSON.parse` by the second caller before it awaits the same in-flight promise — negligible, and race-free (the second caller correctly awaits the first refresh's result). Add this as a one-line code comment above the `inFlightRefresh.get(vaultKey)` lookup.
+
 - [ ] **Step 4: Run to verify pass**
 
 Run: `bun test packages/gateway/src/auth/oauth-registry.test.ts`
@@ -1405,6 +1409,22 @@ Expected: clean working tree; the PR-1 commits (Tasks 1–9) present. No Zoom fi
 - **Behavior preservation:** the six existing auth tests are the net; the only sanctioned test edit is one assertion message in `notion-access-token.test.ts` (Task 8 Step 3), explicitly called out and committed with rationale.
 - **Type consistency:** `OAuthProvider`/`PKCEResult` defined in `oauth-registry.ts`, re-exported by `pkce.ts`; `getValidVaultAccessToken`/`refreshViaRegistry`/`exchangeAuthorizationCode`/`buildAuthorizeUrl`/`OAUTH_PROVIDERS` names are used identically across Tasks 4–8.
 - **No Zoom:** this PR adds the `"zoom"` literal nowhere — PR-2 widens the union and adds the descriptor.
+
+## Review dispositions (2026-05-27)
+
+Plan review (`…-pr1-review.md`) raised four points:
+
+1. **Single-flight lock vs multi-process concurrency** — ✅ documented invariant. Verified
+   no `packages/mcp-connectors/**` file imports the resolver/registry/pkce; token
+   resolution is Gateway-process-only (sync handlers + spawn injection), connectors
+   consume injected env tokens with no Vault access. The in-memory lock is therefore
+   sufficient; the invariant is now stated in Task 5 Step 3. IPC/file lock deferred.
+2. **Vault-read vs lock-check ordering** — ◐ explained, kept as-is. The current order is
+   correct (reviewer concurs); the proposed reorder would pessimize cache hits by
+   serializing them behind unrelated in-flight refreshes. A clarifying code comment is
+   now required above the `inFlightRefresh.get` lookup (Task 5 Step 3 note).
+3. **Assertion-update precision** (Task 8 Step 3) — praise, no change.
+4. **Slack `[,\s]+` scope delimiter** (Task 3) — praise, no change.
 
 ## Hand-off to PR-2
 
