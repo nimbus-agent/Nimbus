@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "tsx": "^4.19.4",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
 }
