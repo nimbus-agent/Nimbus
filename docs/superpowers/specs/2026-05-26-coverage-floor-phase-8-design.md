@@ -87,13 +87,13 @@ These sit at 68–76%; a handful of cases on the existing harness closes each ga
 | File | Baseline | Seam / cases |
 |---|---|---|
 | `commands/doctor.ts` | 46.22% | (1) export-call `bunVersionOk` + `doctorPrintBunCheck`; (2) `doctorRunGatewayRpcs(createMockIpcClient([ping, validate, snapshot]).client)` asserting printed lines + exit code (the single biggest uncovered block, `doctor.ts:156-174`); (3) `runDoctor([])` through the four `setFixture` permutations — no-state, stale-pid, live+IPC-ok, live+IPC-throws (`176-221`). No source change. The Linux `secret-tool` branch in `doctorPrintVaultCheck` (`81/84`) is the only residual (~1-2 lines). |
-| `commands/update.ts` | 34.18% | `runUpdate(argv)` dispatcher via `setFixture({ gatewayState, ipcClient })` (same pattern as `status.test.ts`): (1) `["--check"]` → check output + exit code; (2) `["--yes"]` → `updater.applyUpdate` called + success line; (3) `[]` with `updateAvailable:false` → "No update available."; (4) `[]` with `updateAvailable:true` → "Aborted." (under `bun test` stdin is non-TTY, so `readLine` returns `""` and the abort path runs). The TTY-affirmative branch in `readLine` (`update.ts:105-112`, ~3 lines) is the only residual. |
+| `commands/update.ts` | 34.18% | `runUpdate(argv)` dispatcher via `setFixture({ gatewayState, ipcClient })` (same pattern as `status.test.ts`): (1) `["--check"]` → check output + exit code; (2) `["--yes"]` → `updater.applyUpdate` called + success line; (3) `[]` with `updateAvailable:false` → "No update available."; (4) `[]` with `updateAvailable:true` → "Aborted." (under `bun test` stdin is non-TTY, so `readLine` returns `""` and the abort path runs). The TTY-affirmative branch in `readLine` (`update.ts:105-112`, ~3 lines) is the only residual. Note: `update.ts` has exactly one `process.stdout.write` (the `"Apply update now? [y/N] "` prompt, `:85`) — case 4 *executes* it (so the line is covered) but the harness `captureOutput()` intercepts `console.*` only, so assert on the `console.log("Aborted.")` line, **not** the prompt text. `doctor.ts` is `console.*`-only, so its standard fixture capture is sufficient. |
 
 ### Tier B — The big one (1 file)
 
 | File | Baseline | Seam / cases |
 |---|---|---|
-| `commands/connector.ts` | 40.5% | The dominant uncovered region is the entire `auth` credential-resolution machinery (`connector.ts:258-928`, >half the file): 19 `apply*ConnectorAuth` functions + the `CONNECTOR_AUTH_PARAM_APPLIERS` table + `runConnectorAuth`'s IPC call + post-success output. All reachable through `runConnector(["auth", <service>, ...flags])` with the existing fixture — no refactor, no exclusion. Cases per applier: one **success** (minimal valid flags, queue one `connector.auth` response, assert the params object + the vault-PAT vs OAuth-scopes output branch) and one **primary error** (missing required flag/env — throws *before* `withIpc`, so no fixture needed). Plus the four OAuth `--help` arms (`260-275`), `--port`/`--scopes` happy + invalid, and one env-fallback case to cover `firstEnvTrimmed` (`289-297`). |
+| `commands/connector.ts` | 40.5% | The dominant uncovered region is the entire `auth` credential-resolution machinery (`connector.ts:258-928`, >half the file): 19 `apply*ConnectorAuth` functions + the `CONNECTOR_AUTH_PARAM_APPLIERS` table + `runConnectorAuth`'s IPC call + post-success output. All reachable through `runConnector(["auth", <service>, ...flags])` with the existing fixture — no refactor, no exclusion. Cases per applier: one **success** (minimal valid flags, queue one `connector.auth` response, assert the params object + the vault-PAT vs OAuth-scopes output branch) and one **primary error** (missing required flag/env — throws *before* `withIpc`, so no fixture needed). Plus the four OAuth `--help` arms (`260-275`), `--port`/`--scopes` happy + invalid, and one env-fallback case to cover `firstEnvTrimmed` (`289-297`). **Author the per-applier success/error pairs as a `bun:test` `test.each(table)` over a mutable array of `{ applier, flags, mockResponse?, expectedParams?, expectedExit }` rows** (carry-forward Phase 4: `test.each` needs a *mutable*, non-`readonly` array), so the ~38 homogeneous cases stay a single readable table rather than ~38 hand-written `it()` blocks. The heterogeneous edges (OAuth `--help` arms, `--port`/`--scopes` validity, env-fallback) stay as bespoke `it()` blocks since their assertions differ in shape from the success/error rows. |
 
 ---
 
@@ -135,7 +135,7 @@ Follow the `tui.test.tsx` → `./repl.ts` precedent. `mock.module` is process-gl
 
 ### Temp-dir fs isolation (Tier N — extension)
 
-`mkdtempSync(join(tmpdir(), "nimbus-ext-"))` per test; the keygen/sign handlers take `args` and return an exit code, with all I/O against the temp dir. Generate the test key via the file's own `runExtensionKeygen` (or SDK `generateEd25519Keypair`) so the sign happy-path uses a real 32-byte key.
+`mkdtempSync(join(tmpdir(), "nimbus-ext-"))` per test; the keygen/sign handlers take `args` and return an exit code, with all I/O against the temp dir. Generate the test key via the file's own `runExtensionKeygen` (or SDK `generateEd25519Keypair`) so the sign happy-path uses a real 32-byte key. Cleanup uses `rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })` — the retry guards against transient Windows `EBUSY`/`EPERM` on the just-written files (precedent: `platform.test.ts:51`).
 
 ---
 
@@ -183,7 +183,7 @@ Follow the `tui.test.tsx` → `./repl.ts` precedent. `mock.module` is process-gl
 | Local Windows lcov diverges from CI for the 7 raised entries | Carry-forward 3: drop the 7 only in commit 6, against the CI-Linux `coverage-lcov-merged` artifact; never `update-baseline`. `doctor.ts`'s `secret-tool` branch and `update.ts`'s `readLine` TTY branch flip per-OS but are ≤3 lines each — confirm the CI-Linux number, not the local one. |
 | Excluding 3 CLI files is seen as hiding untested logic | Each exclusion's logic is already covered elsewhere (`gw-state-helpers.ts` twin tests; `decideStartAction`/`wantsNoWizard` in `start.test.ts`; the three dispatch branches in `tui.test.tsx`). The exclusion comments cite the covering test. This matches the existing entry-shim precedent (`gateway/src/index.ts`, `cli/src/index.ts`, worker entries). |
 | `extension` keygen/sign coverage measured against `console.*` capture misses the lines | These handlers write to `process.stdout.write`/`process.stderr.write`, not `console.*` — capture those directly (the `extension.test.ts:705` pattern), or coverage won't move even with passing assertions. |
-| `extension-keygen-sign.test.ts` leaves temp dirs on disk | `rmSync(tmp, { recursive: true, force: true })` in `afterEach`; `mkdtempSync` per test (the `nimbus-testing` isolation rule). |
+| `extension-keygen-sign.test.ts` leaves temp dirs on disk | `rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })` in `afterEach`; `mkdtempSync` per test (the `nimbus-testing` isolation rule). The retry options absorb the transient Windows `EBUSY`/`EPERM` that an AV scanner or lingering handle on a just-written key/manifest can throw — precedent: `packages/gateway/src/platform/platform.test.ts:51` (`rm(..., { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })`). Development is on Windows and the push matrix runs Windows, so this is a real flake source even though the lcov gate is CI-Linux. |
 
 ---
 
@@ -222,3 +222,22 @@ Self-review pass. Each point shows the observation and the **Disposition** appli
 **5. The empty-baseline end state.**
 - **Observation:** An empty `files: {}` is the program's terminal state.
 - **Disposition:** Intended. Acceptance 5 asserts it; Acceptance 9 is the only escape hatch (a raised watermark if CI Linux disagrees on one file), and the implementer must document why if it triggers. The goal is empty.
+
+### External design-review dispositions (2026-05-26)
+
+From [`2026-05-26-coverage-floor-phase-8-design-review.md`](./2026-05-26-coverage-floor-phase-8-design-review.md). Each point was verified against the working tree before disposition.
+
+**R1. Robust temp-dir cleanup (extension keygen/sign) — FIXED.**
+- Verified `packages/gateway/src/platform/platform.test.ts:51` already uses `{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }`. Adopted `maxRetries: 3, retryDelay: 100` on the `extension-keygen-sign.test.ts` cleanup (Test Infrastructure §"Temp-dir fs isolation" + the Risks table). Cheap, precedented, and dev/push-matrix both run Windows.
+
+**R2. Data-driven `test.each` for the 19 connector appliers — FIXED.**
+- Adopted in Tier B: the ~38 homogeneous success/error pairs become a `test.each(table)` over a *mutable* `{ applier, flags, mockResponse?, expectedParams?, expectedExit }` array (carry-forward Phase 4: `test.each` rejects `readonly`). The heterogeneous edges (OAuth `--help` arms, `--port`/`--scopes`, env-fallback) stay bespoke `it()` blocks because their assertions differ in shape.
+
+**R3. Sonar `.tsx` exclusion matching — DEFERRED (verified correct as designed).**
+- The design already specifies an exact `exclusions.ts` entry for `tui.tsx`. `check-exclusion-parity.ts` treats a direct path as its own literal sample, so `isExempt("packages/cli/src/commands/tui.tsx")` returns true once the exact entry exists. Sonar's only extension filter is `**/*.d.ts` in `sonar.exclusions` (line 22); the `sonar.coverage.exclusions` list (line 65) is literal ANT paths, so a literal `packages/cli/src/commands/tui.tsx` matches. No broader `.ts`-only filter exists. No change needed.
+
+**R4. Mock-module isolation across repl/serve/test files — DEFERRED (already covered; reviewer's mechanism partly inaccurate for this repo).**
+- The design already isolates via `afterAll` restore + distinct-leaf-path discipline (carry-forward #1, the Risks table). The reviewer's suggested mechanism — "group into separate files to prevent cross-pollination" — does **not** apply here: `audit:coverage-floor:build-lcov` runs `bun test --coverage` **once per package**, so all CLI test files share one process and file separation alone does not undo a leaked `mock.module`. The actual protection is the restore + distinct-path discipline already specified. No change needed.
+
+**R5. Direct stdout/stderr capture for `update`/`doctor` — DEFERRED (verified non-issue; clarifying note added).**
+- `doctor.ts` is `console.*`-only. `update.ts` has exactly one `process.stdout.write` (the `:85` interactive prompt), which the planned abort-path case *executes* (so it is covered); the assertion targets `console.log("Aborted.")`, which the standard `captureOutput()` does intercept. Added a one-line clarification to the Tier D `update.ts` row so the implementer asserts on the `console.log` line and not the prompt text. No case-list change.

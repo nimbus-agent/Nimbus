@@ -1,27 +1,5 @@
 {
   "version": 1,
-  "generated_at": "2026-05-24T19:19:07.918Z",
-  "files": {
-    "packages/cli/src/commands/connector.ts": {
-      "min_coverage_pct": 40.5
-    },
-    "packages/cli/src/commands/doctor.ts": {
-      "min_coverage_pct": 46.22
-    },
-    "packages/cli/src/commands/extension.ts": {
-      "min_coverage_pct": 72.13
-    },
-    "packages/cli/src/commands/repl.ts": {
-      "min_coverage_pct": 74.36
-    },
-    "packages/cli/src/commands/serve.ts": {
-      "min_coverage_pct": 68.63
-    },
-    "packages/cli/src/commands/test.ts": {
-      "min_coverage_pct": 76.47
-    },
-    "packages/cli/src/commands/update.ts": {
-      "min_coverage_pct": 34.18
-    }
-  }
+  "generated_at": "2026-05-27T00:00:00.000Z",
+  "files": {}
 }
