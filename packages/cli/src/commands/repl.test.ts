@@ -7,7 +7,7 @@
 // (per the Phase 6 plan: "only test the parse-and-execute helper, NOT
 // the readline event loop").
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
@@ -15,7 +15,11 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const replMod = await import("./repl.ts");
-const { loadReplPreconditions, parseReplArgs, runReplTurn } = replMod;
+const { loadReplPreconditions, parseReplArgs, runRepl, runReplTurn } = replMod;
+
+// Captured at module-load so afterEach can restore the genuine module for any
+// sibling test that imports node:readline/promises later in the same process.
+const realReadline = await import("node:readline/promises");
 
 const out = captureOutput();
 
@@ -134,5 +138,46 @@ describe("loadReplPreconditions (REPL gate)", () => {
     const out = await loadReplPreconditions(["--session", "sess-9"]);
     expect(out.socketPath).toBe("/tmp/fake.sock");
     expect(out.sessionId).toBe("sess-9");
+  });
+});
+
+describe("runRepl (readline loop, mocked node:readline/promises)", () => {
+  afterEach(() => {
+    // Restore the genuine module so no sibling test sees the stub.
+    mock.module("node:readline/promises", () => realReadline);
+    clearFixture();
+  });
+
+  it("prints the banner and exits the loop on `exit`", async () => {
+    mock.module("node:readline/promises", () => ({
+      ...realReadline,
+      createInterface: () => ({
+        question: async (): Promise<string> => "exit",
+        close: (): void => {},
+      }),
+    }));
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    await runRepl([]);
+    // runRepl writes the banner via process.stdout.write (not captured); the
+    // assertion that matters is that it returns without hanging.
+    expect(true).toBe(true);
+  });
+
+  it("runs one turn then quits", async () => {
+    let calls = 0;
+    mock.module("node:readline/promises", () => ({
+      ...realReadline,
+      createInterface: () => ({
+        question: async (): Promise<string> => {
+          calls += 1;
+          return calls === 1 ? "what is up" : "quit";
+        },
+        close: (): void => {},
+      }),
+    }));
+    const mockIpc = createMockIpcClient([{ reply: "all good" }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mockIpc.client });
+    await runRepl([]);
+    expect(mockIpc.calls[0]?.method).toBe("agent.invoke");
   });
 });

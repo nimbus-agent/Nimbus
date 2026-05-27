@@ -4,7 +4,7 @@
 // gateway spawn itself is covered by `lib/spawn-gateway.test.ts`; we test
 // the dispatch decision layer here.
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
@@ -12,6 +12,13 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 
 const mod = await import("./serve.ts");
 const { parseServeArgs, runServe, takeFlag } = mod;
+
+// Capture the real spawnGateway function reference (not the namespace) so the
+// afterEach restore can re-install the original function even after mock.module
+// mutates the namespace object's live bindings in place (Bun behaviour).
+const realSpawnGatewayMod = await import("../lib/spawn-gateway.ts");
+const realSpawnGatewayFn = realSpawnGatewayMod.spawnGateway;
+const realStripInspectorEnv = realSpawnGatewayMod.stripInspectorEnv;
 
 const out = captureOutput();
 
@@ -88,5 +95,56 @@ describe("runServe dispatcher", () => {
       processAlive: true,
     });
     await expect(runServe(["--port", "7474"])).rejects.toThrow(/already running/i);
+  });
+});
+
+describe("runServe spawn path (mocked ../lib/spawn-gateway.ts)", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    // Restore using individual captured function refs, NOT the namespace object,
+    // because mock.module mutates the namespace's live bindings in place (Bun).
+    mock.module("../lib/spawn-gateway.ts", () => ({
+      spawnGateway: realSpawnGatewayFn,
+      stripInspectorEnv: realStripInspectorEnv,
+    }));
+    clearFixture();
+  });
+
+  it("spawns + prints HTTP/socket/log lines when gateway is not running", async () => {
+    mock.module("../lib/spawn-gateway.ts", () => ({
+      spawnGateway: async (): Promise<{
+        pid: number;
+        logPath: string;
+        logStartOffset: number;
+      }> => ({
+        pid: 4242,
+        logPath: "/tmp/nimbus-test.log",
+        logStartOffset: 0,
+      }),
+      stripInspectorEnv: realStripInspectorEnv,
+    }));
+    setFixture({}); // readGatewayState -> undefined => gateway not running
+    await runServe(["--port", "7474"]);
+    expect(out.stdout).toContain("HTTP:");
+    expect(out.stdout).toContain("Socket:");
+    expect(out.stdout).toContain("Log:");
+  });
+
+  it("sets process.exitCode = 1 when spawn rejects", async () => {
+    const origExitCode = process.exitCode;
+    process.exitCode = 0;
+    mock.module("../lib/spawn-gateway.ts", () => ({
+      spawnGateway: async (): Promise<never> => {
+        throw new Error("boom");
+      },
+      stripInspectorEnv: realStripInspectorEnv,
+    }));
+    setFixture({});
+    await runServe(["--port", "7474"]);
+    expect(out.stderr).toContain("boom");
+    expect(process.exitCode).toBe(1);
+    process.exitCode = origExitCode;
   });
 });

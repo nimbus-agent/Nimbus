@@ -7,7 +7,8 @@
 // dispatcher skips it altogether, which the dispatcher test relies on by
 // omitting a `scripts.test` entry).
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,18 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 
 const mod = await import("./test.ts");
 const { MANIFEST, getTestScript, loadAndValidateManifest, parseTestArgs, runTest } = mod;
+
+// Capture individual exports before any mock.module call so the afterEach
+// restore can re-install the original functions even after mock.module mutates
+// the namespace object's live bindings in place (Bun behaviour).
+const realChildProcessMod = await import("node:child_process");
+const realSpawn = realChildProcessMod.spawn;
+const realExecFile = realChildProcessMod.execFile;
+const realExec = realChildProcessMod.exec;
+const realFork = realChildProcessMod.fork;
+const realSpawnSync = realChildProcessMod.spawnSync;
+const realExecFileSync = realChildProcessMod.execFileSync;
+const realExecSync = realChildProcessMod.execSync;
 
 const out = captureOutput();
 
@@ -158,5 +171,80 @@ describe("runTest dispatcher", () => {
     mkdirSync(join(tmpDir, "dist"), { recursive: true });
     await runTest([tmpDir]);
     expect(out.stdout).toContain("Extension contract OK");
+  });
+});
+
+describe("runTest spawn path (mocked node:child_process)", () => {
+  let tmpDir: string;
+
+  const FULL_MANIFEST = {
+    id: "com.test.extension",
+    displayName: "test ext",
+    version: "0.1.0",
+    description: "Test extension for runTest spawn path",
+    author: "tester",
+    entrypoint: "dist/index.js",
+    runtime: "bun" as const,
+    permissions: ["read" as const],
+    hitlRequired: [],
+    minNimbusVersion: "0.1.0",
+  };
+
+  beforeEach(() => {
+    out.reset();
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-test-spawn-"));
+    writeFileSync(join(tmpDir, MANIFEST), JSON.stringify(FULL_MANIFEST), "utf8");
+    mkdirSync(join(tmpDir, "dist"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { test: "bun test" } }),
+      "utf8",
+    );
+  });
+  afterEach(() => {
+    // Restore using captured function refs — not the namespace object — because
+    // mock.module mutates the namespace's live bindings in place (Bun behaviour).
+    mock.module("node:child_process", () => ({
+      spawn: realSpawn,
+      execFile: realExecFile,
+      exec: realExec,
+      fork: realFork,
+      spawnSync: realSpawnSync,
+      execFileSync: realExecFileSync,
+      execSync: realExecSync,
+    }));
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  });
+
+  function mockSpawnEmitting(event: "close" | "error", arg: number | Error): void {
+    mock.module("node:child_process", () => ({
+      spawn: (): EventEmitter => {
+        const child = new EventEmitter();
+        queueMicrotask(() => child.emit(event, arg));
+        return child;
+      },
+      execFile: realExecFile,
+      exec: realExec,
+      fork: realFork,
+      spawnSync: realSpawnSync,
+      execFileSync: realExecFileSync,
+      execSync: realExecSync,
+    }));
+  }
+
+  it("resolves + prints OK when the test subprocess exits 0", async () => {
+    mockSpawnEmitting("close", 0);
+    await runTest([tmpDir]);
+    expect(out.stdout).toContain("Extension contract OK");
+  });
+
+  it("rejects when the test subprocess exits non-zero", async () => {
+    mockSpawnEmitting("close", 1);
+    await expect(runTest([tmpDir])).rejects.toThrow(/exited with code 1/);
+  });
+
+  it("rejects when the test subprocess errors", async () => {
+    mockSpawnEmitting("error", new Error("spawn failed"));
+    await expect(runTest([tmpDir])).rejects.toThrow(/spawn failed/);
   });
 });
