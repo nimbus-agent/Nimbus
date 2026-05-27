@@ -67,6 +67,7 @@
     "packages/mcp-connectors/raindrop",
     "packages/mcp-connectors/intercom",
     "packages/mcp-connectors/zendesk",
+    "packages/mcp-connectors/lever",
     "packages/vscode-extension"
   ],
   "scripts": {
