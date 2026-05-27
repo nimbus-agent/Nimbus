@@ -1,0 +1,19 @@
+#!/bin/sh
+# Runs the fast pre-flight before pushing. Skip (emergency/trivial):
+#   NIMBUS_SKIP_PREPUSH=1 git push
+if [ "$NIMBUS_SKIP_PREPUSH" = "1" ]; then
+  echo "↷ pre-push: skipped via NIMBUS_SKIP_PREPUSH=1"
+  exit 0
+fi
+# GUI git clients often don't load your shell profile, so bun may be off PATH.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "✗ 'bun' not found on PATH. If pushing from a GUI/IDE, ensure your shell" >&2
+  echo "  profile is loaded for git, or push from a terminal (or NIMBUS_SKIP_PREPUSH=1)." >&2
+  exit 1
+fi
+echo "▶ pre-push: running 'bun run preflight:fast' (skip with NIMBUS_SKIP_PREPUSH=1) …"
+bun run preflight:fast || {
+  echo "✗ preflight:fast failed — push aborted. Fix, or NIMBUS_SKIP_PREPUSH=1 to bypass." >&2
+  exit 1
+}
+exit 0

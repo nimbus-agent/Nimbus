@@ -156,20 +156,20 @@
   },
   "dependencies": {
     "@nimbus-dev/client": "workspace:*",
-    "dompurify": "^3.4.5",
+    "dompurify": "^3.4.7",
     "marked": "^18.0.4"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.0",
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.120.0",
-    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/coverage-v8": "^4.1.7",
     "@vscode/test-electron": "^2.4.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.28.0",
     "jsdom": "^29.1.1",
     "ovsx": "^0.10.12",
     "typescript": "^6.0.3",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.7"
   }
 }

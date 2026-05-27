@@ -1,3 +1,20 @@
+// Production entry point for gateway-process helpers.
+//
+// The shared CLI test harness (`packages/cli/test/helpers/cli-mocks.ts`)
+// registers `mock.module("../../src/lib/gateway-process.ts", ...)` against
+// this file so dispatcher tests can control `readGatewayState` and
+// `isProcessAlive` via `setFixture({ gatewayState, processAlive })`.
+//
+// The implementation is INTENTIONALLY DUPLICATED with `gw-state-helpers.ts`
+// rather than re-exported from it. ESM re-exports create live bindings
+// shared between the source module and the re-exporting module, and Bun's
+// `mock.module` on Linux + macOS propagates the mock through those live
+// bindings to the source file too — which would shadow the colocated
+// `gateway-process.test.ts` unit test that imports from gw-state-helpers
+// directly. Owning a separate function-body declaration here cuts that
+// propagation: when the harness replaces this module's exports, the
+// helper file's own export bindings stay intact.
+
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";

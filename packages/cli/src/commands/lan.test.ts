@@ -1,5 +1,27 @@
-import { describe, expect, test } from "bun:test";
-import { parseLanArgs } from "./lan.ts";
+// packages/cli/src/commands/lan.test.ts
+//
+// Covers:
+//   - parseLanArgs (getopt-style)
+//   - runLan dispatcher — each sub-handler goes through withGatewayIpc,
+//     which the cli-mocks harness intercepts at the IPCClient constructor
+//     + readGatewayState boundary.
+//
+// runLan uses console.log for human-facing output (captured by
+// captureOutput) and the IPC calls go through the harness-mocked
+// IPCClient (passing through the fixture's ipcClient.call).
+import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
+
+import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { captureOutput } from "../../test/helpers/cli-output.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+
+const mod = await import("./lan.ts");
+const { parseLanArgs, runLan } = mod;
+
+// ----------------------------------------------------------------------
+// Parser tests (preserved from baseline).
+// ----------------------------------------------------------------------
 
 describe("parseLanArgs", () => {
   test("no args → status", () => {
@@ -44,5 +66,129 @@ describe("parseLanArgs", () => {
 
   test("unknown subcommand throws", () => {
     expect(() => parseLanArgs(["bogus"])).toThrow(/Unknown subcommand/);
+  });
+});
+
+// ----------------------------------------------------------------------
+// runLan dispatcher tests.
+// ----------------------------------------------------------------------
+
+const out = captureOutput();
+
+afterAll(() => {
+  out.restore();
+});
+
+describe("runLan — dispatcher", () => {
+  beforeEach(() => {
+    out.reset();
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("status → lan.getStatus + 3-line output", async () => {
+    const mock = createMockIpcClient([
+      { enabled: true, pairingOpen: false, listenAddr: "127.0.0.1:7475" },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["status"]);
+    expect(mock.calls[0]?.method).toBe("lan.getStatus");
+    expect(out.stdout).toContain("LAN enabled:  true");
+    expect(out.stdout).toContain("Pairing open: false");
+    expect(out.stdout).toContain("127.0.0.1:7475");
+  });
+
+  it("status prints '(none)' when listenAddr is null", async () => {
+    const mock = createMockIpcClient([{ enabled: false, pairingOpen: false, listenAddr: null }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan([]);
+    expect(out.stdout).toContain("(none)");
+  });
+
+  it("open → lan.openPairingWindow + prints code + ISO expiry", async () => {
+    const mock = createMockIpcClient([
+      { pairingCode: "AB123-CD456", expiresAt: 1_747_142_500_000 },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["open"]);
+    expect(mock.calls[0]?.method).toBe("lan.openPairingWindow");
+    expect(out.stdout).toContain("AB123-CD456");
+    // The ISO expiry should be present in the output.
+    expect(out.stdout).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("close → lan.closePairingWindow + 'Pairing window closed.'", async () => {
+    const mock = createMockIpcClient([{ ok: true }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["close"]);
+    expect(mock.calls[0]?.method).toBe("lan.closePairingWindow");
+    expect(out.stdout).toContain("Pairing window closed.");
+  });
+
+  it("peers (empty list) → 'No LAN peers.'", async () => {
+    const mock = createMockIpcClient([{ peers: [] }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["peers"]);
+    expect(mock.calls[0]?.method).toBe("lan.listPeers");
+    expect(out.stdout).toContain("No LAN peers.");
+  });
+
+  it("peers (non-empty) → table rows with yes/no + (unknown) for missing displayName", async () => {
+    const mock = createMockIpcClient([
+      {
+        peers: [
+          { peerId: "peer-A", displayName: "Alice", writeAllowed: true },
+          { peerId: "peer-B", writeAllowed: false }, // no displayName
+        ],
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["peers"]);
+    expect(out.stdout).toContain("peer-A");
+    expect(out.stdout).toContain("Alice");
+    expect(out.stdout).toContain("yes");
+    expect(out.stdout).toContain("peer-B");
+    expect(out.stdout).toContain("(unknown)");
+    expect(out.stdout).toContain("no");
+  });
+
+  it("grant <peerId> → lan.grantWrite + confirmation", async () => {
+    const mock = createMockIpcClient([{ ok: true }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["grant", "peer-1"]);
+    expect(mock.calls[0]).toEqual({
+      method: "lan.grantWrite",
+      params: { peerId: "peer-1" },
+    });
+    expect(out.stdout).toContain("Write access granted to peer peer-1");
+  });
+
+  it("revoke <peerId> → lan.revokeWrite + confirmation", async () => {
+    const mock = createMockIpcClient([{ ok: true }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["revoke", "peer-1"]);
+    expect(mock.calls[0]).toEqual({
+      method: "lan.revokeWrite",
+      params: { peerId: "peer-1" },
+    });
+    expect(out.stdout).toContain("Write access revoked for peer peer-1");
+  });
+
+  it("remove <peerId> → lan.removePeer + confirmation", async () => {
+    const mock = createMockIpcClient([{ ok: true }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runLan(["remove", "peer-1"]);
+    expect(mock.calls[0]).toEqual({
+      method: "lan.removePeer",
+      params: { peerId: "peer-1" },
+    });
+    expect(out.stdout).toContain("Peer peer-1 removed.");
+  });
+
+  it("throws 'Gateway is not running' when state is undefined (parser passes, gateway absent)", async () => {
+    setFixture({});
+    await expect(runLan(["status"])).rejects.toThrow(/Gateway is not running/);
   });
 });

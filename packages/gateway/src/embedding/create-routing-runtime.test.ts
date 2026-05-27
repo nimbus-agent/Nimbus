@@ -17,7 +17,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -30,17 +30,10 @@ import { MockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { Embedder } from "./types.ts";
 
-// Absolute module ID so mock.module matches the bare-relative import used
-// inside create-routing-runtime.ts ("./model.ts"). We only mock model.ts
-// (the heavy MiniLM weights loader); openai-embedder.ts is lightweight (a
-// fetch wrapper) so we let it run for real and intercept globalThis.fetch
-// instead. This avoids mock.module leaking the openai stub into the sibling
-// openai-embedder.test.ts file when both run in the same Bun process.
-const MODEL_MOD = resolve(import.meta.dir, "model.ts");
-
-// Capture the real ./model.ts up-front so afterAll can re-mock with the
-// real exports — Bun's mock.module is not cleared by mock.restore().
-const realModelMod = await import(MODEL_MOD);
+// The local MiniLM embedder is injected into `tryCreateRoutingEmbeddingRuntime`
+// via its `createEmbedder` param (not `mock.module`) — a process-global
+// model.ts mock would leak a fake into the sibling model.test.ts. openai-embedder.ts
+// stays real; we intercept globalThis.fetch for its HTTP call instead.
 
 function vecAvailable(): boolean {
   const d = new Database(":memory:");
@@ -67,17 +60,12 @@ function fakeEmbedder(model: string, dims: number): Embedder {
   };
 }
 
-function installEmbedderMocks(opts?: { throwOnLocal?: boolean }): void {
-  mock.module(MODEL_MOD, () => ({
-    LOCAL_EMBEDDING_MODEL_ID: "all-MiniLM-L6-v2",
-    MINIMUM_MODEL_VERSION: "1.0.0",
-    async createLocalEmbedder(): Promise<Embedder> {
-      if (opts?.throwOnLocal === true) {
-        throw new Error("synthetic local embedder failure");
-      }
-      return fakeEmbedder("local:all-MiniLM-L6-v2", 384);
-    },
-  }));
+// Injected local-embedder factory (replaces the old mock.module(model.ts)).
+async function fakeLocalEmbedder(): Promise<Embedder> {
+  return fakeEmbedder("local:all-MiniLM-L6-v2", 384);
+}
+async function throwingLocalEmbedder(): Promise<Embedder> {
+  throw new Error("synthetic local embedder failure");
 }
 
 // The real createOpenAIEmbedder runs lazily — its returned wrapper makes a
@@ -155,20 +143,27 @@ function makeHarness(opts: { migrateTo: number; setApiKey: boolean }): Harness {
   };
 }
 
-async function importFactory(): Promise<
-  typeof import("./create-routing-runtime.ts").tryCreateRoutingEmbeddingRuntime
+type RoutingFactory = typeof import("./create-routing-runtime.ts").tryCreateRoutingEmbeddingRuntime;
+
+// Returns a 5-arg wrapper that injects `createEmbedder` (the local MiniLM
+// factory) as the 6th arg — so test call sites stay `factory(db, paths, ...)`.
+async function importFactory(
+  createEmbedder: Parameters<RoutingFactory>[5] = fakeLocalEmbedder,
+): Promise<
+  (
+    db: Parameters<RoutingFactory>[0],
+    paths: Parameters<RoutingFactory>[1],
+    logger: Parameters<RoutingFactory>[2],
+    toml: Parameters<RoutingFactory>[3],
+    vault: Parameters<RoutingFactory>[4],
+  ) => ReturnType<RoutingFactory>
 > {
   const mod = await import(resolve(import.meta.dir, "create-routing-runtime.ts"));
-  return mod.tryCreateRoutingEmbeddingRuntime;
+  return (db, paths, logger, toml, vault) =>
+    mod.tryCreateRoutingEmbeddingRuntime(db, paths, logger, toml, vault, createEmbedder);
 }
 
 const silentLogger = pino({ level: "silent" });
-
-// Restore the real ./model.ts module after every test in this file, so later
-// test files see the real exports rather than our in-test fake.
-afterAll(() => {
-  mock.module(MODEL_MOD, () => realModelMod);
-});
 
 describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
   beforeEach(() => {
@@ -192,7 +187,6 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
   });
 
   test("OPENAI_API_KEY env var trumps the empty vault key", async () => {
-    installEmbedderMocks();
     processEnvSet("OPENAI_API_KEY", "env-present");
     const h = makeHarness({ migrateTo: 30, setApiKey: false });
     try {
@@ -221,10 +215,9 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
   });
 
   test("returns null when the local embedder throws during init", async () => {
-    installEmbedderMocks({ throwOnLocal: true });
     const h = makeHarness({ migrateTo: 30, setApiKey: true });
     try {
-      const factory = await importFactory();
+      const factory = await importFactory(throwingLocalEmbedder);
       const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
       expect(runtime).toBeNull();
     } finally {
@@ -235,10 +228,9 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
   test("returns null when local embedder init failure happens after API key resolves", async () => {
     // Distinct from the previous test: this one confirms the catch wraps both
     // embedder constructions (line 56-65) — even when only one of the two throws.
-    installEmbedderMocks({ throwOnLocal: true });
     const h = makeHarness({ migrateTo: 30, setApiKey: true });
     try {
-      const factory = await importFactory();
+      const factory = await importFactory(throwingLocalEmbedder);
       const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
       expect(runtime).toBeNull();
     } finally {
@@ -247,7 +239,6 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
   });
 
   test("logs an init-failure warning when an embedder throws", async () => {
-    installEmbedderMocks({ throwOnLocal: true });
     const warnings: Array<Record<string, unknown>> = [];
     const captureLogger = pino(
       { level: "warn" },
@@ -263,7 +254,7 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
     );
     const h = makeHarness({ migrateTo: 30, setApiKey: true });
     try {
-      const factory = await importFactory();
+      const factory = await importFactory(throwingLocalEmbedder);
       await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
       // Re-run with capturing logger so the warn() goes through write()
       await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
@@ -281,7 +272,6 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
       // but vec is unloadable" branch from the "schema doesn't need vec yet" branch.
       return;
     }
-    installEmbedderMocks();
     const h = makeHarness({ migrateTo: 30, setApiKey: true });
     // Force-unload sqlite-vec by reopening the DB on a new connection that we never
     // call tryLoadSqliteVec on. The factory reads user_version (>= 6) then probes
@@ -326,7 +316,6 @@ describe.skipIf(!VEC_AVAILABLE)(
   () => {
     beforeEach(() => {
       mock.restore();
-      installEmbedderMocks();
       installOpenaiFetchStub();
     });
     afterEach(() => {

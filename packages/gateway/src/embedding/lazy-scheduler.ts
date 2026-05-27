@@ -6,12 +6,20 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
-import { createLocalEmbedder, LOCAL_EMBEDDING_MODEL_ID } from "./model.ts";
+import {
+  type CreateLocalEmbedderOptions,
+  createLocalEmbedder,
+  LOCAL_EMBEDDING_MODEL_ID,
+} from "./model.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import type { Embedder, IndexedItem } from "./types.ts";
 
 /**
  * In-process lazy embedding (fallback when the Bun worker cannot start).
+ *
+ * `createEmbedder` is injected for tests only — production passes nothing and
+ * gets the real MiniLM loader. Injection (not `mock.module`) avoids leaking a
+ * process-global model.ts fake into sibling embedding tests (e.g. model.test.ts).
  */
 export function createLazyEmbeddingRuntime(
   db: Database,
@@ -19,6 +27,7 @@ export function createLazyEmbeddingRuntime(
   logger: Logger,
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   preloadedEmbedder?: Embedder,
+  createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
 ): EmbeddingRuntime {
   let pipeline: SqliteEmbeddingPipeline | null = null;
   let loading: Promise<SqliteEmbeddingPipeline | null> | null = null;
@@ -39,7 +48,7 @@ export function createLazyEmbeddingRuntime(
     loading ??= (async (): Promise<SqliteEmbeddingPipeline | null> => {
       try {
         const embedder =
-          preloadedEmbedder ?? (await createLocalEmbedder({ cacheDir: join(dataDir, "models") }));
+          preloadedEmbedder ?? (await createEmbedder({ cacheDir: join(dataDir, "models") }));
         return new SqliteEmbeddingPipeline({
           db,
           embedder,

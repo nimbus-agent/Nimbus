@@ -77,8 +77,39 @@ async function waitForGatewayReady(
   return false;
 }
 
-function wantsNoWizard(args: readonly string[]): boolean {
+export function wantsNoWizard(args: readonly string[]): boolean {
   return args.includes("--no-wizard");
+}
+
+export type StartDecision =
+  | { action: "reuse"; pid: number; reason: "gateway already running" }
+  | { action: "abort-stale-clear"; pid: number; reason: "stale state, will clear and restart" }
+  | { action: "start-fresh"; reason: "no existing state" };
+
+/**
+ * Pure decision-layer for `runStart`. Given the existing state file (if any),
+ * whether its pid is alive, and whether the recorded socket is reachable,
+ * returns the action the dispatcher should take.
+ *
+ * Extracted from `runStart` so the parse + state-file decision is testable
+ * without spawning a real gateway subprocess.
+ */
+export function decideStartAction(
+  existing: { pid: number; socketPath: string } | undefined,
+  pidAlive: boolean,
+  reachable: boolean,
+): StartDecision {
+  if (existing === undefined) {
+    return { action: "start-fresh", reason: "no existing state" };
+  }
+  if (pidAlive && reachable) {
+    return { action: "reuse", pid: existing.pid, reason: "gateway already running" };
+  }
+  return {
+    action: "abort-stale-clear",
+    pid: existing.pid,
+    reason: "stale state, will clear and restart",
+  };
 }
 
 async function sleep(ms: number): Promise<void> {

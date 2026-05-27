@@ -40,6 +40,7 @@ Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T
 
 ### 2026-05-22
 
+- **Coverage floor Phase 6** ✅ — CLI long-tail. Shared test harness at `packages/cli/test/helpers/{cli-mocks,mock-ipc-client,cli-output}.ts`; sub-handler refactors across all 38 commands; `gateway-process.ts` impl-file split to resolve harness-shadow on the colocated unit test. `coverage-baseline.json` 91 → 53 entries; `cli/src/index.ts` structurally excluded.
 - **Tier-2 connector — Semgrep** ✅ — AppSec Platform SAST findings (`semgrep:finding`).
 - **Tier-2 connector — SonarQube / SonarCloud** ✅ — code-quality issues (`sonarqube:code_issue`).
 - **Pre-commit hook docs** ✅ — `docs/cli/pre-commit.md` + `docs/templates/nimbus-pre-commit.sh`.

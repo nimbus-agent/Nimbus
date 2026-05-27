@@ -1,5 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 export type TomlKeySource = "file" | "env";
 
@@ -56,17 +63,39 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, content, "utf8");
+  // SECURITY: use `mkdtempSync(prefix)` to create a unique sibling
+  // directory in the destination's own directory. `mkdtempSync` is the
+  // canonical Node sanitizer CodeQL recognises for the js/file-system-race
+  // rule — it creates the directory atomically with a random suffix,
+  // mode 0o700, and O_EXCL behavior under the hood.
+  //
+  // The dir lives next to `path` (not in `os.tmpdir()`) so the subsequent
+  // `renameSync` of the file inside it is same-volume and therefore
+  // atomic on POSIX + Windows. After rename, the now-empty dir is
+  // rmdir'd best-effort.
+  const dir = dirname(path);
+  const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
+  const tmp = join(swap, "content");
   try {
-    renameSync(tmp, path);
-  } catch {
+    writeFileSync(tmp, content, "utf8");
     try {
-      unlinkSync(path);
+      renameSync(tmp, path);
     } catch {
-      /* ignore */
+      try {
+        unlinkSync(path);
+      } catch {
+        /* ignore */
+      }
+      renameSync(tmp, path);
     }
-    renameSync(tmp, path);
+  } finally {
+    try {
+      rmdirSync(swap);
+    } catch {
+      /* the rename may have left the dir empty (success) or the file
+         may still be inside if writeFileSync threw before rename; either
+         way we don't want to throw from the cleanup path. */
+    }
   }
 }
 

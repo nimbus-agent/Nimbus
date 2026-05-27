@@ -32,7 +32,7 @@ jobs:
       code-changed: ${{ steps.changes.outputs.code-changed }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -106,7 +106,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -140,7 +140,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -175,6 +175,18 @@ jobs:
 
       - name: Gateway + CLI unit tests (retry once on slow runners)
         shell: bash
+        # Gateway and CLI run in SEPARATE `bun test` processes. The CLI suite's
+        # mock harness (`packages/cli/test/helpers/cli-mocks.ts`) installs
+        # process-global `mock.module` registrations and explicitly assumes
+        # per-package process isolation ("serial-within-process"). Running
+        # `bun test packages/gateway/src packages/cli/src` in ONE process let a
+        # gateway test's global `mock.restore()` corrupt the CLI repl tests at
+        # collection time — observed as the whole repl.test.ts file failing
+        # (incl. the dependency-free parseReplArgs) intermittently on macOS.
+        # Separate invocations restore the isolation cli-mocks depends on; this
+        # matches how the push 3-OS matrix (`_test-suite.yml`) runs them per
+        # package.
+        #
         # Retry-once mirrors the macOS/Windows pattern in `_test-suite.yml`. Two
         # tests in `packages/gateway/src/perf/` and `packages/gateway/src/platform/`
         # observably exceed Bun's default 5 s timeout on cold Windows runners and
@@ -183,8 +195,13 @@ jobs:
         # from attempt 2 — so a genuine regression actually fails the job.
         run: |
           set +e
+          run_suite() {
+            bun test packages/gateway/src || return $?
+            bun test packages/cli/src || return $?
+            return 0
+          }
           for attempt in 1 2; do
-            bun test packages/gateway/src packages/cli/src
+            run_suite
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0
@@ -213,7 +230,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -277,7 +294,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -315,7 +332,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -383,7 +400,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 

@@ -107,7 +107,13 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 
 **Worktree directory:** `.worktrees/` (project-local, git-ignored). When setting up isolated workspaces for feature branches, use `.worktrees/<branch-name>`.
 
-**Pre-flight before pushing a PR:** `bun run test:ci` (full CI parity). Full command catalogue + coverage thresholds + env-var overrides live in the [`nimbus-commands`](./.claude/commands/nimbus-commands.md) skill. File-location pointers live in [`nimbus-file-map`](./.claude/commands/nimbus-file-map.md).
+**Pre-flight before pushing a PR:** `bun run preflight` (full local CI parity — every gate CI runs) or `bun run preflight:fast` (~2-3 min, all the cheap static gates). **`bun run test:ci` is only the test suite — it is NOT the full gate set; `preflight` is.** The gate manifest lives in `scripts/lib/preflight-gates.ts`; a drift test (`scripts/preflight.test.ts`) fails if a CI gate is missing from it. See the [`nimbus-preflight`](./.claude/commands/nimbus-preflight.md) skill.
+
+**Branch hygiene:** never commit on `main` / `develop` — branch first (`git switch -c dev/<you>/<topic>`) and verify `git rev-parse --abbrev-ref HEAD` before committing. `bun run hooks:install` installs a pre-commit guard that enforces this and a pre-push `preflight:fast`.
+
+**Cross-platform:** build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators — `bun run audit:cross-platform` flags hardcoded Windows-separator path assertions (backslash / drive-letter / UNC) in tests, the Windows-dev → Ubuntu-CI footgun (escape hatch: `// cross-platform-ok`).
+
+Full command catalogue + coverage thresholds + env-var overrides live in the [`nimbus-commands`](./.claude/commands/nimbus-commands.md) skill. File-location pointers live in [`nimbus-file-map`](./.claude/commands/nimbus-file-map.md).
 
 ---
 
@@ -132,6 +138,7 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 @.claude/commands/nimbus-file-map.md
 @.claude/commands/nimbus-http-write-surface.md
 @.claude/commands/nimbus-ipc.md
+@.claude/commands/nimbus-preflight.md
 @.claude/commands/nimbus-security-invariants.md
 @.claude/commands/nimbus-tauri-allowlist.md
 @.claude/commands/nimbus-testing.md

@@ -1,10 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import {
-  type MetricRowInput,
+import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
+
+import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+
+const mod = await import("./metrics.ts");
+const {
+  formatDoraPretty,
   parseMetricsDoraArgs,
   renderMetricRow,
   renderMixedSourceHint,
-} from "./metrics.ts";
+  runMetricsCli,
+} = mod;
+type MetricRowInput = import("./metrics.ts").MetricRowInput;
 
 describe("parseMetricsDoraArgs", () => {
   test("parses service + since + json", () => {
@@ -104,5 +112,166 @@ describe("renderMixedSourceHint", () => {
   test("includes the actionable guidance phrase", () => {
     const hint = renderMixedSourceHint();
     expect(hint).toContain("Annotate consistently");
+  });
+});
+
+// ----------------------------------------------------------------------
+// formatDoraPretty — envelope-level renderer.
+// ----------------------------------------------------------------------
+
+function metric(
+  value: number | null,
+  unit: string,
+  sample: number,
+  gap: string | null,
+): { value: number | null; unit: string; sample: number; gap: string | null } {
+  return { value, unit, sample, gap };
+}
+
+function envelopeFixture(
+  opts: { hasMixedSource?: boolean } = {},
+): Parameters<typeof formatDoraPretty>[0] {
+  const lt = opts.hasMixedSource
+    ? metric(2.5, "hours", 8, "mixed_source")
+    : metric(2.5, "hours", 8, null);
+  return {
+    service: "svc",
+    since_ms: 30 * 86_400_000,
+    computed_at: "2026-05-22T00:00:00Z",
+    metrics: {
+      deployment_frequency: metric(1.2, "per_day", 36, null),
+      lead_time_for_changes: lt,
+      change_failure_rate: metric(0.1, "percent", 36, null),
+      mttr: metric(null, "hours", 0, "no_data"),
+    },
+  };
+}
+
+describe("formatDoraPretty", () => {
+  test("renders header, four metric rows, and since-days", () => {
+    const out = formatDoraPretty(envelopeFixture(), { tty: false, noColor: true });
+    expect(out).toContain("DORA metrics");
+    expect(out).toContain("svc");
+    expect(out).toContain("Deployment Frequency");
+    expect(out).toContain("Lead Time");
+    expect(out).toContain("Change Failure Rate");
+    expect(out).toContain("MTTR");
+    expect(out).toContain("30d");
+  });
+
+  test("appends mixed_source hint when any metric is mixed_source", () => {
+    const out = formatDoraPretty(envelopeFixture({ hasMixedSource: true }), {
+      tty: false,
+      noColor: true,
+    });
+    expect(out).toContain("Annotate consistently");
+  });
+
+  test("does NOT append hint when no metric is mixed_source", () => {
+    const out = formatDoraPretty(envelopeFixture(), { tty: false, noColor: true });
+    expect(out).not.toContain("Annotate consistently");
+  });
+
+  test("renders em-dash for null values", () => {
+    const out = formatDoraPretty(envelopeFixture(), { tty: false, noColor: true });
+    expect(out).toContain("—");
+  });
+});
+
+// ----------------------------------------------------------------------
+// runMetricsCli — dispatcher.
+// ----------------------------------------------------------------------
+
+const stdoutChunks: string[] = [];
+const stderrChunks: string[] = [];
+const origStdoutWrite = process.stdout.write.bind(process.stdout);
+const origStderrWrite = process.stderr.write.bind(process.stderr);
+const origExit = process.exit.bind(process);
+
+function installStreamCapture(): void {
+  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  process.exit = ((code?: number): never => {
+    throw new Error(`process.exit(${code ?? ""})`);
+  }) as typeof process.exit;
+}
+
+function restoreStreams(): void {
+  process.stdout.write = origStdoutWrite;
+  process.stderr.write = origStderrWrite;
+  process.exit = origExit;
+}
+
+afterAll(() => {
+  restoreStreams();
+});
+
+describe("runMetricsCli", () => {
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+  });
+
+  it("exits 1 on missing subcommand", async () => {
+    await expect(runMetricsCli([])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("Usage:");
+  });
+
+  it("exits 1 on unknown subcommand", async () => {
+    await expect(runMetricsCli(["bogus"])).rejects.toThrow("process.exit(1)");
+  });
+
+  it("exits 1 on arg-parse error (missing --service)", async () => {
+    await expect(runMetricsCli(["dora"])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("--service");
+  });
+
+  it("exits 1 when gateway state is undefined", async () => {
+    setFixture({});
+    await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(1)");
+    expect(stderrChunks.join("")).toContain("Gateway is not running");
+  });
+
+  it("renders pretty output on success", async () => {
+    const mock = createMockIpcClient([envelopeFixture()]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runMetricsCli(["dora", "--service", "svc"]);
+    expect(stdoutChunks.join("")).toContain("DORA metrics");
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]?.method).toBe("metrics.dora");
+    expect((mock.calls[0]?.params as Record<string, unknown>)["service"]).toBe("svc");
+  });
+
+  it("emits JSON envelope when --json passed", async () => {
+    const mock = createMockIpcClient([envelopeFixture()]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await runMetricsCli(["dora", "--service", "svc", "--json"]);
+    expect(stdoutChunks.join("")).toContain('"service": "svc"');
+    expect(stdoutChunks.join("")).toContain('"deployment_frequency"');
+  });
+
+  it("exits 2 on malformed envelope", async () => {
+    const mock = createMockIpcClient([{ not: "an envelope" }]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("Malformed");
+  });
+
+  it("exits 2 on IPC error", async () => {
+    const mock = createMockIpcClient([new Error("ipc down")]);
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("ipc down");
   });
 });

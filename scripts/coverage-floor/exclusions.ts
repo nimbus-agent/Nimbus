@@ -68,6 +68,14 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // zero runtime emit after TypeScript erasure. Same rationale as
   // platform/sandbox/index.ts above.
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
+  // Client package re-export barrel + the askStream type union — pure
+  // `export … from` / `export type` with zero runtime emit after TS erasure.
+  // Same rationale as connectors/index.ts. `stream-events.ts` does not match
+  // the types.ts/-types.ts basename regexes, so it needs an exact entry.
+  { kind: "exact", path: "packages/client/src/index.ts" },
+  { kind: "exact", path: "packages/client/src/stream-events.ts" },
+  // SDK ipc barrel — re-exports ndjson-line-reader.js only; zero runtime emit.
+  { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
 
   // Subprocess entry-point scripts — top-level `await main()` makes them
   // structurally untestable in-process (same shape as github-actions main.ts).
@@ -80,11 +88,45 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // produce no coverage anyway. Same shape as sandbox-wrapper.ts / sandbox-probe.ts.
   { kind: "exact", path: "packages/gateway/src/db/query-guard-worker.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-worker.ts" },
+  // The @xenova/transformers dynamic-import boundary — onnxruntime-node cannot
+  // load under `bun test`. model.ts is unit-tested by mocking this shim's path.
+  {
+    kind: "exact",
+    path: "packages/gateway/src/embedding/load-feature-extraction-pipeline.ts",
+  },
   // Gateway entry point — top-level `await main()` makes in-process testing
   // impossible (same exemption rationale as github-actions/*/src/main.ts).
   // Helpers like `emitSandboxPostureBannerIfDegraded` would need to be
   // extracted to a sibling to test, which is out of scope for this batch.
   { kind: "exact", path: "packages/gateway/src/index.ts" },
+  // CLI entry point — top-level `await main()` makes in-process testing
+  // impossible (same exemption rationale as gateway/src/index.ts above and
+  // github-actions/*/src/main.ts below). The CLI's argv-dispatch flow is
+  // covered indirectly by every command's per-sub-handler tests in
+  // packages/cli/src/commands/*.test.ts.
+  { kind: "exact", path: "packages/cli/src/index.ts" },
+  // CLI lifecycle/render entry shims (Phase 8 — coverage-floor closeout).
+  // gateway-process.ts: intentional byte-for-byte duplicate of
+  // gw-state-helpers.ts. The shared CLI harness `mock.module`s this exact
+  // path, shadowing its body in nearly every command test; the identical
+  // logic is fully branch-covered by gateway-process.test.ts against the
+  // un-mocked twin. The two files must stay separate module records (ESM
+  // re-export live-binding propagation defeats the mock isolation on
+  // Linux/macOS).
+  { kind: "exact", path: "packages/cli/src/lib/gateway-process.ts" },
+  // start.ts: dominant uncovered region (spawnGateway detached subprocess +
+  // waitForGatewayReady real-socket poll + 30-iteration onboarding IPCClient
+  // loop) is structurally unrunnable in a single Ubuntu CI run. The pure
+  // decision layer (decideStartAction, wantsNoWizard) is tested in
+  // start.test.ts. Same rationale as the gateway/src/index.ts top-level
+  // `await main()` exclusion.
+  { kind: "exact", path: "packages/cli/src/commands/start.ts" },
+  // tui.tsx: Ink render shim — inkRender(<App/>) + ink.waitUntilExit() +
+  // signal handlers need a real TTY + raw-mode stdin. The dispatch branches
+  // (--help, gateway-missing, fallback-to-REPL) are covered by tui.test.tsx;
+  // the Ink surface is covered by the e2e suite. `.tsx` matches no existing
+  // regex, so an exact entry is required.
+  { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
 
   // Type-only files whose runtime emit is empty after TypeScript erasure.
   // These don't match the `**/*types*.ts` basename regex below but follow
