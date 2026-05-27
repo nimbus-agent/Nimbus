@@ -69,6 +69,7 @@
     "packages/mcp-connectors/zendesk",
     "packages/mcp-connectors/lever",
     "packages/mcp-connectors/greenhouse",
+    "packages/mcp-connectors/pipedrive",
     "packages/vscode-extension"
   ],
   "scripts": {
