@@ -4,7 +4,7 @@ This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 
-> **Last updated:** 2026-05-28 — added **Phase 5.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 5.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
+> **Last updated:** 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 5.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 5.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
 ---
 
@@ -15,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
 - [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 5.5 through 17 (including 5.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+- [Planned](#planned) — Phases 5.5 through 19 (including 5.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -71,6 +71,8 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 15 | Cross-Organizational Federation | Planned |
 | Phase 16 | The Platform Layer | Planned |
 | Phase 17 | The On-Call Copilot | Planned |
+| Phase 18 | Vertical Personas | Planned |
+| Phase 19 | Ambient Surfaces | Planned |
 
 ---
 
@@ -810,6 +812,26 @@ Depends on Team Vault (above) so service-account / SSO credentials can be shared
 - [ ] **Team audit log** — federation events appended to each member's local audit log; owner can request a merged view
 - [ ] **GDPR/compliance at org level** — `nimbus team purge --user <id>` removes a user's contributions from all shared namespaces; writes a signed deletion record
 
+#### Personal Federation (beyond the engineering team)
+
+The Phase 6 federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that have **no cloud-vendor equivalent** because cloud agents cannot legally or commercially handle the data. This section calls out three: a personal CRM that no third party ever sees, family/couples shared agents for joint logistics that wouldn't otherwise survive a vendor's TOS, and a friend-group mode for the long tail of "I want an agent but trust no one with this data." Each builds on the federation channel + scoped namespaces + audit log without inventing new infrastructure.
+
+- [ ] **Personal CRM** — a `person` table extension + `interaction` item type that indexes a user's relational history from already-indexed connectors: email threads (Gmail / Outlook), calendar attendees (Google Calendar / Outlook), Slack DMs + tagged channels, LinkedIn export (manual import — no live connector), GitHub mentions. New built-in agent `nimbus contacts` answers "tell me about the last time I talked to Sara before our call," "who at Acme did I meet at the conference last year," "draft a follow-up to the people I had coffee with this week." Read-only; the data never leaves the machine. Cloud agents structurally cannot offer this because the data — joint communications, candid notes, social-graph inferences — is not data any third party can lawfully hold under most jurisdictions' privacy law for a multi-party relationship graph.
+- [ ] **Family / couples mode** — a `family` namespace shape with two-to-six paired Gateways federated via the mesh; shared item types limited to a conservative set (`event` from Calendar, structured `shopping_list` items, joint `expense` rows from Mercury / personal Stripe, custody/handover scheduling). HITL on every cross-device write. The shared namespace is **scoped narrower** than a team namespace — a contract test asserts no `email`, `pull_request`, `incident`, or work-item types are exposable through the family shape. Joint medical, joint financial, and joint legal data fall in the long tail of "no vendor can serve this" categories; family mode is the principled local answer.
+- [ ] **Friend-group mode** — same federation primitive as family mode, scoped to long-tail use cases that today have no cohesive home: D&D campaign trackers (initiative + party state + DM notes), fantasy-league rosters, "who's free this weekend" coordination across calendars without surrendering full calendar visibility, group-photo sharing without a cloud upload. The differentiating value is not the apps these replace — it's that there is no app combining them today *because* no cloud vendor wants the liability surface.
+- [ ] **Group-namespace policy fragments** — `[group.<name>].include_types = [...]` + `[group.<name>].exclude_services = [...]` enforced at the federation protocol layer; per-namespace HITL policy fragments live alongside the existing `nimbus.policy.toml` so a family namespace can carry stricter rules than a work namespace on the same Gateway.
+- [ ] **Privacy contract — narrowest-export-shape proof** — extends the existing privacy contract test: for every group/family namespace shape, the test asserts the federation protocol cannot expose any item type or `raw_meta` field not declared in the namespace shape. Verified by attempting a federated query for a non-included type and asserting empty result + audit log entry recording the rejected query.
+
+#### Share & Virality Primitives
+
+The project lacks viral primitives today. The federation channel + audit chain + signed-output infrastructure already shipped in Phase 4 / Phase 11 are exactly the substrates needed; this section is the user-facing surface.
+
+- [ ] **`nimbus share <session-id> [--redact <patterns>] [--expires <duration>]`** — produces a **signed, redacted, content-addressed** transcript of a Nimbus session. Default redaction strips: vault key names, email addresses, internal hostnames, Slack handle prefixes, credit-card patterns, JWT-shaped strings, IP addresses; explicit `--redact` patterns add more. The transcript is signed with the gateway's release Ed25519 key so anyone with the matching pubkey can verify the share was not doctored after publish. Output options: write to a local `.nimbus-share.json` file, upload to a configurable HTTP endpoint (default off — only enabled if the user explicitly configures one; no Nimbus-hosted relay), or publish through the sovereign mesh to a paired peer. Audit-logged on the local Gateway with the redaction-pattern set actually applied (so the user can later prove what was and wasn't shared).
+- [ ] **Verify-share CLI primitive** — `nimbus verify-share <file-or-url>` checks the signature against the published gateway pubkey; the same `eaf-verify`-shaped binary primitive shipped in the S — Standards track. Lets a reviewer drop the binary in their CI to validate user-shared snippets before incorporating into a sales / community / academic write-up.
+- [ ] **Sovereign-mesh referral** — when paired peers share a brief via the federation channel, the receiving end sees an attribution chip on the brief ("forwarded from Asaf's Gateway, 3 hops away"); receivers without Nimbus see a one-line install prompt embedded in the encrypted envelope (only revealed after their *own* paired Gateway decrypts it on first install — no plaintext bootstrap). P2P viral primitive that's a strictly opt-in pull, not a push.
+- [ ] **`nimbus share --as-recipe`** — flag on the share command that strips the conversation entirely and emits only the **declarative workflow** the user followed (which connectors were queried, which graph traversals ran, which thresholds triggered) as a YAML "recipe" file that can be applied to any other Nimbus installation. Closes the `nimbus recipes` near-term initiative item by giving recipes a natural origin point — every successful session is a candidate recipe.
+- [ ] **Audit-replay of a received share** — `nimbus share verify --replay` reruns the shared session locally against the receiver's own indexed data and shows where the answers diverge. Sales-prop: "watch what Nimbus did on Asaf's data run on yours." Catches "this only works for Asaf because he has X connector" issues.
+
 <a id="deferred-from-phase-5"></a>
 
 #### Deferred from Phase 5
@@ -922,6 +944,27 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 - [ ] **`nimbus excellence` built-in agent** — read-only, parallel sub-agents over: service catalog, DORA metrics, feature flags, recent deploy/incident activity; emits `agents.excellence.briefReady` notification; CLI surface `nimbus excellence [--service <name> | --team <name>]` (mirrors `nimbus expert / impact / catchup` per `nimbus-agent-patterns`)
 - [ ] **Excellence dashboard** — Tauri page combining DORA grid + service-catalog browser + stale-flag list + automation template list
 
+#### Wave 5 — Implicit Knowledge Surfaces
+
+A trio of read-only agents that turn the local index into the "shared brain" every engineering team thinks they have but doesn't. Each is buildable on the Phase 7 ownership graph + the Phase 3 relationship graph + the existing indexed connectors — no new connectors required, no new infrastructure. The leverage is exposing data that's *already* in the index but isn't yet queryable in a conversational shape. Single-user-first like the rest of Phase 7; Phase 6 federation makes each one richer.
+
+- [ ] **`nimbus why <file>:<line> | <symbol>`** — for any source location: emits a brief explaining who wrote it (PR author + commit SHA + date), why (linked PR description + reviewer thread + linked Linear/Jira ticket + the Slack thread referenced in the PR if any), what incident or feature drove it (incident-correlation via Phase 3 graph + Phase 5 deploy annotation), and which downstream services depend on it. Effectively `git blame + context + ownership + impact` in one query. Read-only; emits `agents.why.briefReady`. Ships with a corresponding VS Code lens (`nimbus-vscode` extension reads the brief inline above the line on hover). Cloud agents can't do this — they don't see the team's private Slack threads or Linear tickets.
+- [ ] **`nimbus glossary [<term>]`** — extracts and indexes domain-specific terminology from Slack threads + Confluence/Notion pages + Linear/Jira ticket bodies + ADRs + commit messages. New `glossary_term` item type with fields: `term`, `definitions` (the cluster of phrasings the team has used), `first_seen_at`, `last_seen_at`, `top_sources` (the 5 most-cited threads/docs that define it), `synonyms`, `near-misses` (terms confusingly similar). `nimbus glossary` with no argument prints a sorted-by-frequency list; with a term prints the consolidated definition. Onboarding accelerator: a new engineer asks "what does CDR mean here?" and gets the team's actual usage, not Wikipedia's. Generated via a periodic agent over indexed content (cheap; uses local LLM for the consolidation step, no live API call).
+- [ ] **`nimbus decisions [--since <duration>] [--service <name>]`** — implicit ADR extractor. Identifies decisions buried in Slack/Notion/Linear threads using the pattern "we decided X because Y, alternatives were Z" + corroborates via downstream actions (the PR that implemented the decision, the migration file, the IaC diff). Output is a chronological list of decisions with confidence scores and evidence links. **Composes with M1 (Org's Living Memory)** — this is the read-side that makes M1 queryable. **Composes with the Wave 4 ADR auto-drafter** — when `nimbus decisions` finds a decision with no explicit ADR, it offers to draft one.
+- [ ] **`nimbus negotiate [--cycle <quarter|year>] [--peer-benchmark]`** — agent assembles a compensation-conversation prep brief from already-indexed performance evidence: PRs merged + reviewed (count + complexity), incidents resolved with attributed authorship, deploys triggered without rollback, ADRs authored, on-call shifts (PagerDuty data), 1:1 themes from indexed Notion/Linear notes (with consent — the agent asks before reading 1:1 docs). Optionally `--peer-benchmark` pulls anonymized Phase 6 federated comp ranges when M4 is opted in. Output: Markdown brief with evidence-citation links, ready to copy into a self-eval form or share with a manager. Read-only; HITL doesn't apply because nothing is sent anywhere. The slightly-spicy framing puts Nimbus in conversations cloud agents are explicitly designed to stay out of.
+- [ ] **Implicit-knowledge dashboard** — Tauri page combining a recent-decisions feed, the team's glossary growth curve, and the top-N hottest "why" queries from VS Code lens activations. Surfaces the institutional-memory signal without forcing an explicit query.
+
+#### Wave 6 — Agent UX Upgrades
+
+Cross-cutting UX improvements that apply to every agent surface the project ships. Bundled into a Phase 7 wave because Phase 7 is the natural home for "how the agent presents itself" work — Phase 7 is where the engineering-excellence framing collides with the everyday query shape.
+
+- [ ] **Devil's-advocate mode** — `nimbus ask --devil` toggles a prompt-level mode that makes the agent argue *against* the user's plan, surfacing risks, edge cases, and alternative interpretations. Confirmation-bias antidote. Five-line prompt change; large practical value. Composes with the agent-honesty surfaces in Phase 9 Wave 6 — the calibration curve gets a separate column for devil's-advocate-mode confidence vs default-mode confidence so the user can see which mode the agent calibrates better in for their query class.
+- [ ] **Agent personas** — extends the Phase 3.5 configuration profiles with a `[profile.<name>.persona]` block: `tone` (terse / formal / casual / verbose), `voice` (neutral / opinionated / first-person-plural), `confidence_threshold` (how often the agent volunteers "I'm not sure"), `tool_caution` (eager / measured / paranoid — affects HITL escalation defaults). Switching profiles via `nimbus profile switch <name>` already exists; this wave makes the persona configurable per profile so "work Asaf" can be terse + measured and "personal Asaf" can be verbose + opinionated.
+- [ ] **First-class negation queries** — explicit support in `nimbus query` and `nimbus ask` for negation predicates ("PRs that *don't* touch tests," "deploys with *no* downstream incident," "engineers who *haven't* reviewed code this week"). The structured index already handles negation natively; LLMs are notoriously bad at it. Surfacing as a deliberate capability with documentation, examples, and a `--explain` flag that shows the SQL the structured side ran for transparency.
+- [ ] **First-class aggregation-over-time queries** — explicit support for "how many X this quarter vs last," "rolling 7-day MTTR trend," "PR merge throughput by week for the last 90 days." Already possible via SQL but under-marketed. Ships with a `nimbus stats <metric> [--window <duration>] [--bucket <duration>]` CLI surface that's a thin wrapper over the structured query layer, returning ready-to-render time-series JSON.
+- [ ] **`nimbus principles` + `nimbus prove`** — `nimbus principles` prints the seven non-negotiables from `CLAUDE.md` and which invariants (`I1`–`I16`) are currently wired with their last passing test ID. `nimbus prove [<query>]` runs an interactive proof mode: shows the egress ledger before and after a query so the user watches in real time that zero outbound calls occurred. Pairs with the killer demo's transparency surface and the M7 egress-ledger primitive.
+- [ ] **"What's Nimbus doing right now?" tray item** — Tauri tray addition surfacing in-flight sync cycles, in-flight queries, pending HITL approvals, and the last-3 audit-log entries. Builds trust because users can *see* the agent isn't doing anything spooky in the background. One-day work; high every-user-every-day value.
+
 #### Stretch (does not gate phase completion)
 
 - [ ] **Long-tail vendors as community extensions** — Atlassian Compass, Roadie (managed Backstage), Configu, Hatica, Code Climate Velocity, GitClear; ship via Marketplace v2 per the "comprehensive then community" model
@@ -938,6 +981,13 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 - An automation template saved from a recognised incident pattern can be applied to a fresh incident matching the same pattern; user explicitly approves application
 - `nimbus excellence --team my-team` returns a Markdown brief with: top 3 services by recent change, 4-metric DORA snapshot, stale flag count, open-incident count — all from the local index, in under 15 s on a mid-range laptop
 - Privacy contract test passes: no individual-engineer-keyed metric is indexed unless source-system role grants the user access
+- Wave 5: `nimbus why packages/gateway/src/engine/executor.ts:42` returns a brief naming the PR author, the linked Linear ticket, the incident that drove the change (if any), and the downstream service consumers from the relationship graph, all from the local index in under 10 s on a mid-range laptop
+- Wave 5: `nimbus glossary <term>` returns the team's actual usage of the term across at least 3 source threads with first-seen / last-seen dates; the consolidated definition is generated by the local LLM with zero live API calls
+- Wave 5: `nimbus negotiate` returns a Markdown brief with citation links covering at minimum: PRs merged + reviewed, incidents resolved, ADRs authored, on-call shifts — sourced only from data the user already has read access to in the source systems
+- Wave 6: `nimbus ask --devil "ship the migration tonight"` produces a response whose risk surface explicitly contradicts the question framing — verified by an integration test that asserts the response contains at least 3 distinct counter-arguments
+- Wave 6: switching `nimbus profile switch personal` then querying produces output with the persona-configured tone (terse vs verbose, etc.) — verified by an integration test that toggles persona mid-session and asserts the response shape changes
+- Wave 6: `nimbus query --negate "pr touches tests"` returns the correct PR set (compared against a known fixture); the `--explain` flag prints the SQL that ran
+- Wave 6: `nimbus prove "find my PRs this week"` shows the egress ledger before and after the query confirming zero outbound calls; the tray item flashes the in-flight query for the duration of the response
 
 ---
 
@@ -986,6 +1036,21 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 - [ ] **VirusTotal** — hash / IP / domain reputation, recent submissions; read-only
 - [ ] **`nimbus incident <alert-id|incident-id>`** — security-incident-shaped: attacker indicators (IPs, hashes, domains), affected services + owners, exposed endpoints, recent vulnerable deploys, IR runbook recommendations; emits `agents.security_incident.briefReady`. **Distinct** from Phase 10's `nimbus incident-brief` (operational shape).
 
+#### Wave 3.5 — Contextual Dependency Intelligence
+
+A focused wave dedicated to **a single agent that beats Dependabot/Renovate by being context-aware**. Dependabot's failure mode is well-known: it surfaces an upgrade as safe (semver-patch, no CVEs) when the user's own codebase or community-issue history would have flagged a regression. The local index makes Nimbus uniquely positioned to add that context.
+
+- [ ] **`nimbus deps update [<pkg>] [--service <name>] [--json]`** — agent that for every open Dependabot/Renovate PR (read-only — surfaced via the existing GitHub/GitLab connectors), assembles a brief with:
+  - Which files in the user's own codebase import the affected symbols (via the existing `code_symbol` table from the Filesystem v2 intelligence)
+  - Whether the affected files were touched in the last incident (via Phase 7 ownership graph + Phase 3 incident-correlation graph)
+  - Open GitHub issues against the target version of the package (via a one-time live fetch through the GitHub MCP — *only* for the package's repo, never the user's; explicitly excluded from M7 egress ledger background-call quota because the call is user-initiated)
+  - Snyk / Wiz / Semgrep findings on the target version (via the Wave 1–2 connectors)
+  - Compatibility risk against the user's own integration tests indexed in the local index (last passing CI run on a similar bump)
+  - One-paragraph "you would have caught this before merging" verdict at the top
+- [ ] **`deps-watch` watcher** — fires when a new Dependabot/Renovate PR opens AND `nimbus deps update` would have rated it >0.6 risk; surfaces in the morning briefing with the brief inline. Composes with Phase 7 Wave 1 ownership routing so the brief goes to the *team that owns the affected service*, not just the PR author.
+- [ ] **`nimbus deps audit-history [<pkg>]`** — for a package, surfaces the user's own historical experience: every past version installed, how long each was deployed, whether any incidents tagged it. Stops "is this a flaky package?" from being a guessing game.
+- [ ] **HITL stays at the merge boundary** — the agent never auto-merges; the deliverable is the brief, not the action. The user retains the merge button. Composes with the existing Phase 4 HITL gate.
+
 #### Wave 4 — Supply Chain & Identity
 
 - [ ] **Sigstore Rekor** — signed artifacts, transparency-log entries; read-only (Rekor is append-only globally)
@@ -1014,6 +1079,8 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 - `nimbus supply-chain my-service` returns the SBOM diff + attestation gaps + license-policy violations in under 15 s, all from the local index
 - Sigstore Rekor entries are verified before the local index records `sbom_artifact.is_signed = true` (no trust-on-first-use)
 - Privacy contract: identity-event ingestion is read-only by default; the only write operations are HITL-gated `okta.user.suspend` and `doppler.secret.rotate`
+- Wave 3.5: `nimbus deps update` on a seeded open Dependabot PR assembles a brief naming the affected source files in the user's own codebase, the relevant open issues against the target version, the matching Snyk/Semgrep findings, and the historical incident correlation — all in under 15 s from the local index plus one user-initiated GitHub MCP call
+- Wave 3.5: the `deps-watch` watcher fires on a controlled test (a Dependabot PR for a known-regression version) and routes the brief to the affected service's owner team via the Phase 7 Wave 1 ownership graph; the agent never auto-merges
 
 ---
 
@@ -1090,6 +1157,17 @@ This wave delivers the **author-facing eval surface** that Phase 5.5 Marketplace
 - [ ] **Built-in agent eval suites** — the first-party `expert`, `impact`, `catchup`, `oncall`, `meeting-prep`, `standup`, `model-health`, `rag-health` agents ship with `evals/*.yaml` of their own. The CI gate runs them on every PR and refuses regressions beyond a threshold (default 5 points). The agents are dogfooding the framework before the registry hook does.
 - [ ] **Transparency-framed cost surface (not comparison)** — every brief output by the built-in agents carries a footer: `tokens: <local-count>, outbound: <count> calls, time: <wallclock-ms>`. **No "cloud equivalent" numbers** — the framing is "here's what we used," not "here's what a different product would have charged." Easy to add later if competitive framing becomes a deliberate marketing choice; safer to omit by default.
 
+#### Wave 6 — Agent Honesty Surfaces
+
+User-facing trust surfaces. "AI safety" as a product feature, not a marketing word. The framing is: every time the agent runs, the user accumulates evidence about *this specific Nimbus instance's behaviour on their data*. Phase 9 turns that evidence into legible surfaces. None of these are possible for cloud agents at the per-user level because cloud agents don't have an honest record of refusals + per-user calibration + per-user bias signals.
+
+- [ ] **Calibration audit (`nimbus audit calibration [--since <dur>]`)** — for every agent claim that carried a confidence score, the audit looks at whether the user subsequently corrected, retried, or rejected the result, and computes a personal calibration curve (claimed vs observed). Output: 2-D scatter plot (Tauri dashboard) + numeric Brier score + per-agent breakdown (`expert` calibrates better than `impact` on this user's data, say). Calibration curve is also exposed to the router so the router can demote agents whose confidence is over-stated for this user.
+- [ ] **Bias detection diagnostics** — analyzes the agent's output history for systematic skews on this user's queries. Catalog of detectors in v1: (a) reviewer-recommendation gender skew (compares the gender-detected suggested reviewer rate vs the team's actual rate), (b) recency-over-relevance skew (compares how often the agent's top result is the most-recent vs the actual highest-ranked by other signals), (c) seniority-attribution skew (does the agent attribute decisions to senior engineers when ownership graph shows otherwise), (d) service-coverage skew (the agent under-surfaces results from connectors with lower volume even when relevant). Output is a diagnostic per user — not a fix, just transparency. Cloud agents cannot offer this honestly because the diagnostic depends on the user's own ground-truth correction history.
+- [ ] **Refusal log** — every time the agent refuses to do something (insufficient context, low confidence, HITL not granted, missing connector, prompt-injection guard fired), the refusal is logged with reason code + the originating query + the would-be tool call. `nimbus audit refusals [--since <dur>]` surfaces the log. Lets the user contest a refusal ("the agent refused to give me X — why?") and feeds the bias detector. Many cloud agents *silently* refuse or substitute a generic answer; visible refusals are a Nimbus differentiator.
+- [ ] **`nimbus audit replay <session-id>` honesty extension** — extends the M3 replay format to include refusal events + confidence-score evolution across the session (where did the agent's confidence climb, where did it dip), so the replay is not just "what did the agent do" but "what did the agent *think it knew* and how did that evolve."
+- [ ] **Confidence-rebuilds-trust loop** — when the user corrects an answer (via the existing "wrong answer" one-keystroke feedback), the calibration curve updates, and the router uses the new calibration to lower the agent's claimed confidence on similar queries. The loop is **personal and local** — no aggregation, no fleet learning, no surveillance.
+- [ ] **`[ai_engineering.honesty]` config block** — opt-out toggle (default on) for the calibration tracking. Privacy-conservative default: honesty surfaces operate on data the user could already see in their own audit log; nothing new is collected; the surfaces are *views* of existing data.
+
 #### Stretch (does not gate phase completion)
 
 - [ ] **Long-tail vendors as community extensions** — Aporia, Phoenix Arize, OpenLLMetry, Pezzo, Hopsworks, Featureform, Dynamic.ai, Confident AI, DeepEval
@@ -1108,6 +1186,9 @@ This wave delivers the **author-facing eval surface** that Phase 5.5 Marketplace
 - Privacy contract: no LLM trace body content is exfiltrated; only per-trace metadata (latency, cost, model id, success/error) is indexed unless the user explicitly opts in via `[ai_engineering].index_trace_bodies = true`
 - Wave 5 reproducibility gate: `nimbus eval --extension <id>` against a sample first-party extension produces the same numeric score (within rounding) inside a fresh sandbox as the score persisted in that extension's signed manifest at publish time — verified by an integration test that publishes a test extension, fetches it back, runs `nimbus eval`, and asserts equality. This is the property Phase 5.5's registry-side reproducibility check depends on.
 - Wave 5 built-in-agent CI gate: the first-party `expert`, `impact`, `catchup`, `oncall`, `meeting-prep`, `standup`, `model-health`, `rag-health` agents each ship with an `evals/*.yaml` suite; the CI gate refuses PRs that drop any agent's score by more than 5 points.
+- Wave 6: `nimbus audit calibration` against a seeded session history (100 user corrections across 5 agents) produces a per-agent Brier score and renders a 2-D calibration scatter in the Tauri dashboard
+- Wave 6: the bias-detector diagnostic against a controlled fixture (seeded reviewer-recommendation history with a known skew) correctly identifies the gender / recency / seniority / coverage axis the skew is on, with no false positive on a balanced fixture
+- Wave 6: `nimbus audit refusals` lists every refusal of the seeded session with reason code and originating query; contesting a refusal (`--contest <refusal-id>`) opens the would-be tool call for the user to inspect
 
 ---
 
@@ -1232,6 +1313,17 @@ This wave delivers the **author-facing eval surface** that Phase 5.5 Marketplace
 - [ ] **Threshold secret sharing** — executor payload split using Shamir's Secret Sharing across N trusted recipients; any M-of-N can reconstruct; no single recipient can access it alone. Extends to runtime privileged credentials (production secrets, root tokens) so no single engineer or compromised machine can unilaterally access critical credentials — same Shamir primitive applied to live credentials instead of inheritance payload
 - [ ] **Executor audit trail** — every check-in, near-trigger, and handover event logged in the tamper-evident audit chain; recipients receive a verifiable log alongside the payload
 
+#### Public Dogfooding Telemetry (vulnerability-as-marketing)
+
+A single primitive that turns the Phase 3.5 telemetry pipeline into a public-trust artifact. The Nimbus maintainers run their own Gateways with telemetry **deliberately enabled** and **deliberately published** to a public dashboard. The dashboard shows aggregate (no-content) metrics about the maintainers' day-to-day usage: how often HITL fires on them, how often the agent admits it doesn't know, p95 query latency, the cost-per-brief ratio. The marketing argument writes itself: "watch what running this thing actually looks like." The argument cuts deeper because Nimbus is the only product in the category that can honestly publish these numbers — cloud agents would have to release competitive performance data they're motivated to hide.
+
+- [ ] **Public dogfooding dashboard at `nimbus-agent.dev/dogfood`** — static site rendered from the same `[telemetry]` payload-safety-gated aggregate counters Phase 3.5 already collects; updated daily from the maintainers' own Gateways. Visible categories: HITL fire rate, refusal rate, average tokens-per-brief, p95 query latency, top-N most-used agents, ratio of corrections to confirmations. **No per-query content.** **No per-user PII.** The dashboard is renderable as static HTML so it's archivable + cryptographically verifiable.
+- [ ] **Telemetry publication primitive** — `nimbus telemetry publish --to <signed-endpoint>` extends the existing telemetry flush to optionally publish to a known-pubkey endpoint. The dashboard's endpoint is one such; users who want to run their own dashboard (a team's internal dogfood dashboard) point their telemetry at a different endpoint. Honesty primitive: any user can run the same dashboard against their own team.
+- [ ] **Verifiable provenance** — every published dashboard row carries a signature from the originating Gateway's release key. A skeptical reader can verify the dashboard is showing real data from real Gateways and not curated marketing. Composes with the S — Standards EAF verifier CLI shape (same primitive, different payload type).
+- [ ] **"What the agent doesn't know" feed** — a publicly-visible feed of the refusal log entries from the maintainers' own Gateways (aggregate, scrubbed of identifying content). Demonstrates the agent does refuse and on what categories of question. Counter-narrative to the "AI is overconfident" framing.
+- [ ] **Calibration leaderboard (consensual)** — the maintainers' own per-user calibration curves (from Phase 9 Wave 6) published as opt-in. "Here's how often Nimbus says it's 90% confident and is actually right." Shipping a calibration score publicly is a credibility move no cloud agent has made.
+- [ ] **Privacy contract — public-payload safety gate** — extends the existing `bun run test:coverage:telemetry` gate with a `--public-payload` mode that checks the *published* payload (subset of the existing telemetry payload) against an even stricter safety policy: no query strings, no item IDs, no item types beyond their category, no engineer handles. Failing the gate refuses publish.
+
 #### Stretch — Internationalisation (i18n / l10n)
 
 The mobile companion is the natural moment to introduce locale awareness; the same string-extraction effort serves the Tauri UI, CLI, and TUI. Does not gate phase completion.
@@ -1248,6 +1340,8 @@ The mobile companion is the natural moment to introduce locale awareness; the sa
 - A HITL approval made on the mobile app executes within 5 seconds on the home Gateway; action and approval signature appear in the local audit log
 - Removing a YubiKey while the Gateway is running causes credential access to fail gracefully; re-inserting resumes normal operation without re-auth
 - A Digital Executor payload reconstructed by M-of-N recipients is byte-identical to the original and its audit chain passes `nimbus audit verify`
+- Public dogfooding dashboard at `nimbus-agent.dev/dogfood` updates daily from at least three maintainer Gateways with verifiable Ed25519 provenance per row; the `--public-payload` payload-safety gate refuses publish on any payload containing a query string, item ID, or engineer handle
+- A non-maintainer user can run `nimbus telemetry publish --to <their-endpoint>` and stand up their own equivalent dashboard against their own team's Gateways without touching the maintainers' infrastructure
 
 ---
 
@@ -1462,6 +1556,7 @@ Native package-manager distribution; gated independently of the desktop tag, may
 - [ ] **Android companion v0.2** — Kotlin / Jetpack Compose app, same surface shape, Firebase Cloud Messaging as the wakeup relay (envelope encryption identical to APNs; FCM sees only the encrypted blob).
 - [ ] **Voice approval on iOS** — Siri shortcut + voice intent: "Hey Siri, ask Nimbus to approve the deploy" round-trips an approval. Stretch because the Siri intent UX is a non-trivial design surface and the security review needs more work.
 - [ ] **Apple Watch companion** — receive + Approve / Reject from a watch face. Builds on top of the iOS app's pairing + key store. Stretch — watchOS adds a per-platform surface for marginal incremental value.
+- [ ] **Voice-only ambient mode** — a session mode optimized for hands-free use (walks, driving, cooking, the gym). Pulls the existing Phase 4 STT/TTS primitives onto the iOS app via the sovereign-mesh link: the user speaks a query on the phone, audio is streamed encrypted to the desktop Gateway where Whisper.cpp transcribes locally (audio never reaches Apple's servers), agent runs, TTS response is streamed back. Conversations stay continuous via a configurable wake-phrase ("Hey Nimbus") and silence-detection. Briefs are auto-shortened to "speakable" length (configurable; default 3 sentences for ambient-mode delivery). **Discipline:** no on-device STT/TTS in v0 — the mesh-to-Whisper round-trip is the privacy story; on-device falls back to the cloud sandbox iOS provides, which is the exact compromise this phase exists to avoid.
 
 #### Acceptance Criteria
 
@@ -1695,6 +1790,95 @@ Native package-manager distribution; gated independently of the desktop tag, may
 - For a seeded bad-deploy incident, the copilot proposes a rollback with confidence + cited evidence + dry-run blast radius + reversibility label; approving executes through the HITL gate (action + preview in the audit chain); `nimbus audit replay <id>` reconstructs the steps deterministically.
 - A mitigation that makes things worse can be undone in one keystroke (where reversible); irreversible actions are flagged before approval.
 - `nimbus oncall handoff` returns a shift brief in <15s, zero HITL.
+
+---
+
+### Phase 18 — Vertical Personas
+
+**Goal:** Lift Nimbus out of pure dev-tool framing by shipping a tight set of **persona-targeted built-in agents** that turn the existing indexed data into category-defining experiences for audiences with high willingness to pay and high evangelism potential. Each persona is built **only on already-indexed data** — no new connector categories required. The bet: Nimbus is uniquely positioned to serve narrow audiences cloud agents can't (because the data is private, regulated, or low-volume per-customer); each persona becomes a viral wedge into that audience. Discipline: this phase is **read-only built-in agents**, not new feature areas — every persona is a Markdown brief over data already in the index.
+
+> **Composes with Phase 5 connectors:** every persona's data sources are already-shipped Phase 5 connectors. Solo founder reads Stripe + Mercury + Intercom; OSS maintainer reads GitHub + Slack/Discord + Linear; indie creator reads Stripe + indexed analytics exports; academic reads Zotero + arXiv. **No new mandatory connectors gate this phase.**
+>
+> **Composes with Phase 9 (Agent Honesty Surfaces):** every persona agent is subject to the same calibration audit / bias diagnostic / refusal log primitives. Niche audience does not mean reduced rigor.
+
+#### Dependencies
+
+- Phase 4 multi-agent orchestration + LLM router + Plugin API v1
+- Phase 5 Tier-1 connectors landed (Stripe, Mercury, Intercom, Zendesk, Greenhouse, Lever — already shipped; remaining tiers in flight)
+- Phase 9 Wave 5 eval framework (each persona agent ships with `evals/*.yaml` and is gated by it)
+- Phase 5.5 marketplace registry (long-tail personas land as community extensions; first-party set bounded)
+
+#### Persona Briefs (read-only built-in agents)
+
+- [ ] **`nimbus founder` — solo-founder dashboard** — parallel sub-agents over Stripe (MRR / ARR / churn / top customers), Mercury (runway / burn rate / inflows), Intercom + Zendesk (top customer questions this week), Calendar (sales-call prep for the next 7 days), GitHub (this week's commits-to-features attribution). Output is a Markdown brief structured as: Money, People, Product, Calendar. Read-only; no HITL. **Composes with Stripe + Mercury connectors already shipped.** Daily watcher variant pushes the brief on the user's configured morning schedule. Cloud agents structurally can't do this — they don't have read access to Stripe + Mercury + Intercom + Calendar in one place under any reasonable enterprise contract.
+- [ ] **`nimbus maintainer` — open-source maintainer brief** — for OSS maintainers running Nimbus against their own project: parallel sub-agents over GitHub (new issues + pattern-match against historical bug clusters via the relationship graph, "this is a duplicate of #1234" detection, PR reviewer recommendations via the people graph, neglected PRs sorted by age × contributor seniority), Discord / Slack community channels (top-N questions asked but unanswered this week, sentiment trend), Linear (if the project uses it). Output is a Markdown brief structured as: Issues, PRs, Community, Contributors. Read-only; no HITL. **High-status audience** — OSS maintainers are advocates and influencers; this is a recruitment vector disguised as a feature.
+- [ ] **`nimbus creator` — indie-creator analytics agent** — for YouTubers / Patreon creators / Twitch streamers / newsletter-runners: pulls from a thin set of indexed connectors (YouTube Analytics export via the existing Filesystem v2 path, Patreon API, Twitch API, ConvertKit / Substack / Beehiiv export, Stripe for creator-economy revenue, Discord for community engagement). Output: per-week brief on what your audience asked for, which content matched, where churn fired, which platform's audience is most engaged. New first-party connectors here are minimal — most data lands via filesystem export from creator-platform CSVs. **Stretch:** dedicated YouTube + Patreon + Twitch MCP connectors land as community extensions per the Phase 5.5 marketplace pattern.
+- [ ] **`nimbus academic` — research mode** — for researchers / grad students / academics: parallel sub-agents over Zotero (citation graph traversal, "which papers cite paper X that I've already read"), arXiv exports / RSS feeds (new papers in user-configured topic categories matched against the user's bibliography), Readwise / Raindrop (the user's own highlights + saved articles), filesystem (LaTeX project tree → "which papers are cited but not yet read"). Output: a "literature review pulse" brief per topic + per-paper "context" briefs ("what does my existing reading say about this paper's claims"). Closes the "Mendeley/Zotero never had AI" gap. Read-only; no HITL.
+- [ ] **`nimbus taxes` — annual tax-prep agent** — once-a-year flagship feature. Assembles a CPA-ready bundle from Stripe + Mercury + Expensify (Phase 5 deferred) + Ramp (Phase 5 deferred) + Mercury (the connector already shipped surfaces transactions but not categorized — the agent does the categorization). Output: a `.zip` containing categorized expense tables (XLSX + CSV), 1099 / international-equivalent receipt index, charitable-contribution summary, business-vs-personal split, cover memo. Annual willingness-to-pay is enormous; sticky feature; cloud agents can't legally aggregate financial data across providers under most consumer banking T&Cs.
+- [ ] **`nimbus health` — personal health-data brief (stretch)** — opt-in, off by default. For users who import Apple Health / Garmin / Whoop / Strava data via filesystem export, the agent surfaces a weekly brief: sleep + recovery trends, training load, anomalies. **Strict privacy contract:** the data never leaves the machine; the connector is read-only; the data is excluded from any federated namespace by default; a contract test asserts no `health.*` item type can be exposed in a Phase 6 federation namespace. Cloud agents face HIPAA-like constraints that make this category radioactive for them.
+
+#### Persona-Configuration Surface
+
+- [ ] **`[persona.<name>]` config blocks** — each persona's morning-brief frequency, brief sections to include/exclude, alerting thresholds, and connector-source preferences live in TOML. Composes with the Phase 3.5 profile system and the Phase 7 Wave 6 agent-persona block — a `persona = "founder"` profile auto-enables `nimbus founder` daily and routes its output to the user's configured surface (Slack DM, mobile push, terminal).
+- [ ] **Persona discovery** — `nimbus persona list` shows available personas; `nimbus persona enable <name>` switches the active default; `nimbus persona configure <name>` opens the TOML block in the user's editor. Onboarding lift — the wow query for a solo founder is `nimbus founder`, not the generic `nimbus ask`.
+
+#### Acceptance Criteria
+
+- `nimbus founder` against a seeded test corpus (synthetic Stripe + Mercury + Intercom data) produces a Markdown brief covering MRR / runway / top-3 customer questions / next-7-days calendar in under 15 s on a mid-range laptop, with no live API call beyond what's already in the local index.
+- `nimbus maintainer` against a seeded OSS-project corpus correctly identifies a duplicate-issue cluster (verified against a labeled fixture) and recommends a reviewer via the people graph with citation links.
+- `nimbus academic` against a seeded Zotero corpus + a manually-imported arXiv paper produces a "context" brief naming the user's own previously-read papers that bear on the new paper's claims; brief includes per-claim evidence links.
+- `nimbus taxes --year 2026 --output ./taxes-2026.zip` produces a self-verifying ZIP whose `verify.sh` passes against the gateway's release pubkey; the bundle contains categorized expense tables totaling the same gross revenue as the underlying Stripe + Mercury raw data (verifiable by cross-sum).
+- Every persona ships with an `evals/*.yaml` suite consumed by the Phase 9 Wave 5 framework; the per-persona quality score is published in the marketplace listing.
+- Privacy contract: `nimbus health` data is excluded from federated namespace shapes by construction — verified by a contract test that issues a `health.*` namespace export and asserts it fails the namespace shape validator.
+
+---
+
+### Phase 19 — Ambient Surfaces
+
+**Goal:** Make Nimbus present-tense across non-screen surfaces — wearables, voice-first, head-mounted displays, and physical actuation — while keeping the **local-first, no-relay, HITL-gated** architecture intact. This is the highest-risk phase in the roadmap: small audiences, hardware constraints, platform sandboxes (visionOS, Home Assistant, etc.) that may shift under us. Structured Core / Stretch so the phase ships if any one ambient surface lands; the rest can slip.
+
+> **Composes with Phase 11 (Sovereign Mesh):** every ambient surface is a *paired peer* in the mesh — no new wire format. The XR companion, the voice-only deep mode, and the Home-Assistant integration all use the existing NaCl-box channel + the same biometric-HITL primitive Phase 13.5 ships.
+>
+> **Composes with Phase 13.5 (Mobile Companion):** the voice-only mode declared as a stretch in Phase 13.5 is **promoted to Core here** because the phone is the dominant ambient surface; XR is the secondary surface. Phase 13.5 keeps the iOS passive-viewer code; Phase 19 adds the always-listening + always-speaking layer on top.
+
+#### Dependencies
+
+- Phase 4 STT/TTS primitives + voice wake-word loop
+- Phase 11 sovereign mesh + biometric HITL + audit-log signing
+- Phase 13.5 mobile companion (the platform the voice layer rides on)
+- Apple Developer Program enrollment (also a Phase 13 + Phase 13.5 prerequisite); Meta Quest developer account (for the XR stretch)
+
+#### Core — Voice-First Ambient Mode
+
+The flagship ambient surface. Promoted from Phase 13.5 stretch to Phase 19 core because the on-call + commute + cooking + workout use cases are real and the existing STT/TTS infrastructure is most of the work.
+
+- [ ] **Always-listening mode (opt-in)** — extends the Phase 4 wake-word loop to run continuously on the mobile companion with the existing "Hey Nimbus" trigger. Audio buffer is **encrypted on the phone before mesh transit** (NaCl box keyed to the paired Gateway); the audio never reaches Apple / Google's servers. Whisper.cpp transcription runs on the paired Gateway. Idle audio (no wake-word match within the configurable rolling window) is discarded — never stored, never indexed.
+- [ ] **Conversational continuation** — successive queries in a 60-second window share session context without re-stating; silence-detection ends the session naturally. Configurable session timeout. HITL surface for any action shifts to the biometric primitive in Phase 11 — voice-only approve requires FaceID confirmation, not a voice "yes."
+- [ ] **Speakable brief format** — every brief output by the built-in agents gets a `--speakable` mode that returns a 1–3 sentence summary version optimized for TTS playback. Long form available on follow-up ("Nimbus, tell me more"). Read-only; no HITL.
+- [ ] **Ambient-mode privacy mode** — when paired Gateway detects mesh activity from the always-listening surface (any wake-word event), an in-band signal triggers the tray indicator + a brief audit-log entry. User can `nimbus voice mute` at any time on either side to suspend the loop; mute persists across sessions until explicitly resumed. Defensive privacy posture: there is no silent always-on; the loop's presence is always visible.
+
+#### Stretch — XR Companion
+
+- [ ] **visionOS companion** — Vision Pro passthrough sidebar that renders assembled briefs while the user is doing something else. Pairs with the desktop Gateway via the same mesh primitive as the iOS app. Briefs render as fixed panels in the user's environment; no agent execution on the headset; HITL prompts surface as native visionOS modals with biometric (Optic ID) approval. **Discipline:** read-only briefs in v0; no in-headset query input (the visionOS keyboard UX is genuinely poor and would push the design in the wrong direction). Stretch because the audience is tiny and visionOS APIs are still settling.
+- [ ] **Meta Quest companion** — same shape as visionOS, different SDK. Lower priority but socially-shared because the audience is younger. Stretch.
+- [ ] **Apple Watch passive viewer** — already a Phase 13.5 stretch; cross-referenced here.
+
+#### Stretch — Physical Actuation (Home Assistant integration)
+
+- [ ] **Home Assistant connector** — index a local Home Assistant deployment (rooms, devices, automations, sensors); read-only. New `home_device` / `home_automation` item types.
+- [ ] **Context-aware home actuation behind HITL** — `nimbus ask "dim the lights, I'm shipping a hotfix"` resolves to a Home Assistant scene change via the existing HITL gate. The phrase "context-aware home automation that knows your codebase context" sounds bizarre until you try it; the local-first model is exactly what enables it.
+- [ ] **Bridge-to-physical-actuator security model** — every physical actuation (lights, locks, thermostats) is classified by reversibility (light = reversible, lock = irreversible, thermostat = bounded-reversible) and gated accordingly. Locks default to never-HITL-auto (always require explicit user) per Phase 17's reversibility-is-classified-not-assumed rule.
+
+#### Stretch — Wearable Health Companions (read-only)
+
+- [ ] **Whoop / Oura / Garmin / Apple Health integration via filesystem export** — already covered as a stretch in Phase 18's `nimbus health`. Referenced here because the ambient-surface framing fits — the device is the source, the Gateway is the index. **Strict privacy contract:** as in Phase 18, never federated by default.
+
+#### Acceptance Criteria (track-level; not gated by any single sub-section)
+
+- Core voice-first mode round-trips a "Hey Nimbus, what's burning?" query end-to-end (wake-word detection on phone → mesh-encrypted audio transit → Whisper.cpp transcription on Gateway → agent execution → TTS playback on phone) in under 10 seconds on a mid-range laptop + iPhone 15 / Pixel 9; audio never leaves the user's devices, verified by network inspection.
+- The always-listening mode's mute toggle suspends the wake-word loop within 1 second on both ends; the audit log records every mute / unmute event.
+- An XR-companion brief renders in visionOS within 5 seconds of being pushed from the Gateway; HITL approval via Optic ID round-trips back to the Gateway within 3 seconds.
+- A Home Assistant scene change triggered via `nimbus ask` always gates on HITL with a structured before/after preview; locks never bypass HITL regardless of session-level standing approvals.
 
 ---
 
