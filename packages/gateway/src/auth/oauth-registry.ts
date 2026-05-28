@@ -85,9 +85,65 @@ export function parseStandardTokenResponse(json: unknown, requested: string[]): 
   };
 }
 
-const STUB = (): never => {
-  throw new Error("descriptor hook not yet implemented");
-};
+export function parseSlackTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("Invalid Slack OAuth response");
+  }
+  const au = (json as Record<string, unknown>)["authed_user"];
+  if (au === null || typeof au !== "object" || Array.isArray(au)) {
+    throw new Error("Slack OAuth response missing authed_user");
+  }
+  const user = au as Record<string, unknown>;
+  const access = user["access_token"];
+  if (typeof access !== "string" || access === "") {
+    throw new Error("Slack user access token missing");
+  }
+  const refresh = user["refresh_token"];
+  const refreshTok = typeof refresh === "string" && refresh !== "" ? refresh : "";
+  if (refreshTok === "") {
+    throw new Error(
+      "Slack refresh token missing; enable token rotation on the Slack app and re-authorize",
+    );
+  }
+  const expIn = user["expires_in"];
+  let expiresSec = Number.NaN;
+  if (typeof expIn === "number" && Number.isFinite(expIn)) expiresSec = expIn;
+  else if (typeof expIn === "string") expiresSec = Number.parseInt(expIn, 10);
+  const safeExpires = Number.isFinite(expiresSec) && expiresSec > 0 ? expiresSec : 43_200;
+  const scopeStr = user["scope"];
+  const scopes =
+    typeof scopeStr === "string" && scopeStr.trim() !== ""
+      ? scopeStr
+          .split(/[,\s]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : requested;
+  return {
+    accessToken: access,
+    refreshToken: refreshTok,
+    expiresAt: Date.now() + Math.floor(safeExpires * 1000),
+    scopes,
+  };
+}
+
+export function parseNotionTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("Notion token response invalid");
+  }
+  const o = json as { access_token?: unknown; refresh_token?: unknown };
+  const access = o.access_token;
+  if (typeof access !== "string" || access === "") {
+    throw new Error("Notion token response missing access_token");
+  }
+  const refresh = o.refresh_token;
+  const refreshStr = typeof refresh === "string" && refresh !== "" ? refresh : "";
+  return {
+    accessToken: access,
+    refreshToken: refreshStr,
+    expiresAt: Date.now() + 86_400 * 1000,
+    scopes: requested,
+  };
+}
 
 export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
   google: {
@@ -146,8 +202,19 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: STUB,
-    parseTokenResponse: STUB,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      user_scope: a.scopes.join(","),
+      redirect_uri: a.redirectUri,
+      state: a.state,
+      scope: "",
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseSlackTokenResponse,
+    isTokenSuccess: (json) =>
+      json !== null && typeof json === "object" && (json as { ok?: unknown }).ok === true,
   },
   notion: {
     id: "notion",
@@ -160,8 +227,14 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     bodyFormat: "json",
     tokenHeaders: { "Notion-Version": "2022-06-28" },
     mirrorPerService: false,
-    buildAuthorizeParams: STUB,
-    parseTokenResponse: STUB,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      owner: "user",
+      state: a.state,
+    }),
+    parseTokenResponse: parseNotionTokenResponse,
   },
 };
 

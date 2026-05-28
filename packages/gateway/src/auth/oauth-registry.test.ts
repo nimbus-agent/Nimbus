@@ -59,3 +59,65 @@ describe("google/microsoft descriptor hooks", () => {
     expect(r.expiresAt).toBeGreaterThan(Date.now());
   });
 });
+
+describe("slack descriptor hooks", () => {
+  test("authorize params use user_scope (comma) + empty scope", () => {
+    const p = OAUTH_PROVIDERS.slack.buildAuthorizeParams({
+      clientId: "123.456",
+      scopes: ["channels:read", "channels:history"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["user_scope"]).toBe("channels:read,channels:history");
+    expect(p["scope"]).toBe("");
+    expect(p["code_challenge_method"]).toBe("S256");
+  });
+
+  test("parseTokenResponse reads authed_user.access_token", () => {
+    const r = OAUTH_PROVIDERS.slack.parseTokenResponse(
+      {
+        ok: true,
+        authed_user: {
+          access_token: "xoxp-a",
+          refresh_token: "xoxe-r",
+          expires_in: 3600,
+          scope: "channels:read",
+        },
+      },
+      ["channels:read"],
+    );
+    expect(r.accessToken).toBe("xoxp-a");
+    expect(r.refreshToken).toBe("xoxe-r");
+    expect(r.scopes).toEqual(["channels:read"]);
+  });
+
+  test("isTokenSuccess requires ok:true even on HTTP 200", () => {
+    expect(OAUTH_PROVIDERS.slack.isTokenSuccess?.({ ok: false }, true)).toBe(false);
+    expect(OAUTH_PROVIDERS.slack.isTokenSuccess?.({ ok: true }, true)).toBe(true);
+  });
+});
+
+describe("notion descriptor hooks", () => {
+  test("authorize params set owner=user, no PKCE challenge", () => {
+    const p = OAUTH_PROVIDERS.notion.buildAuthorizeParams({
+      clientId: "cid",
+      scopes: [],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+    });
+    expect(p["owner"]).toBe("user");
+    expect(p["response_type"]).toBe("code");
+    expect(p["code_challenge"]).toBeUndefined();
+  });
+
+  test("parseTokenResponse uses synthetic 24h expiry when expires_in absent", () => {
+    const before = Date.now();
+    const r = OAUTH_PROVIDERS.notion.parseTokenResponse(
+      { access_token: "secret_a", refresh_token: "secret_r" },
+      ["x"],
+    );
+    expect(r.accessToken).toBe("secret_a");
+    expect(r.expiresAt).toBeGreaterThanOrEqual(before + 86_400_000 - 5000);
+  });
+});
