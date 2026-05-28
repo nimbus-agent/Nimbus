@@ -1,7 +1,7 @@
 import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MICROSOFT_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
-import { type RefreshAccessTokenContext, refreshAccessToken } from "./pkce.ts";
+import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
 export type StoredOAuthTokens = {
   accessToken: string;
@@ -56,28 +56,20 @@ export async function getValidVaultOAuthAccessToken(args: {
   emptyClientIdError: string;
   provider: "google" | "microsoft";
 }): Promise<string> {
-  const raw = await args.vault.get(args.vaultKey);
-  if (raw === null || raw === "") {
-    throw new Error(args.notConfiguredError);
-  }
-  const parsed = parseStoredOAuthTokens(raw, args.parseErrors);
-  const marginMs = args.marginMs ?? 120_000;
-  if (parsed.expiresAt > Date.now() + marginMs) {
-    return parsed.accessToken;
-  }
-  const clientId = args.getClientId();
-  if (clientId === "") {
-    throw new Error(args.emptyClientIdError);
-  }
-  const refreshCtx: RefreshAccessTokenContext = {
+  const clientSecret =
+    args.provider === "google" && Config.oauthGoogleClientSecret !== ""
+      ? Config.oauthGoogleClientSecret
+      : undefined;
+  return getValidVaultAccessToken({
+    descriptor: OAUTH_PROVIDERS[args.provider],
     vault: args.vault,
-    persistVaultKey: args.vaultKey,
-  };
-  if (args.provider === "google" && Config.oauthGoogleClientSecret !== "") {
-    refreshCtx.clientSecret = Config.oauthGoogleClientSecret;
-  }
-  const next = await refreshAccessToken(parsed.refreshToken, args.provider, clientId, refreshCtx);
-  return next.accessToken;
+    vaultKey: args.vaultKey,
+    clientId: args.getClientId(),
+    ...(clientSecret !== undefined && { clientSecret }),
+    notConfiguredError: args.notConfiguredError,
+    parseErrors: args.parseErrors,
+    emptyClientIdError: args.emptyClientIdError,
+  });
 }
 
 export function microsoftOAuthAccessFromConfig(): {

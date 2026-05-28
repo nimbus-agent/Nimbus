@@ -130,9 +130,7 @@ describe("getValidSlackAccessToken", () => {
       });
     }) as unknown as typeof fetch;
 
-    await expect(getValidSlackAccessToken(vault)).rejects.toThrow(
-      "Slack OAuth token exchange failed",
-    );
+    await expect(getValidSlackAccessToken(vault)).rejects.toThrow("Token exchange failed");
   });
 
   it("throws when the Slack refresh endpoint returns HTTP error status (refresh-http-error path)", async () => {
@@ -154,6 +152,6 @@ describe("getValidSlackAccessToken", () => {
       });
     }) as unknown as typeof fetch;
 
-    await expect(getValidSlackAccessToken(vault)).rejects.toThrow("Slack token HTTP error");
+    await expect(getValidSlackAccessToken(vault)).rejects.toThrow("Token exchange failed");
   });
 });
