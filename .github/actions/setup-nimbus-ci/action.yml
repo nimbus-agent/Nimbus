@@ -1,5 +1,5 @@
 name: Setup Nimbus CI (Bun)
-description: Install Bun, restore ~/.bun/install/cache, optionally verify bun.lock, then frozen install.
+description: Install Bun, restore ~/.bun/install/cache + node_modules, optionally verify bun.lock, then frozen install.
 
 inputs:
   bun-version:
@@ -31,11 +31,31 @@ runs:
         restore-keys: |
           ${{ runner.os }}-bun-
 
+    # node_modules is cached separately from the download cache so a hit
+    # skips the link/extract pass entirely. Keyed strictly on bun.lock so a
+    # lockfile change always misses the cache (no restore-keys — partial
+    # restores would leave a stale tree that frozen-install can't repair).
+    # Per-package node_modules are included because Bun's monorepo layout
+    # puts non-hoistable deps under each workspace package.
+    - name: Cache node_modules
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          node_modules
+          packages/*/node_modules
+          packages/mcp-connectors/*/node_modules
+          packages/github-actions/*/node_modules
+        key: ${{ runner.os }}-node-modules-${{ hashFiles('bun.lock') }}
+
     - name: Install and verify dependencies
       shell: bash
       env:
         VERIFY_LOCK: ${{ inputs.verify-lock }}
         FROZEN_INSTALL: ${{ inputs.frozen-install }}
+      # On a node_modules cache hit, `bun install --frozen-lockfile` still
+      # runs — it verifies the lockfile and the installed tree match, which
+      # is the safety net for cache restores that lose Bun's internal
+      # symlinks. With both caches warm this is near-instant (~2-3 s).
       run: |
         if [ "$VERIFY_LOCK" = "true" ]; then
           bun install --frozen-lockfile
