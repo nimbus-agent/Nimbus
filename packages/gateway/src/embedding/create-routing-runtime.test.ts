@@ -22,7 +22,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pino from "pino";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { openSeededDbFile } from "../../test/helpers/migrated-db-seed.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
@@ -109,10 +109,7 @@ type Harness = {
 
 function makeHarness(opts: { migrateTo: number; setApiKey: boolean }): Harness {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-routing-runtime-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  if (opts.migrateTo > 0) {
-    runIndexedSchemaMigrations(db, opts.migrateTo);
-  }
+  const db = openSeededDbFile(join(dir, "nimbus.db"), opts.migrateTo);
   const vault = new MockVault();
   if (opts.setApiKey) {
     // Deliberately not shaped like a real OpenAI key — only the presence matters
