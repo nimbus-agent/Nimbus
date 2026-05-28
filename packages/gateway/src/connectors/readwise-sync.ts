@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapReadwiseHighlightToItem } from "./readwise-highlight-mapping.ts";
@@ -38,35 +39,15 @@ async function loadCreds(ctx: SyncContext): Promise<ReadwiseCreds | null> {
   return { token };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function highlightsPath(page: number): string {
   const params = new URLSearchParams({ page_size: String(PAGE_SIZE), page: String(page) });
   return `/api/v2/highlights/?${params.toString()}`;
 }
 
-async function readwiseGet(
-  ctx: SyncContext,
-  creds: ReadwiseCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BASE}${path}`, {
+function readwiseGet(ctx: SyncContext, creds: ReadwiseCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${BASE}${path}`, {
     headers: { Authorization: `Token ${creds.token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "readwise GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractHighlights(parsed: unknown): { highlights: unknown[]; next: string | null } {
