@@ -1,11 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  mcpJsonResult as jsonResult,
-} from "../../shared/mcp-tool-kit.ts";
+import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFluxResources } from "./search-filter.ts";
 
 interface FluxKindEntry {
@@ -117,59 +112,55 @@ function listPath(entry: FluxKindEntry, namespace?: string): string {
   return `${prefix}/${entry.plural}`;
 }
 
-const mcp = new McpServer({ name: "nimbus-flux", version: "0.1.0" });
-const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+await runReadOnlyMcpConnector("nimbus-flux", (reg) => {
+  reg(
+    "flux_list",
+    "List Flux Custom Resources of one `kind` (default `kustomization`). Reads the Kubernetes API: all-namespaces by default, or scoped to `namespace` when given. `limit` (default 200) caps the returned `items` client-side. Returns the raw Kubernetes List envelope.",
+    z.object({
+      kind: z.enum(KIND_VALUES).optional(),
+      namespace: z.string().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    async (p) => {
+      const entry = kindEntry(p.kind ?? "kustomization");
+      const root = await agGet(listPath(entry, p.namespace));
+      const items = itemsFrom(root);
+      const cap = p.limit ?? 200;
+      return jsonResult({ items: items.slice(0, cap) });
+    },
+  );
 
-reg(
-  "flux_list",
-  "List Flux Custom Resources of one `kind` (default `kustomization`). Reads the Kubernetes API: all-namespaces by default, or scoped to `namespace` when given. `limit` (default 200) caps the returned `items` client-side. Returns the raw Kubernetes List envelope.",
-  z.object({
-    kind: z.enum(KIND_VALUES).optional(),
-    namespace: z.string().optional(),
-    limit: z.number().int().min(1).max(500).optional(),
-  }),
-  async (p) => {
-    const entry = kindEntry(p.kind ?? "kustomization");
-    const root = await agGet(listPath(entry, p.namespace));
-    const items = itemsFrom(root);
-    const cap = p.limit ?? 200;
-    return jsonResult({ items: items.slice(0, cap) });
-  },
-);
+  reg(
+    "flux_get",
+    "Fetch one Flux Custom Resource by `kind`, `namespace`, and `name` (`/apis/<group>/<version>/namespaces/<ns>/<plural>/<name>`). Throws when no such resource exists.",
+    z.object({
+      kind: z.enum(KIND_VALUES),
+      namespace: z.string().min(1),
+      name: z.string().min(1),
+    }),
+    async (p) => {
+      const entry = kindEntry(p.kind);
+      const path = `${listPath(entry, p.namespace)}/${encodeURIComponent(p.name)}`;
+      return jsonResult(await agGet(path));
+    },
+  );
 
-reg(
-  "flux_get",
-  "Fetch one Flux Custom Resource by `kind`, `namespace`, and `name` (`/apis/<group>/<version>/namespaces/<ns>/<plural>/<name>`). Throws when no such resource exists.",
-  z.object({
-    kind: z.enum(KIND_VALUES),
-    namespace: z.string().min(1),
-    name: z.string().min(1),
-  }),
-  async (p) => {
-    const entry = kindEntry(p.kind);
-    const path = `${listPath(entry, p.namespace)}/${encodeURIComponent(p.name)}`;
-    return jsonResult(await agGet(path));
-  },
-);
-
-reg(
-  "flux_search",
-  "Substring search across Flux Custom Resources of one `kind` (default `kustomization`). Lists the kind across all namespaces and matches the query (case-insensitive) against resource name, namespace, and the Ready condition's reason/message. Returns a `{ matches: [...] }` envelope.",
-  z.object({
-    query: z.string().min(1),
-    kind: z.enum(KIND_VALUES).optional(),
-    limit: z.number().int().min(1).max(200).optional(),
-  }),
-  async (p) => {
-    const entry = kindEntry(p.kind ?? "kustomization");
-    const root = await agGet(listPath(entry));
-    const matches = filterFluxResources(itemsFrom(root), {
-      query: p.query,
-      limit: p.limit,
-    });
-    return jsonResult({ matches });
-  },
-);
-
-const transport = new StdioServerTransport();
-await mcp.connect(transport);
+  reg(
+    "flux_search",
+    "Substring search across Flux Custom Resources of one `kind` (default `kustomization`). Lists the kind across all namespaces and matches the query (case-insensitive) against resource name, namespace, and the Ready condition's reason/message. Returns a `{ matches: [...] }` envelope.",
+    z.object({
+      query: z.string().min(1),
+      kind: z.enum(KIND_VALUES).optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+    }),
+    async (p) => {
+      const entry = kindEntry(p.kind ?? "kustomization");
+      const root = await agGet(listPath(entry));
+      const matches = filterFluxResources(itemsFrom(root), {
+        query: p.query,
+        limit: p.limit,
+      });
+      return jsonResult({ matches });
+    },
+  );
+});
