@@ -240,3 +240,113 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
 
 export type { NimbusVault };
 export { validateVaultKeyOrThrow };
+
+export function buildAuthorizeUrl(d: OAuthProviderDescriptor, a: AuthorizeArgs): URL {
+  const url = new URL(d.authorizeUrl);
+  for (const [k, v] of Object.entries(d.buildAuthorizeParams(a))) {
+    url.searchParams.set(k, v);
+  }
+  return url;
+}
+
+/** OAuth2 token-error JSON → user-safe summary (no secrets). */
+function tokenErrorSummary(json: unknown): string | undefined {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) return undefined;
+  const o = json as Record<string, unknown>;
+  const err = o["error"];
+  if (typeof err !== "string" || err.length === 0) return undefined;
+  const desc = o["error_description"];
+  return typeof desc === "string" && desc.trim() !== "" ? `${err}: ${desc.trim()}` : err;
+}
+
+function basicAuthHeader(clientId: string, clientSecret: string): string {
+  return `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`;
+}
+
+interface TokenRequest {
+  descriptor: OAuthProviderDescriptor;
+  fetchFn: RegistryFetch;
+  clientId: string;
+  clientSecret?: string;
+  grant: Record<string, string>;
+  requestedScopes: string[];
+}
+
+export async function postToken(req: TokenRequest): Promise<PKCEResult> {
+  const d = req.descriptor;
+  const headers: Record<string, string> = { ...(d.tokenHeaders ?? {}) };
+  const fields: Record<string, string> = { client_id: req.clientId, ...req.grant };
+
+  if (
+    d.secretPlacement === "basic_header" &&
+    req.clientSecret !== undefined &&
+    req.clientSecret !== ""
+  ) {
+    headers["Authorization"] = basicAuthHeader(req.clientId, req.clientSecret);
+  } else if (
+    d.secretPlacement === "body" &&
+    req.clientSecret !== undefined &&
+    req.clientSecret !== ""
+  ) {
+    fields["client_secret"] = req.clientSecret;
+  }
+
+  let body: string;
+  if (d.bodyFormat === "json") {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(fields);
+  } else {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) p.set(k, v);
+    body = p.toString();
+  }
+
+  const res = await req.fetchFn(d.tokenUrl, { method: "POST", headers, body });
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Token endpoint returned non-JSON");
+  }
+  const httpOk = res.ok;
+  const success = d.isTokenSuccess ? d.isTokenSuccess(parsed, httpOk) : httpOk;
+  if (!success) {
+    const hint = tokenErrorSummary(parsed);
+    throw new Error(
+      hint === undefined ? "Token exchange failed" : `Token exchange failed (${hint})`,
+    );
+  }
+  return d.parseTokenResponse(parsed, req.requestedScopes);
+}
+
+export interface ExchangeArgs {
+  descriptor: OAuthProviderDescriptor;
+  fetchFn: RegistryFetch;
+  clientId: string;
+  clientSecret?: string;
+  redirectUri: string;
+  codeVerifier?: string;
+  authCode: string;
+  requestedScopes: string[];
+}
+
+export async function exchangeAuthorizationCode(a: ExchangeArgs): Promise<PKCEResult> {
+  const grant: Record<string, string> = {
+    grant_type: "authorization_code",
+    code: a.authCode,
+    redirect_uri: a.redirectUri,
+  };
+  if (a.descriptor.usesPkce && a.codeVerifier !== undefined) {
+    grant["code_verifier"] = a.codeVerifier;
+  }
+  return postToken({
+    descriptor: a.descriptor,
+    fetchFn: a.fetchFn,
+    clientId: a.clientId,
+    ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+    grant,
+    requestedScopes: a.requestedScopes,
+  });
+}

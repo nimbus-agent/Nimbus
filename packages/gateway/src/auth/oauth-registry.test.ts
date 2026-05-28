@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { OAUTH_PROVIDERS } from "./oauth-registry.ts";
+import { buildAuthorizeUrl, exchangeAuthorizationCode, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
 describe("OAUTH_PROVIDERS table", () => {
   test("has an entry for every existing provider with its vault key", () => {
@@ -119,5 +119,74 @@ describe("notion descriptor hooks", () => {
     );
     expect(r.accessToken).toBe("secret_a");
     expect(r.expiresAt).toBeGreaterThanOrEqual(before + 86_400_000 - 5000);
+  });
+});
+
+describe("buildAuthorizeUrl", () => {
+  test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
+    const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {
+      clientId: "cid",
+      scopes: ["openid"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.searchParams.get("client_id")).toBe("cid");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+});
+
+describe("exchangeAuthorizationCode", () => {
+  test("notion exchange posts JSON with Basic auth header; no token leaks on error", async () => {
+    let seenAuth = "";
+    let seenCT = "";
+    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      seenAuth = h.get("authorization") ?? "";
+      seenCT = h.get("content-type") ?? "";
+      return new Response(JSON.stringify({ access_token: "secret_a", refresh_token: "secret_r" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const r = await exchangeAuthorizationCode({
+      descriptor: OAUTH_PROVIDERS.notion,
+      fetchFn: fetchImpl,
+      clientId: "cid",
+      clientSecret: "csecret",
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      authCode: "code",
+      requestedScopes: [],
+    });
+    expect(r.accessToken).toBe("secret_a");
+    expect(seenAuth.startsWith("Basic ")).toBe(true);
+    expect(seenCT).toContain("application/json");
+  });
+
+  test("google exchange posts form with client_secret in body; HTTP error message omits secrets", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: "invalid_grant", error_description: "bad" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    let threw = "";
+    try {
+      await exchangeAuthorizationCode({
+        descriptor: OAUTH_PROVIDERS.google,
+        fetchFn: fetchImpl,
+        clientId: "cid",
+        clientSecret: "GOOGLE_WEB_SECRET",
+        redirectUri: "http://127.0.0.1:1/oauth/callback",
+        codeVerifier: "ver",
+        authCode: "code",
+        requestedScopes: ["openid"],
+      });
+    } catch (e) {
+      threw = String(e instanceof Error ? e.message : e);
+    }
+    expect(threw).toContain("invalid_grant");
+    expect(threw.includes("GOOGLE_WEB_SECRET")).toBe(false);
   });
 });
