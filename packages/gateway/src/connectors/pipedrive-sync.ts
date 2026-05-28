@@ -10,6 +10,9 @@ import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPipedriveDealToItem } from "./pipedrive-deal-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
 
+// connectorFetch opt-out: api_token is in the query string (Pipedrive auth model),
+// so the helper's url-logging on http_error would leak the token. Keep bespoke
+// pipedriveGetDeals so the warn log surfaces only { status, start }.
 const SERVICE_ID = "pipedrive";
 const CURSOR_PREFIX = "nimbus-pipedrive1:";
 const BASE = "https://api.pipedrive.com";
