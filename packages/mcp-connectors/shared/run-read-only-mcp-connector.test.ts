@@ -16,14 +16,16 @@ function syntheticSchema(): ZodObjectSchema<SyntheticArgs> {
 
 describe("buildReadOnlyMcpConnector", () => {
   test("passes serverName and version 0.1.0 to the createServer factory", () => {
-    const factory = mock(() => ({ tool: () => undefined }));
+    const factory = mock((_info: { readonly name: string; readonly version: string }) => ({
+      tool: () => undefined,
+    }));
     buildReadOnlyMcpConnector("nimbus-acme", () => undefined, { createServer: factory });
     expect(factory).toHaveBeenCalledTimes(1);
     expect(factory.mock.calls[0]?.[0]).toEqual({ name: "nimbus-acme", version: "0.1.0" });
   });
 
   test("invokes register with a registrar that delegates to server.tool", () => {
-    const toolSpy = mock(() => undefined);
+    const toolSpy = mock((..._args: unknown[]) => undefined);
     const fakeServer = { tool: toolSpy };
     buildReadOnlyMcpConnector(
       "nimbus-acme",
