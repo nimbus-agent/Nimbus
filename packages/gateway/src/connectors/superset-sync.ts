@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSupersetDashboardToItem } from "./superset-dashboard-mapping.ts";
@@ -45,17 +46,11 @@ async function loadCreds(ctx: SyncContext): Promise<SupersetCreds | null> {
   return { url: trimTrailingSlash(url), username, password };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 async function supersetLogin(
   ctx: SyncContext,
   creds: SupersetCreds,
 ): Promise<{ token: string | null; bytes: number }> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.url}/api/v1/security/login`, {
+  const outcome = await connectorFetch(ctx, SERVICE_ID, `${creds.url}/api/v1/security/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
@@ -65,44 +60,25 @@ async function supersetLogin(
       refresh: true,
     }),
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status }, "superset login failed");
-    return { token: null, bytes: text.length };
+  if (outcome.kind === "http_error") {
+    return { token: null, bytes: outcome.bytes };
   }
-  try {
-    const parsed = JSON.parse(text) as { access_token?: unknown };
-    if (typeof parsed.access_token !== "string" || parsed.access_token === "") {
-      ctx.logger.warn({ serviceId: SERVICE_ID }, "superset login returned no access_token");
-      return { token: null, bytes: text.length };
-    }
-    return { token: parsed.access_token, bytes: text.length };
-  } catch {
+  if (outcome.kind === "parse_error") {
     ctx.logger.warn({ serviceId: SERVICE_ID }, "superset login returned invalid JSON");
-    return { token: null, bytes: text.length };
+    return { token: null, bytes: outcome.bytes };
   }
+  const parsed = outcome.parsed as { access_token?: unknown };
+  if (typeof parsed.access_token !== "string" || parsed.access_token === "") {
+    ctx.logger.warn({ serviceId: SERVICE_ID }, "superset login returned no access_token");
+    return { token: null, bytes: outcome.bytes };
+  }
+  return { token: parsed.access_token, bytes: outcome.bytes };
 }
 
-async function supersetGet(
-  ctx: SyncContext,
-  creds: SupersetCreds,
-  token: string,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.url}${path}`, {
+function supersetGet(ctx: SyncContext, creds: SupersetCreds, token: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.url}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "superset GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractResult(parsed: unknown): unknown[] {
