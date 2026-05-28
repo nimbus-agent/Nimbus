@@ -34,6 +34,7 @@ export type CredentialSpawners = {
   readonly ensurePagerdutyMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensurePhase3BundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureSlackMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureZoomMcp: (ctx: MeshSpawnContext) => Promise<void>;
 };
 
 // All 11 wrappers below are file-private (no `export`). Their sole caller is
@@ -189,6 +190,7 @@ export async function ensureCredentialConnectorsRunning(
   await ensureIfConnectorSecretSet(ctx, "linear", "api_key", () => spawners.ensureLinearMcp(ctx));
   await ensureJiraIfVaultCreds(ctx, spawners);
   await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "zoom", "oauth", () => spawners.ensureZoomMcp(ctx));
   await ensureConfluenceIfVaultCreds(ctx, spawners);
   await ensureDiscordIfOptIn(ctx, spawners);
   await ensureJenkinsIfVaultCreds(ctx, spawners);

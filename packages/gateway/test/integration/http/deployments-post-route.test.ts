@@ -14,11 +14,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import {
   type ReadOnlyHttpServerHandle,
   startReadOnlyHttpServer,
 } from "../../../src/ipc/http-server.ts";
+import { seedDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const TOKEN = "hunter2";
 const NOW = 1747142641204;
@@ -62,9 +62,7 @@ describe("POST /v1/deployments (integration)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "deploy-post-"));
     dbPath = join(dir, "nimbus.db");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 28);
-    db.close();
+    seedDbFile(dbPath, 28);
     writeFileSync(
       join(dir, "nimbus.toml"),
       [

@@ -29,6 +29,7 @@ export const LAZY_MESH = {
   pagerduty: "mesh:pagerduty",
   kubernetes: "mesh:kubernetes",
   obsidian: "mesh:obsidian",
+  zoom: "mesh:zoom",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

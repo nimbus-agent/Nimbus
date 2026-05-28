@@ -353,6 +353,203 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- GitOps / continuous delivery (Flux) ---
+  flux: baseManifest("com.nimbus.flux", {
+    // Flux is always self-hosted (the Kubernetes API server); there is no
+    // central Flux API and no SaaS host. `phase3AddFluxMcp` extends the empty
+    // static network list with the hostname parsed from FLUX_API_URL at spawn
+    // time (same runtime-merge pattern as grafana / jenkins / argocd). Without
+    // that merge Flux would be unreachable under the sandbox; with it, the
+    // connector talks only to the user-configured API server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Data transformation (dbt Cloud) ---
+  dbt: baseManifest("com.nimbus.dbt", {
+    // dbt Cloud SaaS Administrative-API host. Regional / custom-access-URL
+    // instances (emea.dbt.com, au.dbt.com, …) inherit the same Task 14
+    // runtime-merge follow-up as Sentry's `sentry.url`; users supply
+    // `dbt.api_base`. The SaaS default host is the only one in the static
+    // manifest today.
+    network: ["cloud.getdbt.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Business intelligence (Metabase) ---
+  metabase: baseManifest("com.nimbus.metabase", {
+    // Metabase has no universal SaaS host (each org runs its own
+    // self-hosted instance or per-org *.metabaseapp.com subdomain).
+    // `phase3AddMetabaseMcp` extends the empty static network list with the
+    // hostname parsed from METABASE_URL at spawn time (same runtime-merge
+    // pattern as grafana / jenkins / argocd / flux). Without that merge
+    // Metabase would be unreachable under the sandbox; with it, the
+    // connector talks only to the user-configured server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Business intelligence (Superset) ---
+  superset: baseManifest("com.nimbus.superset", {
+    // Apache Superset is always self-hosted (no universal SaaS host).
+    // `phase3AddSupersetMcp` extends the empty static network list with the
+    // hostname parsed from SUPERSET_URL at spawn time (same runtime-merge
+    // pattern as grafana / jenkins / argocd / flux / metabase). Superset has
+    // no static API key — the connector logs in with username/password to
+    // mint a JWT, then calls with a Bearer token; both the login and the
+    // dashboard reads go to this one user-configured host.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Data orchestration (Databricks) ---
+  databricks: baseManifest("com.nimbus.databricks", {
+    // Databricks has no universal SaaS host — every workspace is a distinct
+    // per-org URL (`dbc-*.cloud.databricks.com`, `adb-*.azuredatabricks.net`,
+    // GCP variants). `phase3AddDatabricksMcp` extends the empty static network
+    // list with the hostname parsed from DATABRICKS_HOST at spawn time (same
+    // runtime-merge pattern as grafana / argocd / flux / metabase / superset).
+    // Without that merge Databricks would be unreachable under the sandbox;
+    // with it, the connector talks only to the user-configured workspace.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- ML model registry (MLflow) ---
+  mlflow: baseManifest("com.nimbus.mlflow", {
+    // MLflow has no universal SaaS host — every tracking server is a distinct
+    // per-org URL (self-hosted or managed). `phase3AddMlflowMcp` extends the
+    // empty static network list with the hostname parsed from MLFLOW_HOST at
+    // spawn time (same runtime-merge pattern as grafana / argocd / flux /
+    // metabase / superset / databricks). Without that merge MLflow would be
+    // unreachable under the sandbox; with it, the connector talks only to the
+    // user-configured tracking server.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Hosting / deployments (Vercel) ---
+  vercel: baseManifest("com.nimbus.vercel", {
+    // Vercel SaaS REST API. The API host is fixed (api.vercel.com) — there is
+    // no self-hosted variant and no host override, so the static list is the
+    // only host this connector ever contacts. The *.vercel.app deployment
+    // hosts and the vercel.com inspector URLs are only used to build canonical
+    // URL strings, never fetched, so they are NOT listed.
+    network: ["api.vercel.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Hosting / deployments (Netlify) ---
+  netlify: baseManifest("com.nimbus.netlify", {
+    // Netlify SaaS REST API. The API host is fixed (api.netlify.com) — there
+    // is no self-hosted variant and no host override, so the static list is
+    // the only host this connector ever contacts. The *.netlify.app site
+    // hosts and the app.netlify.com admin URLs are only used to build
+    // canonical URL strings, never fetched, so they are NOT listed.
+    network: ["api.netlify.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Payments / billing (Stripe) ---
+  stripe: baseManifest("com.nimbus.stripe", {
+    // Stripe REST API. The API host is fixed (api.stripe.com) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts. The pay.stripe.com hosted-invoice /
+    // PDF URLs are only used to build canonical URL strings, never fetched, so
+    // they are NOT listed.
+    network: ["api.stripe.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Business banking (Mercury) ---
+  mercury: baseManifest("com.nimbus.mercury", {
+    // Mercury REST API. The API host is fixed (api.mercury.com) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts.
+    network: ["api.mercury.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Reading apps (Readwise) ---
+  readwise: baseManifest("com.nimbus.readwise", {
+    // Readwise REST API. The API host is fixed (readwise.io) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts.
+    network: ["readwise.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Bookmarking apps (Raindrop) ---
+  raindrop: baseManifest("com.nimbus.raindrop", {
+    // Raindrop.io REST API. The API host is fixed (api.raindrop.io) — there is
+    // no self-hosted variant and no host override, so the static list is the
+    // only host this connector ever contacts.
+    network: ["api.raindrop.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Support / helpdesk (Intercom) ---
+  intercom: baseManifest("com.nimbus.intercom", {
+    // Intercom REST API. The API host is fixed (api.intercom.io — the US host).
+    // EU/AU regional hosts (api.eu.intercom.io / api.au.intercom.io) are a
+    // deferred follow-up, so the static list is the only host this connector
+    // ever contacts today — there is no host override.
+    network: ["api.intercom.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Support / helpdesk (Zendesk) ---
+  zendesk: baseManifest("com.nimbus.zendesk", {
+    // Zendesk is per-tenant — every instance is a distinct
+    // `https://<subdomain>.zendesk.com` host. `phase3AddZendeskMcp` extends the
+    // empty static network list with the hostname parsed from ZENDESK_URL at
+    // spawn time (same runtime-merge pattern as grafana / argocd / metabase).
+    // Without that merge Zendesk would be unreachable under the sandbox; with
+    // it, the connector talks only to the user-configured instance.
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Recruiting / ATS (Lever) ---
+  lever: baseManifest("com.nimbus.lever", {
+    // Lever Data API. The API host is fixed (api.lever.co) — there is no
+    // self-hosted variant and no host override, so the static list is the only
+    // host this connector ever contacts.
+    network: ["api.lever.co"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Recruiting / ATS (Greenhouse) ---
+  greenhouse: baseManifest("com.nimbus.greenhouse", {
+    // Greenhouse Harvest API. The API host is fixed (harvest.greenhouse.io) —
+    // there is no self-hosted variant and no host override, so the static list
+    // is the only host this connector ever contacts.
+    network: ["harvest.greenhouse.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- CRM (Pipedrive) ---
+  pipedrive: baseManifest("com.nimbus.pipedrive", {
+    // Pipedrive REST API. The API host is fixed (api.pipedrive.com) — there is
+    // no self-hosted variant and no host override, so the static list is the
+    // only host this connector ever contacts. (The company-specific
+    // <company>.pipedrive.com UI domain is not contacted — deep links are
+    // deferred.) Auth is via the ?api_token= query parameter, not a header.
+    network: ["api.pipedrive.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Team knowledge / Q&A (Stack Overflow for Teams) ---
+  stackoverflow: baseManifest("com.nimbus.stackoverflow", {
+    // Stack Overflow for Teams v3 REST API. The API host is fixed
+    // (api.stackoverflowteams.com) — there is no self-hosted variant and no
+    // host override, so the static list is the only host this connector ever
+    // contacts. (The team slug is URL-encoded into the request PATH, not a
+    // separate host.)
+    network: ["api.stackoverflowteams.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Cluster management ---
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     // Kubernetes API server hostname lives inside the kubeconfig YAML
@@ -363,6 +560,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     // where the kubeconfig server is a non-routable IP). General use is
     // tracked as a known PR 1 limitation.
     network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // --- Video conferencing (Zoom) ---
+  zoom: baseManifest("com.nimbus.zoom", {
+    // Zoom REST + OAuth — fixed SaaS hosts. api.zoom.us serves the REST API
+    // and recording download URLs; zoom.us serves the OAuth authorize +
+    // token endpoints. No self-hosted variant.
+    network: ["api.zoom.us", "zoom.us"],
     filesystem: { read: [], write: [] },
   }),
 

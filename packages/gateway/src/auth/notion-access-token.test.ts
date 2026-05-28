@@ -128,6 +128,6 @@ describe("getValidNotionAccessToken", () => {
       );
     }) as unknown as typeof fetch;
 
-    await expect(getValidNotionAccessToken(vault)).rejects.toThrow("Notion token refresh failed");
+    await expect(getValidNotionAccessToken(vault)).rejects.toThrow("Token exchange failed");
   });
 });

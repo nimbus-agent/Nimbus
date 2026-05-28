@@ -35,7 +35,26 @@ export type Provider =
   | "wiz"
   | "launchdarkly"
   | "flagsmith"
-  | "argocd";
+  | "argocd"
+  | "flux"
+  | "dbt"
+  | "metabase"
+  | "superset"
+  | "databricks"
+  | "mlflow"
+  | "vercel"
+  | "netlify"
+  | "stripe"
+  | "mercury"
+  | "readwise"
+  | "raindrop"
+  | "intercom"
+  | "zendesk"
+  | "lever"
+  | "greenhouse"
+  | "pipedrive"
+  | "stackoverflow"
+  | "zoom";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -76,6 +95,25 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   launchdarkly: { requestsPerMinute: 60, burstSize: 10 },
   flagsmith: { requestsPerMinute: 60, burstSize: 10 },
   argocd: { requestsPerMinute: 60, burstSize: 10 },
+  flux: { requestsPerMinute: 60, burstSize: 10 },
+  dbt: { requestsPerMinute: 60, burstSize: 10 },
+  metabase: { requestsPerMinute: 60, burstSize: 10 },
+  superset: { requestsPerMinute: 60, burstSize: 10 },
+  databricks: { requestsPerMinute: 60, burstSize: 10 },
+  mlflow: { requestsPerMinute: 60, burstSize: 10 },
+  vercel: { requestsPerMinute: 60, burstSize: 10 },
+  netlify: { requestsPerMinute: 60, burstSize: 10 },
+  stripe: { requestsPerMinute: 60, burstSize: 10 },
+  mercury: { requestsPerMinute: 60, burstSize: 10 },
+  readwise: { requestsPerMinute: 60, burstSize: 10 },
+  raindrop: { requestsPerMinute: 60, burstSize: 10 },
+  intercom: { requestsPerMinute: 60, burstSize: 10 },
+  zendesk: { requestsPerMinute: 60, burstSize: 10 },
+  lever: { requestsPerMinute: 60, burstSize: 10 },
+  greenhouse: { requestsPerMinute: 60, burstSize: 10 },
+  pipedrive: { requestsPerMinute: 60, burstSize: 10 },
+  stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
+  zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

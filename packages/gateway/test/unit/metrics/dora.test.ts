@@ -1,9 +1,8 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import {
   changeFailureRate,
   computeDoraMetrics,
@@ -12,6 +11,7 @@ import {
   mttr,
 } from "../../../src/metrics/dora.ts";
 import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 type SeedCiOpts = {
   service: string;
@@ -118,8 +118,7 @@ describe("DORA metrics calculators", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-dora-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 28);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
   });
 
   afterEach(() => {

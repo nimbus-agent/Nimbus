@@ -437,6 +437,506 @@ export async function phase3AddArgocdMcp(
   );
 }
 
+export async function phase3AddFluxMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiUrl = (await readConnectorSecret(vault, "flux", "api_url"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "flux", "token"))?.trim() ?? "";
+  if (apiUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Flux is always self-hosted (the Kubernetes API server);
+  // extend the static (empty) network list with the hostname parsed from
+  // FLUX_API_URL so the sandbox lets the connector reach the user's cluster
+  // (same runtime-merge pattern as grafana / argocd).
+  const host = hostnameFromUrl(apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
+  servers["flux"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("flux")],
+      env: extensionProcessEnv({ FLUX_API_URL: apiUrl, FLUX_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddDbtMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "dbt", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Optional regional / custom-access-URL override; passes through only when
+  // set so the connector falls back to the SaaS default cloud.getdbt.com host.
+  const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
+  servers["dbt"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("dbt")],
+      env: extensionProcessEnv({
+        DBT_TOKEN: tok,
+        ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
+      }),
+    },
+    "dbt",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddMetabaseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "metabase", "url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "metabase", "api_key"))?.trim() ?? "";
+  if (url === "" || apiKey === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Metabase has no universal SaaS host (self-hosted or a
+  // per-org subdomain); extend the empty static network list with the
+  // hostname parsed from METABASE_URL so the sandbox lets the connector reach
+  // the user's Metabase instance (same runtime-merge pattern as grafana /
+  // argocd / flux). The API key is sent by the connector as the `x-api-key`
+  // header.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("metabase", host === null ? [] : [host]);
+  servers["metabase"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("metabase")],
+      env: extensionProcessEnv({ METABASE_URL: url, METABASE_API_KEY: apiKey }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddSupersetMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "superset", "url"))?.trim() ?? "";
+  const user = (await readConnectorSecret(vault, "superset", "username"))?.trim() ?? "";
+  const pass = (await readConnectorSecret(vault, "superset", "password"))?.trim() ?? "";
+  if (url === "" || user === "" || pass === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Apache Superset is always self-hosted (no universal SaaS
+  // host); extend the empty static network list with the hostname parsed from
+  // SUPERSET_URL so the sandbox lets the connector reach the user's Superset
+  // instance (same runtime-merge pattern as grafana / argocd / flux /
+  // metabase). The connector mints a JWT from these credentials at login and
+  // then calls with a Bearer token; both hit this one host.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
+  servers["superset"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("superset")],
+      env: extensionProcessEnv({
+        SUPERSET_URL: url,
+        SUPERSET_USERNAME: user,
+        SUPERSET_PASSWORD: pass,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddDatabricksMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const hostUrl = (await readConnectorSecret(vault, "databricks", "host"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "databricks", "token"))?.trim() ?? "";
+  if (hostUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Databricks has no universal SaaS host (every workspace is a
+  // distinct per-org URL); extend the empty static network list with the
+  // hostname parsed from DATABRICKS_HOST so the sandbox lets the connector
+  // reach the user's workspace (same runtime-merge pattern as grafana /
+  // argocd / flux / metabase / superset). The PAT is sent by the connector as
+  // an `Authorization: Bearer` header.
+  const host = hostnameFromUrl(hostUrl);
+  const manifest = manifestWithExtraNetworkHosts("databricks", host === null ? [] : [host]);
+  servers["databricks"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("databricks")],
+      env: extensionProcessEnv({ DATABRICKS_HOST: hostUrl, DATABRICKS_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddMlflowMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const hostUrl = (await readConnectorSecret(vault, "mlflow", "host"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "mlflow", "token"))?.trim() ?? "";
+  if (hostUrl === "" || tok === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — MLflow has no universal SaaS host (every tracking server is
+  // a distinct per-org URL); extend the empty static network list with the
+  // hostname parsed from MLFLOW_HOST so the sandbox lets the connector reach
+  // the user's tracking server (same runtime-merge pattern as grafana /
+  // argocd / flux / metabase / superset / databricks). The API token is sent
+  // by the connector as an `Authorization: Bearer` header.
+  const host = hostnameFromUrl(hostUrl);
+  const manifest = manifestWithExtraNetworkHosts("mlflow", host === null ? [] : [host]);
+  servers["mlflow"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("mlflow")],
+      env: extensionProcessEnv({ MLFLOW_HOST: hostUrl, MLFLOW_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddVercelMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "vercel", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Vercel's API host is fixed (api.vercel.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge. The optional team id passes through only when set; the
+  // connector omits the `teamId` query param when VERCEL_TEAM_ID is absent.
+  const teamId = (await readConnectorSecret(vault, "vercel", "team_id"))?.trim() ?? "";
+  servers["vercel"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("vercel")],
+      env: extensionProcessEnv({
+        VERCEL_TOKEN: tok,
+        ...(teamId === "" ? {} : { VERCEL_TEAM_ID: teamId }),
+      }),
+    },
+    "vercel",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddNetlifyMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "netlify", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  // Netlify's API host is fixed (api.netlify.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["netlify"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("netlify")],
+      env: extensionProcessEnv({
+        NETLIFY_TOKEN: tok,
+      }),
+    },
+    "netlify",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddStripeMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "stripe", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Stripe's API host is fixed (api.stripe.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["stripe"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("stripe")],
+      env: extensionProcessEnv({
+        STRIPE_API_KEY: key,
+      }),
+    },
+    "stripe",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddMercuryMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "mercury", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Mercury's API host is fixed (api.mercury.com — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["mercury"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("mercury")],
+      env: extensionProcessEnv({
+        MERCURY_TOKEN: key,
+      }),
+    },
+    "mercury",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddReadwiseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "readwise", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Readwise's API host is fixed (readwise.io — a static-network SaaS host), so
+  // this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["readwise"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("readwise")],
+      env: extensionProcessEnv({
+        READWISE_TOKEN: key,
+      }),
+    },
+    "readwise",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddRaindropMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "raindrop", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Raindrop's API host is fixed (api.raindrop.io — a static-network SaaS host),
+  // so this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge.
+  servers["raindrop"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("raindrop")],
+      env: extensionProcessEnv({
+        RAINDROP_TOKEN: key,
+      }),
+    },
+    "raindrop",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddIntercomMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "intercom", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Intercom's API host is fixed (api.intercom.io — the US host, a
+  // static-network SaaS host; EU/AU regional hosts are deferred), so this uses
+  // the `wrap(...)` helper with the static manifest rather than a runtime host
+  // merge.
+  servers["intercom"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("intercom")],
+      env: extensionProcessEnv({
+        INTERCOM_TOKEN: key,
+      }),
+    },
+    "intercom",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddZendeskMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "zendesk", "url"))?.trim() ?? "";
+  const email = (await readConnectorSecret(vault, "zendesk", "email"))?.trim() ?? "";
+  const apiToken = (await readConnectorSecret(vault, "zendesk", "api_token"))?.trim() ?? "";
+  if (url === "" || email === "" || apiToken === "") {
+    return;
+  }
+  // I15 (T2 PR 1) — Zendesk is per-tenant (every instance is a distinct
+  // `https://<subdomain>.zendesk.com` host); extend the empty static network
+  // list with the hostname parsed from ZENDESK_URL at spawn time (same
+  // runtime-merge pattern as grafana / argocd / metabase). The connector builds
+  // a Basic auth header from the email + api_token (username `<email>/token`);
+  // both are passed through as env and never logged.
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
+  servers["zendesk"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("zendesk")],
+      env: extensionProcessEnv({
+        ZENDESK_URL: url,
+        ZENDESK_EMAIL: email,
+        ZENDESK_API_TOKEN: apiToken,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddLeverMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "lever", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Lever's API host is fixed (api.lever.co — a static-network SaaS host), so
+  // this uses the `wrap(...)` helper with the static manifest rather than a
+  // runtime host merge. The connector builds a Basic auth header from the API
+  // key as the username with an empty password; the key passes through as env
+  // and is never logged.
+  servers["lever"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("lever")],
+      env: extensionProcessEnv({
+        LEVER_API_KEY: key,
+      }),
+    },
+    "lever",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddGreenhouseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "greenhouse", "api_key"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Greenhouse's Harvest API host is fixed (harvest.greenhouse.io — a
+  // static-network SaaS host), so this uses the `wrap(...)` helper with the
+  // static manifest rather than a runtime host merge. The connector builds a
+  // Basic auth header from the API key as the username with an empty password;
+  // the key passes through as env and is never logged.
+  servers["greenhouse"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("greenhouse")],
+      env: extensionProcessEnv({
+        GREENHOUSE_API_KEY: key,
+      }),
+    },
+    "greenhouse",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddPipedriveMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const key = (await readConnectorSecret(vault, "pipedrive", "token"))?.trim() ?? "";
+  if (key === "") {
+    return;
+  }
+  // Pipedrive's API host is fixed (api.pipedrive.com — a static-network SaaS
+  // host), so this uses the `wrap(...)` helper with the static manifest rather
+  // than a runtime host merge. The connector authenticates with the token in
+  // the query string (?api_token=<token>) — the token passes through as env and
+  // is never logged.
+  servers["pipedrive"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("pipedrive")],
+      env: extensionProcessEnv({
+        PIPEDRIVE_TOKEN: key,
+      }),
+    },
+    "pipedrive",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddStackoverflowMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const token = (await readConnectorSecret(vault, "stackoverflow", "token"))?.trim() ?? "";
+  const team = (await readConnectorSecret(vault, "stackoverflow", "team"))?.trim() ?? "";
+  // Both keys are required — no-op unless BOTH are present (the team slug is
+  // mandatory because it is URL-encoded into the request path).
+  if (token === "" || team === "") {
+    return;
+  }
+  // Stack Overflow for Teams' API host is fixed (api.stackoverflowteams.com — a
+  // static-network SaaS host; the team slug lives in the request PATH, not as a
+  // separate host), so this uses the `wrap(...)` helper with the static
+  // manifest rather than a runtime host merge. The connector builds a Bearer
+  // header from the PAT; both the token and the team slug pass through as env
+  // and the token is never logged.
+  servers["stackoverflow"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("stackoverflow")],
+      env: extensionProcessEnv({
+        STACKOVERFLOW_TOKEN: token,
+        STACKOVERFLOW_TEAM: team,
+      }),
+    },
+    "stackoverflow",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -458,5 +958,23 @@ export async function buildPhase3Servers(
   await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
   await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
   await phase3AddArgocdMcp(vault, servers, sandboxCwd);
+  await phase3AddFluxMcp(vault, servers, sandboxCwd);
+  await phase3AddDbtMcp(vault, servers, sandboxCwd);
+  await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
+  await phase3AddSupersetMcp(vault, servers, sandboxCwd);
+  await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
+  await phase3AddMlflowMcp(vault, servers, sandboxCwd);
+  await phase3AddVercelMcp(vault, servers, sandboxCwd);
+  await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
+  await phase3AddStripeMcp(vault, servers, sandboxCwd);
+  await phase3AddMercuryMcp(vault, servers, sandboxCwd);
+  await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
+  await phase3AddRaindropMcp(vault, servers, sandboxCwd);
+  await phase3AddIntercomMcp(vault, servers, sandboxCwd);
+  await phase3AddZendeskMcp(vault, servers, sandboxCwd);
+  await phase3AddLeverMcp(vault, servers, sandboxCwd);
+  await phase3AddGreenhouseMcp(vault, servers, sandboxCwd);
+  await phase3AddPipedriveMcp(vault, servers, sandboxCwd);
+  await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   return servers;
 }

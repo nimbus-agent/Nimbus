@@ -1,6 +1,6 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { dispatchSecurityRpc, type SecurityScanResult } from "./security-rpc.ts";
 
 const TARGET_SCHEMA = 31;
@@ -51,16 +51,14 @@ function seedSyncState(db: Database, connectorId: string, depth: string): void {
 
 describe("dispatchSecurityRpc — routing", () => {
   test("non-security method returns miss", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     const r = await dispatchSecurityRpc("metrics.dora", {}, { db, nowMs: () => 1 });
     expect(r.kind).toBe("miss");
     db.close();
   });
 
   test("security.scan returns hit", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     const r = await dispatchSecurityRpc("security.scan", {}, { db, nowMs: () => 1 });
     expect(r.kind).toBe("hit");
     db.close();
@@ -70,8 +68,7 @@ describe("dispatchSecurityRpc — routing", () => {
 describe("dispatchSecurityRpc — depth filtering", () => {
   let db: Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    db = openSeededInMemoryDb(TARGET_SCHEMA);
   });
 
   test("items from summary-depth connectors are scanned", async () => {
@@ -161,8 +158,7 @@ describe("dispatchSecurityRpc — depth filtering", () => {
 
 describe("dispatchSecurityRpc — audit row", () => {
   test("writes exactly one security.scan_completed row with counts, no findings", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     seedSyncState(db, "filesystem", "summary");
     seedItem(db, {
       id: "filesystem:src/a.ts",
@@ -192,8 +188,7 @@ describe("dispatchSecurityRpc — audit row", () => {
 
 describe("dispatchSecurityRpc — response shape", () => {
   test("frozen JSON schema fields are all populated", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     seedSyncState(db, "filesystem", "summary");
     seedItem(db, {
       id: "filesystem:src/a.ts",

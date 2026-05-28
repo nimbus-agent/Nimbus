@@ -1,0 +1,15 @@
+{
+  "id": "com.nimbus.zoom",
+  "displayName": "Zoom",
+  "version": "0.1.0",
+  "description": "Zoom REST API connector (read-only). Surfaces the authenticated user's scheduled meetings as `zoom:meeting` items in the local index via `GET /v2/users/me/meetings?type=scheduled`. Bearer OAuth auth (`Authorization: Bearer <token>`; token is a short-lived access token refreshed by the Gateway via the 3-legged OAuth flow; never logged). The SaaS host (api.zoom.us) is fixed. Recordings and transcripts are deferred follow-ups (PR-3).",
+  "author": "Nimbus",
+  "entrypoint": "dist/server.js",
+  "runtime": "bun",
+  "permissions": {
+    "network": ["api.zoom.us"]
+  },
+  "hitlRequired": [],
+  "syncInterval": 600,
+  "minNimbusVersion": "0.2.0"
+}

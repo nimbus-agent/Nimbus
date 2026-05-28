@@ -1,0 +1,485 @@
+import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { parseStoredOAuthTokens } from "./oauth-vault-payload.ts";
+
+export type OAuthProvider = "google" | "microsoft" | "slack" | "notion" | "zoom";
+
+export interface PKCEResult {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scopes: string[];
+}
+
+export type RegistryFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
+export interface AuthorizeArgs {
+  clientId: string;
+  scopes: string[];
+  redirectUri: string;
+  state: string;
+  codeChallenge?: string;
+}
+
+type ClientSecretMode = "none" | "optional" | "required";
+
+export interface OAuthProviderDescriptor {
+  id: OAuthProvider;
+  vaultKey: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  usesPkce: boolean;
+  clientSecret: ClientSecretMode;
+  secretPlacement: "body" | "basic_header";
+  bodyFormat: "form" | "json";
+  tokenHeaders?: Readonly<Record<string, string>>;
+  mirrorPerService: boolean;
+  buildAuthorizeParams(a: AuthorizeArgs): Record<string, string>;
+  parseTokenResponse(json: unknown, requestedScopes: string[]): PKCEResult;
+  isTokenSuccess?(json: unknown, httpOk: boolean): boolean;
+}
+
+type OAuthTokenJson = {
+  access_token?: unknown;
+  expires_in?: unknown;
+  refresh_token?: unknown;
+  scope?: unknown;
+};
+
+function parseExpiresInSeconds(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") return Number.parseInt(raw, 10);
+  return Number.NaN;
+}
+
+function scopesFromTokenResponse(scopeField: string | undefined, requested: string[]): string[] {
+  if (scopeField !== undefined && scopeField.trim() !== "") {
+    return scopeField.split(/\s+/).filter((s) => s.length > 0);
+  }
+  return requested;
+}
+
+/** Standard OAuth2 form-token response → PKCEResult (google/microsoft/zoom). */
+function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object") {
+    throw new Error("Token response was not valid JSON");
+  }
+  const o = json as OAuthTokenJson;
+  const access = o.access_token;
+  if (typeof access !== "string" || access.length === 0) {
+    throw new Error("Token response missing access_token");
+  }
+  const expiresIn = parseExpiresInSeconds(o.expires_in);
+  if (!Number.isFinite(expiresIn) || expiresIn < 0) {
+    throw new Error("Token response missing expires_in");
+  }
+  const refresh = o.refresh_token;
+  const scope = typeof o.scope === "string" ? o.scope : undefined;
+  return {
+    accessToken: access,
+    refreshToken: typeof refresh === "string" ? refresh : "",
+    expiresAt: Date.now() + Math.floor(expiresIn * 1000),
+    scopes: scopesFromTokenResponse(scope, requested),
+  };
+}
+
+function parseSlackTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("Invalid Slack OAuth response");
+  }
+  const au = (json as Record<string, unknown>)["authed_user"];
+  if (au === null || typeof au !== "object" || Array.isArray(au)) {
+    throw new Error("Slack OAuth response missing authed_user");
+  }
+  const user = au as Record<string, unknown>;
+  const access = user["access_token"];
+  if (typeof access !== "string" || access === "") {
+    throw new Error("Slack user access token missing");
+  }
+  const refresh = user["refresh_token"];
+  const refreshTok = typeof refresh === "string" && refresh !== "" ? refresh : "";
+  if (refreshTok === "") {
+    throw new Error(
+      "Slack refresh token missing; enable token rotation on the Slack app and re-authorize",
+    );
+  }
+  const expIn = user["expires_in"];
+  let expiresSec = Number.NaN;
+  if (typeof expIn === "number" && Number.isFinite(expIn)) expiresSec = expIn;
+  else if (typeof expIn === "string") expiresSec = Number.parseInt(expIn, 10);
+  const safeExpires = Number.isFinite(expiresSec) && expiresSec > 0 ? expiresSec : 43_200;
+  const scopeStr = user["scope"];
+  const scopes =
+    typeof scopeStr === "string" && scopeStr.trim() !== ""
+      ? scopeStr
+          .split(/[,\s]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : requested;
+  return {
+    accessToken: access,
+    refreshToken: refreshTok,
+    expiresAt: Date.now() + Math.floor(safeExpires * 1000),
+    scopes,
+  };
+}
+
+function parseNotionTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("Notion token response invalid");
+  }
+  const o = json as { access_token?: unknown; refresh_token?: unknown };
+  const access = o.access_token;
+  if (typeof access !== "string" || access === "") {
+    throw new Error("Notion token response missing access_token");
+  }
+  const refresh = o.refresh_token;
+  const refreshStr = typeof refresh === "string" && refresh !== "" ? refresh : "";
+  return {
+    accessToken: access,
+    refreshToken: refreshStr,
+    expiresAt: Date.now() + 86_400 * 1000,
+    scopes: requested,
+  };
+}
+
+export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
+  google: {
+    id: "google",
+    vaultKey: "google.oauth",
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    usesPkce: true,
+    clientSecret: "optional",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: true,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+      access_type: "offline",
+      prompt: "consent",
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  microsoft: {
+    id: "microsoft",
+    vaultKey: "microsoft.oauth",
+    authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    usesPkce: true,
+    clientSecret: "none",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: true,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  slack: {
+    id: "slack",
+    vaultKey: "slack.oauth",
+    authorizeUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    usesPkce: true,
+    clientSecret: "none",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      user_scope: a.scopes.join(","),
+      redirect_uri: a.redirectUri,
+      state: a.state,
+      scope: "",
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseSlackTokenResponse,
+    isTokenSuccess: (json) =>
+      json !== null && typeof json === "object" && (json as { ok?: unknown }).ok === true,
+  },
+  notion: {
+    id: "notion",
+    vaultKey: "notion.oauth",
+    authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
+    tokenUrl: "https://api.notion.com/v1/oauth/token",
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "basic_header",
+    bodyFormat: "json",
+    tokenHeaders: { "Notion-Version": "2022-06-28" },
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      owner: "user",
+      state: a.state,
+    }),
+    parseTokenResponse: parseNotionTokenResponse,
+  },
+  zoom: {
+    id: "zoom",
+    vaultKey: "zoom.oauth",
+    authorizeUrl: "https://zoom.us/oauth/authorize",
+    tokenUrl: "https://zoom.us/oauth/token",
+    usesPkce: true,
+    clientSecret: "required",
+    secretPlacement: "basic_header",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+};
+
+export function buildAuthorizeUrl(d: OAuthProviderDescriptor, a: AuthorizeArgs): URL {
+  const url = new URL(d.authorizeUrl);
+  for (const [k, v] of Object.entries(d.buildAuthorizeParams(a))) {
+    url.searchParams.set(k, v);
+  }
+  return url;
+}
+
+/** OAuth2 token-error JSON → user-safe summary (no secrets). */
+function tokenErrorSummary(json: unknown): string | undefined {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) return undefined;
+  const o = json as Record<string, unknown>;
+  const err = o["error"];
+  if (typeof err !== "string" || err.length === 0) return undefined;
+  const desc = o["error_description"];
+  return typeof desc === "string" && desc.trim() !== "" ? `${err}: ${desc.trim()}` : err;
+}
+
+function basicAuthHeader(clientId: string, clientSecret: string): string {
+  return `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`;
+}
+
+interface TokenRequest {
+  descriptor: OAuthProviderDescriptor;
+  fetchFn: RegistryFetch;
+  clientId: string;
+  clientSecret?: string;
+  grant: Record<string, string>;
+  requestedScopes: string[];
+}
+
+async function postToken(req: TokenRequest): Promise<PKCEResult> {
+  const d = req.descriptor;
+  const headers: Record<string, string> = { ...(d.tokenHeaders ?? {}) };
+  const fields: Record<string, string> = { client_id: req.clientId, ...req.grant };
+
+  if (
+    d.secretPlacement === "basic_header" &&
+    req.clientSecret !== undefined &&
+    req.clientSecret !== ""
+  ) {
+    headers["Authorization"] = basicAuthHeader(req.clientId, req.clientSecret);
+  } else if (
+    d.secretPlacement === "body" &&
+    req.clientSecret !== undefined &&
+    req.clientSecret !== ""
+  ) {
+    fields["client_secret"] = req.clientSecret;
+  }
+
+  let body: string;
+  if (d.bodyFormat === "json") {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(fields);
+  } else {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) p.set(k, v);
+    body = p.toString();
+  }
+
+  const res = await req.fetchFn(d.tokenUrl, { method: "POST", headers, body });
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Token endpoint returned non-JSON");
+  }
+  const httpOk = res.ok;
+  const success = d.isTokenSuccess ? d.isTokenSuccess(parsed, httpOk) : httpOk;
+  if (!success) {
+    const hint = tokenErrorSummary(parsed);
+    throw new Error(
+      hint === undefined ? "Token exchange failed" : `Token exchange failed (${hint})`,
+    );
+  }
+  return d.parseTokenResponse(parsed, req.requestedScopes);
+}
+
+export interface ExchangeArgs {
+  descriptor: OAuthProviderDescriptor;
+  fetchFn: RegistryFetch;
+  clientId: string;
+  clientSecret?: string;
+  redirectUri: string;
+  codeVerifier?: string;
+  authCode: string;
+  requestedScopes: string[];
+}
+
+export async function exchangeAuthorizationCode(a: ExchangeArgs): Promise<PKCEResult> {
+  const grant: Record<string, string> = {
+    grant_type: "authorization_code",
+    code: a.authCode,
+    redirect_uri: a.redirectUri,
+  };
+  if (a.descriptor.usesPkce && a.codeVerifier !== undefined) {
+    grant["code_verifier"] = a.codeVerifier;
+  }
+  return postToken({
+    descriptor: a.descriptor,
+    fetchFn: a.fetchFn,
+    clientId: a.clientId,
+    ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+    grant,
+    requestedScopes: a.requestedScopes,
+  });
+}
+
+async function persistTokens(vault: NimbusVault, vaultKey: string, r: PKCEResult): Promise<void> {
+  validateVaultKeyOrThrow(vaultKey);
+  await vault.set(
+    vaultKey,
+    JSON.stringify({
+      accessToken: r.accessToken,
+      refreshToken: r.refreshToken,
+      expiresAt: r.expiresAt,
+      scopes: r.scopes,
+    }),
+  );
+}
+
+export interface RefreshArgs {
+  descriptor: OAuthProviderDescriptor;
+  refreshToken: string;
+  clientId: string;
+  vault: NimbusVault;
+  clientSecret?: string;
+  fetchFn?: RegistryFetch;
+  /** Persist to this key instead of descriptor.vaultKey (Google per-service keys). */
+  persistVaultKey?: string;
+}
+
+export async function refreshViaRegistry(a: RefreshArgs): Promise<PKCEResult> {
+  const fetchFn: RegistryFetch = a.fetchFn ?? ((i, init) => globalThis.fetch(i, init));
+  const partial = await postToken({
+    descriptor: a.descriptor,
+    fetchFn,
+    clientId: a.clientId,
+    ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+    grant: { grant_type: "refresh_token", refresh_token: a.refreshToken },
+    requestedScopes: [],
+  });
+  const result: PKCEResult = {
+    ...partial,
+    refreshToken: partial.refreshToken === "" ? a.refreshToken : partial.refreshToken,
+  };
+  const key =
+    a.persistVaultKey !== undefined && a.persistVaultKey.trim() !== ""
+      ? a.persistVaultKey.trim()
+      : a.descriptor.vaultKey;
+  await persistTokens(a.vault, key, result);
+  return result;
+}
+
+const REFRESH_MARGIN_MS = 120_000;
+// Single-flight: coalesce concurrent refreshes for the same persisted token.
+// Single-process invariant — see Task 5 plan note: only the Gateway process runs
+// `getValidVaultAccessToken`; connector child processes consume injected env tokens
+// and never read the Vault. An in-memory Map is therefore sufficient — no IPC/file
+// lock is needed under that invariant.
+const inFlightRefresh = new Map<string, Promise<string>>();
+
+export interface GetValidArgs {
+  descriptor: OAuthProviderDescriptor;
+  vault: NimbusVault;
+  clientId: string;
+  clientSecret?: string;
+  /** Read/persist key override (Google per-service); defaults to descriptor.vaultKey. */
+  vaultKey?: string;
+  notConfiguredError?: string;
+  parseErrors?: Parameters<typeof parseStoredOAuthTokens>[1];
+  emptyClientIdError?: string;
+  fetchFn?: RegistryFetch;
+}
+
+export async function getValidVaultAccessToken(a: GetValidArgs): Promise<string> {
+  const vaultKey = a.vaultKey ?? a.descriptor.vaultKey;
+  const raw = await a.vault.get(vaultKey);
+  if (raw === null || raw === "") {
+    throw new Error(a.notConfiguredError ?? `${a.descriptor.id} OAuth not configured`);
+  }
+  const parseErrors = a.parseErrors ?? {
+    invalidJson: `Invalid ${vaultKey} vault payload`,
+    invalidPayload: `Invalid ${vaultKey} vault payload`,
+    missingAccess: `Missing ${a.descriptor.id} access token`,
+    missingRefresh: `Missing ${a.descriptor.id} refresh token`,
+    missingExpiry: "Missing token expiry",
+  };
+  const parsed = parseStoredOAuthTokens(raw, parseErrors);
+  if (parsed.expiresAt > Date.now() + REFRESH_MARGIN_MS) {
+    return parsed.accessToken;
+  }
+  if (a.clientId === "") {
+    throw new Error(
+      a.emptyClientIdError ?? `Missing client id for ${a.descriptor.id} token refresh`,
+    );
+  }
+  // Lock is consulted only on the refresh path — after the cheap vault read +
+  // parse + expiry check. Cache-hit callers return immediately and never touch
+  // the lock; reordering this would force cache hits to block on unrelated
+  // in-flight refreshes, strictly worse for the common case.
+  const existing = inFlightRefresh.get(vaultKey);
+  if (existing !== undefined) return existing;
+  const p = (async () => {
+    const next = await refreshViaRegistry({
+      descriptor: a.descriptor,
+      refreshToken: parsed.refreshToken,
+      clientId: a.clientId,
+      vault: a.vault,
+      ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+      ...(a.vaultKey !== undefined && { persistVaultKey: a.vaultKey }),
+      ...(a.fetchFn !== undefined && { fetchFn: a.fetchFn }),
+    });
+    return next.accessToken;
+  })().finally(() => {
+    inFlightRefresh.delete(vaultKey);
+  });
+  inFlightRefresh.set(vaultKey, p);
+  return p;
+}

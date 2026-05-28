@@ -4,6 +4,8 @@ import {
   NOTION_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_SECRET_HELP,
   SLACK_OAUTH_CLIENT_ID_HELP,
+  ZOOM_OAUTH_CLIENT_ID_HELP,
+  ZOOM_OAUTH_CLIENT_SECRET_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
 import { type PKCEOptions, runPKCEFlow } from "../../auth/pkce.ts";
 import { Config } from "../../config.ts";
@@ -543,6 +545,11 @@ function oauthClientConfigForProvider(profile: ReturnType<typeof oauthProfileFor
         clientId: Config.oauthNotionClientId,
         emptyClientIdMessage: NOTION_OAUTH_CLIENT_ID_HELP,
       };
+    case "zoom":
+      return {
+        clientId: Config.oauthZoomClientId,
+        emptyClientIdMessage: ZOOM_OAUTH_CLIENT_ID_HELP,
+      };
     default: {
       const _ex: never = profile.provider;
       throw new ConnectorRpcError(-32602, `Unsupported OAuth provider: ${_ex}`);
@@ -566,6 +573,10 @@ async function connectorAuthOAuthPkce(
   if (profile.provider === "notion" && (notionSecret === undefined || notionSecret === "")) {
     throw new ConnectorRpcError(-32602, NOTION_OAUTH_CLIENT_SECRET_HELP);
   }
+  const zoomSecret = profile.provider === "zoom" ? Config.oauthZoomClientSecret : undefined;
+  if (profile.provider === "zoom" && (zoomSecret === undefined || zoomSecret === "")) {
+    throw new ConnectorRpcError(-32602, ZOOM_OAUTH_CLIENT_SECRET_HELP);
+  }
   const scopes = oauthScopesFromConnectorRequest(rec, profile.defaultScopes);
   const redirectPort = oauthRedirectPortFromRec(rec);
 
@@ -579,6 +590,8 @@ async function connectorAuthOAuthPkce(
   let merged: PKCEOptions = pkceBase;
   if (profile.provider === "notion" && notionSecret !== undefined && notionSecret !== "") {
     merged = { ...merged, oauthClientSecret: notionSecret };
+  } else if (profile.provider === "zoom" && zoomSecret !== undefined && zoomSecret !== "") {
+    merged = { ...merged, oauthClientSecret: zoomSecret };
   } else if (profile.provider === "google" && Config.oauthGoogleClientSecret !== "") {
     merged = { ...merged, oauthClientSecret: Config.oauthGoogleClientSecret };
   }

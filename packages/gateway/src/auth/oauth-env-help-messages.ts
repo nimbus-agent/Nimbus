@@ -61,3 +61,26 @@ notion.so/my-integrations → your integration → OAuth → copy the client sec
 
 PowerShell example:
   $env:NIMBUS_OAUTH_NOTION_CLIENT_SECRET = "secret_..."`;
+
+export const ZOOM_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_ZOOM_CLIENT_ID to your Zoom app's Client ID (OAuth 2.0 with PKCE).
+
+How to obtain:
+1. marketplace.zoom.us → Develop → Build App → create a General App with OAuth enabled.
+2. Add scopes for the APIs you need (e.g. meeting:read:list_meetings, user:read:user).
+3. Configure a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+4. Copy the Client ID from the App Credentials page.
+
+You must also set NIMBUS_OAUTH_ZOOM_CLIENT_SECRET (Zoom's token endpoint requires HTTP Basic auth with the secret).
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_ZOOM_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_ZOOM_CLIENT_SECRET = "..."`;
+
+export const ZOOM_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_ZOOM_CLIENT_SECRET to your Zoom app's Client Secret.
+
+Zoom's token exchange requires the client secret in HTTP Basic auth (it is not stored in the Nimbus vault).
+
+marketplace.zoom.us → your app → App Credentials → copy the Client Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_ZOOM_CLIENT_SECRET = "..."`;

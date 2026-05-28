@@ -21,18 +21,36 @@ import {
   phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
+  phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
+  phase3AddDbtMcp,
   phase3AddFlagsmithMcp,
+  phase3AddFluxMcp,
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
+  phase3AddGreenhouseMcp,
   phase3AddIacMcp,
+  phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
+  phase3AddLeverMcp,
+  phase3AddMercuryMcp,
+  phase3AddMetabaseMcp,
+  phase3AddMlflowMcp,
+  phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
+  phase3AddPipedriveMcp,
+  phase3AddRaindropMcp,
+  phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddStackoverflowMcp,
+  phase3AddStripeMcp,
+  phase3AddSupersetMcp,
+  phase3AddVercelMcp,
   phase3AddWizMcp,
+  phase3AddZendeskMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -672,6 +690,829 @@ describe("phase3AddArgocdMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["ARGOCD_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddFluxMcp ────────────────────────────────────────────────────────
+
+describe("phase3AddFluxMcp", () => {
+  test("no-op without flux.api_url + flux.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when only flux.api_url is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "https://k8s.example.com:6443");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when only flux.token is set (api_url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.token", "sa-jwt");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "   ");
+    await vault.set("flux.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["flux"]).toBeUndefined();
+  });
+
+  test("spawns with FLUX_API_URL/FLUX_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "https://k8s.example.com:6443");
+    await vault.set("flux.token", "sa-jwt-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flux"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "k8s.example.com");
+    expect(spec.env?.["FLUX_API_URL"]).toBe("https://k8s.example.com:6443");
+    expect(spec.env?.["FLUX_TOKEN"]).toBe("sa-jwt-token");
+  });
+
+  test("spawns even when flux.api_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("flux.api_url", "not a url");
+    await vault.set("flux.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFluxMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["flux"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["FLUX_API_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddDbtMcp ─────────────────────────────────────────────────────────
+
+describe("phase3AddDbtMcp", () => {
+  test("no-op without dbt.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dbt"]).toBeUndefined();
+  });
+
+  test("no-op when dbt.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dbt"]).toBeUndefined();
+  });
+
+  test("spawns with DBT_TOKEN set + cloud.getdbt.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "dbt-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dbt"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "cloud.getdbt.com");
+    expect(spec.env?.["DBT_TOKEN"]).toBe("dbt-test-token");
+    expect(spec.env?.["DBT_API_BASE"]).toBeUndefined();
+  });
+
+  test("api_base override propagates as DBT_API_BASE env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("dbt.token", "tok");
+    await vault.set("dbt.api_base", "https://emea.dbt.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDbtMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dbt"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["DBT_API_BASE"]).toBe("https://emea.dbt.com");
+  });
+});
+
+// ─── phase3AddMetabaseMcp ────────────────────────────────────────────────────
+
+describe("phase3AddMetabaseMcp", () => {
+  test("no-op without metabase.url + metabase.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when only metabase.url is set (api_key missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "https://acme.metabaseapp.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when only metabase.api_key is set (url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.api_key", "mb-key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "   ");
+    await vault.set("metabase.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["metabase"]).toBeUndefined();
+  });
+
+  test("spawns with METABASE_URL/METABASE_API_KEY env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "https://acme.metabaseapp.com");
+    await vault.set("metabase.api_key", "mb-key-test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["metabase"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "acme.metabaseapp.com");
+    expect(spec.env?.["METABASE_URL"]).toBe("https://acme.metabaseapp.com");
+    expect(spec.env?.["METABASE_API_KEY"]).toBe("mb-key-test");
+  });
+
+  test("spawns even when metabase.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("metabase.url", "not a url");
+    await vault.set("metabase.api_key", "k");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMetabaseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["metabase"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["METABASE_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddSupersetMcp ────────────────────────────────────────────────────
+
+describe("phase3AddSupersetMcp", () => {
+  test("no-op without any of url / username / password", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when password is missing (url + username only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.username", "reader");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when username is missing (url + password only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when url is missing (username + password only)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "   ");
+    await vault.set("superset.username", "   ");
+    await vault.set("superset.password", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["superset"]).toBeUndefined();
+  });
+
+  test("spawns with all three env vars + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "https://superset.acme.com");
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["superset"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "superset.acme.com");
+    expect(spec.env?.["SUPERSET_URL"]).toBe("https://superset.acme.com");
+    expect(spec.env?.["SUPERSET_USERNAME"]).toBe("reader");
+    expect(spec.env?.["SUPERSET_PASSWORD"]).toBe("pw-secret");
+  });
+
+  test("spawns even when superset.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("superset.url", "not a url");
+    await vault.set("superset.username", "reader");
+    await vault.set("superset.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSupersetMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["superset"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["SUPERSET_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddDatabricksMcp ──────────────────────────────────────────────────
+
+describe("phase3AddDatabricksMcp", () => {
+  test("no-op without databricks.host + databricks.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when only databricks.host is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "https://dbc-abc123.cloud.databricks.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when only databricks.token is set (host missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.token", "dapi-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "   ");
+    await vault.set("databricks.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["databricks"]).toBeUndefined();
+  });
+
+  test("spawns with DATABRICKS_HOST/DATABRICKS_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "https://dbc-abc123.cloud.databricks.com");
+    await vault.set("databricks.token", "dapi-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["databricks"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "dbc-abc123.cloud.databricks.com");
+    expect(spec.env?.["DATABRICKS_HOST"]).toBe("https://dbc-abc123.cloud.databricks.com");
+    expect(spec.env?.["DATABRICKS_TOKEN"]).toBe("dapi-test-token");
+  });
+
+  test("spawns even when databricks.host is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("databricks.host", "not a url");
+    await vault.set("databricks.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDatabricksMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["databricks"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["DATABRICKS_HOST"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddMlflowMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddMlflowMcp", () => {
+  test("no-op without mlflow.host + mlflow.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when only mlflow.host is set (token missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "https://mlflow.acme.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when only mlflow.token is set (host missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.token", "mlflow-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "   ");
+    await vault.set("mlflow.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mlflow"]).toBeUndefined();
+  });
+
+  test("spawns with MLFLOW_HOST/MLFLOW_TOKEN env + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "https://mlflow.acme.com");
+    await vault.set("mlflow.token", "mlflow-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mlflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "mlflow.acme.com");
+    expect(spec.env?.["MLFLOW_HOST"]).toBe("https://mlflow.acme.com");
+    expect(spec.env?.["MLFLOW_TOKEN"]).toBe("mlflow-test-token");
+  });
+
+  test("spawns even when mlflow.host is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("mlflow.host", "not a url");
+    await vault.set("mlflow.token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMlflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mlflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["MLFLOW_HOST"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddVercelMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddVercelMcp", () => {
+  test("no-op without vercel.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vercel"]).toBeUndefined();
+  });
+
+  test("no-op when vercel.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vercel"]).toBeUndefined();
+  });
+
+  test("spawns with VERCEL_TOKEN set + api.vercel.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "vc-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vercel"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.vercel.com");
+    expect(spec.env?.["VERCEL_TOKEN"]).toBe("vc-test-token");
+    expect(spec.env?.["VERCEL_TEAM_ID"]).toBeUndefined();
+  });
+
+  test("team_id propagates as VERCEL_TEAM_ID env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("vercel.token", "tok");
+    await vault.set("vercel.team_id", "team_xyz");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVercelMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vercel"];
+    if (spec === undefined) throw new Error("expected spec");
+    expect(spec.env?.["VERCEL_TEAM_ID"]).toBe("team_xyz");
+  });
+});
+
+// ─── phase3AddNetlifyMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddNetlifyMcp", () => {
+  test("no-op without netlify.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["netlify"]).toBeUndefined();
+  });
+
+  test("no-op when netlify.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("netlify.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["netlify"]).toBeUndefined();
+  });
+
+  test("spawns with NETLIFY_TOKEN set + api.netlify.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("netlify.token", "nf-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddNetlifyMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["netlify"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.netlify.com");
+    expect(spec.env?.["NETLIFY_TOKEN"]).toBe("nf-test-token");
+  });
+});
+
+// ─── phase3AddStripeMcp ──────────────────────────────────────────────────────
+
+describe("phase3AddStripeMcp", () => {
+  test("no-op without stripe.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stripe"]).toBeUndefined();
+  });
+
+  test("no-op when stripe.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("stripe.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stripe"]).toBeUndefined();
+  });
+
+  test("spawns with STRIPE_API_KEY set + api.stripe.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("stripe.api_key", "sk_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStripeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["stripe"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.stripe.com");
+    expect(spec.env?.["STRIPE_API_KEY"]).toBe("sk_test_token");
+  });
+});
+
+// ─── phase3AddMercuryMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddMercuryMcp", () => {
+  test("no-op without mercury.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mercury"]).toBeUndefined();
+  });
+
+  test("no-op when mercury.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("mercury.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["mercury"]).toBeUndefined();
+  });
+
+  test("spawns with MERCURY_TOKEN set + api.mercury.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("mercury.token", "mercury_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMercuryMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["mercury"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.mercury.com");
+    expect(spec.env?.["MERCURY_TOKEN"]).toBe("mercury_test_token");
+  });
+});
+
+// ─── phase3AddReadwiseMcp ────────────────────────────────────────────────────
+
+describe("phase3AddReadwiseMcp", () => {
+  test("no-op without readwise.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["readwise"]).toBeUndefined();
+  });
+
+  test("no-op when readwise.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("readwise.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["readwise"]).toBeUndefined();
+  });
+
+  test("spawns with READWISE_TOKEN set + readwise.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("readwise.token", "readwise_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddReadwiseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["readwise"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "readwise.io");
+    expect(spec.env?.["READWISE_TOKEN"]).toBe("readwise_test_token");
+  });
+});
+
+// ─── phase3AddRaindropMcp ────────────────────────────────────────────────────
+
+describe("phase3AddRaindropMcp", () => {
+  test("no-op without raindrop.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["raindrop"]).toBeUndefined();
+  });
+
+  test("no-op when raindrop.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("raindrop.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["raindrop"]).toBeUndefined();
+  });
+
+  test("spawns with RAINDROP_TOKEN set + api.raindrop.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("raindrop.token", "raindrop_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRaindropMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["raindrop"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.raindrop.io");
+    expect(spec.env?.["RAINDROP_TOKEN"]).toBe("raindrop_test_token");
+  });
+});
+
+// ─── phase3AddIntercomMcp ────────────────────────────────────────────────────
+
+describe("phase3AddIntercomMcp", () => {
+  test("no-op without intercom.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["intercom"]).toBeUndefined();
+  });
+
+  test("no-op when intercom.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("intercom.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["intercom"]).toBeUndefined();
+  });
+
+  test("spawns with INTERCOM_TOKEN set + api.intercom.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("intercom.token", "intercom_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddIntercomMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["intercom"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.intercom.io");
+    expect(spec.env?.["INTERCOM_TOKEN"]).toBe("intercom_test_token");
+  });
+});
+
+// ─── phase3AddZendeskMcp ─────────────────────────────────────────────────────
+
+describe("phase3AddZendeskMcp", () => {
+  test("no-op without any of url / email / api_token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when api_token is missing (url + email only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.email", "agent@acme.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when email is missing (url + api_token only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when url is missing (email + api_token only)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "   ");
+    await vault.set("zendesk.email", "   ");
+    await vault.set("zendesk.api_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zendesk"]).toBeUndefined();
+  });
+
+  test("spawns with the three env vars + the parsed host in the manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "https://acme.zendesk.com");
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["zendesk"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "acme.zendesk.com");
+    expect(spec.env?.["ZENDESK_URL"]).toBe("https://acme.zendesk.com");
+    expect(spec.env?.["ZENDESK_EMAIL"]).toBe("agent@acme.com");
+    expect(spec.env?.["ZENDESK_API_TOKEN"]).toBe("zd-test-token");
+  });
+
+  test("spawns even when zendesk.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("zendesk.url", "not a url");
+    await vault.set("zendesk.email", "agent@acme.com");
+    await vault.set("zendesk.api_token", "zd-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZendeskMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["zendesk"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["ZENDESK_URL"]).toBe("not a url");
+  });
+});
+
+// ─── phase3AddLeverMcp ───────────────────────────────────────────────────────
+
+describe("phase3AddLeverMcp", () => {
+  test("no-op without lever.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["lever"]).toBeUndefined();
+  });
+
+  test("no-op when lever.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("lever.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["lever"]).toBeUndefined();
+  });
+
+  test("spawns with LEVER_API_KEY set + api.lever.co in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("lever.api_key", "lever_test_key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLeverMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["lever"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.lever.co");
+    expect(spec.env?.["LEVER_API_KEY"]).toBe("lever_test_key");
+  });
+});
+
+// ─── phase3AddGreenhouseMcp ──────────────────────────────────────────────────
+
+describe("phase3AddGreenhouseMcp", () => {
+  test("no-op without greenhouse.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["greenhouse"]).toBeUndefined();
+  });
+
+  test("no-op when greenhouse.api_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("greenhouse.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["greenhouse"]).toBeUndefined();
+  });
+
+  test("spawns with GREENHOUSE_API_KEY set + harvest.greenhouse.io in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("greenhouse.api_key", "greenhouse_test_key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreenhouseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["greenhouse"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "harvest.greenhouse.io");
+    expect(spec.env?.["GREENHOUSE_API_KEY"]).toBe("greenhouse_test_key");
+  });
+});
+
+// ─── phase3AddPipedriveMcp ───────────────────────────────────────────────────
+
+describe("phase3AddPipedriveMcp", () => {
+  test("no-op without pipedrive.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["pipedrive"]).toBeUndefined();
+  });
+
+  test("no-op when pipedrive.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("pipedrive.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["pipedrive"]).toBeUndefined();
+  });
+
+  test("spawns with PIPEDRIVE_TOKEN set + api.pipedrive.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("pipedrive.token", "pipedrive_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPipedriveMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["pipedrive"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.pipedrive.com");
+    expect(spec.env?.["PIPEDRIVE_TOKEN"]).toBe("pipedrive_test_token");
+  });
+});
+
+// ─── phase3AddStackoverflowMcp ───────────────────────────────────────────────
+
+describe("phase3AddStackoverflowMcp", () => {
+  test("no-op without either stackoverflow key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when only stackoverflow.token is set (team required)", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when only stackoverflow.team is set (token required)", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.team", "acme");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("no-op when either key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    await vault.set("stackoverflow.team", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["stackoverflow"]).toBeUndefined();
+  });
+
+  test("spawns with both env vars set + api.stackoverflowteams.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("stackoverflow.token", "so_test_token");
+    await vault.set("stackoverflow.team", "acme");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStackoverflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["stackoverflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.stackoverflowteams.com");
+    expect(spec.env?.["STACKOVERFLOW_TOKEN"]).toBe("so_test_token");
+    expect(spec.env?.["STACKOVERFLOW_TEAM"]).toBe("acme");
   });
 });
 

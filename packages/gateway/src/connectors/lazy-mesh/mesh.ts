@@ -25,6 +25,7 @@ import {
   ensurePagerdutyMcp,
   ensurePhase3BundleMcp,
   ensureSlackMcp,
+  ensureZoomMcp,
 } from "./connector-spawns.ts";
 import { ensureCredentialConnectorsRunning } from "./credential-orchestration.ts";
 import { LazyDrainTracker } from "./drain.ts";
@@ -314,6 +315,10 @@ export class LazyConnectorMesh {
     return ensureKubernetesMcp(this.spawnContext);
   }
 
+  async ensureZoomRunning(): Promise<void> {
+    return ensureZoomMcp(this.spawnContext);
+  }
+
   // --- tool aggregation (kept; needs raw slot map access) ---
 
   /** Collect tool maps from all built-in lazy slots. */
@@ -340,6 +345,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.circleci), name: "circleci" },
       { map: await list(LAZY_MESH.pagerduty), name: "pagerduty" },
       { map: await list(LAZY_MESH.kubernetes), name: "kubernetes" },
+      { map: await list(LAZY_MESH.zoom), name: "zoom" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }

@@ -1,0 +1,82 @@
+/**
+ * nimbus-mcp-raindrop — Raindrop.io REST API MCP server (read-only).
+ * Credentials arrive as RAINDROP_TOKEN env, injected at spawn time. Raindrop
+ * uses Bearer auth: `Authorization: Bearer <token>` (a Raindrop.io test token
+ * or OAuth access token; never logged). The API host is fixed at
+ * api.raindrop.io (no host override). v1 indexes bookmarks only.
+ */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import {
+  createRegisterSimpleTool,
+  createZodToolRegistrar,
+  mcpJsonResult as jsonResult,
+} from "../../shared/mcp-tool-kit.ts";
+import { filterRaindropBookmarks } from "./search-filter.ts";
+
+const BASE = "https://api.raindrop.io";
+
+function apiToken(): string {
+  const t = process.env["RAINDROP_TOKEN"]?.trim();
+  if (t === undefined || t === "") {
+    throw new Error("RAINDROP_TOKEN is not set");
+  }
+  return t;
+}
+
+function authHeader(): Record<string, string> {
+  return { Authorization: `Bearer ${apiToken()}`, Accept: "application/json" };
+}
+
+async function raindropGet(path: string): Promise<unknown> {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeader() });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Raindrop ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  return JSON.parse(text) as unknown;
+}
+
+const mcp = new McpServer({ name: "nimbus-raindrop", version: "0.1.0" });
+const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+reg(
+  "raindrop_list",
+  'List the user\'s Raindrop bookmarks (`GET /rest/v1/raindrops/0?perpage=50` — collection id `0` is the special "all raindrops" collection). Returns the `{ result, items: [...], count }` envelope — `items` holds the bookmark objects.',
+  z.object({}),
+  async () => {
+    return jsonResult(await raindropGet(`/rest/v1/raindrops/0?perpage=50`));
+  },
+);
+
+reg(
+  "raindrop_get",
+  "Fetch one Raindrop bookmark by its id (`GET /rest/v1/raindrop/{id}` — note the SINGULAR `raindrop` in the get-by-id path). Returns the `{ result, item: {...} }` envelope. Throws when no match is found.",
+  z.object({
+    id: z.string().min(1),
+  }),
+  async (p) => {
+    return jsonResult(await raindropGet(`/rest/v1/raindrop/${encodeURIComponent(p.id)}`));
+  },
+);
+
+reg(
+  "raindrop_search",
+  "Substring search across the user's Raindrop bookmarks (first page only). Matches the query against the bookmark title, excerpt, note, domain, link, type, and tags (case-insensitive). Returns a `{ matches: [...] }` envelope.",
+  z.object({
+    query: z.string().min(1),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+  async (p) => {
+    const root = await raindropGet(`/rest/v1/raindrops/0?perpage=50`);
+    const items = (root as { items?: unknown[] } | null)?.items;
+    const matches = Array.isArray(items)
+      ? filterRaindropBookmarks(items, { query: p.query, limit: p.limit })
+      : [];
+    return jsonResult({ matches });
+  },
+);
+
+const transport = new StdioServerTransport();
+await mcp.connect(transport);

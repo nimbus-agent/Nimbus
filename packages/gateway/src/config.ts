@@ -147,6 +147,9 @@ export const Config = {
   /** Notion public integration (token endpoint requires Basic auth with secret). */
   oauthNotionClientId: processEnvGet("NIMBUS_OAUTH_NOTION_CLIENT_ID") ?? "",
   oauthNotionClientSecret: processEnvGet("NIMBUS_OAUTH_NOTION_CLIENT_SECRET") ?? "",
+  /** Zoom app (token endpoint requires HTTP Basic auth with the secret). */
+  oauthZoomClientId: processEnvGet("NIMBUS_OAUTH_ZOOM_CLIENT_ID") ?? "",
+  oauthZoomClientSecret: processEnvGet("NIMBUS_OAUTH_ZOOM_CLIENT_SECRET") ?? "",
   /**
    * Q2 §7.0 — top-N items passed in full to the agent after ranked search; override with `NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS` (1–200).
    * Future: `engine.context_window_items` in nimbus.toml.

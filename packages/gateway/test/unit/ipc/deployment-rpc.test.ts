@@ -1,10 +1,10 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../../../src/ipc/deployment-rpc.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const NOW = 1747142641204;
 const valid = {
@@ -21,9 +21,7 @@ const valid = {
 
 function fresh(): Database {
   const dir = mkdtempSync(join(tmpdir(), "drpc-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  runIndexedSchemaMigrations(db, 28);
-  return db;
+  return openSeededDbFile(join(dir, "nimbus.db"), 28);
 }
 
 describe("dispatchDeploymentRpc", () => {

@@ -22,15 +22,15 @@
  * `createEmbeddingRuntime` proper.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
+import { openSeededDbFile } from "../../test/helpers/migrated-db-seed.ts";
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -70,10 +70,7 @@ type Harness = {
 
 function makeHarness(opts: { migrateTo: number; setOpenaiKey?: boolean }): Harness {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-cer-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  if (opts.migrateTo > 0) {
-    runIndexedSchemaMigrations(db, opts.migrateTo);
-  }
+  const db = openSeededDbFile(join(dir, "nimbus.db"), opts.migrateTo);
   const vault = new MockVault();
   if (opts.setOpenaiKey === true) {
     // Presence-only fixture; shape avoids gitleaks.

@@ -38,6 +38,25 @@ export const CONNECTOR_SERVICE_IDS = [
   "launchdarkly",
   "flagsmith",
   "argocd",
+  "flux",
+  "dbt",
+  "metabase",
+  "superset",
+  "databricks",
+  "mlflow",
+  "vercel",
+  "netlify",
+  "stripe",
+  "mercury",
+  "readwise",
+  "raindrop",
+  "intercom",
+  "zendesk",
+  "lever",
+  "greenhouse",
+  "pipedrive",
+  "stackoverflow",
+  "zoom",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -100,6 +119,25 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   launchdarkly: MIN10,
   flagsmith: MIN10,
   argocd: MIN10,
+  flux: MIN10,
+  dbt: MIN10,
+  metabase: MIN10,
+  superset: MIN10,
+  databricks: MIN10,
+  mlflow: MIN10,
+  vercel: MIN10,
+  netlify: MIN10,
+  stripe: MIN10,
+  mercury: MIN10,
+  readwise: MIN10,
+  raindrop: MIN10,
+  intercom: MIN10,
+  zendesk: MIN10,
+  lever: MIN10,
+  greenhouse: MIN10,
+  pipedrive: MIN10,
+  stackoverflow: MIN10,
+  zoom: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -161,6 +199,24 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   launchdarkly: "uses an API token (connector.auth launchdarkly)",
   flagsmith: "uses an admin API token (connector.auth flagsmith)",
   argocd: "uses a bearer API token (connector.auth argocd)",
+  flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
+  dbt: "uses a dbt Cloud API token (connector.auth dbt)",
+  metabase: "uses a Metabase API key (connector.auth metabase)",
+  superset: "uses Superset username/password (connector.auth superset)",
+  databricks: "uses a Databricks PAT (connector.auth databricks)",
+  mlflow: "uses an MLflow API token (connector.auth mlflow)",
+  vercel: "uses an access token + optional team id (connector.auth vercel)",
+  netlify: "uses a personal access token (connector.auth netlify)",
+  stripe: "uses a secret API key (connector.auth stripe)",
+  mercury: "uses a Mercury API token (connector.auth mercury)",
+  readwise: "uses a Readwise API token (connector.auth readwise)",
+  raindrop: "uses a Raindrop.io API token (connector.auth raindrop)",
+  intercom: "uses an Intercom access token (connector.auth intercom)",
+  zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
+  lever: "uses a Lever API key (connector.auth lever)",
+  greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
+  pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
+  stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
@@ -245,6 +301,15 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       };
     case "notion":
       return { provider: "notion", defaultScopes: [] };
+    case "zoom":
+      return {
+        provider: "zoom",
+        defaultScopes: [
+          "user:read:user",
+          "meeting:read:list_meetings",
+          "cloud_recording:read:list_user_recordings",
+        ],
+      };
     default:
       // All remaining ids are in `OAUTH_UNSUPPORTED_DETAILS` and threw above.
       // The throw is the actual control-flow exit; this branch only exists so

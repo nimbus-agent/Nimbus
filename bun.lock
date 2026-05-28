@@ -187,8 +187,32 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/databricks": {
+      "name": "nimbus-mcp-databricks",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/datadog": {
       "name": "nimbus-mcp-datadog",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/dbt": {
+      "name": "nimbus-mcp-dbt",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -216,6 +240,18 @@
     },
     "packages/mcp-connectors/flagsmith": {
       "name": "nimbus-mcp-flagsmith",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/flux": {
+      "name": "nimbus-mcp-flux",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -334,8 +370,32 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/greenhouse": {
+      "name": "nimbus-mcp-greenhouse",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/iac": {
       "name": "nimbus-mcp-iac",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/intercom": {
+      "name": "nimbus-mcp-intercom",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -400,12 +460,72 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/lever": {
+      "name": "nimbus-mcp-lever",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/linear": {
       "name": "nimbus-mcp-linear",
       "version": "0.1.0",
       "bin": {
         "nimbus-mcp-linear": "./dist/server.js",
       },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/mercury": {
+      "name": "nimbus-mcp-mercury",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/metabase": {
+      "name": "nimbus-mcp-metabase",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/mlflow": {
+      "name": "nimbus-mcp-mlflow",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/netlify": {
+      "name": "nimbus-mcp-netlify",
+      "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
         "@nimbus-dev/sdk": "workspace:*",
@@ -499,6 +619,42 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/pipedrive": {
+      "name": "nimbus-mcp-pipedrive",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/raindrop": {
+      "name": "nimbus-mcp-raindrop",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/readwise": {
+      "name": "nimbus-mcp-readwise",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/semgrep": {
       "name": "nimbus-mcp-semgrep",
       "version": "0.1.0",
@@ -562,6 +718,42 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/stackoverflow": {
+      "name": "nimbus-mcp-stackoverflow",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/stripe": {
+      "name": "nimbus-mcp-stripe",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/superset": {
+      "name": "nimbus-mcp-superset",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/teams": {
       "name": "nimbus-mcp-teams",
       "version": "0.1.0",
@@ -577,8 +769,44 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/vercel": {
+      "name": "nimbus-mcp-vercel",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/wiz": {
       "name": "nimbus-mcp-wiz",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/zendesk": {
+      "name": "nimbus-mcp-zendesk",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/zoom": {
+      "name": "nimbus-mcp-zoom",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -2600,11 +2828,17 @@
 
     "nimbus-mcp-confluence": ["nimbus-mcp-confluence@workspace:packages/mcp-connectors/confluence"],
 
+    "nimbus-mcp-databricks": ["nimbus-mcp-databricks@workspace:packages/mcp-connectors/databricks"],
+
     "nimbus-mcp-datadog": ["nimbus-mcp-datadog@workspace:packages/mcp-connectors/datadog"],
+
+    "nimbus-mcp-dbt": ["nimbus-mcp-dbt@workspace:packages/mcp-connectors/dbt"],
 
     "nimbus-mcp-discord": ["nimbus-mcp-discord@workspace:packages/mcp-connectors/discord"],
 
     "nimbus-mcp-flagsmith": ["nimbus-mcp-flagsmith@workspace:packages/mcp-connectors/flagsmith"],
+
+    "nimbus-mcp-flux": ["nimbus-mcp-flux@workspace:packages/mcp-connectors/flux"],
 
     "nimbus-mcp-gcp": ["nimbus-mcp-gcp@workspace:packages/mcp-connectors/gcp"],
 
@@ -2622,7 +2856,11 @@
 
     "nimbus-mcp-grafana": ["nimbus-mcp-grafana@workspace:packages/mcp-connectors/grafana"],
 
+    "nimbus-mcp-greenhouse": ["nimbus-mcp-greenhouse@workspace:packages/mcp-connectors/greenhouse"],
+
     "nimbus-mcp-iac": ["nimbus-mcp-iac@workspace:packages/mcp-connectors/iac"],
+
+    "nimbus-mcp-intercom": ["nimbus-mcp-intercom@workspace:packages/mcp-connectors/intercom"],
 
     "nimbus-mcp-jenkins": ["nimbus-mcp-jenkins@workspace:packages/mcp-connectors/jenkins"],
 
@@ -2632,7 +2870,17 @@
 
     "nimbus-mcp-launchdarkly": ["nimbus-mcp-launchdarkly@workspace:packages/mcp-connectors/launchdarkly"],
 
+    "nimbus-mcp-lever": ["nimbus-mcp-lever@workspace:packages/mcp-connectors/lever"],
+
     "nimbus-mcp-linear": ["nimbus-mcp-linear@workspace:packages/mcp-connectors/linear"],
+
+    "nimbus-mcp-mercury": ["nimbus-mcp-mercury@workspace:packages/mcp-connectors/mercury"],
+
+    "nimbus-mcp-metabase": ["nimbus-mcp-metabase@workspace:packages/mcp-connectors/metabase"],
+
+    "nimbus-mcp-mlflow": ["nimbus-mcp-mlflow@workspace:packages/mcp-connectors/mlflow"],
+
+    "nimbus-mcp-netlify": ["nimbus-mcp-netlify@workspace:packages/mcp-connectors/netlify"],
 
     "nimbus-mcp-newrelic": ["nimbus-mcp-newrelic@workspace:packages/mcp-connectors/newrelic"],
 
@@ -2646,6 +2894,12 @@
 
     "nimbus-mcp-pagerduty": ["nimbus-mcp-pagerduty@workspace:packages/mcp-connectors/pagerduty"],
 
+    "nimbus-mcp-pipedrive": ["nimbus-mcp-pipedrive@workspace:packages/mcp-connectors/pipedrive"],
+
+    "nimbus-mcp-raindrop": ["nimbus-mcp-raindrop@workspace:packages/mcp-connectors/raindrop"],
+
+    "nimbus-mcp-readwise": ["nimbus-mcp-readwise@workspace:packages/mcp-connectors/readwise"],
+
     "nimbus-mcp-semgrep": ["nimbus-mcp-semgrep@workspace:packages/mcp-connectors/semgrep"],
 
     "nimbus-mcp-sentry": ["nimbus-mcp-sentry@workspace:packages/mcp-connectors/sentry"],
@@ -2656,9 +2910,21 @@
 
     "nimbus-mcp-sonarqube": ["nimbus-mcp-sonarqube@workspace:packages/mcp-connectors/sonarqube"],
 
+    "nimbus-mcp-stackoverflow": ["nimbus-mcp-stackoverflow@workspace:packages/mcp-connectors/stackoverflow"],
+
+    "nimbus-mcp-stripe": ["nimbus-mcp-stripe@workspace:packages/mcp-connectors/stripe"],
+
+    "nimbus-mcp-superset": ["nimbus-mcp-superset@workspace:packages/mcp-connectors/superset"],
+
     "nimbus-mcp-teams": ["nimbus-mcp-teams@workspace:packages/mcp-connectors/teams"],
 
+    "nimbus-mcp-vercel": ["nimbus-mcp-vercel@workspace:packages/mcp-connectors/vercel"],
+
     "nimbus-mcp-wiz": ["nimbus-mcp-wiz@workspace:packages/mcp-connectors/wiz"],
+
+    "nimbus-mcp-zendesk": ["nimbus-mcp-zendesk@workspace:packages/mcp-connectors/zendesk"],
+
+    "nimbus-mcp-zoom": ["nimbus-mcp-zoom@workspace:packages/mcp-connectors/zoom"],
 
     "nimbus-vscode": ["nimbus-vscode@workspace:packages/vscode-extension"],
 

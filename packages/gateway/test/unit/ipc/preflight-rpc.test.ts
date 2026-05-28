@@ -1,22 +1,21 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../../../src/ipc/preflight-rpc.ts";
 import {
   PREFLIGHT_FIXTURE_NOW_MS,
   seedPaymentServicePreflightFixture,
 } from "../../fixtures/preflight/payment-service/seed.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 describe("preflight-rpc: deploy.preflight", () => {
   let dir: string;
   let db: Database;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-rpc-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
