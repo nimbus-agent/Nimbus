@@ -4,7 +4,7 @@ This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 
-> **Last updated:** 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
+> **Last updated:** 2026-05-28 — added **Phase 5.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 5.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
 ---
 
@@ -15,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
 - [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 6 through 17, plus near-term & cross-phase initiatives
+- [Planned](#planned) — Phases 5.5 through 17 (including 5.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -56,6 +56,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
 | Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial) |
+| Phase 5.5 | Marketplace Registry | Planned |
 | Phase 6 | Team | Planned |
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
@@ -63,7 +64,9 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 10 | The Autonomous Agent | Planned |
 | Phase 11 | Sovereign Mesh | Planned |
 | Phase 12 | Enterprise | Planned |
+| Phase 12.5 | Compliance Receipts | Planned |
 | Phase 13 | Desktop Distribution | Planned |
+| Phase 13.5 | Mobile Companion | Planned |
 | Phase 14 | Agent Evolution / AI v2 | Planned |
 | Phase 15 | Cross-Organizational Federation | Planned |
 | Phase 16 | The Platform Layer | Planned |
@@ -693,6 +696,59 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 ## Planned
 
+### Phase 5.5 — Marketplace Registry
+
+**Goal:** Turn the connector + extension ecosystem into a discoverable, trustworthy, quality-scored economy without yet operating a payment processor. The v0.1.1 trigger "5 seed community extensions in the registry" is elevated to a full phase because the marketplace is the **ecosystem flywheel** that compounds every other piece of work — once authors are publishing, every new SaaS the world produces becomes a Nimbus connector within days. Payments wait until install base is large enough to support author rent (post-Phase 12); this phase ships the **registry, the quality layer, and the trust layer** only.
+
+> **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Phase 9 ships Wave 5 *before* Phase 5.5 closes, so the marketplace UI has real quality data from day one.
+>
+> **Composes with the S — Standards track:** registry-published extensions carry a Signed Connector Manifest produced by the same `I16` Ed25519 chain the Gateway already enforces at install + startup. The published manifest schema is the reference implementation for the SCM artifact in the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track.
+
+#### Dependencies
+
+- Phase 3 Extension Registry v1 (manifest + sandbox + signing infra)
+- Phase 4 Plugin API v1 frozen + `@nimbus-dev/sdk` v1.0.0 published
+- Phase 4 `I16` extension-signature verification (publisher Ed25519 chain)
+- Phase 9 Wave 5 — `nimbus eval` framework + quality-score persistence (gating the marketplace UI's quality column)
+- Phase 4 auto-update daemon (`extension.checkForUpdates` / `extension.update` IPC; CLI-only)
+
+#### Hosted Registry
+
+- [ ] **`registry.nimbus-agent.dev`** — public read-only HTTP registry serving signed extension manifests + tarball URLs + version metadata. **No user accounts on the registry itself.** Authors publish via a one-shot signed POST whose payload is verified against a public-key chain rooted in the publisher Ed25519 key — the same chain `I16` already enforces at install. Registry is stateless against authorship: the keys are the identity. Static-hosting-friendly (S3 / R2 / GCS + CDN); no relational database; manifest index materialized from the on-disk tarball tree on each publish.
+- [ ] **Author publishing flow** — `nimbus extension publish` CLI: signs the manifest with the publisher key, uploads the tarball + manifest to the registry, returns a registry URL. Idempotent against a `<id>@<version>` tuple; refuses to overwrite an existing version (`I16` chain integrity). Pre-publish runs `nimbus eval` against the extension's declared eval suite (see Phase 9 Wave 5) and persists the score into the manifest.
+- [ ] **`nimbus extension search <query>` + `nimbus extension info <id>`** — CLI surfaces over the registry's manifest index. Output includes install count, quality score, last-published date, publisher verification status, declared `permissions`, and the cryptographic fingerprint of the signing key.
+- [ ] **Manifest browser at `nimbus-agent.dev/extensions`** — static-site catalog with search + filter by category / connector kind / quality threshold / verified-publisher only. Renders per-extension pages with the README, sandbox manifest, eval-suite summary, and the install command. No JavaScript on the read path; static HTML so it's archivable + auditable.
+
+#### Quality Layer
+
+- [ ] **Quality score surfaced in marketplace UI** — both the CLI (`nimbus extension info`) and the Tauri Marketplace panel (already shipped in Phase 4 WS5-D) read the per-extension quality score persisted at publish time via Phase 9 Wave 5. Score is a numeric 0–100 plus a per-rubric breakdown (mandatory tool surface, HITL declaration correctness, item id format compliance, contract-test pass rate, eval-suite pass rate against the author's own evals).
+- [ ] **Cross-author eval cross-check** — the registry-side publish hook re-runs the contract tests in a fresh Bun sandbox before accepting the publish, so an author cannot ship a passing score they couldn't reproduce. The contract-test suite from `@nimbus-dev/sdk` is the canonical source.
+- [ ] **Quality regression watcher** — when an installed extension publishes a new version with a quality score lower than the installed version's score by more than a configurable threshold (default 10 points), the auto-update daemon **does not** apply the update; it queues an HITL prompt with the regression breakdown. Composes with the Phase 4 auto-update daemon.
+
+#### Trust Layer (Verified Publishers)
+
+- [ ] **Verified Publisher tier** — annual subscription ($X/yr; pricing decided when the tier opens, not on this commit) that funds the signing + verification operation. Subscribers get: (a) a checkmark next to their publisher name in CLI + marketplace, (b) their publisher key pre-shipped in the gateway's trust store so end users do not have to fetch it on first install, (c) KYC + abuse-monitoring SLA. Verification is on the **publisher**, not on individual extension quality.
+- [ ] **Pre-shipped trust store + first-install offline path** — gateway ships with a baked-in JSON manifest of verified-publisher pubkeys. Installing a verified-publisher extension from a tarball with no network call still verifies against this baked store. Refreshed on each gateway release; an out-of-band update mechanism is **explicitly out of scope** for this phase (the gateway release cadence is the rotation cadence; emergency publisher-key revocation is a Phase 12 enterprise concern).
+- [ ] **Publisher key rotation procedure** — documented one-time rotation flow: publisher signs a "next pubkey" announcement with the *current* key; the next gateway release picks it up; subsequent installs verify against the new key. No automated revocation list (CRL) — too much infra for this phase.
+- [ ] **Abuse reporting + takedown** — `nimbus extension report <id>` posts a structured complaint to a maintainer inbox. Takedowns are a manual moderation action that removes the manifest from the registry index (the tarball is left in place under its content-addressed URL — anyone who explicitly trusts the content hash can still install). Logged in a public moderation ledger so takedowns are themselves auditable.
+
+#### Author Onboarding
+
+- [ ] **`nimbus connector init --from-openapi <url-or-path>`** — pre-M6 author tool that scaffolds a connector skeleton from an OpenAPI / AsyncAPI spec. Generates the manifest, the sync handler, the mapping function, and a contract test against the spec. Authors customize from there. Does **not** make the agent self-extending (that's still M6); it makes a human author 10× faster.
+- [ ] **20-extension grant program** — $1k/connector marketing spend to seed the registry with 20 community-authored extensions targeting categories the first-party set under-serves (e.g., niche vertical SaaS, regional SaaS, OSS tooling). Treated as marketing budget, not marketplace seed — authors keep the code AGPL or MIT under SDK terms; no Nimbus equity, no royalties.
+- [ ] **Extension Author Hub** — `nimbus-agent.dev/authors` static page consolidating: the SDK reference, the contract-test guide, the signing-keypair quickstart, the publishing workflow, the eval-suite authoring guide, the Verified Publisher application form, and the grant-program details.
+
+#### Acceptance Criteria
+
+- `registry.nimbus-agent.dev` is live and serves at least 30 distinct extensions (the 15 first-party Phase 5 connectors that migrate plus the 15 first-completed grant-program submissions) with valid signed manifests verifiable against the Phase 4 `I16` chain.
+- `nimbus extension publish` round-trips against the live registry: a new version of a test connector is published, becomes searchable, installs cleanly on a fresh gateway, and verifies the signature offline against the baked trust store.
+- At least 5 Verified Publishers (counted by distinct pubkeys, not extensions) are active and their keys are baked into the current gateway release's trust store; an installer of one of their extensions never sees a "publisher unknown" warning.
+- Phase 9 Wave 5 quality scores appear on every published extension's registry page and Tauri Marketplace tile; the score is reproducible by running `nimbus eval --extension <id>` locally and matches within rounding.
+- The quality-regression watcher fires on a controlled test: a v1.0.1 published with a deliberately worse eval-suite score does not auto-update an installed v1.0.0, and surfaces a structured HITL prompt with the per-rubric delta.
+- The abuse-reporting + takedown flow is exercised once against a deliberately-misbehaving test extension submitted by a maintainer; the takedown appears in the public moderation ledger within the agreed SLA.
+
+---
+
 ### Phase 6 — Team
 
 **Goal:** Make Nimbus a collaborative layer for engineering teams — shared intelligence without surrendering local sovereignty.
@@ -1022,6 +1078,18 @@ Phase 5/6 already index model registry entries from MLflow / SageMaker / Vertex 
 - [ ] **`nimbus model-health [<model-name>]`** — parallel sub-agents over LLM observability + eval + cost connectors; per-model brief with latency p50/p95/p99, eval-suite pass rate trajectory, cost burn vs. budget, recent prompt regressions, drift indicators; emits `agents.modelHealth.briefReady`
 - [ ] **`nimbus rag-health [<rag-app-name>]`** — parallel sub-agents over vector-store + RAG-eval + ingestion connectors; per-application brief with retrieval-quality scores, embedding-version drift, vector-store health, knowledge-base freshness, recent ingestion failures; emits `agents.ragHealth.briefReady`
 
+#### Wave 5 — Extension Eval Framework (Marketplace prerequisite)
+
+This wave delivers the **author-facing eval surface** that Phase 5.5 Marketplace consumes as the quality column. Scoped narrowly to *extension authors*, not to end users — per-user calibration UIs are explicitly deferred until the post-Phase 5.5 install base supports statistically meaningful per-user sample sizes. The framing is **transparency, not comparison**: there are no "cloud equivalent cost" numbers (legally risky, gameable, and the providers reprice faster than we can chase). The framing is "here's what this extension scored against its own evals on a reproducible harness."
+
+- [ ] **`nimbus eval` CLI + runner** — `nimbus eval [--extension <id>] [--suite <path>] [--json]`. Reads `evals/*.yaml` from the extension's package root (a frozen schema with `name`, `input`, `expected`, `rubric`, `weight` fields), runs each case against the extension's MCP tool surface inside the same sandbox the gateway uses at runtime (`I15`), and writes a deterministic numeric score plus a per-rubric breakdown. Output format is the canonical input to the marketplace quality column.
+- [ ] **Eval schema in `@nimbus-dev/sdk`** — frozen at SDK v1.1.0 (additive minor bump, no breaking change). Authors `import { defineEvalSuite } from "@nimbus-dev/sdk/eval"` and get a typed schema with editor autocomplete. Schema covers deterministic rubrics (string match, JSON shape match, set membership) only in v1; LLM-as-judge rubrics are a v1.2 follow-up (gated on a regression study against the deterministic baseline).
+- [ ] **Registry-side reproducibility check** — the Phase 5.5 publish hook re-runs `nimbus eval` in a fresh registry-side sandbox against the author-declared suite and verifies the score matches what the author submitted (within rounding). Mismatches reject the publish. Closes the "authors ship evals that pass for them but not anyone else" attack vector.
+- [ ] **Quality score persistence** — score + per-rubric breakdown stored as a signed field in the manifest at publish time; the gateway carries it in the extension registry table; the Tauri marketplace tile reads it directly with no live registry call. Score is part of the `I16`-signed manifest, so it cannot be tampered post-publish.
+- [ ] **Local quality regression test for end users** — `nimbus eval --installed` runs every installed extension's declared suite against the local environment. Useful for the user who wants to confirm an extension still scores what the marketplace claimed when their local connectors are configured. Exit code 1 on a configurable regression threshold; integrates with the auto-update HITL prompt (see Phase 5.5 "Quality regression watcher").
+- [ ] **Built-in agent eval suites** — the first-party `expert`, `impact`, `catchup`, `oncall`, `meeting-prep`, `standup`, `model-health`, `rag-health` agents ship with `evals/*.yaml` of their own. The CI gate runs them on every PR and refuses regressions beyond a threshold (default 5 points). The agents are dogfooding the framework before the registry hook does.
+- [ ] **Transparency-framed cost surface (not comparison)** — every brief output by the built-in agents carries a footer: `tokens: <local-count>, outbound: <count> calls, time: <wallclock-ms>`. **No "cloud equivalent" numbers** — the framing is "here's what we used," not "here's what a different product would have charged." Easy to add later if competitive framing becomes a deliberate marketing choice; safer to omit by default.
+
 #### Stretch (does not gate phase completion)
 
 - [ ] **Long-tail vendors as community extensions** — Aporia, Phoenix Arize, OpenLLMetry, Pezzo, Hopsworks, Featureform, Dynamic.ai, Confident AI, DeepEval
@@ -1038,6 +1106,8 @@ Phase 5/6 already index model registry entries from MLflow / SageMaker / Vertex 
 - AI cost watcher fires on a 50 % daily-spend spike against the 7-day rolling baseline; surfaces in morning briefing with per-key attribution
 - Policy-violation watcher blocks an LLM call routing to a non-policy model class (verified via LLM router integration test); decision recorded in audit log
 - Privacy contract: no LLM trace body content is exfiltrated; only per-trace metadata (latency, cost, model id, success/error) is indexed unless the user explicitly opts in via `[ai_engineering].index_trace_bodies = true`
+- Wave 5 reproducibility gate: `nimbus eval --extension <id>` against a sample first-party extension produces the same numeric score (within rounding) inside a fresh sandbox as the score persisted in that extension's signed manifest at publish time — verified by an integration test that publishes a test extension, fetches it back, runs `nimbus eval`, and asserts equality. This is the property Phase 5.5's registry-side reproducibility check depends on.
+- Wave 5 built-in-agent CI gate: the first-party `expert`, `impact`, `catchup`, `oncall`, `meeting-prep`, `standup`, `model-health`, `rag-health` agents each ship with an `evals/*.yaml` suite; the CI gate refuses PRs that drop any agent's score by more than 5 points.
 
 ---
 
@@ -1253,6 +1323,60 @@ Connectors for the GRC tools enterprises already use to evidence SOC 2 / ISO 270
 
 ---
 
+### Phase 12.5 — Compliance Receipts
+
+**Goal:** Give an individual engineer the artifacts they need to unblock their own organization's security review **without a sales motion.** This phase explicitly does not target procurement, audit firms, or sales — it targets the engineer who has Nimbus installed and now needs to satisfy their CISO before it can be used at work. The deliverable is *receipts* — a structured bundle of evidence that maps to a framework's controls — not third-party attestation, not a BAA, not a vertical starter pack. Cloud agents cannot produce this artifact for the user's specific deployment because they don't know what's installed locally; Nimbus can.
+
+> **Composes with Phase 8 (Security Engineering):** the audit chain + egress ledger + supply-chain attestations Phase 8 delivers are the raw evidence the bundle assembles. Phase 12.5 is the *assembler*, not the source.
+>
+> **Composes with the S — Standards track:** the egress-ledger section of every bundle is rendered in the EAF reference-impl format from the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track. Bundles that include EAF can be independently verified by any third party with the EAF verifier CLI.
+>
+> **Composes with the M7 North-Star (Provable Locality):** M7 *is* the egress-ledger primitive; Phase 12.5 is the **product surface** that turns it into a self-service compliance artifact.
+
+#### Dependencies
+
+- Phase 4 tamper-evident BLAKE3-chained audit log
+- Phase 8 egress ledger + supply-chain attestations (M7 substrate)
+- Phase 9 model-weight integrity + model-policy registry (control evidence for AI-specific frameworks)
+- S — Standards track: EAF reference implementation + verifier CLI
+
+#### Compliance Bundle
+
+- [ ] **`nimbus compliance bundle --framework <name> [--output <path>]`** — produces a `.zip` containing:
+  - **Cover memo** (Markdown + PDF render) explaining what this bundle is, what it isn't (not third-party attestation), and how to use it in a security review.
+  - **Control mapping spreadsheet** (XLSX + CSV) — one row per control in the framework, listing: control ID, control name, evidence file path, evidence type (config / audit extract / signed log / configuration snapshot / N/A), and a one-sentence summary of *how* this Nimbus deployment satisfies the control. N/A rows are explicit about why the control doesn't apply.
+  - **Audit-log extract** — the BLAKE3-chained audit log for the configured window (default last 90 days), exported in the existing `nimbus audit export` format with the chain-verification proof.
+  - **Egress attestation** — the M7 egress ledger for the same window, rendered as a signed EAF artifact (reference-impl format).
+  - **Configuration snapshot** — `nimbus.toml` (secret values redacted), connector list with health states, vault key inventory (key *names* only, not values), installed extensions with signed manifests + publisher fingerprints, sandbox manifests per connector (I15 evidence).
+  - **Cryptographic attestation** — the bundle itself is signed with the gateway's release Ed25519 key. The included `verify.sh` script (POSIX) and `verify.ps1` (Windows) verify the bundle against the published gateway pubkey.
+- [ ] **Frameworks in v1** — `soc2` (CC6 + CC7), `iso27001` (Annex A controls), `gdpr` (Articles 5, 25, 30, 32), `eu-ai-act` (Article 13 transparency report), `hipaa` (technical safeguards only — administrative + physical safeguards explicitly out of scope), `nist-csf` (Identify + Protect + Detect functions).
+- [ ] **SOC2 pilot first** — ship `--framework soc2-pilot` as the first dogfood target. Pilots against the maintainer's own SOC2 controls; iterates against three independent security teams' feedback before opening the rest of the frameworks. The other frameworks are template work once the SOC2 evidence-collection plumbing is right.
+- [ ] **What's explicitly NOT in scope** — third-party attestation, BAA contracts, vertical starter packs (legal / healthcare / finance specific tooling), penetration test reports, formal risk assessments. These are sales-motion artifacts; Phase 12.5 is receipts only.
+
+#### Data Subject Request (GDPR Article 15 + Article 22)
+
+- [ ] **`nimbus dsr <subject-identifier> [--output <path>]`** — produces a per-subject artifact answering "what does this agent know about person X" + how to delete it.
+  - **Subject identifier** — email, GitHub login, Slack handle, or any handle the people graph resolves; the command runs `resolvePerson` first and dumps the resolved identity graph as part of the artifact.
+  - **Output bundle** — JSON + PDF render of: every indexed `item` referencing the subject (across all connectors), every `person` row + cross-service handles, every `audit_log` row mentioning the subject, every relationship-graph edge incident to the subject's nodes, and a per-row "source of record" pointer to the originating connector.
+  - **Deletion plan** — second half of the artifact is a Markdown checklist of what `nimbus data delete --service <name> --subject <identifier>` would do per connector, with dry-run row counts. **Does not execute** without explicit `--execute` + HITL approval; the artifact alone is read-only.
+- [ ] **Article 22 (right to explanation) extension** — when a DSR is run for a subject who has been the target of an HITL-approved action by a Nimbus agent, the artifact additionally includes the M3 replay trace for that action (reasoning + evidence + decision path). Composes with the M3 North-Star.
+
+#### Doc & Sample Artifacts
+
+- [ ] **`docs/compliance/`** — one Markdown file per supported framework, explaining the control-to-evidence mapping in narrative form. Used by engineers prepping their security review to anticipate questions.
+- [ ] **Sample bundle per framework** — pre-rendered example bundle (with synthetic data) committed under `docs/compliance/samples/`. Lets a prospective adopter see the artifact shape before installing Nimbus.
+- [ ] **Reviewer's quickstart** — `docs/compliance/reviewer-quickstart.md`, a one-page guide for a security team reviewing a bundle: what the chain-verification proof means, what EAF guarantees vs doesn't guarantee, what's signed vs unsigned, how to cross-check against a fresh `nimbus diag` snapshot.
+
+#### Acceptance Criteria
+
+- `nimbus compliance bundle --framework soc2-pilot --output ./bundle.zip` produces a self-verifying zip whose `verify.sh` succeeds offline against the published gateway pubkey on a fresh machine with no Nimbus installed.
+- The SOC2 pilot bundle is reviewed by three independent engineers' security teams; each confirms the bundle unblocks (or would unblock, in a sandboxed review) Nimbus adoption inside their org without any further questions Nimbus could not have anticipated.
+- `nimbus dsr <test-subject>` against a seeded test corpus produces a JSON artifact whose contents round-trip cleanly through the matching `nimbus data delete --service ... --subject ... --dry-run` and report identical row counts (i.e., the DSR view is the same view the deletion plan would act on — no drift).
+- Every framework in v1 has at least one rendered sample bundle under `docs/compliance/samples/` and a narrative doc under `docs/compliance/`.
+- An end-to-end privacy contract: the bundle never contains a vault value or a credential body; only key names, manifest hashes, and signed manifest contents. Verified by a `bun run audit:compliance-payload-safety` gate analogous to the existing telemetry payload-safety gate.
+
+---
+
 ### Phase 13 — Desktop Distribution
 
 **Goal:** Publish the Tauri desktop UI as signed, OS-gatekeeper-clean release artifacts. The desktop UI itself was built in Phase 4 (WS5-A through WS5-D, all `[x]` in [§ Phase 4](#phase-4--presence-)); what slipped from `v0.1.0` was the release vehicle — signed installers, per-OS build matrix, Gatekeeper / SmartScreen handling, and the Tauri-specific security audit follow-ups. This phase delivers the `desktop-v0.1.0` tag, gated independently of the headless `v0.1.0` and `vscode-v0.1.0` tags.
@@ -1297,6 +1421,56 @@ Native package-manager distribution; gated independently of the desktop tag, may
 - A user double-clicking the macOS `.dmg` and the Windows `.msi` from a clean OS install is not blocked by Gatekeeper or SmartScreen.
 - The smoke checklist in `manual-smoke-desktop.md` is ✅/⚠ on every row.
 - The Tauri auto-update path (Ed25519 signature verify + rollback) round-trips against a live update manifest from `desktop-v0.1.0` to a hypothetical `desktop-v0.1.1`.
+
+---
+
+### Phase 13.5 — Mobile Companion
+
+**Goal:** Solve the on-call engineer's "the agent is on the laptop in my bag" problem by shipping a **passive viewer** mobile app that pairs to the user's own desktop gateway over the existing Phase 11 sovereign-mesh primitive. The mobile app **does not execute the agent locally** — it receives push notifications for HITL consent and assembled briefs, and forwards the user's approve/reject decision back through the mesh. iOS first; Android follows in a v0.2 of the same phase. Discipline: this phase is one platform, one persona (the user already running on-call from their own desktop), one job (receive + decide). Resist scope creep into "agent on phone."
+
+> **Composes with Phase 11 (Sovereign Mesh):** the laptop ↔ phone link is the existing NaCl-box pairing flow, extended with an opt-in push relay through APNs (Apple Push Notification service). Messages sent over the relay are *already encrypted* end-to-end by the mesh; APNs sees only an encrypted envelope.
+>
+> **Composes with Phase 17 (The On-Call Copilot):** Phase 17's predict/understand/mitigate/coordinate loop generates the briefs the mobile companion displays. The companion is the **mobile presentation layer** for the Phase 17 agent, not a re-implementation.
+
+#### Dependencies
+
+- Phase 4 encrypted LAN remote access (NaCl-box wire format, peer-pairing flow)
+- Phase 11 sovereign mesh (peer addressing across networks)
+- Phase 17 (or earlier) assembled-brief format — the schema the mobile app renders
+- Apple Developer Program enrollment (also a Phase 13 prerequisite)
+
+#### iOS (v0.1)
+
+- [ ] **`nimbus-companion` iOS app — passive viewer only** — SwiftUI app, minimum iOS 17. Three screens: (a) **Pairing**, a one-time setup that exchanges X25519 keys with a host gateway using the existing 120-bit base58 pairing code displayed on the host CLI / Tauri UI, (b) **Inbox**, a list of HITL consent requests + assembled briefs received from paired hosts, (c) **Brief Detail**, a read-view of a single brief or HITL request with Approve / Reject buttons. **No query input. No on-device agent. No local index.** Resist the temptation to add either.
+- [ ] **APNs push relay (encrypted envelope)** — the host gateway sends a NaCl-box-sealed envelope to APNs targeting the paired device token; APNs forwards the wakeup; the iOS app decrypts the envelope using the locally-stored shared key. APNs sees only the encrypted blob + device token; it cannot read brief contents or HITL action details. **APNs is a wakeup channel, not a data channel** — the device pulls the actual brief over the sovereign-mesh link after wake.
+- [ ] **HITL round-trip** — Approve / Reject in the iOS app builds an `agents.hitl.respond` payload, encrypts it with the same shared key, sends it back through the mesh (with APNs as the wakeup if the host is asleep). The host's existing HITL gate is the source of truth — the phone is a remote consent surface, not a separate authorization path.
+- [ ] **Multi-host pairing** — a single iOS app can be paired to multiple host gateways (the user's laptop + the user's desktop + a shared on-call machine). Inbox shows the source host on every row; Approve/Reject is per-message routed to the originating host.
+- [ ] **Offline behavior** — when the host is unreachable (laptop closed, no network), inbox displays the last-known cached briefs but Approve/Reject is disabled with a clear "host offline" indicator. No queueing — pending HITL gates the action; if the user wants the action they re-trigger from the desktop when reachable.
+- [ ] **App Store distribution** — submitted to the App Store under the same Apple Developer Program enrollment that funds Phase 13's macOS notarization. Open-source under AGPL alongside the rest of the gateway; the App Store binary is a distribution channel, not a closed fork.
+- [ ] **Privacy + tracking posture** — explicit "no analytics, no third-party SDKs" stance in the App Store privacy nutrition label. The only network calls are APNs (Apple) and the paired hosts (the user's own machines). Confirmed in app review.
+
+#### Companion-Aware Gateway Surface
+
+- [ ] **`nimbus companion pair` CLI** — generates the 120-bit base58 pairing code, displays it for the user to type into the iOS app, opens a 5-minute pairing window using the existing LAN pairing flow.
+- [ ] **`nimbus companion list-devices`** — shows paired devices with last-seen time and last-received-message time.
+- [ ] **`nimbus companion revoke-device <id>`** — removes a device's stored shared key; sends a final "you've been unpaired" message; the device's inbox stops receiving on next poll.
+- [ ] **HITL push routing config** — `[companion].push_categories = ["hitl", "incident", "agent-brief"]` per-category opt-in; e.g., a user can opt into HITL pushes but not into morning briefings.
+- [ ] **Tauri Companion settings panel** — list paired devices, revoke, regenerate pairing code, configure push categories.
+
+#### Stretch (does not gate phase completion)
+
+- [ ] **Android companion v0.2** — Kotlin / Jetpack Compose app, same surface shape, Firebase Cloud Messaging as the wakeup relay (envelope encryption identical to APNs; FCM sees only the encrypted blob).
+- [ ] **Voice approval on iOS** — Siri shortcut + voice intent: "Hey Siri, ask Nimbus to approve the deploy" round-trips an approval. Stretch because the Siri intent UX is a non-trivial design surface and the security review needs more work.
+- [ ] **Apple Watch companion** — receive + Approve / Reject from a watch face. Builds on top of the iOS app's pairing + key store. Stretch — watchOS adds a per-platform surface for marginal incremental value.
+
+#### Acceptance Criteria
+
+- A fresh iOS device pairs with a fresh gateway in under 60 seconds using the `nimbus companion pair` flow, exchanging X25519 keys via the existing pairing primitive with no third-party broker.
+- An HITL consent request fired on the laptop arrives as an iOS push within 5 seconds when both devices are online; the approve / reject decision arrives back at the laptop within 3 seconds of the user's tap; the host's HITL gate sees the decision as if the user had clicked Approve in the Tauri popup.
+- The APNs envelope never carries plaintext brief content or HITL action details — verified by inspecting the APNs payload in transit during an integration test against Apple's sandbox APNs environment.
+- The App Store privacy nutrition label correctly reports "no analytics, no third-party SDKs" and the App Store reviewer approves on first submission.
+- A revoked device's inbox stops receiving messages within 60 seconds; the host gateway logs the revocation in the audit chain.
+- An offline-host scenario degrades gracefully: the iOS app displays cached briefs read-only and disables Approve / Reject with a clear "host offline" message; no spurious approvals or queued-but-lost decisions.
 
 ---
 
@@ -1535,6 +1709,7 @@ Audience-agnostic "no other tool does this" pillars, each enabled **because** of
 - [ ] **M5 — Counterfactual / Time-Travel Ops** — v1 is *static/causal analysis* (config + code paths + dependency graph + indexed integration-test history); live simulation of stateful external systems is out of scope. Extends Phase 10 point-in-time + Phase 14.
 - [ ] **M6 — The Self-Extending Agent** — notices its own gaps (toil heatmap) and **drafts its own connector/automation**: read-only by default, contract-tested against the SDK, generated only against an authoritative published spec (never hallucinated), sandboxed (`I15`), HITL-installed + `I16`-signed; never auto-tests writes against a live API. Extends Phase 14 + Phase 16.
 - [ ] **M7 — Provable Locality** — a continuous, cryptographically-attestable **egress ledger**: every network host the gateway and each sandboxed connector contacted, exportable as an auditor-grade artifact (*"proof this agent touched only these hosts this quarter"*). Uncopyable **because** of local-first + no-relay + `I15` — the sandbox already enforces a per-host network allowlist per connector, so the ledger is a faithful record, not a self-report; a cloud competitor (which *is* the egress) structurally cannot produce one. Promotes the killer demo's "0 outbound network calls" from a demo flourish to a product. Extends Phase 8 (the ledger + `nimbus egress` + signed report) and Phase 12 (auditor-grade compliance export); built on `I15` + the BLAKE3 audit chain. The chain is tamper-*evident*, not tamper-*proof* (a same-UID attacker could truncate + regenerate it); the Phase 12 export is **scheduled and pushed to an external append-only sink**, and that cadence — not the local store — is what bounds the rewrite window.
+- [ ] **M8 — Time-Travel** — point-in-time queries over the structured `item` table: `nimbus ask --as-of "2026-04-15T14:00Z" "..."`. The local index becomes an append-only audit-grade timeline of every change to every connected system the user touched. Scoped narrowly: **structured items only**, not vectors (vector-index snapshots blow up disk — 1M items × delta × 365 days is hundreds of GB before compression). 30-day default retention; configurable via `[index].timetravel_retention_days`. Use cases: incident retrospectives ("what did our deploy state look like 30 seconds before the alert fired?"), legal discovery, post-mortem reconstruction, "what did we know when we made this decision." Uncopyable **because** local-first plus the BLAKE3 chain — cloud agents discard intermediate states; only the user's own machine has the raw history. Extends Phase 10 point-in-time + the existing audit chain; relates to M5 (counterfactual) which uses M8 as substrate. Implementation: per-write snapshot row to a `item_history` shadow table with TTL-driven prune; vector recall stays current-state-only.
 
 **Connective tissue** (the substrates that make the above one product): the **proactive meta-agent** ("what should I look at right now?" — routes to the right brief by context across ~15 built-in agents); the **Impact Ledger** (one tamper-evident measurement spine feeding the team ROI report, the evaluator "look what it did this week," and M2); a **causal/temporal event spine** (under M1/M2/M5); a first-class **transparency surface** (always-visible "Local Only" egress indicator — M7 is its signed, exportable form — plus inspect/delete-everything + decision replay); and the **"when the agent is wrong" backbone** (calibrated confidence with the humility to say "I'm not sure," one-keystroke undo, wrong-recommendation feedback that lowers future confidence — shared with Phase 17's remediation).
 
@@ -1558,6 +1733,36 @@ Defeating the cold start — Nimbus's wow is proportional to how much it has ind
 **"The page that answered itself"** — runs on `nimbus demo`: a P1 fires → the assembled brief is already there (cause, the deploy 8 min ago, the PR, cascade root) → *"95% confidence, rollback dry-run affects payment-service only, reversible — approve?"* → resolved, mean-time-to-context 22s → post-mortem + status-page drafted → `nimbus audit replay` shows every decision and **"0 outbound network calls."** Tagline: *"Your systems just had an incident. Nimbus already handled the first 30 minutes — locally, and it can prove it."*
 
 This is **not a feature — it's a cross-phase milestone that proves the thesis**, and reverse-engineering it yields the minimal first slice to build: `nimbus demo` sandbox → Phase 17 W2 (pushed brief + deep investigation + cascade) → Phase 17 W3 (confidence/dry-run remediation) + the "when the agent is wrong" mechanism → `nimbus audit replay` + transparency surface (M3) → the Impact Ledger. *(The production version needs a minimal cut of the Phase 10 + Phase 4 substrate; the demo sandbox seeds it.)* **Declare "ship the killer demo" an explicit prioritization spine.** Alternate cuts: *"Ask your entire org anything"* (data-eng/lineage; M1) and *"Watch it run and never phone home"* (security buyer; M3/M4).
+
+---
+
+<a id="s--standards-cross-phase"></a>
+
+### S — Standards (cross-phase track, reference-impl only)
+
+A standing track that publishes the format specs Nimbus consumes anyway, as **reference implementations** other tools can read. Explicitly **not** an attempt to win an IETF / CNCF / NIST process — adversarial review of the "own a standard" framing made it clear that a small vendor cannot push a spec through a standards body without prior share, and that "if we publish it, they will come" is the standards graveyard. The track ships specs as a marketing artifact + a verifier CLI; whether they become de facto is determined downstream by adoption, not upstream by lobbying.
+
+Three of the four original standardization candidates (LAIP, PAT, SCM) are demoted to internal formats — referenced by name in the relevant phase but not standardized. The fourth, EAF, survives because it has an existing constituency (security teams reviewing the user's deployment, per Phase 12.5) that no other party currently serves.
+
+#### EAF — Egress Attestation Format (anchor)
+
+- [ ] **EAF v0.1 published** at `standards.nimbus-agent.dev/eaf/v0.1` (or the `nimbus-standards/` directory if `nimbus-agent.dev` doesn't yet host a standards subpath) — JSON Schema + narrative spec describing the egress-ledger record format, the BLAKE3 chain primitive, the signed-envelope envelope, and the verification semantics. License: Apache 2.0 so derivative implementations are unblocked.
+- [ ] **`eaf-verify` CLI** — small standalone Bun (or Go for portability) binary that takes an EAF artifact + the issuer's public key and verifies: (a) chain integrity, (b) issuer signature on the envelope, (c) timestamp monotonicity, (d) every claimed egress event has a complete record (no `null` host fields). Distributed as a single binary so a security reviewer can drop it into their CI without installing Nimbus.
+- [ ] **Reference fixtures** — committed under `docs/standards/eaf/fixtures/` — a golden valid artifact, a golden tampered artifact (chain break), a golden truncated artifact, a golden re-signed artifact (replayed envelope). Used as a conformance suite for any derivative implementation.
+- [ ] **EAF in Phase 12.5** — every compliance bundle's egress-ledger section is an EAF v0.1 artifact (already noted in Phase 12.5). The Phase 12.5 bundle's `verify.sh` invokes `eaf-verify` against the included egress section.
+
+#### Demoted formats (referenced internally, not standardized)
+
+- [ ] **LAIP (Local Agent Interop Protocol)** — internal wire format for Nimbus-to-Nimbus federation (Phase 6, Phase 11). Documented in `docs/protocols/laip.md` as an internal spec. Not pursued as an external standard — bilateral protocol adoption requires industry incentive that doesn't exist.
+- [ ] **PAT (Portable Agent Trace)** — internal format for the M3 replay trace (reasoning + evidence + decision path). Documented as part of the M3 substrate work. The cross-agent handoff exporter (`nimbus export-session`) writes PAT; importers in Claude Code / Cursor are demoted from "phase deliverable" to "demo + courtesy bridge if a third party wants to consume it." No bet on bilateral adoption.
+- [ ] **SCM (Signed Connector Manifest)** — already implemented as the `I16` chain; the Phase 5.5 published manifest schema is its reference implementation. Documented as a section of the Phase 5.5 spec rather than a standalone RFC.
+
+#### Acceptance Criteria (track-level, not gated by a single phase)
+
+- EAF v0.1 + its verifier CLI + its conformance fixtures are published and reachable from `docs/standards/eaf/`.
+- Phase 12.5 bundles include EAF artifacts that the `eaf-verify` binary validates offline against the published Nimbus issuer pubkey.
+- At least one third party (an auditor, a security consultancy, or another local-first agent vendor) has run `eaf-verify` against a Nimbus-produced artifact and provided feedback — even rejecting feedback counts; the existence of an outside reader proves the artifact has crossed a credibility threshold.
+- The PAT and LAIP internal specs are documented enough that a future contributor can implement against them; SCM's reference implementation matches the Phase 5.5 manifest schema 1:1.
 
 ---
 
