@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapStripeInvoiceToItem } from "./stripe-invoice-mapping.ts";
@@ -38,11 +39,6 @@ async function loadCreds(ctx: SyncContext): Promise<StripeCreds | null> {
   return { apiKey };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function invoicesPath(startingAfter: string | null): string {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (startingAfter !== null) {
@@ -51,25 +47,10 @@ function invoicesPath(startingAfter: string | null): string {
   return `/v1/invoices?${params.toString()}`;
 }
 
-async function stripeGet(
-  ctx: SyncContext,
-  creds: StripeCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BASE}${path}`, {
+function stripeGet(ctx: SyncContext, creds: StripeCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${BASE}${path}`, {
     headers: { Authorization: `Bearer ${creds.apiKey}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "stripe GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractInvoices(parsed: unknown): { invoices: unknown[]; hasMore: boolean } {
