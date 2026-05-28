@@ -148,8 +148,6 @@ describe("mapFluxResourceToItem", () => {
   });
 
   test("missing status.conditions → ready_status null, no throw", () => {
-    // Replace status wholesale — the makeRes override spreads over the default
-    // `{ conditions, lastAppliedRevision, ... }`, so `{ status: {} }` cannot clear them.
     const bare = makeRes();
     bare["status"] = {};
     const row = mapFluxResourceToItem(bare, ctx());
@@ -179,7 +177,6 @@ describe("mapFluxResourceToItem", () => {
     if (def === null) throw new Error("expected mapping to succeed");
     expect(meta(def)["suspend"]).toBe(false);
 
-    // Non-boolean truthy value does not count as suspend.
     const weird = mapFluxResourceToItem(makeRes({ spec: { suspend: "yes" } }), ctx());
     if (weird === null) throw new Error("expected mapping to succeed");
     expect(meta(weird)["suspend"]).toBe(false);
@@ -193,7 +190,6 @@ describe("mapFluxResourceToItem", () => {
   });
 
   test("reconciler with no spec.url → url null", () => {
-    // Replace spec wholesale so the default `url` is cleared.
     const reconciler = makeRes();
     reconciler["spec"] = { path: "./apps" };
     const row = mapFluxResourceToItem(reconciler, ctx());

@@ -5,16 +5,6 @@ import { STATUS_POLL_INTERVAL_MS } from "./constants.ts";
 import type { TuiMode } from "./state.ts";
 import { useIpcPoll } from "./useIpcPoll.ts";
 
-/**
- * Mirrors `SyncStatus` from `packages/gateway/src/sync/types.ts` — the row
- * shape returned by the Gateway's `connector.listStatus` IPC method. Only
- * the two fields we render are pulled into this local row.
- *
- * BUG-003: previously the TUI declared `{ service, status: ok|degraded|down }`
- * and called the non-existent `connector.list` method. The Gateway dispatcher
- * silently returned method-not-found, the parser rejected the empty result,
- * and the pane rendered `loading…` forever.
- */
 interface ConnectorRow {
   serviceId: string;
   status: "ok" | "syncing" | "paused" | "backoff" | "error";
@@ -46,7 +36,6 @@ function glyph(status: ConnectorRow["status"]): string {
   if (status === "syncing" || status === "paused") {
     return "◐";
   }
-  // backoff, error
   return "○";
 }
 

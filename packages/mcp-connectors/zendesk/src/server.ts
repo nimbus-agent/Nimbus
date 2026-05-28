@@ -1,12 +1,3 @@
-/**
- * nimbus-mcp-zendesk — Zendesk Support REST API MCP server (read-only).
- * Credentials arrive as ZENDESK_URL + ZENDESK_EMAIL + ZENDESK_API_TOKEN env,
- * injected at spawn time. Zendesk uses HTTP Basic auth where the username is
- * `<email>/token` and the password is the API token — the header is
- * `Authorization: Basic base64(<email>/token:<api_token>)` (never logged).
- * Zendesk is per-tenant: ZENDESK_URL is the full `https://<subdomain>.zendesk.com`
- * base (no SaaS default — it must be set). v1 indexes tickets only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -30,12 +21,6 @@ function baseUrl(): string {
   return trimTrailingSlash(v);
 }
 
-/**
- * Build the Basic auth header. Zendesk's token-auth scheme makes the username
- * `<email>/token` and the password the API token — reuse the shared
- * email:token base64 helper with `<email>/token` as the "email" half. The
- * resulting header is never logged.
- */
 function authHeader(): Record<string, string> {
   const email = process.env["ZENDESK_EMAIL"]?.trim();
   if (email === undefined || email === "") {

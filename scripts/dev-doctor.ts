@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Nimbus Dev Doctor: Checks the development environment for prerequisites,
- * configuration issues, and common pitfalls.
- *
- * Usage: bun scripts/dev-doctor.ts
- */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT } from "./lib/root.ts";
@@ -59,14 +53,7 @@ async function checkNodeModules(): Promise<void> {
   }
 }
 
-/**
- * Linux build dependencies. Distro-agnostic where possible: prefer
- * capability checks (`Bun.which`, `pkg-config --exists`) over package-
- * manager-specific queries so Fedora/Arch users don't get false WARNs.
- */
 async function checkLinuxBuildDeps(): Promise<void> {
-  // C/C++ toolchain — needed for native deps that lack a prebuilt for the
-  // platform. Capability check is the presence of any C compiler driver.
   const ccPath = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
   if (ccPath) {
     log("OK", `C compiler available (${ccPath}).`);
@@ -77,7 +64,6 @@ async function checkLinuxBuildDeps(): Promise<void> {
     );
   }
 
-  // pkg-config — needed by node-gyp for libsecret discovery
   const pkgConfigPath = Bun.which("pkg-config");
   if (!pkgConfigPath) {
     log(
@@ -88,8 +74,6 @@ async function checkLinuxBuildDeps(): Promise<void> {
   }
   log("OK", `pkg-config available (${pkgConfigPath}).`);
 
-  // libsecret development headers — capability-checked via pkg-config so
-  // Fedora (libsecret-devel) and Arch (libsecret) aren't flagged.
   const libsecret = Bun.spawnSync(["pkg-config", "--exists", "libsecret-1"], {
     stderr: "ignore",
     stdout: "ignore",
@@ -104,11 +88,6 @@ async function checkLinuxBuildDeps(): Promise<void> {
   }
 }
 
-/**
- * Linux runtime requirement: `secret-tool` (from libsecret-tools) is what
- * `nimbus doctor` and the Vault end up calling against the Secret Service.
- * Matches the check in `packages/cli/src/commands/doctor.ts`.
- */
 async function checkLinuxSecretTool(): Promise<void> {
   if (Bun.which("secret-tool") === null) {
     log(
@@ -120,11 +99,6 @@ async function checkLinuxSecretTool(): Promise<void> {
   log("OK", "secret-tool on PATH.");
 }
 
-/**
- * macOS build dependencies: Xcode Command Line Tools provide the C/C++
- * toolchain for native deps + Tauri's `cargo` linker. `xcode-select -p`
- * prints the active developer dir; missing/non-existent → CLT not installed.
- */
 async function checkMacosXcodeCLT(): Promise<void> {
   const p = Bun.spawnSync(["xcode-select", "-p"], { stderr: "ignore" });
   const path = p.stdout.toString().trim();
@@ -135,12 +109,6 @@ async function checkMacosXcodeCLT(): Promise<void> {
   }
 }
 
-/**
- * Windows: best-effort check for a C++ build toolchain. We only verify a
- * compiler driver is reachable from the current shell — if the user runs
- * dev-doctor from a vanilla PowerShell the tools may exist but not be on
- * PATH, so this is informational, not a hard error.
- */
 async function checkWindowsBuildTools(): Promise<void> {
   const cl = Bun.which("cl") ?? Bun.which("clang") ?? Bun.which("gcc");
   if (cl) {
@@ -164,11 +132,6 @@ async function checkPlatformDeps(): Promise<void> {
   }
 }
 
-/**
- * gcloud is only needed to develop / test against the Google connectors
- * (Drive, Gmail, Photos). Most contributors don't touch those — log INFO
- * so the absence isn't a yellow flag in everyone's terminal.
- */
 async function checkGcloud(): Promise<void> {
   try {
     const p = Bun.spawnSync(["gcloud", "--version"], { stderr: "ignore" });

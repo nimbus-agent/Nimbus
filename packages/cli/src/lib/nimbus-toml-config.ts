@@ -17,7 +17,6 @@ export type TomlKeyEntry = {
   readonly envVar?: string;
 };
 
-/** Known env overrides for `nimbus config list`. */
 const ENV_BY_DOTTED: Readonly<Record<string, string>> = {
   "telemetry.enabled": "NIMBUS_TELEMETRY_ENABLED",
   "telemetry.endpoint": "NIMBUS_TELEMETRY_ENDPOINT",
@@ -63,16 +62,6 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  // SECURITY: use `mkdtempSync(prefix)` to create a unique sibling
-  // directory in the destination's own directory. `mkdtempSync` is the
-  // canonical Node sanitizer CodeQL recognises for the js/file-system-race
-  // rule — it creates the directory atomically with a random suffix,
-  // mode 0o700, and O_EXCL behavior under the hood.
-  //
-  // The dir lives next to `path` (not in `os.tmpdir()`) so the subsequent
-  // `renameSync` of the file inside it is same-volume and therefore
-  // atomic on POSIX + Windows. After rename, the now-empty dir is
-  // rmdir'd best-effort.
   const dir = dirname(path);
   const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
   const tmp = join(swap, "content");

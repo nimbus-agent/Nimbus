@@ -4,15 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * Lightweight smoke for `nimbus catchup`: spawn the CLI without a running
- * Gateway and verify the "Gateway is not running" exit path + help integration
- * + unknown-positional rejection.
- *
- * Mirrors impact.smoke.e2e.test.ts. Full Gateway+CLI round-trip e2e is
- * deferred to a follow-up alongside the same harness work that expert
- * deferred (per F-7 in the T3 design doc).
- */
 describe("nimbus catchup e2e (no-Gateway smoke)", () => {
   const cliEntry = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 

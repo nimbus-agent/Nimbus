@@ -1,7 +1,3 @@
-/**
- * CLI command handlers — IPC to Gateway only (no gateway source imports).
- */
-
 export { runAsk } from "./ask.ts";
 export { runAudit } from "./audit.ts";
 export { runBench } from "./bench.ts";

@@ -12,16 +12,6 @@ export type DualSearchOptions = {
   since?: number;
 };
 
-/**
- * KNN over both `vec_items_384` and `vec_items_1536` (when the matching
- * `(query, model)` pair is provided), then merge by distance ascending
- * and truncate to `limit`.
- *
- * Distance comparison across two embedding models is an approximation —
- * both providers we support today (MiniLM, OpenAI text-embedding-3-small)
- * return unit-normalised vectors, so raw L2 is "good enough" for v1.
- * RRF / per-model normalisation is a future PR.
- */
 export function vectorSearchChunksDual(db: Database, opts: DualSearchOptions): VectorChunkHit[] {
   const hits: VectorChunkHit[] = [];
   if (opts.queryEmbedding384 !== undefined && opts.model384 !== undefined) {

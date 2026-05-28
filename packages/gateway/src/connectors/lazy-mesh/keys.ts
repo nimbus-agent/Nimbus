@@ -3,9 +3,6 @@ import { fileURLToPath } from "node:url";
 
 const _LAZY_MESH_DIR = dirname(fileURLToPath(import.meta.url));
 
-// NB: One additional ".." compared to the original lazy-mesh.ts because this
-// file lives in connectors/lazy-mesh/ instead of connectors/. Resolves to
-// packages/mcp-connectors. A regression here breaks every spawn at runtime.
 export const MCP_CONNECTORS_ROOT = join(_LAZY_MESH_DIR, "..", "..", "..", "..", "mcp-connectors");
 
 export function mcpConnectorServerScript(packageDir: string): string {

@@ -29,7 +29,7 @@ describe("writeCastBytes", () => {
     ];
     const text = new TextDecoder().decode(writeCastBytes(chunks));
     const lines = text.split("\n").filter((l) => l.length > 0);
-    expect(lines).toHaveLength(3); // header + 2 events
+    expect(lines).toHaveLength(3);
     const e1 = JSON.parse(lines[1] ?? "");
     const e2 = JSON.parse(lines[2] ?? "");
     expect(e1).toEqual([0.0, "o", "hello\n"]);

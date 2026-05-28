@@ -1,13 +1,5 @@
-/**
- * Cast-driver normalization pipeline. Order is load-bearing — UUID rule
- * must run before SHA rule so the SHA pattern does not consume UUID hex
- * segments. See spec §3.3.
- */
-
 export interface NormalizationContext {
-  /** Runner's temp-dir prefix (e.g. /tmp/cast-driver-xyz). Substituted with <TMP>. */
   readonly tmpDirPrefix: string;
-  /** User's home prefix (e.g. /home/runner). Substituted with <HOME>. */
   readonly homePrefix: string;
 }
 
@@ -26,9 +18,6 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g
 const ULID = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
 const LABELLED_ID = /\b(session_id|streamId|stream_id|sessionId|pid|PID)\s*[=:]?\s*([\w-]+)\b/g;
 const VERSION = /\b(nimbus|Bun|Node)\s+v\d+\.\d+\.\d+(?:[-+.][\w.-]+)?\b/g;
-// Git SHA: Match either (a) labeled SHA: sha=, commit=, etc. followed by 7-40 hex,
-// OR (b) very long hex (20+ chars) that's clearly not a typo or number.
-// Does NOT match bare short hex like "deadbeef" or pure decimals.
 const GIT_SHA = /(?:sha=|commit=|SHA=|COMMIT=)([0-9a-f]{7,40})\b|\b[0-9a-f]{20,40}\b/g;
 
 function escapeForRegex(s: string): string {
@@ -47,13 +36,10 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
   {
     name: "cr-resolution",
     apply: (t) => {
-      // (a) Replace \r\n with \n
       let text = t.replace(/\r\n/g, "\n");
-      // (c) Lone trailing \r at EOF becomes \n
       if (text.endsWith("\r")) {
         text = `${text.slice(0, -1)}\n`;
       }
-      // (b) Within each line, keep only substring after last \r
       const lines = text.split("\n");
       const resolved = lines.map((line) => {
         const lastCr = line.lastIndexOf("\r");
@@ -116,12 +102,10 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
     name: "git-sha",
     apply: (t) =>
       t.replace(GIT_SHA, (match) => {
-        // If it's a labeled SHA (sha=abc123), replace just the hex part
         const labelMatch = match.match(/^(sha=|commit=|SHA=|COMMIT=)/i);
         if (labelMatch) {
           return `${labelMatch[1]}<SHA>`;
         }
-        // Otherwise it's a bare long hex, replace entirely
         return "<SHA>";
       }),
   },

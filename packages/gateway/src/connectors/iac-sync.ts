@@ -16,10 +16,6 @@ export type IacSyncableOptions = {
   ensureIacMcpRunning: () => Promise<void>;
 };
 
-/**
- * Registers the connector for scheduler + MCP tools. When enabled, upserts a heartbeat item
- * with indexed AWS Lambda counts for `nimbus status --drift` / ping drift hints.
- */
 export function createIacSyncable(options: IacSyncableOptions): Syncable {
   const initialSyncDepthDays = 1;
   return {

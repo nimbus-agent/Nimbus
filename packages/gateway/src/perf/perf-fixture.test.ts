@@ -28,7 +28,6 @@ describe("buildSyntheticIndex", () => {
     try {
       const a = await buildSyntheticIndex("small", { cacheDir: dir });
       const contentA = readFileSync(a);
-      // Force regeneration by deleting and re-running.
       rmSync(a);
       const b = await buildSyntheticIndex("small", { cacheDir: dir });
       const contentB = readFileSync(b);
@@ -44,7 +43,6 @@ describe("buildSyntheticIndex", () => {
     try {
       const path = await buildSyntheticIndex("small", { cacheDir: dir });
       const mtime1 = statSync(path).mtimeMs;
-      // Wait briefly so a regeneration would change mtime.
       await new Promise((r) => setTimeout(r, 20));
       const path2 = await buildSyntheticIndex("small", { cacheDir: dir });
       const mtime2 = statSync(path2).mtimeMs;

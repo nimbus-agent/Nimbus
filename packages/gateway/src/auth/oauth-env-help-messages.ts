@@ -1,8 +1,3 @@
-/**
- * Multi-line user guidance for missing OAuth env configuration.
- * Kept in sync with CLI `connector-oauth-env-help.ts` (duplicate by design — CLI does not depend on gateway).
- */
-
 export const GOOGLE_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_GOOGLE_CLIENT_ID to your Google OAuth client ID (Desktop app, PKCE).
 
 How to obtain:

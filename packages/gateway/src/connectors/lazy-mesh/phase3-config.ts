@@ -10,12 +10,6 @@ import { mcpConnectorServerScript } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
-/**
- * I15 (T2 PR 1) — wrap each Phase-3 ServerSpec via the sandbox-wrapper
- * so MCPClient's internal spawn lands in `sandbox-wrapper.ts`. The
- * `serviceId` (the key in `servers`) is also the lookup key in
- * `FIRST_PARTY_MANIFESTS`.
- */
 function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSpec {
   return wrapServerSpec(spec, manifestForFirstParty(serviceId), sandboxCwd);
 }
@@ -134,9 +128,6 @@ export async function phase3AddGrafanaMcp(
   if (gfu === "" || gtk === "") {
     return;
   }
-  // I15 (T2 PR 1) — Grafana is always user-configured; extend the static
-  // (empty) network list with the hostname parsed from GRAFANA_URL so the
-  // sandbox lets the connector reach the user's Grafana instance.
   const grafanaHost = hostnameFromUrl(gfu);
   const grafanaManifest = manifestWithExtraNetworkHosts(
     "grafana",
@@ -280,9 +271,6 @@ export async function phase3AddSonarqubeMcp(
   if (tok === "") {
     return;
   }
-  // SonarCloud requires `organization`; self-hosted SonarQube ignores it.
-  // We pass it through unconditionally — when unset, the connector's
-  // server.ts omits the query param.
   const url = (await readConnectorSecret(vault, "sonarqube", "url"))?.trim() ?? "";
   const organization =
     (await readConnectorSecret(vault, "sonarqube", "organization"))?.trim() ?? "";
@@ -310,9 +298,6 @@ export async function phase3AddSemgrepMcp(
   if (tok === "") {
     return;
   }
-  // Semgrep's deployment_slug is required for any deployment-scoped
-  // read; the syncable discovers it from `/deployments` when unset, so
-  // we pass it through optionally to short-circuit that round-trip.
   const slug = (await readConnectorSecret(vault, "semgrep", "deployment_slug"))?.trim() ?? "";
   servers["semgrep"] = wrap(
     {
@@ -338,9 +323,6 @@ export async function phase3AddWizMcp(
   if (clientId === "" || clientSecret === "") {
     return;
   }
-  // Optional regional override; passes through only when set, so the
-  // connector falls back to the SaaS default `api.app.wiz.io` /
-  // `auth.app.wiz.io` URLs encoded in server.ts.
   const apiUrl = (await readConnectorSecret(vault, "wiz", "api_url"))?.trim() ?? "";
   const authUrl = (await readConnectorSecret(vault, "wiz", "auth_url"))?.trim() ?? "";
   servers["wiz"] = wrap(
@@ -368,8 +350,6 @@ export async function phase3AddLaunchdarklyMcp(
   if (tok === "") {
     return;
   }
-  // Optional regional override; passes through only when set so the
-  // connector falls back to the SaaS default app.launchdarkly.com host.
   const baseUrl = (await readConnectorSecret(vault, "launchdarkly", "base_url"))?.trim() ?? "";
   servers["launchdarkly"] = wrap(
     {
@@ -394,8 +374,6 @@ export async function phase3AddFlagsmithMcp(
   if (tok === "") {
     return;
   }
-  // Optional regional / self-hosted override; passes through only when set so
-  // the connector falls back to the SaaS default api.flagsmith.com host.
   const apiBase = (await readConnectorSecret(vault, "flagsmith", "api_base"))?.trim() ?? "";
   servers["flagsmith"] = wrap(
     {
@@ -421,9 +399,6 @@ export async function phase3AddArgocdMcp(
   if (url === "" || tok === "") {
     return;
   }
-  // I15 (T2 PR 1) — ArgoCD is always self-hosted; extend the static (empty)
-  // network list with the hostname parsed from ARGOCD_URL so the sandbox lets
-  // the connector reach the user's ArgoCD instance (Grafana pattern).
   const host = hostnameFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host]);
   servers["argocd"] = wrapServerSpec(
@@ -447,10 +422,6 @@ export async function phase3AddFluxMcp(
   if (apiUrl === "" || tok === "") {
     return;
   }
-  // I15 (T2 PR 1) — Flux is always self-hosted (the Kubernetes API server);
-  // extend the static (empty) network list with the hostname parsed from
-  // FLUX_API_URL so the sandbox lets the connector reach the user's cluster
-  // (same runtime-merge pattern as grafana / argocd).
   const host = hostnameFromUrl(apiUrl);
   const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
   servers["flux"] = wrapServerSpec(
@@ -473,8 +444,6 @@ export async function phase3AddDbtMcp(
   if (tok === "") {
     return;
   }
-  // Optional regional / custom-access-URL override; passes through only when
-  // set so the connector falls back to the SaaS default cloud.getdbt.com host.
   const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
   servers["dbt"] = wrap(
     {
@@ -500,12 +469,6 @@ export async function phase3AddMetabaseMcp(
   if (url === "" || apiKey === "") {
     return;
   }
-  // I15 (T2 PR 1) — Metabase has no universal SaaS host (self-hosted or a
-  // per-org subdomain); extend the empty static network list with the
-  // hostname parsed from METABASE_URL so the sandbox lets the connector reach
-  // the user's Metabase instance (same runtime-merge pattern as grafana /
-  // argocd / flux). The API key is sent by the connector as the `x-api-key`
-  // header.
   const host = hostnameFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("metabase", host === null ? [] : [host]);
   servers["metabase"] = wrapServerSpec(
@@ -530,12 +493,6 @@ export async function phase3AddSupersetMcp(
   if (url === "" || user === "" || pass === "") {
     return;
   }
-  // I15 (T2 PR 1) — Apache Superset is always self-hosted (no universal SaaS
-  // host); extend the empty static network list with the hostname parsed from
-  // SUPERSET_URL so the sandbox lets the connector reach the user's Superset
-  // instance (same runtime-merge pattern as grafana / argocd / flux /
-  // metabase). The connector mints a JWT from these credentials at login and
-  // then calls with a Bearer token; both hit this one host.
   const host = hostnameFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
   servers["superset"] = wrapServerSpec(
@@ -563,12 +520,6 @@ export async function phase3AddDatabricksMcp(
   if (hostUrl === "" || tok === "") {
     return;
   }
-  // I15 (T2 PR 1) — Databricks has no universal SaaS host (every workspace is a
-  // distinct per-org URL); extend the empty static network list with the
-  // hostname parsed from DATABRICKS_HOST so the sandbox lets the connector
-  // reach the user's workspace (same runtime-merge pattern as grafana /
-  // argocd / flux / metabase / superset). The PAT is sent by the connector as
-  // an `Authorization: Bearer` header.
   const host = hostnameFromUrl(hostUrl);
   const manifest = manifestWithExtraNetworkHosts("databricks", host === null ? [] : [host]);
   servers["databricks"] = wrapServerSpec(
@@ -592,12 +543,6 @@ export async function phase3AddMlflowMcp(
   if (hostUrl === "" || tok === "") {
     return;
   }
-  // I15 (T2 PR 1) — MLflow has no universal SaaS host (every tracking server is
-  // a distinct per-org URL); extend the empty static network list with the
-  // hostname parsed from MLFLOW_HOST so the sandbox lets the connector reach
-  // the user's tracking server (same runtime-merge pattern as grafana /
-  // argocd / flux / metabase / superset / databricks). The API token is sent
-  // by the connector as an `Authorization: Bearer` header.
   const host = hostnameFromUrl(hostUrl);
   const manifest = manifestWithExtraNetworkHosts("mlflow", host === null ? [] : [host]);
   servers["mlflow"] = wrapServerSpec(
@@ -620,10 +565,6 @@ export async function phase3AddVercelMcp(
   if (tok === "") {
     return;
   }
-  // Vercel's API host is fixed (api.vercel.com — a static-network SaaS host),
-  // so this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge. The optional team id passes through only when set; the
-  // connector omits the `teamId` query param when VERCEL_TEAM_ID is absent.
   const teamId = (await readConnectorSecret(vault, "vercel", "team_id"))?.trim() ?? "";
   servers["vercel"] = wrap(
     {
@@ -648,9 +589,6 @@ export async function phase3AddNetlifyMcp(
   if (tok === "") {
     return;
   }
-  // Netlify's API host is fixed (api.netlify.com — a static-network SaaS host),
-  // so this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge.
   servers["netlify"] = wrap(
     {
       command: "bun",
@@ -673,9 +611,6 @@ export async function phase3AddStripeMcp(
   if (key === "") {
     return;
   }
-  // Stripe's API host is fixed (api.stripe.com — a static-network SaaS host),
-  // so this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge.
   servers["stripe"] = wrap(
     {
       command: "bun",
@@ -698,9 +633,6 @@ export async function phase3AddMercuryMcp(
   if (key === "") {
     return;
   }
-  // Mercury's API host is fixed (api.mercury.com — a static-network SaaS host),
-  // so this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge.
   servers["mercury"] = wrap(
     {
       command: "bun",
@@ -723,9 +655,6 @@ export async function phase3AddReadwiseMcp(
   if (key === "") {
     return;
   }
-  // Readwise's API host is fixed (readwise.io — a static-network SaaS host), so
-  // this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge.
   servers["readwise"] = wrap(
     {
       command: "bun",
@@ -748,9 +677,6 @@ export async function phase3AddRaindropMcp(
   if (key === "") {
     return;
   }
-  // Raindrop's API host is fixed (api.raindrop.io — a static-network SaaS host),
-  // so this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge.
   servers["raindrop"] = wrap(
     {
       command: "bun",
@@ -773,10 +699,6 @@ export async function phase3AddIntercomMcp(
   if (key === "") {
     return;
   }
-  // Intercom's API host is fixed (api.intercom.io — the US host, a
-  // static-network SaaS host; EU/AU regional hosts are deferred), so this uses
-  // the `wrap(...)` helper with the static manifest rather than a runtime host
-  // merge.
   servers["intercom"] = wrap(
     {
       command: "bun",
@@ -801,12 +723,6 @@ export async function phase3AddZendeskMcp(
   if (url === "" || email === "" || apiToken === "") {
     return;
   }
-  // I15 (T2 PR 1) — Zendesk is per-tenant (every instance is a distinct
-  // `https://<subdomain>.zendesk.com` host); extend the empty static network
-  // list with the hostname parsed from ZENDESK_URL at spawn time (same
-  // runtime-merge pattern as grafana / argocd / metabase). The connector builds
-  // a Basic auth header from the email + api_token (username `<email>/token`);
-  // both are passed through as env and never logged.
   const host = hostnameFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
   servers["zendesk"] = wrapServerSpec(
@@ -833,11 +749,6 @@ export async function phase3AddLeverMcp(
   if (key === "") {
     return;
   }
-  // Lever's API host is fixed (api.lever.co — a static-network SaaS host), so
-  // this uses the `wrap(...)` helper with the static manifest rather than a
-  // runtime host merge. The connector builds a Basic auth header from the API
-  // key as the username with an empty password; the key passes through as env
-  // and is never logged.
   servers["lever"] = wrap(
     {
       command: "bun",
@@ -860,11 +771,6 @@ export async function phase3AddGreenhouseMcp(
   if (key === "") {
     return;
   }
-  // Greenhouse's Harvest API host is fixed (harvest.greenhouse.io — a
-  // static-network SaaS host), so this uses the `wrap(...)` helper with the
-  // static manifest rather than a runtime host merge. The connector builds a
-  // Basic auth header from the API key as the username with an empty password;
-  // the key passes through as env and is never logged.
   servers["greenhouse"] = wrap(
     {
       command: "bun",
@@ -887,11 +793,6 @@ export async function phase3AddPipedriveMcp(
   if (key === "") {
     return;
   }
-  // Pipedrive's API host is fixed (api.pipedrive.com — a static-network SaaS
-  // host), so this uses the `wrap(...)` helper with the static manifest rather
-  // than a runtime host merge. The connector authenticates with the token in
-  // the query string (?api_token=<token>) — the token passes through as env and
-  // is never logged.
   servers["pipedrive"] = wrap(
     {
       command: "bun",
@@ -912,17 +813,9 @@ export async function phase3AddStackoverflowMcp(
 ): Promise<void> {
   const token = (await readConnectorSecret(vault, "stackoverflow", "token"))?.trim() ?? "";
   const team = (await readConnectorSecret(vault, "stackoverflow", "team"))?.trim() ?? "";
-  // Both keys are required — no-op unless BOTH are present (the team slug is
-  // mandatory because it is URL-encoded into the request path).
   if (token === "" || team === "") {
     return;
   }
-  // Stack Overflow for Teams' API host is fixed (api.stackoverflowteams.com — a
-  // static-network SaaS host; the team slug lives in the request PATH, not as a
-  // separate host), so this uses the `wrap(...)` helper with the static
-  // manifest rather than a runtime host merge. The connector builds a Bearer
-  // header from the PAT; both the token and the team slug pass through as env
-  // and the token is never logged.
   servers["stackoverflow"] = wrap(
     {
       command: "bun",

@@ -6,7 +6,6 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** Best-effort summary from Google API JSON error bodies (never log raw tokens). */
 export function formatGoogleHttpError(status: number, bodyText: string, service: string): string {
   const base = `${service} sync failed: ${String(status)}`;
   const trimmed = bodyText.trim();
@@ -36,11 +35,6 @@ export function formatGoogleHttpError(status: number, bodyText: string, service:
   return base;
 }
 
-/**
- * Shared fetch helper for all Google API connectors.
- * Acquires the "google" rate-limit token, merges the Bearer header, and parses JSON.
- * Throws UnauthenticatedError on 401; uses formatGoogleHttpError for all other non-2xx responses.
- */
 export async function fetchGoogleJson(
   ctx: SyncContext,
   token: string,

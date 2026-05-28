@@ -1,19 +1,3 @@
-/**
- * S4 — TUI first-paint (`nimbus tui` → first frame).
- *
- * Spawns `bun packages/cli/src/index.ts tui` per sample with NIMBUS_BENCH=1
- * set, and times to the `[tui] first-frame` stderr marker emitted from a
- * useEffect inside App.tsx — that effect fires after React's first commit,
- * which is *after* Ink has flushed the first frame to the TTY. Sends
- * SIGTERM after the marker.
- *
- * Note: a running gateway is a precondition — the TUI command exits early
- * if the gateway state is unreadable. The bench operator is responsible
- * for running `nimbus start` before invoking this surface; if the gateway
- * isn't running, the spawn-and-time helper's pre-marker exit guard will
- * throw and the bench-cli will record a per-surface stub_reason.
- */
-
 import { resolve } from "node:path";
 
 import { spawnAndTimeToMarker } from "../process-spawn-bench.ts";
@@ -29,8 +13,6 @@ export interface RunOptions {
 }
 
 function defaultCliEntry(): string {
-  // packages/gateway/src/perf/surfaces/bench-tui-first-paint.ts
-  //   → packages/cli/src/index.ts
   return resolve(import.meta.dir, "..", "..", "..", "..", "cli", "src", "index.ts");
 }
 

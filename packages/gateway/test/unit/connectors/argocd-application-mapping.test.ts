@@ -85,8 +85,6 @@ describe("mapArgocdApplicationToItem", () => {
   });
 
   test("bodyPreview falls back to ? when sync/health absent", () => {
-    // Replace status wholesale — the makeApp override spreads over the default
-    // `{ sync, health }`, so `{ status: {} }` cannot clear them.
     const app = makeApp();
     app["status"] = {};
     const row = mapArgocdApplicationToItem(app, ctx());

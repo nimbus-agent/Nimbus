@@ -1,16 +1,6 @@
-/**
- * Unit tests for `parseDeployAnnotateArgs` — getopt-style flag parsing +
- * field-shape validation for `nimbus deploy annotate`.
- *
- * The CLI parser mirrors a subset of `packages/gateway/src/deployment/annotate.ts`
- * validators so usage errors fail locally (exit 2) before round-tripping
- * to IPC. Field-level semantic checks (time-window bounds, etc.) remain
- * the Gateway's job.
- */
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -103,7 +93,7 @@ describe("parseDeployAnnotateArgs", () => {
 
   test("rejects malformed --sha (not lowercase hex / too short)", () => {
     const args = [...REQUIRED];
-    args[args.indexOf("--sha") + 1] = "XYZ"; // not lowercase hex AND too short
+    args[args.indexOf("--sha") + 1] = "XYZ";
     expect(() => parseDeployAnnotateArgs(args)).toThrow(/--sha must be/);
   });
 
@@ -147,12 +137,6 @@ describe("parseDeployAnnotateArgs", () => {
     expect(() => parseDeployAnnotateArgs(args)).toThrow(/--env must be/);
   });
 });
-
-// ----------------------------------------------------------------------
-// runDeployAnnotate dispatcher tests — returns number (0/1/2), so no
-// process.exit interception needed. Output goes via process.stdout.write
-// / process.stderr.write so we capture those directly.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];
@@ -206,7 +190,7 @@ describe("runDeployAnnotate", () => {
   });
 
   it("returns 2 with arg-parse error printed to stderr", async () => {
-    const exit = await runDeployAnnotate(["--service", "x"]); // missing many required
+    const exit = await runDeployAnnotate(["--service", "x"]);
     expect(exit).toBe(2);
     expect(stderrChunks.join("")).toMatch(/is required|must be/);
   });
@@ -235,7 +219,6 @@ describe("runDeployAnnotate", () => {
     expect(stdoutChunks.join("")).toContain("DORA-eligible");
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0]?.method).toBe("deployment.annotate");
-    // Payload includes all required fields.
     const params = mock.calls[0]?.params as Record<string, unknown>;
     expect(params["service"]).toBe("payment-service");
     expect(params["sha"]).toBe("abc1234");

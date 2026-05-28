@@ -1,9 +1,7 @@
 import type { IndexedItem } from "./types.ts";
 
 export type ChunkOptions = {
-  /** Approximate max tokens per chunk (tokens ≈ chars / 4). */
   maxChunkTokens: number;
-  /** Overlap in approximate tokens between consecutive chunks. */
   overlapTokens: number;
 };
 
@@ -48,7 +46,6 @@ function pushWordCharSlices(word: string, maxChars: number, out: string[]): void
   }
 }
 
-/** Split a single sentence that exceeds `maxChars` on whitespace (last resort). */
 function splitLongPiece(piece: string, maxChars: number): string[] {
   if (piece.length <= maxChars) {
     return [piece];
@@ -140,10 +137,6 @@ function mergeOverlapBetweenChunks(packed: string[], overlapChars: number): stri
   return withOverlap;
 }
 
-/**
- * Chunk text for embedding: sentence-aware packing with token budget and tail overlap.
- * Input for items is typically `title + "\n" + body_preview` (see {@link itemTextForEmbedding}).
- */
 export function chunkText(text: string, opts?: Partial<ChunkOptions>): string[] {
   const o = { ...DEFAULT_OPTS, ...opts };
   const maxChars = Math.max(64, o.maxChunkTokens * 4);

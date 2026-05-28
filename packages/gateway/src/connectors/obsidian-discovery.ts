@@ -31,16 +31,6 @@ function readDirSafe(path: string): readonly string[] {
   }
 }
 
-/**
- * Recursively finds every directory that directly contains a `.obsidian/`
- * marker. Walks each `[[filesystem.roots]]` root.
- *
- * Stops recursion into a directory once it is identified as a vault — but
- * the spec allows nested vaults: if a sub-directory of a vault itself
- * contains `.obsidian/`, that sub-directory is also returned. The walker
- * therefore continues into sub-directories of an identified vault, but
- * skips the inner `.obsidian/` directories themselves.
- */
 export function discoverVaults(roots: readonly string[]): readonly string[] {
   const out: string[] = [];
   for (const root of roots) {
@@ -78,11 +68,6 @@ function walkForVaults(dir: string, out: string[]): void {
   }
 }
 
-/**
- * Returns paths (vault-relative, forward-slashed) of every `.md` file
- * under `vaultRoot`, excluding any `.md` inside the vault's `.obsidian/`
- * directory and inside any nested-vault sub-directory.
- */
 export function discoverNotesInVault(vaultRoot: string): readonly string[] {
   const out: string[] = [];
   walkForNotes(vaultRoot, vaultRoot, out);
@@ -94,7 +79,6 @@ function walkForNotes(currentDir: string, vaultRoot: string, out: string[]): voi
     return;
   }
   const entries = readDirSafe(currentDir);
-  // If this directory is itself a nested vault (and not the root), stop here.
   if (
     currentDir !== vaultRoot &&
     entries.includes(VAULT_MARKER) &&

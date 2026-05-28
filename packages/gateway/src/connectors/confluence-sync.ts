@@ -47,7 +47,6 @@ function lastModifiedFromContent(row: Record<string, unknown>): string | undefin
   return stringField(lu, "when");
 }
 
-/** User who last updated the page (when Confluence includes `by` under `history.lastUpdated`). */
 function confluenceLastUpdatedBy(row: Record<string, unknown>): Record<string, unknown> | null {
   const hist = asRecord(row["history"]);
   const lu = hist === undefined ? undefined : asRecord(hist["lastUpdated"]);
@@ -102,7 +101,6 @@ function confluenceWatermarkStopOrBumpMax(
   return false;
 }
 
-/** @returns `true` when watermark ordering says to stop the whole sync. */
 function confluenceUpsertOneSearchHit(
   ctx: SyncContext,
   item: unknown,

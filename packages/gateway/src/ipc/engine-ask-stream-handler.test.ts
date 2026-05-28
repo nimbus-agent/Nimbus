@@ -44,7 +44,6 @@ describe("createAskStreamHandler", () => {
     const handler = createAskStreamHandler(deps);
     const result = await handler("client-1", { input: "say hi" });
     expect(result).toEqual({ streamId: "stream-test-1" });
-    // Wait for the IIFE to flush
     await new Promise((r) => setTimeout(r, 10));
     const tokens = notifications.filter((n) => n.method === "engine.streamToken");
     expect(tokens.length).toBe(2);
@@ -83,7 +82,6 @@ describe("createAskStreamHandler", () => {
       runWithRequestContext: async (_ctx, fn) => fn(),
       agentInvokeHandler: async (ctx) => {
         signalSeen = ctx.signal;
-        // Simulate a long-running stream that checks signal cooperatively
         for (let i = 0; i < 100; i += 1) {
           if (ctx.signal?.aborted) {
             throw new Error("cancelled");
@@ -94,7 +92,6 @@ describe("createAskStreamHandler", () => {
     };
     const handler = createAskStreamHandler(deps);
     await handler("client-1", { input: "long" });
-    // Cancel quickly
     await new Promise((r) => setTimeout(r, 5));
     expect(registry.has("stream-cancel-1")).toBe(true);
     expect(registry.cancel("stream-cancel-1")).toBe(true);

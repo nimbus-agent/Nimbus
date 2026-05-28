@@ -1,18 +1,3 @@
-/**
- * Pure mapping from a Snyk aggregated-issue payload to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `snyk-sync.ts` so the HTTP path and the indexing path can be tested
- * independently.
- *
- * Snyk's aggregated-issues envelope is documented at
- * https://snyk.docs.apiary.io/#reference/projects/aggregated-issues. The
- * fields surfaced into `metadata` are the ones the Phase-5 roadmap calls
- * out: `severity`, `cve_id`, `affected_package`, `fix_available`,
- * `project_url`, `disclosed_at`, `published_at`, plus a couple of joins
- * (`project_id`, `org_id`, `type`) that downstream `nimbus query`
- * predicates need to correlate a CVE back to a repo or an open PR.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "critical" | "high" | "medium" | "low";

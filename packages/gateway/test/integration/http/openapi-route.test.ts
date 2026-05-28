@@ -14,10 +14,7 @@ describe("GET /v1/openapi.json", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-openapi-route-"));
     dbPath = join(tmpDir, "nimbus.db");
-    // Empty schema is fine — the openapi route does not query the DB.
     new Database(dbPath).close();
-    // Pass port = 0 so the OS picks a free port; eliminates the random-port
-    // collision risk under shared CI runners.
     handle = startReadOnlyHttpServer(dbPath, 0);
     port = handle.port;
   });

@@ -1,17 +1,3 @@
-/**
- * Reads docs/perf/history.jsonl, finds the most recent complete
- * reference-m1air HistoryLine, and writes it verbatim to --output.
- *
- * Used by .github/workflows/_perf-reference.yml to produce
- * packages/docs/public/perf/latest.json after each operator-attested
- * reference benchmark run. Pure functions live here for unit tests;
- * the CLI wrapper at the bottom is the workflow entry point.
- *
- * Per Non-Negotiable #7, parsed JSON is treated as `unknown` and
- * validated by isCompleteReferenceLine before being returned as
- * HistoryLine. There are no `as HistoryLine` casts.
- */
-
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -29,14 +15,6 @@ export class NoQualifyingLineError extends Error {
   }
 }
 
-/**
- * Runtime predicate: `value` is a HistoryLine for a complete
- * reference-m1air run (the only kind we publish to the docs site).
- *
- * "Complete" = `incomplete` is absent or explicitly `false`. Only
- * `incomplete === true` triggers the skip — this matches the spec
- * §6 wording.
- */
 function isCompleteReferenceLine(value: unknown): value is HistoryLine {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -54,10 +32,6 @@ function isCompleteReferenceLine(value: unknown): value is HistoryLine {
   );
 }
 
-/**
- * Returns the most recent complete reference-m1air line in `historyJsonl`.
- * Throws (caller catches and rewraps as NoQualifyingLineError) when none exists.
- */
 export function selectLatestReferenceLine(historyJsonl: string): HistoryLine {
   const lines = historyJsonl.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -76,11 +50,6 @@ export function selectLatestReferenceLine(historyJsonl: string): HistoryLine {
   throw new Error("no complete reference-m1air line found");
 }
 
-/**
- * Writes `JSON.stringify(line) + "\n"` to outputPath atomically:
- * write to <outputPath>.tmp, then rename. This means a crash mid-write
- * cannot leave a partial file in place.
- */
 export function writeLatestJson(outputPath: string, line: HistoryLine): void {
   const parent = dirname(outputPath);
   if (!existsSync(parent)) {
@@ -91,7 +60,6 @@ export function writeLatestJson(outputPath: string, line: HistoryLine): void {
   renameSync(tmp, outputPath);
 }
 
-/** End-to-end: read history file, select line, write output. */
 export function deriveLatestJson({ historyPath, outputPath }: DeriveOptions): void {
   if (!existsSync(historyPath)) {
     throw new Error(`history file not found: ${historyPath}`);
@@ -109,7 +77,6 @@ export function deriveLatestJson({ historyPath, outputPath }: DeriveOptions): vo
   writeLatestJson(outputPath, line);
 }
 
-/** CLI: bun derive-latest-json.ts --history <path> --output <path> */
 function parseArgs(argv: string[]): DeriveOptions {
   let historyPath: string | undefined;
   let outputPath: string | undefined;

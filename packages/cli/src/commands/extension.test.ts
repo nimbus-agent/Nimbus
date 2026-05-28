@@ -1,20 +1,6 @@
-/**
- * Unit tests for `nimbus extension` per-subcommand handlers.
- *
- * Each handler is exercised with a fixture-driven `IPCClient`-shaped mock
- * (via the shared CLI test harness) so the tests run in-process and do
- * not touch the gateway socket. Coverage targets the success path + IPC-
- * error path for every public helper.
- *
- * Phase 6 Task 13: migrated off per-file `mock.module("@clack/prompts")`
- * + `mock.module("../lib/gateway-process.ts")` (which leaked across the
- * full `bun test packages/cli` run via Bun's process-global mock.module)
- * and onto the shared harness in `packages/cli/test/helpers/cli-mocks.ts`.
- */
-
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -41,8 +27,6 @@ const out = captureOutput();
 afterAll(() => {
   out.restore();
 });
-
-// ----------------------------- flag helpers -------------------------------
 
 describe("hasFlag", () => {
   test("returns true when flag is present", () => {
@@ -80,8 +64,6 @@ describe("stripFlags", () => {
   });
 });
 
-// ----------------------------- fetchSandboxPosture ------------------------
-
 describe("fetchSandboxPosture", () => {
   beforeEach(() => {
     out.reset();
@@ -108,8 +90,6 @@ describe("fetchSandboxPosture", () => {
     expect(await fetchSandboxPosture(client)).toBeNull();
   });
 });
-
-// ----------------------------- runExtensionList ---------------------------
 
 describe("runExtensionList", () => {
   beforeEach(() => {
@@ -138,14 +118,12 @@ describe("runExtensionList", () => {
       },
     ]);
     await runExtensionList(client, ["list"]);
-    // New tabular format: ID | Version | Publisher | Status
     expect(out.stdout).toMatch(/ID\s+Version\s+Publisher\s+Status/);
     expect(out.stdout).toContain("a.b");
     expect(out.stdout).toContain("1.0.0");
     expect(out.stdout).toContain("c.d");
     expect(out.stdout).toContain("disabled");
     expect(out.stdout).toContain("(unverified)");
-    // needs-reinstall annotation lines are preserved for grep-based scripts.
     expect(out.stdout).toContain("e.f@3.0.0 [needs-reinstall]");
   });
 
@@ -167,8 +145,6 @@ describe("runExtensionList", () => {
     await expect(runExtensionList(client, ["list"])).rejects.toThrow(/ipc down/);
   });
 });
-
-// ----------------------------- runExtensionInfo ---------------------------
 
 describe("runExtensionInfo", () => {
   beforeEach(() => {
@@ -236,8 +212,6 @@ describe("runExtensionInfo", () => {
     );
   });
 });
-
-// ----------------------------- runExtensionInstall ------------------------
 
 describe("runExtensionInstall", () => {
   const origIsTty = process.stdout.isTTY;
@@ -338,8 +312,6 @@ describe("runExtensionInstall", () => {
   });
 });
 
-// ----------------------------- enable / disable ---------------------------
-
 describe("runExtensionEnable", () => {
   beforeEach(() => {
     out.reset();
@@ -392,8 +364,6 @@ describe("runExtensionDisable", () => {
     await expect(runExtensionDisable(client, ["x"])).rejects.toThrow(/disable failed/);
   });
 });
-
-// ----------------------------- runExtensionRemove -------------------------
 
 describe("runExtensionRemove", () => {
   const origIsTty = process.stdout.isTTY;
@@ -481,8 +451,6 @@ describe("runExtensionRemove", () => {
   });
 });
 
-// ----------------------------- runExtension (top-level dispatcher) ----------
-
 describe("runExtension top-level dispatcher", () => {
   beforeEach(() => {
     out.reset();
@@ -492,7 +460,7 @@ describe("runExtension top-level dispatcher", () => {
   });
 
   test("throws when gateway state is unreadable", async () => {
-    setFixture({}); // gatewayState undefined
+    setFixture({});
     await expect(runExtension(["list"])).rejects.toThrow(/Gateway is not running/);
   });
 
@@ -501,8 +469,6 @@ describe("runExtension top-level dispatcher", () => {
   // socket. Those branches are intentionally left to e2e tests; the
   // per-handler logic above already covers the meaningful code paths.
 });
-
-// ----------------------------- runExtensionInstall --publisher-key (T2 PR 2) -
 
 describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
   const origIsTty = process.stdout.isTTY;
@@ -550,8 +516,6 @@ describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
   });
 });
 
-// ----------------------------- formatExtensionListTable (T2 PR 2) ----------
-
 describe("formatExtensionListTable (T2 PR 2)", () => {
   test("renders header with ID | Version | Publisher | Status", () => {
     const formatted = formatExtensionListTable(
@@ -572,8 +536,6 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       isTty: true,
       noColor: false,
     });
-    // ESC = U+001B; build via String.fromCharCode so the literal regex doesn't
-    // carry a control character (Biome `noControlCharactersInRegex`).
     const ESC = String.fromCharCode(27);
     expect(formatted).toMatch(new RegExp(`${ESC}\\[2;33m\\(unverified\\)\\s*${ESC}\\[0m`));
   });
@@ -596,8 +558,6 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
   });
 });
 
-// ----------------------------- formatExtensionInfoHuman (T2 PR 2) ----------
-
 describe("formatExtensionInfoHuman (T2 PR 2)", () => {
   test("shows Publisher section with id + truncated key for signed extensions", () => {
     const formatted = formatExtensionInfoHuman({
@@ -614,8 +574,6 @@ describe("formatExtensionInfoHuman (T2 PR 2)", () => {
     expect(formatted).toMatch(/Publisher:\s+\(unverified\)/);
   });
 });
-
-// ----------------------------- runExtensionInfo --json (T2 PR 2) ----------
 
 describe("runExtensionInfo publisher (T2 PR 2)", () => {
   beforeEach(() => {
@@ -641,7 +599,6 @@ describe("runExtensionInfo publisher (T2 PR 2)", () => {
     await runExtensionInfo(client, ["ext-a"], ["info", "ext-a"]);
     expect(out.stdout).toMatch(/Publisher:\s+pub-a/);
     expect(out.stdout).toContain("AAAAAAAAAAAAAAAA…");
-    // Truncated, not full
     expect(out.stdout).not.toContain(fullKey);
   });
 
@@ -676,10 +633,6 @@ describe("runExtensionInfo publisher (T2 PR 2)", () => {
   });
 });
 
-// ─────────────────────────── T2 PR 4 — --force / --deps / --tree ────────────
-
-// ----------------------------- runExtensionRemove --force (T2 PR 4) ---------
-
 describe("runExtensionRemove --force (T2 PR 4)", () => {
   const origIsTty = process.stdout.isTTY;
   let stderrOutput: string[] = [];
@@ -700,8 +653,6 @@ describe("runExtensionRemove --force (T2 PR 4)", () => {
 
   test("--force passes force:true in payload + writes warning to stderr", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
-    // Capture stderr — `process.stderr.write` is what extension.ts uses for
-    // the --force warning, not `console.warn`, so we intercept directly.
     process.stderr.write = (chunk: string | Uint8Array): boolean => {
       stderrOutput.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
       return true;
@@ -716,13 +667,10 @@ describe("runExtensionRemove --force (T2 PR 4)", () => {
 
   test("prints actionable message on reverse_dep_blocked and exits 1", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
-    // Capture stderr before triggering the error path.
     process.stderr.write = (chunk: string | Uint8Array): boolean => {
       stderrOutput.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
       return true;
     };
-    // Override process.exit so it throws instead of killing the process,
-    // which lets us assert on stderr output written before exit is called.
     const origExit = process.exit.bind(process);
     process.exit = ((code?: number) => {
       throw new Error(`process.exit(${code ?? ""})`);
@@ -742,8 +690,6 @@ describe("runExtensionRemove --force (T2 PR 4)", () => {
     }
   });
 });
-
-// ----------------------------- runExtensionInfo --deps (T2 PR 4) ------------
 
 describe("runExtensionInfo --deps (T2 PR 4)", () => {
   beforeEach(() => {
@@ -793,13 +739,10 @@ describe("runExtensionInfo --deps (T2 PR 4)", () => {
     ]);
     await runExtensionInfo(client, ["ext-b"], ["info", "ext-b", "--deps"]);
     expect(out.stdout).toContain("(none)");
-    // Neither Forward nor Reverse section should appear
     expect(out.stdout).not.toContain("Forward");
     expect(out.stdout).not.toContain("Reverse");
   });
 });
-
-// ----------------------------- runExtensionList --tree (T2 PR 4) ------------
 
 describe("runExtensionList --tree (T2 PR 4)", () => {
   beforeEach(() => {
@@ -810,7 +753,6 @@ describe("runExtensionList --tree (T2 PR 4)", () => {
   });
 
   test("--tree fetches per-extension info and renders via renderTree", async () => {
-    // extension.list → 2 rows; then extension.info for each row
     const { client, calls } = createMockIpcClient([
       {
         extensions: [
@@ -818,18 +760,14 @@ describe("runExtensionList --tree (T2 PR 4)", () => {
           { id: "ext-b", version: "2.0.0", enabled: 1 },
         ],
       },
-      // extension.info for ext-a
       { extension: { forwardDeps: [{ id: "ext-b", range: "^2.0.0" }] } },
-      // extension.info for ext-b
       { extension: { forwardDeps: [] } },
     ]);
     await runExtensionList(client, ["list", "--tree"]);
-    // Should have made 3 calls: list + 2 info
     expect(calls.length).toBe(3);
     expect(calls[0]?.method).toBe("extension.list");
     expect(calls[1]?.method).toBe("extension.info");
     expect(calls[2]?.method).toBe("extension.info");
-    // renderTree output should contain both extension ids
     expect(out.stdout).toContain("ext-a");
     expect(out.stdout).toContain("ext-b");
   });
@@ -837,10 +775,8 @@ describe("runExtensionList --tree (T2 PR 4)", () => {
   test("--tree falls back to leaf node when extension.info throws", async () => {
     const { client } = createMockIpcClient([
       { extensions: [{ id: "ext-z", version: "0.1.0", enabled: 1 }] },
-      // extension.info throws
       new Error("info unavailable"),
     ]);
-    // Should not throw — best-effort leaf rendering
     await runExtensionList(client, ["list", "--tree"]);
     expect(out.stdout).toContain("ext-z");
   });

@@ -1,4 +1,3 @@
-/** V31 migration — `extension_dependency` table + reverse-dep index. See spec §3. */
 export const V31_EXTENSION_DEPENDENCY_SQL = `
 CREATE TABLE extension_dependency (
   extension_id  TEXT    NOT NULL,

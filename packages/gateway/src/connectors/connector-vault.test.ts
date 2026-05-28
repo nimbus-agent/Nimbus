@@ -14,10 +14,6 @@ import {
   writePerServiceOAuthKey,
 } from "./connector-vault.ts";
 
-// Type-equality probe (Hilger). Two type parameters are equal iff both are
-// assignable in both directions when wrapped in identity-typed arrow functions.
-// Used below to pin `ConnectorSecretKeyOf<S>` to specific union literals so
-// that any silent widening (e.g. to `string`) fails compile, not just runtime.
 type Eq<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
 function assertEq<_A, _B>(_: Eq<_A, _B>): void {
@@ -69,18 +65,13 @@ describe("readConnectorSecret", () => {
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
     void readConnectorSecret(vault, "google_drive", "oauth");
 
-    // The runtime expectation is irrelevant for these checks; the assertion
     // is that the file typechecks only with the @ts-expect-error directives.
     expect(true).toBe(true);
   });
 });
 
 describe("ConnectorSecretKeyOf — type pins", () => {
-  // These pins fail at compile time if `ConnectorSecretKeyOf<S>` ever silently
-  // widens to `string` or drifts from the manifest's bare-key suffix union.
   // The earlier `@ts-expect-error` directives only assert that bad inputs are
-  // rejected; they would still pass if the type were `string` (which accepts
-  // every literal including the misspelled ones, plus everything else).
   test("pins to manifest-derived bare-key suffixes (compile-time)", () => {
     assertEq<ConnectorSecretKeyOf<"github">, "pat">(true);
     assertEq<ConnectorSecretKeyOf<"slack">, "oauth">(true);
@@ -89,9 +80,6 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"datadog">, "api_key" | "app_key" | "site">(true);
     assertEq<ConnectorSecretKeyOf<"bitbucket">, "username" | "app_password">(true);
 
-    // Empty-manifest services must resolve to `never`, not `string`. This is
-    // the main defence the `[T] extends [never]` non-distributive guard in
-    // ConnectorSecretKeyOf was added for.
     assertEq<ConnectorSecretKeyOf<"google_drive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"gmail">, never>(true);
     assertEq<ConnectorSecretKeyOf<"google_photos">, never>(true);
@@ -100,24 +88,19 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"teams">, never>(true);
     assertEq<ConnectorSecretKeyOf<"github_actions">, never>(true);
 
-    // Negative pins prove the equality probe distinguishes the cases above
-    // from the most plausible regression (silent widening to `string`).
     // @ts-expect-error — `ConnectorSecretKeyOf<"github">` is `"pat"`, not `string`.
     assertEq<ConnectorSecretKeyOf<"github">, string>(true);
     // @ts-expect-error — `ConnectorSecretKeyOf<"google_drive">` is `never`, not `string`.
     assertEq<ConnectorSecretKeyOf<"google_drive">, string>(true);
 
-    // writeConnectorSecret keyName must accept the same union as readConnectorSecret.
     assertEq<Parameters<typeof writeConnectorSecret<"github">>[2], "pat">(true);
     assertEq<Parameters<typeof writeConnectorSecret<"datadog">>[2], "api_key" | "app_key" | "site">(
       true,
     );
 
-    // sharedOAuthKey signature pins.
     assertEq<Parameters<typeof sharedOAuthKey>[0], "google" | "microsoft">(true);
     assertEq<ReturnType<typeof sharedOAuthKey>, "google.oauth" | "microsoft.oauth">(true);
 
-    // deleteConnectorSecret signature pins (parameter + return type).
     assertEq<Parameters<typeof deleteConnectorSecret<"github">>[2], "pat">(true);
     assertEq<ReturnType<typeof deleteConnectorSecret>, Promise<void>>(true);
 
@@ -278,7 +261,6 @@ describe("writePerServiceOAuthKey", () => {
     const vault = createMemoryVault();
     await vault.set("github.oauth", "ghp_test");
     await writePerServiceOAuthKey(vault, "github", "github.oauth");
-    // No per-service Github OAuth key exists, so nothing else is written.
     expect(await vault.get("github.oauth")).toBe("ghp_test");
   });
 
@@ -309,7 +291,6 @@ describe("migrateToPerServiceOAuthKeys", () => {
     await vault.set("outlook.oauth", "outlook-specific");
     await migrateToPerServiceOAuthKeys(vault);
     expect(await vault.get("outlook.oauth")).toBe("outlook-specific");
-    // Other per-service keys still get the shared value because they were empty.
     expect(await vault.get("onedrive.oauth")).toBe("shared");
     expect(await vault.get("teams.oauth")).toBe("shared");
   });

@@ -13,10 +13,6 @@ interface Props {
   readonly showCancelHint: boolean;
 }
 
-/**
- * Mutable context bundled into one object so per-keystroke handlers take
- * two parameters (context + position) instead of a long parameter list.
- */
 interface ProcessContext {
   readonly bufRef: React.MutableRefObject<string>;
   readonly histCursorRef: React.MutableRefObject<number | null>;
@@ -37,7 +33,6 @@ function isEditable(ctx: ProcessContext): boolean {
   return !ctx.inHitlRef.current && !ctx.disabledRef.current;
 }
 
-/** Up arrow — step back to an older entry, clamp at the oldest. */
 function handleUp(ctx: ProcessContext): void {
   if (!isEditable(ctx)) {
     return;
@@ -53,7 +48,6 @@ function handleUp(ctx: ProcessContext): void {
   ctx.forceRender();
 }
 
-/** Down arrow — step forward through history, past the end back to empty. */
 function handleDown(ctx: ProcessContext): void {
   if (!isEditable(ctx)) {
     return;
@@ -74,11 +68,6 @@ function handleDown(ctx: ProcessContext): void {
   ctx.forceRender();
 }
 
-/**
- * Advance past an ANSI CSI sequence, returning the new position.
- * Up/Down are short-circuited by the caller; this handles everything else
- * (right arrow, etc.) with a full CSI skip.
- */
 function skipCsi(chunk: string, start: number): number {
   let i = start;
   while (i < chunk.length) {
@@ -91,7 +80,6 @@ function skipCsi(chunk: string, start: number): number {
   return i;
 }
 
-/** Returns the new position after consuming the escape sequence. */
 function handleEscape(chunk: string, i: number, ctx: ProcessContext): number {
   const three = chunk.slice(i, i + 3);
   if (three === "\x1B[A") {
@@ -105,7 +93,6 @@ function handleEscape(chunk: string, i: number, ctx: ProcessContext): number {
   return skipCsi(chunk, i + 1);
 }
 
-/** Enter / Return — trim, submit, persist to history, reset buffer. */
 function handleSubmit(ctx: ProcessContext): void {
   if (!isEditable(ctx)) {
     return;
@@ -130,7 +117,6 @@ function handleSubmit(ctx: ProcessContext): void {
   ctx.forceRender();
 }
 
-/** Backspace / Delete — trim one char off the end of the buffer. */
 function handleBackspace(ctx: ProcessContext): void {
   if (!isEditable(ctx)) {
     return;
@@ -143,7 +129,6 @@ function isHitlKey(ch: string): boolean {
   return ch === "a" || ch === "r" || ch === "d" || ch === "q";
 }
 
-/** Printable character — either forwards to HITL handler or appends to buffer. */
 function handlePrintable(ch: string, ctx: ProcessContext): void {
   if (ctx.inHitlRef.current) {
     if (isHitlKey(ch)) {
@@ -158,13 +143,6 @@ function handlePrintable(ch: string, ctx: ProcessContext): void {
   ctx.forceRender();
 }
 
-/**
- * Process a raw data chunk from stdin into individual actions.
- *
- * stdin.write() in ink-testing-library emits the entire string as one 'data'
- * event (e.g. "hello" is five characters in one chunk), so this function
- * iterates the chunk and dispatches each keystroke to its specific handler.
- */
 function processChunk(chunk: string, ctx: ProcessContext): void {
   let i = 0;
   while (i < chunk.length) {
@@ -188,7 +166,6 @@ function processChunk(chunk: string, ctx: ProcessContext): void {
       handleBackspace(ctx);
       continue;
     }
-    // Skip any other control characters.
     if ((ch.codePointAt(0) ?? 0) < 32) {
       continue;
     }
@@ -199,15 +176,11 @@ function processChunk(chunk: string, ctx: ProcessContext): void {
 export function QueryInput(props: Props): React.JSX.Element {
   const { mode, historyPath, onSubmit, onHitlKey, onCancelKey, showCancelHint } = props;
 
-  // Mutable buffer — updated synchronously inside the data handler so that
-  // consecutive stdin.write() calls in tests (e.g. "hello" then "\r") see
-  // the correct value without waiting for a React state flush.
   const bufRef = React.useRef("");
   const histCursorRef = React.useRef<number | null>(null);
   const historyRef = React.useRef<string[]>([]);
   const [, forceRender] = React.useReducer((n: number) => n + 1, 0);
 
-  // Stable refs so the data handler never captures stale closures.
   const inHitlRef = React.useRef(mode === "awaiting-hitl");
   const disabledRef = React.useRef(mode === "streaming" || mode === "disconnected");
   const historyPathRef = React.useRef(historyPath);
@@ -222,7 +195,6 @@ export function QueryInput(props: Props): React.JSX.Element {
   onHitlKeyRef.current = onHitlKey;
   onCancelKeyRef.current = onCancelKey;
 
-  // Load history from file (async; populates historyRef before first Up press).
   React.useEffect(() => {
     void readHistory(historyPath).then((entries) => {
       historyRef.current = entries;
@@ -231,8 +203,6 @@ export function QueryInput(props: Props): React.JSX.Element {
 
   const { stdin } = useStdin();
 
-  // useLayoutEffect runs synchronously after each render, ensuring the 'data'
-  // listener is installed before the test's first stdin.write() fires.
   React.useLayoutEffect(() => {
     const handler = (data: unknown): void => {
       const ctx: ProcessContext = {

@@ -1,12 +1,3 @@
-/**
- * nimbus-mcp-zoom — Zoom REST API MCP server (read-only). Credentials arrive
- * as the ZOOM_TOKEN env var, injected at spawn time by the Gateway after
- * resolving a fresh OAuth access token via getValidZoomAccessToken. Bearer
- * auth: `Authorization: Bearer <token>` + `Accept: application/json`; the
- * token is never logged. The API host is fixed at api.zoom.us. v1 indexes
- * scheduled meetings (`/v2/users/me/meetings?type=scheduled`); PR-3 adds
- * recordings/transcripts.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

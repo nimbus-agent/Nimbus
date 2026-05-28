@@ -5,7 +5,6 @@ import {
   tagNames,
 } from "../../../src/connectors/readwise-highlight-mapping.ts";
 
-// 2024-03-01T12:00:00.000Z → Date.parse → epoch ms.
 const HIGHLIGHTED_ISO = "2024-03-01T12:00:00.000Z";
 const HIGHLIGHTED_MS = Date.parse(HIGHLIGHTED_ISO);
 const UPDATED_ISO = "2024-03-02T08:00:00.000Z";
@@ -70,7 +69,7 @@ describe("mapReadwiseHighlightToItem", () => {
     const row = mapReadwiseHighlightToItem(makeHighlight({ text: long }), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe(`${"x".repeat(80)}…`);
-    expect(row.title.length).toBe(81); // 80 chars + the ellipsis
+    expect(row.title.length).toBe(81);
   });
 
   test("title trims whitespace before measuring", () => {

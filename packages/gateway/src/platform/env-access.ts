@@ -1,4 +1,3 @@
-/** Bracket access only — satisfies `noPropertyAccessFromIndexSignature` without dot notation on `process.env`. */
 export function processEnvGet(name: string): string | undefined {
   const v = process.env[name];
   return v;

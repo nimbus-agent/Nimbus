@@ -173,7 +173,6 @@ describe("mapDbtJobToItem", () => {
     expect(meta(row)["most_recent_run_finished_at"]).toBe(
       Date.parse("2022-03-15T09:00:00.000000Z"),
     );
-    // bodyPreview prefers the run status over state.
     expect(row.bodyPreview).toBe("nightly-prod-run — Success");
   });
 

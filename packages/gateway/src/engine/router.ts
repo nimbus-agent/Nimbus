@@ -34,11 +34,6 @@ function resolveAnthropicModelId(configured: string): string {
   return s;
 }
 
-// Model identifiers are short, ASCII, drawn from a tiny alphabet by every
-// known provider (claude-3-5-sonnet-20241022, gpt-4o-mini, etc.). Validate
-// before sending to the provider API so a tampered nimbus.toml cannot smuggle
-// arbitrary content into the outbound request body. Also breaks the CodeQL
-// js/file-access-to-http taint flow (regex test is a recognised sanitiser).
 const SAFE_MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,128}$/;
 
 function assertSafeModelName(model: string): string {
@@ -189,9 +184,6 @@ async function llmClassify(
   return classifiedFromObject(o);
 }
 
-/**
- * Single LLM call to classify NL input. Uses Anthropic when `ANTHROPIC_API_KEY` is set, else OpenAI when `OPENAI_API_KEY` is set.
- */
 export async function classifyIntent(userText: string): Promise<ClassifiedIntent> {
   const trimmed = userText.trim();
   if (trimmed.length === 0) {

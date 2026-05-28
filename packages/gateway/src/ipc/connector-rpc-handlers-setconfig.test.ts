@@ -14,7 +14,6 @@ function makeIndex(): { db: Database; idx: LocalIndex } {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
-  // Register "github" so requireRegisteredSchedulerServiceId can find it.
   idx.ensureConnectorSchedulerRegistration("github", 300_000, Date.now());
   return { db, idx };
 }
@@ -120,7 +119,6 @@ describe("handleConnectorSetConfig — enabled parameter", () => {
   test("enabled: false without scheduler calls localIndex.pauseConnectorSync", () => {
     const { idx } = makeIndex();
     const ctx = makeCtx({ serviceId: "github", enabled: false }, idx);
-    // Should not throw; pause is applied via localIndex directly (no scheduler)
     const result = handleConnectorSetConfig(ctx);
     expect(result.kind).toBe("hit");
     expect((result.value as Record<string, unknown>)["enabled"]).toBe(false);
@@ -148,10 +146,6 @@ describe("handleConnectorSetConfig — no-op omitted fields", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Helpers shared by notification tests
-// ---------------------------------------------------------------------------
-
 function setup(): { idx: LocalIndex; sched: ConnectorRpcHandlerContext["syncScheduler"] } {
   const { idx } = makeIndex();
   return { idx, sched: undefined };
@@ -173,10 +167,6 @@ function makeNotifyCtx(
     notify: (m, p) => notifications.push({ method: m, params: p }),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Task 11 + 12: connector.configChanged from handleConnectorSetConfig
-// ---------------------------------------------------------------------------
 
 describe("handleConnectorSetConfig — connector.configChanged notification", () => {
   test("emits connector.configChanged with the full snapshot after mutations", () => {
@@ -220,10 +210,6 @@ describe("handleConnectorSetConfig — connector.configChanged notification", ()
     expect(fired?.params["enabled"]).toBe(true);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Task 13: connector.configChanged from pause / resume / setInterval
-// ---------------------------------------------------------------------------
 
 describe("connector.configChanged — emitted from pause/resume/setInterval as well", () => {
   test("handleConnectorPause emits configChanged with enabled:false", () => {

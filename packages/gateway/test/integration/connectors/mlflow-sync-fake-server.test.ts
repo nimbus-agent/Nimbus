@@ -22,10 +22,8 @@ interface SearchPage {
 }
 
 interface FakeMlflowConfig {
-  /** Keyed by the incoming `page_token` query value; "" is the first page. */
   searchPages?: Record<string, SearchPage>;
   searchStatus?: number;
-  /** When true, the search endpoint returns a non-JSON body (parse error). */
   searchInvalidJson?: boolean;
 }
 
@@ -89,7 +87,6 @@ function startHarness(config: FakeMlflowConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         mlflow: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -147,7 +144,6 @@ describe("mlflow-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-mlflow1:")).toBe(true);
 
-    // Auth is exactly the `Authorization: Bearer <token>` header.
     for (const r of h.fake.requests) {
       expect(r.authorization).toBe("Bearer mlflow-test-token");
     }
@@ -193,15 +189,11 @@ describe("mlflow-sync against Bun.serve fake API", () => {
       (r) => r.path === "/api/2.0/mlflow/registered-models/search",
     );
     expect(searchReqs).toHaveLength(2);
-    // The second search request carries the page_token from page 1.
     expect(searchReqs[1]?.query).toContain("page_token=PAGE2");
   });
 
   test("MAX_PAGES cap: an endlessly-paginating registry stops after 20 page requests", async () => {
-    // Every page returns one model and a next_page_token pointing at itself,
-    // so without the cap this would loop forever.
     h = startHarness({});
-    // Override the fake to always return a self-referential next_page_token.
     h.fake.stop();
     const requests: RecordedReq[] = [];
     let counter = 0;

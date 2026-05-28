@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeLeverConfig {
-  /** Pages of postings, in order. Each entry becomes one `data` page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the postings route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -50,8 +48,6 @@ function startFakeLever(config: FakeLeverConfig): FakeLever {
           return new Response("{not json", { status: 200 });
         }
         const pages = config.pages ?? [[]];
-        // Lever offset cursor: the `offset` query param is the page index
-        // (0 when absent). The `next` value we return is the next index.
         const offset = Number(u.searchParams.get("offset") ?? "0");
         const data = pages[offset] ?? [];
         const hasNext = offset + 1 < pages.length;
@@ -91,7 +87,6 @@ function startHarness(config: FakeLeverConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         lever: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -121,8 +116,6 @@ function posting(id: string, over: Record<string, unknown> = {}): Record<string,
   };
 }
 
-// The fake fakes api.lever.co, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.lever.co → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -157,12 +150,9 @@ describe("lever-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-lever1:")).toBe(true);
 
-    // Single page (hasNext false) → the walk stopped after one GET.
     const reqs = h.fake.requests.filter((r) => r.path === "/v1/postings");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("limit=100");
-    // The Basic auth header is base64(<api_key>:) — the key as username, empty
-    // password. The raw key never appears in the header.
     const expected = `Basic ${Buffer.from("lever_api_key_secret:", "utf8").toString("base64")}`;
     for (const r of h.fake.requests) {
       expect(r.authorization).toBe(expected);
@@ -179,7 +169,6 @@ describe("lever-sync against Bun.serve fake API", () => {
   });
 
   test("hasNext/next offset-cursor walk: follows next across pages", async () => {
-    // page 0 hasNext → page 1 hasNext → page 2 last.
     h = startHarness({
       pages: [[posting("a")], [posting("b")], [posting("c")]],
     });
@@ -199,7 +188,6 @@ describe("lever-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 single-item pages, each with hasNext → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => [posting(`id-${String(i)}`)]);
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);

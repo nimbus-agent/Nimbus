@@ -117,7 +117,6 @@ describe("ConnectionManager", () => {
     const states: ConnectionState[] = [];
     mgr.onState((s) => states.push(s));
     await mgr.start();
-    // Allow retries
     await new Promise((r) => setTimeout(r, 50));
     const kinds = states.map((s) => s.kind);
     expect(kinds).toContain("connected");

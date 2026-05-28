@@ -1,15 +1,3 @@
-/**
- * Fixture seeder for the `payment-service` DORA scenario.
- *
- * Seeds 30 days of synthetic data into the unified `item` table:
- * - 13 deploys (8 GitHub Actions + 4 GitLab + 1 Jenkins)
- * - 22 merged PRs (8 GitHub + 4 GitLab + 7 "extra" GitHub sharing SHAs + 3 revert-labeled)
- * - 4 PagerDuty incidents (3 within the 60-min CFR window, 1 outside)
- *
- * Expected values are hand-computed and stored in `expected-metrics.json`.
- * The fixture timestamp `FIXTURE_NOW_MS` is frozen so the test is deterministic.
- */
-
 import type { Database } from "bun:sqlite";
 import {
   EMPTY_NIMBUS_VAULT,
@@ -54,10 +42,6 @@ function ins(db: Database, row: ItemRow): void {
 export async function seedPaymentServiceFixture(
   db: Database,
 ): Promise<{ config: DoraServiceConfig }> {
-  // ---------------------------------------------------------------------------
-  // Deploys: 13 total
-  // ---------------------------------------------------------------------------
-  // 8 GitHub Actions deploys, every 2 days starting at FIXTURE_NOW_MS - 5*DAY
   let t = FIXTURE_NOW_MS - 5 * DAY;
   for (let i = 0; i < 8; i++) {
     ins(db, {
@@ -76,7 +60,6 @@ export async function seedPaymentServiceFixture(
     t -= 2 * DAY;
   }
 
-  // 4 GitLab deploys, every 3 days starting at FIXTURE_NOW_MS - 1*DAY
   t = FIXTURE_NOW_MS - 1 * DAY;
   for (let i = 0; i < 4; i++) {
     ins(db, {
@@ -95,7 +78,6 @@ export async function seedPaymentServiceFixture(
     t -= 3 * DAY;
   }
 
-  // 1 Jenkins deploy at FIXTURE_NOW_MS - 15*DAY
   ins(db, {
     id: "jenkins:jen_deploy_0",
     service: "jenkins",
@@ -110,10 +92,6 @@ export async function seedPaymentServiceFixture(
     },
   });
 
-  // ---------------------------------------------------------------------------
-  // Merged PRs: 22 total (3 reverts excluded from lead time)
-  // ---------------------------------------------------------------------------
-  // 8 GitHub PRs, each merged 1 hour (3600 s) before the matching GHA deploy.
   for (let i = 0; i < 8; i++) {
     const deployAt = FIXTURE_NOW_MS - 5 * DAY - i * 2 * DAY;
     const mergedAt = deployAt - 3600_000;
@@ -134,7 +112,6 @@ export async function seedPaymentServiceFixture(
     });
   }
 
-  // 4 GitLab PRs, each merged 2 hours (7200 s) before the matching GitLab deploy.
   for (let i = 0; i < 4; i++) {
     const deployAt = FIXTURE_NOW_MS - 1 * DAY - i * 3 * DAY;
     const mergedAt = deployAt - 7200_000;
@@ -155,10 +132,6 @@ export async function seedPaymentServiceFixture(
     });
   }
 
-  // 7 "extra" GitHub PRs share SHAs with the first 7 GHA deploys but are merged
-  // 10+ days back so each one matches the same-SHA deploy with a larger lead-time
-  // delta. The calculator's find() picks the FIRST deploy with matching SHA where
-  // deploy.modifiedAt >= pr.merged_at — in our insertion order, that's gha_deploy_i.
   for (let i = 0; i < 7; i++) {
     const mergedAt = FIXTURE_NOW_MS - (10 * DAY + i * 1 * DAY) - 1800_000;
     ins(db, {
@@ -178,7 +151,6 @@ export async function seedPaymentServiceFixture(
     });
   }
 
-  // 3 revert-labeled PRs sharing SHAs with the first 3 GHA deploys — excluded by label.
   for (let i = 0; i < 3; i++) {
     const mergedAt = FIXTURE_NOW_MS - (4 * DAY + i * DAY);
     ins(db, {
@@ -198,11 +170,6 @@ export async function seedPaymentServiceFixture(
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // PagerDuty incidents: 4 total (3 inside CFR window, 1 outside)
-  // ---------------------------------------------------------------------------
-  // Flow built incidents through the production parser so the DORA calculator
-  // sees what syncPagerdutyIncidentItems would actually produce in prod.
   const pdIncidents: unknown[] = [];
   for (let i = 0; i < 3; i++) {
     const deployAt = FIXTURE_NOW_MS - 5 * DAY - i * 2 * DAY;

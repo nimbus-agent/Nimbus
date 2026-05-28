@@ -1,11 +1,5 @@
 import type { MCPClient } from "@mastra/mcp";
 
-/**
- * S8-F4 — explicit collision detection. The Mastra per-server prefix should
- * structurally prevent collisions (mcp_* prefix on user MCPs vs. built-in
- * server names without that prefix), but a future Mastra change or a manual
- * misconfiguration could regress to a silent override. Fail loud.
- */
 export function mergeToolMapsOrThrow(
   sources: ReadonlyArray<{ map: LazyMeshToolMap; name: string }>,
 ): LazyMeshToolMap {

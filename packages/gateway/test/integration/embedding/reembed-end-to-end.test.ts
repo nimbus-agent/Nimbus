@@ -12,10 +12,6 @@ import {
 } from "../../../src/ipc/index-reembed-rpc.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
 
-// Probe sqlite-vec availability once at load time. macOS CI runners without a
-// loadable vec dylib (codesigning / arch mismatch) skip this suite cleanly
-// instead of failing in beforeEach — same pattern as
-// filesystem-v2-semantic-search.integration.test.ts.
 function vecAvailable(): boolean {
   const d = new Database(":memory:");
   tryLoadSqliteVec(d);
@@ -51,8 +47,6 @@ function freshCtx(): {
     events,
     cleanup: () => {
       db.close();
-      // Windows can hold a brief file lock after close(); swallow EBUSY since
-      // the OS reaps the temp dir later.
       try {
         rmSync(tmp, { recursive: true, force: true });
       } catch {

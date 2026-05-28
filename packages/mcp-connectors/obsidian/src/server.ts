@@ -1,21 +1,3 @@
-/**
- * nimbus-mcp-obsidian — Obsidian vault MCP server.
- *
- * Vault paths are injected as OBSIDIAN_VAULT_PATHS_JSON (JSON array of
- * absolute paths). The server discovers `.obsidian/` markers within those
- * paths, parses Markdown notes on demand, and exposes:
- *
- *   - obsidian_list   (read)  — list notes, optionally filtered by vault or tag
- *   - obsidian_get    (read)  — read a single note by id or relative path
- *   - obsidian_search (read)  — substring search over note titles + bodies
- *   - obsidian_append_to_daily_note (write, HITL `obsidian.note.append`)
- *
- * Mutations require Gateway HITL — the gate fires before this server is
- * called. No assertHitlRequired() call is made here because that helper
- * does not exist in this codebase; the structural defense is in
- * packages/gateway/src/engine/executor.ts (HITL_REQUIRED_BACKING).
- */
-
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -57,16 +39,6 @@ function vaultIdFromAbsolutePath(absolutePath: string): string {
   return createHash("sha256").update(absolutePath).digest("hex").slice(0, 12);
 }
 
-/**
- * Reject any user-supplied path that escapes the vault. `vaultRoot` is
- * trusted (it came from OBSIDIAN_VAULT_PATHS_JSON, set by the gateway from
- * `[[filesystem.roots]]`). `relPath` is untrusted — caller could pass
- * `../../../etc/passwd`. Resolves both, asserts the candidate sits under
- * `vaultRoot + sep`. Throws on traversal.
- *
- * The HITL gate covers the write path; this guard covers the read path
- * (which is not gated) and adds defense-in-depth on the write path.
- */
 function assertWithinVault(vaultRoot: string, relPath: string): string {
   const resolvedRoot = resolve(vaultRoot);
   const candidate = resolve(resolvedRoot, relPath);
@@ -172,7 +144,6 @@ function readNote(
   vaultRoot: string,
   relPath: string,
 ): { title: string; body: string; raw: string } {
-  // Path-traversal guard. relPath may be user-controlled (`obsidian_get`).
   const abs = assertWithinVault(vaultRoot, relPath);
   const raw = readFileSync(abs, "utf8");
   const m = FRONTMATTER_RE.exec(raw);
@@ -202,8 +173,6 @@ const reg = createZodToolRegistrar(registerSimpleTool);
 
 const VAULTS = discoverVaults(loadVaultPaths());
 
-// ---- read tools ----
-
 const obsidianListSchema = z.object({
   vault: z.string().min(1).optional(),
   tag: z.string().min(1).optional(),
@@ -231,9 +200,6 @@ reg(
         if (out.length >= limit) break;
         const { title, raw } = readNote(v.root, rel);
         if (parsed.tag !== undefined) {
-          // Crude tag check — passes when the literal tag string occurs in
-          // the frontmatter block (full YAML semantic parsing happens in
-          // the gateway syncable; the MCP tool surface stays small).
           const fm = FRONTMATTER_RE.exec(raw);
           if (fm === null || !fm[1]?.includes(parsed.tag)) continue;
         }
@@ -339,12 +305,9 @@ reg(
   },
 );
 
-// ---- write tool (HITL: obsidian.note.append) ----
-
 const appendDailyNoteSchema = z.object({
   vault_id: z.string().min(1),
   content: z.string().min(1),
-  /** Optional override; otherwise the server picks "today" via the resolver. */
   date_iso: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -375,9 +338,6 @@ function resolveDailyNoteRelativePath(vaultRoot: string, date: Date): string {
   const cfgPath = join(vaultRoot, ".obsidian", "daily-notes.json");
   let folder = "";
   let format = "YYYY-MM-DD";
-  // Try to read the config; missing file or parse failure → defaults.
-  // No `existsSync` precheck — a missing-file `ENOENT` is caught here too,
-  // and skipping the precheck closes a TOCTOU window.
   try {
     const parsed = JSON.parse(readFileSync(cfgPath, "utf8")) as unknown;
     if (parsed !== null && typeof parsed === "object") {
@@ -406,19 +366,9 @@ reg(
     const date =
       parsed.date_iso !== undefined ? new Date(`${parsed.date_iso}T00:00:00Z`) : new Date();
     const rel = resolveDailyNoteRelativePath(v.root, date);
-    // Defense-in-depth: the user-controlled `daily-notes.json` `folder`
-    // could contain `..` segments. HITL is the structural defense; this
-    // guard fails closed if the resolved path escapes the vault.
     const abs = assertWithinVault(v.root, rel);
     mkdirSync(dirname(abs), { recursive: true });
 
-    // Open once with `a+` (read+append, creates if missing) and use the
-    // returned file descriptor for both the size/last-byte check and the
-    // append. This eliminates the time-of-check / time-of-use race that
-    // an `existsSync` → `readFileSync` → `writeFileSync` sequence would
-    // expose: a regular file swapped to a symlink between the calls would
-    // still be followed by the later one. With a single fd, all three
-    // operations resolve through the same open inode.
     const fd = openSync(abs, "a+");
     let bytes = 0;
     try {
@@ -453,6 +403,5 @@ reg(
   },
 );
 
-// ---- transport (must be the LAST line) ----
 const transport = new StdioServerTransport();
 await server.connect(transport);

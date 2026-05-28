@@ -1,7 +1,3 @@
-/**
- * §7.8 — `connector.remove`: if Vault mutation fails after shared `google.oauth` is deleted,
- * the handler restores the backed-up OAuth JSON (see `handleConnectorRemove` try/catch).
- */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
@@ -23,7 +19,6 @@ const autoApproveExecutor = new ToolExecutor(
 
 const OAUTH_BACKUP = '{"access_token":"redacted-for-test","refresh_token":"also-redacted"}';
 
-/** Deletes from the inner store, then faults when removing shared Google OAuth (simulates partial failure). */
 class FaultAfterGoogleOauthDeleteVault implements NimbusVault {
   private readonly inner = new MockVault();
 

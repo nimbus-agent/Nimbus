@@ -96,7 +96,7 @@ describe("LlmRouter.generate", () => {
 
 describe("LlmRouter capability floor", () => {
   test("skips provider below minReasoningParams for reasoning task", async () => {
-    const router = new LlmRouter(DEFAULT_CONFIG); // minReasoningParams: 7
+    const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerProvider(makeFakeProvider("ollama", true), { parameterCount: 3 });
     router.registerProvider(makeFakeProvider("remote", true));
     const provider = await router.selectProvider("reasoning");
@@ -153,9 +153,8 @@ describe("LlmRouter context window overflow", () => {
   test("mid-truncates prompt for summarisation when it exceeds context window", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     const captured = { prompt: "" };
-    // contextWindow: 100 tokens → limit = 85 tokens = 340 chars
     router.registerProvider(makeCaptureProvider("ollama", true, captured), { contextWindow: 100 });
-    const longPrompt = "x".repeat(500); // ~125 tokens > 85 limit
+    const longPrompt = "x".repeat(500);
     await router.generate({ task: "summarisation", prompt: longPrompt });
     expect(captured.prompt).toContain("[...truncated...]");
     expect(captured.prompt.length).toBeLessThan(longPrompt.length);
@@ -170,7 +169,7 @@ describe("LlmRouter context window overflow", () => {
     router.registerProvider(makeCaptureProvider("remote", true, captured));
     const longPrompt = "x".repeat(500);
     await router.generate({ task: "reasoning", prompt: longPrompt });
-    expect(captured.prompt).toBe(longPrompt); // remote receives full prompt
+    expect(captured.prompt).toBe(longPrompt);
   });
 
   test("throws for reasoning overflow when air-gap is enforced", async () => {

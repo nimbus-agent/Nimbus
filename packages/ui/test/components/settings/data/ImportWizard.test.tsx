@@ -68,9 +68,7 @@ describe("ImportWizard — happy path + reload", () => {
     const reload = vi.fn();
     vi.stubGlobal("location", { ...globalThis.location, reload });
     dataImportMock.mockResolvedValue({ credentialsRestored: 4, oauthEntriesFlagged: 2 });
-    // Use real timers for the navigation steps, then check setTimeout behaviour
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    // Navigate to confirm step with real-timer user events before fake timers take effect
     openMock.mockResolvedValue("/mock-input/nimbus.tar.gz");
     render(<ImportWizard onClose={() => {}} />);
     await user.click(screen.getByRole("button", { name: /Choose file/ }));

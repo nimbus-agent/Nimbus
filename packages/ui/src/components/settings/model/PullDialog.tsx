@@ -52,7 +52,6 @@ export function PullDialog({ open, onClose }: Props) {
       try {
         const { available: a } = await createIpcClient().llmGetStatus();
         setAvailable(a);
-        // If ollama unavailable but llamacpp is, default to llamacpp; else leave ollama.
         if (a.ollama === false && a.llamacpp === true) setProvider("llamacpp");
       } catch {
         setAvailable({ ollama: true, llamacpp: true });
@@ -101,7 +100,6 @@ export function PullDialog({ open, onClose }: Props) {
         else unlisten = fn;
       })
       .catch(() => undefined);
-    // Re-attach: if activePullId is persisted but no notifications are flowing, arm stall timer.
     if (activePullId !== null) {
       if (stallTimerRef.current !== null) clearTimeout(stallTimerRef.current);
       stallTimerRef.current = setTimeout(() => setPullStalled(true), STALL_MS);

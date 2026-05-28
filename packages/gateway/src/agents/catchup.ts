@@ -6,18 +6,15 @@ import { detectEmptyIndex } from "./_lib/gap-notes.ts";
 import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
 import { type SynthesizerLlm, synthesize } from "./_lib/synthesize.ts";
 
-const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
-const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000;
+const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 const PER_SERVICE_QUOTA = 50;
 
 export type CatchupInput = {
   sinceMs?: number;
   service?: string;
-  /** Test seam — override the active profile's [user] me_person_id. */
   mePersonIdOverride?: string;
-  /** Test seam — replace the default `git config user.email` runner. */
   runGitOverride?: GitRunner;
-  /** Test seam — replace the default `os.userInfo().username` lookup. */
   osUsernameOverride?: string;
 };
 
@@ -45,8 +42,6 @@ export type WindowItem = {
 };
 
 type SubAgentResult = {
-  // Each sub-agent returns a single typed slice of the involvement set or the
-  // window-item bag. The agent merges them in the post-Promise loop.
   ownedServices?: string[];
   activeRepos?: string[];
   incidentServices?: string[];
@@ -79,8 +74,6 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
   const empty = detectEmptyIndex(ctx.db);
   if (empty !== null) preflightGaps.push(empty);
 
-  // Stage 0 — synchronous self-person resolution. Must complete before fan-out
-  // because every Stage 1 sub-agent needs `selfPersonId`.
   const osUsername = input.osUsernameOverride ?? safeOsUsername();
   const resolution = await resolveSelfPerson(ctx.db, {
     ...(input.mePersonIdOverride === undefined ? {} : { override: input.mePersonIdOverride }),
@@ -97,7 +90,6 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     });
   }
 
-  // Stage 1 — five parallel sub-agents.
   const coordinator = new AgentCoordinator({
     sessionId: ctx.sessionId,
     parentId: `catchup:${ctx.sessionId}`,
@@ -113,7 +105,6 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
   ];
   const results = await coordinator.run(tasks);
 
-  // Merge sub-agent outputs.
   const involvement: Involvement = {
     ownedServices: [],
     activeRepos: [],
@@ -144,7 +135,6 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     if (decoded.gap !== undefined) subAgentGaps.push(decoded.gap);
   }
 
-  // Stage 2 — score, group, order.
   let sections = scoreAndGroup(windowItems, involvement);
   if (input.service !== undefined) {
     sections = sections.filter((s) => s.serviceId === input.service);
@@ -192,10 +182,6 @@ function safeOsUsername(): string {
   }
 }
 
-// ============================================================================
-// Stage 2 — scoring + grouping.
-// ============================================================================
-
 const SCORE_OWNED_SERVICE = 1.0;
 const SCORE_ACTIVE_REPO = 0.7;
 const SCORE_INCIDENT_SERVICE = 0.7;
@@ -231,16 +217,12 @@ function scoreItem(
     raw = SCORE_DEFAULT;
     reasons.push("default");
   }
-  // Normalise the bag of additive boosts into a 0..1 value. The maximum
-  // possible raw is OWNED + REPO + INCIDENT + COLLAB ≈ 2.9; clamp at 1.
   const score = Math.min(raw, 1);
   return { score, reasons };
 }
 
 export function scoreAndGroup(items: WindowItem[], involvement: Involvement): CatchupSection[] {
   if (items.length === 0) return [];
-  // Group by service, scoring each item once. Track section aggregate score
-  // (sum of item scores) for cross-section ordering.
   const buckets = new Map<string, { items: CatchupItem[]; aggregate: number; total: number }>();
   for (const item of items) {
     const { score, reasons } = scoreItem(item, involvement);
@@ -260,8 +242,6 @@ export function scoreAndGroup(items: WindowItem[], involvement: Involvement): Ca
       slot.total += 1;
     }
   }
-  // Order items within each section by score desc; tie-break on modifiedAt desc
-  // to keep the most recent on top of equal-score clusters.
   const ordered = [...buckets.entries()].map(([serviceId, slot]) => ({
     serviceId,
     aggregate: slot.aggregate,
@@ -278,11 +258,6 @@ export function scoreAndGroup(items: WindowItem[], involvement: Involvement): Ca
   return ordered.map((o) => o.section);
 }
 
-// ============================================================================
-// Stage 1 — five sub-agents. Each is read-only SQL against the local index.
-// All SQL uses the real schema (item, sync_state, person).
-// ============================================================================
-
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
 async function subOwnedServices(
@@ -292,9 +267,6 @@ async function subOwnedServices(
 ): Promise<SubAgentResult> {
   if (selfPersonId === null) return { ownedServices: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
-  // "Owned" approximated as: services where this person has the highest
-  // authorship density in the last 90 days. We pick services where they
-  // authored ≥ 5 items (a coarse threshold that defends against noise).
   const rows = db
     .query(
       `SELECT service, COUNT(*) AS n
@@ -315,9 +287,6 @@ async function subActiveRepos(
 ): Promise<SubAgentResult> {
   if (selfPersonId === null) return { activeRepos: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
-  // Repos where the user authored a PR in the last 90 days. Repo label is the
-  // graph_entity row of type 'repo' linked through item.external_id stem.
-  // We approximate via item.external_id LIKE matching of the form "owner/repo#NNN".
   const rows = db
     .query(
       `SELECT DISTINCT
@@ -339,11 +308,6 @@ async function subRespondedIncidents(
 ): Promise<SubAgentResult> {
   if (selfPersonId === null) return { incidentServices: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
-  // Services where the user has a `resolves` graph edge into an incident
-  // entity in the last 90 days. The edge may not exist yet (graph populator
-  // follow-up); if it doesn't, this returns the empty set silently — the
-  // population gap is not a per-call gap note (it would fire on every
-  // `catchup`, polluting output).
   const rows = db
     .query(
       `SELECT DISTINCT i.service AS service
@@ -364,11 +328,6 @@ async function subCollaborators(
 ): Promise<SubAgentResult> {
   if (selfPersonId === null) return { collaboratorPersonIds: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
-  // Collaborators are other people whose authored items the user has touched
-  // (via review or shared thread) in the last 90 days. Today's index lacks a
-  // direct review_relation, so we approximate via "authors of items in repos
-  // the user is also active in" — same-repo coauthors. ≥ 3 shared items is
-  // the threshold; below that the relationship is too tenuous to surface.
   const rows = db
     .query(
       `SELECT author_id AS person_id, COUNT(*) AS n
@@ -398,8 +357,6 @@ async function subWindowItems(
   sinceMs: number,
 ): Promise<SubAgentResult> {
   const sinceCutoff = Date.now() - sinceMs;
-  // All items modified in the window, capped per-service for latency.
-  // Window query is the dominant cost; we use an indexed range on modified_at.
   const rows = db
     .query(
       `SELECT id, service, title, modified_at,
@@ -419,10 +376,6 @@ async function subWindowItems(
     repo_label: string | null;
     author_id: string | null;
   }>;
-  // Apply per-service quota in JS (cheap) so we keep fan-out latency bounded
-  // even on a large index. SQLite doesn't have window-function-friendly
-  // syntax in the indexed-build path we rely on, so a single ORDER BY +
-  // sequential walk is cleaner than per-service subqueries.
   const perService = new Map<string, number>();
   const out: WindowItem[] = [];
   for (const r of rows) {

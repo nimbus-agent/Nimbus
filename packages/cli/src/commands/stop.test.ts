@@ -1,12 +1,3 @@
-// packages/cli/src/commands/stop.test.ts
-//
-// Unit tests for `nimbus stop` decision logic. The dispatcher itself reads
-// the gateway state file via the harness mock and signals the recorded pid;
-// we test the parse + state-file decision layer here. Tests do NOT actually
-// SIGTERM real processes — the harness's `process.kill` calls hit a pid we
-// recorded ourselves below or a pid known to be alive (the test process),
-// and the dispatcher swallows the resulting error.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
@@ -54,13 +45,8 @@ describe("runStop dispatcher", () => {
   });
 
   it("attempts to signal the recorded pid when state is present", async () => {
-    // Use a pid that definitely does not exist so process.kill throws inside
-    // the swallow-it try/catch — we are exercising the branch, not the kill.
     setFixture({ gatewayState: { socketPath: "/tmp/fake.sock", pid: 2_147_483_640 } });
     await runStop([]);
-    // The dispatcher prints nothing to console.log on the signal path —
-    // @clack/prompts spinner is mocked to a no-op in the harness — so the
-    // assertion is that no "No gateway state" appeared.
     expect(out.stdout).not.toContain("No gateway state found");
   });
 });

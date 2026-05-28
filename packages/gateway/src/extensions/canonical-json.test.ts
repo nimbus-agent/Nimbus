@@ -31,14 +31,12 @@ describe("canonicalize", () => {
   });
 
   it("normalizes string VALUES to NFC", () => {
-    // "café" composed (precomposed é, U+00E9) vs decomposed (e + U+0301)
     const composed = "café";
     const decomposed = "café";
     expect(canonicalize(composed)).toBe(canonicalize(decomposed));
   });
 
   it("does NOT normalize object KEYS", () => {
-    // Keys are signed byte-for-byte; we never rewrite them.
     const composedKey = "café";
     const decomposedKey = "café";
     const composed = { [composedKey]: 1 };

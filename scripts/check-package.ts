@@ -1,13 +1,4 @@
 #!/usr/bin/env bun
-// Quick safety check for npm package names. Run before `bun add <name>` to
-// catch typosquats and brand-new (potentially slopsquatted) packages.
-//
-// Usage: bun run check-package <package-name>
-//
-// Exit codes:
-//   0  package exists; metadata printed
-//   1  package does not exist on the npm registry, or registry / network error
-//   2  usage error (no argv)
 
 type RegistryDoc = {
   name?: string;
@@ -17,10 +8,6 @@ type RegistryDoc = {
   author?: { name?: string; email?: string } | string;
 };
 
-// Pre-built regex matching C0 (U+0000-U+001F) and C1 (U+007F-U+009F) control
-// characters EXCEPT TAB (0x09), LF (0x0A), and CR (0x0D), which are kept
-// because real npm metadata fields occasionally contain them. Built from
-// String.fromCharCode so this source file holds no literal control characters.
 const _CTRL_CHARS = (() => {
   const allowed = new Set([0x09, 0x0a, 0x0d]);
   let chars = "";
@@ -33,12 +20,6 @@ const _CTRL_CHARS = (() => {
 const _ESCAPED_CTRL_CHARS = _CTRL_CHARS.replaceAll(/[\\\]^-]/g, String.raw`\$&`);
 const CTRL_RE = new RegExp(`[${_ESCAPED_CTRL_CHARS}]`, "g");
 
-/**
- * Strip C0/C1 control characters from registry-fetched strings before
- * logging. Mitigates terminal-injection (ANSI / control-sequence) risk when
- * an attacker-controlled npm package field contains escape codes. TAB / LF /
- * CR are preserved because real package descriptions sometimes contain them.
- */
 function sanitize(value: unknown): string {
   const s = typeof value === "string" ? value : JSON.stringify(value);
   return s.replaceAll(CTRL_RE, "?");

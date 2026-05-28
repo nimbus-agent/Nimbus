@@ -1,39 +1,3 @@
-/**
- * Pure mapping from an Intercom `GET /conversations` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `intercom-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "intercom", type = "conversation"` rows — a single item
- * type. `external_id = String(<conversation id>)` (Intercom ids are numeric
- * strings; the row is skipped when `id` is missing/non-numeric — accept either a
- * numeric string or a number, mirroring Raindrop's `_id` skip logic). The
- * conceptual item identity is `intercom:conversation`; the `item.id` ends up
- * `intercom:<id>`.
- *
- * IMPORTANT: Intercom's `created_at` / `updated_at` are epoch SECONDS, exactly
- * like Stripe's timestamps and UNLIKE the epoch-ms / ISO-8601 APIs. They are
- * multiplied by 1000 via {@link secondsToMs} (re-used from the Stripe mapper —
- * the single source of the seconds→ms helper) on the way into the index — never
- * passed through verbatim, and never run through `Date.parse` (these are
- * numbers, not ISO strings).
- *
- * `canonical_url` / `url` are null: the Intercom inbox deep link needs the
- * workspace app id, which is not present in the conversation payload (deferred —
- * the Mercury null-canonical pattern).
- *
- * The conversation `source.body` is HTML; it is stripped to plain text for the
- * body preview (a simple tag-strip + whitespace collapse, no dependency).
- *
- * The `conversation:conversation` type is sparse/structured here — the
- * conversation LIST endpoint only returns the first message (`source.body`),
- * bodies are short, and the batch default is to omit to avoid surprise OpenAI
- * spend for hybrid-mode users — so it stays on local MiniLM embeddings, NOT
- * added to `PROSE_HEAVY_TYPES`.
- */
-
-// Re-use the Stripe seconds→ms helper — Intercom timestamps are epoch SECONDS
-// (NOT ms, NOT ISO). Do not redefine a local copy.
 import { secondsToMs } from "./stripe-invoice-mapping.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -54,12 +18,6 @@ export interface IntercomMappedRow {
   readonly syncedAt: number;
 }
 
-/**
- * Strip HTML tags from a string to plain text. Removes `<...>` runs, collapses
- * runs of whitespace to a single space, and trims. Returns `""` for non-strings
- * or empty results. Intentionally simple — no HTML-entity decoding, no
- * dependency.
- */
 export function stripHtml(raw: unknown): string {
   if (typeof raw !== "string") {
     return "";
@@ -70,11 +28,6 @@ export function stripHtml(raw: unknown): string {
     .trim();
 }
 
-/**
- * The conversation `id` may be a numeric string (`"123456"`) or a number
- * (`123456`). Return the stringified numeric id, or `null` when the id is
- * missing/non-numeric.
- */
 function conversationId(row: Record<string, unknown>): string | null {
   const num = numberField(row, "id");
   if (num !== undefined) {
@@ -87,7 +40,6 @@ function conversationId(row: Record<string, unknown>): string | null {
   return null;
 }
 
-/** Contact ids from a `contacts: { contacts: [{ id }] }` shape, defensive. */
 function contactIds(row: Record<string, unknown>): string[] {
   const contacts = asRecord(row["contacts"]);
   const list = contacts === undefined ? undefined : contacts["contacts"];
@@ -110,7 +62,6 @@ function contactIds(row: Record<string, unknown>): string[] {
   return ids;
 }
 
-/** Tag NAMES from a `tags: { tags: [{ name }] }` shape, defensive. */
 function tagNames(row: Record<string, unknown>): string[] {
   const tags = asRecord(row["tags"]);
   const list = tags === undefined ? undefined : tags["tags"];
@@ -158,7 +109,6 @@ export function mapIntercomConversationToItem(
   const sourceAuthorName = stringField(author, "name") ?? null;
   const sourceAuthorEmail = stringField(author, "email") ?? null;
 
-  // assignee_id: `admin_assignee_id`, else nested `assignee.id`.
   const adminAssignee = numberField(row, "admin_assignee_id");
   const assigneeObj = asRecord(row["assignee"]) ?? {};
   const assigneeNested =
@@ -174,17 +124,11 @@ export function mapIntercomConversationToItem(
   const createdAt = secondsToMs(numberField(row, "created_at"));
   const updatedAt = secondsToMs(numberField(row, "updated_at"));
 
-  // canonical/url is null — the inbox deep link needs the workspace app id,
-  // which is not present in the conversation payload (deferred).
   const canonicalUrl: string | null = null;
 
-  // title: `source.subject` when non-empty, else `Conversation <id>` (Intercom
-  // conversations frequently have no subject).
   const trimmedSubject = sourceSubject !== null ? sourceSubject.trim() : "";
   const title = trimmedSubject !== "" ? trimmedSubject : `Conversation ${id}`;
 
-  // bodyPreview: the HTML-stripped source body, else the state label, else the
-  // title.
   const strippedBody = stripHtml(sourceBodyHtml);
   const bodyPreview =
     strippedBody !== "" ? strippedBody : state !== null && state !== "" ? state : title;

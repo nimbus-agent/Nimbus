@@ -1,7 +1,3 @@
-/**
- * Bun worker entry: owns `@xenova/transformers` + sqlite writes for embeddings.
- * Loaded via `new Worker(new URL("./embedding-worker.ts", import.meta.url))`.
- */
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";

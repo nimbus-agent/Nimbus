@@ -1,15 +1,3 @@
-/**
- * Integration: exercise `createSnykSyncable` against a Bun.serve fake
- * Snyk REST endpoint. Complements the MockFetch-based unit tests by
- * proving the sync handler emits well-formed HTTP requests (URL,
- * Authorization header, JSON body) and consumes the live response
- * shape end-to-end through real fetch + JSON parsing.
- *
- * Pattern: install a fetch interceptor that rewrites `api.snyk.io`
- * requests to the local `Bun.serve` URL, then assert the gateway's
- * `item` table contains the upserted rows after `sync()` returns.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
@@ -118,8 +106,6 @@ function startHarness(): Harness {
   const vault = createMockVault();
   const fake = startFakeSnyk();
   const originalFetch = globalThis.fetch;
-  // Rewrite api.snyk.io → fake.baseUrl so the production code stays
-  // unchanged (no test-only env-var override of SNYK_API).
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -160,16 +146,13 @@ describe("snyk-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-snyk1:")).toBe(true);
 
-    // Every request carries the `token <value>` header.
     expect(h.fake.requests.length).toBeGreaterThan(0);
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("token fake-token-xyz");
     }
-    // The handler called the org-discovery endpoint exactly once.
     const orgCalls = h.fake.requests.filter((r) => r.path === "/v1/orgs");
     expect(orgCalls).toHaveLength(1);
 
-    // Two issues land in the index — one per org.
     const rows = h.db
       .query<{ external_id: string; title: string; metadata: string }, []>(
         "SELECT external_id, title, metadata FROM item WHERE service = 'snyk' ORDER BY external_id",

@@ -135,9 +135,6 @@ function applyNimbusEmbeddingKey(
   }
 }
 
-/**
- * Best-effort `[embedding]` section from `nimbus.toml` (no full TOML dependency).
- */
 export function parseNimbusTomlEmbeddingSection(source: string): Partial<NimbusEmbeddingToml> {
   const lines = source.split(/\r?\n/);
   let inEmbedding = false;
@@ -166,7 +163,6 @@ export function parseNimbusTomlEmbeddingSection(source: string): Partial<NimbusE
   return out;
 }
 
-/** Active profile from `NIMBUS_PROFILE` (default profile uses `nimbus.toml`). */
 export function resolveNimbusTomlForProfile(configDir: string): string {
   const p = processEnvGet("NIMBUS_PROFILE")?.trim();
   if (p === undefined || p === "" || p === "default") {
@@ -195,12 +191,9 @@ export function loadNimbusEmbeddingFromConfigDir(configDir: string): NimbusEmbed
   return loadNimbusEmbeddingFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [llm] section ──────────────────────────────────────────────────────────
-
 export type NimbusLlmToml = {
   preferLocal: boolean;
   remoteModel: string;
-  /** Cheaper/faster model used by the engine intent classifier. May differ from {@link remoteModel}. */
   classifierModel: string;
   localModel: string;
   llamacppServerPath: string;
@@ -303,13 +296,6 @@ export function loadNimbusLlmFromPath(tomlPath: string): NimbusLlmToml {
   }
 }
 
-/**
- * Load only the keys the user explicitly set in `[llm]`. Returns an empty
- * object when the file is missing, unreadable, or has no `[llm]` section.
- *
- * Use this when the caller wants to distinguish "user wrote it" from
- * "defaulted" — e.g. to layer on top of an env-var resolution chain.
- */
 export function loadNimbusLlmPartialFromPath(tomlPath: string): Partial<NimbusLlmToml> {
   if (!existsSync(tomlPath)) {
     return {};
@@ -326,24 +312,13 @@ export function loadNimbusLlmFromConfigDir(configDir: string): NimbusLlmToml {
   return loadNimbusLlmFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [voice] section ────────────────────────────────────────────────────────
-
 export type NimbusVoiceToml = {
   enabled: boolean;
-  /** Absolute path to the whisper-cli binary. Falls back to NIMBUS_WHISPER_PATH env var, then PATH. */
   whisperPath: string;
-  /** Whisper model for full STT transcription, e.g. "base.en", "small", "medium". */
   whisperModel: string;
-  /**
-   * Whisper model used exclusively by the wake word detector loop.
-   * Defaults to "tiny.en" to keep CPU load low — independent of `whisperModel`.
-   */
   wakeWordWhisperModel: string;
-  /** Wake word phrase. Case-insensitive substring match against Whisper transcript. */
   wakeWord: string;
-  /** Optional path to piper TTS binary for higher-quality output. */
   piperPath: string;
-  /** Optional path to piper voice model (.onnx file). */
   piperModel: string;
 };
 
@@ -427,8 +402,6 @@ export function loadNimbusVoiceFromPath(tomlPath: string): NimbusVoiceToml {
 export function loadNimbusVoiceFromConfigDir(configDir: string): NimbusVoiceToml {
   return loadNimbusVoiceFromPath(join(configDir, "nimbus.toml"));
 }
-
-// ─── [updater] section ──────────────────────────────────────────────────────
 
 export type NimbusUpdaterToml = {
   enabled: boolean;
@@ -523,8 +496,6 @@ export function loadNimbusUpdaterFromPath(tomlPath: string): NimbusUpdaterToml {
 export function loadNimbusUpdaterFromConfigDir(configDir: string): NimbusUpdaterToml {
   return loadNimbusUpdaterFromPath(join(configDir, "nimbus.toml"));
 }
-
-// ─── [lan] section ──────────────────────────────────────────────────────────
 
 export type NimbusLanToml = {
   enabled: boolean;
@@ -632,10 +603,7 @@ export function loadNimbusLanFromConfigDir(configDir: string): NimbusLanToml {
   return loadNimbusLanFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [automation] ───────────────────────────────────────────────────────────
-
 export type NimbusAutomationToml = {
-  /** When true (default), graph predicates on watchers are evaluated. */
   graphConditions: boolean;
 };
 
@@ -690,13 +658,7 @@ export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAuto
   return loadNimbusAutomationFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [extensions] section (T2 PR 3) ─────────────────────────────────────────
-
 export type NimbusExtensionsToml = {
-  /**
-   * Polling cadence (hours) for the `ExtensionAutoUpdater` daemon. Integer in
-   * [1, 168]. Default 24.
-   */
   updateCheckIntervalHours: number;
 };
 
@@ -759,12 +721,7 @@ export function loadNimbusExtensionsFromConfigDir(configDir: string): NimbusExte
   return loadNimbusExtensionsFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [user] — first-class identity hint for built-in agents (T3 PR 3).
-// ---------------------------------------------------------------------------
-
 export type NimbusUserToml = {
-  /** Optional override for self-person resolution; consumed by `nimbus catchup`. */
   mePersonId?: string;
 };
 
@@ -817,19 +774,8 @@ export function loadNimbusUserFromConfigDir(configDir: string): NimbusUserToml {
   return loadNimbusUserFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [pagerduty] — Top-level PagerDuty connector + preflight knobs
-// (Phase 5 T4 wrap-up).
-// ---------------------------------------------------------------------------
-
 export type NimbusPagerdutyToml = {
-  /** Hard cap on pages walked per `pagerduty-sync.ts` invocation. 1..100. */
   maxPagesPerSync: number;
-  /**
-   * Priority names that preflight should treat as equivalent to "P1".
-   * Stored lowercased + deduplicated. Empty by default (preflight matches
-   * the verbatim "P1" string only, identical to pre-existing behavior).
-   */
   severityP1Aliases: readonly string[];
 };
 
@@ -863,7 +809,6 @@ function parseNimbusPagerdutySection(source: string): Partial<NimbusPagerdutyTom
       }
       out.maxPagesPerSync = n;
     } else if (key === "severity_p1_aliases") {
-      // Reuse parseStringArray (defined later in this file) — already drops empty entries.
       const raw = parseStringArray(valRaw);
       const seen = new Set<string>();
       const collected: string[] = [];
@@ -904,10 +849,6 @@ export function loadNimbusPagerdutyFromPath(tomlPath: string): NimbusPagerdutyTo
   try {
     return parseNimbusPagerdutyToml(raw);
   } catch (err) {
-    // Surface validation errors (e.g. max_pages_per_sync out of range) so
-    // operators don't silently fall back to defaults. Matches the
-    // ci.service / metrics.dora conflict-warning pattern used elsewhere in
-    // this file (see loadNimbusServiceConfigsFromConfigDir).
     process.stderr.write(
       `nimbus: [pagerduty] config in ${tomlPath} rejected, using defaults: ` +
         `${err instanceof Error ? err.message : String(err)}\n`,
@@ -920,12 +861,7 @@ export function loadNimbusPagerdutyFromConfigDir(configDir: string): NimbusPager
   return loadNimbusPagerdutyFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [metrics.dora.<service-id>] — DORA service map (Phase 5 T4 PR 2)
-// ---------------------------------------------------------------------------
-
 const DORA_TABLE_PREFIX = "[metrics.dora.";
-// Canonical set of service-config keys shared by [metrics.dora.<id>] and [ci.service.<id>] parsers.
 const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   "repos",
   "pagerduty_services",
@@ -943,7 +879,6 @@ function parseStringArray(raw: string): string[] {
   const inner = t.slice(1, -1).trim();
   if (inner.length === 0) return [];
   const out: string[] = [];
-  // Naive split — repos / pagerduty ids don't contain commas or quotes.
   for (const part of inner.split(",")) {
     const v = parseString(part);
     if (v.length > 0) out.push(v);
@@ -951,13 +886,6 @@ function parseStringArray(raw: string): string[] {
   return out;
 }
 
-/**
- * Shared materialization of accumulated key-value pairs into ServiceConfig
- * instances. Used by both `[metrics.dora.<id>]` and `[ci.service.<id>]` parsers.
- *
- * `blockLabel` is the table-prefix label used in error messages
- * (e.g. "metrics.dora" or "ci.service").
- */
 function materializeServiceConfigs(
   accum: Map<string, Record<string, string>>,
   blockLabel: string,
@@ -1072,12 +1000,6 @@ export function loadNimbusDoraFromConfigDir(configDir: string): Map<string, Serv
   return loadNimbusDoraFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [ci.service.<service-id>] — Generic service map for CI/CD features
-// (Phase 5 T4 PR 3a). Same fields and semantics as [metrics.dora.<id>];
-// reading either block yields a ServiceConfig.
-// ---------------------------------------------------------------------------
-
 const CI_SERVICE_TABLE_PREFIX = "[ci.service.";
 
 export function parseNimbusCiServiceToml(raw: string): Map<string, ServiceConfig> {
@@ -1112,12 +1034,6 @@ export function parseNimbusCiServiceToml(raw: string): Map<string, ServiceConfig
   return materializeServiceConfigs(accum, "ci.service");
 }
 
-/**
- * Loads service configs from `<configDir>/nimbus.toml`, unioning the
- * `[metrics.dora.<id>]` and `[ci.service.<id>]` blocks. When a service id
- * appears under both keys, the `[ci.service.<id>]` block wins and a warning
- * is logged once naming the conflict.
- */
 export function loadNimbusServiceConfigsFromConfigDir(
   configDir: string,
 ): Map<string, ServiceConfig> {
@@ -1126,9 +1042,6 @@ export function loadNimbusServiceConfigsFromConfigDir(
   const raw = readFileSync(tomlPath, "utf8");
   const dora = parseNimbusDoraToml(raw);
   const ci = parseNimbusCiServiceToml(raw);
-  // Phase 5 T4 wrap-up: read [pagerduty].severity_p1_aliases once and
-  // attach to every materialized ServiceConfig. The aliases array is
-  // already lowercased + deduped by parseNimbusPagerdutyToml.
   const pagerdutyCfg = parseNimbusPagerdutyToml(raw);
   const aliases = pagerdutyCfg.severityP1Aliases;
   const merged: Map<string, ServiceConfig> = new Map();

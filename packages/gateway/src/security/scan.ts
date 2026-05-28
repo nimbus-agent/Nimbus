@@ -1,12 +1,3 @@
-/**
- * Pure scanner over indexed item rows. Takes an iterable of `ScanItem`
- * records, applies each `SecretPattern` regex against `body_preview`, and
- * returns the structured envelope (minus the depth-skip count, which the
- * dispatcher fills in from its `sync_state.depth` query).
- *
- * No DB, no audit, no I/O. Trivially unit-testable with synthetic inputs.
- */
-
 import { buildContextSnippet, redactSecret, type SecretPattern } from "./secret-patterns.ts";
 
 export interface ScanItem {
@@ -42,12 +33,6 @@ export interface PureScanResult {
   readonly findings: readonly SecurityFinding[];
 }
 
-/**
- * Iterate rows, apply each pattern to `body_preview`, emit a `SecurityFinding`
- * per (row × pattern × match offset). Returns the pure envelope; the
- * dispatcher merges in `items_skipped_depth` and `skipped_connectors` before
- * returning to the caller.
- */
 export function scanItemsForSecrets(
   rows: Iterable<ScanItem>,
   patterns: readonly SecretPattern[],

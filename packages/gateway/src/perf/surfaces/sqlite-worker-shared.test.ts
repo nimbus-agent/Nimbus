@@ -25,7 +25,7 @@ describe("runWorkerLoop", () => {
         attempt += 1;
         if (attempt % 3 === 0) {
           const err = new Error("database is locked") as Error & { code: number };
-          err.code = 5; // SQLITE_BUSY
+          err.code = 5;
           throw err;
         }
       },
@@ -35,7 +35,6 @@ describe("runWorkerLoop", () => {
     const result = await runWorkerLoop({ durationMs: 50, deps });
     expect(result.busyRetries).toBeGreaterThan(0);
     expect(result.writes).toBeGreaterThan(0);
-    // Writes + retries = total attempts; retries should not be counted as writes.
     expect(result.writes + result.busyRetries).toBe(attempt);
   });
 

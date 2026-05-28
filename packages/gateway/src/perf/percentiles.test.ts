@@ -11,7 +11,7 @@ describe("computePercentiles", () => {
   });
 
   test("computes correct percentiles for a 100-sample uniform distribution", () => {
-    const samples = Array.from({ length: 100 }, (_, i) => i + 1); // 1..100
+    const samples = Array.from({ length: 100 }, (_, i) => i + 1);
     const r = computePercentiles(samples);
     expect(r.p50).toBe(50.5);
     expect(r.p95).toBe(95.05);

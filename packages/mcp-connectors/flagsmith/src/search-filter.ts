@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `flagsmith_search`. Extracted from
- * `server.ts` so the matching logic can be unit-tested without spawning an
- * MCP stdio transport. The server keeps the HTTP / envelope wrapper; this
- * module owns the name/description/tags haystack + case-insensitive
- * substring match.
- */
-
 export interface FlagsmithSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;
@@ -21,10 +13,6 @@ function tagsString(row: Record<string, unknown>): string {
   if (!Array.isArray(tags)) {
     return "";
   }
-  // Flagsmith feature tags arrive as numeric ids here (labels are resolved
-  // gateway-side); stringify whatever is present so a numeric/string tag id
-  // still contributes to the haystack. Name + description remain the primary
-  // matching path.
   return tags
     .filter((t): t is string | number => typeof t === "string" || typeof t === "number")
     .map((t) => String(t))

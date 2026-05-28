@@ -4,19 +4,11 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-/**
- * Test entry point — invoked by the dispatcher `runVault(args)` and the
- * colocated `vault.test.ts`. Do not call from other command files.
- */
 export async function runVaultSet(client: IPCClient, key: string, value: string): Promise<void> {
   await client.call("vault.set", { key, value });
   console.log("Stored.");
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runVault(args)` and the
- * colocated `vault.test.ts`. Do not call from other command files.
- */
 export async function runVaultGet(client: IPCClient, key: string): Promise<void> {
   const ok = await confirm({
     message: "Secrets echo to this terminal. Continue?",
@@ -28,19 +20,11 @@ export async function runVaultGet(client: IPCClient, key: string): Promise<void>
   console.log(v ?? "(not set)");
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runVault(args)` and the
- * colocated `vault.test.ts`. Do not call from other command files.
- */
 export async function runVaultDelete(client: IPCClient, key: string): Promise<void> {
   await client.call("vault.delete", { key });
   console.log("Deleted (if it existed).");
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runVault(args)` and the
- * colocated `vault.test.ts`. Do not call from other command files.
- */
 export async function runVaultList(client: IPCClient, prefix?: string): Promise<void> {
   const listKeysParams: { prefix?: string } = {};
   if (prefix !== undefined) {

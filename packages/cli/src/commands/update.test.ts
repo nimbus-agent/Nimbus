@@ -1,9 +1,3 @@
-// packages/cli/src/commands/update.test.ts
-//
-// Unit tests for `nimbus update` — argv parser + sub-handlers driven by a
-// fixture IPCClient mock. Tests the IPC calls to `updater.checkNow` and
-// `updater.applyUpdate` without spawning a real gateway socket.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
@@ -51,10 +45,6 @@ describe("parseUpdateArgs", () => {
 });
 
 describe("runUpdateCheck", () => {
-  // Snapshot + restore the process.exitCode so cross-test bleed-through
-  // doesn't leak into adjacent suites. `process.exitCode` is typed as
-  // `number | string | null | undefined` on recent Node — coerce to a
-  // plain number on save and re-assign verbatim on restore.
   let origExitCode: typeof process.exitCode;
 
   beforeEach(() => {
@@ -175,10 +165,6 @@ describe("runUpdate dispatcher", () => {
   });
 
   it("bare invocation with update available aborts under non-TTY stdin", async () => {
-    // The interactive prompt at update.ts:85 (`process.stdout.write`) executes
-    // here (so it is covered) but is NOT captured by captureOutput(); assert on
-    // the console.log("Aborted.") line, not the prompt text. Under `bun test`
-    // stdin is non-TTY, so readLine() returns "" and the abort path runs.
     const mock = createMockIpcClient([
       {
         currentVersion: "0.1.0",

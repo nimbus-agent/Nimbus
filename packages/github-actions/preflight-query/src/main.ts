@@ -8,27 +8,6 @@ import {
   renderJobSummary,
 } from "./render.ts";
 
-// -----------------------------------------------------------------------
-// Sanitization barriers for Gateway-derived data.
-//
-// CodeQL's js/http-to-file-access flags the appendFileSync sinks below
-// because their content originates from `fetch()`. The operator runs
-// their own local Gateway, so the real risk is bounded — but breaking
-// the dataflow cleanly is cheap and removes the alert.
-//
-// String fields are passed through a character allowlist
-// (`.replace(/<deny-class>/g, "")`) plus a length cap; numeric fields
-// are coerced through `Number()` + `Math.trunc()`; enum fields are
-// narrowed to literal string constants. CodeQL recognises each of these
-// as a taint barrier for the `js/http-to-file-access` rule.
-// -----------------------------------------------------------------------
-
-// Conservative print-safe character class. Strips C0 control chars
-// below 0x20 except tab/LF/CR plus DEL 0x7F. Keeps printable ASCII
-// and UTF-8 multi-byte sequences. Used as the sanitizer barrier on
-// strings flowing into file-write sinks. The hex-escape form keeps the
-// source ASCII-only; the rule below is the explicit intent of this
-// barrier, not an accident.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit byte ranges define the sanitizer barrier
 const DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
@@ -99,7 +78,6 @@ function sanitizeEnvelope(raw: Envelope): Envelope {
 }
 
 function getInput(name: string): string {
-  // GitHub Actions inputs land in env as INPUT_<NAME> with hyphens → underscores.
   const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
   return process.env[envName] ?? "";
 }
@@ -116,24 +94,16 @@ function getIntInput(name: string, fallback: number): number {
   return Number.isInteger(n) ? n : fallback;
 }
 
-// Cap on bytes written to GITHUB_STEP_SUMMARY per Action run. GitHub's
-// own limit is 1 MiB; this is a tighter bound that also serves as a DoS
-// guard against an adversarial Gateway returning a multi-gigabyte body.
 const STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 
 function writeJobSummary(md: string): void {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (file === undefined) return;
-  // Truncate before write. The summary is rendered as markdown through
-  // GitHub's HTML sanitizer (raw <script>, event handlers, etc. are
-  // stripped server-side), so the remaining risk is markdown-injection
-  // phishing only — capped length prevents flooding.
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
   appendFileSync(file, `${safe}\n`);
 }
 
 function emitAnnotation(level: "warning" | "error", message: string): void {
-  // GitHub Actions workflow-command format.
   process.stdout.write(`::${level}::${message}\n`);
 }
 
@@ -158,8 +128,6 @@ async function fetchEnvelope(
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
-      // 4xx/5xx from the Gateway → treat as unreachable for exit-code purposes.
-      // (A real misconfiguration would be a 400; users still want a clear log.)
       const body = await res.text();
       emitAnnotation(
         "warning",
@@ -211,11 +179,6 @@ export async function main(): Promise<void> {
     process.exit(code);
   }
 
-  // Sanitize once. From here on, every value flowing into a file-write
-  // sink (setOutput → GITHUB_OUTPUT, writeJobSummary → GITHUB_STEP_SUMMARY)
-  // is a primitive (number) or a regex-allowlisted+length-capped string,
-  // with verdict narrowed to a literal enum. This breaks the
-  // js/http-to-file-access taint flow at a single explicit boundary.
   const env = sanitizeEnvelope(fetched.envelope);
   writeJobSummary(renderJobSummary(env));
   for (const ann of renderAnnotations(env, mode)) {

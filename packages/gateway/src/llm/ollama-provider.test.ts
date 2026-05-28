@@ -132,7 +132,6 @@ describe("OllamaProvider", () => {
 
 describe("OllamaProvider.pullModel", () => {
   beforeEach(() => {
-    // Restore real fetch so Bun.serve can be reached
     globalThis.fetch = _realFetch;
   });
 

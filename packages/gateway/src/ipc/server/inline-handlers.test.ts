@@ -77,10 +77,6 @@ function makeSession(): { session: ClientSession; notifications: Array<unknown> 
   return { session, notifications };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rpcGatewayPing
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("rpcGatewayPing", () => {
   test("returns version + uptime + agentLimits without drift by default", () => {
     const ctx = makeCtx();
@@ -122,10 +118,6 @@ describe("rpcGatewayPing", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rpcAuditList
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("rpcAuditList", () => {
   test("returns [] when localIndex is undefined", () => {
     const ctx = makeCtx();
@@ -140,7 +132,6 @@ describe("rpcAuditList", () => {
 
   test("limit is clamped to [1, 1000] and floored", () => {
     const ctx = makeCtx({ localIndex: makeIndex() });
-    // 0 -> 1; 9999 -> 1000; 5.9 -> 5; non-number ignored
     expect(Array.isArray(rpcAuditList(ctx, { limit: 0 }))).toBe(true);
     expect(Array.isArray(rpcAuditList(ctx, { limit: 9999 }))).toBe(true);
     expect(Array.isArray(rpcAuditList(ctx, { limit: 5.9 }))).toBe(true);
@@ -148,30 +139,18 @@ describe("rpcAuditList", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rpcConsentRespond
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("rpcConsentRespond", () => {
   test("invalid params surface as RpcMethodError", () => {
     const ctx = makeCtx();
-    // The ConsentCoordinatorImpl's handleRespond returns a typed error for
-    // missing/invalid params; rpcConsentRespond rethrows as RpcMethodError.
     try {
       rpcConsentRespond(ctx, "client-1", { bogus: true });
     } catch (e) {
       expect(e).toBeInstanceOf(RpcMethodError);
       return;
     }
-    // If handleRespond doesn't reject the shape above (interface tolerated
-    // it), at least confirm the handler returned the ok envelope.
     expect(true).toBe(true);
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// rpcIndexSearchRanked — parameter validation
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("rpcIndexSearchRanked — param validation", () => {
   test("no localIndex -> -32603", async () => {
@@ -213,10 +192,6 @@ describe("rpcIndexSearchRanked — param validation", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// dispatchAgentInvoke — handler-absent + parsing
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("dispatchAgentInvoke", () => {
   test("returns the echo reply when no handler is configured", async () => {
     const ctx = makeCtx();
@@ -250,7 +225,6 @@ describe("dispatchAgentInvoke", () => {
     expect(captured?.["agent"]).toBe("devops");
     expect(captured?.["stream"]).toBe(true);
 
-    // sendChunk should write a streaming notification when invoked.
     const sendChunk = captured?.["sendChunk"] as (text: string) => void;
     sendChunk("chunk-1");
     expect(notifications.length).toBe(1);
@@ -283,10 +257,6 @@ describe("dispatchAgentInvoke", () => {
     expect(captured?.["agent"]).toBeUndefined();
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// dispatchWorkflowRunRpc — early-throw paths
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("dispatchWorkflowRunRpc", () => {
   test("no localIndex -> -32603", async () => {
@@ -361,10 +331,6 @@ describe("dispatchWorkflowRunRpc", () => {
     expect(r).toBeDefined();
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// dispatchEngineAskStream — handler-absent early throw
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("dispatchEngineAskStream", () => {
   test("no agent handler -> -32603", () => {

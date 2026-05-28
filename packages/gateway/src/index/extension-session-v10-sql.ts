@@ -1,7 +1,3 @@
-/**
- * Extension registry rows + RAG session memory vectors.
- */
-
 export const EXTENSION_SESSION_V10_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS extension (
   id              TEXT PRIMARY KEY,
@@ -34,11 +30,6 @@ BEGIN
 END;
 `;
 
-/**
- * Fallback v10 schema used when sqlite-vec is unavailable.
- * session_memory.vec_rowid becomes nullable; the cleanup trigger is omitted because
- * vec_items_384 doesn't exist in the no-vec schema.
- */
 export const EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS extension (
   id              TEXT PRIMARY KEY,

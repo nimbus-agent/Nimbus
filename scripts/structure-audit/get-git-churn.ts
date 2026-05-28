@@ -1,29 +1,15 @@
 #!/usr/bin/env bun
-// Ranking-evidence helper: 90-day commit count per packages/*/src/**.ts file.
-// Output: docs/structure-audit/churn-90d.json
-// {
-//   files: [{ file, commits90d }, ...],   // sorted descending
-//   p80Threshold: number,                  // 80th-percentile cutoff for impact-score 4
-// }
 
 import { auditOutputPath, iterateSourceFiles, REPO_ROOT } from "./lib.ts";
 
 export function computePercentile(sorted: readonly number[], p: number): number {
   if (sorted.length === 0) return 0;
-  // Nearest-rank (inclusive): index = ceil(p/100 * N) - 1, clamped to [0, N-1].
-  // For [1..10] p80 → index 7 → value 8 (matches the documented contract).
   const ascending = [...sorted].sort((a, b) => a - b);
   const rank = Math.ceil((p / 100) * ascending.length);
   const idx = Math.min(Math.max(rank - 1, 0), ascending.length - 1);
   return ascending[idx] ?? 0;
 }
 
-/**
- * One `git log` invocation that returns every changed-file path in the last
- * 90 days; we count occurrences per-path. Strictly better than per-file
- * `git rev-list` (which spawns ~500 processes on this monorepo, ~30 s of
- * pure spawn overhead).
- */
 function buildChurnMap(): Map<string, number> {
   const proc = Bun.spawnSync(
     ["git", "log", "--since=90 days ago", "--name-only", "--pretty=format:"],

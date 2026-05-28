@@ -53,7 +53,6 @@ describe("dispatchReindexRpc", () => {
     ).rejects.toBeInstanceOf(ReindexRpcError);
   });
 
-  // S1-F7 — administrative depths skip the HITL gate.
   for (const depth of ["metadata_only", "summary"] as const) {
     test(`${depth} depth skips the HITL gate (administrative)`, async () => {
       let gateCalls = 0;
@@ -69,7 +68,6 @@ describe("dispatchReindexRpc", () => {
     });
   }
 
-  // S1-F7
   test("full depth runs the HITL gate before reindex", async () => {
     const order: string[] = [];
     const idx = makeIdx();
@@ -92,7 +90,6 @@ describe("dispatchReindexRpc", () => {
     expect(out.kind).toBe("hit");
   });
 
-  // S1-F7
   test("full depth bypasses the gate when no toolExecutor is wired (internal callers)", async () => {
     const idx = makeIdx();
     const out = await dispatchReindexRpc(
@@ -103,7 +100,6 @@ describe("dispatchReindexRpc", () => {
     expect(out.kind).toBe("hit");
   });
 
-  // S1-F7
   test("full depth declined consent throws ReindexRpcError", async () => {
     const idx = makeIdx();
     const executor = makeFakeExecutor({

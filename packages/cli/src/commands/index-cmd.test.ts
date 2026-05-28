@@ -1,7 +1,6 @@
-// packages/cli/src/commands/index-cmd.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -90,24 +89,13 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
   });
 
   it("issues index.reembed and resolves on index.reembedDone", async () => {
-    // The MockIpcClient stores a handler when the code subscribes via
-    // onNotification; we then trigger that handler via `emit()` inside
-    // the .call() resolution so it fires after the await resolves jobId.
     const mock = createMockIpcClient([{ jobId: "job-1" }]);
-    // Wire the call so once the runReembed handler subscribes + then
-    // resolves the initial call, we emit progress + done synchronously
-    // from a Promise microtask scheduled by the .call() trampoline.
-    // Easiest: replace the inner call function so it emits before
-    // resolving the jobId.
     const baseClient = mock.client as unknown as {
       call: (m: string, p: unknown) => Promise<unknown>;
     };
     const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
       const r = await baseClient.call(m, p);
       if (m === "index.reembed") {
-        // Microtask: subscriptions are registered BEFORE .call() resolves
-        // in the production code (see index-cmd.ts), so by the time we
-        // emit here the handlers are already in place.
         setTimeout(() => {
           mock.emit("index.reembedProgress", {
             jobId: "job-1",
@@ -294,9 +282,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       },
     });
     await runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--yes", "--json"]);
-    // No progress lines under --json
     expect(out.stdout).not.toMatch(/progress: /);
-    // The single trailing line should be parseable JSON with the summary.
     const trimmed = out.stdout.trim().split("\n").pop() ?? "";
     expect(JSON.parse(trimmed)).toEqual({
       jobId: "job-json",

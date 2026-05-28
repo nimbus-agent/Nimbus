@@ -5,11 +5,6 @@ export type VoiceServiceConfig = {
   stt: SttProvider;
   tts: TtsProvider;
   wakeWord?: WakeWordDetector;
-  /**
-   * Called whenever the microphone opens or closes — from either the wake-word
-   * loop or a caller-initiated `transcribe()`. IPC layer forwards these as
-   * `voice.microphoneActive` notifications.
-   */
   onMicrophoneStateChange?: (event: MicrophoneStateEvent) => void;
 };
 
@@ -24,7 +19,6 @@ export class VoiceService {
   private readonly stt: SttProvider;
   private readonly tts: TtsProvider;
   private readonly wakeWordDet: WakeWordDetector | undefined;
-  /** Set by the IPC server to forward mic-state events as voice.microphoneActive notifications. */
   onMicrophoneStateChange: ((event: MicrophoneStateEvent) => void) | undefined;
   readonly enabled: boolean;
 
@@ -46,8 +40,6 @@ export class VoiceService {
   async transcribe(audioPath: string): Promise<{ text: string; durationMs: number }> {
     if (!this.enabled) throw new Error("Voice is not enabled in configuration");
 
-    // Microphone arbiter: pause wake word so the two audio loops cannot contend
-    // for the input device. Only resume if it was running before we stopped it.
     const resumeWakeWord = this.wakeWordDet?.isRunning === true;
     if (resumeWakeWord) {
       this.wakeWordDet?.stop();

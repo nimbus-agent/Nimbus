@@ -1,21 +1,3 @@
-/**
- * Webview entry — bundled by esbuild to `media/webview.js` (browser IIFE,
- * `globalName: "NimbusWebview"`). Loaded by the chat WebviewPanel constructed
- * in `extension.ts`.
- *
- * Responsibilities:
- *   1. Listen for ExtensionToWebview messages (chat-protocol.ts) and apply
- *      them to the DOM (transcript, sub-task strip, HITL card, empty state).
- *   2. Bind DOM events on the input form + HITL buttons + empty-state action
- *      buttons and post WebviewToExtension messages back through
- *      `acquireVsCodeApi().postMessage(...)`.
- *
- * All HTML the webview generates flows through the helpers in `render.ts`,
- * which escape user-controlled content. The webview's CSP (set in
- * extension.ts) blocks inline script and restricts script-src to a per-load
- * nonce so any markdown injection cannot execute code.
- */
-
 import type { ExtensionToWebview, WebviewToExtension } from "../chat-protocol.js";
 import {
   type EmptyStateInput,
@@ -35,9 +17,6 @@ declare function acquireVsCodeApi(): VsCodeApi;
 
 const vscode = acquireVsCodeApi();
 
-// ---------------------------------------------------------------------------
-// DOM cache. Wired up once on DOMContentLoaded.
-
 interface Refs {
   transcript: HTMLElement;
   subTaskList: HTMLElement;
@@ -51,8 +30,6 @@ interface Refs {
 }
 
 function refs(): Refs {
-  // The webview shell is a fixed scaffold the extension HTML defines; these
-  // selectors are stable across renders.
   return {
     transcript: must("#transcript"),
     subTaskList: must("#subtask-list"),
@@ -72,13 +49,8 @@ function must<T extends Element = HTMLElement>(sel: string): T {
   return el;
 }
 
-// ---------------------------------------------------------------------------
-// Streaming state. The current assistant turn is held in `streamingText` and
-// re-rendered on every token so markdown blocks display correctly mid-stream.
-
 interface State {
   streamingText: string;
-  /** True between userMessage and done/error/reset. Drives Send/Stop UI. */
   streaming: boolean;
 }
 
@@ -86,9 +58,6 @@ const state: State = {
   streamingText: "",
   streaming: false,
 };
-
-// ---------------------------------------------------------------------------
-// Message handlers — one per discriminated `type` in ExtensionToWebview.
 
 function applyMessage(r: Refs, msg: ExtensionToWebview): void {
   switch (msg.type) {
@@ -115,7 +84,6 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
         "beforeend",
         renderTurn({ role: "user", text: msg.text, timestamp: Date.now() }),
       );
-      // Open a fresh streaming turn placeholder.
       state.streamingText = "";
       r.transcript.insertAdjacentHTML(
         "beforeend",
@@ -126,13 +94,9 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       return;
     case "token":
       state.streamingText += msg.text;
-      // Re-render the in-flight turn body. We render whole-text every time —
-      // markdown is not stable mid-token (open code fences, etc.) and the
-      // re-render cost on the small payloads we deal with is negligible.
       {
         const target = r.transcript.querySelector('div.markdown[data-streaming="1"]');
         if (target !== null) {
-          // Use the same renderer the final turn uses so markdown is consistent.
           target.innerHTML = renderTurnBodyHtml(state.streamingText);
         }
       }
@@ -168,11 +132,6 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       return;
     case "error":
       finalizeStreamingTurn(r);
-      // Build the error article via DOM APIs (textContent) instead of
-      // insertAdjacentHTML so the agent-supplied error message can never be
-      // interpreted as HTML — the strict CSP plus DOMPurify on the markdown
-      // path already block script execution, but `textContent` makes the
-      // intent unambiguous to static analysis (and to readers).
       {
         const article = document.createElement("article");
         article.className = "turn turn-error";
@@ -194,7 +153,6 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       );
       return;
     case "themeChange":
-      // VS Code applies CSS variables automatically; nothing to do.
       return;
   }
 }
@@ -203,7 +161,6 @@ function finalizeStreamingTurn(r: Refs): void {
   const target = r.transcript.querySelector<HTMLElement>('div.markdown[data-streaming="1"]');
   if (target !== null) {
     delete target.dataset["streaming"];
-    // One last full re-render so the final markdown is well-formed.
     target.innerHTML = renderTurnBodyHtml(state.streamingText);
     target.parentElement?.classList.remove("turn-streaming");
   }
@@ -214,9 +171,6 @@ function finalizeStreamingTurn(r: Refs): void {
 }
 
 function renderTurnBodyHtml(text: string): string {
-  // Borrow the assistant-turn body renderer by feeding renderTurn and
-  // slicing out the inner markdown div. Cheap and keeps a single source of
-  // truth for the markdown invocation.
   const full = renderTurn({ role: "assistant", text });
   const start = full.indexOf('<div class="markdown">');
   const end = full.lastIndexOf("</div>");
@@ -232,27 +186,19 @@ function setStreaming(r: Refs, streaming: boolean): void {
 }
 
 function scrollToBottom(r: Refs): void {
-  // The transcript pane uses overflow-y: auto; pin to the bottom on every
-  // mutation while streaming so newly arriving tokens stay in view.
   r.transcript.scrollTop = r.transcript.scrollHeight;
 }
 
-/** CSS.escape polyfill — avoids pulling in the full lib. */
 function cssEscape(s: string): string {
   return s.replaceAll(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
-// ---------------------------------------------------------------------------
-// Bootstrap
-
 function bootstrap(): void {
   const r = refs();
 
-  // Initial state — empty until the extension hydrates or sends a turn.
   r.emptyMount.insertAdjacentHTML("beforeend", renderEmptyState({ sub: "no-transcript" }));
   setStreaming(r, false);
 
-  // Form submit → submitAsk
   r.form.addEventListener("submit", (e) => {
     e.preventDefault();
     if (state.streaming) return;
@@ -262,7 +208,6 @@ function bootstrap(): void {
     r.input.value = "";
   });
 
-  // Cmd/Ctrl+Enter submits even when textarea is multi-line.
   r.input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -270,14 +215,11 @@ function bootstrap(): void {
     }
   });
 
-  // Stop button → stopStream
   r.stop.addEventListener("click", () => {
     if (!state.streaming) return;
     vscode.postMessage({ type: "stopStream" });
   });
 
-  // Delegated listener — split into per-target handlers so each branch stays
-  // simple (Sonar's cognitive-complexity gate caps a single handler at 15).
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement | null;
     if (target === null) return;
@@ -286,21 +228,12 @@ function bootstrap(): void {
   });
 
   window.addEventListener("message", (ev) => {
-    // Origin verification (Sonar S2819 / CodeQL js/missing-origin-check):
-    // VS Code webviews run inside a sandboxed iframe; the extension host
-    // posts messages via the surrounding webview-frame. The `vscode-webview`
-    // origin scheme is the authoritative trust signal — `event.source` does
-    // *not* reliably equal `window.parent` (VS Code's message-broker setup
-    // breaks the expected window relationship; checking it silently dropped
-    // every extension→webview message). Empty origins are still accepted so
-    // unit-test harnesses (jsdom) work.
     if (ev.origin.length > 0 && !ev.origin.startsWith("vscode-webview")) return;
     const data = ev.data as ExtensionToWebview;
     if (data === null || typeof data !== "object" || typeof data.type !== "string") return;
     applyMessage(r, data);
   });
 
-  // Tell the extension we're ready to receive hydrate/empty-state.
   vscode.postMessage({ type: "ready" });
 }
 
@@ -311,11 +244,6 @@ function mkStub(text: string): HTMLElement {
   return el;
 }
 
-/**
- * HITL Approve/Reject button click — returns true when the click was handled
- * so the caller can short-circuit. Posts the decision back to the extension
- * and replaces the card with an "decision recorded" stub for instant feedback.
- */
 function handleHitlButtonClick(target: HTMLElement): boolean {
   const decisionBtn = target.closest<HTMLButtonElement>("button.hitl-btn[data-decision]");
   if (decisionBtn === null) return false;
@@ -332,7 +260,6 @@ function handleHitlButtonClick(target: HTMLElement): boolean {
   return true;
 }
 
-/** Empty-state action buttons (Open Logs / Start Gateway). */
 function handleEmptyStateActionClick(target: HTMLElement): void {
   const btn = target.closest<HTMLButtonElement>("button[data-action]");
   if (btn === null) return;

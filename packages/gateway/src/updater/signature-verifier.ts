@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import nacl from "tweetnacl";
 
-/**
- * Verifies an Ed25519 signature over `SHA-256(binary)`.
- * Returns false on ANY failure — never throws.
- */
 export function verifyBinarySignature(
   binary: Uint8Array,
   signature: Uint8Array,
@@ -21,20 +17,10 @@ export function verifyBinarySignature(
   }
 }
 
-/**
- * Computes lowercase hex SHA-256 of the given bytes.
- */
 export function sha256Hex(binary: Uint8Array): string {
   return createHash("sha256").update(binary).digest("hex");
 }
 
-/**
- * S6-F6 — verifies an Ed25519 signature over the canonical envelope
- * `JSON.stringify({ version, target, sha256 })`. The signed envelope binds
- * the binary identity to its manifest claim, defeating manifest-substitution
- * attacks where an attacker pairs a legacy signed binary with a fresh manifest.
- * Returns false on ANY failure — never throws.
- */
 export function verifyManifestEnvelope(input: {
   version: string;
   target: string;

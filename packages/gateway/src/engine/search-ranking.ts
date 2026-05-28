@@ -1,7 +1,3 @@
-/**
- * Deterministic composite score for index search (FTS + recency + service weight).
- */
-
 const WEIGHT_FTS = 0.5;
 const WEIGHT_RECENCY = 0.3;
 const WEIGHT_SERVICE = 0.2;
@@ -22,9 +18,6 @@ export function servicePriorityScore(
   return 0.5;
 }
 
-/**
- * Lower BM25 is a better match. Map batch to [0,1] where 1 = best (lowest BM25).
- */
 export function normalizeBm25LowerIsBetter(values: readonly number[]): number[] {
   if (values.length === 0) {
     return [];
@@ -56,7 +49,6 @@ export function compositeSearchScore(normBm25: number, recency: number, serviceP
   return WEIGHT_FTS * normBm25 + WEIGHT_RECENCY * recency + WEIGHT_SERVICE * serviceP;
 }
 
-/** Map higher-is-better scores to [0,1] with 1 = best in the batch. */
 export function normalizeHigherIsBetter(values: readonly number[]): number[] {
   if (values.length === 0) {
     return [];

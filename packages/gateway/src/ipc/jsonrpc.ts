@@ -1,8 +1,3 @@
-/**
- * JSON-RPC 2.0 over newline-delimited JSON (one object per line).
- * @see architecture.md §IPC Protocol
- */
-
 import { NdjsonLineReader as SdkNdjsonLineReader } from "@nimbus-dev/sdk/ipc";
 
 export { IPC_MAX_LINE_BYTES } from "@nimbus-dev/sdk/ipc";
@@ -50,7 +45,6 @@ export class JsonRpcParseError extends Error {
   override readonly name = "JsonRpcParseError";
 }
 
-/** NDJSON line buffer — delegates to `@nimbus-dev/sdk/ipc`; throws {@link JsonRpcParseError} on line limit violations. */
 export class NdjsonLineReader {
   private readonly inner: SdkNdjsonLineReader;
 

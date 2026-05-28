@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeGreenhouseConfig {
-  /** Pages of jobs, in order. Each entry becomes one bare-array response page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the jobs route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -50,8 +48,6 @@ function startFakeGreenhouse(config: FakeGreenhouseConfig): FakeGreenhouse {
           return new Response("{not json", { status: 200 });
         }
         const pages = config.pages ?? [[]];
-        // Greenhouse page-numbers from 1: the `page` query param indexes into
-        // the configured pages. The response body is a BARE JSON array.
         const page = Number(u.searchParams.get("page") ?? "1");
         const data = pages[page - 1] ?? [];
         return Response.json(data);
@@ -86,7 +82,6 @@ function startHarness(config: FakeGreenhouseConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         greenhouse: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -110,9 +105,6 @@ function job(id: number, over: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-// The fake fakes harvest.greenhouse.io, but the sync handler hardcodes the SaaS
-// base. We override the global fetch to rewrite harvest.greenhouse.io → the fake
-// server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -147,12 +139,9 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-greenhouse1:")).toBe(true);
 
-    // A short page (2 < 100) → the walk stopped after one GET.
     const reqs = h.fake.requests.filter((r) => r.path === "/v1/jobs");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("per_page=100");
-    // The Basic auth header is base64(<api_key>:) — the key as username, empty
-    // password. The raw key never appears in the header.
     const expected = `Basic ${Buffer.from("greenhouse_api_key_secret:", "utf8").toString("base64")}`;
     for (const r of h.fake.requests) {
       expect(r.authorization).toBe(expected);
@@ -169,7 +158,6 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   });
 
   test("bare-array page-number walk: follows full pages until a short page", async () => {
-    // page 1 full (100) → page 2 full (100) → page 3 short (1) last.
     const full1 = Array.from({ length: 100 }, (_, i) => job(1000 + i));
     const full2 = Array.from({ length: 100 }, (_, i) => job(2000 + i));
     h = startHarness({ pages: [full1, full2, [job(3000)]] });
@@ -189,7 +177,6 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 FULL pages of 100 → the cap (20) stops it before exhaustion.
     const pages = Array.from({ length: 25 }, (_, p) =>
       Array.from({ length: 100 }, (_, i) => job(p * 100 + i)),
     );

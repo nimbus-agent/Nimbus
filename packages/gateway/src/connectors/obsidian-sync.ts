@@ -131,7 +131,6 @@ function deleteNotesAbsentFromVault(
     }
     dbRun(db, "DELETE FROM item WHERE id = ?", [row.id]);
     dbRun(db, "DELETE FROM obsidian_notes WHERE id = ?", [row.id]);
-    // Cascade: also drop graph relations pointing at the deleted note.
     dbRun(
       db,
       `DELETE FROM graph_relation
@@ -172,17 +171,9 @@ export function createObsidianSyncable(options: ObsidianSyncableOptions): Syncab
         const vaultName = formatVaultName(vaultRoot);
         const noteRelPaths = discoverNotesInVault(vaultRoot);
 
-        // First pass — parse every note (cheap) so we can build the in-vault
-        // wikilink index needed to resolve targets.
         const parsedNotes: IndexedNote[] = [];
         for (const rel of noteRelPaths) {
           const abs = join(vaultRoot, rel);
-          // Open once and use the file descriptor for both fstat and read,
-          // closing the time-of-check / time-of-use race between a separate
-          // `statSync(path)` + `readFileSync(path)` (a regular file swapped
-          // to a symlink between the calls would still be followed by the
-          // second call). Both operations now resolve through the same open
-          // inode rather than re-traversing the path.
           let mtimeMs = 0;
           let source: string | undefined;
           let fd: number | undefined;
@@ -222,8 +213,6 @@ export function createObsidianSyncable(options: ObsidianSyncableOptions): Syncab
           });
         }
 
-        // Build the in-vault wikilink index — by lower-cased filename and by
-        // lower-cased title.
         const byFilenameLower = new Map<string, { id: string; title: string }>();
         const byTitleLower = new Map<string, string>();
         for (const n of parsedNotes) {
@@ -231,10 +220,6 @@ export function createObsidianSyncable(options: ObsidianSyncableOptions): Syncab
           byTitleLower.set(n.title.toLowerCase(), n.itemId);
         }
 
-        // Second pass — for each note, decide if it needs upserting (mtime
-        // newer than cursor) and resolve its wikilinks against the index.
-        // Per-vault transaction bounds DB round-trips and ensures sticky
-        // deletes commit atomically with the upserts.
         const keepIds = new Set<string>();
         let perVaultDeleted = 0;
         ctx.db.transaction(() => {

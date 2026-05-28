@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-launchdarkly — LaunchDarkly v2 REST API MCP server (read-only).
- * Credentials arrive as LAUNCHDARKLY_TOKEN env, injected at spawn time.
- * LaunchDarkly sends the raw token in the Authorization header — no Bearer prefix.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

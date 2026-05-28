@@ -57,9 +57,6 @@ beforeEach(() => {
   useNimbusStore.setState({ connectionState: "connected" } as never);
 });
 
-// ---------------------------------------------------------------------------
-// List behaviour
-// ---------------------------------------------------------------------------
 describe("Workflows page — list", () => {
   it("renders workflow names and descriptions", async () => {
     stubWorkflowList([WORKFLOW_1, WORKFLOW_2]);
@@ -124,9 +121,6 @@ describe("Workflows page — list", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Step-list editor
-// ---------------------------------------------------------------------------
 async function openNewDialog() {
   stubWorkflowList([]);
   renderPage();
@@ -152,7 +146,6 @@ describe("Workflows page — step-list editor", () => {
   it("'Remove step' on the only step resets to one empty step", async () => {
     await openNewDialog();
     await userEvent.click(screen.getByRole("button", { name: /remove step 1/i }));
-    // Should still have exactly one step after reset
     expect(screen.getByLabelText("Step 1 tool")).toBeInTheDocument();
     expect(screen.queryByLabelText("Step 2 tool")).not.toBeInTheDocument();
   });
@@ -201,7 +194,6 @@ describe("Workflows page — step-list editor", () => {
     await userEvent.click(screen.getByRole("button", { name: /edit workflow Deploy/i }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // WORKFLOW_1 has one step: { tool: "github.tag", params: { ref: "main" } }
     const toolInput = screen.getByLabelText("Step 1 tool") as HTMLInputElement;
     expect(toolInput.value).toBe("github.tag");
 
@@ -230,9 +222,6 @@ describe("Workflows page — step-list editor", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Run-history drawer
-// ---------------------------------------------------------------------------
 describe("Workflows page — run-history drawer", () => {
   it("expanding a workflow row fetches and renders the last N runs", async () => {
     stubWorkflowList([
@@ -333,9 +322,6 @@ describe("Workflows page — run-history drawer", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Run with params dialog
-// ---------------------------------------------------------------------------
 const ALPHA_WORKFLOW = {
   id: "wf1",
   name: "alpha",

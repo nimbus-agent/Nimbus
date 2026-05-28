@@ -1,10 +1,9 @@
-// packages/cli/src/commands/telemetry.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";

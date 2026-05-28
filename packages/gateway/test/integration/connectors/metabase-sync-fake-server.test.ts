@@ -82,7 +82,6 @@ function startHarness(config: FakeMbConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         metabase: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -132,7 +131,6 @@ describe("metabase-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-metabase1:")).toBe(true);
 
-    // Auth is exactly the `x-api-key` header (never `Authorization`).
     for (const r of h.fake.requests) {
       expect(r.apiKey).toBe("mb-key-test");
     }
@@ -142,7 +140,6 @@ describe("metabase-sync against Bun.serve fake API", () => {
         "SELECT external_id, metadata FROM item WHERE service = 'metabase' ORDER BY external_id",
       )
       .all();
-    // external_id = String(id); ordered "10","20" lexically.
     expect(rows.map((r) => r.external_id)).toEqual(["10", "20"]);
 
     const first = JSON.parse(rows[0]?.metadata ?? "{}") as Record<string, unknown>;

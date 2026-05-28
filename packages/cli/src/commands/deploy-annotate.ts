@@ -1,21 +1,3 @@
-/**
- * `nimbus deploy annotate` — record a completed deployment for DORA + agent correlation.
- *
- * Calls the Gateway `deployment.annotate` JSON-RPC method (Phase 5 T4 PR 3b
- * Tasks 5+6) and prints the typed result envelope. The CLI duplicates the
- * Gateway-side field shape validators in `parseDeployAnnotateArgs` so usage
- * errors are caught locally (exit 2) before round-tripping to IPC.
- *
- * Exit codes:
- *   0 = success (deployment recorded)
- *   1 = internal failure (gateway unreachable, IPC error, malformed envelope)
- *   2 = arg-parse / validation error (getopt-style)
- *
- * Surface: NOT LLM-facing. Security invariant I11 (wrapToolOutput) does not
- * apply here — the CLI consumes the result envelope directly for human
- * rendering, not as an LLM tool result.
- */
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";

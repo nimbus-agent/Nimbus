@@ -81,8 +81,6 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
     };
   }
 
-  // Constructor-bound facade exposing closure state to extracted dispatchers.
-  // Same pattern as MeshSpawnContext in lazy-mesh PR #163.
   const ctx: ServerCtx = {
     options,
     consentImpl,

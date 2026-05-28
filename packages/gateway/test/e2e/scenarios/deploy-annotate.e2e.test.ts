@@ -1,17 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — `nimbus deploy annotate` end-to-end (in-process).
- *
- * Mirrors the in-process e2e pattern used by `metrics-dora.e2e.test.ts` and
- * `preflight-deploy.e2e.test.ts`: builds a fresh SQLite DB with index
- * migrations applied through V28 (the post-deploy annotation schema), then
- * dispatches `deployment.annotate` via the same handler the IPC server uses.
- *
- * Asserts the CLI → IPC → DB round-trip persists three rows (`item`,
- * `deployment_items`, `audit_log`) on first call and idempotency on retry
- * (is_new=false, single `item` row, two `audit_log` rows — the contract
- * the GitHub Action retry path relies on).
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -28,9 +14,6 @@ describe("E2E (in-process): nimbus deploy annotate", () => {
   let dir: string;
   let db: Database;
 
-  // Cold-start module load + 29 sequential migrations + sqlite-vec extension
-  // load legitimately approaches 5 s on Windows GHA runners. The default Bun
-  // hook timeout is 5 s; bump it so the hook doesn't race the migration.
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-deploy-annotate-e2e-"));
     db = new Database(join(dir, "nimbus.db"));
@@ -76,7 +59,6 @@ describe("E2E (in-process): nimbus deploy annotate", () => {
     expect(second.value.is_new).toBe(false);
     expect(second.value.external_id).toBe(first.value.external_id);
 
-    // DB state: exactly one item, one deployment_items row, two audit rows.
     const items = db.query("SELECT COUNT(*) AS c FROM item WHERE type = 'deployment'").get() as {
       c: number;
     };

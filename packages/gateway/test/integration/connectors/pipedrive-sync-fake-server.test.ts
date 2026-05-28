@@ -14,17 +14,13 @@ interface RecordedReq {
   method: string;
   path: string;
   query: string;
-  /** Full request URL (host + path + query) — used ONLY to assert the token IS sent in the query. */
   url: string;
 }
 
 interface FakePipedriveConfig {
-  /** Pages of deals, in order. Each entry becomes one `data` page. */
   pages?: unknown[][];
-  /** When true, `data` is returned as null (Pipedrive returns null for empty). */
   nullData?: boolean;
   status?: number;
-  /** When true, the deals route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -44,7 +40,6 @@ function startFakePipedrive(config: FakePipedriveConfig): FakePipedrive {
       requests.push({ method: req.method, path: u.pathname, query: u.search, url: req.url });
       if (u.pathname === "/v1/deals") {
         if (config.status !== undefined && config.status !== 200) {
-          // The error body deliberately does NOT echo the token (Pipedrive's don't).
           return new Response(JSON.stringify({ success: false, error: "server error" }), {
             status: config.status,
           });
@@ -54,8 +49,6 @@ function startFakePipedrive(config: FakePipedriveConfig): FakePipedrive {
         }
         const pages = config.pages ?? [[]];
         const start = Number(u.searchParams.get("start") ?? "0");
-        // Map the `start` offset to a page index (each page is PAGE_SIZE=100 wide,
-        // but the test pages use their own lengths — index by 100s).
         const pageIndex = start / 100;
         const data = config.nullData === true ? null : (pages[pageIndex] ?? []);
         const moreItems = pageIndex + 1 < pages.length;
@@ -98,7 +91,6 @@ function startHarness(config: FakePipedriveConfig): Harness {
   LocalIndex.ensureSchema(db);
   const vault = createMockVault();
   const fake = startFakePipedrive(config);
-  // Capture every structured log line so the token-leak assertion can scan them.
   const logs: CapturedLog[] = [];
   const logger = pino(
     { level: "trace" },
@@ -156,13 +148,10 @@ function deal(id: number, over: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-/** A full page of 100 distinct deals (the `limit` max), so the walk continues. */
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 100 }, (_, i) => deal(base + i));
 }
 
-// The fake fakes api.pipedrive.com, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.pipedrive.com → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -197,12 +186,10 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-pipedrive1:")).toBe(true);
 
-    // Single short page (more_items_in_collection=false) → one GET, start=0.
     const reqs = h.fake.requests.filter((r) => r.path === "/v1/deals");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("limit=100");
     expect(reqs[0]?.query).toContain("start=0");
-    // The token IS sent in the query string (the auth mechanism).
     expect(reqs[0]?.query).toContain(`api_token=${TOKEN}`);
 
     const rows = h.db
@@ -215,7 +202,6 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   });
 
   test("offset walk: continues while more_items_in_collection is true, follows next_start", async () => {
-    // page 0 is a full 100-item page (walk continues); page 1 is short (stops).
     h = startHarness({ pages: [fullPage(1), [deal(1000)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("pipedrive.token", TOKEN);
@@ -232,7 +218,6 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 full pages → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 100 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
@@ -302,10 +287,6 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     expect(result.cursor?.startsWith("nimbus-pipedrive1:")).toBe(true);
   });
 
-  // ── TOKEN-LEAK GUARD ──────────────────────────────────────────────────────
-  // Pipedrive sends the token in the query string, so the request URL carries
-  // the secret. A first-page 500 must NOT surface the token anywhere — not in
-  // the SyncResult, not in any captured log line.
   test("first-page 5xx degrades gracefully AND never leaks the token in logs/result", async () => {
     h = startHarness({ status: 500 });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
@@ -314,17 +295,13 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 
-    // Graceful degradation: no throw, zero upserts, pass-1 cursor.
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-pipedrive1:")).toBe(true);
 
-    // The error was logged (the GET failed) ...
     expect(h.logs.some((l) => l.msg === "pipedrive GET failed")).toBe(true);
-    // ... but NO log line — message, fields, or raw JSON — contains the token.
     for (const log of h.logs) {
       expect(log.raw.includes(TOKEN)).toBe(false);
     }
-    // And the serialized SyncResult never contains the token either.
     expect(JSON.stringify(result).includes(TOKEN)).toBe(false);
   });
 
@@ -336,8 +313,6 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     const syncable = createPipedriveSyncable({ ensurePipedriveMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
 
-    // Dump every persisted item column (title, body_preview, canonical_url,
-    // metadata JSON, …) as a single string and assert the token is absent.
     const rows = h.db
       .query<Record<string, unknown>, []>("SELECT * FROM item WHERE service = 'pipedrive'")
       .all();

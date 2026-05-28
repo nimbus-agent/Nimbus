@@ -1,16 +1,3 @@
-/**
- * nimbus-mcp-pipedrive — Pipedrive REST API MCP server (read-only).
- * Credentials arrive as PIPEDRIVE_TOKEN env, injected at spawn time.
- *
- * AUTH: Pipedrive authenticates with the token IN THE QUERY STRING
- * (`?api_token=<token>`) — there is NO Authorization header, so every request
- * URL contains the secret. CONSEQUENCE: the request URL (and anything derived
- * from it) MUST NEVER appear in a thrown Error message or any log line. Errors
- * are built from the HTTP status code + the resource label + a token-free
- * response-body slice only (Pipedrive error bodies do not echo the token; the
- * slice is still capped). The API host is fixed at api.pipedrive.com (no host
- * override). v1 indexes deals only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -31,21 +18,11 @@ function apiToken(): string {
   return t;
 }
 
-/**
- * Append `api_token=<token>` to a path's query string. The token goes in the
- * URL because Pipedrive has no Authorization header. The caller must NEVER pass
- * the returned URL into a log line or error message.
- */
 function withToken(path: string): string {
   const sep = path.includes("?") ? "&" : "?";
   return `${BASE}${path}${sep}api_token=${encodeURIComponent(apiToken())}`;
 }
 
-/**
- * GET a Pipedrive resource. On a non-2xx, throw using only the status code, the
- * caller-supplied resource LABEL (never the URL — it carries the token), and a
- * token-free body slice.
- */
 async function pipedriveGet(path: string, resourceLabel: string): Promise<unknown> {
   const res = await fetch(withToken(path), { headers: { Accept: "application/json" } });
   const text = await res.text();

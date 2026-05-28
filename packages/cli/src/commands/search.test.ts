@@ -1,7 +1,6 @@
-// packages/cli/src/commands/search.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -123,7 +122,6 @@ describe("runSearch — dispatcher", () => {
       },
     });
     await runSearch(["hi", "--limit", "notanumber"]);
-    // Non-numeric defaults to 20.
     expect(mock.calls[0]?.params).toMatchObject({ limit: 20 });
   });
 

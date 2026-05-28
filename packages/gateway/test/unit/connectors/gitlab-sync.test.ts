@@ -10,10 +10,6 @@ import {
 const ENSURE_MCP = { ensureGitlabMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-glab1:";
 
-// URL matchers — gitlab endpoints carry query strings, so URL matchers are
-// RegExp patterns where they vary. Anchored to `^...$` style to fail fast on
-// stray fragments. The default API base is `https://gitlab.com/api/v4` unless
-// the `gitlab.api_base` vault key overrides it.
 const DEFAULT_API_BASE = "https://gitlab.com/api/v4";
 const EVENTS_RE_DEFAULT = /^https:\/\/gitlab\.com\/api\/v4\/events\?/;
 const PIPELINES_RE_ANY = /\/api\/v4\/projects\/[^/]+\/pipelines\?/;
@@ -27,15 +23,6 @@ function decodeCursor<T>(cursor: string): T {
   return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
 }
 
-/**
- * Insert a `gitlab` indexed item directly into the in-memory db so the
- * pipelines branch's `listGitlabProjectsFromIndex` (SELECT DISTINCT
- * json_extract(metadata, '$.project')) returns the project for that row.
- *
- * The pipeline-list URL is then `projects/{url-encoded-path}/pipelines?...`,
- * so seeding here drives the pipelines branch end-to-end without needing
- * to run the events branch first.
- */
 function seedGitlabIndexProject(fixture: ConnectorSyncFixture, projectPath: string): void {
   const externalId = `${projectPath}!1`;
   const id = `gitlab:${externalId}`;
@@ -64,12 +51,6 @@ function seedGitlabIndexProject(fixture: ConnectorSyncFixture, projectPath: stri
   );
 }
 
-/**
- * Run a callback against a fresh fixture that does NOT inherit the
- * default vault-seeded credentials from `beforeEach`. Mirrors the
- * bitbucket / discord / github test patterns — used by credential-short-circuit
- * tests so each can stage its own vault state without leakage.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -87,16 +68,12 @@ let fixture: ConnectorSyncFixture;
 beforeEach(async () => {
   fixture = createConnectorSyncFixture();
   fixture.fetchMock.install();
-  // Seed the gitlab PAT so default cases reach the fetch path. Use a
-  // stub-style value that avoids the gitleaks all-caps trigger patterns.
   await fixture.vault.set("gitlab.pat", "gitlab-stub-pat");
 });
 
 afterEach(() => {
   fixture.cleanup();
 });
-
-// ─── Bucket A: Credential short-circuits ────────────────────────────────────
 
 describe("gitlab-sync — credential short-circuits", () => {
   test("returns noop when gitlab.pat is not set", async () => {
@@ -121,27 +98,16 @@ describe("gitlab-sync — credential short-circuits", () => {
   });
 
   test("api_base missing defaults to https://gitlab.com/api/v4", async () => {
-    // Events branch — empty page. Pipelines branch is also empty because
-    // we did not seed an indexed gitlab item, so no pipelines URL is hit.
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
-    // The events fetch must hit the default API base.
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url.startsWith(`${DEFAULT_API_BASE}/events?`)).toBe(true);
   });
 });
 
-// ─── Bucket B: Cursor decode ─────────────────────────────────────────────────
-
 describe("gitlab-sync — cursor decode", () => {
-  /**
-   * Stage an empty events response so each malformed-cursor test falls
-   * through the default sync state and exits cleanly. Pipelines branch
-   * needs no stub because no gitlab items are seeded — projects list is
-   * empty, so `syncGitlabPipelinesForIndexedProjects` issues zero fetches.
-   */
   function stageEmptyEvents(): void {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
   }
@@ -151,7 +117,6 @@ describe("gitlab-sync — cursor decode", () => {
     const v2 = encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 1, pipelines: {} });
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
     expect(res.hasMore).toBe(false);
-    // Cursor "after" param is preserved from the v2 input.
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("after=2026-04-01T00%3A00%3A00.000Z");
@@ -159,12 +124,9 @@ describe("gitlab-sync — cursor decode", () => {
 
   test("v1 cursor upgrades to v2 (preserves after + page; pipelines map is empty)", async () => {
     stageEmptyEvents();
-    // v1 shape: no `v` field. decodeCursor falls through to the `v=1 → v=2`
-    // upgrade path on lines 60–61 with an empty pipelines map.
     const v1 = encodeCursor({ after: "2026-03-15T00:00:00.000Z", page: 2 });
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v1);
     expect(res.hasMore).toBe(false);
-    // The cursor "after" param is preserved from the v1 input.
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("after=2026-03-15T00%3A00%3A00.000Z");
@@ -173,7 +135,6 @@ describe("gitlab-sync — cursor decode", () => {
     if (res.cursor === null) throw new Error("expected cursor after v1 upgrade");
     const decoded = decodeCursor<{ v: number; pipelines: Record<string, number> }>(res.cursor);
     expect(decoded.v).toBe(2);
-    // Upgraded cursor carries an empty pipelines map.
     expect(decoded.pipelines).toEqual({});
   });
 
@@ -183,7 +144,6 @@ describe("gitlab-sync — cursor decode", () => {
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
     expect(eventCalls).toHaveLength(1);
-    // Default page is 1.
     expect(eventCalls[0].url).toContain("page=1");
   });
 
@@ -239,7 +199,6 @@ describe("gitlab-sync — cursor decode", () => {
     expect(res.hasMore).toBe(false);
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
     expect(eventCalls).toHaveLength(1);
-    // Default page when cursor is rejected.
     expect(eventCalls[0].url).toContain("page=1");
   });
 
@@ -257,11 +216,6 @@ describe("gitlab-sync — cursor decode", () => {
 
   test("pipelines map: non-finite values are dropped, finite values preserved", async () => {
     stageEmptyEvents();
-    // The cursor carries one finite entry (acme/app -> 42) and a non-finite
-    // entry (acme/bad -> NaN, serializes as null). parsePipelineCursorMap
-    // drops the non-finite entry. No projects are indexed, so the pipelines
-    // branch issues no fetches; we observe the filtering via the returned
-    // cursor's `pipelines` map.
     const res = await createGitlabSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
       encodeCursor({
@@ -274,13 +228,10 @@ describe("gitlab-sync — cursor decode", () => {
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("expected cursor");
     const decoded = decodeCursor<{ pipelines: Record<string, number> }>(res.cursor);
-    // Finite entry kept; non-finite stripped.
     expect(decoded.pipelines["acme/app"]).toBe(42);
     expect("acme/bad" in decoded.pipelines).toBe(false);
   });
 });
-
-// ─── Bucket C: HTTP request paths — events ──────────────────────────────────
 
 describe("gitlab-sync — HTTP request paths (events)", () => {
   test("sends PRIVATE-TOKEN header on events fetch", async () => {
@@ -338,8 +289,6 @@ describe("gitlab-sync — HTTP request paths (events)", () => {
   });
 });
 
-// ─── Bucket D: HTTP request paths — pipelines ───────────────────────────────
-
 describe("gitlab-sync — HTTP request paths (pipelines)", () => {
   test("pipelines URL has per_page=25, order_by=id, sort=desc", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
@@ -365,15 +314,11 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
 
     const pipelineCalls = fixture.fetchMock.calls.filter((c) => PIPELINES_RE_ANY.test(c.url));
     expect(pipelineCalls).toHaveLength(1);
-    // URL-encoded path component: slash becomes %2F.
     expect(pipelineCalls[0].url).toContain("/projects/acme%2Fapp/pipelines?");
-    // Plain slash should NOT appear inside the project path segment.
     expect(/\/projects\/acme\/app\/pipelines/.test(pipelineCalls[0].url)).toBe(false);
   });
 
   test("pipelines 429 → logs warning, does NOT throw (asymmetric handling vs events)", async () => {
-    // The pipelines branch swallows 429 (line ~516–522) — it logs a warning and
-    // returns `{ upserted: 0 }`. Verify the sync resolves successfully.
     seedGitlabIndexProject(fixture, "acme/app");
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond(
@@ -389,9 +334,6 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
   });
 
   test("pipelines invalid JSON → does NOT throw, returns zero upserts (asymmetric)", async () => {
-    // The pipelines branch silently catches JSON parse failures (line ~531–536)
-    // and returns `{ upserted: 0 }` — different from the events branch which
-    // throws on the same error shape.
     seedGitlabIndexProject(fixture, "acme/app");
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respondWithText("GET", PIPELINES_RE_ANY, "<html>not json</html>");
@@ -401,8 +343,6 @@ describe("gitlab-sync — HTTP request paths (pipelines)", () => {
     expect(res.hasMore).toBe(false);
   });
 });
-
-// ─── Bucket E: Events branch — indexing ─────────────────────────────────────
 
 describe("gitlab-sync — events branch (indexing)", () => {
   test("MergeRequestEvent with target_type=MergeRequest → upserts as 'pr'", async () => {
@@ -419,14 +359,9 @@ describe("gitlab-sync — events branch (indexing)", () => {
         project: { path_with_namespace: "acme/app" },
       },
     ]);
-    // Events upserts add a gitlab item with metadata.project = "acme/app",
-    // so the pipelines branch (which scans `SELECT DISTINCT
-    // json_extract(metadata,'$.project')`) will try to fetch pipelines for
-    // that project. Stub it as empty so the test focuses on the MR upsert.
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, []);
 
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Only the MR was upserted (pipelines page was empty).
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string; type: string }, []>(
@@ -474,7 +409,6 @@ describe("gitlab-sync — events branch (indexing)", () => {
         created_at: "2026-04-01T12:00:00.000Z",
         project: { path_with_namespace: "acme/app" },
       },
-      // a well-formed sibling to confirm only the broken one is dropped
       {
         id: 104,
         action_name: "opened",
@@ -547,8 +481,6 @@ describe("gitlab-sync — events branch (indexing)", () => {
   });
 });
 
-// ─── Bucket F: Pipelines branch — indexing ──────────────────────────────────
-
 describe("gitlab-sync — pipelines branch (indexing)", () => {
   test("pipeline with id > lastSeen → upserted as 'ci_run' with metadata", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
@@ -586,10 +518,6 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
   test("pipeline id <= lastSeen → loop break (no further upserts for that project)", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
-    // Pipelines are returned in descending order (sort=desc). Pass a
-    // watermark of 100; the array carries one above-watermark id (101)
-    // followed by a below-watermark id (50). The break should fire when
-    // the iterator hits id=50 — but id=101 was already upserted first.
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, [
       {
         id: 101,
@@ -603,8 +531,6 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
         ref: "main",
         created_at: new Date(Date.now() - 120 * 1000).toISOString(),
       },
-      // This third row would be upserted if the break didn't fire — but
-      // because we hit id=50 (<= lastSeen=100), iteration stops here.
       {
         id: 200, // ignored — break already fired
         status: "success",
@@ -620,8 +546,6 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       pipelines: { "acme/app": 100 },
     });
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
-    // Only id=101 survived (above watermark); id=50 triggered break; id=200
-    // was never reached because iteration stopped at the break.
     expect(res.itemsUpserted).toBe(1);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
@@ -635,7 +559,6 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
   test("pipeline with created_at < floor is skipped (time-window guard)", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
-    // floor = nowMs - 30d. created_at = 90 days ago → far outside the floor.
     const longAgoIso = new Date(Date.now() - 90 * 86_400_000).toISOString();
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, [
       {
@@ -662,9 +585,7 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, [
       {
         id: 777,
-        // status omitted
         ref: "feature/branch",
-        // duration omitted
         sha: "abc123",
         created_at: new Date(Date.now() - 60 * 1000).toISOString(),
       },
@@ -704,17 +625,13 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) throw new Error("expected cursor");
     const decoded = decodeCursor<{ pipelines: Record<string, number> }>(res.cursor);
-    // Highest id seen for acme/app is 905.
     expect(decoded.pipelines["acme/app"]).toBe(905);
   });
 });
 
-// ─── Bucket G: Phase machine + cycle ────────────────────────────────────────
-
 describe("gitlab-sync — phase machine + cycle", () => {
   test("one cycle: events + pipelines merged into single result", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
-    // Events branch: one MR event.
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, [
       {
         id: 1,
@@ -726,7 +643,6 @@ describe("gitlab-sync — phase machine + cycle", () => {
         project: { path_with_namespace: "acme/app" },
       },
     ]);
-    // Pipelines branch: two pipelines for the seeded project.
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, [
       {
         id: 1001,
@@ -743,37 +659,19 @@ describe("gitlab-sync — phase machine + cycle", () => {
     ]);
 
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // 1 MR + 2 pipelines = 3 upserts (plus the seed row, but that's not
-    // counted in itemsUpserted of this sync call).
     expect(res.itemsUpserted).toBe(3);
     expect(res.hasMore).toBe(false);
-    // bytesTransferred is the sum of events + pipelines text lengths — both
-    // non-empty, so total should be positive.
     expect(res.bytesTransferred).toBeGreaterThan(0);
   });
 
   test("events x-next-page header advances page across multi-page events fetch", async () => {
-    // The events branch advances `page` when the response carries an
-    // `x-next-page` header pointing at a different page number. We stage
-    // a non-empty events array on page 1 so the iteration continues, and
-    // an empty events array on page 2 so the loop exits.
     let pageCalls = 0;
     let pipelineCalls = 0;
-    // Replace the harness fetchMock with a URL-routing custom fetch — the
-    // built-in MockFetch matches stubs by method+url regex and picks the
-    // first match, which can't distinguish page=1 from page=2 without
-    // body-matchers (and these are GETs with no body).
     fixture.fetchMock.restore();
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
       const u =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      // Page 1 of events: one MR + x-next-page=2 header → loop continues.
-      // Pagination uses `gitlabShouldContinuePaging`, which requires both
-      // x-next-page and a non-empty items array. The `&page=` prefix is
-      // load-bearing — without the `&` boundary, the regex `page=1` matches
-      // the substring `page=1` inside `per_page=100`, double-firing the
-      // stub for the page=2 URL.
       if (/[&?]page=1(&|$)/.test(u) && /\/events\?/.test(u)) {
         pageCalls += 1;
         return new Response(
@@ -793,12 +691,8 @@ describe("gitlab-sync — phase machine + cycle", () => {
       }
       if (/[&?]page=2(&|$)/.test(u) && /\/events\?/.test(u)) {
         pageCalls += 1;
-        // Page 2: empty array → outer loop terminates because
-        // `gitlabShouldContinuePaging` returns null (itemCount === 0).
         return new Response(JSON.stringify([]), { status: 200 });
       }
-      // Pipelines branch fires after events because the MR upsert added an
-      // "acme/app" item to the index → swallow it as an empty page.
       if (PIPELINES_RE_ANY.test(u)) {
         pipelineCalls += 1;
         return new Response(JSON.stringify([]), { status: 200 });
@@ -808,10 +702,8 @@ describe("gitlab-sync — phase machine + cycle", () => {
 
     try {
       const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      // One event upserted from page 1; page 2 returned empty.
       expect(res.itemsUpserted).toBe(1);
       expect(pageCalls).toBe(2);
-      // Pipelines branch fired exactly once for the freshly-added project.
       expect(pipelineCalls).toBe(1);
     } finally {
       globalThis.fetch = origFetch;
@@ -827,7 +719,6 @@ describe("gitlab-sync — phase machine + cycle", () => {
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
-    // notifications log should record nothing — gitlab-sync emits none.
     expect(fixture.notifications.emitted).toHaveLength(0);
   });
 });

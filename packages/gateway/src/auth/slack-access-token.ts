@@ -2,9 +2,6 @@ import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
-/**
- * Returns a valid Slack user access token, refreshing via `oauth.v2.access` when near expiry.
- */
 export async function getValidSlackAccessToken(vault: NimbusVault): Promise<string> {
   return getValidVaultAccessToken({
     descriptor: OAUTH_PROVIDERS.slack,

@@ -1,27 +1,3 @@
-/**
- * Pure comparator — given a current `HistoryLine`, an optional previous
- * `HistoryLine` for the same runner, and the SLO_THRESHOLDS table,
- * returns one `SurfaceComparison` per SLO row. No I/O.
- *
- * Spec § 3.1 fail conditions, direction-aware:
- *   (a) Ceiling metrics (`p95_ms`, `p50_ms`, `rss_bytes_p95`,
- *       `first_token_ms`): fail when `measured > absolute threshold`
- *       (`refMax` for reference, `ghaMax` for GHA — selected by `runner`)
- *       and when `deltaPct > max(noiseFloorPct, noiseFloorAbs / prev *
- *       100)` (positive delta = regression).
- *   (b) Floor metrics (`throughput_per_sec`, `tokens_per_sec`): fail
- *       when `measured < absolute threshold` and when the *drop*
- *       exceeds the noise floor (`-deltaPct > effectiveFloorPct`).
- *       The `delta-fail` status keeps `deltaPct` in its natural sign
- *       (negative for a throughput regression) so the PR-comment
- *       formatter can render `-X%` directly.
- *
- * Workload rows have `gated: false`; `isFailingComparison()` short-
- * circuits to `false` for them regardless of status. C-1 callers
- * exit non-zero only on `kind: "absolute-fail"` or `kind: "delta-fail"`
- * for gated rows.
- */
-
 import type { HistoryLine, HistoryLineSurface } from "./history-line.ts";
 import type { SloThreshold } from "./slo-thresholds.ts";
 import type { BenchSurfaceId, RunnerKind } from "./types.ts";
@@ -44,7 +20,6 @@ function readMetric(
   metric: SloThreshold["metric"],
 ): number | undefined {
   if (s === undefined) return undefined;
-  // Map SloThreshold.metric to the corresponding HistoryLineSurface field.
   switch (metric) {
     case "p95_ms":
       return s.p95_ms;
@@ -65,24 +40,17 @@ function isStub(s: HistoryLineSurface | undefined): boolean {
   return s?.samples_count === 0;
 }
 
-/**
- * Floor metrics: higher = better, so the regression direction is *down*
- * and the absolute threshold is a minimum. Ceiling metrics flip both.
- */
 export function isFloorMetric(metric: SloThreshold["metric"]): boolean {
   return metric === "throughput_per_sec" || metric === "tokens_per_sec";
 }
 
 function classifySkip(slo: SloThreshold, runner: RunnerKind): ComparisonStatus | null {
-  // S2-c, S7-c, S9 — `ghaMax === "skipped"` means reference-only.
   if (slo.ghaMax === "skipped" && runner !== "reference-m1air") {
     return { kind: "skipped", reason: "reference-only" };
   }
-  // S7-a/b/c — only Linux gates; macOS/Windows record but skip.
   if (slo.linuxOnlyGate === true && runner !== "gha-ubuntu" && runner !== "reference-m1air") {
     return { kind: "skipped", reason: "linux-only-gate" };
   }
-  // Workload rows — `ghaMax === "tbd-c2"` until C-2.
   if (slo.ghaMax === "tbd-c2") {
     return { kind: "skipped", reason: "tbd-c2" };
   }
@@ -106,12 +74,9 @@ function compareOne(
 
   const measured = readMetric(current, slo.metric);
   if (measured === undefined) {
-    // Surface present in slo but not in current — treat as pass when no
-    // baseline to compare to, otherwise fall through to delta logic.
     return previous == null ? { kind: "no-baseline", current: 0 } : { kind: "pass" };
   }
 
-  // Absolute check — only meaningful when ghaMax is numeric.
   const threshold = pickAbsoluteThreshold(slo, runner);
   if (threshold !== undefined) {
     const absoluteFail = isFloorMetric(slo.metric) ? measured < threshold : measured > threshold;
@@ -120,14 +85,10 @@ function compareOne(
     }
   }
 
-  // Delta check requires previous.
   if (previous == null) return { kind: "no-baseline", current: measured };
   const prev = readMetric(previous, slo.metric);
   if (prev === undefined || prev <= 0) return { kind: "no-baseline", current: measured };
 
-  // deltaPct stays in its natural sign so the PR-comment formatter shows
-  // `-X%` for a throughput drop. regressionPct is the direction-aware
-  // magnitude — positive when the surface got worse.
   const deltaPct = ((measured - prev) / prev) * 100;
   const regressionPct = isFloorMetric(slo.metric) ? -deltaPct : deltaPct;
   const floorAbsAsPct = (slo.noiseFloorAbs / prev) * 100;

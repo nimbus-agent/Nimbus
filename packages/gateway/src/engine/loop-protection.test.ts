@@ -54,8 +54,6 @@ describe("tool call cap", () => {
     const cap = Config.maxToolCallsPerSession;
     const ctx = makeCtx({ toolCallCount: { value: cap - 1 } });
     const coordinator = new AgentCoordinator(ctx);
-    // value=cap-1 + 2 new tasks would total cap+1 — must throw before any execute()
-    // and must NOT increment the counter (atomic reservation: all-or-nothing).
     await expect(coordinator.run([makeTask("first"), makeTask("second")])).rejects.toThrow(
       "Tool call limit reached",
     );
@@ -68,11 +66,9 @@ describe("tool call cap", () => {
     const coord1 = new AgentCoordinator(makeCtx({ toolCallCount: sharedCounter }));
     const coord2 = new AgentCoordinator(makeCtx({ toolCallCount: sharedCounter }));
 
-    // coord1 consumes the last slot
     await coord1.run([makeTask("from-coord1")]);
     expect(sharedCounter.value).toBe(cap);
 
-    // coord2 is now at the cap and must throw
     await expect(coord2.run([makeTask("from-coord2")])).rejects.toThrow("Tool call limit reached");
   });
 });

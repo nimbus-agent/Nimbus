@@ -1,29 +1,3 @@
-/**
- * Shared driver for the S6-* sync-throughput surfaces (Drive / Gmail /
- * GitHub). Each per-service file in this directory is a thin wrapper
- * that supplies the connector identity (service name + MSW handler
- * factory + tmp-dir prefix); the loop, IPC contract, MSW lifecycle, and
- * items/sec calculation live here.
- *
- * The COUNT(*) before/after queries are O(log N) — `idx_item_service`
- * (packages/gateway/src/index/unified-item-v3-sql.ts:37) covers them
- * — so the count overhead is negligible inside the timed window.
- *
- * MSW unhandled-request policy is `"warn"` here (not `"error"` as in
- * unit tests). Rationale: the spawned gateway emits unrelated HTTP
- * during steady-state — telemetry post, update-manifest probe — that
- * would crash the bench under `"error"`. Unit tests use `"error"` as
- * a sentinel against connector drift since they don't spawn a real
- * gateway. (feedback F-1.3)
- *
- * Production IPC wiring (deferred to PR-C / PR-B-2b-3): see
- * bench-rss-heavy-sync.ts header for the recommended NimbusClient
- * pattern (feedback F-1.1).
- *
- * resultKind = "throughput" → per-run samples are items/sec; harness
- * returns median across runs as throughputPerSec.
- */
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -42,9 +16,7 @@ export type IpcCallFn = (method: string, params: unknown) => Promise<unknown>;
 export interface SyncThroughputRunOptions {
   spawn?: typeof Bun.spawn;
   gatewayEntry?: string;
-  /** Test injection. In production constructed against the spawned socket. */
   ipcCall?: IpcCallFn;
-  /** Test injection — a custom MSW server used in place of fixture-driven setupServer. */
   mswServer?: SetupServer;
 }
 

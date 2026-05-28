@@ -9,19 +9,12 @@ import {
 const ENSURE_MCP = { ensureNewrelicMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-nr1:";
 
-// Exact URL — no query params, no base URL variants. If newrelic-sync.ts ever
-// appends a query string, convert to a regex anchor.
 const APPS_URL = "https://api.newrelic.com/v2/applications.json";
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -65,8 +58,6 @@ describe("newrelic-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it (mirrors sentry-sync.test.ts).
 describe("newrelic-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -224,7 +215,6 @@ describe("newrelic-sync — with shared fixture", () => {
       });
       const res = await createNewrelicSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(3);
-      // external_id values are lowercase: SQLite default collation is case-sensitive
       const rows = fixture.db
         .query<{ external_id: string }, []>(
           "SELECT external_id FROM item WHERE service = 'newrelic' ORDER BY external_id",

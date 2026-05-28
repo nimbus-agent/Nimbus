@@ -1,8 +1,3 @@
-/**
- * Printed by `nimbus connector auth <svc> --help`.
- * Keep in sync with gateway `oauth-env-help-messages.ts`.
- */
-
 export const GOOGLE_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_GOOGLE_CLIENT_ID to your Google OAuth client ID (Desktop app, PKCE).
 
 How to obtain:

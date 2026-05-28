@@ -1,7 +1,3 @@
-/**
- * nimbus-mcp-grafana — Grafana HTTP API MCP (read-focused).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

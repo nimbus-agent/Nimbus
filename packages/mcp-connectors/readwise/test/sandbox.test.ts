@@ -1,11 +1,3 @@
-// Sandbox contract test — verifies the declared manifest permissions match
-// runtime enforcement when this connector is spawned under the gateway's
-// sandbox runner.
-//
-// Gated on NIMBUS_TEST_HARNESS because `runSandboxContractTests` expects the
-// probe to run inside a sandbox-wrapped process. Readwise joins the same
-// deferred-harness queue as Stripe / Mercury / Vercel / Netlify / Snyk.
-
 import { describe, it } from "bun:test";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

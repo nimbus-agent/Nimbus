@@ -10,7 +10,6 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export type RunDataExportInput = {
   output: string;
-  /** When false, omit index.db.gz from the bundle. */
   includeIndex: boolean;
   passphrase: string;
   vault: NimbusVault;
@@ -18,7 +17,6 @@ export type RunDataExportInput = {
   platform: "win32" | "darwin" | "linux";
   nimbusVersion: string;
   schemaVersion: number;
-  /** Override Argon2id params in tests. */
   kdfParams?: KdfParams;
 };
 
@@ -33,7 +31,7 @@ async function collectVaultManifestPlaintext(vault: NimbusVault): Promise<string
   const keys = await vault.listKeys();
   const entries: Array<{ key: string; value: string }> = [];
   for (const key of keys) {
-    if (key === "backup.recovery_seed") continue; // seed is never included in the encrypted manifest
+    if (key === "backup.recovery_seed") continue;
     const value = await vault.get(key);
     if (value !== null) entries.push({ key, value });
   }
@@ -44,7 +42,6 @@ export async function runDataExport(input: RunDataExportInput): Promise<RunDataE
   const seed = await ensureRecoverySeed(input.vault);
   const stage = mkdtempSync(join(tmpdir(), "nimbus-export-stage-"));
 
-  // Vault manifest (encrypted)
   const vaultPlaintext = await collectVaultManifestPlaintext(input.vault);
   const encrypted = await encryptVaultManifest({
     plaintext: vaultPlaintext,
@@ -55,7 +52,6 @@ export async function runDataExport(input: RunDataExportInput): Promise<RunDataE
   const vaultPath = join(stage, "vault-manifest.json.enc");
   writeFileSync(vaultPath, JSON.stringify(encrypted));
 
-  // Side files: watchers, workflows, extensions, profiles, audit chain
   const watchersPath = join(stage, "watchers.json");
   writeFileSync(watchersPath, "[]");
   const workflowsPath = join(stage, "workflows.json");
@@ -100,9 +96,6 @@ export async function runDataExport(input: RunDataExportInput): Promise<RunDataE
 
   return {
     outputPath: input.output,
-    // S2-F5 — only return the seed on the run that just generated it. On
-    // subsequent runs the user already wrote it down; re-disclosing it through
-    // every export reply is gratuitous credential exposure.
     recoverySeed: seed.generated ? seed.mnemonic : "",
     recoverySeedGenerated: seed.generated,
     itemsExported: parsedVault.length,

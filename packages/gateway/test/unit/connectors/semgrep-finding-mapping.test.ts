@@ -2,9 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { mapSemgrepFindingToItem } from "../../../src/connectors/semgrep-finding-mapping.ts";
 
-// Realistic Semgrep AppSec Platform finding payload — see
-// https://semgrep.dev/api/v1/docs/. Tests below mutate this fixture
-// and assert specific mapping behaviours.
 function makeFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base: Record<string, unknown> = {
     id: "12345",

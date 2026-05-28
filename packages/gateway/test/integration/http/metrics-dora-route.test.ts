@@ -1,11 +1,3 @@
-/**
- * Integration test: GET /v1/metrics/dora HTTP route (Phase 5 T4 PR 2 — Task 7).
- *
- * Verifies the read-only HTTP server dispatches `/v1/metrics/dora` to the
- * shared `dispatchMetricsRpc` handler, threading the optional `configDir`
- * and `nowMs` options. Uses the payment-service fixture from Task 5.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -37,9 +29,6 @@ repos = ["github:nimbus-agent/payments", "gitlab:nimbus-agent/payments", "jenkin
 pagerduty_services = ["P12ABCD"]
 `,
     );
-    // Pass port = 0 so the OS picks a free port; reading `handle.port` after
-    // start eliminates the random-port-collision flake that hit this test on
-    // shared CI runners (port 40370 in use → `Failed to start server`).
     handle = startReadOnlyHttpServer(dbPath, 0, {
       configDir: dir,
       nowMs: () => FIXTURE_NOW_MS,
@@ -82,10 +71,6 @@ pagerduty_services = ["P12ABCD"]
   });
 
   it("returns generic 500 (no message leak) when the config loader throws", async () => {
-    // Replace the valid config with one that fails to parse — bad regex causes
-    // `loadNimbusDoraFromConfigDir` to throw, which must bubble up to the
-    // outer `fetch` catch and return a generic "internal_error" — never the
-    // raw exception message (CodeQL: information exposure through stack trace).
     writeFileSync(
       join(dir, "nimbus.toml"),
       `[metrics.dora.payment-service]

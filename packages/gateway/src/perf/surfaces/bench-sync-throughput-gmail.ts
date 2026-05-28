@@ -1,9 +1,3 @@
-/**
- * S6-gmail — Gmail sync throughput. See bench-sync-throughput-shared.ts
- * for the loop and MSW policy; this file supplies only the connector
- * identity.
- */
-
 import { gmailHandlers } from "../fixtures/msw-handlers.ts";
 import type { BenchRunOptions } from "../types.ts";
 import {

@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeMercuryConfig {
-  /** The accounts array returned by `GET /api/v1/accounts` (wrapped in `{ accounts }`). */
   accounts?: unknown[];
   status?: number;
-  /** When true, the accounts route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -81,7 +79,6 @@ function startHarness(config: FakeMercuryConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         mercury: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -106,8 +103,6 @@ function account(id: string, over: Record<string, unknown> = {}): Record<string,
   };
 }
 
-// The fake fakes api.mercury.com, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.mercury.com → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -142,7 +137,6 @@ describe("mercury-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-mercury1:")).toBe(true);
 
-    // Single GET — no pagination.
     const reqs = h.fake.requests.filter((r) => r.path === "/api/v1/accounts");
     expect(reqs).toHaveLength(1);
     for (const r of h.fake.requests) {

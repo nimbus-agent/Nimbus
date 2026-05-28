@@ -49,16 +49,6 @@ describe("runSandboxContractTests", () => {
   });
 
   it("handles a manifest with no declared network hosts without crashing", async () => {
-    // No declared hosts → probes 1 and 2 are both skipped. Only probe 3
-    // (fs-denied) runs. Outside the gateway sandbox harness, probe 3's
-    // outcome depends on OS-level ACLs:
-    //   - POSIX: /etc/passwd is world-readable → probe exits 2 → harness throws.
-    //   - Windows: SAM hive is owner-locked → probe exits 10 → harness passes.
-    // We only assert the "harness runs to completion" property here; the
-    // pass/fail outcome is platform-dependent and that asymmetry is the
-    // documented UX for third-party authors who invoke this outside the
-    // gateway test helper. The gateway test helper wraps the probe with
-    // `createSandboxRunner` and gets uniform enforcement across platforms.
     const dir = mkdtempSync(join(tmpdir(), "sdk-contract-empty-"));
     const manifestPath = join(dir, "nimbus.extension.json");
     writeFileSync(manifestPath, JSON.stringify({ id: "test.empty", permissions: {} }));
@@ -69,10 +59,8 @@ describe("runSandboxContractTests", () => {
       outcome = "fail";
     }
     if (process.platform === "win32") {
-      // Windows SAM hive is OS-protected → fs-denied probe gets EACCES → pass.
       expect(outcome).toBe("pass");
     } else {
-      // POSIX /etc/passwd is world-readable → fs-denied probe exits 2 → harness throws.
       expect(outcome).toBe("fail");
     }
   }, 30_000);
@@ -141,9 +129,6 @@ describe("runSandboxContractTests", () => {
   });
 
   it("tolerates a manifest with `permissions: string[]` (legacy array form)", async () => {
-    // The validator at registry-load normalizes legacy array form; the SDK
-    // harness sees it on disk and must not crash — it just skips the
-    // network probes and runs fs-denied.
     const manifestPath = writeManifest(["read-files", "trash"]);
     const { runner, calls } = makeProbeRunner([
       { probe: "fs-denied", result: { status: 10, stderr: "", stdout: "" } },
@@ -153,9 +138,6 @@ describe("runSandboxContractTests", () => {
   });
 
   it("`__defaultRunProbe` returns a well-formed envelope on a probe that exits non-zero", () => {
-    // Smoke-test the production runProbe by invoking it with an unknown
-    // probe name; the probe binary exits 2 (unexpected) without touching
-    // the sandbox so it's safe everywhere.
     const r = __defaultRunProbe("definitely-not-a-probe", "");
     expect(typeof r.status).toBe("number");
     expect(typeof r.stderr).toBe("string");

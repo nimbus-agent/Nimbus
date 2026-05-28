@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Deep Clean: Runs the root `clean` script, then wipes all `node_modules`
- * and lockfiles across the monorepo for a truly fresh start.
- *
- * The package list is read from root `package.json`'s `workspaces` field
- * so adding a new MCP connector under `packages/mcp-connectors/*` doesn't
- * silently leave its `node_modules` orphaned.
- *
- * Usage: bun scripts/clean-deep.ts
- */
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT, run } from "./lib/root.ts";
@@ -23,8 +13,6 @@ function readWorkspaces(): readonly string[] {
   if (!Array.isArray(pkg.workspaces) || pkg.workspaces.length === 0) {
     throw new Error("Root package.json has no `workspaces` array — refusing to deep-clean.");
   }
-  // This repo uses explicit per-package paths (no `*` globs); guard so a
-  // future glob entry doesn't get silently treated as a literal path.
   for (const w of pkg.workspaces) {
     if (w.includes("*")) {
       throw new Error(
@@ -38,18 +26,13 @@ function readWorkspaces(): readonly string[] {
 
 process.stdout.write("--- Nimbus Deep Clean ---\n");
 
-// 1. Run standard clean (removes dist/ folders)
 process.stdout.write("Running bun run clean...\n");
 run(["bun", "run", "clean"], REPO_ROOT);
 
-// 2. Remove root node_modules and lockfile
 process.stdout.write("Removing root node_modules and bun.lock...\n");
 rmSync(join(REPO_ROOT, "node_modules"), { recursive: true, force: true });
 rmSync(join(REPO_ROOT, "bun.lock"), { force: true });
 
-// 3. Wipe per-package node_modules. Bun usually hoists everything to the
-// root, but some packages (notably under packages/mcp-connectors/*) end
-// up with their own when peer-dep resolution forks.
 const packages = readWorkspaces();
 for (const pkg of packages) {
   const pkgDir = join(REPO_ROOT, pkg, "node_modules");

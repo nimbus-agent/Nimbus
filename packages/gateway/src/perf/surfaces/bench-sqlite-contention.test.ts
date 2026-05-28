@@ -40,14 +40,10 @@ describe("runSqliteContentionOnce", () => {
     expect(samples.length).toBe(1);
     expect(samples[0]).toBeGreaterThan(0);
     expect(nWorkersSeen).toBe(3);
-    // 7 retries × 3 workers, accumulated into a caller-managed sentinel.
     expect(S10_BUSY_RETRIES.value).toBe(21);
   });
 
   test("accumulates retries across multiple driver invocations (D-5)", async () => {
-    // runBench calls the driver N times (once per run); the driver must
-    // ADD to the sentinel each time, not overwrite it. This pins the D-5
-    // contract so a future refactor can't re-introduce per-call reset.
     const fakeWorker = class FakeWorker {
       onmessage: ((e: MessageEvent<unknown>) => void) | null = null;
       onerror: ((e: ErrorEvent) => void) | null = null;
@@ -77,7 +73,6 @@ describe("runSqliteContentionOnce", () => {
         { WorkerCtor: fakeWorker as unknown as typeof Worker, durationMs: 50 },
       );
     }
-    // 5 retries × 3 workers × 3 driver invocations = 45
     expect(S10_BUSY_RETRIES.value).toBe(45);
   });
 });

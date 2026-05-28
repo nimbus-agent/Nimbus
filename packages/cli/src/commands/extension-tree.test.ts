@@ -24,9 +24,7 @@ describe("renderTree", () => {
       },
     ]);
     expect(out).toContain("com.example.foo@1.0.0");
-    // crypto appears somewhere under foo's branch
     expect(out).toMatch(/com\.shared\.crypto@2\.4\.1/);
-    // crypto's second appearance (inside utils' subtree) is suffixed
     expect(out).toMatch(/com\.shared\.crypto@2\.4\.1\s+\(already shown\)/);
   });
 
@@ -39,7 +37,6 @@ describe("renderTree", () => {
       { id: "com.a", version: "1.0.0", forwardDeps: [] },
       { id: "com.b", version: "1.0.0", forwardDeps: [] },
     ]);
-    // Both roots, each on its own line, alphabetical.
     expect(out.split("\n")).toEqual(["com.a@1.0.0", "com.b@1.0.0"]);
   });
 
@@ -55,16 +52,12 @@ describe("renderTree", () => {
       { id: "c", version: "3.0.0", forwardDeps: [] },
     ]);
     const lines = out.split("\n");
-    // a is root (no connector)
     expect(lines[0]).toBe("a@1.0.0");
-    // b is last child of a → └─
     expect(lines[1]).toContain("└─ b@2.0.0");
-    // c is last child of b → └─ with deeper indent
     expect(lines[2]).toContain("└─ c@3.0.0");
   });
 
   it("diamond dependency marks second occurrence as already shown", () => {
-    // shared is a dep of both left and right; root → left, right → shared
     const out = renderTree([
       {
         id: "root",
@@ -78,10 +71,8 @@ describe("renderTree", () => {
       { id: "right", version: "1.0.0", forwardDeps: [{ id: "shared", range: "*" }] },
       { id: "shared", version: "1.0.0", forwardDeps: [] },
     ]);
-    // shared should appear at least twice
     const occurrences = [...out.matchAll(/shared@1\.0\.0/g)];
     expect(occurrences.length).toBeGreaterThanOrEqual(2);
-    // At least one occurrence is suffixed with (already shown)
     expect(out).toMatch(/shared@1\.0\.0\s+\(already shown\)/);
   });
 });

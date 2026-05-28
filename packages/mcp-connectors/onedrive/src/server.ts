@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-onedrive — Microsoft Graph OneDrive tools (read + delete/move writes).
- * Access token is injected by the Gateway as MICROSOFT_OAUTH_ACCESS_TOKEN (never logged).
- * Delete/move require Gateway HITL (`onedrive.delete`, `onedrive.move`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

@@ -1,16 +1,3 @@
-/**
- * Snyk REST sync handler. Walks `/v1/orgs` → `/v1/org/<id>/projects` →
- * `/v1/org/<id>/project/<pid>/aggregated-issues` and upserts each issue
- * into the unified `item` table as `service = "snyk", type =
- * "vulnerability"` via {@link mapSnykAggregatedIssueToItem}.
- *
- * Single-pass cursor model (matches `sentry-sync.ts`): every successful
- * run emits a fresh `nimbus-snyk1:{pass: 1}` cursor so the scheduler does
- * not re-queue immediately. Snyk does not expose a delta endpoint for
- * issues; full-walk-per-cycle is acceptable at the 10-minute default
- * cadence because the aggregated-issues responses are small.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,

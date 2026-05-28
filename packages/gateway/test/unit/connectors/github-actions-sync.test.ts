@@ -11,9 +11,6 @@ import {
 const ENSURE_MCP = { ensureGithubMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-gha1:";
 
-// github actions workflow-runs URL. Production sets per_page=30 via
-// URLSearchParams, so per-repo matchers anchor on the path prefix and
-// accept any query string.
 const RUNS_URL_ACME_REPO_A =
   /^https:\/\/api\.github\.com\/repos\/acme\/repo-a\/actions\/runs(?:\?.*)?$/;
 const RUNS_URL_ACME_REPO_B =
@@ -27,12 +24,6 @@ function decodeCursorJson(c: string): unknown {
   return JSON.parse(Buffer.from(c.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"));
 }
 
-/**
- * Seed a GitHub-indexed repository row so `listGithubReposFromIndex` returns
- * it. Uses the production `upsertIndexedItemForSync` helper to avoid coupling
- * to the raw `item` table schema. `listGithubReposFromIndex` reads
- * `metadata.repo` (NOT `metadata.repo_full_name`).
- */
 function seedGithubRepo(ctx: SyncContext, fullName: string): void {
   const now = Date.now();
   upsertIndexedItemForSync(ctx, {
@@ -51,11 +42,6 @@ function seedGithubRepo(ctx: SyncContext, fullName: string): void {
   });
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -112,8 +98,6 @@ describe("github-actions-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it.
 describe("github-actions-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -619,7 +603,6 @@ describe("github-actions-sync — with shared fixture", () => {
         )
         .get();
       const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
-      // ~10s = 10_000 ms; allow some slack since `Date.parse` rounds to ms.
       expect(meta.durationMs).toBeGreaterThanOrEqual(9_000);
       expect(meta.durationMs).toBeLessThanOrEqual(11_000);
     });
@@ -644,11 +627,8 @@ describe("github-actions-sync — with shared fixture", () => {
       });
       const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
         fixture.createSyncContext(),
-        // Only repo-a in cursor with high lastSeen — repo-b should still
-        // upsert because it defaults to 0.
         encodeCursor({ repos: { "acme/repo-a": 50 } }),
       );
-      // repo-a fully skipped (1 <= 50). repo-b: 1 upsert.
       expect(res.itemsUpserted).toBe(1);
     });
   });

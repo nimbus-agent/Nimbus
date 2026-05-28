@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-mercury — Mercury REST API MCP server (read-only).
- * Credentials arrive as MERCURY_TOKEN env, injected at spawn time. Mercury uses
- * a standard `Authorization: Bearer <api-token>` header (never logged). The API
- * host is fixed at api.mercury.com (no host override). v1 indexes accounts only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

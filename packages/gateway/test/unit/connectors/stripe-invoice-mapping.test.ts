@@ -6,7 +6,6 @@ import {
   secondsToMs,
 } from "../../../src/connectors/stripe-invoice-mapping.ts";
 
-// 1_700_000_000 s = 2023-11-14T22:13:20Z → ×1000 = 1_700_000_000_000 ms.
 const CREATED_S = 1_700_000_000;
 const CREATED_MS = 1_700_000_000_000;
 const DUE_S = 1_700_500_000;
@@ -155,7 +154,7 @@ describe("mapStripeInvoiceToItem", () => {
     const row = mapStripeInvoiceToItem(noDue, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["due_date"]).toBeUndefined();
-    expect("due_date" in meta(row)).toBe(true); // key present, value undefined
+    expect("due_date" in meta(row)).toBe(true);
   });
 
   test("due_date of 0 (Stripe 'unset') maps to undefined", () => {

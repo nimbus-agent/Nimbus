@@ -1,10 +1,3 @@
-/**
- * Focused handshake integration tests for LanServer.
- *
- * - S3-F4: hello with unknown pubkey records a rate-limit failure.
- * - S3-F6: lockout reply uses kind-aware code (hello_err for hello,
- *   pair_err for pair) instead of always emitting pair_err.
- */
 import { afterEach, describe, expect, test } from "bun:test";
 import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
 import { LanServer, type LanServerOptions } from "./lan-server.ts";
@@ -99,7 +92,6 @@ function sendHandshake(
         },
       },
     });
-    // Belt-and-suspenders timeout in case the server hangs.
     setTimeout(() => {
       try {
         conn.then((s) => s.end()).catch(() => {});
@@ -128,7 +120,6 @@ describe("LanServer.handleHandshake — S3-F4 / S3-F6", () => {
     const { port } = await startServer(makeRateLimit(calls), hostKp);
     const reply = await sendHandshake(port, "hello", new Uint8Array(32).fill(7));
     expect(reply?.kind).toBe("hello_err");
-    // checkAllowed=false short-circuits before recordFailure runs.
     expect(calls.failures.length).toBe(0);
   });
 

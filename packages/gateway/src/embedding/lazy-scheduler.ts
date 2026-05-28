@@ -14,13 +14,6 @@ import {
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import type { Embedder, IndexedItem } from "./types.ts";
 
-/**
- * In-process lazy embedding (fallback when the Bun worker cannot start).
- *
- * `createEmbedder` is injected for tests only — production passes nothing and
- * gets the real MiniLM loader. Injection (not `mock.module`) avoids leaking a
- * process-global model.ts fake into sibling embedding tests (e.g. model.test.ts).
- */
 export function createLazyEmbeddingRuntime(
   db: Database,
   dataDir: string,
@@ -119,7 +112,6 @@ export function createLazyEmbeddingRuntime(
       if (dims === 1536) {
         return { vec384: null, vec1536: vec, model384: null, model1536: p.embeddingModel };
       }
-      // 384 (or any other supported single-pipeline mode)
       return { vec384: vec, vec1536: null, model384: p.embeddingModel, model1536: null };
     },
 

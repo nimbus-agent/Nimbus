@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-gitlab — GitLab REST MCP server (API v4).
- * PAT is injected as GITLAB_PAT (PRIVATE-TOKEN). Optional GITLAB_API_BASE_URL for self-hosted.
- * MR merge requires Gateway HITL (`repo.pr.merge`).
- * Pipeline retry/cancel require Gateway HITL (`gitlab.pipeline.retry`, `gitlab.pipeline.cancel`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

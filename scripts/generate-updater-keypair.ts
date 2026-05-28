@@ -1,17 +1,3 @@
-/**
- * One-shot generator for the Nimbus updater Ed25519 keypair.
- *
- * USAGE:
- *   bun scripts/generate-updater-keypair.ts
- *
- * Generates a 32-byte Ed25519 seed → keypair. Prints:
- *   - public key (hex + base64)  → paste into packages/gateway/src/updater/public-key.ts
- *   - private key (base64)       → store as GitHub secret UPDATER_SIGNING_KEY
- *
- * REFUSES to run if public-key.ts already contains a non-dev public key,
- * to prevent accidental rotation. Delete/reset the file manually if rotation
- * is intended.
- */
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

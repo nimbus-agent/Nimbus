@@ -80,8 +80,6 @@ describe("mapFlagsmithFeatureToItem", () => {
     if (standard === null) throw new Error("expected mapping to succeed");
     expect(meta(standard)["type"]).toBe("MULTIVARIATE");
 
-    // Unusual/unknown type strings are NOT rejected (deliberate departure
-    // from LD's enum-restricted kind).
     const weird = mapFlagsmithFeatureToItem(makeFeature({ type: "SOME_FUTURE_TYPE" }), ctx());
     if (weird === null) throw new Error("expected mapping to succeed");
     expect(meta(weird)["type"]).toBe("SOME_FUTURE_TYPE");

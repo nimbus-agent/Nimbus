@@ -1,19 +1,3 @@
-/**
- * Pure mapping from a SonarQube `/api/issues/search` issue payload to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `sonarqube-sync.ts` so the HTTP path and the indexing path can be
- * tested independently.
- *
- * SonarQube's issues envelope is documented at
- * https://next.sonarqube.com/sonarqube/web_api/api/issues/search. The
- * fields surfaced into `metadata` are the ones the Phase 5 roadmap row
- * for `code_issue` calls out: severity, type (BUG / VULNERABILITY /
- * CODE_SMELL), status, rule, component, file_path, line, tags, effort,
- * debt, message, creation_date, update_date — plus a couple of joins
- * (`project_key`, `canonical_url`) that downstream `nimbus query`
- * predicates need to correlate a finding back to a repo or an open PR.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "BLOCKER" | "CRITICAL" | "MAJOR" | "MINOR" | "INFO";
@@ -32,9 +16,7 @@ const ISSUE_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 export interface SonarMappingContext {
-  /** Base URL of the Sonar instance — used to construct canonical issue URLs. */
   readonly baseUrl: string;
-  /** Organization slug (SonarCloud) or empty string (self-hosted). */
   readonly organization: string;
   readonly syncedAt: number;
 }
@@ -52,13 +34,9 @@ export interface SonarMappedRow {
   readonly syncedAt: number;
 }
 
-// String-loop trailing-slash trim. Avoids `/\/+$/` which Sonar's static
-// analyzer flags as ReDoS-risk; on a sane regex engine the anchored `+`
-// is linear-time, but the non-regex form is uncontroversially safe and
-// equally clear.
 export function stripTrailingSlashes(s: string): string {
   let end = s.length;
-  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  while (end > 0 && s.charCodeAt(end - 1) === 47) end -= 1;
   return s.slice(0, end);
 }
 
@@ -111,12 +89,6 @@ function pickIntField(row: Record<string, unknown>, key: string): number | null 
   return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null;
 }
 
-/**
- * Extract the file path from a SonarQube component key. SonarQube
- * formats component keys as `<projectKey>:<path>` for files within a
- * project; the project itself uses the bare projectKey. Returns null
- * when the component is the project root (no `:` separator).
- */
 function extractFilePath(component: string): string | null {
   const idx = component.indexOf(":");
   if (idx < 0 || idx === component.length - 1) {

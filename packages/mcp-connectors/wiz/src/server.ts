@@ -1,27 +1,3 @@
-/**
- * nimbus-mcp-wiz — Wiz cloud security platform connector
- * (GraphQL, read-only).
- *
- * Exposes the three mandatory read tools (`wiz_list`, `wiz_get`,
- * `wiz_search`) per the Nimbus connector authoring contract. No write
- * tools are registered and `hitlRequired` is empty in the manifest —
- * `wiz.issue.resolve` and `wiz.issue.assign` are deferred Phase 8
- * follow-ups.
- *
- * Auth is Wiz's standard OAuth client_credentials flow: at process
- * startup the connector exchanges `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`
- * (injected from `wiz.client_id` + `wiz.client_secret` vault keys) for
- * an access token at `WIZ_AUTH_URL` (default
- * `https://auth.app.wiz.io/oauth/token`). The token is cached for the
- * process lifetime; Wiz tokens live ~24 h so a fresh-per-spawn token
- * survives any reasonable session. The Gateway re-spawns the connector
- * if the process exits, which re-fetches.
- *
- * The GraphQL endpoint is at `WIZ_API_URL` (default
- * `https://api.app.wiz.io/graphql`). Regional users (us-2, eu-1, …)
- * override both vault keys.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

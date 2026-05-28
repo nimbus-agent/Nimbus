@@ -12,7 +12,6 @@ const DEFAULT_API_BASE = "https://gitlab.com/api/v4";
 const MAX_PAGES_PER_SYNC = 8;
 const MAX_PIPELINE_PROJECTS_PER_SYNC = 15;
 
-/** Cursor v2 adds per-project pipeline id watermarks. */
 type GitlabSyncCursorV2 = {
   v: 2;
   after: string;

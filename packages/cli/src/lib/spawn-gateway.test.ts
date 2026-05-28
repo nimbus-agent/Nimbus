@@ -1,12 +1,3 @@
-// packages/cli/src/lib/spawn-gateway.test.ts
-//
-// Phase 6 commit 5 of 14 — extends prior `stripInspectorEnv` coverage with
-// direct `spawnGateway` cases: the launch-failure branch (no gateway
-// binary, no monorepo checkout, NIMBUS_GATEWAY_EXECUTABLE pointing at a
-// non-existent file), the happy-path PID + log roundtrip via
-// `NIMBUS_GATEWAY_EXECUTABLE` pointing at a real no-op subprocess, and
-// the `.nimbus-profile` -> `NIMBUS_PROFILE` env wiring.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,14 +48,6 @@ describe("stripInspectorEnv", () => {
     expect(out).not.toBe(env);
   });
 });
-
-// ----------------------------------------------------------------------
-// spawnGateway — drive `resolveGatewayLaunch` through the
-// `NIMBUS_GATEWAY_EXECUTABLE` override so we don't depend on a built
-// dist binary or a monorepo checkout being discoverable from the test
-// runner's cwd. Cleanup of every spawned child is handled by the
-// file-level `liveProcs` set.
-// ----------------------------------------------------------------------
 
 const liveProcs = new Set<Bun.Subprocess>();
 
@@ -120,10 +103,6 @@ describe("spawnGateway — launch failure", () => {
   beforeEach(() => {
     prevEnv = previousExecutableEnv();
     dir = mkdtempSync(join(tmpdir(), "nimbus-spawn-fail-"));
-    // Point the resolver at a path that does NOT exist; this short-circuits
-    // resolveGatewayLaunch into its `ok: false` branch with a deterministic
-    // message regardless of whether the test runner sits in a monorepo
-    // checkout.
     process.env["NIMBUS_GATEWAY_EXECUTABLE"] = join(dir, "no-such-binary");
   });
 
@@ -157,11 +136,6 @@ describe("spawnGateway — happy path via NIMBUS_GATEWAY_EXECUTABLE", () => {
     const paths = makePaths(dir);
     mkdirSync(paths.logDir, { recursive: true });
 
-    // We use the running Bun binary itself as the "gateway" — it's
-    // guaranteed to exist on PATH for any environment that can run
-    // this test, and it reads stdin so it stays alive until we kill
-    // it. The override path bypasses the dist + repo-root resolvers
-    // entirely (see resolveFromOverride).
     process.env["NIMBUS_GATEWAY_EXECUTABLE"] = process.execPath;
 
     const result = await spawnGateway(paths);
@@ -174,9 +148,6 @@ describe("spawnGateway — happy path via NIMBUS_GATEWAY_EXECUTABLE", () => {
     const logContents = readFileSync(result.logPath, "utf8");
     expect(logContents).toContain("nimbus: spawning gateway");
 
-    // Track for cleanup. `spawnGateway` returns a detached child via
-    // node:child_process; we can't recover a Bun.Subprocess handle from
-    // a pid alone, so manually kill by pid here.
     try {
       process.kill(result.pid);
     } catch {
@@ -192,16 +163,10 @@ describe("spawnGateway — happy path via NIMBUS_GATEWAY_EXECUTABLE", () => {
     const first = await spawnGateway(paths);
     expect(first.logStartOffset).toBe(0);
 
-    // The second call should see a non-zero offset because the first
-    // spawn already wrote the timestamped marker line into the same
-    // daily log file. The exact byte count is platform-dependent (it
-    // includes the current ISO timestamp), so we assert > 0 not a
-    // specific number.
     const second = await spawnGateway(paths);
     expect(second.logPath).toBe(first.logPath);
     expect(second.logStartOffset).toBeGreaterThan(0);
 
-    // Cleanup: kill both children.
     for (const pid of [first.pid, second.pid]) {
       try {
         process.kill(pid);
@@ -216,9 +181,6 @@ describe("spawnGateway — happy path via NIMBUS_GATEWAY_EXECUTABLE", () => {
     mkdirSync(paths.logDir, { recursive: true });
     process.env["NIMBUS_GATEWAY_EXECUTABLE"] = process.execPath;
 
-    // We can't easily introspect a detached child's env from here, so
-    // this case primarily exercises the extraEnv merge branch
-    // (Object.entries loop) without throwing.
     const result = await spawnGateway(paths, {
       extraEnv: { NIMBUS_TEST_KEY: "hello", NIMBUS_TEST_KEY_2: "world" },
     });

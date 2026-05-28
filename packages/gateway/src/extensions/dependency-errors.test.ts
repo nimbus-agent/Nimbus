@@ -66,7 +66,7 @@ describe("ReverseDepBlockedError", () => {
     expect(e.blockers[0]?.range).toBe("^1.0.0");
     expect(e.message).toContain("reverse_dep_blocked");
     expect(e.message).toContain("com.shared.A");
-    expect(e.message).toContain("1"); // blocker count
+    expect(e.message).toContain("1");
   });
 
   it("narrows via isReverseDepBlockedError", () => {

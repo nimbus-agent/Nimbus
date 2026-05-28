@@ -25,10 +25,6 @@ function nonEmpty(s: string | undefined): s is string {
   return s !== undefined && s.trim() !== "";
 }
 
-/**
- * Resolve or create a `person` row from sync-time hints (local SQLite only — no connector calls).
- * Email evidence sets `linked = true`; handle-only rows use `linked = false`.
- */
 export function resolvePersonForSync(db: Database, hints: PersonSyncHints): string | null {
   if (
     !nonEmpty(hints.canonicalEmail) &&
@@ -373,9 +369,6 @@ function resolveHandleOnlyPerson(db: Database, hints: PersonSyncHints): string |
   return null;
 }
 
-/**
- * Merge `personIdB` into `personIdA` (A survives). Updates `item.author_id` references and deletes B.
- */
 export function mergePeople(db: Database, personIdA: string, personIdB: string): string {
   if (personIdA === personIdB) {
     return personIdA;

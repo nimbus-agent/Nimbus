@@ -66,7 +66,6 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
   if (input.dryRun) return { preflight, deleted: false };
 
   input.index.rawDb.transaction(() => {
-    // DELETE FROM item cascades to embedding_chunk, which triggers deletion from vec_items_384
     input.index.rawDb.run(`DELETE FROM item WHERE service = ?`, [input.service]);
     input.index.rawDb.run(`DELETE FROM sync_state WHERE connector_id LIKE ?`, [
       `${input.service}%`,

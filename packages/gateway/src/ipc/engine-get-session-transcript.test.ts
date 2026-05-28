@@ -5,7 +5,6 @@ import { createGetSessionTranscriptHandler } from "./engine-get-session-transcri
 
 function seedDb(): Database {
   const db = new Database(":memory:");
-  // Schema mirrors the post-V24 production audit_log layout.
   db.run(`
     CREATE TABLE audit_log (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,28 +1,6 @@
-/**
- * Pure mapping from a Flux (GitOps Toolkit) Custom Resource to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `flux-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "flux", type = "resource"` rows — a SINGLE type across all
- * nine CRD kinds, with the kind carried in metadata (`ctx.kind`). The
- * `resource` type is sparse/structured (name, kind, Ready status, revisions),
- * so it stays on local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * A Flux CR is nested: `metadata` (name, namespace, creationTimestamp),
- * `spec` (suspend, url, path), and `status` (conditions[], lastAppliedRevision,
- * lastAttemptedRevision). We descend defensively with {@link asRecord} so a
- * missing sub-object yields nulls rather than throwing.
- *
- * Flux has no web UI, so there is no clickable URL. `canonicalUrl` is a
- * non-clickable resource locator string `<kind>/<namespace>/<name>`, and the
- * row's `url` field is null.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface FluxMappingContext {
-  /** The CRD kind discriminator (e.g. `kustomization`, `helm_release`). */
   readonly kind: string;
   readonly syncedAt: number;
 }
@@ -51,11 +29,6 @@ interface ReadyCondition {
   readonly lastTransitionTime: string | null;
 }
 
-/**
- * Find the `Ready` entry in `status.conditions` (an array of condition
- * objects). Returns null when there is no Ready condition (or no conditions
- * array at all). Descends defensively — never throws.
- */
 function findReadyCondition(status: Record<string, unknown>): ReadyCondition | null {
   const conditions = status["conditions"];
   if (!Array.isArray(conditions)) {
@@ -108,7 +81,6 @@ export function mapFluxResourceToItem(raw: unknown, ctx: FluxMappingContext): Fl
   const lastAttemptedRevision = stringField(status, "lastAttemptedRevision") ?? null;
 
   const nsLocator = namespace ?? "_";
-  // No web UI: canonicalUrl is a non-clickable resource locator string.
   const canonicalUrl = `${ctx.kind}/${nsLocator}/${name}`;
   const externalId = `${ctx.kind}/${nsLocator}/${name}`;
 

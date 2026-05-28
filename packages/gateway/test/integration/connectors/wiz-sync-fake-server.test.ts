@@ -1,18 +1,3 @@
-/**
- * Integration: exercise `createWizSyncable` against a `Bun.serve` fake
- * that stands in for both Wiz endpoints — the OAuth `client_credentials`
- * token endpoint (`/oauth/token`) and the GraphQL API (`/graphql`).
- * Complements the pure-mapper unit tests by proving the sync handler
- * emits well-formed requests (auth round-trip, Bearer header, GraphQL
- * pagination via `after`) and consumes the live response shape
- * end-to-end through real fetch + JSON parsing.
- *
- * Pattern (matches semgrep/sonarqube/snyk): install a fetch interceptor
- * that rewrites the two default Wiz hosts to the local `Bun.serve` URL,
- * then assert the gateway's `item` table contains the upserted rows
- * after `sync()` returns.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
@@ -43,13 +28,9 @@ interface IssueNode {
 }
 
 interface FakeWizConfig {
-  /** Pages returned by the /graphql endpoint, in order. */
   pages: Array<{ nodes: unknown[]; hasNextPage: boolean; endCursor: string | null }>;
-  /** When set, /oauth/token responds with this status instead of 200. */
   authStatus?: number;
-  /** When true, /oauth/token returns 200 but omits `access_token`. */
   authNoToken?: boolean;
-  /** When true, /graphql returns a GraphQL `errors` envelope. */
   graphqlErrors?: boolean;
 }
 
@@ -131,8 +112,6 @@ function startHarness(config: FakeWizConfig): Harness {
   const vault = createMockVault();
   const fake = startFakeWiz(config);
   const originalFetch = globalThis.fetch;
-  // Rewrite the two default Wiz hosts → fake.baseUrl so production code
-  // stays unchanged (no test-only env-var override of the API URLs).
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -202,7 +181,6 @@ describe("wiz-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-wiz1:")).toBe(true);
 
-    // Exactly one auth round-trip; the GraphQL call carries the bearer.
     const authCalls = h.fake.requests.filter((r) => r.path === "/oauth/token");
     expect(authCalls).toHaveLength(1);
     const gqlCalls = h.fake.requests.filter((r) => r.path === "/graphql");
@@ -210,7 +188,6 @@ describe("wiz-sync against Bun.serve fake API", () => {
     for (const r of gqlCalls) {
       expect(r.auth).toBe("Bearer fake-wiz-token");
     }
-    // Open-status filter is sent to the API.
     const firstGql = gqlCalls[0];
     if (firstGql === undefined) throw new Error("expected a graphql call");
     expect(firstGql.variables?.["filterBy"]).toEqual({ status: ["OPEN"] });
@@ -301,7 +278,6 @@ describe("wiz-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-wiz1:")).toBe(true);
-    // Auth succeeded, so exactly one graphql attempt was made before the break.
     expect(h.fake.requests.filter((r) => r.path === "/oauth/token")).toHaveLength(1);
     expect(h.fake.requests.filter((r) => r.path === "/graphql")).toHaveLength(1);
   });

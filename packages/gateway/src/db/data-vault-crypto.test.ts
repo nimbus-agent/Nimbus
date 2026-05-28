@@ -10,14 +10,9 @@ const PASSPHRASE = "correct horse battery staple";
 const SEED =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-// Argon2id with 64 MB memory is slow in Bun. We override to tiny parameters for tests.
 const FAST_KDF = { t: 1, m: 1024, p: 1 } as const;
 
 describe("envelope encryption", () => {
-  // The KDF allowlist (S2-F10) only accepts production parameters by default.
-  // Tests in this file use FAST_KDF for speed — register it once for the
-  // duration of the suite so decryptVaultManifest accepts the round-tripped
-  // blobs.
   let restoreKdf: () => void;
   beforeAll(() => {
     restoreKdf = _addTestKdfProfile({ ...FAST_KDF });
@@ -101,7 +96,6 @@ describe("decryptVaultManifest — KDF allowlist (S2-F10)", () => {
       seed: SEED,
       kdfParams: FAST_KDF,
     });
-    // Substitute params not in the allowlist (different m / t).
     const tampered = { ...blob, kdf: { t: 1, m: 8, p: 1 } };
     await expect(decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).rejects.toThrow(
       /kdf params not in allowlist/i,
@@ -122,7 +116,6 @@ describe("decryptVaultManifest — KDF allowlist (S2-F10)", () => {
   });
 
   test("accepts the DEFAULT_KDF profile (production)", async () => {
-    // No kdfParams override → uses DEFAULT_KDF { t: 3, m: 64*1024, p: 1 }.
     const blob = await encryptVaultManifest({
       plaintext: "x",
       passphrase: PASSPHRASE,

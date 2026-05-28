@@ -109,7 +109,6 @@ describe("AgentCoordinator", () => {
 
     const results = await coordinator.run(tasks);
     expect(results).toHaveLength(3);
-    // Result array index must match input task index regardless of resolution order.
     expect(results.map((r) => r.text)).toEqual(["done 0", "done 1", "done 2"]);
     expect(results.map((r) => r.taskIndex)).toEqual([0, 1, 2]);
     expect(results.every((r) => r.status === "done")).toBe(true);
@@ -135,16 +134,12 @@ describe("AgentCoordinator", () => {
     const results = await new AgentCoordinator(ctx).run(tasks);
     const elapsed = performance.now() - start;
 
-    // 3x serial would be ~300ms; 500ms gives CI runner margin (slow ubuntu-24.04
-    // GitHub runners under load can push a 100ms setTimeout to 130ms+).
     expect(elapsed).toBeLessThan(500);
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.status === "done")).toBe(true);
   });
 
   test("AgentCoordinator pre-checks tool-call cap before fan-out", async () => {
-    // Arrange: cap is 20 (the production default in Config.maxToolCallsPerSession).
-    // Pre-load 18; submitting 5 tasks would total 23 — must throw before any execute().
     let executes = 0;
     const ctx = {
       sessionId: "s1",
@@ -162,7 +157,7 @@ describe("AgentCoordinator", () => {
     }));
 
     await expect(new AgentCoordinator(ctx).run(tasks)).rejects.toThrow(/Tool call limit reached/);
-    expect(executes).toBe(0); // No sub-task got to start.
+    expect(executes).toBe(0);
   });
 
   test("AgentCoordinator returns sibling status: done when one task throws", async () => {

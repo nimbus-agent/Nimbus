@@ -25,21 +25,12 @@ async function resolveOpenAIApiKey(vault: NimbusVault): Promise<string> {
   return typeof v === "string" ? v.trim() : "";
 }
 
-/**
- * Hybrid embedding runtime — wraps two `SqliteEmbeddingPipeline` instances
- * (MiniLM 384 + OpenAI 1536) in a `RoutingEmbeddingPipeline`. Returns
- * `null` if the OpenAI key is missing, the OpenAI embedder fails to build,
- * or sqlite-vec is unavailable — caller falls back to MiniLM-only.
- */
 export async function tryCreateRoutingEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,
   logger: Logger,
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   vault: NimbusVault,
-  // Injected for tests only — production passes nothing and gets the real
-  // MiniLM loader. Injection (not `mock.module`) avoids leaking a process-global
-  // model.ts fake into sibling embedding tests (e.g. model.test.ts).
   createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
 ): Promise<EmbeddingRuntime | null> {
   const apiKey = await resolveOpenAIApiKey(vault);
@@ -114,7 +105,6 @@ export async function tryCreateRoutingEmbeddingRuntime(
     },
 
     async embedQuery(text: string): Promise<Float32Array | null> {
-      // Single-vec API stays on the local embedder for back-compat.
       const vecs = await localEmbedder.embed([text]);
       return vecs[0] ?? null;
     },

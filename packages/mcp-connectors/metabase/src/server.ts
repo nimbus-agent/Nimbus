@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-metabase — Metabase API MCP server (read-only).
- * Credentials arrive as METABASE_URL + METABASE_API_KEY env, injected at
- * spawn time. The Metabase API key is sent as the `x-api-key` request header
- * (NOT `Authorization`). Metabase has no universal SaaS host, so there is no
- * default for METABASE_URL — it must be set.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -24,7 +17,6 @@ function apiBase(): string {
   if (v === undefined || v === "") {
     throw new Error("METABASE_URL is not set");
   }
-  // Metabase paths already include `/api/...`, so the base is just the host root.
   return trimTrailingSlash(v);
 }
 
@@ -45,7 +37,6 @@ async function mbGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the dashboard array out of a `/api/dashboard` response (bare array, else `.data`). */
 function dashboardsFrom(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;

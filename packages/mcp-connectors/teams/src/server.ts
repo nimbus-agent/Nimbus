@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-teams — Microsoft Graph Teams (channels + chats). Token: MICROSOFT_OAUTH_ACCESS_TOKEN.
- * Channel/chat posts require Gateway HITL (`teams.message.post`, `teams.message.postChat`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-slack — Slack Web API MCP server (user OAuth token).
- * Token is injected as SLACK_USER_ACCESS_TOKEN (never logged).
- * Posts require Gateway HITL (`slack.message.post`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -71,7 +65,6 @@ const slackConversationsHistorySchema = z.object({
 
 type SlackConversationsHistoryParsed = z.infer<typeof slackConversationsHistorySchema>;
 
-/** Shared shape for `conversations.history` (channels + DMs). */
 function buildConversationsHistoryBody(
   parsed: SlackConversationsHistoryParsed,
 ): Record<string, unknown> {

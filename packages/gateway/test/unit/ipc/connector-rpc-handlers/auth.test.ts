@@ -1,13 +1,3 @@
-/**
- * Unit tests for packages/gateway/src/ipc/connector-rpc-handlers/auth.ts
- *
- * Scope (Task 7): PAT-based connectors + observability set.
- *   github, gitlab, linear, circleci, jenkins, bitbucket
- *   grafana, sentry, newrelic, datadog, pagerduty
- *
- * Task 8 will extend this file with: aws, azure, gcp, kubernetes, discord,
- * iac, jira, confluence, and the OAuth/PKCE dispatch paths.
- */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
@@ -15,8 +5,6 @@ import { handleConnectorAuth } from "../../../../src/ipc/connector-rpc-handlers/
 import type { ConnectorRpcHandlerContext } from "../../../../src/ipc/connector-rpc-handlers/context.ts";
 import { loadSchedulerState } from "../../../../src/sync/scheduler-store.ts";
 import { MockVault } from "../../../../src/vault/mock.ts";
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeCtx(
   rec: Record<string, unknown>,
@@ -43,32 +31,26 @@ function freshDeps(): { db: Database; vault: MockVault; localIndex: LocalIndex }
   return { db, vault, localIndex };
 }
 
-/** Assert scheduler row was written for a given service. */
 function assertSchedulerRow(db: Database, serviceId: string): void {
   const row = loadSchedulerState(db, serviceId);
   expect(row).not.toBeNull();
   expect(row?.service_id).toBe(serviceId);
 }
 
-/** Assert vault key holds the expected value. */
 async function assertVaultKey(vault: MockVault, key: string, expected: string): Promise<void> {
   const val = await vault.get(key);
   expect(val).toBe(expected);
 }
 
-/** Assert vault key is absent. */
 async function assertVaultKeyAbsent(vault: MockVault, key: string): Promise<void> {
   const val = await vault.get(key);
   expect(val).toBeNull();
 }
 
-/** Confirm that credential value does not appear in the JSON-serialised response. */
 function assertCredentialRedacted(result: unknown, secret: string): void {
   const json = JSON.stringify(result);
   expect(json).not.toContain(secret);
 }
-
-// ─── github ─────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — github", () => {
   let db: Database;
@@ -134,8 +116,6 @@ describe("handleConnectorAuth — github", () => {
   });
 });
 
-// ─── gitlab ─────────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — gitlab", () => {
   let db: Database;
   let vault: MockVault;
@@ -176,7 +156,6 @@ describe("handleConnectorAuth — gitlab", () => {
   });
 
   test("happy path: omitting apiBaseUrl removes gitlab.api_base if present", async () => {
-    // First set it
     await vault.set("gitlab.api_base", "https://old.example");
     const fixture = "fixture-gl-3";
     const ctx = makeCtx({ service: "gitlab", personalAccessToken: fixture }, vault, localIndex);
@@ -200,8 +179,6 @@ describe("handleConnectorAuth — gitlab", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── linear ─────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — linear", () => {
   let db: Database;
@@ -250,8 +227,6 @@ describe("handleConnectorAuth — linear", () => {
   });
 });
 
-// ─── circleci ────────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — circleci", () => {
   let db: Database;
   let vault: MockVault;
@@ -290,8 +265,6 @@ describe("handleConnectorAuth — circleci", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── jenkins ─────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — jenkins", () => {
   let db: Database;
@@ -391,8 +364,6 @@ describe("handleConnectorAuth — jenkins", () => {
   });
 });
 
-// ─── bitbucket ───────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — bitbucket", () => {
   let db: Database;
   let vault: MockVault;
@@ -462,8 +433,6 @@ describe("handleConnectorAuth — bitbucket", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── grafana ─────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — grafana", () => {
   let db: Database;
@@ -544,8 +513,6 @@ describe("handleConnectorAuth — grafana", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── sentry ──────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — sentry", () => {
   let db: Database;
@@ -632,8 +599,6 @@ describe("handleConnectorAuth — sentry", () => {
   });
 });
 
-// ─── newrelic ────────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — newrelic", () => {
   let db: Database;
   let vault: MockVault;
@@ -691,8 +656,6 @@ describe("handleConnectorAuth — newrelic", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── datadog ─────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — datadog", () => {
   let db: Database;
@@ -792,8 +755,6 @@ describe("handleConnectorAuth — datadog", () => {
   });
 });
 
-// ─── pagerduty ───────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — pagerduty", () => {
   let db: Database;
   let vault: MockVault;
@@ -847,8 +808,6 @@ describe("handleConnectorAuth — pagerduty", () => {
     assertCredentialRedacted(result, fixture);
   });
 });
-
-// ─── aws ─────────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — aws", () => {
   let db: Database;
@@ -976,8 +935,6 @@ describe("handleConnectorAuth — aws", () => {
   });
 });
 
-// ─── azure ───────────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — azure", () => {
   let db: Database;
   let vault: MockVault;
@@ -1082,8 +1039,6 @@ describe("handleConnectorAuth — azure", () => {
   });
 });
 
-// ─── gcp ─────────────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — gcp", () => {
   let db: Database;
   let vault: MockVault;
@@ -1161,8 +1116,6 @@ describe("handleConnectorAuth — gcp", () => {
   });
 });
 
-// ─── kubernetes ──────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — kubernetes", () => {
   let db: Database;
   let vault: MockVault;
@@ -1239,8 +1192,6 @@ describe("handleConnectorAuth — kubernetes", () => {
     await assertVaultKeyAbsent(vault, "kubernetes.kubeconfig");
   });
 });
-
-// ─── discord opt-in ──────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — discord", () => {
   let db: Database;
@@ -1350,8 +1301,6 @@ describe("handleConnectorAuth — discord", () => {
   });
 });
 
-// ─── iac opt-in ──────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — iac", () => {
   let db: Database;
   let vault: MockVault;
@@ -1403,8 +1352,6 @@ describe("handleConnectorAuth — iac", () => {
     await assertVaultKeyAbsent(vault, "iac.enabled");
   });
 });
-
-// ─── jira ─────────────────────────────────────────────────────────────────────
 
 describe("handleConnectorAuth — jira", () => {
   let db: Database;
@@ -1520,8 +1467,6 @@ describe("handleConnectorAuth — jira", () => {
   });
 });
 
-// ─── confluence ───────────────────────────────────────────────────────────────
-
 describe("handleConnectorAuth — confluence", () => {
   let db: Database;
   let vault: MockVault;
@@ -1603,30 +1548,6 @@ describe("handleConnectorAuth — confluence", () => {
   });
 });
 
-// ─── OAuth/PKCE dispatch (error paths) ───────────────────────────────────────
-//
-// The helpers oauthClientConfigForProvider, oauthScopesFromConnectorRequest,
-// and oauthRedirectPortFromRec are NOT exported from auth.ts. They are tested
-// indirectly by triggering connectorAuthOAuthPkce through handleConnectorAuth
-// with OAuth-only service IDs (google_drive, outlook, slack, notion, etc.).
-//
-// Microsoft/Slack/Notion client IDs default to "" in the test environment
-// (NIMBUS_OAUTH_MICROSOFT_CLIENT_ID / NIMBUS_OAUTH_SLACK_CLIENT_ID /
-// NIMBUS_OAUTH_NOTION_CLIENT_ID are unset), so connectorAuthOAuthPkce throws
-// ConnectorRpcError(-32602) before reaching runPKCEFlow.
-//
-// Google's NIMBUS_OAUTH_GOOGLE_CLIENT_ID may or may not be set in CI. When it
-// IS set, execution proceeds past the clientId check and reaches runPKCEFlow
-// which calls openUrl. The ctx for Google tests uses a sentinel openUrl that
-// throws, making the call reject (with any error). The meaningful assertion is
-// that handleConnectorAuth does NOT return successfully — i.e. the OAuth path
-// is wired and runPKCEFlow is being invoked (not bypassed).
-//
-// The oauthScopesFromConnectorRequest and oauthRedirectPortFromRec helpers are
-// exercised by the google_drive + outlook calls below (default-scopes path and
-// custom-port path respectively). oauthClientConfigForProvider is exercised by
-// all four provider branches (google, microsoft, slack, notion).
-
 function makeOAuthCtx(
   rec: Record<string, unknown>,
   vault: MockVault,
@@ -1636,7 +1557,6 @@ function makeOAuthCtx(
     rec,
     vault,
     localIndex,
-    // Allow openUrl to be called; it throws to abort the PKCE flow cleanly.
     openUrl: async (_url: string) => {
       throw new Error("openUrl: PKCE flow aborted in test");
     },
@@ -1645,12 +1565,10 @@ function makeOAuthCtx(
   };
 }
 
-// Top-level const so both branches of the conditional test definitions read the
-// same value without repeated process.env access.
 const GOOGLE_CLIENT_ID_FOR_TESTS = process.env["NIMBUS_OAUTH_GOOGLE_CLIENT_ID"] ?? "";
 
 describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
-  let db: Database; // held only for afterEach cleanup; no scheduler assertions in OAuth tests
+  let db: Database;
   let vault: MockVault;
   let localIndex: LocalIndex;
 
@@ -1661,11 +1579,6 @@ describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
   afterEach(() => {
     db.close();
   });
-
-  // ── Google provider — clientId may or may not be set in CI ──
-  // When NIMBUS_OAUTH_GOOGLE_CLIENT_ID is empty the handler throws -32602 before
-  // reaching runPKCEFlow. When it is set, execution reaches runPKCEFlow which
-  // calls openUrl; the test ctx's sentinel openUrl throws a specific string.
 
   if (GOOGLE_CLIENT_ID_FOR_TESTS === "") {
     test("google_drive: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
@@ -1689,8 +1602,6 @@ describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
     });
   }
 
-  // ── Microsoft provider — clientId is "" → ConnectorRpcError -32602 ──
-
   test("onedrive: missing NIMBUS_OAUTH_MICROSOFT_CLIENT_ID throws -32602", async () => {
     const ctx = makeOAuthCtx({ service: "onedrive" }, vault, localIndex);
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
@@ -1701,22 +1612,16 @@ describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
   });
 
-  // ── Slack provider — clientId is "" → ConnectorRpcError -32602 ──
-
   test("slack: missing NIMBUS_OAUTH_SLACK_CLIENT_ID throws -32602", async () => {
     const ctx = makeOAuthCtx({ service: "slack" }, vault, localIndex);
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
   });
-
-  // ── Notion provider — clientId is "" → ConnectorRpcError -32602 ──
 
   test("notion: missing NIMBUS_OAUTH_NOTION_CLIENT_ID throws -32602", async () => {
     const ctx = makeOAuthCtx({ service: "notion" }, vault, localIndex);
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
   });
 });
-
-// ─── Dispatch — unknown connector name ───────────────────────────────────────
 
 describe("handleConnectorAuth — unknown service name", () => {
   let db: Database;

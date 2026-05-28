@@ -1,19 +1,3 @@
-/**
- * nimbus-mcp-semgrep — Semgrep AppSec Platform REST API MCP server
- * (read-only).
- *
- * Exposes the three mandatory read tools (`semgrep_list`, `semgrep_get`,
- * `semgrep_search`) per the Nimbus connector authoring contract. No write
- * tools are registered and `hitlRequired` is empty in the manifest —
- * `semgrep.finding.triage` is a deferred Phase 8 follow-up.
- *
- * Credentials arrive as `SEMGREP_TOKEN` env, injected at spawn time by the
- * Gateway from the `semgrep.token` vault key. `SEMGREP_DEPLOYMENT_SLUG` is
- * required for any deployment-scoped read; the gateway-side syncable
- * discovers the slug from `/deployments` if unset. The connector never
- * reaches for the vault itself (per the project's non-negotiable #3).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

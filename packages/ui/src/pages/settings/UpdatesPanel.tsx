@@ -55,9 +55,6 @@ export function UpdatesPanel() {
     refresh().catch(() => undefined);
   }, [refresh]);
 
-  // No subscriptions, no timer here — `UpdaterRestartChrome` (mounted in RootLayout)
-  // owns all of that. This panel only reads from the slice and exposes user actions.
-
   const onCheckNow = useCallback(async () => {
     setUiState("checking");
     try {

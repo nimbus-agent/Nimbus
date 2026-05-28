@@ -1,12 +1,3 @@
-/**
- * nimbus-mcp-lever — Lever Data API MCP server (read-only).
- * Credentials arrive as LEVER_API_KEY env, injected at spawn time. Lever uses
- * HTTP Basic auth where the API key is the USERNAME and the password is EMPTY:
- * `Authorization: Basic base64(<api_key>:)` (note the trailing colon — the empty
- * password; never logged). The API host is fixed at api.lever.co (no host
- * override). v1 indexes job postings only — opportunities / candidates are
- * deferred (candidate PII; out of scope for v1).
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -28,12 +19,6 @@ function apiKey(): string {
   return t;
 }
 
-/**
- * Build the Basic auth header. Lever's scheme makes the API key the username
- * and the password EMPTY — reuse the shared email:token base64 helper with the
- * API key as the "email" half and an empty-string "token" half, producing
- * `Basic base64(<api_key>:)`. The resulting header is never logged.
- */
 function authHeader(): Record<string, string> {
   return { Authorization: encodeBasicAuthHeader(apiKey(), ""), Accept: "application/json" };
 }

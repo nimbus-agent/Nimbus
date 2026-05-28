@@ -30,11 +30,6 @@ interface PipedriveCreds {
   readonly token: string;
 }
 
-/**
- * `pipedrive.token` is required. Pipedrive's API host is a fixed SaaS host
- * (`api.pipedrive.com`) — there is no host override key. The connector no-ops
- * unless the token is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<PipedriveCreds | null> {
   const token = (await readConnectorSecret(ctx.vault, "pipedrive", "token"))?.trim() ?? "";
   if (token === "") {
@@ -48,14 +43,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/**
- * Build the FULL deals URL including the `api_token=<token>` query parameter.
- *
- * SECURITY: Pipedrive authenticates with the token IN THE QUERY STRING — there
- * is no Authorization header — so the returned URL contains the secret. The
- * caller MUST NEVER log this URL or place it (or anything derived from it) into
- * an Error/audit/log line. The `start` offset is Pipedrive's forward cursor.
- */
 function dealsUrl(token: string, start: number): string {
   const params = new URLSearchParams({
     api_token: token,
@@ -76,9 +63,6 @@ async function pipedriveGetDeals(
   });
   const text = await res.text();
   if (!res.ok) {
-    // Log only the status + resource — NEVER the URL (it carries the token in
-    // the query string) and NEVER the body (it could be large). The `start`
-    // offset is token-free, so it is safe to surface for diagnostics.
     ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, start }, "pipedrive GET failed");
     return { kind: "http_error", bytes: text.length };
   }
@@ -89,14 +73,6 @@ async function pipedriveGetDeals(
   }
 }
 
-/**
- * `GET /v1/deals` returns the Pipedrive envelope
- * `{ success, data: [...] | null, additional_data: { pagination: {
- * more_items_in_collection, next_start? } } }`. Extract the data array (a null
- * `data` is treated as empty), the `more_items_in_collection` flag, and the
- * `next_start` offset defensively — a missing/malformed envelope yields an
- * empty page with `moreItems: false` so the walk terminates.
- */
 function extractDeals(parsed: unknown): {
   deals: unknown[];
   moreItems: boolean;
@@ -147,12 +123,6 @@ export function createPipedriveSyncable(options: PipedriveSyncableOptions): Sync
       let totalUpserted = 0;
       let start = 0;
 
-      // The first deals page is the gating call: a FIRST-page http/parse error
-      // maps to the pass-cursor-empty result (http keeps the prior cursor, parse
-      // resets). Later-page errors just break, preserving whatever was already
-      // collected. Pipedrive offset-paginates: pass `start=<next_start>` and
-      // follow `more_items_in_collection` until it is false (or the MAX_PAGES
-      // cap stops the walk). An empty page also terminates.
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await pipedriveGetDeals(ctx, creds, start);
         totalBytes += outcome.bytes;

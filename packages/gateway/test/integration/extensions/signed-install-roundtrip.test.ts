@@ -26,10 +26,8 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const vault = new MockVault();
 
-    // 1. keygen (in-process — equivalent to `nimbus extension keygen`)
     const { privkey, pubkey } = generateEd25519Keypair();
 
-    // 2. write a signed manifest in a source directory
     const sourceDir = mkdtempSync(join(tmpdir(), "nimbus-roundtrip-src-"));
     try {
       mkdirSync(join(sourceDir, "dist"), { recursive: true });
@@ -39,7 +37,6 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
         permissions: {},
         publisher: { id: "test-pub", key: encodeBase64(pubkey) },
       };
-      // 3. sign (equivalent to `nimbus extension sign`)
       const signature = await signManifest(baseManifest, privkey);
       writeFileSync(
         join(sourceDir, "nimbus.extension.json"),
@@ -47,7 +44,6 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
       );
       writeFileSync(join(sourceDir, "dist", "index.js"), "export default {};");
 
-      // 4. install with explicit --publisher-key path
       const keyDir = mkdtempSync(join(tmpdir(), "nimbus-roundtrip-key-"));
       try {
         const keyFile = join(keyDir, "pub.key");
@@ -64,16 +60,13 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
         });
         expect(installResult.id).toBe("roundtrip-ext");
 
-        // 5. publisher key is now in the vault cache
         expect(await readPublisherKey(vault, "test-pub")).toEqual(pubkey);
 
-        // 6. startup verify pass keeps the extension enabled
         await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
         const row = listExtensions(db).find((r) => r.id === "roundtrip-ext");
         expect(row?.enabled).toBe(1);
         expect(signatureDisabledRegistry.has("roundtrip-ext")).toBe(false);
 
-        // 7. on-disk manifest still carries the publisher block
         const installedManifest = JSON.parse(
           readFileSync(join(extensionsDir, "roundtrip-ext", "nimbus.extension.json"), "utf8"),
         ) as { publisher: { id: string } };
@@ -125,7 +118,6 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
         }),
       ).rejects.toThrow();
 
-      // No DB row should exist (install was rolled back)
       expect(listExtensions(db).find((r) => r.id === "mismatch-ext")).toBeUndefined();
     } finally {
       rmSync(sourceDir, { recursive: true, force: true });

@@ -1,7 +1,6 @@
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
 
-/** PAT / API keys cleared when removing a connector (OAuth keys use provider-wide clear elsewhere). */
 export const CONNECTOR_VAULT_SECRET_KEYS = {
   google_drive: [],
   gmail: [],

@@ -8,8 +8,6 @@ function pad2(n: number): string {
 }
 
 export function formatDailyNoteFilename(format: string, date: Date): string {
-  // Use UTC components — daily notes don't depend on the user's locale at the
-  // sync layer, and tests are deterministic this way.
   const replacements: Record<string, string> = {
     YYYY: String(date.getUTCFullYear()),
     YY: String(date.getUTCFullYear() % 100).padStart(2, "0"),
@@ -26,7 +24,6 @@ export function formatDailyNoteFilename(format: string, date: Date): string {
 }
 
 export type DailyNotePath = {
-  /** Forward-slashed vault-relative path including `.md` suffix. */
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly warning: string | undefined;

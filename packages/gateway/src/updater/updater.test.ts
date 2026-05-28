@@ -33,10 +33,6 @@ type ManifestBuilder = (
   downloadUrl: string,
 ) => ReturnType<typeof buildSignedManifest>;
 
-/**
- * Spin up a download server + manifest server pair. Returns the binary so
- * tests can derive expectations from it.
- */
 function startManifestAndDownloadServers(
   binary: Uint8Array,
   build: ManifestBuilder = (b, url) => buildSignedManifest(b, kp, url, "0.2.0"),
@@ -178,8 +174,6 @@ describe("Updater state machine", () => {
       },
     });
 
-    // Use a valid manifest signed against the real binary so verification fails
-    // at hash/sig rather than before progress events are emitted
     const binary = new Uint8Array(randomBytes(512));
     server = Bun.serve({
       hostname: "127.0.0.1",
@@ -193,12 +187,9 @@ describe("Updater state machine", () => {
     const u = makeUpdater({ emit });
     await u.checkNow();
 
-    // applyUpdate will throw at hash/sig verification (tampered binary), but
-    // downloadProgress events must have been emitted before that point
     await u.applyUpdate().catch(() => {});
 
     expect(progressEvents.length).toBeGreaterThanOrEqual(1);
-    // total comes from content-length header; some servers omit it for streaming (ok to be 0)
     expect(typeof progressEvents[0]?.total).toBe("number");
     const last = progressEvents.at(-1)!;
     expect(last.bytes).toBe(512);
@@ -304,10 +295,7 @@ describe("G6 — updater hardening", () => {
   });
 
   test("downloadAsset rejects body that exceeds the configured cap (S6-F3)", async () => {
-    // Use a small cap (1 KiB) and stream more than that; runtime accumulator
-    // fires before MAX_DOWNLOAD_BYTES is even relevant. This validates the
-    // accumulator code path; the production cap of 500 MiB has the same shape.
-    const binary = new Uint8Array(randomBytes(8 * 1024)); // 8 KiB > 1 KiB cap
+    const binary = new Uint8Array(randomBytes(8 * 1024));
     startManifestAndDownloadServers(binary);
     const u = makeUpdater({ maxDownloadBytes: 1024 });
     await u.checkNow();
@@ -434,7 +422,6 @@ describe("G6 — updater polish (S6-F8 / S6-F9 / S6-F10 / S6-F11)", () => {
     downloadServer?.stop(true);
   });
 
-  // S6-F8 — temp dir is removed regardless of installer success or failure.
   for (const variant of ["success", "failure"] as const) {
     test(`S6-F8 — temp directory is removed after applyUpdate ${variant}`, async () => {
       const binary = new Uint8Array(randomBytes(256));
@@ -460,9 +447,6 @@ describe("G6 — updater polish (S6-F8 / S6-F9 / S6-F10 / S6-F11)", () => {
   }
 
   test("S6-F9 — getStatus.lastError strips URL userinfo from a fetch error", async () => {
-    // Use a non-loopback URL with userinfo so isPermittedSchemeForUpdater
-    // rejects it before fetch — the rejection message would otherwise
-    // echo the bare URL with credentials.
     const u = new Updater({
       currentVersion: "0.1.0",
       manifestUrl: "https://user:supersecret@cdn.example.com/latest.json",

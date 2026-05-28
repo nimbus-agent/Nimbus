@@ -1,9 +1,3 @@
-/**
- * Synthetic Gmail `messages.list` + `messages.get` generator. Two-step:
- *   1. messages.list returns paginated id+threadId pairs.
- *   2. messages.get on each id returns the full message payload.
- */
-
 import type { CorpusTier } from "../types.ts";
 
 export const GMAIL_TIER_COUNTS: Record<CorpusTier, number> = {

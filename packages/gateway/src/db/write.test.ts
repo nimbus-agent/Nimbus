@@ -60,7 +60,6 @@ describe("DiskFullError translation", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE t (n BLOB)");
     db.exec("PRAGMA max_page_count = 4");
-    // Fill the DB until SQLITE_FULL fires.
     let caught: unknown;
     try {
       const big = new Uint8Array(64 * 1024);
@@ -79,8 +78,6 @@ describe("DiskFullError translation", () => {
     let caught: unknown;
     try {
       const big = "x".repeat(64 * 1024);
-      // dbExec wraps db.exec which has no parameter API; `big` is a fixed local
-      // constant (not user input), so the inline string is safe and necessary.
       for (let i = 0; i < 100; i++) dbExec(db, `INSERT INTO t (n) VALUES ('${big}')`);
     } catch (err) {
       caught = err;

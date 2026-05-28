@@ -1,6 +1,5 @@
 import type { OAuthProvider } from "../auth/pkce.ts";
 
-/** Normalised connector `service_id` values (Q2 plan / scheduler_state). */
 export const CONNECTOR_SERVICE_IDS = [
   "google_drive",
   "gmail",
@@ -81,7 +80,6 @@ const SEC90 = 90 * 1000;
 const MIN120 = 120 * 1000;
 const HOUR6 = 6 * 60 * 60 * 1000;
 
-/** Default scheduler interval per service (must list every {@link ConnectorServiceId}). */
 const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number } = {
   google_drive: MIN30,
   onedrive: MIN30,
@@ -161,15 +159,6 @@ function oauthUnsupported(serviceId: ConnectorServiceId, detail: string): never 
   throw new Error(`oauthProfileForService: ${serviceId} ${detail}`);
 }
 
-/**
- * Services that authenticate via a PAT / API token / kubeconfig / service-account
- * key rather than OAuth. Calling `oauthProfileForService` for one of these is a
- * misuse — callers should read the connector's vault keys directly via
- * `readConnectorSecret`. The detail string explains the correct auth shape.
- *
- * Adding a new non-OAuth connector: add an entry here. Adding a new OAuth
- * connector: add a branch in the `switch` below.
- */
 const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   github: "uses a PAT (connector.auth personalAccessToken)",
   github_actions: "uses the same PAT as github (connector.auth github)",
@@ -311,9 +300,6 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
         ],
       };
     default:
-      // All remaining ids are in `OAUTH_UNSUPPORTED_DETAILS` and threw above.
-      // The throw is the actual control-flow exit; this branch only exists so
-      // TypeScript's exhaustiveness check passes for the OAuth-supported switch.
       return oauthUnsupported(
         serviceId,
         "is missing both an OAuth branch and an unsupported entry",

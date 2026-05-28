@@ -9,10 +9,6 @@ export async function sha256Hex(content: string): Promise<string> {
     .join("");
 }
 
-/**
- * Simple line-based unified diff. Sufficient for snapshot review;
- * not a full LCS-based algorithm.
- */
 export function unifiedDiff(
   baseline: string | null,
   actual: string,

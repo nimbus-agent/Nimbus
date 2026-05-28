@@ -6,7 +6,6 @@ function makeIndex(): LocalIndex {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
-  // Seed a sync_state row for "github" (mimics connector registration)
   db.run(
     `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token) VALUES (?, NULL, NULL)`,
     ["github"],

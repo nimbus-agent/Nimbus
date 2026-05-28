@@ -1,6 +1,5 @@
 import { normalizeEmail } from "./person-store.ts";
 
-/** Linear-time shape check matching the former bare-mailbox regex (no ReDoS). */
 function isBareMailboxShape(s: string): boolean {
   if (s === "") {
     return false;
@@ -22,7 +21,6 @@ function isBareMailboxShape(s: string): boolean {
   return dot > 0 && dot < domain.length - 1;
 }
 
-/** `Display Name <addr@host>` spanning the full trimmed string (non-empty display name). */
 function tryParseNamedAngleMailbox(trimmed: string): { displayName: string; email: string } | null {
   if (!trimmed.endsWith(">")) {
     return null;
@@ -43,7 +41,6 @@ function tryParseNamedAngleMailbox(trimmed: string): { displayName: string; emai
   return { displayName, email: inner };
 }
 
-/** First `<…>` segment whose inner text looks like a mailbox (linear scan, no ReDoS). */
 function extractFirstAngleBracketEmail(trimmed: string): string | null {
   let searchFrom = 0;
   while (true) {
@@ -63,10 +60,6 @@ function extractFirstAngleBracketEmail(trimmed: string): string | null {
   }
 }
 
-/**
- * Parse the first mailbox address from a MIME `From` header (e.g. `Name <a@b.com>` or `a@b.com`).
- * Returns normalized lowercase email and optional display name.
- */
 export function parseFromHeaderForPerson(raw: string | null | undefined): {
   email?: string;
   displayName?: string;

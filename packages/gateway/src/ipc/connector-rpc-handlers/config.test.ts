@@ -135,13 +135,6 @@ describe("handleConnectorAddMcp", () => {
   test("serviceId conflicting with built-in -> -32602", async () => {
     const { stub: scheduler } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
-    // Use a normalized form that maps to a built-in via normalizeConnectorServiceId.
-    // normalizeUserMcpServiceId returns the value with prefix-only lowering;
-    // normalizeConnectorServiceId checks against the built-in id set.
-    // We can construct one by using a built-in slug under the mcp_ prefix:
-    // since normalizeUserMcpServiceId requires `mcp_` prefix, the built-in
-    // overlap path is unreachable in practice. This test asserts the same
-    // top-level invariant via the format-rejection path above. Skip.
     expect(true).toBe(true);
     void scheduler;
     void mesh;
@@ -227,7 +220,6 @@ describe("handleConnectorSetInterval", () => {
     );
     expect(r.kind).toBe("hit");
     expect(calls.setIntervalCalls).toEqual([{ id: "github", ms: 60_500 }]);
-    // configChanged notification fired.
     expect(
       fixture.notifications.payloadsFor("connector.configChanged").length,
     ).toBeGreaterThanOrEqual(1);

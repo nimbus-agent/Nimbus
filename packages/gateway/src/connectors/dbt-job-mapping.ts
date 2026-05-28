@@ -1,25 +1,7 @@
-/**
- * Pure mapping from a dbt Cloud Administrative-API job object to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `dbt-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "dbt", type = "job"` rows — a single item type.
- * `external_id = "<accountId>:<jobId>"`. The `job` type is sparse/structured
- * (name, ids, version, state, run status), so it stays on local MiniLM
- * embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * v1 indexes jobs + their latest run status only. Model-level lineage
- * (`data_model` upstream/downstream refs) requires the separate dbt Discovery
- * GraphQL API and is a deferred follow-up.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface DbtMappingContext {
-  /** API base URL — used to build the canonical dbt Cloud job-UI URL. */
   readonly apiBase: string;
-  /** Numeric account id the job belongs to. */
   readonly accountId: number;
   readonly syncedAt: number;
 }
@@ -45,7 +27,6 @@ function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-/** dbt Cloud `state` is an int: 1 = active, 2 = deleted; anything else → null. */
 function mapState(value: unknown): string | null {
   if (value === 1) {
     return "active";
@@ -56,11 +37,6 @@ function mapState(value: unknown): string | null {
   return null;
 }
 
-/**
- * Build the canonical URL for a dbt Cloud job. The job-UI deep link is
- * `<base>/deploy/<accountId>/projects/<projectId>/jobs/<jobId>`. When the
- * project id is missing, fall back to the account deploy page.
- */
 export function jobUrl(
   apiBase: string,
   accountId: number,
@@ -74,12 +50,6 @@ export function jobUrl(
   return `${base}/deploy/${String(accountId)}/projects/${String(projectId)}/jobs/${String(jobId)}`;
 }
 
-/**
- * Pull the most-recent run status from whichever nested run object dbt Cloud
- * attached to the job (`most_recent_run` or `most_recent_completed_run`). The
- * basic jobs list does not always include runs, so this is best-effort —
- * returns nulls when no run object is present.
- */
 function readMostRecentRun(row: Record<string, unknown>): {
   status: string | null;
   finishedAtMs: number | null;

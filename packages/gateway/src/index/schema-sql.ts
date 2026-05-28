@@ -1,7 +1,3 @@
-/**
- * Initial SQLite schema for the local metadata index (Q1).
- * Embedded as a string so `bun build --compile` bundles it with the gateway.
- */
 export const INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS items (
   id          TEXT PRIMARY KEY,

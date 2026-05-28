@@ -48,9 +48,6 @@ describe("vault key validation", () => {
     expect(isWellFormedVaultKey("extension.publisher_key.UPPER")).toBe(false);
   });
 
-  // S2-F7 — mixed-case keys would silently collide on case-insensitive
-  // filesystems (NTFS by default, HFS+ optionally). Reject them at the
-  // validation boundary to keep backend storage deterministic.
   test("rejects uppercase to prevent NTFS / HFS+ case-fold collisions", () => {
     expect(isWellFormedVaultKey("Github.pat")).toBe(false);
     expect(isWellFormedVaultKey("github.PAT")).toBe(false);

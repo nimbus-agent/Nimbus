@@ -18,7 +18,7 @@ function isHttpsTokenEndpoint(s: string, host: string, pathname: string): boolea
 
 describe("pkceCodeChallengeS256", () => {
   test("matches SHA-256 base64url of verifier (RFC 7636)", async () => {
-    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"; // example shape; URL-safe
+    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const challenge = await pkceCodeChallengeS256(verifier);
     expect(challenge).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(challenge.length).toBeGreaterThan(0);

@@ -24,10 +24,6 @@ Usage:
 `);
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runConfig(args)` and the
- * colocated `config.test.ts`. Do not call from other command files.
- */
 export async function runConfigValidate(client: IPCClient): Promise<void> {
   const r = await client.call<{ ok: boolean; errors: string[]; warnings: string[] }>(
     "config.validate",
@@ -62,10 +58,6 @@ function printAdditionalEnvOverrideLegend(): void {
   );
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runConfig(args)` and the
- * colocated `config.test.ts`. Do not call from other command files.
- */
 export function runConfigList(tomlPath: string): void {
   console.log(tomlPath);
   const rows = listTomlKeysWithEnv(tomlPath);
@@ -87,10 +79,6 @@ export function runConfigList(tomlPath: string): void {
   console.log(readFileSync(tomlPath, "utf8"));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runConfig(args)` and the
- * colocated `config.test.ts`. Do not call from other command files.
- */
 export function runConfigGet(tomlPath: string, key: string): void {
   if (key === "" || !key.includes(".")) {
     throw new Error("Usage: nimbus config get <section.key>  (e.g. telemetry.enabled)");
@@ -109,10 +97,6 @@ export function runConfigGet(tomlPath: string, key: string): void {
   console.log("(not set)");
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runConfig(args)` and the
- * colocated `config.test.ts`. Do not call from other command files.
- */
 export function runConfigSet(tomlPath: string, key: string, val: string): void {
   if (key === "" || !key.includes(".") || val === "") {
     throw new Error("Usage: nimbus config set <section.key> <value>");
@@ -122,14 +106,6 @@ export function runConfigSet(tomlPath: string, key: string, val: string): void {
   console.log("Restart the Gateway to apply. Env vars still override file values when set.");
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runConfig(args)` and the
- * colocated `config.test.ts`. Do not call from other command files.
- *
- * `spawnFn` is a seam for tests so the dispatcher can pass `node:child_process`
- * `spawn` in production and a recorder stub in tests. Returns the editor exit
- * code via the same EventEmitter contract.
- */
 export type SpawnFn = (
   cmd: string,
   args: string[],

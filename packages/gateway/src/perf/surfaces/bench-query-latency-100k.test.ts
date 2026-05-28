@@ -12,8 +12,6 @@ describe("runQueryLatency100kOnce (S2-b)", () => {
   test("returns 100 finite samples (test runs against small tier for speed)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-s2b-test-"));
     try {
-      // We pass corpus override at the test level by hand-constructing opts
-      // so the test stays fast; production runs use the wrapper's pinned tier.
       const samples = await runQueryLatency100kOnce(
         { runs: 1, runner: "local-dev", corpus: "small" },
         { cacheDir: dir, overrideTier: "small" },

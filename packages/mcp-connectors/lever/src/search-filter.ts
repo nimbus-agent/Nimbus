@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `lever_search`. Extracted from `server.ts` so
- * the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns the
- * text/state/team/department/location/tag haystack + case-insensitive substring
- * match.
- */
-
 export interface LeverSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;
@@ -16,7 +8,6 @@ function stringField(row: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** A categories sub-field (`team` / `department` / `location` / `commitment` / `level`). */
 function categoryField(row: Record<string, unknown>, key: string): string {
   const cats = row["categories"];
   if (cats === null || typeof cats !== "object" || Array.isArray(cats)) {
@@ -26,7 +17,6 @@ function categoryField(row: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Tag strings from a Lever `tags: ["a", "b"]` array, tolerating non-strings. */
 function tagText(row: Record<string, unknown>): string {
   const tags = row["tags"];
   if (!Array.isArray(tags)) {

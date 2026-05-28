@@ -136,8 +136,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, liveBuffer: "" };
 
     default: {
-      // Exhaustiveness: if a new TuiAction variant is added but not handled
-      // above, TypeScript errors on this `satisfies never` check.
       action satisfies never;
       return state;
     }

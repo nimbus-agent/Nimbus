@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeReadwiseConfig {
-  /** Pages of highlights, in order. Each entry becomes one DRF `results` page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the highlights route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -52,7 +50,6 @@ function startFakeReadwise(config: FakeReadwiseConfig): FakeReadwise {
         const pages = config.pages ?? [[]];
         const page = Number(u.searchParams.get("page") ?? "1");
         const results = pages[page - 1] ?? [];
-        // `next` is non-null only when a subsequent non-empty page exists.
         const hasNext = page < pages.length && (pages[page] ?? []).length > 0;
         return Response.json({
           count: pages.reduce((n, p) => n + p.length, 0),
@@ -91,7 +88,6 @@ function startHarness(config: FakeReadwiseConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         readwise: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -116,8 +112,6 @@ function highlight(id: number, over: Record<string, unknown> = {}): Record<strin
   };
 }
 
-// The fake fakes readwise.io, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite readwise.io → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -152,12 +146,10 @@ describe("readwise-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-readwise1:")).toBe(true);
 
-    // Single page — `next` was null so the walk stopped after one GET.
     const reqs = h.fake.requests.filter((r) => r.path === "/api/v2/highlights/");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("page_size=1000");
     for (const r of h.fake.requests) {
-      // DRF token auth — the literal word "Token", NOT "Bearer".
       expect(r.authorization).toBe("Token readwise_test_token");
     }
 
@@ -189,7 +181,6 @@ describe("readwise-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 pages, each non-empty with a non-null next → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => [highlight(i + 1)]);
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);

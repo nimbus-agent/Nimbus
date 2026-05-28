@@ -1,28 +1,3 @@
-/**
- * Pure mapping from a Readwise `GET /api/v2/highlights/` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `readwise-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "readwise", type = "highlight"` rows — a single item type.
- * `external_id = String(<highlight id>)`. The conceptual item identity is
- * `readwise:highlight`; the `item.id` ends up `readwise:<id>`. A highlight is
- * short (an excerpt plus a note), so it stays on local MiniLM embeddings — NOT
- * added to `PROSE_HEAVY_TYPES` (avoids surprise OpenAI spend on the whole
- * highlight corpus).
- *
- * IMPORTANT: Readwise's `highlighted_at` and `updated` are ISO-8601 STRINGS
- * (e.g. `"2024-03-01T12:00:00.000Z"`), like Netlify's / Mercury's timestamps
- * and UNLIKE the epoch-ms / epoch-seconds number APIs. Parse them to epoch-ms
- * with {@link parseIsoMs} — never pass the ISO string through verbatim, and
- * never treat it as epoch seconds.
- *
- * The `tags` array is a list of `{ id, name }` objects; only the tag NAMES are
- * stored (as a string array), tolerating non-object entries. The source article
- * `url` (present for web highlights, null for book highlights) is the canonical
- * URL — book highlights have no per-highlight public URL.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface ReadwiseMappingContext {
@@ -48,10 +23,6 @@ function parseIsoMs(v: unknown): number | null {
 
 const TITLE_MAX = 80;
 
-/**
- * Tag NAMES from a Readwise `tags: [{ id, name }]` array. Non-array input and
- * non-object / nameless entries are tolerated (skipped).
- */
 export function tagNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -79,7 +50,6 @@ export function mapReadwiseHighlightToItem(
     return null;
   }
 
-  // `id` is a number — stringify for external_id; skip the row if missing.
   const idNum = numberField(row, "id");
   if (idNum === undefined) {
     return null;
@@ -92,15 +62,12 @@ export function mapReadwiseHighlightToItem(
   const locationType = stringField(row, "location_type") ?? null;
   const color = stringField(row, "color") ?? null;
   const bookId = numberField(row, "book_id") ?? null;
-  // The source article URL is present for web highlights, null for books.
   const sourceUrl = stringField(row, "url") ?? null;
   const tags = tagNames(row["tags"]);
 
   const highlightedAt = parseIsoMs(row["highlighted_at"]);
   const updatedAt = parseIsoMs(row["updated"]);
 
-  // title: the first 80 chars of the highlight text (trimmed; append `…` when
-  // truncated); fall back to `Highlight <id>`.
   const trimmedText = text !== null ? text.trim() : "";
   const title =
     trimmedText !== ""
@@ -109,10 +76,8 @@ export function mapReadwiseHighlightToItem(
         : trimmedText
       : `Highlight ${id}`;
 
-  // bodyPreview: the user's note when present, else the highlight text.
   const bodyPreview = note !== null && note !== "" ? note : (text ?? "");
 
-  // canonical/url: the source article URL when a non-empty string, else null.
   const canonicalUrl = sourceUrl !== null && sourceUrl !== "" ? sourceUrl : null;
 
   const modifiedAt = updatedAt ?? highlightedAt ?? ctx.syncedAt;

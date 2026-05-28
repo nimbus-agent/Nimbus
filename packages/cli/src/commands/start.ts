@@ -15,12 +15,6 @@ import { getCliPlatformPaths } from "../paths.ts";
 
 const ONBOARDING_MARKER = ".nimbus-post-start-onboarding";
 const SOCKET_PROBE_TIMEOUT_MS = 2000;
-// Generous upper bound for everything `createPlatformServices()` does before
-// IPC binds: DB migrations, MCP mesh spawn, sync scheduler init. The
-// embedding worker no longer blocks here — it inits in the background and
-// the bridge gracefully no-ops calls until ready (see worker-bridge.ts).
-// First-run DB migrations on a populated index are the slowest realistic
-// step at the moment; 60s is plenty.
 const DEFAULT_READY_WAIT_TIMEOUT_MS = 60_000;
 const READY_POLL_INTERVAL_MS = 250;
 
@@ -86,14 +80,6 @@ export type StartDecision =
   | { action: "abort-stale-clear"; pid: number; reason: "stale state, will clear and restart" }
   | { action: "start-fresh"; reason: "no existing state" };
 
-/**
- * Pure decision-layer for `runStart`. Given the existing state file (if any),
- * whether its pid is alive, and whether the recorded socket is reachable,
- * returns the action the dispatcher should take.
- *
- * Extracted from `runStart` so the parse + state-file decision is testable
- * without spawning a real gateway subprocess.
- */
 export function decideStartAction(
   existing: { pid: number; socketPath: string } | undefined,
   pidAlive: boolean,

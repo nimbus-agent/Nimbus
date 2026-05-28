@@ -1,27 +1,11 @@
-// packages/cli/src/commands/deploy.test.ts
-//
-// Covers:
-//   - parseDeployPreflightArgs (getopt-style flag parsing)
-//   - runDeployCli (dispatcher) — usage error, gateway-not-running,
-//     verdict/mode interaction, malformed envelope, IPC error path,
-//     annotate sub-route.
-//
-// runDeployCli writes via process.stdout.write / process.stderr.write
-// (not console.*), so we intercept those streams directly and override
-// process.exit so it throws — the same pattern extension.test.ts uses
-// for exit-call assertions.
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const deployMod = await import("./deploy.ts");
 const { parseDeployPreflightArgs, runDeployCli } = deployMod;
-
-// ----------------------------------------------------------------------
-// Parser tests (preserved from baseline).
-// ----------------------------------------------------------------------
 
 describe("nimbus deploy preflight arg parser", () => {
   test("parses service + target-ref + json", () => {
@@ -93,10 +77,6 @@ describe("nimbus deploy preflight arg parser", () => {
   });
 });
 
-// ----------------------------------------------------------------------
-// Dispatcher (runDeployCli) tests.
-// ----------------------------------------------------------------------
-
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];
 const origStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -151,7 +131,6 @@ describe("runDeployCli — dispatcher", () => {
   });
 
   it("exits 2 with 'Gateway is not running' when state is undefined", async () => {
-    // gatewayState left unset → readGatewayState returns undefined.
     setFixture({});
     await expect(
       runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
@@ -173,8 +152,6 @@ describe("runDeployCli — dispatcher", () => {
     };
     const mock = createMockIpcClient([envelope]);
     setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
-    // No explicit `mode` ⇒ default warn ⇒ verdict ok ⇒ no exit(1). The
-    // function returns normally (no throw).
     await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
     expect(stdoutChunks.join("")).toContain("Deploy preflight");
     expect(stdoutChunks.join("")).toContain("[ok]");
@@ -207,12 +184,6 @@ describe("runDeployCli — dispatcher", () => {
   });
 
   it("triggers the block-exit branch when --mode block AND verdict warn", async () => {
-    // Note: deploy.ts wraps the IPC call in try/catch where the catch
-    // unconditionally exits 2 after printing the inner error. So
-    // process.exit(1) thrown inside the try-block surfaces here as
-    // process.exit(2) from the outer catch. We assert (a) the pretty
-    // output was written BEFORE the exit (proving we reached the block
-    // comparison) and (b) the function exited non-zero.
     const envelope = {
       service: "svc",
       target_ref: "main",
@@ -269,8 +240,6 @@ describe("runDeployCli — dispatcher", () => {
   });
 
   it("routes 'annotate' sub-arg through runDeployAnnotate (exit 2 on missing --service)", async () => {
-    // runDeployAnnotate exits with code 2 when arg-parse fails. The dispatcher
-    // forwards the return value as process.exit(code).
     await expect(runDeployCli(["annotate"])).rejects.toThrow("process.exit(2)");
   });
 });

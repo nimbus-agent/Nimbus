@@ -42,9 +42,6 @@ describe("mapZoomMeetingToItem", () => {
     });
     expect(row?.metadata["start_time"]).toBe(Date.parse("2026-06-01T10:00:00Z"));
     expect(row?.metadata["created_at"]).toBe(Date.parse("2026-05-25T12:00:00Z"));
-    // modifiedAt MUST use created_at, not start_time — start_time is when the
-    // meeting will happen, not when its row was last edited (a future-scheduled
-    // meeting would otherwise get a future modifiedAt). Review point 1.
     expect(row?.modifiedAt).toBe(Date.parse("2026-05-25T12:00:00Z"));
     expect(row?.syncedAt).toBe(SYNCED_AT);
   });

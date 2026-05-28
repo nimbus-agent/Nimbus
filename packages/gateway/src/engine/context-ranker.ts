@@ -22,9 +22,6 @@ function serviceTypeSortKey(it: RankedIndexItem): string {
   return `${it.service}\0${typeKey(it)}`;
 }
 
-/**
- * Top-N full items plus a compact summary of remaining matches by service/type.
- */
 export function buildContextWindow(
   results: readonly RankedIndexItem[],
   maxItems: number,

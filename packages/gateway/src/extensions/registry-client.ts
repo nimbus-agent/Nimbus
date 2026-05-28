@@ -1,20 +1,3 @@
-/**
- * Registry client that fetches `<baseUrl>/publishers/<id>.key` and returns
- * the 32-byte Ed25519 pubkey body. Body shape: raw 44-char base64 (with
- * padding) of a 32-byte payload, no envelope. Strict body-length check
- * defends against trailing-garbage / append-style attacks.
- *
- * Phase-5 T2 PR 3 extends this surface with the two methods the polling
- * `ExtensionAutoUpdater` daemon needs:
- *
- * - `fetchLatestVersion(id, channel, signal)` → `{ version, channel } | null`
- * - `fetchManifest(id, version, signal)` → `{ manifest, manifestHash, entryHash, tarballUrl, tarballSizeBytes? }`
- *
- * Both go through the same timeout + per-call `AbortController` plumbing.
- * Schema-invalid responses throw; 404 on `latest` returns `null`; 404 on
- * `manifest` throws (a referenced version must be servable).
- */
-
 import { type ExtensionManifest, parseExtensionManifestJson } from "./manifest.ts";
 import { decodeBase64 } from "./verify-signature.ts";
 
@@ -30,13 +13,11 @@ export interface PublisherKeyFetcher {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_RETRIES = 1;
-const EXPECTED_BASE64_LEN = 44; // base64 of 32 bytes with padding
-
+const EXPECTED_BASE64_LEN = 44;
 export function createPublisherKeyFetcher(opts: {
   baseUrl: string;
   timeoutMs?: number;
   retries?: number;
-  /** Injected fetch implementation for tests. Defaults to global fetch. */
   fetchFn?: typeof fetch;
 }): PublisherKeyFetcher {
   const baseUrl = opts.baseUrl.replace(/\/+$/, "");
@@ -106,8 +87,6 @@ export function createPublisherKeyFetcher(opts: {
   };
 }
 
-// ─── T2 PR 3 — full registry client ─────────────────────────────────────────
-
 export interface RegistryClientOpts {
   baseUrl: string;
   timeoutMs?: number;
@@ -122,13 +101,6 @@ export interface FetchLatestVersionResponse {
 
 export interface FetchManifestResponse {
   manifest: ExtensionManifest;
-  /**
-   * Raw on-disk JSON object as received from the registry. Used by the
-   * auto-update daemon for `verifyManifestSignature` because canonicalization
-   * is over the bytes the publisher actually signed — the parsed
-   * `ExtensionManifest` includes defaulted fields (e.g. `updateChannel`) that
-   * would change the canonical bytes.
-   */
   manifestRaw: Record<string, unknown>;
   manifestHash: string;
   entryHash: string;

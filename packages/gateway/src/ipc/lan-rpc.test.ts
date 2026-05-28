@@ -61,7 +61,6 @@ describe("checkLanMethodAllowed", () => {
     expect(() =>
       checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false }),
     ).toThrow(LanError);
-    // Verify the error is ERR_METHOD_NOT_ALLOWED, not ERR_LAN_WRITE_FORBIDDEN
     let thrown: LanError | undefined;
     try {
       checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false });

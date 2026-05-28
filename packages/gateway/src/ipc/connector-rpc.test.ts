@@ -9,7 +9,6 @@ function makeIndex(): LocalIndex {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
-  // Register a connector in scheduler_state so requireRegisteredSchedulerServiceId passes
   db.run(
     `INSERT INTO scheduler_state
        (service_id, cursor, interval_ms, last_sync_at, next_sync_at, status, error_msg, consecutive_failures, paused)
@@ -196,9 +195,6 @@ describe("connector.setConfig", () => {
 
 describe("connector.startAuth deprecated alias (S4-F2)", () => {
   test("connector.startAuth dispatches to the same handler as connector.auth", async () => {
-    // Both methods route through `handleConnectorAuth` which calls
-    // `parseServiceArg` first; passing an unknown service yields the same
-    // error from both paths, proving they share the handler.
     const baseLocalIndex = makeIndex();
     const start = dispatchConnectorRpc({
       ...baseOpts,
@@ -212,8 +208,6 @@ describe("connector.startAuth deprecated alias (S4-F2)", () => {
       method: "connector.auth",
       params: { service: "totally-not-a-real-connector" },
     });
-    // Both must reject with the same error class — proves they share the
-    // handler-side dispatch (parseServiceArg in handleConnectorAuth).
     let startErr: unknown;
     let authErr: unknown;
     try {
@@ -241,8 +235,6 @@ describe("connector.startAuth deprecated alias (S4-F2)", () => {
       params: {},
     });
     expect(miss.kind).toBe("miss");
-    // The alias case is hit, so it does NOT return miss — it routes to the
-    // auth handler which throws on a missing/invalid `service` param.
     await expect(
       dispatchConnectorRpc({
         ...baseOpts,

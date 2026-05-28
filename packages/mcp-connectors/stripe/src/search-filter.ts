@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `stripe_search`. Extracted from `server.ts`
- * so the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns the
- * number/status/customer/description haystack + case-insensitive substring
- * match.
- */
-
 export interface StripeSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

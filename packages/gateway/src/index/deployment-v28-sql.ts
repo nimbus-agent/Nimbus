@@ -1,14 +1,3 @@
-/**
- * V28 migration — `deployment_items` shadow table for the post-deploy
- * annotation surface (Phase 5 T4 PR 3b). One row per annotated deploy,
- * keyed by the unified `item.id`. Append-only and additive — no backfill
- * is needed; existing rows in `item` are unaffected.
- *
- * The unified `item` table holds the cross-cutting search row
- * (`service = "<provider>"`, `type = "deployment"`); this shadow table
- * holds structured fields the DORA calculator queries directly.
- */
-
 export const DEPLOYMENT_V28_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS deployment_items (
   id                  TEXT PRIMARY KEY,

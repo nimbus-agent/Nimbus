@@ -1,16 +1,9 @@
 #!/usr/bin/env bun
-/**
- * Local CI-parity pre-flight. `bun run preflight` (full) / `bun run preflight:fast`.
- * Flags: --fast (fast tier only), --list (print gates, run nothing), --no-bail
- * (run all gates, don't stop at first failure).
- */
 import { type Gate, type GateTier, selectGates } from "./lib/preflight-gates.ts";
 
 async function runGate(g: Gate): Promise<boolean> {
   const started = Date.now();
   process.stdout.write(`\n▶ ${g.name} …\n`);
-  // Spread to a fresh mutable array — g.cmd is readonly; this keeps the call
-  // type-correct without casting away the readonly guarantee.
   const proc = Bun.spawn([...g.cmd], {
     stdout: "inherit",
     stderr: "inherit",
@@ -50,10 +43,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Output stays live (inherit) so long gates (build, test:ci) show progress.
-  // Rather than buffer failing stderr — which would hide that progress — re-print
-  // the exact command for each failed gate so the user can reproduce it in
-  // isolation without scrolling.
   process.stdout.write(`\n── preflight (${tier}) summary ──\n`);
   for (const r of results) process.stdout.write(`  ${r.ok ? "✓" : "✗"} ${r.gate.name}\n`);
   const failed = results.filter((r) => !r.ok);

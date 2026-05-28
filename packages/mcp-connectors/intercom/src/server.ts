@@ -1,11 +1,3 @@
-/**
- * nimbus-mcp-intercom — Intercom REST API MCP server (read-only).
- * Credentials arrive as INTERCOM_TOKEN env, injected at spawn time. Intercom
- * uses Bearer auth: `Authorization: Bearer <token>` (an Intercom Access Token;
- * never logged) plus the `Intercom-Version: 2.11` + `Accept: application/json`
- * request headers. The API host is fixed at api.intercom.io (the US host — no
- * host override). v1 indexes conversations only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

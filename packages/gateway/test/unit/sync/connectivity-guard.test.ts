@@ -1,20 +1,8 @@
-/**
- * Tests for the connectivity probe (sync/connectivity.ts).
- *
- * Plan §2.5: mock `isOnline()` returning false; assert no connector's
- * `backoff_attempt` incremented and no `transitionHealth` was called
- * with `transient_error`.
- *
- * We test the module behaviour directly (pure logic) and also verify
- * that a real DNS resolution to a known-good host returns true.
- */
-
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONNECTIVITY_PROBE_HOST, isOnline } from "../../../src/sync/connectivity.ts";
 
 describe("isOnline", () => {
   test("returns false when DNS lookup rejects", async () => {
-    // Override Bun.dns.lookup to simulate offline
     const original = Bun.dns.lookup;
     // @ts-expect-error -- patching for test
     Bun.dns.lookup = async () => {
@@ -45,7 +33,6 @@ describe("isOnline", () => {
   test("returns true when DNS lookup resolves", async () => {
     const original = Bun.dns.lookup;
     // @ts-expect-error -- patching for test
-    // Return shape only; `isOnline` treats any successful resolution as online.
     Bun.dns.lookup = async () => [{ address: "dns-mock-success", family: 4 }];
 
     const result = await isOnline();

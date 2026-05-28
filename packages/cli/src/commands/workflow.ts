@@ -25,19 +25,11 @@ function hasFlag(args: string[], flag: string): boolean {
   return true;
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
- * the colocated `workflow.test.ts`. Do not call from other command files.
- */
 export async function runWorkflowList(client: IPCClient): Promise<void> {
   const out = await client.call<{ workflows: unknown }>("workflow.list", {});
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
- * the colocated `workflow.test.ts`. Do not call from other command files.
- */
 export async function runWorkflowDelete(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   if (name === "") {
@@ -47,10 +39,6 @@ export async function runWorkflowDelete(client: IPCClient, rest: string[]): Prom
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
- * the colocated `workflow.test.ts`. Do not call from other command files.
- */
 export async function runWorkflowSave(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   const tail = rest.slice(1);
@@ -80,10 +68,6 @@ export async function runWorkflowSave(client: IPCClient, rest: string[]): Promis
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWorkflowCli(args)` and
- * the colocated `workflow.test.ts`. Do not call from other command files.
- */
 export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise<void> {
   const name = rest[0]?.trim() ?? "";
   const tail = rest.slice(1);

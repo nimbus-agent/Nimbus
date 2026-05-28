@@ -8,9 +8,6 @@ import {
 } from "./hybrid-internal.ts";
 import type { HybridSearchOptions, HybridSearchResult } from "./hybrid-types.ts";
 
-/**
- * Reciprocal Rank Fusion over BM25-ordered items and sqlite-vec chunk KNN (collapsed per item).
- */
 export async function hybridSearch(
   db: Database,
   opts: HybridSearchOptions,

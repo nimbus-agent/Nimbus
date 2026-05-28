@@ -1,13 +1,3 @@
-// packages/cli/src/lib/cli-logger.test.ts
-//
-// Phase 6 commit 4 of 14 — covers `createCliFileLogger`, the
-// `NIMBUS_LOG_LEVEL` resolver, and the calendar-date-stamped log path.
-//
-// `ensureGatewayDirs` is not mocked by the shared harness, so the test
-// points `CliPlatformPaths` at a real temp directory and lets the file
-// logger create its destination on disk. Pino's `destination({ sync })`
-// writes synchronously, so reading the file back is deterministic.
-
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,24 +43,19 @@ describe("createCliFileLogger", () => {
   test("writes a log file under the resolved logDir using the local calendar date", async () => {
     const { logger, logPath } = await createCliFileLogger(paths);
 
-    // logPath lives under logDir; basename matches `cli-YYYY-MM-DD.log`.
     expect(dirname(logPath)).toBe(paths.logDir);
     const baseRe = /^cli-\d{4}-\d{2}-\d{2}\.log$/;
     const base = logPath.slice(dirname(logPath).length + 1);
     expect(baseRe.test(base)).toBe(true);
 
-    // The file logger uses pino.destination({ sync: true }), so by the
-    // time `logger.info(...)` returns the bytes are on disk.
     logger.info({ scope: "test" }, "hello from cli-logger.test");
     expect(existsSync(logPath)).toBe(true);
     const contents = readFileSync(logPath, "utf8");
     expect(contents).toContain("hello from cli-logger.test");
-    // pino default JSON shape carries the msg field.
     expect(contents).toMatch(/"msg":"hello from cli-logger.test"/);
   });
 
   test("ensures the log directory exists before opening the pino destination", async () => {
-    // Directories are not pre-created; the helper must create them.
     expect(existsSync(paths.logDir)).toBe(false);
     const { logPath } = await createCliFileLogger(paths);
     expect(existsSync(paths.logDir)).toBe(true);
@@ -95,7 +80,7 @@ describe("createCliFileLogger", () => {
   });
 
   test("treats an empty NIMBUS_LOG_LEVEL the same as unset (info default)", async () => {
-    process.env["NIMBUS_LOG_LEVEL"] = "   "; // whitespace trims to empty
+    process.env["NIMBUS_LOG_LEVEL"] = "   ";
     const { logger, logPath } = await createCliFileLogger(paths);
     logger.debug({ scope: "lvl" }, "still-filtered");
     logger.info({ scope: "lvl" }, "still-included");

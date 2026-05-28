@@ -30,8 +30,6 @@ async function main(): Promise<void> {
       const res = await fetch(url, { method: "HEAD" });
       process.exit(res.status >= 200 && res.status < 500 ? 0 : 2);
     } catch {
-      // Network unreachable / DNS failure / sandbox block on a host that
-      // should be allowed — all unexpected.
       process.exit(2);
     }
   }
@@ -62,11 +60,6 @@ async function main(): Promise<void> {
       process.exit(2);
     } catch (e: unknown) {
       const code = (e as { code?: string }).code;
-      // EACCES / EPERM: classic POSIX denial.
-      // EBUSY: Windows reports the locked SAM hive as "in use" rather than
-      //   "access denied" depending on session/elevation context. From the
-      //   probe's perspective both mean "file is unreadable", which is the
-      //   property under test.
       if (code === "EACCES" || code === "EPERM" || code === "EBUSY") process.exit(10);
       process.exit(2);
     }

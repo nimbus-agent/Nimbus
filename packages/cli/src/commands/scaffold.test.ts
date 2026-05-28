@@ -1,8 +1,3 @@
-// packages/cli/src/commands/scaffold.test.ts
-//
-// Unit tests for `nimbus scaffold` — argv parser + scaffold-plan builder +
-// end-to-end fs writes against a tmp dir.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -83,7 +78,6 @@ describe("buildScaffoldFiles", () => {
     const pkgFile = files.find((f) => f.path[0] === "package.json");
     expect(pkgFile).toBeDefined();
     const pkg = JSON.parse(pkgFile!.content) as Record<string, unknown>;
-    // Non-[a-z0-9-] chars (including `.`, `/`, `!`) become `-`.
     expect(pkg["name"]).toBe("nimbus-extension-com-acme-foo-bar");
     expect(pkg["private"]).toBe(true);
     expect(pkg["type"]).toBe("module");

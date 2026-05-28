@@ -1,23 +1,6 @@
-// packages/cli/src/commands/tui.test.tsx
-//
-// Covers the `runTui` dispatcher. Two branches are deterministically testable
-// without rendering Ink (which requires a real TTY + writable raw stdin):
-//   1. --help / -h prints usage and returns.
-//   2. Gateway state missing → "Gateway is not running" on stderr + exitCode = 1.
-//   3. Fallback path (non-TTY in CI) → invokes runRepl via the mocked module.
-//
-// The actual Ink render path is not exercised because spawning a real TTY +
-// raw-mode stdin under bun-test is inherently flaky; integration tests in the
-// e2e suite cover that surface.
-//
-// IMPORTANT: this test mocks `./repl.ts` locally (rather than via the shared
-// harness) because no other CLI test cares about that module. The mock is
-// installed at top-of-file via `mock.module` so the `await import("./tui.tsx")`
-// below captures the stub.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const replCalls: Array<string[]> = [];
@@ -29,10 +12,6 @@ mock.module("./repl.ts", () => ({
 
 const mod = await import("./tui.tsx");
 const { runTui } = mod;
-
-// ----------------------------------------------------------------------
-// process.stdout / process.stderr stream capture.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];
@@ -104,20 +83,11 @@ describe("runTui — gateway missing", () => {
     await runTui([]);
     expect(stderrChunks.join("")).toContain("Gateway is not running");
     expect(process.exitCode).toBe(1);
-    // No REPL fallback in this branch — we exit before fallback detection.
     expect(replCalls).toHaveLength(0);
   });
 });
 
-// ----------------------------------------------------------------------
-// Fallback path: gateway present but environment is non-TTY (always true
-// in bun-test). The dispatcher must call runRepl with the original args.
-// ----------------------------------------------------------------------
-
 describe("runTui — fallback to REPL", () => {
-  // Save / restore isTTY descriptor so the detection branch fires the way
-  // we expect. In headless CI process.stdout.isTTY is already undefined,
-  // but other tests in the same process may have stubbed it differently.
   let origIsTty: PropertyDescriptor | undefined;
 
   beforeEach(() => {
@@ -126,8 +96,6 @@ describe("runTui — fallback to REPL", () => {
     replCalls.length = 0;
     installStreamCapture();
     origIsTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-    // Explicitly assert non-TTY to make the test deterministic regardless of
-    // whether earlier tests stubbed isTTY=true.
     Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
   });
   afterEach(() => {
@@ -136,7 +104,6 @@ describe("runTui — fallback to REPL", () => {
     if (origIsTty !== undefined) {
       Object.defineProperty(process.stdout, "isTTY", origIsTty);
     } else {
-      // Remove the property we installed.
       delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
     }
   });

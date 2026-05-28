@@ -5,7 +5,6 @@ import {
   tagStrings,
 } from "../../../src/connectors/lever-posting-mapping.ts";
 
-// Lever createdAt / updatedAt are epoch MILLISECONDS — verbatim, no parse.
 const CREATED_MS = 1_700_000_000_000;
 const UPDATED_MS = 1_700_000_500_000;
 const POSTING_ID = "f2f01e16-27f8-4711-a728-e7c5e8c2d4c4";

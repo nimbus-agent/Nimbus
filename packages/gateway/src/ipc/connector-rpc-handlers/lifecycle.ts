@@ -3,8 +3,6 @@ import type { SyncScheduler } from "../../sync/scheduler.ts";
 import { ConnectorRpcError, requireRegisteredSchedulerServiceId } from "../connector-rpc-shared.ts";
 import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
 
-// ─── shared internal helpers (also imported by config.ts) ────────────────────
-
 export function emitConfigChanged(
   notify: ((method: string, params: Record<string, unknown>) => void) | undefined,
   localIndex: LocalIndex,
@@ -28,7 +26,6 @@ export function resumeConnector(
   localIndex: LocalIndex,
 ): void {
   if (syncScheduler === undefined) {
-    // NOSONAR: This is line 219. Suppressing "enabled" boolean flag warning.
     localIndex.resumeConnectorSync(id);
   } else {
     syncScheduler.resume(id);
@@ -46,8 +43,6 @@ export function pauseConnector(
     syncScheduler.pause(id);
   }
 }
-
-// ─── public handlers ─────────────────────────────────────────────────────────
 
 export function handleConnectorPause(ctx: ConnectorRpcHandlerContext): ConnectorRpcHit {
   const { rec, localIndex, syncScheduler, notify } = ctx;

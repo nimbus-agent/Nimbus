@@ -1,13 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — HTTP write-route dispatcher (invariant I13).
- *
- * This file is the single source of truth for which `POST` paths
- * `startReadOnlyHttpServer` is permitted to accept. The allowlist is
- * compile-time and the count is asserted in `security-invariants.test.ts`.
- * Adding a new write route requires editing this file and bumping the
- * count assertion in the same commit.
- */
-
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
@@ -16,8 +6,7 @@ import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts"
 
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze(["POST /v1/deployments"]);
 
-const MAX_BODY_BYTES = 8 * 1024; // 8 KiB
-
+const MAX_BODY_BYTES = 8 * 1024;
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -49,13 +38,6 @@ function jsonResponse(
   });
 }
 
-/**
- * Writes a rejection audit row. The `appendAuditEntry` helper carries the
- * BLAKE3 chain so brute-force probes are tamper-evident (S2 disposition).
- * Failures of the audit write itself never break the response — the row
- * is best-effort. The catch is silent rather than logging to stderr so
- * a corrupted audit chain cannot fingerprint the rejection path.
- */
 function recordRejection(
   ctx: WriteRouteContext,
   args: {
@@ -89,8 +71,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   const url = new URL(req.url);
   const key = `${req.method} ${url.pathname}`;
   if (!WRITE_ROUTE_ALLOWLIST.includes(key)) {
-    // Path is a known write path served on a different method, OR an unknown path.
-    // Distinguish 405 from 404 by checking whether ANY method in the allowlist matches the path.
     const pathMatchesAny = WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${url.pathname}`));
     if (pathMatchesAny) {
       return new Response("Method Not Allowed", {
@@ -103,9 +83,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
 
   const auth = requireBearer(req, { expectedToken: ctx.expectedToken });
   if (auth.surfaceDisabled === true) {
-    // No audit row here: the surface isn't on, so brute-forcing it is
-    // structurally impossible. Logging a row per probe would create a
-    // disk-fill vector for an attacker that can't actually authenticate.
     return jsonResponse(
       {
         error: "write_surface_disabled",
@@ -137,7 +114,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
     });
   }
 
-  // Body parsing with 8 KiB cap.
   const lenHeader = req.headers.get("content-length");
   if (lenHeader !== null) {
     const n = Number.parseInt(lenHeader, 10);
@@ -183,8 +159,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   }
 
   if (key === "POST /v1/deployments") {
-    // Unknown-service check happens against the configured set first so the
-    // 400 carries the helpful `known_services` list before validation runs.
     const svc =
       parsed !== null && typeof parsed === "object" && "service" in parsed
         ? (parsed as { service?: unknown }).service
@@ -214,8 +188,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
           : { deployEnvironments: ctx.deployEnvironments }),
       });
       if (out.kind === "hit") {
-        // Success audit is written INSIDE annotateDeployment — do not
-        // double-write here.
         return jsonResponse(out.value, 200, rateLimitHeaders(limit));
       }
       recordRejection(ctx, {
@@ -244,8 +216,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
           rateLimitHeaders(limit),
         );
       }
-      // Suppress internal details from the response body. The token
-      // fingerprint and audit row capture forensic context.
       recordRejection(ctx, {
         tokenFingerprint: auth.fingerprint,
         resultCode: 500,
@@ -254,7 +224,6 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
       return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
     }
   }
-  // Defensive — unreachable because of the allowlist check above.
   return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
 }
 

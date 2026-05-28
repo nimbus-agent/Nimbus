@@ -1,15 +1,3 @@
-/**
- * nimbus-mcp-bitrise — Bitrise REST API MCP server (read-only).
- *
- * Exposes the three mandatory read tools (`bitrise_list`, `bitrise_get`,
- * `bitrise_search`) per the Nimbus connector authoring contract. No write
- * tools are registered and `hitlRequired` is empty in the manifest.
- *
- * Credentials arrive as `BITRISE_TOKEN` env, injected at spawn time by the
- * Gateway from the `bitrise.token` vault key. The connector never reaches
- * for the vault itself (per the project's non-negotiable #3).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -28,7 +16,6 @@ function authHeader(): Record<string, string> {
   if (t === undefined || t === "") {
     throw new Error("BITRISE_TOKEN is not set");
   }
-  // Bitrise v0.1 uses a bare PAT in the Authorization header — no Bearer scheme.
   return { Authorization: t, Accept: "application/json" };
 }
 
@@ -60,8 +47,6 @@ reg(
     const params: string[] = [];
     params.push(`limit=${String(p.limit ?? 50)}`);
     if (p.status !== undefined) {
-      // Bitrise build status query mapping:
-      //   not-finished → status=0, successful → 1, failed → 2, aborted → 3.
       const map = { "not-finished": 0, successful: 1, failed: 2, aborted: 3 } as const;
       params.push(`status=${String(map[p.status])}`);
     }
@@ -95,7 +80,6 @@ reg(
     limit: z.number().int().min(1).max(200).optional(),
   }),
   async (p) => {
-    // Pull a generous page (cap 50 per Bitrise) and filter client-side.
     const root = await bitriseGet(`/v0.1/apps/${encodeURIComponent(p.appSlug)}/builds?limit=50`);
     const data = (root as { data?: unknown[] } | null)?.data;
     const matches = Array.isArray(data)

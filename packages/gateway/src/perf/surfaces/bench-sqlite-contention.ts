@@ -1,25 +1,3 @@
-/**
- * S10 — SQLite write contention.
- *
- * Drives three Workers (sync / watcher / audit) against a shared
- * bun:sqlite database for `durationMs`, sampling `totalThroughputPerSec`
- * across the fleet. `totalBusyRetries` is accumulated onto a
- * module-private sentinel so bench-cli can fold it into the surface
- * entry as `busy_retries` without a samples-array contract change.
- *
- * D-2 (plan): no PRAGMA journal_mode = WAL. Workers call
- * LocalIndex.ensureSchema which leaves the rollback-journal default,
- * matching production and giving the heaviest writer contention.
- *
- * D-5 (plan): the driver does NOT reset the sentinel. bench-cli's
- * processSurface clears `S10_BUSY_RETRIES.value = 0` once before the
- * runBench loop; this driver `+=` accumulates per invocation so after
- * `runs` calls the sentinel holds the SUM of retries across all runs.
- *
- * resultKind = "throughput" → samples[i] is items/sec for run i;
- * harness returns median across runs.
- */
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -34,24 +12,9 @@ export interface SqliteContentionRunOptions {
 
 const DEFAULT_DURATION_MS = 5_000;
 
-/**
- * Module-private sentinel — bench-cli RESETS once before the runBench
- * loop and READS once after; this driver only ACCUMULATES.
- *
- * The samples[] return contract from `SurfaceFn` is `number[]`, which
- * cannot carry a second metric without a schema change. Spec §6.6
- * permits this side-channel because busyRetries is a single scalar
- * per run-set, not per-sample data.
- */
 export const S10_BUSY_RETRIES: { value: number } = { value: 0 };
 
 function workerUrl(name: string): URL {
-  // pathToFileURL handles Windows drive letters + percent-encoding per the
-  // Node URL spec, replacing the brittle `path.replace(/\\/g, "/")` shim.
-  // Cast bridges the structural-but-incompatible split between node:url's URL
-  // and the global URL that @types/node exposes via the legacy "url" module —
-  // identical at runtime, but TS treats URLSearchParams.toJSON as missing in
-  // the node:url variant.
   return pathToFileURL(resolve(import.meta.dir, `${name}.ts`)) as unknown as URL;
 }
 
@@ -73,7 +36,6 @@ export async function runSqliteContentionOnce(
       sharedDbPath: dbPath,
       ...(runOpts.WorkerCtor !== undefined && { WorkerCtor: runOpts.WorkerCtor }),
     });
-    // D-5: accumulate, do not overwrite. bench-cli owns the reset.
     S10_BUSY_RETRIES.value += result.totalBusyRetries;
     return [result.totalThroughputPerSec];
   } finally {

@@ -18,18 +18,12 @@ interface RecordedReq {
 
 interface IntercomPage {
   conversations: unknown[];
-  /** When set, `pages.next.starting_after` is this value (drives the cursor walk). */
   nextStartingAfter?: string | null;
 }
 
 interface FakeIntercomConfig {
-  /**
-   * Keyed by the incoming `starting_after` query value; the first page (no
-   * cursor) is keyed `""`.
-   */
   pages?: Record<string, IntercomPage>;
   status?: number;
-  /** When true, the conversations route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -107,7 +101,6 @@ function startHarness(config: FakeIntercomConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         intercom: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -139,8 +132,6 @@ function conversation(id: string, over: Record<string, unknown> = {}): Record<st
   };
 }
 
-// The fake fakes api.intercom.io, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.intercom.io → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -153,11 +144,6 @@ function withRewrittenFetch(fakeBase: string): () => void {
   };
 }
 
-/**
- * Build a full page (150) of distinct conversations with numeric ids starting at
- * `base` (Intercom conversation ids are numeric strings — the mapper skips
- * non-numeric ids).
- */
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 150 }, (_, i) => conversation(String(base + i)));
 }
@@ -226,8 +212,6 @@ describe("intercom-sync against Bun.serve fake API", () => {
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("intercom.token", "k");
 
-    // Rebuild the fake to always serve a full page with a fresh next cursor and
-    // fresh ids, so only the MAX_PAGES cap stops the walk.
     h.fake.stop();
     let serial = 0;
     const requests: RecordedReq[] = [];

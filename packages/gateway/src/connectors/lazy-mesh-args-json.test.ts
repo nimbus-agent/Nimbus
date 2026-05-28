@@ -1,8 +1,3 @@
-/**
- * S8-F8 — verify MCPClient ids use crypto.randomUUID() (not Date.now()).
- * S8-F9 — verify malformed args_json transitions connector health to
- * persistent_error and emits a warn log line.
- */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
@@ -93,7 +88,6 @@ describe("LazyConnectorMesh — args_json failure (S8-F9)", () => {
         },
       ],
     });
-    // Should not throw, even without db / logger.
     await mesh.ensureUserMcpRunning("broken-svc");
     await mesh.disconnect();
   });
@@ -104,12 +98,8 @@ describe("LazyConnectorMesh — UUID ids (S8-F8)", () => {
     const dir = join(import.meta.dir, "lazy-mesh");
     const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
     const src = files.map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
-    // Every `id:` template literal that previously used Date.now() should now use randomUUID().
-    // Predicate scoped to id literals so unrelated Date.now() uses (e.g. Phase 5 T6 PR 2
-    // wall-clock `calledAt` / `durationMs` for tool_call_log rows) do not trip this gate.
     expect(/id:\s*`[^`]*\$\{Date\.now\(\)\}/.test(src)).toBe(false);
     expect(/id:\s*['"][^'"]*Date\.now\(\)/.test(src)).toBe(false);
-    // randomUUID is imported and used.
     expect(src.includes("randomUUID")).toBe(true);
   });
 });

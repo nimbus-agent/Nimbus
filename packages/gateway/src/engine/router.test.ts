@@ -3,9 +3,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { classifyIntent } from "./router.ts";
 
-// Captured at module load time. Bun runs test files in isolated worker
-// threads, so this is the genuine native fetch unless a sibling test file
-// in the same worker mutated globalThis.fetch before this module evaluated.
 const BUN_NATIVE_FETCH = globalThis.fetch;
 const ORIGINAL_ANTHROPIC = process.env["ANTHROPIC_API_KEY"];
 const ORIGINAL_OPENAI = process.env["OPENAI_API_KEY"];
@@ -37,8 +34,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// Body text is discarded; only the status code is inspected by
-// agentErrorFromHttpResponse. The string is purely descriptive.
 function textResponse(body: string, status = 200): Response {
   return new Response(body, {
     status,
@@ -65,10 +60,6 @@ function useOpenAiOnly(): void {
   setEnv("OPENAI_API_KEY", "sk-stub-oai");
   setEnv("NIMBUS_CLASSIFIER_MODEL", undefined);
 }
-
-// ---------------------------------------------------------------------------
-// Empty input fast-return — no fetch
-// ---------------------------------------------------------------------------
 
 describe("classifyIntent — empty input", () => {
   test("empty string returns unknown,confidence 1 without calling fetch", async () => {
@@ -103,10 +94,6 @@ describe("classifyIntent — empty input", () => {
     expect(fetchCalled).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Anthropic happy paths
-// ---------------------------------------------------------------------------
 
 describe("classifyIntent — Anthropic happy paths", () => {
   test("parses plain JSON body, returns file_search intent", async () => {
@@ -251,8 +238,6 @@ describe("classifyIntent — Anthropic happy paths", () => {
 
   test("non-finite confidence (NaN) is coerced to 0", async () => {
     useAnthropicOnly();
-    // NaN is not representable in JSON, so we use a non-number that
-    // normalizeConfidence treats the same way.
     stubFetch(async () =>
       anthropicTextResponse(
         JSON.stringify({
@@ -371,10 +356,6 @@ describe("classifyIntent — Anthropic happy paths", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Anthropic error paths
-// ---------------------------------------------------------------------------
-
 describe("classifyIntent — Anthropic error paths", () => {
   test("HTTP 401 → invalid_api_key", async () => {
     useAnthropicOnly();
@@ -463,8 +444,6 @@ describe("classifyIntent — Anthropic error paths", () => {
       caught = e;
     }
     expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    // Non-JSON body throws "Classifier returned non-JSON" inside llmClassify,
-    // which is not a GatewayAgentUnavailableError so it's wrapped as network_error.
     expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
   });
 
@@ -515,7 +494,6 @@ describe("classifyIntent — Anthropic error paths", () => {
 
   test("response with no text-content block falls through to non-JSON error path", async () => {
     useAnthropicOnly();
-    // content array exists but has no entries with type: "text"
     stubFetch(async () => jsonResponse({ content: [{ type: "tool_use", text: "" }] }));
 
     let caught: unknown;
@@ -528,10 +506,6 @@ describe("classifyIntent — Anthropic error paths", () => {
     expect((caught as GatewayAgentUnavailableError).reason).toBe("network_error");
   });
 });
-
-// ---------------------------------------------------------------------------
-// OpenAI happy paths
-// ---------------------------------------------------------------------------
 
 describe("classifyIntent — OpenAI happy paths", () => {
   test("parses plain JSON body from OpenAI choices[0].message.content", async () => {
@@ -572,8 +546,6 @@ describe("classifyIntent — OpenAI happy paths", () => {
     expect(capturedReq?.headers.get("authorization")).toBe("Bearer sk-stub-oai");
     expect(capturedReq?.headers.get("content-type")).toBe("application/json");
 
-    // Body should declare json_object response_format + temperature 0 + the
-    // resolved model id (no `openai/` prefix; default is `gpt-4o-mini`).
     const body = JSON.parse(capturedBody) as {
       model: string;
       temperature: number;
@@ -599,10 +571,6 @@ describe("classifyIntent — OpenAI happy paths", () => {
     expect(result.requiresHITL).toBe(true);
   });
 });
-
-// ---------------------------------------------------------------------------
-// OpenAI error paths
-// ---------------------------------------------------------------------------
 
 describe("classifyIntent — OpenAI error paths", () => {
   test("HTTP 401 → invalid_api_key", async () => {
@@ -722,10 +690,6 @@ describe("classifyIntent — OpenAI error paths", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Anthropic preference when both keys are set
-// ---------------------------------------------------------------------------
-
 describe("classifyIntent — provider selection", () => {
   test("prefers Anthropic when both ANTHROPIC_API_KEY and OPENAI_API_KEY are set", async () => {
     setEnv("ANTHROPIC_API_KEY", "sk-stub-anth");
@@ -759,10 +723,6 @@ describe("classifyIntent — provider selection", () => {
     expect(capturedUrl).toBe("https://api.openai.com/v1/chat/completions");
   });
 });
-
-// ---------------------------------------------------------------------------
-// No API key
-// ---------------------------------------------------------------------------
 
 describe("classifyIntent — no API key", () => {
   test("throws GatewayAgentUnavailableError(no_api_key) when neither key is set", async () => {

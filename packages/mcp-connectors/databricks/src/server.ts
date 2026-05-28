@@ -1,11 +1,3 @@
-/**
- * nimbus-mcp-databricks — Databricks Jobs API 2.1 MCP server (read-only).
- * Credentials arrive as DATABRICKS_HOST + DATABRICKS_TOKEN env, injected at
- * spawn time. The Databricks Personal Access Token is sent as
- * `Authorization: Bearer <token>`. Databricks has no universal SaaS host —
- * each workspace is a distinct per-org URL, so there is no default for
- * DATABRICKS_HOST; it must be set.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -25,7 +17,6 @@ function apiBase(): string {
   if (v === undefined || v === "") {
     throw new Error("DATABRICKS_HOST is not set");
   }
-  // Paths already include `/api/2.1/...`, so the base is just the workspace host.
   return trimTrailingSlash(v);
 }
 
@@ -46,7 +37,6 @@ async function dbGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the jobs array out of a `/api/2.1/jobs/list` response (`.jobs`, else []). */
 function jobsFrom(root: unknown): unknown[] {
   const jobs = (root as { jobs?: unknown } | null)?.jobs;
   return Array.isArray(jobs) ? jobs : [];

@@ -32,7 +32,6 @@ describe("ResultStream", () => {
 
   test("renders nothing extra when liveBuffer is empty", () => {
     const { lastFrame, unmount } = render(withEntries([], ""));
-    // Bare render; no crash, no stray placeholder.
     expect(lastFrame() ?? "").not.toContain("undefined");
     unmount();
   });

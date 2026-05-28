@@ -1,25 +1,7 @@
-/**
- * Pure mapping from a Metabase dashboard object to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `metabase-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "metabase", type = "dashboard"` rows. The `dashboard`
- * type is sparse/structured (name, collection, short description), so it
- * stays on local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * The dashboard's collection name is resolved by the syncable from a single
- * `/api/collection` call and passed in via `ctx.collectionNames`. Metabase
- * collection ids can be numbers OR the string `"root"`; we key the map by
- * `String(collection_id)`.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface MetabaseMappingContext {
-  /** Metabase base URL — used to build canonical dashboard URLs. */
   readonly baseUrl: string;
-  /** Map of `String(collection_id)` → collection name, resolved from `/api/collection`. */
   readonly collectionNames: Record<string, string>;
   readonly syncedAt: number;
 }
@@ -41,11 +23,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Build the canonical URL for a dashboard. Metabase's UI and API share the
- * same host, so there is no host rewrite — the dashboard page lives at
- * `<base>/dashboard/<id>`.
- */
 export function dashboardUrl(baseUrl: string, id: number): string {
   return `${trimTrailingSlash(baseUrl)}/dashboard/${encodeURIComponent(String(id))}`;
 }
@@ -54,10 +31,6 @@ function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-/**
- * Normalise a Metabase `collection_id` (number, the string `"root"`, or
- * null/undefined) into a stable string key, or null when absent.
- */
 function collectionIdKey(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return String(raw);
@@ -68,7 +41,6 @@ function collectionIdKey(raw: unknown): string | null {
   return null;
 }
 
-/** Count the dashcards/cards array if present; null when neither is an array. */
 function cardCount(row: Record<string, unknown>): number | null {
   const dashcards = row["dashcards"];
   if (Array.isArray(dashcards)) {

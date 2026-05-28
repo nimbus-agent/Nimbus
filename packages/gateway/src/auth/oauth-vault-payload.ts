@@ -1,9 +1,3 @@
-// Pure OAuth-token vault payload parser — shared between the registry-side
-// resolver (`oauth-registry.ts::getValidVaultAccessToken`) and the legacy
-// google/microsoft resolver (`oauth-vault-tokens.ts::getValidVaultOAuthAccessToken`).
-// Extracted into its own module to break the cycle that would otherwise be:
-//   oauth-registry.ts → oauth-vault-tokens.ts → oauth-registry.ts.
-
 export type StoredOAuthTokens = {
   accessToken: string;
   refreshToken: string;

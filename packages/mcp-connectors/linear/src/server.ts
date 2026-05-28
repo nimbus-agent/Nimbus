@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-linear — Linear GraphQL MCP server.
- * API key is injected as LINEAR_API_KEY (never logged).
- * Mutations require Gateway HITL (`linear.issue.create`, `linear.issue.update`, `linear.comment.create`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

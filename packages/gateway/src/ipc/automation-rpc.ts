@@ -94,18 +94,9 @@ interface AutomationCtx {
   db: Database;
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
-  /** I16 — vault for caching verified publisher pubkeys at install time. */
   vault?: NimbusVault;
-  /** I16 — registry client used to fetch unknown publisher pubkeys. */
   fetcher?: PublisherKeyFetcher;
-  /** I16 — when true, refuse install if vault cache or explicit key cannot satisfy. */
   enforceAirGap?: boolean;
-  /**
-   * T2 PR 3 — auto-update RPC dependencies. Present iff the Gateway wired the
-   * `ExtensionAutoUpdater` daemon; absent in legacy callers (e.g. some unit
-   * tests). When absent, `extension.checkForUpdates` and `extension.update`
-   * return -32603 instead of crashing.
-   */
   autoUpdate?: AutoUpdateRpcDeps;
 }
 
@@ -189,10 +180,6 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.disable": (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, false);
-    // S7-F10 — fire-and-forget: the IPC response shape is just { ok };
-    // callers don't wait for the child teardown. The disabled-flag is
-    // already flipped, so even if the stop is in flight, no new tool
-    // calls will reach the child.
     if (ok && ctx.mesh !== undefined) {
       void ctx.mesh.stopExtensionClient(id);
     }
@@ -203,15 +190,11 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     const id = requireString(rec, "id");
     const force = rec !== undefined && rec["force"] === true;
 
-    // Reverse-dep guard: refuse removal when other installed extensions depend
-    // on this one, unless `force` is set.
     if (!force) {
       const rdeps = reverseDeps(ctx.db, id);
       if (rdeps.length > 0) {
         const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
         const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
-        // Prefix "reverse_dep_blocked:" lets the CLI (and tests) pattern-match
-        // this error class without importing gateway types.
         throw new AutomationRpcError(
           -32603,
           `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
@@ -223,9 +206,6 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     if (installPath === null) {
       throw new AutomationRpcError(-32602, "Extension not found");
     }
-    // Clear forward-dep edges owned by the removed extension so the dependency
-    // graph stays consistent (startup completeness guard will hard-disable any
-    // remaining reverse dependents on next start).
     clearDeps(ctx.db, id);
     try {
       rmSync(installPath, { recursive: true, force: true });
@@ -268,9 +248,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 };
 
 type ExtensionListItem = ExtensionRow & {
-  /** Set when the extension is hard-disabled with a structured reason. */
   disabled_reason?: typeof PRE_T2_DISABLE_REASON;
-  /** True when the extension was hard-disabled and needs to be reinstalled. */
   needs_reinstall?: boolean;
 };
 
@@ -318,8 +296,6 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     };
   }
 
-  // T2 PR 3 — surface prevVersion (alphabetically-greatest _prev/<v>/ entry)
-  // and cachedUpdate (the AutoUpdateCache entry if the daemon detected a bump).
   let prevVersion: string | null = null;
   try {
     const extRoot = dirname(row.install_path);
@@ -377,7 +353,6 @@ async function handleExtensionInstall(
   if (dir === undefined || dir.trim() === "") {
     throw new AutomationRpcError(-32603, "Gateway is not configured with an extensions directory");
   }
-  // Optional publisherKeyPath parameter for `--publisher-key <path>` CLI flow.
   const publisherKeyPath =
     rec !== undefined && typeof rec["publisherKeyPath"] === "string"
       ? rec["publisherKeyPath"].trim()
@@ -424,17 +399,11 @@ export async function dispatchAutomationRpc(options: {
   method: string;
   params: unknown;
   db: Database;
-  /** Required for `extension.install`. */
   extensionsDir?: string;
-  /** S7-F10 — `extension.disable` calls `stopExtensionClient` to terminate the running child. */
   mesh?: AutomationRpcExtensionMeshHandle;
-  /** I16 — vault for caching verified publisher pubkeys at install time. */
   vault?: NimbusVault;
-  /** I16 — registry client used to fetch unknown publisher pubkeys. */
   fetcher?: PublisherKeyFetcher;
-  /** I16 — when true, refuse signed-extension install if no local pubkey is available. */
   enforceAirGap?: boolean;
-  /** T2 PR 3 — wired auto-update dependencies; absent in legacy callers. */
   autoUpdate?: AutoUpdateRpcDeps;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];

@@ -63,10 +63,6 @@ function fsErrorCode(e: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runProfile(args)` and the
- * colocated `profile.test.ts`. Do not call from other command files.
- */
 export function runProfileCreate(configDir: string, baseToml: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   if (name === "" || name === "default") {
@@ -91,10 +87,6 @@ export function runProfileCreate(configDir: string, baseToml: string, tail: stri
   console.log(`Created ${dest}`);
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runProfile(args)` and the
- * colocated `profile.test.ts`. Do not call from other command files.
- */
 export function runProfileList(configDir: string): void {
   const active = activeProfileName(configDir);
   const profiles = listProfileFiles(configDir);
@@ -108,10 +100,6 @@ export function runProfileList(configDir: string): void {
   }
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runProfile(args)` and the
- * colocated `profile.test.ts`. Do not call from other command files.
- */
 export function runProfileSwitch(configDir: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   if (name === "") {
@@ -132,10 +120,6 @@ export function runProfileSwitch(configDir: string, tail: string[]): void {
   );
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runProfile(args)` and the
- * colocated `profile.test.ts`. Do not call from other command files.
- */
 export function runProfileDelete(configDir: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   const yes = tail.includes("--yes");

@@ -1,20 +1,7 @@
-/**
- * Test-only `fetch` shim that stages canned Responses keyed by
- * (method, URL-pattern, optional body-matcher) and records every call.
- *
- * Lives under test/helpers/ so it is NOT subject to the per-file
- * coverage floor — it is the testing tool, not production code.
- */
-
 export type FetchCall = {
   readonly url: string;
   readonly method: string;
   readonly body: string | null;
-  /**
-   * Request headers captured from `init.headers` at call time, normalized to
-   * lower-cased keys for case-insensitive lookup (HTTP header semantics).
-   * Empty record when no headers were provided.
-   */
   readonly headers: Readonly<Record<string, string>>;
 };
 
@@ -32,16 +19,6 @@ export class MockFetch {
   private readonly stubs: Stub[] = [];
   private original: typeof globalThis.fetch | null = null;
 
-  /**
-   * Stage a response. URL may be a literal string (exact match) or a RegExp.
-   * The first stub that matches in registration order wins.
-   * A stub without `bodyMatch` matches any body; register more-specific stubs (with `bodyMatch`) BEFORE catch-all stubs for the same URL.
-   *
-   * @example
-   * mock.respond("POST", "https://slack.com/api/auth.test", {
-   *   ok: true, url: "https://acme.slack.com/",
-   * });
-   */
   respond(
     method: string,
     url: string | RegExp,
@@ -59,7 +36,6 @@ export class MockFetch {
     });
   }
 
-  /** Stage a non-JSON text response (used to test the JSON-parse-failure branch). */
   respondWithText(
     method: string,
     url: string | RegExp,
@@ -94,12 +70,6 @@ export class MockFetch {
     }
   }
 
-  /**
-   * Return the first recorded call. Throws a descriptive error if no calls
-   * have been recorded yet. Use when you want to read `.url` / `.headers`
-   * / `.body` on a guaranteed-present call without sprinkling
-   * `noUncheckedIndexedAccess` narrowing boilerplate through tests.
-   */
   firstCall(): FetchCall {
     const c = this.calls[0];
     if (c === undefined) {
@@ -108,10 +78,6 @@ export class MockFetch {
     return c;
   }
 
-  /**
-   * Helper for assertions: every call body that matches `urlPattern`,
-   * parsed as JSON. Throws on bodies that aren't valid JSON.
-   */
   bodiesFor(method: string, urlPattern: string | RegExp): unknown[] {
     return this.calls
       .filter((c) => c.method === method.toUpperCase() && this.matchesUrl(urlPattern, c.url))
@@ -128,9 +94,6 @@ export class MockFetch {
   }
 
   private async handle(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-    // string -> as-is; URL -> href via toString(); Request -> input.url
-    // (Request.toString() returns "[object Request]", which silently
-    // breaks every URL matcher — explicit narrowing prevents that.)
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
@@ -168,12 +131,6 @@ export class MockFetch {
   }
 }
 
-/**
- * Normalize `RequestInit.headers` (Headers | [string, string][] | record)
- * into a plain `{ lowercase-key: value }` record. Returns an empty record
- * when no headers were provided so assertions can use `??` / direct lookup
- * without checking for `undefined`.
- */
 function normalizeRequestHeaders(raw: HeadersInit | undefined): Readonly<Record<string, string>> {
   if (raw === undefined) {
     return Object.freeze({});

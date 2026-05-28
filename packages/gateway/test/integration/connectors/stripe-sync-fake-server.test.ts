@@ -21,13 +21,8 @@ interface StripePage {
 }
 
 interface FakeStripeConfig {
-  /**
-   * Keyed by the incoming `starting_after` query value; the first page (no
-   * cursor) is keyed `""`.
-   */
   pages?: Record<string, StripePage>;
   status?: number;
-  /** When true, the invoices route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -91,7 +86,6 @@ function startHarness(config: FakeStripeConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         stripe: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -119,8 +113,6 @@ function invoice(id: string, over: Record<string, unknown> = {}): Record<string,
   };
 }
 
-// The fake fakes api.stripe.com, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.stripe.com → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -133,7 +125,6 @@ function withRewrittenFetch(fakeBase: string): () => void {
   };
 }
 
-/** Build a full page (100) of distinct invoices with the given prefix. */
 function fullPage(prefix: string): unknown[] {
   return Array.from({ length: 100 }, (_, i) => invoice(`${prefix}_${String(i)}`));
 }
@@ -200,8 +191,6 @@ describe("stripe-sync against Bun.serve fake API", () => {
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("stripe.api_key", "k");
 
-    // Rebuild the fake to always serve a full page with has_more:true and fresh
-    // ids, so only the MAX_PAGES cap stops the walk.
     h.fake.stop();
     let serial = 0;
     const requests: RecordedReq[] = [];

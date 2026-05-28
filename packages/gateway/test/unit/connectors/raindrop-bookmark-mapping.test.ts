@@ -5,7 +5,6 @@ import {
   tagStrings,
 } from "../../../src/connectors/raindrop-bookmark-mapping.ts";
 
-// 2024-03-01T12:00:00.000Z → Date.parse → epoch ms.
 const CREATED_ISO = "2024-03-01T12:00:00.000Z";
 const CREATED_MS = Date.parse(CREATED_ISO);
 const UPDATED_ISO = "2024-03-02T08:00:00.000Z";

@@ -1,18 +1,3 @@
-// packages/cli/src/commands/doctor-core.test.ts
-//
-// Tests the dependency-injected `nimbus doctor` logic in `doctor-core.ts`
-// DIRECTLY. This file deliberately does NOT import the shared `cli-mocks.ts`
-// harness and does NOT `mock.module` anything: `doctor-core.ts` imports none
-// of the mocked modules as values, so the test's coverage scope is just the
-// core file (plus this test file, which `--coverage-skip-test-files` masks)
-// rather than the full transitive graph (`paths.ts`, `gateway-process.ts`,
-// `ipc-client/index.ts`, …). On Linux CI, those transitive imports drag
-// `All files` below the 80 % threshold even when the real target sits at ~83
-// %; injecting the deps eliminates them from the instrumented set.
-//
-// All external dependencies are injected via a `DoctorCoreDeps` fake. See
-// `doctor-core.ts` / `doctor.ts` header comments.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -32,8 +17,6 @@ import {
   runDoctor,
   worstHealthSeverity,
 } from "./doctor-core.ts";
-
-// ─── Voice helper fixture factory ───────────────────────────────────────────
 
 type WhichMap = Record<string, string | null>;
 
@@ -56,8 +39,6 @@ function makeVoiceCfg(overrides: Partial<DoctorVoiceConfig> = {}): DoctorVoiceCo
     ...overrides,
   };
 }
-
-// ─── Production-deps fake ────────────────────────────────────────────────────
 
 const FAKE_PATHS = {
   configDir: "/tmp/nimbus-test/config",
@@ -212,10 +193,6 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     process.exitCode = 0;
   });
   afterEach(() => {
-    // Force-clear any non-zero exitCode the dispatcher set during this test —
-    // restoring `origExitCode` (often undefined) leaves Bun's process exit
-    // code at whatever a prior test bumped it to. Explicit `= 0` keeps the
-    // test runner's own exit status clean.
     process.exitCode = 0;
     if (origExitCode !== undefined) process.exitCode = origExitCode;
   });
@@ -276,14 +253,10 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
 });
 
 describe("doctorVoiceLines", () => {
-  // ── disabled ────────────────────────────────────────────────────────────────
-
   it("returns [] when voice is disabled", () => {
     const lines = doctorVoiceLines(makeVoiceCfg({ enabled: false }), makeEnv({}));
     expect(lines).toHaveLength(0);
   });
-
-  // ── whisper detection ───────────────────────────────────────────────────────
 
   it("reports whisper ok when whisperPath is explicitly set", () => {
     const lines = doctorVoiceLines(
@@ -331,8 +304,6 @@ describe("doctorVoiceLines", () => {
     ).toBe(true);
   });
 
-  // ── ffmpeg detection ────────────────────────────────────────────────────────
-
   it("reports ffmpeg ok when it is on PATH", () => {
     const lines = doctorVoiceLines(
       makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
@@ -354,8 +325,6 @@ describe("doctorVoiceLines", () => {
       ),
     ).toBe(true);
   });
-
-  // ── platform TTS ────────────────────────────────────────────────────────────
 
   it("reports macOS say always available on darwin", () => {
     const lines = doctorVoiceLines(
@@ -408,8 +377,6 @@ describe("doctorVoiceLines", () => {
       ),
     ).toBe(true);
   });
-
-  // ── piper helper ────────────────────────────────────────────────────────────
 
   it("emits no piper lines when piperPath and piperModel are both empty", () => {
     const lines = doctorVoiceLines(

@@ -2,13 +2,6 @@ import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
-/**
- * Returns a valid Zoom user access token, refreshing via the registry's
- * single-flight `getValidVaultAccessToken` when near expiry. Persists the
- * rotated refresh token Zoom issues on every refresh (the chain-invalidating
- * concern that motivated the PR-1 single-flight lock landed in PR-1; Zoom
- * invalidates the entire token chain on refresh-token reuse).
- */
 export async function getValidZoomAccessToken(vault: NimbusVault): Promise<string> {
   return getValidVaultAccessToken({
     descriptor: OAUTH_PROVIDERS.zoom,

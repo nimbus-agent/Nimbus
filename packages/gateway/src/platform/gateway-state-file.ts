@@ -11,16 +11,9 @@ export function gatewayStateFilePath(paths: PlatformPaths): string {
 export type WriteGatewayStateOptions = {
   pid: number;
   socketPath: string;
-  /** Optional log file path; falls back to NIMBUS_GATEWAY_LOG_PATH env var. */
   logPath?: string;
 };
 
-/**
- * Writes the gateway state file so any client (CLI, IDE-attached debugger,
- * external tool) can locate the running gateway by reading dataDir/gateway.json.
- * Synchronous so it is guaranteed durable before the IPC server starts accepting
- * connections.
- */
 export function writeGatewayStateFile(paths: PlatformPaths, opts: WriteGatewayStateOptions): void {
   const envLog = processEnvGet("NIMBUS_GATEWAY_LOG_PATH");
   const logPath = opts.logPath ?? (envLog !== undefined && envLog !== "" ? envLog : undefined);

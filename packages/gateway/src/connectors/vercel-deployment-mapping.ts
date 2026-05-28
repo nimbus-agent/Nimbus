@@ -1,26 +1,3 @@
-/**
- * Pure mapping from a Vercel `GET /v6/deployments` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `vercel-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "vercel", type = "deployment"` rows — a single item type.
- * `external_id = <uid>` (verbatim). The conceptual item identity is
- * `vercel:deployment`; the `item.id` ends up `vercel:<uid>`. NOTE: the bare
- * `deployment` *column* value is shared with the CI/CD annotation pipeline, but
- * that pipeline keys its rows under the CI-provider `service` (`github-actions`
- * etc.), so the `(service, external_id)` unique key never collides with this
- * connector's `service = "vercel"` rows. The `deployment` type is
- * sparse/structured (uid, name, state, commit sha), so it stays on local
- * MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * IMPORTANT: Vercel's `created` is epoch MILLISECONDS (a number) — pass through
- * verbatim via `numberField`, NO `Date.parse`.
- *
- * Nested access (`creator`, `meta`) descends defensively with {@link asRecord}
- * so a missing sub-object yields nulls rather than throwing.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface VercelMappingContext {
@@ -40,11 +17,6 @@ export interface VercelMappedRow {
   readonly syncedAt: number;
 }
 
-/**
- * Build the canonical (user-facing) URL for a deployment. Prefers the
- * vercel.com dashboard `inspectorUrl`; else prepends `https://` to the bare
- * `*.vercel.app` host; else null.
- */
 export function deploymentUrl(
   inspectorUrl: string | null,
   deployHost: string | null,
@@ -73,13 +45,10 @@ export function mapVercelDeploymentToItem(
   }
 
   const name = stringField(row, "name") ?? null;
-  // `readyState` is the live state; `state` is the (older) alias. Prefer
-  // readyState, fall back to state.
   const state = stringField(row, "readyState") ?? stringField(row, "state") ?? null;
   const target = stringField(row, "target") ?? null;
   const deployHost = stringField(row, "url") ?? null;
   const inspectorUrl = stringField(row, "inspectorUrl") ?? null;
-  // Vercel `created` is epoch ms — pass through, no Date.parse.
   const createdAt = numberField(row, "created") ?? null;
 
   const meta = asRecord(row["meta"]) ?? {};

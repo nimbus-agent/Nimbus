@@ -1,10 +1,3 @@
-// packages/cli/src/commands/registry.test.ts
-//
-// `registry.ts` is a leaf data module — the single source of truth for the
-// `nimbus <subcommand>` namespace. Tests assert its shape so the audit
-// tripwire that loads it (`audit:readme-cli`) and the runtime dispatcher in
-// `index.ts` stay in lockstep with the README.
-
 import { describe, expect, it } from "bun:test";
 
 import { COMMAND_NAMES, type CommandName } from "./registry.ts";

@@ -93,10 +93,6 @@ function printDriftHints(lines: string[]): void {
   }
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runStatus(args)` and the
- * colocated `status.test.ts`. Do not call from other command files.
- */
 export async function runStatusImpl(
   client: IPCClient,
   state: { pid?: number; socketPath: string; logPath?: string },

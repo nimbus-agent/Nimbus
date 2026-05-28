@@ -1,8 +1,3 @@
-// packages/cli/src/lib/connector-oauth-env-help.test.ts
-//
-// Covers the four exported help-text constants + two console.log
-// printer functions. Captures console output via the shared helper.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";

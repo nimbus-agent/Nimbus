@@ -4,16 +4,6 @@ import { join } from "node:path";
 import { CI_ONLY_GATES, PREFLIGHT_GATES } from "./lib/preflight-gates.ts";
 import { REPO_ROOT } from "./structure-audit/lib.ts";
 
-/**
- * Extract `bun run <script>` and `bunx <tool>` gate ids from a workflow file.
- * Flag-tolerant: matches `bun run X`, `bun --bun run X`, `bunx X`, `bunx --bun X`
- * so an intervening runtime flag can't silently hide a gate (review Q1).
- *
- * Each intervening-flag group is `\s+-\S+` (whitespace, then a dash-led token).
- * `\s`/`\S` are disjoint so the input partitions exactly one way — this avoids
- * the exponential backtracking a `(?:\s+--?[\w-]+)*` form would have on inputs
- * like `-- -- --` (CodeQL js/redos).
- */
 export function extractWorkflowGates(yaml: string): string[] {
   const gates = new Set<string>();
   for (const m of yaml.matchAll(/\bbun(?:\s+-\S+)*\s+run\s+([a-z][\w:-]+)/g))
@@ -25,7 +15,6 @@ export function extractWorkflowGates(yaml: string): string[] {
 function manifestScriptIds(): Set<string> {
   const ids = new Set<string>();
   for (const g of PREFLIGHT_GATES) {
-    // "bun run X" -> X ; "bunx Y ..." -> Y
     if (g.cmd[0] === "bun" && g.cmd[1] === "run" && g.cmd[2]) ids.add(g.cmd[2]);
     if (g.cmd[0] === "bunx" && g.cmd[1]) ids.add(g.cmd[1]);
   }

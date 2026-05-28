@@ -59,11 +59,6 @@ function parseRunFlags(args: string[]): RunWorkflowOptions {
   return { dryRun, noTtv, agent };
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWorkflowFromFile(args)`
- * and the colocated `run-workflow.test.ts`. Do not call from other command
- * files.
- */
 export async function runWorkflowFromFileWithClient(
   client: IPCClient,
   file: string,
@@ -104,9 +99,6 @@ export async function runWorkflowFromFileWithClient(
   console.log(`\n${JSON.stringify(out, undefined, 2)}`);
 }
 
-/**
- * `nimbus run <workflow-file>` — upserts workflow from file, then executes it (same as workflow save + run).
- */
 export async function runWorkflowFromFile(args: string[]): Promise<void> {
   const file = args[0]?.trim() ?? "";
   if (file === "") {

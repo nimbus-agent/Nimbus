@@ -6,21 +6,12 @@ import { createIpcClient } from "../ipc/client";
 import type { WorkflowListResult, WorkflowSummary } from "../ipc/types";
 import { useNimbusStore } from "../store";
 
-// ---------------------------------------------------------------------------
-// Step-list editor
-// ---------------------------------------------------------------------------
-
 interface StepDraft {
-  /** Synthetic stable key — assigned at creation, used only for React list rendering. */
   id: string;
   tool: string;
   paramsJson: string;
 }
 
-// Monotonic counter for StepDraft ids — uniqueness is only required within a
-// single workflow editor instance's lifetime (these ids never persist and are
-// not exposed to any network/security boundary). crypto.randomUUID() would be
-// overkill; a counter is simpler and doesn't trip linters for pseudorandom use.
 let stepIdCounter = 0;
 function newStepId(): string {
   stepIdCounter += 1;
@@ -132,10 +123,6 @@ function StepListEditor({ steps, onChange }: StepListEditorProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Save dialog
-// ---------------------------------------------------------------------------
-
 interface SaveDialogProps {
   initial?: WorkflowSummary;
   onClose: () => void;
@@ -226,10 +213,6 @@ function SaveWorkflowDialog({ initial, onClose, onSaved }: Readonly<SaveDialogPr
   );
 }
 
-// ---------------------------------------------------------------------------
-// Workflow list row
-// ---------------------------------------------------------------------------
-
 interface WorkflowRowProps {
   readonly workflow: WorkflowSummary;
   readonly dryRun: boolean;
@@ -305,10 +288,6 @@ function WorkflowRow({
     </tr>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export function Workflows() {
   const connectionState = useNimbusStore((s) => s.connectionState);

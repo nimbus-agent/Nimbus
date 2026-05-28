@@ -90,10 +90,6 @@ describe("runConversationalAgent", () => {
         { role: "assistant", text: "Sure — what email should I send this to?" },
       ],
     });
-    // First positional arg to agent.generate must be a messages array containing
-    // the two prior turns plus the current user input, in that order.
-    // Bun's mock types `.mock.calls` as an empty tuple by default, so we
-    // widen via `unknown` before indexing.
     const calls = generateMock.mock.calls as unknown as unknown[][];
     expect(calls.length).toBeGreaterThan(0);
     const arg: unknown = calls[0]?.[0];

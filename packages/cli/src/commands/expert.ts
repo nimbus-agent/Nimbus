@@ -2,7 +2,6 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
-// Mirrors ExpertBrief types locally to comply with the IPC-only package dependency rule.
 import { type ExpertBrief, isExpertBrief } from "../types/agents.ts";
 
 export type ExpertCliArgs = {

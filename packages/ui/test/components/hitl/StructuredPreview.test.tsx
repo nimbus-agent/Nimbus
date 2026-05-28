@@ -110,8 +110,6 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     });
     render(<StructuredPreview details={details} action="extension.autoUpdate" />);
     const pre = screen.getByTestId("auto-update-changelog");
-    // textContent has the literal script tag — would have executed if we
-    // used dangerouslySetInnerHTML; this asserts the CSP-safe path.
     expect(pre.textContent).toContain("<script>alert(1)</script>");
   });
 

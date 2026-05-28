@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-circleci — CircleCI API v2 MCP server.
- * Mutations require Gateway HITL: `circleci.pipeline.trigger`, `circleci.job.cancel`.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

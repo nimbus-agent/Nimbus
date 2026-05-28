@@ -12,8 +12,8 @@ export type DriverMode = "check" | "update";
 export interface DriverOpts {
   readonly mode: DriverMode;
   readonly scriptPaths: ReadonlyArray<string>;
-  readonly demosRoot: string; // typically "docs/demos"
-  readonly fixturesRoot: string; // typically "scripts/cast-driver/fixtures"
+  readonly demosRoot: string;
+  readonly fixturesRoot: string;
   readonly artifactsDir: string | undefined;
   readonly harness: (opts: HarnessOpts) => Promise<HarnessRun>;
 }
@@ -77,7 +77,6 @@ export async function runDriver(opts: DriverOpts): Promise<DriverResult> {
       continue;
     }
 
-    // check mode
     let baselineHash: string | null = null;
     try {
       baselineHash = readFileSync(hashPath, "utf8").trim();

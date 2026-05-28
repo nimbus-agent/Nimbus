@@ -1,17 +1,6 @@
-/**
- * Read-only SQL guard for `nimbus query --sql` and diagnostics `index.querySql`.
- * Layer 1: keyword blocklist + PRAGMA allowlist. Layer 2: separate SQLite handle
- * opened with `readonly: true`, dispatched to a Bun Worker for wall-clock timeout.
- */
-
 const FORBIDDEN =
   /\b(INSERT|UPDATE|DELETE|DROP|ALTER|ATTACH|DETACH|REPLACE|CREATE|TRUNCATE|VACUUM)\b/i;
 
-// S5-F2 — Layer 1 PRAGMA gate is now an allowlist, not a deny-list. Any PRAGMA
-// not in this set is rejected before the read-only handle even opens. Layer 2
-// (SQLITE_OPEN_READONLY) still prevents data mutation; this gate prevents
-// observable side-effects (e.g. `PRAGMA optimize` writes to FTS5 shadow tables;
-// `PRAGMA mmap_size` perturbs memory).
 const ALLOWED_PRAGMA = new Set([
   "query_only",
   "table_info",
@@ -55,18 +44,6 @@ export function assertReadOnlySelectSql(sql: string): void {
   }
 }
 
-/**
- * Runs a single SELECT on a **dedicated** read-only SQLite handle inside a Bun Worker.
- * Times out at `options.timeoutMs` (default 30 s) by terminating the worker — protects
- * the gateway event loop from unbounded recursive CTEs (S5-F3).
- *
- * **Termination semantics.** `worker.terminate()` kills the worker on the OS
- * level; the SQLite C-call running in that worker may continue for a tick or
- * two until it next yields, but it cannot affect the gateway event loop because
- * the worker is in a separate thread context. SQLite's `sqlite3_interrupt()`
- * is not reachable through `bun:sqlite`'s public surface; if a future Bun
- * release exposes it, swap the terminate path for an interrupt-then-await.
- */
 export async function runReadOnlySelect(
   dbPath: string,
   sql: string,

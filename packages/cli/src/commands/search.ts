@@ -10,7 +10,6 @@ type SearchFlags = {
   positional: string[];
 };
 
-/** @returns next index after consuming args at `i` */
 function consumeSearchArg(args: string[], i: number, f: SearchFlags): number {
   const a = args[i];
   if (a === undefined) {

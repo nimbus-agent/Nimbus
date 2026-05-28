@@ -1,10 +1,3 @@
-/**
- * Synthetic GitHub `GET /repos/{owner}/{repo}/pulls` page generator.
- * GitHub paginates via the `Link` response header (RFC 5988); the
- * helper produces both the per-page PR array and the matching header
- * value for `buildGithubLinkHeader`.
- */
-
 import type { CorpusTier } from "../types.ts";
 
 export const GITHUB_TIER_COUNTS: Record<CorpusTier, number> = {

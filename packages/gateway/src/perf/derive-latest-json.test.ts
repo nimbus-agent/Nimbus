@@ -91,9 +91,6 @@ describe("selectLatestReferenceLine", () => {
   });
 
   test("treats incomplete: false the same as absent", () => {
-    // Construct with incomplete: false at runtime — the public type only
-    // permits incomplete?: true, so we cast through `unknown` to avoid a
-    // type error while still exercising the runtime branch.
     const raw = { ...referenceLine, incomplete: false } as unknown as HistoryLine;
     const got = selectLatestReferenceLine(`${JSON.stringify(raw)}\n`);
     expect(got.run_id).toBe(referenceLine.run_id);

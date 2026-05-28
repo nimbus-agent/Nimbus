@@ -14,23 +14,11 @@ Usage:
 `);
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runTelemetry(args)` and the
- * colocated `telemetry.test.ts`. Do not call from other command files.
- */
 export async function runTelemetryShow(client: IPCClient): Promise<void> {
   const r = await client.call<unknown>("telemetry.preview", {});
   console.log(JSON.stringify(r, null, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runTelemetry(args)` and the
- * colocated `telemetry.test.ts`. Do not call from other command files.
- *
- * `writeFile` is a seam for tests so the dispatcher can pass `Bun.write` in
- * production and a recorder stub in tests. `now` is also injectable for
- * deterministic asserts.
- */
 export async function runTelemetryDisable(
   dataDir: string,
   writeFile: (p: string, data: string) => Promise<unknown> = (p, d) =>

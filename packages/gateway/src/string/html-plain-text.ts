@@ -1,9 +1,3 @@
-/**
- * HTML-ish snippets to short plain text for index previews.
- * Implemented without tag-matching regex on arbitrary-length input (Sonar typescript:S5852 / ReDoS).
- */
-
-/** Drops `<...>` spans; each removed tag becomes one ASCII space. Unclosed `<` hides the rest of the string. */
 export function stripHtmlTagsToSpaces(input: string): string {
   let out = "";
   let inTag = false;
@@ -24,7 +18,6 @@ export function stripHtmlTagsToSpaces(input: string): string {
   return out;
 }
 
-/** Collapses any run of Unicode whitespace to a single space; trims ends. No `/\s+/g` regex. */
 export function collapseWhitespace(input: string): string {
   let out = "";
   let prevWasWs = false;

@@ -23,10 +23,6 @@ export interface ConnectionDeps {
 export interface ConnectionManager {
   start(): Promise<void>;
   dispose(): Promise<void>;
-  /** Force an immediate reconnect attempt, bypassing the backoff timer.
-   *  Used by the `nimbus.reconnect` command. Idempotent — safe to call
-   *  while already connected (no-op) or while a reconnect is pending
-   *  (cancels the timer and tries now). */
   reconnectNow(): Promise<void>;
   onState(listener: (s: ConnectionState) => void): { dispose(): void };
   current(): ConnectionState;

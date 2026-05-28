@@ -41,7 +41,6 @@ import { dispatchWorkflowRunRpc } from "./inline-handlers.ts";
 import type { CreateIpcServerOptions } from "./options.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
-// File-private; only tryDispatchDiagnosticsRpc uses it.
 function assertDiagnosticsRpcAccess(
   method: string,
   wantsConfig: boolean,
@@ -103,12 +102,7 @@ export async function tryDispatchAgentsRpc(
   try {
     const out = await dispatchAgentsRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
-      // No `llm` plumbing in PR 1 — synthesize() falls back to the deterministic
-      // renderer. PR-N will pass ctx.options.llmRouter once a routing API for
-      // built-in agents lands.
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
-      // PR 3 — agents.catchup loads `[user] me_person_id` from the active
-      // profile's nimbus.toml. Other branches ignore configDir.
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
     if (out.kind === "hit") return out.value;
@@ -200,9 +194,6 @@ export async function tryDispatchMetricsRpc(
   method: string,
   params: unknown,
 ): Promise<typeof metricsRpcSkipped | unknown> {
-  // Only `metrics.dora` is handled today (Phase 5 T4 PR 2). Returning the
-  // metrics-specific skip sentinel keeps the chain logic uniform with audit /
-  // profile while reserving the namespace for future `metrics.*` methods.
   if (!method.startsWith("metrics.") || ctx.options.localIndex === undefined) {
     return metricsRpcSkipped;
   }
@@ -280,9 +271,6 @@ export async function tryDispatchReindexRpc(
 ): Promise<unknown> {
   if (method !== "connector.reindex") return phase4RpcSkipped;
   try {
-    // S1-F7 — bind a per-client `ToolExecutor` so `full`-depth reindex
-    // routes through the HITL consent gate. The dispatcher used here is
-    // a stub: gate() never calls dispatch().
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
@@ -374,7 +362,6 @@ export async function tryDispatchDataRpc(
     if (process.platform === "win32") rpcPlatform = "win32";
     else if (process.platform === "darwin") rpcPlatform = "darwin";
     else rpcPlatform = "linux";
-    // A stub dispatcher is intentional — gate() for IPC-native ops never calls dispatch().
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
@@ -404,7 +391,6 @@ export async function tryDispatchDataRpc(
   return phase4RpcSkipped;
 }
 
-// File-private — used only by handleLanLocalRpc.
 function requireLanIndex(ctx: ServerCtx) {
   if (ctx.options.localIndex === undefined)
     throw new RpcMethodError(-32603, "Local index is not available");
@@ -427,13 +413,6 @@ function handleLanLocalRpc(ctx: ServerCtx, method: string, params: unknown): unk
   const rec = asRecord(params);
   switch (method) {
     case "lan.openPairingWindow": {
-      // S3-F9 — derive expiresAt from the same PairingWindow instance whose
-      // timer enforces consume(). Previously expiresAt was computed from a
-      // separate `lanPairingWindowMs` option that could diverge from the
-      // PairingWindow's configured windowMs (e.g. caller passes the option
-      // here but constructs PairingWindow elsewhere with the default 300_000),
-      // leaving the UI counting down to a moment when the gate has already
-      // closed. The single source of truth is now PairingWindow.getExpiresAt().
       const pw = requireLanPairingWindow(ctx);
       const pairingCode = generatePairingCode();
       pw.open(pairingCode);
@@ -478,8 +457,6 @@ export async function tryDispatchLanRpc(
   params: unknown,
 ): Promise<unknown> {
   if (!method.startsWith("lan.")) return phase4RpcSkipped;
-  // Local IPC clients (not LAN peers) are permitted to call all lan.* methods.
-  // checkLanMethodAllowed is only applied on the LAN HTTP path (lan-server.ts).
   return handleLanLocalRpc(ctx, method, params);
 }
 
@@ -567,9 +544,6 @@ export async function tryDispatchAutomationRpc(
       throw new RpcMethodError(-32603, "Local index is not available");
     }
     try {
-      // T2 PR 3 — for extension.checkForUpdates / extension.update, build a
-      // per-request ToolExecutor with a consent channel bound to THIS client
-      // and combine the runtime bag's helpers with a per-request gate.
       let autoUpdateDeps: Parameters<typeof dispatchAutomationRpc>[0]["autoUpdate"];
       if (
         ctx.options.extensionsAutoUpdate !== undefined &&
@@ -590,8 +564,6 @@ export async function tryDispatchAutomationRpc(
           gate: async (action) => {
             const r = await toolExecutor.gate(action);
             if (r === "proceed") return "proceed";
-            // Narrow the broader ActionResult shape; gate() never returns
-            // status="ok" in practice (dispatch is the "ok" path).
             return { status: "rejected" };
           },
         };
@@ -603,11 +575,7 @@ export async function tryDispatchAutomationRpc(
         ...(ctx.options.extensionsDir === undefined
           ? {}
           : { extensionsDir: ctx.options.extensionsDir }),
-        // S7-F10 — pass the mesh so extension.disable can terminate the
-        // running child immediately (fire-and-forget inside the dispatcher).
         ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
-        // I16 — signed-extension install path needs the vault (publisher key cache),
-        // a registry fetcher (when network is permitted), and the air-gap flag.
         vault: ctx.options.vault,
         ...(ctx.options.extensionsPublisherKeyFetcher === undefined
           ? {}
@@ -668,7 +636,6 @@ export async function tryDispatchConnectorRpc(
     throw new RpcMethodError(-32603, "Gateway is not configured for OAuth (missing openUrl)");
   }
   try {
-    // A stub dispatcher is intentional — gate() for IPC-native ops never calls dispatch().
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));

@@ -24,7 +24,6 @@ describe("Platform Abstraction Layer", () => {
       XDG_DATA_HOME: processEnvGet("XDG_DATA_HOME"),
       XDG_RUNTIME_DIR: processEnvGet("XDG_RUNTIME_DIR"),
     };
-    // Isolated paths for all platforms
     processEnvSet("APPDATA", tmpDir);
     processEnvSet("LOCALAPPDATA", tmpDir);
     processEnvSet("XDG_CONFIG_HOME", join(tmpDir, ".config"));
@@ -37,16 +36,6 @@ describe("Platform Abstraction Layer", () => {
     for (const [key, val] of Object.entries(originalEnv)) {
       processEnvSet(key, val);
     }
-    // Async fs.promises.rm with retries — the documented Windows-EBUSY
-    // workaround. Several tests in this file import ./index.ts, which
-    // constructs full PlatformServices (sync scheduler, connector mesh,
-    // lazy-loaded embedding runtime); under full-suite parallelism those
-    // services may still hold OS file handles inside tmpDir when this hook
-    // runs. POSIX unlinks open files happily and won't retry; Windows
-    // refuses deletion. If retries still fail (services that hold handles
-    // longer than the retry budget), the cleanup is logged-and-deferred to
-    // the OS temp reaper — failing the suite over a racy cleanup of a temp
-    // dir is worse than the leak.
     try {
       await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     } catch (err) {
@@ -100,16 +89,10 @@ describe("Platform Abstraction Layer", () => {
       await services.connectorMesh?.disconnect().catch(() => {});
       services.disposeSidecars?.();
       services.localIndex?.close();
-      // Small delay to let async scheduler tasks finish before the DB is completely yanked
       await new Promise((r) => setTimeout(r, 100));
     }
-  }, 30000); // 30s timeout to allow for the full V0→V28 migration chain on slow runners
-
+  }, 30000);
   it("uses the documented IPC path pattern per OS", () => {
-    // The socket path is determined entirely by the per-OS PlatformPaths
-    // factory — no need to assemble the full PlatformServices stack (DB
-    // migrations, vault, connector mesh, sync scheduler) just to read one
-    // string. The end-to-end shape is covered by the sibling test above.
     const os = platform();
     const paths =
       os === "win32"

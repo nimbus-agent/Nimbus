@@ -1,16 +1,3 @@
-// packages/cli/src/commands/repl-core.test.ts
-//
-// Tests the dependency-injected REPL logic in `repl-core.ts` DIRECTLY. This
-// file deliberately does NOT import the shared `cli-mocks.ts` harness and does
-// NOT `mock.module` anything: `repl-core.ts` imports none of the mocked
-// modules as values, so it stays out of Bun's mock-resolution blast radius and
-// its export surface is stable on every platform. All external dependencies
-// are injected via a `ReplCoreDeps` fake. (The previous `repl.test.ts` drove
-// the production `repl.ts` — which DOES import the mocked modules — and failed
-// intermittently on CI: macOS link-error `Export named 'loadReplPreconditions'
-// not found`, and a Linux coverage drop below the floor. See repl-core.ts /
-// repl.ts header comments.)
-
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -34,7 +21,6 @@ afterAll(() => {
 
 const FAKE_PATHS = {} as unknown as CliPlatformPaths;
 
-/** Build an injectable deps fake; override fields per test. */
 function makeDeps(overrides: Partial<ReplCoreDeps> = {}): ReplCoreDeps {
   return {
     readGatewayState: async (): Promise<ReplGatewayState | undefined> => undefined,
@@ -153,7 +139,6 @@ describe("runRepl (readline loop, injected interface)", () => {
     out.reset();
   });
 
-  // Inject a stub readline interface so the loop runs deterministically.
   function fakeInterface(answers: string[]): Parameters<typeof runRepl>[2] {
     let idx = 0;
     return (() => ({
@@ -176,8 +161,6 @@ describe("runRepl (readline loop, injected interface)", () => {
         handlersRegistered += 1;
       },
     });
-    // Covers runRepl's full structure: preconditions, client connect, handler
-    // registration, the readline loop, the break, and the finally cleanup.
     await runRepl([], deps, fakeInterface(["exit"]));
     expect(handlersRegistered).toBe(1);
     expect(mockIpc.calls).toHaveLength(0);

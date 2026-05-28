@@ -108,7 +108,6 @@ describe("startMetricsServer", () => {
   test("escapes label backslash, double-quote, and newline characters", async () => {
     const escapeDb = openSeededInMemoryDb(30);
     const now = Date.now();
-    // Service name carrying every Prometheus-sensitive character at once.
     const wild = `${String.raw`tricky"name\with`}\nnewline`;
     escapeDb.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
@@ -118,7 +117,6 @@ describe("startMetricsServer", () => {
     const localHandle = startMetricsServer(() => escapeDb, 0);
     try {
       const body = await (await get(localHandle.port, "/metrics")).text();
-      // Backslash becomes \\, quote becomes \", newline becomes a literal space.
       expect(body).toContain(String.raw`service="tricky\"name\\with newline"`);
     } finally {
       localHandle.stop();

@@ -15,12 +15,6 @@ import { createZoomSyncable } from "./zoom-sync.ts";
 
 const CURSOR_PREFIX = "nimbus-zoom1:";
 
-/**
- * Build a vault stub with a non-expired Zoom OAuth token.
- * `expiresAt` must exceed `Date.now() + 120_000` (the 2-min refresh margin in
- * oauth-registry.ts) so `getValidZoomAccessToken` returns the cached access
- * token directly without attempting a network refresh.
- */
 function makeZoomVault(accessToken = "test-access-token") {
   return createStubVault({
     "zoom.oauth": JSON.stringify({
@@ -35,7 +29,6 @@ function makeMeeting(id: number, topic = "Test Meeting", startTime = "2026-06-01
   return { id, topic, start_time: startTime };
 }
 
-/** Returns a fetch stub that only handles /v2/users/me/meetings URLs. */
 function stubMeetingsFetch(
   pages: Array<{ meetings: unknown[]; next_page_token: string; status?: number }>,
 ): { fetchCount: { n: number } } {
@@ -64,7 +57,6 @@ function stubMeetingsFetch(
   return { fetchCount };
 }
 
-/** Wraps a SyncContext to track rateLimiter.acquire calls. */
 function withAcquireTracking(ctx: ReturnType<typeof syncTestContext>) {
   const acquireProviders: string[] = [];
   const originalAcquire = ctx.rateLimiter.acquire.bind(ctx.rateLimiter);
@@ -129,12 +121,10 @@ describeWithFetchRestore("zoom-sync", () => {
     stubMeetingsFetch([{ meetings: [], next_page_token: "", status: 500 }]);
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    const priorCursor = "nimbus-zoom1:cHJpb3I="; // some prior cursor
-
+    const priorCursor = "nimbus-zoom1:cHJpb3I=";
     const r = await sync.sync(syncTestContext(db, makeZoomVault()), priorCursor);
 
     expect(r.itemsUpserted).toBe(0);
-    // HTTP error on first page: cursor preserved to prior cursor, NOT success cursor
     expect(r.cursor).toBe(priorCursor);
     expectServiceItemCount(db, "zoom", 0);
   });
@@ -157,16 +147,12 @@ describeWithFetchRestore("zoom-sync", () => {
     const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
 
     expect(r.itemsUpserted).toBe(0);
-    // Parse error resets cursor to the pass1 cursor (not null)
     expect(r.cursor).not.toBeNull();
     expect((r.cursor as string).startsWith(CURSOR_PREFIX)).toBe(true);
     expectServiceItemCount(db, "zoom", 0);
   });
 
   test("MAX_PAGES caps the walk at 20 fetches", async () => {
-    // Stub returns next_page_token: "more" every time → walk must stop at MAX_PAGES=20.
-    // Use a high-burst rate limiter (burstSize=100) so no token-refill sleep occurs
-    // across 20 sequential acquires — keeps the test well within the 5 s timeout.
     let fetchCount = 0;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
       const url = urlFromFetchInput(input);
@@ -186,7 +172,6 @@ describeWithFetchRestore("zoom-sync", () => {
 
     const db = createMemoryIndexDb();
     const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
-    // High-burst limiter: burstSize=100 so all 20 acquires succeed immediately
     const fastLimiter = new ProviderRateLimiter({
       zoom: { requestsPerMinute: 6000, burstSize: 100 },
     });

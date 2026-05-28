@@ -68,7 +68,6 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     void deps.panel.postMessage(m);
   };
 
-  // Returns true if the iterator should break.
   const handleEvent = async (ev: StreamEvent): Promise<boolean> => {
     if (ev.type === "token") {
       post({ type: "token", text: ev.text });

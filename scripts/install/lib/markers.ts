@@ -17,7 +17,6 @@ export function stripMarkerBlock(content: string): string {
   if (endIndex === -1) {
     return content;
   }
-  // Cut from the line containing BEGIN through the line containing END (inclusive).
   const beginLineStart = content.lastIndexOf("\n", beginIndex - 1) + 1;
   const endLineEnd = content.indexOf("\n", endIndex + END_MARKER.length);
   const cutEnd = endLineEnd === -1 ? content.length : endLineEnd + 1;

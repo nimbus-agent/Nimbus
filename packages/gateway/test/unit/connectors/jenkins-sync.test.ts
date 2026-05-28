@@ -10,17 +10,9 @@ const ENSURE_MCP = { ensureJenkinsMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-jnk1:";
 const BASE_URL = "https://jenkins.example.com";
 
-// Jenkins endpoints carry query strings (the depth-4 jobs tree, and the
-// per-job builds tree). MockFetch's string matcher is exact, so all URL
-// matchers are RegExp patterns anchored on the path prefix; the encoded
-// `tree` parameter varies between the two endpoints and is not asserted
-// against here (see the targeted "URL contains tree=" tests for that).
 const JOBS_LIST_RE = /^https:\/\/jenkins\.example\.com\/api\/json\?tree=/;
 const BUILDS_LIST_RE_ANY = /^https:\/\/jenkins\.example\.com\/job\/[^?]+\/api\/json\?tree=/;
 
-// Per-job builds-list URLs — production code joins fullName segments with
-// `/job/` and URL-encodes each segment. Anchor on the resulting path so
-// per-job stubs can be registered before the catch-all builds-list stub.
 const BUILDS_LIST_RE_BUILD_A =
   /^https:\/\/jenkins\.example\.com\/job\/team\/job\/build-a\/api\/json\?tree=/;
 const BUILDS_LIST_RE_BUILD_B =
@@ -38,11 +30,6 @@ const BASIC_AUTH = `Basic ${Buffer.from("jenkins-stub-user:jenkins-stub-token", 
   "base64",
 )}`;
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -132,8 +119,6 @@ describe("jenkins-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it (mirrors datadog-sync.test.ts).
 describe("jenkins-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -228,7 +213,6 @@ describe("jenkins-sync — with shared fixture", () => {
     });
 
     test("sends basic auth + Accept on builds-list URL", async () => {
-      // Per-job stub first, then the broad jobs-list stub.
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, {
         jobs: [{ name: "build-a", fullName: "team/build-a" }],
       });
@@ -245,7 +229,6 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: [] });
       await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       const url = fixture.fetchMock.firstCall().url;
-      // No double-slash between host and `/api/json`.
       expect(url.startsWith(`${BASE_URL}/api/json?tree=`)).toBe(true);
       expect(url).not.toContain("//api/json");
     });
@@ -274,7 +257,6 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, [1, 2, 3]);
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(0);
-      // Only the jobs-list call should have fired — no per-job follow-ups.
       expect(fixture.fetchMock.calls).toHaveLength(1);
     });
 
@@ -291,7 +273,6 @@ describe("jenkins-sync — with shared fixture", () => {
         builds: [{ number: 5, timestamp: recentTs, result: "SUCCESS" }],
       });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      // Only build-b's one build was upserted.
       expect(res.itemsUpserted).toBe(1);
       const row = fixture.db
         .query<{ external_id: string }, []>(
@@ -335,20 +316,15 @@ describe("jenkins-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_ANY, { builds: [] });
       await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       const buildsCalls = fixture.fetchMock.calls.filter((c) => BUILDS_LIST_RE_ANY.test(c.url));
-      // Three entries: folder1, folder1/sub, folder1/sub/x (flattener
-      // emits every node with a displayable name).
       expect(buildsCalls).toHaveLength(3);
-      // The leaf path uses nested /job/ segments.
       const leafCall = buildsCalls.find((c) => c.url.includes("/job/folder1/job/sub/job/x/"));
       expect(leafCall).toBeDefined();
     });
 
     test("jobs-list with non-array jobs field → bails on flatten, 0 upserts", async () => {
-      // jobs is not an array; production passes `undefined` to flattener.
       fixture.fetchMock.respond("GET", JOBS_LIST_RE, { jobs: "not-an-array" });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(0);
-      // Only the jobs-list call fired.
       expect(fixture.fetchMock.calls).toHaveLength(1);
     });
   });
@@ -367,9 +343,6 @@ describe("jenkins-sync — with shared fixture", () => {
       });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(
         fixture.createSyncContext(),
-        // Pretend we already saw build 4 — only 4 is at-or-below, so only it
-        // gets skipped while 3 is below as well. Actually the predicate is
-        // `num <= lastSeen`, so with lastSeen=4 BOTH 3 and 4 are skipped.
         encodeCursor({ jobs: { "team/build-a": 4 } }),
       );
       expect(res.itemsUpserted).toBe(0);
@@ -498,7 +471,6 @@ describe("jenkins-sync — with shared fixture", () => {
         jobs: [{ name: "build-a", fullName: "team/build-a" }],
       });
       const recentTs = Date.now() - 60_000;
-      // Returned builds: 5, 6, 7. We already saw 6 — only 7 should upsert.
       fixture.fetchMock.respond("GET", BUILDS_LIST_RE_BUILD_A, {
         builds: [
           { number: 5, timestamp: recentTs, result: "SUCCESS" },
@@ -583,7 +555,6 @@ describe("jenkins-sync — with shared fixture", () => {
       });
       const res = await createJenkinsSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(4);
-      // external_id values are lowercase: SQLite default collation is case-sensitive.
       const rows = fixture.db
         .query<{ external_id: string }, []>(
           "SELECT external_id FROM item WHERE service = 'jenkins' ORDER BY external_id",

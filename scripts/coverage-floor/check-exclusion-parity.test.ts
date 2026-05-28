@@ -4,7 +4,6 @@ import { findParityGaps } from "./check-exclusion-parity.ts";
 
 describe("findParityGaps", () => {
   test("returns empty when both sides agree (every sonar pattern is exempt locally)", () => {
-    // Patterns that match the EXCLUSIONS registry's existing entries.
     const sonarPatterns = ["**/index/*-v[0-9]*-sql.ts", "packages/gateway/src/perf/**"];
     expect(findParityGaps(sonarPatterns)).toEqual([]);
   });
@@ -16,8 +15,6 @@ describe("findParityGaps", () => {
   });
 
   test("permits sonar patterns that are subsets of local exemptions", () => {
-    // EXCLUSIONS exempts the entire perf/ directory; a sonar pattern that
-    // exempts a sub-path is consistent (not a gap).
     expect(findParityGaps(["packages/gateway/src/perf/fixtures/foo.ts"])).toEqual([]);
   });
 });

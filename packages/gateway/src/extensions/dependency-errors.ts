@@ -1,6 +1,5 @@
 import type { DependencyConflict } from "./dependency-types.ts";
 
-/** Thrown by the solver when the closure cannot be satisfied (cycle / unsatisfiable / range_invalid). */
 export class DependencyConflictError extends Error {
   readonly conflict: DependencyConflict;
 
@@ -11,7 +10,6 @@ export class DependencyConflictError extends Error {
   }
 }
 
-/** Thrown when the solver cannot reach the registry to resolve a missing dep. */
 export class OfflineDependencyResolutionError extends Error {
   readonly missingId: string;
   readonly parent: string;
@@ -24,7 +22,6 @@ export class OfflineDependencyResolutionError extends Error {
   }
 }
 
-/** Thrown by `extension.remove` when one or more installed extensions still depend on the target and `force` was not set. */
 export class ReverseDepBlockedError extends Error {
   readonly target: string;
   readonly blockers: ReadonlyArray<{ id: string; range: string }>;
@@ -37,7 +34,6 @@ export class ReverseDepBlockedError extends Error {
   }
 }
 
-/** Type-narrowing helpers — never use `instanceof` across module boundaries. */
 export function isDependencyConflictError(e: unknown): e is DependencyConflictError {
   return e instanceof Error && (e as Error).name === "DependencyConflictError";
 }

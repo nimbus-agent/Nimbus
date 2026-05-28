@@ -1,22 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — I11 regression test for the post-deploy annotation
- * surface.
- *
- * `deployment.annotate` is CLI + HTTP only, not LLM-facing today, so the
- * `<tool_output>` envelope (invariant I11) is not in the production path.
- * However, the deployment metadata is plain JSON stored in `item.metadata`,
- * and if a future built-in agent ever surfaces it to the model via
- * `wrapToolOutput`, an attacker-controlled CI payload could inject a literal
- * `</tool_output>` and prematurely terminate the envelope.
- *
- * This test parameterizes over every string field of `DeploymentAnnotateInput`
- * that accepts a literal `</tool_output>` (the four fields whose validators
- * do not reject the sequence) and asserts that wrapping the stored row via
- * `wrapToolOutput` yields exactly one closing tag — the outer envelope's
- * own. The `service` and `environment` fields are excluded because their
- * regex `/^[a-z0-9][a-z0-9._-]*$/` rejects `<`, `>`, and `/`.
- */
-
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
@@ -69,7 +50,6 @@ describe("I11 — </tool_output> escape on deployment metadata", () => {
         .get(result.external_id) as { metadata: string };
       const metadata = JSON.parse(row.metadata) as unknown;
       const envelope = wrapToolOutput({ service: "deployment", tool: "lookup" }, metadata);
-      // Exactly one literal occurrence — the outer envelope's closing tag.
       const occurrences = envelope.split("</tool_output>").length - 1;
       expect(occurrences).toBe(1);
       db.close();

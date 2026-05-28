@@ -41,12 +41,6 @@ function makeCtxWithIndex(dataDir: string): {
   return { ctx, db, localIndex };
 }
 
-/**
- * Best-effort temp-dir cleanup. On Windows the SQLite handle is sometimes
- * still pinned for a few hundred ms after `db.close()`, so `rmSync` can
- * race and throw EBUSY. The OS will reap the temp dir on reboot in the
- * worst case; never fail a test on cleanup.
- */
 function rmTmp(dir: string): void {
   try {
     rmSync(dir, { recursive: true, force: true });
@@ -128,11 +122,6 @@ describe("diag.getVersion", () => {
   });
 });
 
-/**
- * Build a minimal in-memory `SandboxRunner` for the buildSandboxDiagPayload
- * tests. We never call `.spawn()` so it returns a sentinel that fails the
- * test if anything reaches it.
- */
 function makeMockRunner(opts: {
   platform: "linux" | "darwin" | "win32";
   fullyActive: boolean;
@@ -206,8 +195,6 @@ describe("buildSandboxDiagPayload (T2 PR 1 Task 20)", () => {
   });
 });
 
-// ─── DiagnosticsRpcError ─────────────────────────────────────────────────────
-
 describe("DiagnosticsRpcError", () => {
   test("carries rpcCode and message", () => {
     const err = new DiagnosticsRpcError(-32602, "bad input");
@@ -216,8 +203,6 @@ describe("DiagnosticsRpcError", () => {
     expect(err.name).toBe("DiagnosticsRpcError");
   });
 });
-
-// ─── Dispatcher unknown method ───────────────────────────────────────────────
 
 describe("dispatchDiagnosticsRpc — dispatcher", () => {
   test("returns kind:miss for unknown method", async () => {
@@ -230,8 +215,6 @@ describe("dispatchDiagnosticsRpc — dispatcher", () => {
     }
   });
 });
-
-// ─── config.validate ─────────────────────────────────────────────────────────
 
 describe("config.validate", () => {
   test("returns ok:false with errors when nimbus.toml missing", async () => {
@@ -276,8 +259,6 @@ describe("config.validate", () => {
   });
 });
 
-// ─── telemetry.disableMark (OS-temp guard) ───────────────────────────────────
-
 describe("telemetry.disableMark", () => {
   test("refuses to write when dataDir is under OS temp", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-tmp-"));
@@ -290,8 +271,6 @@ describe("telemetry.disableMark", () => {
     }
   });
 });
-
-// ─── db.verify / db.repair (needs localIndex) ────────────────────────────────
 
 describe("db.verify", () => {
   test("requires a local index", () => {
@@ -360,8 +339,6 @@ describe("db.repair", () => {
     }
   });
 });
-
-// ─── db.snapshot.take / db.snapshots.list / db.snapshots.prune ──────────────
 
 describe("db.snapshot family", () => {
   test("snapshot.take + snapshots.list round-trip", async () => {
@@ -473,8 +450,6 @@ describe("db.snapshot family", () => {
   });
 });
 
-// ─── db.getMeta / db.setMeta ─────────────────────────────────────────────────
-
 describe("db.getMeta / db.setMeta", () => {
   test("getMeta rejects missing key", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-meta-"));
@@ -567,8 +542,6 @@ describe("db.getMeta / db.setMeta", () => {
     }
   });
 });
-
-// ─── index.metrics / index.queryItems ────────────────────────────────────────
 
 describe("index.metrics", () => {
   test("requires a local index", () => {
@@ -698,14 +671,11 @@ describe("index.queryItems", () => {
   });
 });
 
-// ─── diag.slowQueries ────────────────────────────────────────────────────────
-
 describe("diag.slowQueries", () => {
   test("returns rows:[] when slow_query_log table does not exist", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sq-"));
     try {
       const { ctx, db } = makeCtxWithIndex(dir);
-      // Drop the table to exercise the hasTable=null branch.
       try {
         db.run("DROP TABLE IF EXISTS slow_query_log");
       } catch {
@@ -771,8 +741,6 @@ describe("diag.slowQueries", () => {
   });
 });
 
-// ─── telemetry.preview ───────────────────────────────────────────────────────
-
 describe("telemetry.preview", () => {
   test("returns disabled message when marker file exists", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-prev-"));
@@ -795,7 +763,6 @@ describe("telemetry.preview", () => {
       try {
         const r = await dispatchDiagnosticsRpc("telemetry.preview", null, ctx);
         expect(r.kind).toBe("hit");
-        // Should not be the disabled shape.
         const v = (r as { value: Record<string, unknown> }).value;
         expect((v as { disabled?: boolean }).disabled).toBeUndefined();
       } finally {
@@ -806,8 +773,6 @@ describe("telemetry.preview", () => {
     }
   });
 });
-
-// ─── diag.snapshot ───────────────────────────────────────────────────────────
 
 describe("diag.snapshot", () => {
   test("returns the full diagnostic envelope with sandbox + extensions blocks", async () => {
@@ -836,10 +801,8 @@ describe("diag.snapshot", () => {
         expect(Array.isArray(v.connectorHealth)).toBe(true);
         expect(Array.isArray(v.watchers)).toBe(true);
         expect(v.hitl.pendingConsentRequests).toBe(0);
-        // Sandbox runner is undefined in this fixture → all_or_nothing.
         expect(v.sandbox.platform_capabilities.network).toBe("all_or_nothing");
         expect(typeof v.extensions.disabled_pre_t2).toBe("number");
-        // T2 PR 2 — SignatureDisabledRegistry count surfaces here too.
         expect(typeof v.extensions.signature_disabled_count).toBe("number");
       } finally {
         db.close();
@@ -879,8 +842,6 @@ describe("diag.snapshot", () => {
   });
 });
 
-// ─── telemetry.getStatus (with localIndex) ──────────────────────────────────
-
 describe("telemetry.getStatus — with localIndex", () => {
   test("returns enabled:true with preview fields when marker absent and index present", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-tgs-"));
@@ -891,8 +852,6 @@ describe("telemetry.getStatus — with localIndex", () => {
         expect(r.kind).toBe("hit");
         const v = (r as { value: { enabled: boolean } }).value;
         expect(v.enabled).toBe(true);
-        // When a localIndex exists and telemetry is enabled, additional preview
-        // fields (from buildTelemetryPreview) are spread into the response.
         expect(Object.keys(v).length).toBeGreaterThan(1);
       } finally {
         db.close();
@@ -902,8 +861,6 @@ describe("telemetry.getStatus — with localIndex", () => {
     }
   });
 });
-
-// ─── index.querySql ──────────────────────────────────────────────────────────
 
 describe("index.querySql", () => {
   test("returns rows for a valid SELECT statement", async () => {
@@ -915,7 +872,6 @@ describe("index.querySql", () => {
           `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
            VALUES ('i1', 'github', 'pr', 'pr-1', 'hi', 0, 0)`,
         );
-        // The query runs against the disk path nimbus.db with a read-only handle.
         const r = await dispatchDiagnosticsRpc(
           "index.querySql",
           { sql: "SELECT id FROM item WHERE service = 'github'" },
@@ -924,9 +880,6 @@ describe("index.querySql", () => {
         expect(r.kind).toBe("hit");
         const v = (r as { value: { rows: Array<{ id: string }>; meta: { count: number } } }).value;
         expect(v.meta.count).toBeGreaterThanOrEqual(0);
-        // We cannot guarantee the row count because runReadOnlySelect opens a
-        // fresh handle and may not see the unflushed write — but the shape
-        // is contract-tested either way.
         expect(Array.isArray(v.rows)).toBe(true);
       } finally {
         db.close();

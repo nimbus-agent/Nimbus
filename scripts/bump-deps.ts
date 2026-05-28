@@ -1,11 +1,3 @@
-/**
- * Applies the open dependabot version bumps to package.json files in this
- * workspace. Run once, then `bun install` regenerates a single bun.lock.
- *
- * Filesystem access is attempt-and-recover (try `readFileSync`, treat ENOENT
- * as "skip") rather than `existsSync`-then-read, so there's no TOCTOU window
- * between the check and the use.
- */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 type PackageJson = {
@@ -28,28 +20,19 @@ function tryReadJson(file: string): PackageJson | null {
 }
 
 const bumps: Array<{ file: string; dep: string; ver: string }> = [
-  // root
   { file: "package.json", dep: "@biomejs/biome", ver: "2.4.14" },
-  // cli
   { file: "packages/cli/package.json", dep: "yaml", ver: "2.8.4" },
   { file: "packages/cli/package.json", dep: "@clack/prompts", ver: "1.3.0" },
-  // ui — tauri-js group
   { file: "packages/ui/package.json", dep: "@tauri-apps/api", ver: "2.11.0" },
   { file: "packages/ui/package.json", dep: "@tauri-apps/cli", ver: "2.11.0" },
   { file: "packages/ui/package.json", dep: "jsdom", ver: "29.1.1" },
-  // docs
   { file: "packages/docs/package.json", dep: "astro", ver: "6.2.1" },
-  // vscode-extension
   { file: "packages/vscode-extension/package.json", dep: "jsdom", ver: "29.1.1" },
   { file: "packages/vscode-extension/package.json", dep: "@types/node", ver: "25.6.0" },
   { file: "packages/vscode-extension/package.json", dep: "esbuild", ver: "0.28.0" },
   { file: "packages/vscode-extension/package.json", dep: "marked", ver: "18.0.3" },
 ];
 
-// zod 4.4.2 across gateway + every mcp connector. The mcp-connectors loop
-// drives off `readdirSync` rather than a glob, so each candidate path may or
-// may not contain a package.json — `tryReadJson` handles the missing case
-// without a separate existence check.
 bumps.push({ file: "packages/gateway/package.json", dep: "zod", ver: "4.4.2" });
 for (const d of readdirSync("packages/mcp-connectors")) {
   bumps.push({

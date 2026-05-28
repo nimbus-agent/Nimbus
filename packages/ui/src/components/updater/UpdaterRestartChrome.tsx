@@ -14,14 +14,6 @@ import { RestartOverlay } from "../settings/updater/RestartOverlay";
 
 const RECONNECT_TIMEOUT_MS = 2 * 60 * 1_000;
 
-/**
- * Always-mounted (rendered inside `RootLayout`). Owns every cross-cutting effect for
- * the updater restart window so navigating away from `/settings/updates` mid-apply
- * does not strand the success-detection logic or hide the overlay.
- *
- * Source of truth is the `updater` slice. `UpdatesPanel` reads the same slice for
- * its panel-local UI but performs no listener/timer work — that all lives here.
- */
 export function UpdaterRestartChrome() {
   const uiState = useNimbusStore((s) => s.updaterUiState);
   const restarting = useNimbusStore((s) => s.updaterRestarting);
@@ -35,7 +27,6 @@ export function UpdaterRestartChrome() {
   const reconnectStartRef = useRef<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
 
-  // Drive the elapsed counter while in `reconnecting`, fail at the 2-min mark.
   useEffect(() => {
     if (uiState !== "reconnecting") {
       reconnectStartRef.current = null;
@@ -59,9 +50,6 @@ export function UpdaterRestartChrome() {
     return () => clearInterval(id);
   }, [uiState, setFailure, setUiState]);
 
-  // Translate gateway updater notifications into slice updates.
-  // Read `updaterUiState` via getState() to avoid making the dep list
-  // re-register the listener every state transition.
   const onNotification = useCallback(
     (n: JsonRpcNotification) => {
       switch (n.method) {
@@ -115,7 +103,6 @@ export function UpdaterRestartChrome() {
         const expected = latest?.toVersion ?? null;
         if (expected !== null && version.version === expected) {
           setUiState("success");
-          // Refresh status so the panel reflects the new currentVersion.
           try {
             const next = await createIpcClient().updaterGetStatus();
             setStatus(next);

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { last4, mapMercuryAccountToItem } from "../../../src/connectors/mercury-account-mapping.ts";
 
-// 2024-03-01T12:00:00.000Z → Date.parse → epoch ms.
 const CREATED_ISO = "2024-03-01T12:00:00.000Z";
 const CREATED_MS = Date.parse(CREATED_ISO);
 

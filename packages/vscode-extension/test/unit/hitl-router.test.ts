@@ -68,7 +68,6 @@ describe("HitlRouter", () => {
   test("snapshot returns currently-pending requests", async () => {
     const deps: HitlRouterDeps = {
       ...makeDeps({ chatVisibleAndFocused: false }),
-      // never resolve so the request stays pending
       showToast: vi.fn((): Promise<HitlDecision | undefined> => new Promise(() => undefined)),
     };
     const router = createHitlRouter(deps);

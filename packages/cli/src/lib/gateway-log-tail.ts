@@ -1,18 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
-/**
- * Tails a gateway log file for progress display in the CLI spinner. The log
- * is a mix of plain stdout/stderr writes (e.g. `[gateway] ready ...`) and
- * pino JSON lines — `extractLatestMessage` picks a human-readable preview
- * from either.
- *
- * Partial writes are not consumed: the offset stops at the last newline so
- * a half-flushed line is picked up on the next poll once it completes.
- *
- * The poll opens the file with `O_RDONLY` and uses `fstat` on the same
- * descriptor to read the size, so there's no TOCTOU window between an
- * existence check and the subsequent open or stat.
- */
 export class GatewayLogTailer {
   private offset: number;
 
@@ -20,14 +7,11 @@ export class GatewayLogTailer {
     this.offset = startOffset;
   }
 
-  /** Returns the most recent complete line's preview, or `null` if nothing new. */
   pollLatest(logPath: string): string | null {
     let fd: number;
     try {
       fd = openSync(logPath, "r");
     } catch (err) {
-      // File doesn't exist yet (gateway hasn't written anything) or another
-      // benign filesystem condition — treat as "no new content".
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         return null;
       }

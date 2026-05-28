@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeRaindropConfig {
-  /** Pages of bookmarks, in order. Each entry becomes one `items` page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the raindrops route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -50,7 +48,6 @@ function startFakeRaindrop(config: FakeRaindropConfig): FakeRaindrop {
           return new Response("{not json", { status: 200 });
         }
         const pages = config.pages ?? [[]];
-        // Raindrop pages are 0-based.
         const page = Number(u.searchParams.get("page") ?? "0");
         const items = pages[page] ?? [];
         return Response.json({
@@ -89,7 +86,6 @@ function startHarness(config: FakeRaindropConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         raindrop: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -115,13 +111,10 @@ function bookmark(id: number, over: Record<string, unknown> = {}): Record<string
   };
 }
 
-/** A full page of 50 distinct bookmarks (the `perpage` max), so the walk continues. */
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 50 }, (_, i) => bookmark(base + i));
 }
 
-// The fake fakes api.raindrop.io, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.raindrop.io → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -156,13 +149,11 @@ describe("raindrop-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-raindrop1:")).toBe(true);
 
-    // Single short page (2 < perpage=50) → the walk stopped after one GET.
     const reqs = h.fake.requests.filter((r) => r.path === "/rest/v1/raindrops/0");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("perpage=50");
     expect(reqs[0]?.query).toContain("page=0");
     for (const r of h.fake.requests) {
-      // Bearer auth — never logged.
       expect(r.authorization).toBe("Bearer raindrop_test_token");
     }
 
@@ -176,7 +167,6 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   });
 
   test("0-based page walk: continues on a full page, stops on a short page", async () => {
-    // page 0 is a full 50-item page (walk continues); page 1 is short (stops).
     h = startHarness({ pages: [fullPage(1), [bookmark(100)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("raindrop.token", "k");
@@ -193,7 +183,6 @@ describe("raindrop-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 full pages → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 50 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);

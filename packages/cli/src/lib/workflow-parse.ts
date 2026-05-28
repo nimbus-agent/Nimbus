@@ -11,9 +11,6 @@ function asStepArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
-/**
- * Parse a workflow definition from JSON or YAML (`.json`, `.yml`, `.yaml`).
- */
 export function parseWorkflowFileContent(content: string, filePath: string): ParsedWorkflowFile {
   const lower = filePath.toLowerCase();
   let root: unknown;

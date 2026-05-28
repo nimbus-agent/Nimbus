@@ -1,10 +1,9 @@
-// packages/cli/src/commands/profile.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 
@@ -98,7 +97,6 @@ describe("runProfileList", () => {
     writeFileSync(join(tmp, ".nimbus-profile"), "work\n", "utf8");
     runProfileList(tmp);
     expect(out.stdout).toContain("active: work");
-    // personal comes before work alphabetically
     const personalIdx = out.stdout.indexOf("  personal");
     const workIdx = out.stdout.indexOf("* work");
     expect(personalIdx).toBeGreaterThan(-1);

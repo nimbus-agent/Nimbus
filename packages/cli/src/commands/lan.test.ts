@@ -1,27 +1,12 @@
-// packages/cli/src/commands/lan.test.ts
-//
-// Covers:
-//   - parseLanArgs (getopt-style)
-//   - runLan dispatcher — each sub-handler goes through withGatewayIpc,
-//     which the cli-mocks harness intercepts at the IPCClient constructor
-//     + readGatewayState boundary.
-//
-// runLan uses console.log for human-facing output (captured by
-// captureOutput) and the IPC calls go through the harness-mocked
-// IPCClient (passing through the fixture's ipcClient.call).
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./lan.ts");
 const { parseLanArgs, runLan } = mod;
-
-// ----------------------------------------------------------------------
-// Parser tests (preserved from baseline).
-// ----------------------------------------------------------------------
 
 describe("parseLanArgs", () => {
   test("no args → status", () => {
@@ -69,10 +54,6 @@ describe("parseLanArgs", () => {
   });
 });
 
-// ----------------------------------------------------------------------
-// runLan dispatcher tests.
-// ----------------------------------------------------------------------
-
 const out = captureOutput();
 
 afterAll(() => {
@@ -115,7 +96,6 @@ describe("runLan — dispatcher", () => {
     await runLan(["open"]);
     expect(mock.calls[0]?.method).toBe("lan.openPairingWindow");
     expect(out.stdout).toContain("AB123-CD456");
-    // The ISO expiry should be present in the output.
     expect(out.stdout).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 

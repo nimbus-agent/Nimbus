@@ -1,20 +1,3 @@
-/**
- * Phase 5 T2 PR 3 — `nimbus extension update` end-to-end (in-process).
- *
- * Mirrors the in-process e2e pattern used by `deploy-annotate.e2e.test.ts`:
- * stages a signed extension on disk and exercises the full IPC contract the
- * CLI (`runExtensionUpdateWithCaller` / `runExtensionDowngradeWithCaller`)
- * sees end-to-end:
- *   1. extension.checkForUpdates {force: true} → cached AvailableUpdate[]
- *   2. extension.update {id, toVersion} → {applied: true, jobId} + disk swap
- *   3. extension.update for a downgrade target → swap + _prev/<fromVersion>/
- *   4. publisher_key_missing path → {applied: false, reason, hint}
- *
- * Stays gateway-internal (no cross-package import of `cli/`) per the
- * package-dependency rule in CLAUDE.md (`gateway ← no imports from cli`).
- * Asserts the response shapes the CLI's typed callers consume.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -173,7 +156,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
 
-      // Stage v1.0.0 under the T2 PR 3 two-version layout (<extRoot>/active/).
       const v1 = {
         id: extensionId,
         version: "1.0.0",
@@ -226,7 +208,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       });
       const autoUpdateDeps = { ...runtime.deps, gate: async () => "proceed" as const };
 
-      // CLI step 1: extension.checkForUpdates {force: true}
       const list = (await dispatchAutoUpdateRpc(
         "extension.checkForUpdates",
         { force: true },
@@ -236,7 +217,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(list[0]?.id).toBe(extensionId);
       expect(list[0]?.toVersion).toBe("1.1.0");
 
-      // CLI step 2: extension.update {id, toVersion}
       const apply = (await dispatchAutoUpdateRpc(
         "extension.update",
         { id: extensionId, toVersion: "1.1.0" },
@@ -245,7 +225,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(apply.applied).toBe(true);
       expect(typeof apply.jobId).toBe("string");
 
-      // Disk state matches the CLI's success message contract.
       const activeManifest = JSON.parse(
         readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8"),
       ) as { version: string };
@@ -255,7 +234,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.1.0");
 
-      // No secrets in audit chain — canonical contract for any auto-update path.
       const auditRows = db.query(`SELECT action_json FROM audit_log`).all() as Array<{
         action_json: string;
       }>;
@@ -264,7 +242,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(auditDump).not.toMatch(/password/i);
       expect(auditDump).not.toMatch(/secret_value/i);
 
-      // Applied + detected audit rows are both present (Task 9 + Task 10 contract).
       const types = auditRows
         .map((r) => JSON.parse(r.action_json) as { id?: string })
         .filter((p) => p.id === extensionId).length;
@@ -291,7 +268,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
 
-      // Pre-built two-version layout: active/=1.1.0 + _prev/1.0.0/.
       mkdirSync(join(extRoot, "active", "dist"), { recursive: true });
       writeFileSync(
         join(extRoot, "active", "nimbus.extension.json"),
@@ -379,7 +355,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
       const vault = new MockVault();
-      // Intentionally omit writePublisherKey.
 
       const extensionId = "ext-orphan";
       const runtime = createAutoUpdateRuntime({

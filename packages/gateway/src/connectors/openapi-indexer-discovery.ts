@@ -29,11 +29,6 @@ function pathMatchesAnyGlob(rel: string, globs: readonly string[]): boolean {
   return false;
 }
 
-/**
- * Minimal glob matcher: `*` (no slashes), `**` (any chars including slashes),
- * literal `?` (one char). Anchored. Sufficient for `ignore_globs` patterns
- * like `**\/legacy\/**`.
- */
 function matchesGlob(input: string, glob: string): boolean {
   let re = "^";
   for (let i = 0; i < glob.length; i++) {
@@ -87,8 +82,6 @@ function walk(
     return;
   }
   for (const e of entries) {
-    // Never follow symlinks — protects against directory cycles and against
-    // a hostile vault that links into the user's home dir.
     if (e.isSymbolicLink()) {
       continue;
     }
@@ -122,10 +115,3 @@ function walk(
     }
   }
 }
-
-// Performance note: we do NOT pre-compile `ignoreGlobs` into a single regex.
-// The `DEFAULT_IGNORE_DIRS` Set covers the high-fanout paths (`node_modules`,
-// `.git`, `dist`, ...) at O(1); `pathMatchesAnyGlob` runs only on directories
-// and files that survived that check, which is bounded. Pre-compilation is
-// a hot-path optimisation we can add later if a real workload shows it
-// matters.

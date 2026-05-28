@@ -1,11 +1,3 @@
-/**
- * Phase 3 — incident correlation using only the local index (no LLM, no MCP).
- *
- * Seeds synthetic PagerDuty / GitHub / Jenkins / Slack / AWS items that share a
- * payment-service incident narrative, links them in the relationship graph, and
- * asserts ranked search plus traverseGraph surface the same cross-service set.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 

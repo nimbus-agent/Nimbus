@@ -1,17 +1,5 @@
-/**
- * asciinema v2 NDJSON writer.
- *
- * Header `timestamp` is frozen to 1700000000 so the .cast file is byte-
- * reproducible across regenerations — keeps `git diff` clean during
- * `bun run record-casts --update-snapshots`. The .cast file is a byproduct
- * and is not part of the hash contract (spec §3.4); the constant is purely
- * for reviewer ergonomics.
- */
-
 export interface CastChunk {
-  /** Milliseconds since the input step's CLI start. */
   readonly tMs: number;
-  /** The stdout bytes for this chunk, already decoded to UTF-8 string. */
   readonly data: string;
 }
 
@@ -26,7 +14,6 @@ const HEADER = {
 
 function eventLine(chunk: CastChunk): string {
   const seconds = chunk.tMs / 1000;
-  // Three decimal places match the millisecond input precision exactly.
   const rounded = Math.round(seconds * 1000) / 1000;
   return JSON.stringify([rounded, "o", chunk.data]);
 }

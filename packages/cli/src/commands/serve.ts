@@ -14,12 +14,6 @@ export function takeFlag(args: string[], flag: string): string | undefined {
 
 export type ServeArgs = { kind: "help" } | { kind: "serve"; port: number };
 
-/**
- * Pure parser for `nimbus serve` argv. Extracted for unit testing without
- * touching the actual gateway spawn.
- *
- * Resolution order: --port flag > NIMBUS_HTTP_PORT env > default 7474.
- */
 export function parseServeArgs(args: string[], envHttpPort?: string): ServeArgs {
   if (args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
     return { kind: "help" };
@@ -32,9 +26,6 @@ export function parseServeArgs(args: string[], envHttpPort?: string): ServeArgs 
   return { kind: "serve", port };
 }
 
-/**
- * Starts the Gateway with `NIMBUS_HTTP_PORT` so the read-only HTTP sidecar is enabled.
- */
 export async function runServe(args: string[]): Promise<void> {
   const parsed = parseServeArgs(args, process.env["NIMBUS_HTTP_PORT"]);
   if (parsed.kind === "help") {

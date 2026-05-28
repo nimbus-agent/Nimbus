@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-argocd — ArgoCD API MCP server (read-only).
- * Credentials arrive as ARGOCD_URL + ARGOCD_TOKEN env, injected at spawn time.
- * ArgoCD API tokens (from `argocd account generate-token`) are sent as
- * `Authorization: Bearer <token>`. ArgoCD is always self-hosted, so there is
- * no SaaS default for ARGOCD_URL — it must be set.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -44,7 +37,6 @@ async function agGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the `items` array out of an `/applications` response (or a bare array). */
 function applicationsFrom(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;

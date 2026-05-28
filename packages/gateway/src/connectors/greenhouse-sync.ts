@@ -29,11 +29,6 @@ interface GreenhouseCreds {
   readonly apiKey: string;
 }
 
-/**
- * `greenhouse.api_key` is required. Greenhouse's Harvest API host is a fixed
- * SaaS host (`harvest.greenhouse.io`) — there is no host override key. The
- * connector no-ops unless the key is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<GreenhouseCreds | null> {
   const apiKey = (await readConnectorSecret(ctx.vault, "greenhouse", "api_key"))?.trim() ?? "";
   if (apiKey === "") {
@@ -42,13 +37,6 @@ async function loadCreds(ctx: SyncContext): Promise<GreenhouseCreds | null> {
   return { apiKey };
 }
 
-/**
- * Build the Basic auth header. Greenhouse's scheme makes the API key the
- * USERNAME and the password EMPTY, so the header is `Basic base64(<api_key>:)` —
- * note the trailing colon. The gateway cannot import the mcp-shared
- * `encodeBasicAuthHeader`, so the base64 is inlined here (the bitbucket-sync /
- * jenkins-sync / lever-sync pattern). The key is never logged.
- */
 function basicAuthHeader(apiKey: string): string {
   const b64 = Buffer.from(`${apiKey}:`, "utf8").toString("base64");
   return `Basic ${b64}`;
@@ -59,7 +47,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/** Build `/v1/jobs?per_page=100&page=N` (1-based). */
 function jobsPath(page: number): string {
   const params = new URLSearchParams({ per_page: String(PAGE_SIZE), page: String(page) });
   return `/v1/jobs?${params.toString()}`;
@@ -86,12 +73,6 @@ async function greenhouseGet(
   }
 }
 
-/**
- * `GET /v1/jobs` returns a BARE JSON array of job objects (NOT an envelope).
- * A non-array body yields an empty page so the walk terminates. (Greenhouse
- * also sends an RFC-5988 `Link` header with rel="next", but the walk uses the
- * full-page-length heuristic like Netlify — the Link header is not parsed.)
- */
 function extractJobs(parsed: unknown): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
@@ -126,12 +107,6 @@ export function createGreenhouseSyncable(options: GreenhouseSyncableOptions): Sy
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      // The first jobs page is the gating call: a FIRST-page http/parse error
-      // maps to the pass-cursor-empty result (http keeps the prior cursor, parse
-      // resets). Later-page errors just break, preserving whatever was already
-      // collected. Greenhouse page-paginates over a BARE array: increment `page`
-      // from 1; stop when a page returns fewer than per_page items (or an empty
-      // array), or the MAX_PAGES cap is hit.
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await greenhouseGet(ctx, creds, jobsPath(page));
         totalBytes += outcome.bytes;

@@ -1,8 +1,3 @@
-/**
- * Phase 3 stub — rolling baseline + z-score style deviation (no automated remediation; HITL remains mandatory).
- * Future: feed from post-sync telemetry / embedding norms (Phase 4 alignment).
- */
-
 export type AnomalyNotification = {
   readonly seriesId: string;
   readonly value: number;
@@ -14,7 +9,6 @@ export type AnomalyNotifyFn = (event: AnomalyNotification) => void;
 
 const DEFAULT_WINDOW = 64;
 
-/** Simple rolling window mean/std deviation for scalar signals (e.g. sync duration, item counts). */
 export class AnomalyDetectorStub {
   private readonly windowSize: number;
   private readonly series = new Map<string, number[]>();
@@ -52,7 +46,6 @@ export class AnomalyDetectorStub {
     return AnomalyDetectorStub.zScoreAgainstSamples(xs, value);
   }
 
-  /** z-score of `value` against prior samples only (used for anomaly notify). */
   private static zScoreAgainstSamples(samples: readonly number[], value: number): number {
     if (samples.length < 3) {
       return 0;

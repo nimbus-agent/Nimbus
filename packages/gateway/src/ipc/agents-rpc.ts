@@ -18,7 +18,6 @@ export type AgentsRpcContext = {
   db: Database;
   llm?: SynthesizerLlm;
   notify: (method: string, params: unknown) => void;
-  /** Active profile config dir; consulted by `agents.catchup` for `[user] me_person_id`. */
   configDir?: string;
 };
 
@@ -32,8 +31,7 @@ const MIN_DEPTH = 1;
 const MAX_IMPACT_DEPTH = 5;
 const MAX_SERVICE_LEN = 64;
 
-const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
-
+const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 function requireExpertParams(params: unknown): { topicOrFile: string; limit?: number } {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new AgentsRpcError(-32602, "agents.expert requires { topicOrFile: string }");

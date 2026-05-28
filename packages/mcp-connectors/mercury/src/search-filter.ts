@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `mercury_search`. Extracted from `server.ts`
- * so the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns the
- * id/name/status/type/kind/business-name haystack + case-insensitive substring
- * match.
- */
-
 export interface MercurySearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

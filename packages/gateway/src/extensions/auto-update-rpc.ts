@@ -6,11 +6,6 @@ import {
   type UpdateApplyResult,
 } from "./auto-update-types.ts";
 
-/**
- * Minimal subset of the executor's `PlannedAction` shape that the RPC
- * handler hands to `gate()`. Kept narrow to avoid pulling the full
- * `ToolExecutor` type into this module.
- */
 interface PlannedAction {
   type: typeof ACTION_TYPE_AUTO_UPDATE | typeof ACTION_TYPE_DOWNGRADE;
   payload: Record<string, unknown>;
@@ -21,7 +16,6 @@ type GateResult = "proceed" | { status: "rejected" };
 export interface AutoUpdateRpcDeps {
   cache: AutoUpdateCache;
   forcePoll: () => Promise<void>;
-  /** Gate the action through ToolExecutor (I2/I3/I4). */
   gate: (action: PlannedAction) => Promise<GateResult>;
   performUpgrade: (cached: AvailableUpdate) => Promise<void>;
   performDowngrade: (cached: AvailableUpdate) => Promise<void>;
@@ -30,11 +24,6 @@ export interface AutoUpdateRpcDeps {
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
 }
 
-/**
- * Per-extension mutex map; second concurrent caller for the same id returns
- * `update_in_flight`. Module-scoped because the daemon + the CLI both route
- * through this dispatcher and we want one mutex regardless of caller.
- */
 const mutex = new Map<string, Promise<void>>();
 
 export async function dispatchAutoUpdateRpc(
@@ -123,7 +112,6 @@ export async function dispatchAutoUpdateRpc(
       return { applied: false, reason: "user_rejected" } satisfies UpdateApplyResult;
     }
 
-    // Acquire mutex
     if (mutex.has(id)) {
       return { applied: false, reason: "update_in_flight" } satisfies UpdateApplyResult;
     }
@@ -176,12 +164,6 @@ export async function dispatchAutoUpdateRpc(
   throw new Error(`unknown method: ${method}`);
 }
 
-/**
- * Strict `x.y.z` of non-negative integers. v1 does NOT support pre-release
- * tags (e.g., `1.0.0-beta.1`); the RPC handler refuses to apply such a
- * bump via `assertStrictSemver` and throws `InvalidVersionFormat`. Future
- * pre-release support can lift this to a real semver library.
- */
 const STRICT_SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export class InvalidVersionFormat extends Error {
@@ -218,10 +200,6 @@ function extractPhase(message: string): string {
   return "internal_error";
 }
 
-/**
- * Test-only helper to drop the per-extension mutex map between test cases —
- * the module-scoped Map persists across describe blocks otherwise.
- */
 export function _resetAutoUpdateMutexForTests(): void {
   mutex.clear();
 }

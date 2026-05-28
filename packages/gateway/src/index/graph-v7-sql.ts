@@ -1,7 +1,3 @@
-/**
- * Local relationship graph (`graph_entity`, `graph_relation`).
- */
-
 export const GRAPH_V7_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS graph_entity (
   id          TEXT PRIMARY KEY,

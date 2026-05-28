@@ -62,7 +62,6 @@ function scopesFromTokenResponse(scopeField: string | undefined, requested: stri
   return requested;
 }
 
-/** Standard OAuth2 form-token response → PKCEResult (google/microsoft/zoom). */
 function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
   if (json === null || typeof json !== "object") {
     throw new Error("Token response was not valid JSON");
@@ -269,7 +268,6 @@ export function buildAuthorizeUrl(d: OAuthProviderDescriptor, a: AuthorizeArgs):
   return url;
 }
 
-/** OAuth2 token-error JSON → user-safe summary (no secrets). */
 function tokenErrorSummary(json: unknown): string | undefined {
   if (json === null || typeof json !== "object" || Array.isArray(json)) return undefined;
   const o = json as Record<string, unknown>;
@@ -391,7 +389,6 @@ export interface RefreshArgs {
   vault: NimbusVault;
   clientSecret?: string;
   fetchFn?: RegistryFetch;
-  /** Persist to this key instead of descriptor.vaultKey (Google per-service keys). */
   persistVaultKey?: string;
 }
 
@@ -418,11 +415,6 @@ export async function refreshViaRegistry(a: RefreshArgs): Promise<PKCEResult> {
 }
 
 const REFRESH_MARGIN_MS = 120_000;
-// Single-flight: coalesce concurrent refreshes for the same persisted token.
-// Single-process invariant — see Task 5 plan note: only the Gateway process runs
-// `getValidVaultAccessToken`; connector child processes consume injected env tokens
-// and never read the Vault. An in-memory Map is therefore sufficient — no IPC/file
-// lock is needed under that invariant.
 const inFlightRefresh = new Map<string, Promise<string>>();
 
 export interface GetValidArgs {
@@ -430,7 +422,6 @@ export interface GetValidArgs {
   vault: NimbusVault;
   clientId: string;
   clientSecret?: string;
-  /** Read/persist key override (Google per-service); defaults to descriptor.vaultKey. */
   vaultKey?: string;
   notConfiguredError?: string;
   parseErrors?: Parameters<typeof parseStoredOAuthTokens>[1];
@@ -460,10 +451,6 @@ export async function getValidVaultAccessToken(a: GetValidArgs): Promise<string>
       a.emptyClientIdError ?? `Missing client id for ${a.descriptor.id} token refresh`,
     );
   }
-  // Lock is consulted only on the refresh path — after the cheap vault read +
-  // parse + expiry check. Cache-hit callers return immediately and never touch
-  // the lock; reordering this would force cache hits to block on unrelated
-  // in-flight refreshes, strictly worse for the common case.
   const existing = inFlightRefresh.get(vaultKey);
   if (existing !== undefined) return existing;
   const p = (async () => {

@@ -110,14 +110,7 @@ export type RunWorkflowExecutionParams = {
   dryRun: boolean;
   stream: boolean;
   sendChunk: (text: string) => void;
-  /** When set (tests), invoked instead of {@link runConversationalAgent}. Production IPC omits this. */
   conversationalRunner?: (p: RunConversationalAgentParams) => Promise<{ reply: string }>;
-  /**
-   * Optional per-step parameter overrides: map of step label → params patch.
-   * Persisted on the workflow_run row as `params_override_json` for audit.
-   * For prompt-based steps, the override is recorded but not applied mid-execution
-   * (steps have no structured params object to merge into).
-   */
   readonly paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
 };
 
@@ -129,7 +122,6 @@ export type RunWorkflowExecutionResult = {
     status: string;
     output?: string;
     error?: string;
-    /** Dry-run only: heuristic HITL action ids for CLI preview. */
     hitlActions?: readonly string[];
   }>;
 };
@@ -191,11 +183,6 @@ async function executeWorkflowStep(
   }
 }
 
-/**
- * Close out a completed run: write the finished row, emit the chained audit
- * entry, and prune the retention window. The three gateway-side effects always
- * fire together, in that order, at every completion site.
- */
 function finalizeRun(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -218,7 +205,6 @@ function finalizeRun(
   pruneWorkflowRuns(p.db, wf.id, RUN_RETENTION_PER_WORKFLOW);
 }
 
-/** Dry-run branch: persist + finalize the preview row, return the preview results. */
 function executeDryRun(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -249,11 +235,6 @@ function executeDryRun(
   };
 }
 
-/**
- * Real-run step loop. Returns either a completed result (all steps done, or a
- * halt-on-error) or a directive to continue — used to keep runWorkflowExecution
- * flat.
- */
 async function executeRealRunSteps(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -281,9 +262,6 @@ async function executeRealRunSteps(
   return { runId, dryRun: false, stepResults };
 }
 
-/**
- * Executes a saved workflow sequentially via the conversational agent (tools allowed per step).
- */
 export async function runWorkflowExecution(
   p: RunWorkflowExecutionParams,
 ): Promise<RunWorkflowExecutionResult> {

@@ -33,18 +33,11 @@ describeWin("DpapiVault — optional entropy (S2-F4)", () => {
     const cfg = mkdtempSync(join(tmpdir(), "nimbus-dpapi-tamper-"));
     const v1 = new DpapiVault({ configDir: cfg } as never);
     await v1.set("github.pat", "ghp_value");
-    // Strip Hidden+System attrs (we set them at creation time as a casual-
-    // delete defense) so the test harness can overwrite. The clear is part
-    // of the simulated tamper, not part of the security boundary itself.
-    // Use the absolute path (matches the production caller in win32.ts).
     const entropyPath = join(cfg, "vault", ".entropy");
     const winDir = process.env["SystemRoot"] ?? process.env["windir"] ?? String.raw`C:\Windows`;
     spawnSync(String.raw`${winDir}\System32\attrib.exe`, ["-H", "-S", entropyPath], {
       windowsHide: true,
     });
-    // Overwrite entropy with new random bytes — simulates a different
-    // process / user attempting to decrypt. DPAPI decrypt should fail and
-    // the legacy fallback (no-entropy) should also fail.
     const newEntropy = Buffer.alloc(32, 0xab);
     writeFileSync(entropyPath, newEntropy);
     const v2 = new DpapiVault({ configDir: cfg } as never);
@@ -55,7 +48,6 @@ describeWin("DpapiVault — optional entropy (S2-F4)", () => {
     const { DpapiVault, _legacyEncryptForTest } = await import("./win32.ts");
     const cfg = mkdtempSync(join(tmpdir(), "nimbus-dpapi-legacy-"));
     const vaultDir = join(cfg, "vault");
-    // Build the vault dir + write a pre-fix entry encrypted without entropy.
     const { mkdirSync } = await import("node:fs");
     mkdirSync(vaultDir, { recursive: true });
     const blob = _legacyEncryptForTest("legacy_value");
@@ -64,7 +56,6 @@ describeWin("DpapiVault — optional entropy (S2-F4)", () => {
     const v1 = new DpapiVault({ configDir: cfg } as never);
     expect(await v1.get("github.pat")).toBe("legacy_value");
 
-    // After migration the entry should decrypt with entropy on a fresh handle.
     const v2 = new DpapiVault({ configDir: cfg } as never);
     expect(await v2.get("github.pat")).toBe("legacy_value");
   });

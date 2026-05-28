@@ -1,16 +1,3 @@
-/**
- * nimbus-mcp-snyk — Snyk REST API MCP server (read-only).
- *
- * Exposes the three mandatory read tools (`snyk_list`, `snyk_get`,
- * `snyk_search`) per the Nimbus connector authoring contract. No write
- * tools are registered and `hitlRequired` is empty in the manifest —
- * `snyk.issue.ignore` is a deferred Phase 8 follow-up.
- *
- * Credentials arrive as `SNYK_TOKEN` env, injected at spawn time by the
- * Gateway from the `snyk.token` vault key. The connector never reaches
- * for the vault itself (per the project's non-negotiable #3).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -29,7 +16,6 @@ function authHeader(): Record<string, string> {
   if (t === undefined || t === "") {
     throw new Error("SNYK_TOKEN is not set");
   }
-  // Snyk REST uses the `token <value>` Authorization scheme rather than Bearer.
   return { Authorization: `token ${t}`, Accept: "application/json" };
 }
 
@@ -52,7 +38,6 @@ async function snykPost(path: string, body: unknown): Promise<unknown> {
   if (!res.ok) {
     throw new Error(`Snyk ${String(res.status)}: ${text.slice(0, 400)}`);
   }
-  // Some Snyk POST endpoints return an empty body on success; tolerate that.
   if (text.trim() === "") {
     return {};
   }

@@ -176,10 +176,6 @@ describe("resolveSelfPerson (orchestrator)", () => {
   });
 
   test("override is used verbatim — no validation that the person exists", async () => {
-    // This is intentional: downstream sub-agents will return zero evidence and
-    // emit gaps, which is the correct user-facing signal that the override is
-    // wrong. We do NOT pre-validate here because doing so would add a DB read
-    // on the hot path for every catchup invocation.
     const out = await resolveSelfPerson(freshDb(), {
       override: "person-does-not-exist",
       runGit: async () => null,

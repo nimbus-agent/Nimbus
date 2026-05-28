@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-jenkins — Jenkins Classic REST MCP server.
- * Writes require Gateway HITL: `jenkins.build.trigger`, `jenkins.build.abort`.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -24,7 +19,6 @@ import {
 const mcp = new McpServer({ name: "nimbus-jenkins", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
 
-/** Must match `JENKINS_JOBS_API_TREE` in `@nimbus/gateway` `jenkins-api-jobs.ts` (MCP cannot import gateway). */
 const JOBS_TREE =
   "jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url]]]]";
 

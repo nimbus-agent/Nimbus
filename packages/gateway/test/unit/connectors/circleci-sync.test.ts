@@ -11,8 +11,6 @@ import {
 const ENSURE_MCP = { ensureCircleciMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-cci1:";
 
-// circleci pipelines list URL — production calls
-// GET https://circleci.com/api/v2/project/<encoded-slug>/pipeline
 const PIPELINES_URL_RE =
   /^https:\/\/circleci\.com\/api\/v2\/project\/[^/]+\/[^/]+\/[^/]+\/pipeline$/;
 
@@ -27,12 +25,6 @@ function decodeCursorJson(c: string): unknown {
   return JSON.parse(Buffer.from(c.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"));
 }
 
-/**
- * Seed a GitHub-indexed repository row so `listGithubReposFromIndex` returns
- * it. Uses the production `upsertIndexedItemForSync` helper to avoid coupling
- * to the raw `item` table schema. `listGithubReposFromIndex` reads
- * `metadata.repo` (NOT `metadata.repo_full_name`).
- */
 function seedGithubRepo(ctx: SyncContext, fullName: string): void {
   const now = Date.now();
   upsertIndexedItemForSync(ctx, {
@@ -51,11 +43,6 @@ function seedGithubRepo(ctx: SyncContext, fullName: string): void {
   });
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -105,7 +92,6 @@ describe("circleci-sync — credential short-circuits", () => {
   test("returns noop when no github repos are indexed (even with valid token)", async () => {
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("circleci.api_token", "circleci-stub-token");
-      // No seedGithubRepo() call — index is empty for github.
       const syncable = createCircleciSyncable(ENSURE_MCP);
       const res = await syncable.sync(iso.createSyncContext(), "preserved-cursor");
       expect(iso.fetchMock.calls).toHaveLength(0);
@@ -114,8 +100,6 @@ describe("circleci-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it (mirrors jenkins-sync.test.ts).
 describe("circleci-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -145,9 +129,6 @@ describe("circleci-sync — with shared fixture", () => {
     });
 
     test("URL contains correctly slug-encoded gh/<owner>/<repo>", async () => {
-      // Use a repo name with a character that round-trips through
-      // encodeURIComponent (no transformation needed but proves
-      // segment-by-segment encoding).
       seedGithubRepo(fixture.createSyncContext(), "acme-org/repo.name");
       fixture.fetchMock.respond("GET", PIPELINES_URL_RE, { items: [] });
       await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
@@ -185,7 +166,6 @@ describe("circleci-sync — with shared fixture", () => {
       fixture.fetchMock.respondWithText("GET", PIPELINES_URL_ACME_REPO_A, "<html>not json</html>");
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(0);
-      // Cursor is still encoded (sync did not throw).
       expect(res.cursor).not.toBeNull();
     });
 
@@ -204,7 +184,6 @@ describe("circleci-sync — with shared fixture", () => {
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.cursor).not.toBeNull();
       const decoded = decodeCursorJson(res.cursor!) as { projects: Record<string, number> };
-      // After the run, the slug key exists with lastSeen=0 (no pipelines).
       expect(decoded.projects).toEqual({ "gh/acme/repo-a": 0 });
     });
 
@@ -254,7 +233,6 @@ describe("circleci-sync — with shared fixture", () => {
       });
       const res = await createCircleciSyncable(ENSURE_MCP).sync(
         fixture.createSyncContext(),
-        // lastSeen=4 → both 3 and 4 (predicate `num <= lastSeen`) are skipped.
         encodeCursor({ projects: { "gh/acme/repo-a": 4 } }),
       );
       expect(res.itemsUpserted).toBe(0);
@@ -332,7 +310,6 @@ describe("circleci-sync — with shared fixture", () => {
         .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'circleci'")
         .get();
       const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
-      // branch missing → tag fallback.
       expect(meta.branch).toBe("v1.0.0");
       expect(meta.revision).toBe("abc123");
     });
@@ -388,7 +365,6 @@ describe("circleci-sync — with shared fixture", () => {
     test("owner-only (no `/`) → skipped via githubRepoToCircleProjectSlug returning null", async () => {
       seedGithubRepo(fixture.createSyncContext(), "no-slash-here");
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      // No HTTP call should have been made — slug returned null.
       expect(fixture.fetchMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
     });
@@ -432,7 +408,6 @@ describe("circleci-sync — with shared fixture", () => {
     test("second sync uses prior maxNum as lastSeen → older pipelines skipped", async () => {
       seedGithubRepo(fixture.createSyncContext(), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
-      // Pipelines 5, 6, 7 — already saw 6, so only 7 should upsert.
       fixture.fetchMock.respond("GET", PIPELINES_URL_ACME_REPO_A, {
         items: [
           { number: 5, created_at: recentTs, state: "success" },
@@ -468,11 +443,8 @@ describe("circleci-sync — with shared fixture", () => {
       });
       const res = await createCircleciSyncable(ENSURE_MCP).sync(
         fixture.createSyncContext(),
-        // Only repo-a in cursor with high lastSeen — repo-b should still
-        // upsert because it defaults to 0.
         encodeCursor({ projects: { "gh/acme/repo-a": 50 } }),
       );
-      // repo-a is fully skipped (1 <= 50). repo-b has 1 upsert.
       expect(res.itemsUpserted).toBe(1);
     });
   });
@@ -497,8 +469,6 @@ describe("circleci-sync — with shared fixture", () => {
       });
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(4);
-      // SQLite default collation is case-sensitive; external_id values are
-      // lowercase, so ascending order is deterministic.
       const rows = fixture.db
         .query<{ external_id: string; url: string | null }, []>(
           "SELECT external_id, url FROM item WHERE service = 'circleci' ORDER BY external_id",
@@ -531,7 +501,6 @@ describe("circleci-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", PIPELINES_URL_ACME_REPO_A, { items: [] });
       fixture.fetchMock.respond("GET", PIPELINES_URL_ACME_REPO_B, { items: [] });
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      // Each response body is `{"items":[]}` (12 chars) → sum = 24.
       expect(res.bytesTransferred).toBe(24);
     });
   });

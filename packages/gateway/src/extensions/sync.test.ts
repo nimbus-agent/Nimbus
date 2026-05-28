@@ -34,8 +34,6 @@ describe("syncPublisherKeys", () => {
     const old = generateEd25519Keypair().pubkey;
     const fresh = generateEd25519Keypair().pubkey;
     await writePublisherKey(vault, "pub-a", old);
-    // Manifest staged with `old` pubkey + placeholder signature.
-    // Re-verify against `fresh` must fail (different key, fake sig).
     await stageSignedExtensionOnDisk({ db, extensionsDir, publisherId: "pub-a", pubkey: old });
 
     const result = await syncPublisherKeys({
@@ -97,7 +95,6 @@ describe("syncPublisherKeys", () => {
       enforceAirGap: false,
       dryRun: true,
     });
-    // Cache is untouched
     const cached = await readPublisherKey(vault, "pub-a");
     expect(cached).toBeDefined();
     expect(encodeBase64(cached!)).toBe(encodeBase64(old));

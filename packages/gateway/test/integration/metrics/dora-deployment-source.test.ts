@@ -1,17 +1,3 @@
-/**
- * Integration test: `deploymentFrequency` source preference.
- *
- * Verifies that:
- *   1. Annotated deploys (`deployment_items` joined to `item`) are preferred
- *      over regex-matched `ci_run` rows when both exist in the window.
- *   2. The `mixed_source` gap is emitted when both sources are present.
- *   3. The legacy regex-only window still returns gap = null.
- *   4. An empty window returns gap = `"no_deployment_data"`.
- *
- * `leadTimeForChanges` and `changeFailureRate` remain on the regex path in
- * this PR; they're out of scope.
- */
-
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -60,7 +46,6 @@ describe("dora.deploymentFrequency — source preference", () => {
     expect(df.sample).toBe(3);
     expect(df.gap).toBe("mixed_source");
     expect(df.value).not.toBeNull();
-    // 3 deploys over 30 days
     expect(df.value).toBeCloseTo(3 / 30, 5);
   });
 

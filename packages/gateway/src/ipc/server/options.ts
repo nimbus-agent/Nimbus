@@ -22,84 +22,29 @@ export type CreateIpcServerOptions = {
   listenPath: string;
   vault: NimbusVault;
   version: string;
-  /** When set, `audit.list` reads from the local index; otherwise returns []. */
   localIndex?: LocalIndex;
-  /** Host path for `extension.install` copies; same as platform `extensionsDir`. */
   extensionsDir?: string;
-  /** Opens URLs for OAuth (`connector.auth`). */
   openUrl?: (url: string) => Promise<void>;
-  /** Background sync; required for `connector.sync` force runs. */
   syncScheduler?: SyncScheduler;
-  /** Required for `connector.addMcp`. */
   connectorMesh?: LazyConnectorMesh;
-  /** Merged into `gateway.ping` (e.g. embedding backfill progress). */
   getEmbeddingStatus?: () => Record<string, unknown>;
-  /** Monotonic gateway start time (ms) for ping.uptime */
   startedAtMs?: number;
-  /** Initial `agent.invoke` handler; may be replaced via {@link IPCServer.setAgentInvokeHandler}. */
   agentInvoke?: AgentInvokeHandler;
-  /** Handles `workflow.run` (sequential agent steps); set via {@link IPCServer.setWorkflowRunHandler}. */
   workflowRun?: WorkflowRunHandler;
-  /** RAG session chunks (schema v10+); requires embedding runtime + sqlite-vec. */
   sessionMemoryStore?: SessionMemoryStore;
-  /**
-   * Data directory (`paths.dataDir`) for `db.*` / snapshot listing RPCs.
-   * Required when exposing diagnostics methods that touch the filesystem.
-   */
   dataDir?: string;
-  /** Config directory (`paths.configDir`) for `config.validate` and related RPCs. */
   configDir?: string;
-  /**
-   * Optional hook when a client connects (tests, diagnostics).
-   * Not part of the JSON-RPC surface.
-   */
   onClientConnected?: (clientId: string) => void;
-  /** LLM model registry for llm.* RPCs. */
   llmRegistry?: LlmRegistry;
-  /** Voice service for voice.* RPCs. */
   voiceService?: VoiceService;
-  /** Auto-updater for updater.* RPCs. */
   updater?: Updater;
-  /** LAN server instance for lan.* RPCs. */
   lanServer?: LanServer;
-  /** Pairing window shared with the LAN server. */
   lanPairingWindow?: PairingWindow;
-  /** Profile manager for profile.* RPCs. */
   profileManager?: ProfileManager;
-  /**
-   * Per-platform sandbox runner — surfaces extension-sandbox posture in
-   * `diag.snapshot` (`sandbox.platform_capabilities`). When undefined, the
-   * payload reports `network: "all_or_nothing"` with reason
-   * `"sandbox runner unavailable"`. Constructed in `assemblePlatformServices`
-   * (T2 PR 1).
-   */
   sandboxRunner?: SandboxRunner;
-  /**
-   * Optional fetcher for signed-extension install signature verification (I16).
-   * When undefined, `extension.install` falls back to vault-cache-only / explicit
-   * `--publisher-key` paths for signed manifests.
-   */
   extensionsPublisherKeyFetcher?: PublisherKeyFetcher;
-  /**
-   * Air-gap flag for signed-extension install (I16). When true, the install
-   * refuses to reach the registry — only the vault cache and `--publisher-key`
-   * file are consulted.
-   */
   extensionsEnforceAirGap?: boolean;
-  /**
-   * T2 PR 3 — auto-update runtime bag. When undefined,
-   * `extension.checkForUpdates` and `extension.update` return
-   * `-32603 Gateway is not configured with auto-update support` (the
-   * dispatcher does not synthesize fallbacks). Constructed in
-   * `assemblePlatformServices` when both a registry URL is configured and
-   * air-gap is not enforced.
-   */
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
-  /**
-   * T2 PR 3 — auto-update diagnostic snapshot. Surfaced under
-   * `diag.snapshot.extensions.auto_update`. Omitted when the daemon was
-   * not configured.
-   */
   extensionsAutoUpdateDiag?: {
     cachedUpdatesCount: () => number;
     intervalHours: number;

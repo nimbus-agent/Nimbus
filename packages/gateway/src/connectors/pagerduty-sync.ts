@@ -43,9 +43,6 @@ function parsePagerdutyListResponse(text: string): { incidents: unknown[]; more:
   if (rec === undefined) return null;
   const incidents = rec["incidents"];
   if (!Array.isArray(incidents)) return null;
-  // PagerDuty's REST v2 list response wraps the array with a sibling
-  // boolean `more`. Absent (or non-boolean) is treated as `false` so the
-  // loop terminates on a malformed response.
   return { incidents, more: rec["more"] === true };
 }
 
@@ -118,10 +115,6 @@ export function syncPagerdutyIncidentItems(
 
 export type PagerdutySyncableOptions = {
   ensurePagerdutyMcpRunning: () => Promise<void>;
-  /**
-   * Hard cap on pages walked per sync invocation. Default 20. Range 1..100
-   * enforced by config parser; not re-validated here.
-   */
   maxPagesPerSync?: number;
 };
 
@@ -141,10 +134,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
         return syncNoopResult(cursor, t0);
       }
       const prev = decodeCursor(cursor);
-      // Single `now` for the whole sync batch — standard atomic batch
-      // semantics. With maxPagesPerSync=20 and the default 2-minute
-      // sync interval, drift is at most seconds; `syncedAt` is the
-      // sync-start timestamp by design. (Reviewer concern #3 noted.)
       const now = Date.now();
       const floorIso = new Date(now - initialSyncDepthDays * 86_400_000).toISOString();
       const since = prev?.lastUpdated ?? floorIso;
@@ -175,11 +164,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             { serviceId: SERVICE_ID, status: res.status, page: pagesFetched },
             "pagerduty sync: list failed",
           );
-          // Preserve progress: cursor reflects pages already ingested.
-          // PD `since` is inclusive (`updated_at >= since`); if the failed
-          // page contained rows sharing the saved timestamp, next sync
-          // re-fetches them and SQLite UPSERT on (service, external_id)
-          // deduplicates idempotently.
           return {
             cursor: encodeCursor({ lastUpdated: maxUpdated }),
             itemsUpserted: totalUpserted,
@@ -189,7 +173,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             bytesTransferred: totalBytesTransferred,
           };
         }
-        // Single JSON.parse per page — returns both `incidents` and `more`.
         const parsed = parsePagerdutyListResponse(text);
         if (parsed === null) {
           return {

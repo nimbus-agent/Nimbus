@@ -149,13 +149,10 @@ describe("getTomlValueFromFile", () => {
   });
 
   test("rethrows non-ENOENT read errors (passing a directory path triggers EISDIR)", () => {
-    // tomlPath here points at the dir itself, which is a directory; reading
-    // it triggers EISDIR which is not the ENOENT swallow branch.
     expect(() => getTomlValueFromFile(dir, "llm.remote_model")).toThrow();
   });
 
   test("ignores keys with an unparseable '=' position (eq <= 0)", () => {
-    // A line like '= bare' has eq === 0 -> the helper skips it without throwing.
     writeFileSync(tomlPath, `[llm]\n= bare\nremote_model = "still-found"\n`);
     expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"still-found"`);
   });
@@ -229,7 +226,6 @@ describe("setTomlValueInFile", () => {
     setTomlValueInFile(tomlPath, "llm.remote_model", 'tricky\\"value');
     const contents = readFileSync(tomlPath, "utf8");
     expect(contents).toContain(`remote_model = "tricky\\\\\\"value"`);
-    // Round-trip: getTomlValueFromFile returns the on-disk literal (still quoted).
     const read = getTomlValueFromFile(tomlPath, "llm.remote_model");
     expect(read).toBe(`"tricky\\\\\\"value"`);
   });
@@ -247,7 +243,6 @@ describe("setTomlValueInFile", () => {
     writeFileSync(tomlPath, `[llm]\nclassifier_model = "haiku"\n[other]\nx = "y"\n`);
     setTomlValueInFile(tomlPath, "llm.remote_model", "sonnet");
     const contents = readFileSync(tomlPath, "utf8");
-    // The new key must appear before `[other]`, inside the [llm] block.
     const llmStart = contents.indexOf("[llm]");
     const otherStart = contents.indexOf("[other]");
     const newKey = contents.indexOf(`remote_model = "sonnet"`);

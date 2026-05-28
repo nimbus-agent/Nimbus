@@ -1,7 +1,3 @@
-/**
- * Build env for MCP child processes: BASELINE_KEYS from host plus caller-supplied extras only.
- * No `process.env` spread — gateway-private vars (API keys, updater overrides) must not leak.
- */
 const BASELINE_KEYS = [
   "PATH",
   "HOME",

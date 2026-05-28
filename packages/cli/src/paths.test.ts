@@ -1,22 +1,3 @@
-// packages/cli/src/paths.test.ts
-//
-// Covers `resolveSocketPath` + `getCliPlatformPaths` across all three OS
-// branches on a single CI runner. We mutate `process.env` directly and
-// restore in `afterEach` (per-test scope, no cross-file contamination) —
-// `envGet` in `./env.ts` is a thin `process.env[NAME]` wrapper, so a
-// real env mutation exercises the same code path as a mock would.
-//
-// We do NOT use `mock.module("./env.ts", ...)` because that is
-// process-global under Bun and would shadow every other test file in
-// the same `bun test packages/cli` invocation that imports paths.ts
-// transitively (Phase 5 lesson #1 in the plan).
-//
-// `process.platform` is stubbed via a captured PropertyDescriptor
-// restored in `afterEach`. `node:os.homedir()` and `tmpdir()` still
-// read the underlying OS — assertions therefore use `join(homedir(),
-// ...)` against the same operands the source uses, never hardcoded
-// paths (Phase 5 lesson 4).
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";

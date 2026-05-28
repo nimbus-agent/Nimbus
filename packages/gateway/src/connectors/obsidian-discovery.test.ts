@@ -6,18 +6,14 @@ import { discoverNotesInVault, discoverVaults } from "./obsidian-discovery.ts";
 
 function setupTree(): { root: string } {
   const root = mkdtempSync(join(tmpdir(), "obsidian-disc-"));
-  // Top-level vault
   mkdirSync(join(root, "Vault1", ".obsidian"), { recursive: true });
   writeFileSync(join(root, "Vault1", "Welcome.md"), "# Welcome");
   mkdirSync(join(root, "Vault1", "subfolder"), { recursive: true });
   writeFileSync(join(root, "Vault1", "subfolder", "Nested.md"), "# Nested");
-  // Nested vault inside Vault1 (supported, separate vault)
   mkdirSync(join(root, "Vault1", "Inner", ".obsidian"), { recursive: true });
   writeFileSync(join(root, "Vault1", "Inner", "InnerNote.md"), "# Inner");
-  // node_modules and .git are ignored even if they contain a fake .obsidian dir
   mkdirSync(join(root, "node_modules", "junk", ".obsidian"), { recursive: true });
   writeFileSync(join(root, "node_modules", "junk", "Skip.md"), "# Skip");
-  // A non-vault directory with .md files (no .obsidian) is not a vault
   mkdirSync(join(root, "Random"), { recursive: true });
   writeFileSync(join(root, "Random", "NotInVault.md"), "");
   return { root };
@@ -40,15 +36,12 @@ test("discoverNotesInVault returns relative paths of all .md files under the vau
   const notes = discoverNotesInVault(join(root, "Vault1")).map((p) => p.replaceAll("\\", "/"));
   expect(notes).toContain("Welcome.md");
   expect(notes).toContain("subfolder/Nested.md");
-  // Notes inside the inner vault must not appear here — they belong to that vault
   expect(notes.some((p) => p.startsWith("Inner/"))).toBe(false);
-  // Non-md files are skipped
   expect(notes.every((p) => p.endsWith(".md"))).toBe(true);
 });
 
 test("discoverNotesInVault skips .obsidian/ directory contents", () => {
   const { root } = setupTree();
-  // Drop a .md file inside .obsidian to confirm it's filtered out.
   writeFileSync(join(root, "Vault1", ".obsidian", "ConfigNote.md"), "# nope");
   const notes = discoverNotesInVault(join(root, "Vault1"));
   expect(notes.some((p) => p.includes(".obsidian"))).toBe(false);

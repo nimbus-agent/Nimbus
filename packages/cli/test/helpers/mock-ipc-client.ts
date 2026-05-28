@@ -1,9 +1,3 @@
-// packages/cli/test/helpers/mock-ipc-client.ts
-//
-// Hand-rolled IPCClient stub builder. Tests pass this directly to
-// sub-handlers (which accept `client: IPCClient` as a parameter) —
-// no mock.module needed.
-
 import type { IPCClient } from "../../src/ipc-client/index.ts";
 
 export type CallRecord = { method: string; params: unknown };

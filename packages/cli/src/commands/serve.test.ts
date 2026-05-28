@@ -1,9 +1,3 @@
-// packages/cli/src/commands/serve.test.ts
-//
-// Unit tests for `nimbus serve` argv parser + early-return branches. The
-// gateway spawn itself is covered by `lib/spawn-gateway.test.ts`; we test
-// the dispatch decision layer here.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
@@ -13,9 +7,6 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 const mod = await import("./serve.ts");
 const { parseServeArgs, runServe, takeFlag } = mod;
 
-// Capture the real spawnGateway function reference (not the namespace) so the
-// afterEach restore can re-install the original function even after mock.module
-// mutates the namespace object's live bindings in place (Bun behaviour).
 const realSpawnGatewayMod = await import("../lib/spawn-gateway.ts");
 const realSpawnGatewayFn = realSpawnGatewayMod.spawnGateway;
 const realStripInspectorEnv = realSpawnGatewayMod.stripInspectorEnv;
@@ -103,8 +94,6 @@ describe("runServe spawn path (mocked ../lib/spawn-gateway.ts)", () => {
     out.reset();
   });
   afterEach(() => {
-    // Restore using individual captured function refs, NOT the namespace object,
-    // because mock.module mutates the namespace's live bindings in place (Bun).
     mock.module("../lib/spawn-gateway.ts", () => ({
       spawnGateway: realSpawnGatewayFn,
       stripInspectorEnv: realStripInspectorEnv,
@@ -125,7 +114,7 @@ describe("runServe spawn path (mocked ../lib/spawn-gateway.ts)", () => {
       }),
       stripInspectorEnv: realStripInspectorEnv,
     }));
-    setFixture({}); // readGatewayState -> undefined => gateway not running
+    setFixture({});
     await runServe(["--port", "7474"]);
     expect(out.stdout).toContain("HTTP:");
     expect(out.stdout).toContain("Socket:");

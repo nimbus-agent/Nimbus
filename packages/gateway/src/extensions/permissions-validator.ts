@@ -1,14 +1,3 @@
-/**
- * Manifest permission validator + back-compat normalizer.
- *
- * Object form (T2+): `{ network?: string[]; filesystem?: { read?: string[]; write?: string[] } }`.
- * Array form (pre-T2 legacy): `string[]` — normalized to default-deny.
- *
- * RFC 1123 hostnames only in `network`. No wildcards in object form. No `..`
- * components in filesystem paths. cwd + scoped temp dir are implicitly allowed
- * by the sandbox runner and never appear here.
- */
-
 export interface FilesystemPermissions {
   read: string[];
   write: string[];
@@ -24,9 +13,6 @@ const HOSTNAME_RE =
 
 export function validateAndNormalizePermissions(input: unknown): SandboxPermissions {
   if (Array.isArray(input)) {
-    // Legacy array form → default-deny everything. Array entries
-    // ("read-files", "trash", etc.) were never load-bearing security
-    // defenses; the HITL gate is. They are dropped silently.
     return { network: [], filesystem: { read: [], write: [] } };
   }
 

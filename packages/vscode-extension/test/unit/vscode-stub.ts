@@ -1,9 +1,3 @@
-/**
- * Minimal stub of the `vscode` module for vitest unit tests.
- * Real source-under-test should NOT import `vscode` directly — use vscode-shim.ts.
- * This stub exists for any code path that does (which should be only extension.ts).
- */
-
 export const window = {
   createOutputChannel: (_name: string) => ({
     appendLine: (_msg: string) => undefined,

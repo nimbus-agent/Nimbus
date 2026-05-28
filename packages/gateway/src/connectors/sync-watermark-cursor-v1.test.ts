@@ -4,8 +4,6 @@ import { decodeWatermarkCursorV1, encodeWatermarkCursorV1 } from "./sync-waterma
 const PREFIX = "wm:v1:";
 
 describe("encodeWatermarkCursorV1 / decodeWatermarkCursorV1", () => {
-  // ── Happy-path round-trips ────────────────────────────────────────────────
-
   it("round-trips a cursor with a string watermark", () => {
     const cursor = { v: 1 as const, watermark: "2026-05-21T00:00:00Z" };
     const encoded = encodeWatermarkCursorV1(PREFIX, cursor);
@@ -23,13 +21,10 @@ describe("encodeWatermarkCursorV1 / decodeWatermarkCursorV1", () => {
   });
 
   it("decodes a cursor whose watermark field is missing → normalises to null", () => {
-    // Encode an object without the watermark key to exercise the `w === undefined` branch.
     const encoded = PREFIX + Buffer.from(JSON.stringify({ v: 1 }), "utf8").toString("base64url");
     const decoded = decodeWatermarkCursorV1(encoded, PREFIX);
     expect(decoded).toEqual({ v: 1, watermark: null });
   });
-
-  // ── null / empty raw input ────────────────────────────────────────────────
 
   it("returns null when raw is null", () => {
     expect(decodeWatermarkCursorV1(null, PREFIX)).toBeNull();
@@ -39,24 +34,18 @@ describe("encodeWatermarkCursorV1 / decodeWatermarkCursorV1", () => {
     expect(decodeWatermarkCursorV1("", PREFIX)).toBeNull();
   });
 
-  // ── prefix / schema-version mismatch ──────────────────────────────────────
-
   it("returns null when raw has the wrong prefix (prefix mismatch)", () => {
     const cursor = { v: 1 as const, watermark: "tok" };
     const encoded = encodeWatermarkCursorV1("other:", cursor);
-    // Trying to decode with the different prefix → decodeNimbusJsonCursorPayload returns undefined
     expect(decodeWatermarkCursorV1(encoded, PREFIX)).toBeNull();
   });
 
   it("returns null when schema version is not 1", () => {
-    // v: 2 should fail the rec["v"] !== 1 check
     const encoded =
       PREFIX +
       Buffer.from(JSON.stringify({ v: 2, watermark: "tok" }), "utf8").toString("base64url");
     expect(decodeWatermarkCursorV1(encoded, PREFIX)).toBeNull();
   });
-
-  // ── bad payload shapes ────────────────────────────────────────────────────
 
   it("returns null when payload is JSON null", () => {
     const encoded = PREFIX + Buffer.from("null", "utf8").toString("base64url");
@@ -69,12 +58,10 @@ describe("encodeWatermarkCursorV1 / decodeWatermarkCursorV1", () => {
   });
 
   it("returns null when payload is not valid base64url JSON (malformed)", () => {
-    // '!!!!' is not valid base64url → JSON.parse throws → returns undefined → null
     expect(decodeWatermarkCursorV1(PREFIX + "!!!!", PREFIX)).toBeNull();
   });
 
   it("returns null when watermark field is a non-string, non-null value", () => {
-    // watermark: 42 is a number → should return null
     const encoded =
       PREFIX + Buffer.from(JSON.stringify({ v: 1, watermark: 42 }), "utf8").toString("base64url");
     expect(decodeWatermarkCursorV1(encoded, PREFIX)).toBeNull();

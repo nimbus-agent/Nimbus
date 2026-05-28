@@ -25,7 +25,6 @@ interface JobsPage {
 interface FakeDbxConfig {
   runs?: unknown[];
   runsStatus?: number;
-  /** Keyed by the incoming `page_token` query value; "" is the first page. */
   jobsPages?: Record<string, JobsPage>;
   jobsStatus?: number;
 }
@@ -93,7 +92,6 @@ function startHarness(config: FakeDbxConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         databricks: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -155,7 +153,6 @@ describe("databricks-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-databricks1:")).toBe(true);
 
-    // Auth is exactly the `Authorization: Bearer <token>` header.
     for (const r of h.fake.requests) {
       expect(r.authorization).toBe("Bearer dapi-test-token");
     }
@@ -235,7 +232,6 @@ describe("databricks-sync against Bun.serve fake API", () => {
 
     const jobsListReqs = h.fake.requests.filter((r) => r.path === "/api/2.1/jobs/list");
     expect(jobsListReqs).toHaveLength(2);
-    // The second jobs/list request carries the page_token from page 1.
     expect(jobsListReqs[1]?.query).toContain("page_token=PAGE2");
   });
 });

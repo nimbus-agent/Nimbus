@@ -1,17 +1,3 @@
-/**
- * Pure mappings from Bitrise REST payloads to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `bitrise-sync.ts` so the HTTP path and the indexing path can be tested
- * independently.
- *
- * Phase 5 (Wave B) Bitrise connector — read-only. Two item types in v1:
- * `bitrise:app` (project_type / repo_url / default_branch) and
- * `bitrise:build` (status, workflow_id, branch, commit, durations). The
- * roadmap row mentions "releases" and "certificates state"; both are
- * deferred — Bitrise's REST surface for those is expensive to walk on a
- * 10-minute cadence and the value is incremental compared to builds.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface BitriseMappedRow {

@@ -1,5 +1,3 @@
-// Assembles latest.json from signed platform artifacts.
-
 import { readFileSync, writeFileSync } from "node:fs";
 
 interface Target {
@@ -54,8 +52,6 @@ for (const t of targets) {
   platforms[t.name] = { url: t.url, sha256: sha, signature: sig };
 }
 
-// Note: we are currently in Phase 5. The v0.1.0 release is the first
-// to ship the auto-updater. We do not need to support Phase 3 clients.
 const manifest: Record<string, unknown> = {
   version,
   pub_date: new Date().toISOString(),

@@ -1,18 +1,3 @@
-/**
- * Semgrep AppSec Platform REST sync handler. Walks
- * `GET /api/v1/deployments` → `GET /api/v1/deployments/<slug>/findings`
- * (paged, capped) and upserts each open finding into the unified `item`
- * table as `service = "semgrep", type = "finding"` via
- * {@link mapSemgrepFindingToItem}.
- *
- * Single-pass cursor model (matches `snyk-sync.ts` /
- * `sonarqube-sync.ts`): every successful run emits a fresh
- * `nimbus-semgrep1:{pass: 1}` cursor so the scheduler does not re-queue
- * immediately. Semgrep does not expose a delta endpoint for findings;
- * full-walk-per-cycle is acceptable at the 10-minute default cadence
- * because we filter to `status=open` and cap pages.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -29,8 +14,7 @@ const SERVICE_ID = "semgrep";
 const CURSOR_PREFIX = "nimbus-semgrep1:";
 const SEMGREP_API = "https://semgrep.dev/api/v1";
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_CYCLE = 20; // 2000 findings per cycle cap.
-
+const MAX_PAGES_PER_CYCLE = 20;
 type SemgrepCursorV1 = { pass: number };
 
 function encodeCursor(c: SemgrepCursorV1): string {

@@ -74,9 +74,6 @@ export function rankExpertFindings(
   return rawScores.slice(0, Math.min(limit, MAX_LIMIT)).map((r) => r.finding);
 }
 
-// Stage-1 sub-agents: each is a SubTask whose execute() returns
-// { stream: ExpertEvidenceStream | null, gap?: GapNote }
-// serialised via JSON in `outcome.text`. The expert agent decodes them.
 type SubAgentResult = {
   stream?: ExpertEvidenceStream;
   gap?: GapNote;
@@ -102,7 +99,6 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
   const start = performance.now();
   const limit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
-  // Pre-flight gaps that don't require running sub-agents.
   const preflightGaps: GapNote[] = [];
   const empty = detectEmptyIndex(ctx.db);
   if (empty !== null) preflightGaps.push(empty);
@@ -128,7 +124,6 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
   const subAgentGaps: GapNote[] = [];
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) {
-      // A sub-agent that errored is treated as a structural gap so the user sees the failure.
       subAgentGaps.push({
         category: "missing_connector",
         detail: `expert sub-agent #${r.taskIndex} failed${r.errorText === undefined ? "" : `: ${r.errorText}`}`,
@@ -140,8 +135,6 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
     if (decoded.gap !== undefined) subAgentGaps.push(decoded.gap);
   }
 
-  // Gap-note coverage rule: every sub-agent that runs must return either >=1 evidence
-  // OR >=1 gap note. The asserts in expert.test.ts pin this contract per sub-agent.
   const ranked = rankExpertFindings(streams, limit);
   const brief: ExpertBrief = {
     kind: "expert",
@@ -159,7 +152,6 @@ export async function emitExpertBrief(
   input: ExpertInput,
   ctx: ExpertContext,
 ): Promise<{ sessionId: string }> {
-  // Run in the background; emit `expert.briefReady` when done.
   void (async () => {
     const brief = await runExpert(input, ctx);
     const markdown = await synthesize(brief, ctx.llm === undefined ? {} : { llm: ctx.llm });
@@ -169,7 +161,6 @@ export async function emitExpertBrief(
       findings: brief,
     });
   })().catch((err: unknown) => {
-    // Defensive: deterministic render must always succeed; any error is structural.
     ctx.notify("expert.briefError", {
       sessionId: ctx.sessionId,
       error: err instanceof Error ? err.message : String(err),
@@ -178,24 +169,7 @@ export async function emitExpertBrief(
   return { sessionId: ctx.sessionId };
 }
 
-// ============================================================================
-// Sub-agents — each is a deterministic SQL/graph traversal.
-// ============================================================================
-
-// All SQL below uses the real schema (F1–F4):
-//   - `item` (singular) with `body_preview` (not `body`) and direct `author_id`
-//     FK to `person.id`.
-//   - `graph_entity` with `type` (not `kind`); `external_id` + `service` link
-//     entities to their source rows (no `ref` column).
-//   - `graph_relation` with `from_id` / `to_id` / `type` (not source_id /
-//     target_id / relation_type).
-//   - `person` (singular) with `id`, `display_name`, plus per-service handle
-//     columns. Authorship is FK-direct on `item.author_id`; the `authored`
-//     graph edge is for graph-traversal queries.
-
 async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
-  // Direct FK path: item.author_id → person.id. Faster + simpler than the
-  // graph route, and the Phase 3 connectors all populate item.author_id.
   const commits = db
     .query(
       `SELECT
@@ -248,7 +222,6 @@ async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
       existing.evidence.push(ev);
     }
   }
-  // Return the largest stream — the rest are aggregated by rankExpertFindings.
   const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
   return winner === undefined ? {} : { stream: winner };
 }
@@ -304,17 +277,11 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
       existing.evidence.push(ev);
     }
   }
-  // Return the largest stream — rankExpertFindings handles cross-stream merging.
   const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
   return winner === undefined ? {} : { stream: winner };
 }
 
 async function subPrReviewed(db: Database, input: string): Promise<SubAgentResult> {
-  // `reviewed` is registered in graph_relation_type (graph-v7-sql.ts line 37)
-  // but the populator does not yet emit any rows into graph_relation with
-  // type='reviewed'. detectMissingRelationEmit returns the gap when emit is 0;
-  // the day a populator change lands real edges, this sub-agent's SQL path
-  // (below) starts producing evidence — no T3 edit needed.
   const gap = detectMissingRelationEmit(
     db,
     "reviewed",
@@ -326,18 +293,13 @@ async function subPrReviewed(db: Database, input: string): Promise<SubAgentResul
 }
 
 async function subIncidentResolved(db: Database, input: string): Promise<SubAgentResult> {
-  // `incident` graph entities are not yet emitted (spec § Sub-agent decomposition).
   const gap = detectMissingEntityType(db, "incident");
   if (gap !== null) return { gap };
-  // (When `incident` lands, the SQL chains person → resolves → incident → mentions(input).)
   void input;
   return {};
 }
 
 async function subChatMentions(db: Database, input: string): Promise<SubAgentResult> {
-  // Slack messages → `posted` edge → person. graph_relation columns are
-  // (id, from_id, to_id, type, weight, ...). Person entities live in
-  // graph_entity with type='person' and external_id mirroring person.id.
   const rows = db
     .query(
       `SELECT
@@ -391,7 +353,6 @@ async function subChatMentions(db: Database, input: string): Promise<SubAgentRes
       existing.evidence.push(ev);
     }
   }
-  // Return the largest stream — rankExpertFindings handles cross-stream merging.
   const winner = [...merged.values()].sort((a, b) => b.evidence.length - a.evidence.length)[0];
   return winner === undefined ? {} : { stream: winner };
 }

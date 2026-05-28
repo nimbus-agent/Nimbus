@@ -1,24 +1,9 @@
-/**
- * Pure mapping from a Flagsmith feature-flag definition to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `flagsmith-sync.ts` so the REST path and the indexing path can be
- * tested independently.
- *
- * Emits `service = "flagsmith", type = "feature_flag"` rows. The
- * `feature_flag` type is sparse/structured (name, type, flags), so it stays
- * on local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface FlagsmithMappingContext {
-  /** API base URL — used to derive the user-facing app host for canonical URLs. */
   readonly apiBase: string;
-  /** Numeric project id the feature belongs to. */
   readonly projectId: number;
-  /** Human-readable project name. */
   readonly projectName: string;
-  /** Map of tag id → label, resolved from `/projects/{id}/tags/`. */
   readonly tagMap: Record<number, string>;
   readonly syncedAt: number;
 }
@@ -36,12 +21,6 @@ export interface FlagsmithMappedRow {
   readonly syncedAt: number;
 }
 
-/**
- * Derive the user-facing Flagsmith app base from the API base. Flagsmith's
- * API host is `api.flagsmith.com`; the dashboard host is `app.flagsmith.com`.
- * We rewrite a leading `api.` to `app.`; any other host (self-hosted) is
- * passed through unchanged. On parse failure, falls back to the SaaS app host.
- */
 export function appBaseFromApiBase(apiBase: string): string {
   try {
     const u = new URL(apiBase);
@@ -53,11 +32,6 @@ export function appBaseFromApiBase(apiBase: string): string {
   }
 }
 
-/**
- * Build the canonical URL for a feature. Per-feature deep links require an
- * environment (deferred follow-up), so the honest canonical target is the
- * project page.
- */
 export function featureUrl(apiBase: string, projectId: number): string {
   return `${appBaseFromApiBase(apiBase)}/project/${encodeURIComponent(String(projectId))}`;
 }

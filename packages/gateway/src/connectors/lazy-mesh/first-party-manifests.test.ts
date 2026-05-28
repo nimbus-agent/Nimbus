@@ -45,8 +45,6 @@ describe("manifestForFirstParty", () => {
   });
 
   test("FIRST_PARTY_MANIFESTS contains the spec's enumerated connectors", () => {
-    // The exact list is asserted to catch accidental deletions; spec §6 of
-    // the T2 PR 1 design names these 28 service ids.
     const expected = [
       "filesystem",
       "github",
@@ -136,7 +134,6 @@ describe("hostnameFromUrl", () => {
   });
 
   test("returns null when the URL's hostname is empty", () => {
-    // file: URLs in many runtimes produce an empty hostname.
     expect(hostnameFromUrl("file:///etc/passwd")).toBeNull();
   });
 
@@ -198,7 +195,6 @@ describe("manifestWithExtraNetworkHosts", () => {
     const out = manifestWithExtraNetworkHosts("obsidian", ["sync.obsidian.example.com"]);
     expect(out.permissions.filesystem.read).toEqual([]);
     expect(out.permissions.filesystem.write).toEqual([]);
-    // Mutating the output's filesystem arrays must not affect the base.
     (out.permissions.filesystem.read as string[]).push("/etc");
     expect(FIRST_PARTY_MANIFESTS["obsidian"]?.permissions.filesystem.read).toEqual([]);
   });

@@ -236,12 +236,6 @@ export function updatePersonHandles(
     linked?: boolean;
   },
 ): void {
-  // S5-F5 — replace the prior `sets.join(", ")` template-literal SQL with
-  // discrete dbRun() calls per field. The discrete calls run inside a single
-  // transaction so multi-field patches stay atomic, and each UPDATE routes
-  // through dbRun's SQLITE_FULL → DiskFullError translation. The UPDATE
-  // skeleton is no longer constructed from a runtime list, eliminating the
-  // template-literal-SQL pattern entirely.
   db.transaction(() => {
     if (patch.displayName !== undefined) {
       dbRun(db, "UPDATE person SET display_name = ? WHERE id = ?", [patch.displayName, id]);

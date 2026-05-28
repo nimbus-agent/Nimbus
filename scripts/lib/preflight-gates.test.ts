@@ -22,7 +22,6 @@ describe("preflight gate manifest", () => {
   test("selectGates('full') returns every fast gate as a contiguous prefix, then full", () => {
     const full = selectGates("full");
     const fastCount = full.filter((g) => g.tier === "fast").length;
-    // Fast gates must occupy exactly indices [0, fastCount); full gates the rest.
     expect(full.slice(0, fastCount).every((g) => g.tier === "fast")).toBe(true);
     expect(full.slice(fastCount).every((g) => g.tier === "full")).toBe(true);
   });

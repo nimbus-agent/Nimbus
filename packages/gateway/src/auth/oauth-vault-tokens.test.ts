@@ -58,7 +58,6 @@ describe("microsoftOAuthAccessFromConfig", () => {
     expect(cfg.vaultKey).toBe("microsoft.oauth");
     expect(cfg.provider).toBe("microsoft");
     expect(cfg.notConfiguredError).toContain("Microsoft");
-    // Each error string should be non-empty so the caller can distinguish them.
     expect(cfg.parseErrors.invalidJson.length).toBeGreaterThan(0);
     expect(cfg.parseErrors.missingExpiry.length).toBeGreaterThan(0);
   });
@@ -113,7 +112,6 @@ describe("getValidVaultOAuthAccessToken", () => {
   });
 
   it("throws emptyClientIdError when the cached token is expired but client id is empty", async () => {
-    // expiresAt in the past — forces the refresh branch.
     await vault.set(
       "microsoft.oauth",
       JSON.stringify({

@@ -1,9 +1,6 @@
 import { compareVaultKeysAlphabetically, validateVaultKeyOrThrow } from "./key-format.ts";
 import type { NimbusVault } from "./nimbus-vault.ts";
 
-/**
- * In-memory vault for fast contract tests (no OS keystore). Do not use for production secrets.
- */
 export class MockVault implements NimbusVault {
   private readonly store = new Map<string, string>();
 

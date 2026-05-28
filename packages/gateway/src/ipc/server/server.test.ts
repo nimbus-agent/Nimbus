@@ -1,14 +1,3 @@
-/**
- * Targeted unit tests for `createIpcServer` in `server.ts`.
- *
- * These tests cover the thin wiring paths that the dispatcher and
- * inline-handler tests don't reach: `broadcast`, `setAgentInvokeHandler`,
- * `setWorkflowRunHandler`, `setUpdater`, the `voiceService.onMicrophoneStateChange`
- * callback wiring, the listener startup/shutdown lifecycle on POSIX, and
- * several previously-uncovered RPC dispatch arms (`audit.list`,
- * `engine.cancelStream`, default `vault-or-method-not-found`).
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -42,7 +31,6 @@ function makeMinimalServer() {
 describe("createIpcServer", () => {
   test("broadcast does not throw when no clients are connected", () => {
     const { server } = makeMinimalServer();
-    // With zero connected clients this is a no-op; confirm it doesn't throw.
     expect(() => server.broadcast("test.event", { foo: "bar" })).not.toThrow();
   });
 
@@ -50,7 +38,6 @@ describe("createIpcServer", () => {
     const { server } = makeMinimalServer();
     const handler = async (_ctx: unknown) => ({ reply: "ok" });
     expect(() => server.setAgentInvokeHandler(handler as never)).not.toThrow();
-    // Setting back to undefined is also valid
     expect(() => server.setAgentInvokeHandler(undefined)).not.toThrow();
   });
 
@@ -71,7 +58,6 @@ describe("createIpcServer", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
 
-    // Capture the callback that createIpcServer stores on voiceService
     let storedCallback: ((e: { active: boolean; source: string }) => void) | undefined;
     const fakeVoiceService = {
       set onMicrophoneStateChange(cb:
@@ -88,21 +74,10 @@ describe("createIpcServer", () => {
       voiceService: fakeVoiceService as never,
     });
 
-    // The constructor should have wired the callback
     expect(typeof storedCallback).toBe("function");
-    // Invoking it with zero clients should not throw
     expect(() => storedCallback?.({ active: true, source: "microphone" })).not.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Group A: Listener startup + shutdown on POSIX (Linux/macOS unix-socket arm).
-//
-// These cover the uncovered `start()` lines 219-223 (removeStaleUnixSocketIfPresent
-// + startBunUnixListener + chmodListenSocketBestEffort) and the `stop()` lines
-// 241-255 (drain bunListener + unlink socket file). On Windows the start() arm
-// returns early after startWin32NetServer; these tests skip there.
-// ---------------------------------------------------------------------------
 
 describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)", () => {
   let tmpDir: string;
@@ -110,8 +85,6 @@ describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)"
 
   beforeEach(() => {
     if (platform() === "win32") return;
-    // Keep the socket name short — unix socket paths are length-capped (104 on
-    // macOS, 108 on Linux). The mkdtemp prefix already consumes ~25 chars.
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-srv-"));
     socketPath = join(tmpDir, "g.sock");
   });
@@ -140,8 +113,6 @@ describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)"
 
   test("start() removes a stale socket file at listenPath before bind", async () => {
     if (platform() === "win32") return;
-    // Pre-create a junk regular file at the listen path. The bind would
-    // EADDRINUSE without removeStaleUnixSocketIfPresent.
     writeFileSync(socketPath, "stale");
     expect(existsSync(socketPath)).toBe(true);
 
@@ -151,7 +122,6 @@ describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)"
       version: "0.0.0-test",
     });
     await server.start();
-    // bind succeeded => the stale file was cleared and re-bound as a unix sock
     expect(existsSync(socketPath)).toBe(true);
     await server.stop();
     expect(existsSync(socketPath)).toBe(false);
@@ -166,19 +136,9 @@ describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)"
     });
     await server.start();
     await server.stop();
-    // Second stop() must not throw — bunListener is already undefined.
     await expect(server.stop()).resolves.toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Group B: RPC dispatch coverage.
-//
-// Drive real JSON-RPC requests through the listener so the switch-arm in
-// dispatchMethod (server.ts:168-194) executes. Cross-platform: Win32 uses
-// \\.\pipe\..., POSIX uses a unix socket under tmpdir. Pattern mirrors
-// `exchangeFirstNdjsonLine` in ipc.test.ts.
-// ---------------------------------------------------------------------------
 
 function testListenPath(): string {
   if (platform() === "win32") {
@@ -282,8 +242,6 @@ describe("createIpcServer — RPC dispatch arms", () => {
       })}\n`,
     );
     const res = JSON.parse(line) as { result?: unknown; error?: unknown };
-    // Either result (empty audit log) or a typed error from rpcAuditList. Both
-    // prove the switch-arm `case "audit.list"` executed.
     expect(res.result !== undefined || res.error !== undefined).toBe(true);
   });
 
@@ -305,8 +263,6 @@ describe("createIpcServer — RPC dispatch arms", () => {
       })}\n`,
     );
     const res = JSON.parse(line) as { result?: unknown; error?: unknown };
-    // The cancel handler returns either { cancelled: false } or a typed error
-    // for an unknown streamId. Either path proves the case arm executed.
     expect(res.result !== undefined || res.error !== undefined).toBe(true);
   });
 
@@ -356,8 +312,6 @@ describe("createIpcServer — RPC dispatch arms", () => {
     );
     const res = JSON.parse(line) as { error?: { code: number } };
     expect(res.error).toBeDefined();
-    // -32601 = method not found; -32603 = vault-routed internal error. Either
-    // value proves the default arm + rpcVaultOrMethodNotFound executed.
     expect(res.error?.code === -32601 || res.error?.code === -32603).toBe(true);
   });
 });

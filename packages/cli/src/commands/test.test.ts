@@ -1,12 +1,3 @@
-// packages/cli/src/commands/test.test.ts
-//
-// Unit tests for the `nimbus test` connector-contract runner. We test the
-// pure parser + manifest loader + package.json script discovery layers;
-// the actual `bun test` subprocess spawn is NOT exercised (that path is
-// covered structurally — when `getTestScript` returns `undefined`, the
-// dispatcher skips it altogether, which the dispatcher test relies on by
-// omitting a `scripts.test` entry).
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -19,9 +10,6 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 const mod = await import("./test.ts");
 const { MANIFEST, getTestScript, loadAndValidateManifest, parseTestArgs, runTest } = mod;
 
-// Capture individual exports before any mock.module call so the afterEach
-// restore can re-install the original functions even after mock.module mutates
-// the namespace object's live bindings in place (Bun behaviour).
 const realChildProcessMod = await import("node:child_process");
 const realSpawn = realChildProcessMod.spawn;
 const realExecFile = realChildProcessMod.execFile;
@@ -152,9 +140,6 @@ describe("runTest dispatcher", () => {
   });
 
   it("runs contract checks + prints OK when manifest valid and no package.json present", async () => {
-    // A full-shape manifest the SDK contract test will accept (all
-    // `isNonEmptyString` fields populated + valid runtime + permissions
-    // array + semver minNimbusVersion).
     const manifest = {
       id: "com.test.extension",
       displayName: "test ext",
@@ -202,8 +187,6 @@ describe("runTest spawn path (mocked node:child_process)", () => {
     );
   });
   afterEach(() => {
-    // Restore using captured function refs — not the namespace object — because
-    // mock.module mutates the namespace's live bindings in place (Bun behaviour).
     mock.module("node:child_process", () => ({
       spawn: realSpawn,
       execFile: realExecFile,

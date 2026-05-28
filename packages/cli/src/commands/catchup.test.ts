@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const mod = await import("./catchup.ts");
@@ -51,10 +51,6 @@ describe("parseCatchupArgs", () => {
     expect(() => parseCatchupArgs(["--since", "365d"])).toThrow(/90 days/);
   });
 });
-
-// ----------------------------------------------------------------------
-// process.stdout / process.stderr / process.exit capture for dispatcher.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];

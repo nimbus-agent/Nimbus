@@ -53,7 +53,7 @@ describe("preflight-rpc: deploy.preflight", () => {
       },
     );
     if (out.kind !== "hit") throw new Error("expected hit");
-    expect(out.value.verdict).toBe("ok"); // count-only verdict; gaps don't flip it
+    expect(out.value.verdict).toBe("ok");
     expect(out.value.checks.active_p1_incidents.gap).toBe("no_pagerduty_mapping");
     expect(out.value.checks.failing_ci_runs.gap).toBe("no_repos");
     expect(out.value.checks.merge_conflicts.gap).toBe("no_repos");

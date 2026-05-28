@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-stripe — Stripe REST API MCP server (read-only).
- * Credentials arrive as STRIPE_API_KEY env, injected at spawn time. Stripe uses
- * a standard `Authorization: Bearer <secret-key>` header (the key starts
- * `sk_live_` / `sk_test_` — never logged). The API host is fixed at
- * api.stripe.com (no host override). v1 indexes invoices only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

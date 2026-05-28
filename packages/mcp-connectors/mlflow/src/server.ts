@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-mlflow — MLflow Model Registry API MCP server (read-only).
- * Credentials arrive as MLFLOW_HOST + MLFLOW_TOKEN env, injected at spawn
- * time. The MLflow API token is sent as `Authorization: Bearer <token>`.
- * MLflow has no universal SaaS host — each tracking server is a distinct
- * per-org URL, so there is no default for MLFLOW_HOST; it must be set.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -24,7 +17,6 @@ function apiBase(): string {
   if (v === undefined || v === "") {
     throw new Error("MLFLOW_HOST is not set");
   }
-  // Paths already include `/api/2.0/mlflow/...`, so the base is just the host.
   return trimTrailingSlash(v);
 }
 
@@ -45,7 +37,6 @@ async function mlflowGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the models array out of a registered-models/search response (`.registered_models`, else []). */
 function modelsFrom(root: unknown): unknown[] {
   const models = (root as { registered_models?: unknown } | null)?.registered_models;
   return Array.isArray(models) ? models : [];

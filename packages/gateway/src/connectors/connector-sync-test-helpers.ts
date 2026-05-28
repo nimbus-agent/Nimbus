@@ -36,7 +36,6 @@ export function silentSyncContextExtras(): Pick<SyncContext, "logger" | "rateLim
   };
 }
 
-/** Full `SyncContext` for unit tests (memory DB + stub vault + silent logger/rate limiter). */
 export function syncTestContext(db: Database, vault: NimbusVault): SyncContext {
   return { db, vault, ...silentSyncContextExtras() };
 }
@@ -56,7 +55,6 @@ export function expectServiceItemCount(db: Database, service: string, count: num
   expect(row.c).toBe(count);
 }
 
-/** Shared “missing credential → empty sync” case for connector sync unit tests. */
 export function testConnectorSyncNoop(
   name: string,
   createSyncable: () => Syncable,
@@ -70,7 +68,6 @@ export function testConnectorSyncNoop(
   });
 }
 
-/** Alias for `fetch` handler typing in connector sync tests. */
 export type SyncTestFetchParams = Parameters<typeof fetch>;
 
 export function urlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
@@ -83,7 +80,6 @@ export function urlFromFetchInput(input: Parameters<typeof fetch>[0]): string {
   return input.url;
 }
 
-/** Connector tests that stub `globalThis.fetch` — restores the original after each case. */
 export function describeWithFetchRestore(name: string, fn: () => void): void {
   describe(name, () => {
     const origFetch = globalThis.fetch;

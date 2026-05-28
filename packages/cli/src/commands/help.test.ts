@@ -1,4 +1,3 @@
-// packages/cli/src/commands/help.test.ts
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";

@@ -16,10 +16,8 @@ interface RecordedReq {
 }
 
 interface FakeStackOverflowConfig {
-  /** Pages of questions, in order. Each entry becomes one `items` page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the questions route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -29,8 +27,7 @@ interface FakeStackOverflow {
   stop(): void;
 }
 
-const TEAM = "acme team"; // intentionally contains a space to exercise URL-encoding
-
+const TEAM = "acme team";
 function startFakeStackOverflow(config: FakeStackOverflowConfig): FakeStackOverflow {
   const requests: RecordedReq[] = [];
   let server: Server | undefined;
@@ -53,7 +50,6 @@ function startFakeStackOverflow(config: FakeStackOverflowConfig): FakeStackOverf
         if (config.badJson === true) {
           return new Response("{not json", { status: 200 });
         }
-        // The v3 API pages are 1-based.
         const page = Number(u.searchParams.get("page") ?? "1");
         const items = pages[page - 1] ?? [];
         return Response.json({
@@ -96,7 +92,6 @@ function startHarness(config: FakeStackOverflowConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         stackoverflow: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -123,13 +118,10 @@ function question(id: number, over: Record<string, unknown> = {}): Record<string
   };
 }
 
-/** A full page of 100 distinct questions (the `pagesize` max), so the walk continues. */
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 100 }, (_, i) => question(base + i));
 }
 
-// The fake fakes api.stackoverflowteams.com, but the sync handler hardcodes the
-// SaaS base. We override the global fetch to rewrite the host → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -165,17 +157,14 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-stackoverflow1:")).toBe(true);
 
-    // Single page (totalPages 1) → the walk stopped after one GET.
     const expectedPath = `/v3/teams/${encodeURIComponent(TEAM)}/questions`;
     const reqs = h.fake.requests.filter((r) => r.path === expectedPath);
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("pagesize=100");
     expect(reqs[0]?.query).toContain("page=1");
     expect(reqs[0]?.query).toContain("sort=creation");
-    // The team slug was URL-encoded into the path (the space → %20).
     expect(expectedPath).toContain("%20");
     for (const r of h.fake.requests) {
-      // Bearer auth — never logged.
       expect(r.authorization).toBe("Bearer so_test_token");
     }
 
@@ -189,7 +178,6 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   });
 
   test("page-number walk: continues while page < totalPages, stops at the last page", async () => {
-    // page 1 is a full 100-item page (walk continues); page 2 is the last page.
     h = startHarness({ pages: [fullPage(1), [question(1000)]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("stackoverflow.token", "k");
@@ -208,7 +196,6 @@ describe("stackoverflow-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 full pages, totalPages 25 → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 100 + 1));
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);

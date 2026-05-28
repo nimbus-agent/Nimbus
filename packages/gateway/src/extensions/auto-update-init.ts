@@ -22,20 +22,6 @@ import { readPublisherKey } from "./publisher-keys.ts";
 import { createRegistryClient, type RegistryClient } from "./registry-client.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
-/**
- * Build the live `ExtensionAutoUpdater` daemon + its `AutoUpdateRpcDeps`
- * dependency bag for the IPC dispatcher. Returns `null` when auto-update is
- * not configured for this Gateway (no registry URL, or air-gap enforced).
- *
- * The two outputs are intentionally separate:
- *
- * - `daemon` — owns the polling loop; `start()` is called by the caller (the
- *   assemble wiring) once the rest of the Gateway is online; `stop()` is
- *   registered in `sidecarStops` so the shutdown path tears it down cleanly.
- * - `deps` — the slice the IPC dispatcher injects per-request into
- *   `dispatchAutoUpdateRpc`. The `gate` field is filled per-client by the
- *   dispatcher (Per-request `ToolExecutor` instance), NOT here.
- */
 export interface AutoUpdateInitOpts {
   db: Database;
   vault: NimbusVault;
@@ -44,7 +30,6 @@ export interface AutoUpdateInitOpts {
   registryBaseUrl: string;
   intervalHours: number;
   enforceAirGap: boolean;
-  /** mesh handle for client teardown after a successful swap; optional. */
   stopExtensionClient?: (extensionId: string) => Promise<void>;
 }
 
@@ -61,7 +46,6 @@ export interface AutoUpdateRuntimeBag {
 export interface AutoUpdateRuntime {
   daemon: ExtensionAutoUpdater;
   deps: AutoUpdateRuntimeBag;
-  /** AbortController for in-flight orchestration (download / extract). */
   abortController: AbortController;
 }
 
@@ -102,8 +86,6 @@ async function listInstalledRows(db: Database): Promise<InstalledExtensionRow[]>
 }
 
 async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
-  // Re-uses the same hex+case posture as `verifyTarballSha256`, but returns
-  // the hex string (the orchestrator does its own compare).
   const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -113,8 +95,6 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
 async function extractTarballToDir(bytes: Uint8Array, destDir: string): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
   await mkdir(destDir, { recursive: true });
-  // mkdtemp creates the staging dir with O_EXCL + 0o700 semantics, so the
-  // tarball never lands at a predictable path in the shared OS temp dir.
   const tmpDir = await mkdtemp(join(tmpdir(), "nimbus-au-"));
   const tmpFile = join(tmpDir, "src.tar");
   try {
@@ -234,8 +214,4 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   return { daemon, deps, abortController };
 }
 
-/**
- * Re-export for tests that need to round-trip the SHA-256 verification helper
- * without re-importing.
- */
 export { verifyTarballSha256 };

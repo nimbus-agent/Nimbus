@@ -1,14 +1,3 @@
-/**
- * Phase 5 acceptance test for `nimbus security scan`.
- *
- * Mirrors the in-process e2e pattern used by `metrics-dora.e2e.test.ts`:
- * seeds a `sync_state` row for a filesystem connector at `summary` depth
- * plus one `item` row whose `body_preview` contains the AWS-documented
- * public test key `AKIAIOSFODNN7EXAMPLE`, then dispatches `security.scan`
- * via the same handler the IPC server uses. Asserts the finding shape
- * AND that the full secret never appears in the response or the audit row.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
@@ -22,14 +11,12 @@ describe("nimbus security scan (e2e, in-process)", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, TARGET_SCHEMA);
 
-    // Seed: filesystem connector at summary depth (acceptance criterion).
     db.run(
       `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth)
          VALUES (?, ?, ?, ?)`,
       ["filesystem", 1_700_000_000_000, null, "summary"],
     );
 
-    // Seed: one item with the public AWS test value in its body_preview.
     const body = `// public test value documented at https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html\nconst KEY = '${PUBLIC_AWS_TEST_KEY}';`;
     db.run(
       `INSERT INTO item
@@ -61,7 +48,6 @@ describe("nimbus security scan (e2e, in-process)", () => {
     if (out.kind !== "hit") throw new Error("expected hit");
     const result: SecurityScanResult = out.value;
 
-    // Acceptance criterion: file path, pattern, and connector are reported.
     expect(result.findings_count).toBe(1);
     const f = result.findings[0]!;
     expect(f.service).toBe("filesystem");
@@ -71,10 +57,8 @@ describe("nimbus security scan (e2e, in-process)", () => {
     expect(f.match_redacted).toBe("AKIA****MPLE");
     expect(f.url).toBe("file:///abs/src/config.ts");
 
-    // Non-Negotiable #3: full secret must NOT appear anywhere in the response.
     expect(JSON.stringify(result)).not.toContain(PUBLIC_AWS_TEST_KEY);
 
-    // Audit chain: exactly one summary row, no secret in its action_json.
     const audits = db
       .query(
         `SELECT action_type, hitl_status, action_json

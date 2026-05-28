@@ -29,12 +29,6 @@ export function parseUpdateArgs(argv: string[]): UpdateArgs {
   return { mode, yes };
 }
 
-/**
- * Sub-handler: `nimbus update --check`. Calls `updater.checkNow` and prints
- * the version info; sets `process.exitCode = 1` when a newer version exists,
- * `0` otherwise. Exposed so the test suite can drive the dispatcher in
- * isolation from the gateway socket.
- */
 export async function runUpdateCheck(client: IPCClient): Promise<void> {
   const result = await client.call<UpdateCheckResult>("updater.checkNow", {});
   console.log(`current: ${result.currentVersion}`);
@@ -45,11 +39,6 @@ export async function runUpdateCheck(client: IPCClient): Promise<void> {
   process.exitCode = result.updateAvailable ? 1 : 0;
 }
 
-/**
- * Sub-handler: `nimbus update --yes` (no prompt). Calls `updater.applyUpdate`
- * and prints the success message. The prompt-bearing apply flow lives in
- * `runUpdate`, which composes a check + interactive prompt + this helper.
- */
 export async function runUpdateApply(client: IPCClient): Promise<void> {
   await client.call<unknown>("updater.applyUpdate", {});
   console.log("Update applied. Gateway will restart.");
@@ -98,7 +87,6 @@ export async function runUpdate(argv: string[]): Promise<void> {
 async function readLine(): Promise<string> {
   return new Promise((resolve) => {
     if (!process.stdin.isTTY) {
-      // If not a TTY, don't try to read
       resolve("");
       return;
     }

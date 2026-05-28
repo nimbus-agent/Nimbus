@@ -67,7 +67,6 @@ describe("runWorkerBench", () => {
     expect(result.perWorker.length).toBe(3);
     expect(result.perWorker.every((w) => w.writes === 500)).toBe(true);
     expect(result.totalBusyRetries).toBe(9);
-    // 500 writes / 0.1s = 5000/s per worker × 3 workers
     expect(result.totalThroughputPerSec).toBeGreaterThan(0);
     expect(result.errors.length).toBe(0);
   });
@@ -102,8 +101,7 @@ describe("runWorkerBench", () => {
       }),
     });
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500); // bounded by timeoutMs + slop
-    // Worker did emit 'done' before the hang, so perWorker has it
+    expect(elapsed).toBeLessThan(500);
     expect(result.perWorker.length).toBe(1);
   });
 

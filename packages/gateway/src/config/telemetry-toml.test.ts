@@ -58,11 +58,8 @@ flush_interval_seconds = not-a-number
 endpoint = ""
 `;
     const p = parseNimbusTomlTelemetrySection(raw);
-    // parseBool returns undefined, applyTelemetryKv leaves enabled unset.
     expect(p.enabled).toBeUndefined();
-    // parseIntDec returns NaN-rejecting undefined, flushIntervalSeconds unset.
     expect(p.flushIntervalSeconds).toBeUndefined();
-    // Empty-string endpoint is treated as "no value" by applyTelemetryKv.
     expect(p.endpoint).toBeUndefined();
   });
 });

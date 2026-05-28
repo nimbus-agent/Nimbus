@@ -81,7 +81,6 @@ function personTableHasColumn(db: Database, columnName: string): boolean {
   return rows.some((r) => r.name === columnName);
 }
 
-/** Current local index `PRAGMA user_version` (0 before first migration). */
 export function readIndexedUserVersion(db: Database): number {
   const row = db.query("PRAGMA user_version").get() as { user_version: number } | undefined;
   const v = row?.user_version;
@@ -406,9 +405,6 @@ function migrateIndexedV29ToV30(db: Database, now: number): void {
   const hasVec = vecTableExists(db);
   const sql = hasVec ? VEC_ITEMS_1536_V30_SCHEMA_SQL : VEC_ITEMS_1536_V30_NO_VEC_SQL;
   db.transaction(() => {
-    // Bun's bun:sqlite on macOS throws "SQL string mustn't be blank" for an
-    // empty `db.exec("")`; Windows/Linux tolerate it. The no-vec fallback is
-    // intentionally empty (records the migration row only).
     if (sql.trim().length > 0) {
       dbExec(db, sql);
     }
@@ -500,9 +496,6 @@ const BACKFILL_LABELS: readonly string[] = [
   "extension_dependency table + reverse-dep index (T2 PR 4) (backfilled)",
 ];
 
-/**
- * Backfill the ledger on existing databases that already reached `user_version` before the ledger existed.
- */
 function backfillMigrationsLedger(db: Database): void {
   const uv = readIndexedUserVersion(db);
   if (uv < 1) {
@@ -529,20 +522,11 @@ function backfillMigrationsLedger(db: Database): void {
   })();
 }
 
-// ─── Pre-migration backup ────────────────────────────────────────────────────
-
 export type MigrationBackupOptions = {
-  /** Directory where backups are written, e.g. `<dataDir>/backups`. */
   backupDir: string;
-  /** Absolute path to the live DB file (must not be `:memory:`). */
   dbPath: string;
 };
 
-/**
- * Thrown when a migration fails mid-run. The pre-migration backup path is
- * included in the message so the Gateway startup handler can print a clear,
- * actionable recovery message before exiting.
- */
 export class MigrationRollbackError extends Error {
   readonly migrationVersion: number;
   readonly backupPath: string | null;
@@ -561,14 +545,6 @@ export class MigrationRollbackError extends Error {
   }
 }
 
-/**
- * Create a gzip-compressed backup of `dbPath` before running migration `version`.
- * Uses `VACUUM INTO` (SQLite 3.27+) so the backup is always clean regardless of
- * WAL state — no need to close the database first.
- *
- * Returns the path of the written `.db.gz` file.
- * Throws if the backup cannot be written (caller aborts the migration).
- */
 function writePreMigrationBackup(
   db: Database,
   version: number,
@@ -585,8 +561,6 @@ function writePreMigrationBackup(
   const gzPath = `${tmpPath}.gz`;
   const gzPartial = `${tmpPath}.${uniq}.gz.partial`;
 
-  // VACUUM INTO creates a defragmented, WAL-checkpointed copy without locking
-  // the source for longer than a read transaction.
   dbRun(db, `VACUUM INTO ?`, [tmpPath]);
   try {
     chmodSync(tmpPath, 0o600);
@@ -594,8 +568,6 @@ function writePreMigrationBackup(
     /* best-effort */
   }
 
-  // readFileSync / Bun.gzipSync / open+writeSync are all synchronous —
-  // safe to call from the migration runner without async plumbing.
   const raw = readFileSync(tmpPath);
   const compressed = Bun.gzipSync(raw);
   const fd = openSync(gzPartial, "wx", 0o600);
@@ -611,7 +583,6 @@ function writePreMigrationBackup(
     renameSync(gzPartial, gzPath);
   }
 
-  // Remove the uncompressed temp copy
   try {
     rmSync(tmpPath);
   } catch {
@@ -621,16 +592,12 @@ function writePreMigrationBackup(
   return gzPath;
 }
 
-/**
- * Remove backup files older than `maxAgeDays` from `backupDir`.
- * Called at the end of a fully successful migration run.
- */
 function pruneOldBackups(backupDir: string, maxAgeDays: number): void {
   let entries: string[];
   try {
     entries = readdirSync(backupDir);
   } catch {
-    return; // directory doesn't exist yet — nothing to prune
+    return;
   }
   const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   for (const name of entries) {
@@ -663,32 +630,18 @@ function applyIndexedSchemaStep(
   let backupPath: string | null = null;
 
   if (backupOptions !== undefined) {
-    // Abort the entire run if the backup cannot be written.
     backupPath = writePreMigrationBackup(db, step.toVersion, backupOptions);
   }
 
   try {
     step.apply(db, now);
   } catch (err) {
-    // Each migration runs inside its own transaction — SQLite has already
-    // rolled it back. Wrap and re-throw with recovery information.
     throw new MigrationRollbackError(step.toVersion, backupPath, err);
   }
 
   return step.toVersion;
 }
 
-// ─── Public runner ────────────────────────────────────────────────────────────
-
-/**
- * Formal migration runner (Q2 §1.5). `PRAGMA user_version` remains the source of truth for stepping;
- * `_schema_migrations` is an append-only audit log.
- *
- * When `backupOptions` is provided, a gzip-compressed backup of the DB is
- * written before each migration step. On failure the migration transaction is
- * rolled back automatically by SQLite; the backup is available for manual
- * recovery and its path is included in the thrown `MigrationRollbackError`.
- */
 export function runIndexedSchemaMigrations(
   db: Database,
   targetVersion: number,
@@ -719,7 +672,6 @@ export function runIndexedSchemaMigrations(
     );
   }
 
-  // Prune old backups after a fully successful run (best-effort).
   if (anyStepRan && backupOptions !== undefined) {
     try {
       pruneOldBackups(backupOptions.backupDir, 30);

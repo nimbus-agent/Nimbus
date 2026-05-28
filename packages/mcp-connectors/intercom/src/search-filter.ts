@@ -1,17 +1,8 @@
-/**
- * Pure substring-match filter for `intercom_search`. Extracted from `server.ts`
- * so the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns the
- * title (source.subject) / source.body / state / source author name+email / tag
- * haystack + case-insensitive substring match.
- */
-
 export interface IntercomSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;
 }
 
-/** Non-array object — `undefined` if not a plain object. */
 function asRecord(v: unknown): Record<string, unknown> | undefined {
   if (v === null || typeof v !== "object" || Array.isArray(v)) {
     return undefined;
@@ -24,7 +15,6 @@ function stringField(row: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Tag NAMES from a `tags: { tags: [{ name }] }` shape, tolerating non-objects. */
 function tagText(row: Record<string, unknown>): string {
   const tags = asRecord(row["tags"]);
   const list = tags === undefined ? undefined : tags["tags"];

@@ -130,7 +130,6 @@ type ProjectKeysOutcome =
   | { readonly keys: string[]; readonly bytes: number }
   | { readonly error: "http_error" | "parse_error"; readonly bytes: number };
 
-/** Resolve the set of project keys to walk: the configured single project, or all projects. */
 async function resolveProjectKeys(
   ctx: SyncContext,
   creds: LaunchdarklyCreds,
@@ -145,7 +144,6 @@ async function resolveProjectKeys(
   return { keys: [creds.projectKey], bytes: 0 };
 }
 
-/** Walk one project's flags (offset-paged, capped) and upsert them. */
 async function syncProjectFlags(
   ctx: SyncContext,
   creds: LaunchdarklyCreds,

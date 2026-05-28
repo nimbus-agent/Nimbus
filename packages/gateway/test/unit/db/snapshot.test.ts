@@ -15,7 +15,6 @@ import {
 } from "../../../src/db/snapshot.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 
-/** Create a DB at a real path (required for VACUUM INTO). Seeds 2 item rows. */
 function makeDbAt(dbPath: string): Database {
   const db = new Database(dbPath);
   LocalIndex.ensureSchema(db);
@@ -39,7 +38,7 @@ describe("db/snapshot", () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "nimbus-snapshot-test-"));
     dbPath = join(tmp, "nimbus.db");
-    dataDir = tmp; // snapshots land in <tmp>/snapshots/
+    dataDir = tmp;
     db = makeDbAt(dbPath);
   });
 
@@ -55,8 +54,6 @@ describe("db/snapshot", () => {
       /* Windows may hold a file lock briefly after close; ignore cleanup errors */
     }
   });
-
-  // ─── takeSnapshot ─────────────────────────────────────────────────────────
 
   describe("takeSnapshot", () => {
     it("creates a .db.gz file in <dataDir>/snapshots/", () => {
@@ -82,13 +79,10 @@ describe("db/snapshot", () => {
       const snapshotPath = takeSnapshot(db, dataDir);
       const compressed = readFileSync(snapshotPath);
       const raw = Bun.gunzipSync(compressed);
-      // SQLite magic header: "SQLite format 3\0" at offset 0
       const magic = String.fromCharCode(...raw.slice(0, 15));
       expect(magic).toBe("SQLite format 3");
     });
   });
-
-  // ─── listSnapshots ────────────────────────────────────────────────────────
 
   describe("listSnapshots", () => {
     it("returns empty array when snapshots dir does not exist", () => {
@@ -106,7 +100,6 @@ describe("db/snapshot", () => {
 
     it("returns entries newest-first when multiple snapshots exist", async () => {
       takeSnapshot(db, dataDir);
-      // Small delay to guarantee different timestamps
       await Bun.sleep(5);
       takeSnapshot(db, dataDir);
 
@@ -117,13 +110,11 @@ describe("db/snapshot", () => {
 
     it("ignores files that do not match the nimbus-<ts>.db.gz pattern", () => {
       const snapshotsDir = join(dataDir, "snapshots");
-      // Create the dir by taking a snapshot, then plant a stray file
       takeSnapshot(db, dataDir);
       writeFileSync(join(snapshotsDir, "unrelated.txt"), "garbage");
       writeFileSync(join(snapshotsDir, "backup.db"), "not a snapshot");
 
       const entries = listSnapshots(dataDir);
-      // Only the legitimate snapshot should be present
       expect(entries).toHaveLength(1);
       for (const e of entries) {
         expect(e.filename).toMatch(/^nimbus-\d+\.db\.gz$/);
@@ -141,13 +132,10 @@ describe("db/snapshot", () => {
     });
   });
 
-  // ─── previewRestore ───────────────────────────────────────────────────────
-
   describe("previewRestore", () => {
     it("reports snapshotItemCount matching items in snapshot", () => {
       const snapshotPath = takeSnapshot(db, dataDir);
       const preview = previewRestore(db, snapshotPath);
-      // We seeded 2 rows
       expect(preview.snapshotItemCount).toBe(2);
     });
 
@@ -173,29 +161,22 @@ describe("db/snapshot", () => {
     });
   });
 
-  // ─── restoreSnapshot ─────────────────────────────────────────────────────
-
   describe("restoreSnapshot", () => {
     it("overwrites the live DB file so row count matches the snapshot", () => {
-      // Snapshot with 2 rows
       const snapshotPath = takeSnapshot(db, dataDir);
 
-      // Add a 3rd row to the live DB then close it
       db.run(
         `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
          VALUES ('github:3','github','pr','3','extra',0,0)`,
       );
       db.close();
 
-      // Restore overwrites the file
       restoreSnapshot(snapshotPath, dbPath);
 
-      // Re-open and check row count is back to 2
       const restored = new Database(dbPath, { readonly: true });
       const row = restored.query("SELECT COUNT(*) AS c FROM item").get() as { c: number };
       restored.close();
 
-      // Re-assign db so afterEach doesn't fail on double-close
       db = new Database(dbPath);
 
       expect(row.c).toBe(2);
@@ -205,7 +186,6 @@ describe("db/snapshot", () => {
       const snapshotPath = takeSnapshot(db, dataDir);
       db.close();
       restoreSnapshot(snapshotPath, dbPath);
-      // Should open without throwing
       const reopened = new Database(dbPath);
       const row = reopened.query("SELECT COUNT(*) AS c FROM item").get() as { c: number };
       reopened.close();
@@ -213,8 +193,6 @@ describe("db/snapshot", () => {
       expect(typeof row.c).toBe("number");
     });
   });
-
-  // ─── pruneSnapshots ───────────────────────────────────────────────────────
 
   describe("pruneSnapshots", () => {
     it("returns 0 when there are no snapshots", () => {
@@ -256,8 +234,7 @@ describe("db/snapshot", () => {
 
       pruneSnapshots(dataDir, 1);
 
-      // The oldest two should be gone from disk
-      const toBeDeleted = allBefore.slice(1); // allBefore is newest-first; slice(1) = older two
+      const toBeDeleted = allBefore.slice(1);
       for (const e of toBeDeleted) {
         expect(existsSync(e.path)).toBe(false);
       }
@@ -278,8 +255,6 @@ describe("db/snapshot", () => {
       expect(remaining[0]!.path).toBe(newestPath);
     });
   });
-
-  // ─── startSnapshotScheduler ───────────────────────────────────────────────
 
   describe("startSnapshotScheduler", () => {
     it("returns a handle with a stop() method", () => {
@@ -313,7 +288,6 @@ describe("db/snapshot", () => {
       const countAfterStop = listSnapshots(dataDir).length;
       expect(countAfterStop).toBeGreaterThanOrEqual(1);
 
-      // Wait another two intervals; count must not grow
       await Bun.sleep(100);
       expect(listSnapshots(dataDir).length).toBe(countAfterStop);
     });
@@ -332,8 +306,6 @@ describe("db/snapshot", () => {
       expect(listSnapshots(dataDir)).toHaveLength(0);
     });
   });
-
-  // ─── formatSnapshotList ───────────────────────────────────────────────────
 
   describe("formatSnapshotList", () => {
     it("returns a 'No snapshots' message for empty input", () => {
@@ -378,12 +350,9 @@ describe("db/snapshot", () => {
       const entries = listSnapshots(dataDir);
       const output = formatSnapshotList(entries);
       const lines = output.split("\n").filter((l) => l.trim().length > 0);
-      // header + separator + 2 data rows = 4 lines minimum
       expect(lines.length).toBeGreaterThanOrEqual(4);
     });
   });
-
-  // ─── DEFAULT_SNAPSHOT_CONFIG ──────────────────────────────────────────────
 
   describe("DEFAULT_SNAPSHOT_CONFIG", () => {
     it("is enabled by default", () => {

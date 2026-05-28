@@ -108,20 +108,6 @@ describe("D11 — checkVaultKeyAllowList", () => {
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
   test("VAULT_KEY_ALLOW_LIST has exactly 9 entries", () => {
-    // Each entry has a documented structural reason. The first 5 land in the
-    // structure-audit design spec § 4.4 (helper home, Google OAuth canonical
-    // reader, Google PKCE writer, Microsoft provider-shared OAuth, OpenAI
-    // embedding provider). The 6th — connector-secrets-manifest.ts — was
-    // added in the manifest-derived widening spec (2026-05-02) as the
-    // canonical declaration site for per-connector vault keys. The 7th —
-    // extensions/publisher-keys.ts — was added in Phase 5 T2 PR 2 as the
-    // declaration site for the `extension.publisher_key.<id>` namespace.
-    // The 8th — auth/oauth-registry.ts — was added in the OAuth-registry
-    // refactor (PR-1) as the single source of truth for descriptor.vaultKey
-    // values across google/microsoft/slack/notion. The 9th —
-    // auth/zoom-access-token.ts — was added in PR-2 as the Zoom OAuth
-    // resolver that constructs the "zoom.oauth" key in its parseErrors
-    // defaults.
     expect(VAULT_KEY_ALLOW_LIST).toHaveLength(9);
   });
 });
@@ -129,7 +115,6 @@ describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
 describe("D11 — manifest-derived VAULT_KEY_RE", () => {
   test("matches representative manifest entries", () => {
     const keys = Object.values(CONNECTOR_VAULT_SECRET_KEYS).flat();
-    // Spot-check each suffix family present in the manifest.
     for (const sample of [
       "jira.api_token",
       "aws.access_key_id",
@@ -168,9 +153,6 @@ describe("D12 — collectDbRunCensus (diagnostic census, allowList = [])", () =>
   });
 
   test("also collects db.run() inside db/write.ts (census uses allowList = [])", () => {
-    // The census is an exhaustive snapshot — it intentionally includes the
-    // wrapper itself (allowList = []) so the output reflects all call sites.
-    // Use findDirectDbRunExec (with the default allow-list) for the binary gate.
     const census = collectDbRunCensus([
       {
         relPath: "packages/gateway/src/db/write.ts",

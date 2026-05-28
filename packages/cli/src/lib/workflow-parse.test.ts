@@ -1,4 +1,3 @@
-// packages/cli/src/lib/workflow-parse.test.ts
 import { describe, expect, it } from "bun:test";
 
 import { parseWorkflowFileContent } from "./workflow-parse.ts";

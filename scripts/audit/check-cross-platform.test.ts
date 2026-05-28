@@ -35,9 +35,7 @@ describe("cross-platform audit detector (Windows-separator scope)", () => {
     const src =
       `expect(u).toBe("https://api.example.com/v1/x");\n` +
       `expect(s).toBe("hello world");\n` +
-      // POSIX data value — intentionally NOT flagged (regex can't tell it from a real bug)
       `expect(sock).toBe("/tmp/nimbus/data.sock");\n` +
-      // URL/router route — intentionally NOT flagged
       `expect(route).toBe("/oauth/v2/authorize");\n`;
     expect(findCrossPlatformIssues(src, "x.test.ts").length).toBe(0);
   });

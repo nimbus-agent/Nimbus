@@ -1,13 +1,3 @@
-/**
- * Coverage for `model.ts` — the in-process MiniLM embedder.
- *
- * `createLocalEmbedder` takes an injected `loadPipeline` (the `@xenova`
- * boundary shim) so its body is unit-testable with a fake pipeline. We use
- * parameter injection rather than `mock.module` deliberately: sibling
- * embedding tests (create-routing-runtime, lazy-scheduler) used to
- * `mock.module(model.ts)` process-globally, which leaked fakes into this file.
- * They now inject too, so a plain default-parameter fake is leak-proof.
- */
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { FeatureExtractionPipe } from "./load-feature-extraction-pipeline.ts";
@@ -20,7 +10,6 @@ type LoaderState = {
   cacheDir?: string;
 };
 
-/** Build an injectable loader that records its cacheDir + pipe calls. */
 function fakeLoader(state: LoaderState): (cacheDir: string) => Promise<FeatureExtractionPipe> {
   return async (cacheDir: string) => {
     state.cacheDir = cacheDir;

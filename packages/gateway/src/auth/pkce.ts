@@ -11,27 +11,18 @@ import {
 
 export type { OAuthProvider, PKCEResult };
 
-/** Subset of `fetch` for tests and dependency injection (avoids Bun/undici `preconnect` typing drift). */
 export type PKCEFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface PKCEOptions {
   clientId: string;
   scopes: string[];
-  /**
-   * Notion public integrations require `client_secret` at the token endpoint (HTTP Basic).
-   * Supplied from env via `connector.auth` — never from IPC user params.
-   */
   oauthClientSecret?: string;
-  /** If set, this port is tried first (before `portRange`). */
   redirectPort?: number;
-  /** Inclusive range of ports to try after `redirectPort` (if any). */
   portRange?: [number, number];
   provider: OAuthProvider;
   vault: NimbusVault;
   openUrl: (url: string) => Promise<void>;
-  /** @default global fetch */
   fetchImpl?: PKCEFetch;
-  /** Invoked once when binding an OS-assigned ephemeral port (last resort). */
   onRandomPortFallback?: () => void;
 }
 
@@ -71,7 +62,6 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-/** RFC 7636: code_challenge = BASE64URL(SHA256(code_verifier)). */
 export async function pkceCodeChallengeS256(codeVerifier: string): Promise<string> {
   const data = new TextEncoder().encode(codeVerifier);
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -214,12 +204,6 @@ async function runOnLocalPort(
 }
 
 export async function runPKCEFlow(options: PKCEOptions): Promise<PKCEResult> {
-  // Pre-flight: providers whose descriptor declares `clientSecret: "required"`
-  // (notion, zoom) cannot complete a token exchange without one. Reject up
-  // front so the caller sees a fast error instead of the 5-minute callback
-  // timeout. The per-provider check used to live in the dropped
-  // `runNotionOAuthOnLocalPort` helper; the registry refactor unified all
-  // providers through `runOnLocalPort` and lost this guard.
   const descriptor = OAUTH_PROVIDERS[options.provider];
   if (descriptor.clientSecret === "required") {
     const secret = options.oauthClientSecret?.trim();
@@ -253,12 +237,7 @@ export async function runPKCEFlow(options: PKCEOptions): Promise<PKCEResult> {
 export interface RefreshAccessTokenContext {
   vault: NimbusVault;
   fetchImpl?: PKCEFetch;
-  /** Google (or other confidential) web clients: include at token refresh when required by the provider. */
   clientSecret?: string;
-  /**
-   * When set, refreshed tokens are written to this vault key instead of the provider default
-   * (`google.oauth` / `microsoft.oauth`). Must match the key used to read the refresh token.
-   */
   persistVaultKey?: string;
 }
 
@@ -279,10 +258,6 @@ export async function refreshAccessToken(
   });
 }
 
-/**
- * Slack user-token refresh (`oauth.v2.access` with `grant_type=refresh_token`).
- * Persists merged tokens to `slack.oauth`.
- */
 export async function refreshSlackUserToken(
   refreshToken: string,
   clientId: string,
@@ -297,10 +272,6 @@ export async function refreshSlackUserToken(
   });
 }
 
-/**
- * Notion OAuth refresh (`/v1/oauth/token` with `grant_type=refresh_token`).
- * Persists merged tokens to `notion.oauth`.
- */
 export async function refreshNotionToken(
   refreshToken: string,
   clientId: string,

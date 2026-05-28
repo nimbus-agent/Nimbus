@@ -24,7 +24,6 @@ function tryPersistStart(db: Database, opts: SubAgentRunOptions, now: number): n
     );
     return stmt.lastInsertRowid as number;
   } catch {
-    /* DB may be in read-only mode during tests; continue without persistence */
     return undefined;
   }
 }

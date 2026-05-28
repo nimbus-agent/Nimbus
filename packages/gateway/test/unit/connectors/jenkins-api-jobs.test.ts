@@ -33,7 +33,6 @@ describe("jenkinsApiJobNodeDisplayName", () => {
   });
 
   test("returns empty string when both are non-string types", () => {
-    // Intentionally bad input — types relax via the loose shape on JenkinsApiJobNode.
     const n = { fullName: 42, name: null } as unknown as JenkinsApiJobNode;
     expect(jenkinsApiJobNodeDisplayName(n)).toBe("");
   });

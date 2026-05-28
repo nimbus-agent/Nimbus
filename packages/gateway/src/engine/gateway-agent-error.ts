@@ -1,9 +1,3 @@
-/**
- * Thrown when NL routing cannot reach an LLM. Discriminates the *why* so the
- * CLI can surface an actionable message instead of a generic "check your
- * network and key" line that conflates four unrelated failure modes.
- */
-
 export type AgentUnavailableReason =
   | "no_api_key"
   | "invalid_api_key"
@@ -19,7 +13,6 @@ export type AgentProviderName = "anthropic" | "openai";
 export type AgentUnavailableInit = {
   reason: AgentUnavailableReason;
   provider?: AgentProviderName;
-  /** Already-redacted, safe-to-show context. NEVER include API keys. */
   detail?: string;
 };
 
@@ -89,10 +82,6 @@ function parseProviderErrorBody(body: string): ProviderErrorBody {
   return {};
 }
 
-/**
- * Maps an HTTP error response from `fetch` to a typed
- * `GatewayAgentUnavailableError`. Used by the classifier in `router.ts`.
- */
 export function agentErrorFromHttpResponse(
   provider: AgentProviderName,
   status: number,
@@ -130,12 +119,6 @@ export function agentErrorFromHttpResponse(
   });
 }
 
-/**
- * Maps an arbitrary caught Error (e.g., from a Mastra agent that wraps the
- * provider SDK) to a typed `GatewayAgentUnavailableError` when the error
- * string matches a known LLM-side failure. Returns `null` when the error
- * doesn't look LLM-related — caller should re-throw via `sanitizeExternalError`.
- */
 export function agentErrorFromCaughtError(
   e: unknown,
   provider?: AgentProviderName,

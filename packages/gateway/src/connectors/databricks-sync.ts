@@ -35,12 +35,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Both `databricks.host` and `databricks.token` are required and have no
- * defaults — Databricks has no universal SaaS host (every workspace is a
- * distinct per-org URL). The connector no-ops unless both are non-empty
- * after trim; the host's trailing slash is trimmed.
- */
 async function loadCreds(ctx: SyncContext): Promise<DatabricksCreds | null> {
   const host = (await readConnectorSecret(ctx.vault, "databricks", "host"))?.trim() ?? "";
   const token = (await readConnectorSecret(ctx.vault, "databricks", "token"))?.trim() ?? "";
@@ -61,7 +55,6 @@ async function dbGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Databricks PAT is sent as `Authorization: Bearer <token>`.
   const res = await fetch(`${creds.host}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -77,28 +70,19 @@ async function dbGet(
   }
 }
 
-/** Pull a named array out of an envelope (`<key>`, else []). */
 function extractArray(parsed: unknown, key: string): unknown[] {
   const v = asRecord(parsed)?.[key];
   return Array.isArray(v) ? v : [];
 }
 
-/** Read a string field from a record, returning null when absent / not a string. */
 function strOrNull(r: Record<string, unknown>, key: string): string | null {
   return stringField(r, key) ?? null;
 }
 
-/** Read a number field from a record, returning null when absent / not a number. */
 function numOrNull(r: Record<string, unknown>, key: string): number | null {
   return numberField(r, key) ?? null;
 }
 
-/**
- * Build a `job_id` → latest run summary map from one page of
- * `/api/2.1/jobs/runs/list` (most-recent-first). The FIRST occurrence per
- * `job_id` is kept (= the latest run). A non-ok response yields an empty map
- * — the enrichment is best-effort (jobs still index with null run fields).
- */
 function extractRunsByJobId(parsed: unknown): Map<number, RunSummary> {
   const map = new Map<number, RunSummary>();
   for (const r of extractArray(parsed, "runs")) {
@@ -112,7 +96,6 @@ function extractRunsByJobId(parsed: unknown): Map<number, RunSummary> {
     }
     const state = asRecord(run["state"]) ?? {};
     const clusterInstance = asRecord(run["cluster_instance"]) ?? {};
-    // run_duration is the canonical field; execution_duration is the fallback.
     const duration = numOrNull(run, "run_duration") ?? numOrNull(run, "execution_duration");
     map.set(jobId, {
       run_id: numOrNull(run, "run_id"),
@@ -167,9 +150,6 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
         return syncNoopResult(cursor, t0);
       }
 
-      // One page of recent runs to resolve latest-run-per-job. A non-ok
-      // response here is non-fatal — proceed with an empty map (jobs still
-      // index, with `latest_run_*` null).
       const runsOutcome = await dbGet(
         ctx,
         creds,
@@ -181,8 +161,6 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
           ? extractRunsByJobId(runsOutcome.parsed)
           : new Map<number, RunSummary>();
 
-      // The jobs walk is the gating call: a FIRST-page http/parse error maps
-      // to the pass-cursor-empty result. Later-page errors just break.
       const now = Date.now();
       let totalUpserted = 0;
       let pageToken: string | null = null;
@@ -196,7 +174,6 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
               ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
               : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
           }
-          // A later-page failure is non-fatal: keep what we already indexed.
           break;
         }
 

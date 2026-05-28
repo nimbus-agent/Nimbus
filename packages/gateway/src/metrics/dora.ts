@@ -1,12 +1,3 @@
-/**
- * Phase 5 T4 PR 2 — DORA metric calculators.
- *
- * Pure functions over the unified `item` table. Each calculator reads only the
- * rows in `[nowMs - sinceMs, nowMs]` and returns `null` with a {@link DoraGap}
- * note when the data is insufficient. See `docs/dora.md` for the full
- * methodology.
- */
-
 import type { Database } from "bun:sqlite";
 import type { DoraServiceConfig, ParsedDoraRepoUrn } from "./dora-config.ts";
 import { providerServiceColumns } from "./dora-config.ts";
@@ -48,7 +39,6 @@ function gapOrNull(metric: DoraMetricValue): DoraMetricValue {
   return metric;
 }
 
-/** Median of a non-empty pre-sorted ascending array. Floor of the mean for even counts. */
 function medianOfSorted(sorted: readonly number[]): number {
   const n = sorted.length;
   if (n === 0) throw new Error("medianOfSorted: empty array");
@@ -79,10 +69,6 @@ function distinctPrServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[]
   return Array.from(out);
 }
 
-/**
- * Matches `metadata.repo` (GitHub / Bitbucket), `metadata.project` (GitLab),
- * `metadata.jobName` (Jenkins), or `external_id` fallback (CircleCI). Combined per provider.
- */
 function repoLikeMatchesUrn(
   metadata: Record<string, unknown> | null,
   externalId: string,
@@ -98,10 +84,6 @@ function repoLikeMatchesUrn(
     case "jenkins":
       return metadata["jobName"] === urn.providerId;
     case "circleci":
-      // CircleCI item externalIds embed the slug rather than expose a `repo`/`project`
-      // metadata key. Substring match is intentional but means two configs whose
-      // providerIds are prefixes of one another may both match a single deploy.
-      // Operators should pick providerIds that are not prefixes of any other.
       return externalId.includes(urn.providerId);
   }
 }
@@ -150,12 +132,6 @@ type AnnotatedDeployRow = {
   metadata: string | null;
 };
 
-/**
- * Selects post-deploy-annotated deploys from `deployment_items` for the given
- * service+environments window. Counts only `conclusion = 'success'`; non-success
- * conclusions never count as a deploy under DORA. This is the preferred
- * source — see {@link deploymentFrequency} for the regex-fallback behaviour.
- */
 function selectAnnotatedDeploys(
   db: Database,
   cfg: DoraServiceConfig,
@@ -181,19 +157,6 @@ function selectAnnotatedDeploys(
   return rows;
 }
 
-/**
- * Deployment frequency.
- *
- * Source preference: when annotated deploys exist in the window
- * (`deployment_items` rows joined to `item.type = 'deployment'`), they win.
- * Regex-matched `ci_run` rows are only used as a fallback when no annotated
- * deploys are present. If both sources exist in the same window the annotated
- * count is reported and a `mixed_source` gap is emitted so callers can prompt
- * operators to retire the legacy regex path.
- *
- * `leadTimeForChanges` and `changeFailureRate` continue to use the legacy
- * regex path for now — a follow-up PR will teach them about annotated rows.
- */
 export function deploymentFrequency(
   db: Database,
   cfg: DoraServiceConfig,

@@ -9,11 +9,6 @@ export interface IpcPollState<T> {
   stale: boolean;
 }
 
-/**
- * Poll an IPC method on the given interval, pausing whenever `mode` is
- * "disconnected". Fires immediately on mount and on reconnect. Exposes
- * last-known data as stale while paused.
- */
 export function useIpcPoll<T>(method: string, intervalMs: number, mode: TuiMode): IpcPollState<T> {
   const { client, logger } = useIpc();
   const [data, setData] = useState<T | null>(null);

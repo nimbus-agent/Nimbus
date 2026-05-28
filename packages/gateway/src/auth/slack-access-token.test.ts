@@ -4,7 +4,6 @@ import { Config } from "../config.ts";
 import { MockVault } from "../vault/mock.ts";
 import { getValidSlackAccessToken } from "./slack-access-token.ts";
 
-// Config is not Object.freeze-d at runtime — cast to allow temporary mutation in tests.
 const mutableConfig = Config as {
   oauthSlackClientId: string;
 };
@@ -16,18 +15,15 @@ describe("getValidSlackAccessToken", () => {
 
   beforeEach(() => {
     vault = new MockVault();
-    // Restore env-driven Config field to empty so each test has a clean slate.
     mutableConfig.oauthSlackClientId = "";
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    // Restore Config after each test.
     mutableConfig.oauthSlackClientId = "";
   });
 
   it("throws when slack.oauth vault key is absent (vault-miss path)", async () => {
-    // vault is empty — readConnectorSecret("slack", "oauth") returns null.
     await expect(getValidSlackAccessToken(vault)).rejects.toThrow("Slack OAuth not configured");
   });
 
@@ -37,7 +33,7 @@ describe("getValidSlackAccessToken", () => {
   });
 
   it("returns cached token immediately when expiresAt is well in the future (cache-hit path)", async () => {
-    const farFuture = Date.now() + 24 * 60 * 60 * 1000; // 24 h ahead
+    const farFuture = Date.now() + 24 * 60 * 60 * 1000;
     await vault.set(
       "slack.oauth",
       JSON.stringify({
@@ -47,7 +43,6 @@ describe("getValidSlackAccessToken", () => {
       }),
     );
 
-    // Ensure fetch is NOT called — a cache hit must not hit the network.
     let fetchCalled = false;
     globalThis.fetch = (async () => {
       fetchCalled = true;
@@ -60,7 +55,6 @@ describe("getValidSlackAccessToken", () => {
   });
 
   it("throws when token is expired but NIMBUS_OAUTH_SLACK_CLIENT_ID is not set", async () => {
-    // expiresAt in the past — forces the refresh branch; client id empty → throws.
     await vault.set(
       "slack.oauth",
       JSON.stringify({
@@ -70,12 +64,10 @@ describe("getValidSlackAccessToken", () => {
       }),
     );
 
-    // Config field is already empty from beforeEach.
     await expect(getValidSlackAccessToken(vault)).rejects.toThrow("NIMBUS_OAUTH_SLACK_CLIENT_ID");
   });
 
   it("calls refreshSlackUserToken and returns new access token when token is expired (refresh-success path)", async () => {
-    // Token expired: expiresAt in the past.
     await vault.set(
       "slack.oauth",
       JSON.stringify({
@@ -88,8 +80,6 @@ describe("getValidSlackAccessToken", () => {
     mutableConfig.oauthSlackClientId = "slack-client-id";
 
     let fetchCalls = 0;
-    // refreshSlackUserToken calls slackOAuthV2Access which POSTs to the Slack API.
-    // The response must have ok:true and authed_user with access_token + refresh_token.
     globalThis.fetch = (async (_input: unknown, _init?: unknown) => {
       fetchCalls += 1;
       return new Response(

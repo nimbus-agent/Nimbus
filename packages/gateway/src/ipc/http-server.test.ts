@@ -1,23 +1,3 @@
-/**
- * Tier-B coverage for `startReadOnlyHttpServer` lifecycle scaffolding.
- *
- * The 65.12% baseline already came from three route-targeted integration
- * tests (`openapi-route.test.ts`, `metrics-dora-route.test.ts`,
- * `deployments-post-route.test.ts`, `preflight-deploy-route.test.ts`). The
- * uncovered slice was lifecycle scaffolding — the `Bun.serve` boundary, the
- * 405/404 dispatcher arms (POST without write surface, PUT/DELETE with and
- * without write surface, GET on a known POST path, GET on an unknown path),
- * the POST → `dispatchWriteRoute` arm, the `resolveDeploymentToken`
- * exception → generic 500 branch, the simple read-only routes for
- * `/v1/health`, `/v1/items`, `/v1/connectors`, `/v1/people`, and
- * `/v1/audit` (none of which were exercised by the existing route tests),
- * and the `stop()` cleanup arms (with and without `writeDb`).
- *
- * Each test uses `port = 0` so the OS picks a free port; this matches the
- * precedent set by `openapi-route.test.ts` and avoids random-port collision
- * flake on shared CI runners.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -68,7 +48,6 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     });
     expect(res.status).toBe(405);
     expect(res.headers.get("Allow")).toBe("GET");
-    // Drain body so the connection can close cleanly.
     await res.text();
   });
 
@@ -114,11 +93,6 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
   });
 
   it("POST to /v1/deployments reaches dispatchWriteRoute when the surface is mounted", async () => {
-    // The actual auth / validation flow is exercised by
-    // `deployments-post-route.test.ts`. Here we only assert that the
-    // request reached the dispatcher — i.e. the response is NOT 405. With
-    // no Authorization header the dispatcher will reject as 401, which
-    // is the proof that we crossed the lifecycle boundary.
     handle = startReadOnlyHttpServer(dbPath, 0, {
       resolveDeploymentToken: async () => "test-token",
     });
@@ -159,8 +133,6 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     dbPath = join(tmpDir, "nimbus.db");
     const db = new Database(dbPath);
     runIndexedSchemaMigrations(db, 28);
-    // Seed one row in each table so the route handlers actually execute
-    // their result-shaping branches.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, body_preview, url,
                          canonical_url, modified_at, author_id, metadata,
@@ -217,8 +189,6 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   });
 
   it("GET /v1/items honours limit and since-window query params", async () => {
-    // Exercise `parsePositiveInt` (limit) + `parseItemsListTimeFilters`
-    // (since + sinceMs + untilMs).
     const url = `http://127.0.0.1:${handle!.port}/v1/items?limit=5&since=30d&untilMs=999999999999`;
     const res = await fetch(url);
     expect(res.status).toBe(200);
@@ -311,15 +281,10 @@ describe("startReadOnlyHttpServer — cleanup", () => {
   });
 
   it("stop() closes the write handle when the write surface is mounted", () => {
-    // Both branches of the `if (writeDb !== null)` cleanup arm get exercised
-    // by this pair of tests — the no-write-surface test above covers the
-    // skip-branch, and this one covers the close-branch.
     const handle = startReadOnlyHttpServer(dbPath, 0, {
       resolveDeploymentToken: async () => "test-token",
     });
     expect(() => handle.stop()).not.toThrow();
-    // Second stop() must also be a no-op — the inner try/catch swallows
-    // any "already closed" errors so callers don't have to track state.
     expect(() => handle.stop()).not.toThrow();
   });
 });

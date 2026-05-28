@@ -1,24 +1,3 @@
-/**
- * Wiz cloud-security-platform GraphQL sync handler. Runs an
- * `Issues` GraphQL query at `WIZ_API_URL` (default
- * `https://api.app.wiz.io/graphql`) and upserts each open issue into
- * the unified `item` table as `service = "wiz", type = "issue"` via
- * {@link mapWizIssueToItem}.
- *
- * Auth: Wiz uses OAuth client_credentials. Each sync cycle fetches a
- * fresh access token from `WIZ_AUTH_URL` (default
- * `https://auth.app.wiz.io/oauth/token`) using `wiz.client_id` +
- * `wiz.client_secret` from the vault. Tokens live ~24 h; the
- * per-cycle fetch is wasteful (one extra round-trip every 10 min) but
- * keeps the code simple — no token caching across syncs, no expiry
- * tracking.
- *
- * Single-pass cursor model (matches snyk/sonarqube/semgrep): every
- * successful run emits a fresh `nimbus-wiz1:{pass: 1}` cursor. Wiz's
- * GraphQL endpoint exposes `pageInfo.endCursor` for forward pagination
- * within a single cycle; we cap pages per cycle to bound cost.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,

@@ -1,17 +1,3 @@
-/**
- * Direct unit tests for `connectors/lazy-mesh/phase3-config.ts` —
- * each `phase3Add<Service>Mcp` helper has a credential-presence short-
- * circuit (no spawn) and a credentials-present branch (wraps ServerSpec
- * via the sandbox wrapper).
- *
- * These tests bypass `LazyConnectorMesh` and exercise the helpers
- * directly with a `MockVault` seeded per test. The successful spawn
- * branch is validated by inspecting the resulting `ServerSpec`: it must
- * carry a sandbox-wrapper command and the sandbox-control env vars
- * (`NIMBUS_SANDBOX_MANIFEST_JSON`, `NIMBUS_SANDBOX_CWD`) — both proofs
- * that the I15 wiring fired without going through MCPClient.
- */
-
 import { describe, expect, test } from "bun:test";
 
 import { createMockVault } from "../../vault/mock.ts";
@@ -63,8 +49,6 @@ function readManifest(spec: ServerSpec): { permissions: { network: string[] } } 
 }
 
 function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
-  // Wrapped specs carry the sandbox-control env vars and a command that
-  // points at process.execPath — never the raw "bun" the helper passes.
   expect(spec.command).toBe(process.execPath);
   expect(spec.env?.["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
   expect(spec.env?.["NIMBUS_SANDBOX_CWD"]).toBe(SANDBOX_CWD);
@@ -73,8 +57,6 @@ function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
     expect(manifest.permissions.network).toContain(expectedHost);
   }
 }
-
-// ─── phase3AddAwsMcp ─────────────────────────────────────────────────────────
 
 describe("phase3AddAwsMcp", () => {
   test("no-op when no creds present", async () => {
@@ -135,14 +117,11 @@ describe("phase3AddAwsMcp", () => {
   });
 });
 
-// ─── phase3AddAzureMcp ───────────────────────────────────────────────────────
-
 describe("phase3AddAzureMcp", () => {
   test("no-op when any of tenant/client/secret missing", async () => {
     const vault = createMockVault();
     await vault.set("azure.tenant_id", "T");
     await vault.set("azure.client_id", "C");
-    // secret missing
     const servers: Record<string, ServerSpec> = {};
     await phase3AddAzureMcp(vault, servers, SANDBOX_CWD);
     expect(servers["azure"]).toBeUndefined();
@@ -165,8 +144,6 @@ describe("phase3AddAzureMcp", () => {
   });
 });
 
-// ─── phase3AddGcpMcp ─────────────────────────────────────────────────────────
-
 describe("phase3AddGcpMcp", () => {
   test("no-op without credentials_json_path", async () => {
     const vault = createMockVault();
@@ -187,8 +164,6 @@ describe("phase3AddGcpMcp", () => {
     expect(spec.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/etc/gcp.json");
   });
 });
-
-// ─── phase3AddIacMcp ─────────────────────────────────────────────────────────
 
 describe("phase3AddIacMcp", () => {
   test("no-op when iac.enabled is unset", async () => {
@@ -218,13 +193,10 @@ describe("phase3AddIacMcp", () => {
   });
 });
 
-// ─── phase3AddGrafanaMcp ─────────────────────────────────────────────────────
-
 describe("phase3AddGrafanaMcp", () => {
   test("no-op without url + token", async () => {
     const vault = createMockVault();
     await vault.set("grafana.url", "https://grafana.example.com");
-    // token missing
     const servers: Record<string, ServerSpec> = {};
     await phase3AddGrafanaMcp(vault, servers, SANDBOX_CWD);
     expect(servers["grafana"]).toBeUndefined();
@@ -254,19 +226,14 @@ describe("phase3AddGrafanaMcp", () => {
     expect(spec).toBeDefined();
     if (spec === undefined) return;
     expectSandboxed(spec);
-    // Empty network host list (or whatever the base manifest is); the
-    // important property is that the call did not throw.
     expect(spec.env?.["GRAFANA_URL"]).toBe("not a url");
   });
 });
-
-// ─── phase3AddSentryMcp ──────────────────────────────────────────────────────
 
 describe("phase3AddSentryMcp", () => {
   test("no-op without token + org", async () => {
     const vault = createMockVault();
     await vault.set("sentry.auth_token", "tok");
-    // org missing
     const servers: Record<string, ServerSpec> = {};
     await phase3AddSentryMcp(vault, servers, SANDBOX_CWD);
     expect(servers["sentry"]).toBeUndefined();
@@ -301,8 +268,6 @@ describe("phase3AddSentryMcp", () => {
   });
 });
 
-// ─── phase3AddNewrelicMcp ────────────────────────────────────────────────────
-
 describe("phase3AddNewrelicMcp", () => {
   test("no-op without api_key", async () => {
     const vault = createMockVault();
@@ -324,13 +289,10 @@ describe("phase3AddNewrelicMcp", () => {
   });
 });
 
-// ─── phase3AddDatadogMcp ─────────────────────────────────────────────────────
-
 describe("phase3AddDatadogMcp", () => {
   test("no-op without api_key + app_key", async () => {
     const vault = createMockVault();
     await vault.set("datadog.api_key", "ak");
-    // app_key missing
     const servers: Record<string, ServerSpec> = {};
     await phase3AddDatadogMcp(vault, servers, SANDBOX_CWD);
     expect(servers["datadog"]).toBeUndefined();
@@ -365,8 +327,6 @@ describe("phase3AddDatadogMcp", () => {
   });
 });
 
-// ─── phase3AddSnykMcp ────────────────────────────────────────────────────────
-
 describe("phase3AddSnykMcp", () => {
   test("no-op without snyk.token", async () => {
     const vault = createMockVault();
@@ -396,8 +356,6 @@ describe("phase3AddSnykMcp", () => {
   });
 });
 
-// ─── phase3AddSonarqubeMcp ──────────────────────────────────────────────────
-
 describe("phase3AddSonarqubeMcp", () => {
   test("no-op without sonarqube.token", async () => {
     const vault = createMockVault();
@@ -426,7 +384,6 @@ describe("phase3AddSonarqubeMcp", () => {
     expectSandboxed(spec, "sonarcloud.io");
     expect(spec.env?.["SONARQUBE_TOKEN"]).toBe("sq-test-token");
     expect(spec.env?.["SONARQUBE_ORGANIZATION"]).toBe("acme");
-    // No URL override → env var omitted.
     expect(spec.env?.["SONARQUBE_URL"]).toBeUndefined();
   });
 
@@ -441,8 +398,6 @@ describe("phase3AddSonarqubeMcp", () => {
     expect(spec.env?.["SONARQUBE_URL"]).toBe("https://sonar.example.com");
   });
 });
-
-// ─── phase3AddSemgrepMcp ────────────────────────────────────────────────────
 
 describe("phase3AddSemgrepMcp", () => {
   test("no-op without semgrep.token", async () => {
@@ -485,8 +440,6 @@ describe("phase3AddSemgrepMcp", () => {
   });
 });
 
-// ─── phase3AddWizMcp ─────────────────────────────────────────────────────────
-
 describe("phase3AddWizMcp", () => {
   test("no-op without wiz.client_id / wiz.client_secret", async () => {
     const vault = createMockVault();
@@ -524,7 +477,6 @@ describe("phase3AddWizMcp", () => {
     expectSandboxed(spec, "api.app.wiz.io");
     expect(spec.env?.["WIZ_CLIENT_ID"]).toBe("client-abc");
     expect(spec.env?.["WIZ_CLIENT_SECRET"]).toBe("secret-xyz");
-    // Regional override env vars are absent unless explicitly configured.
     expect(spec.env?.["WIZ_API_URL"]).toBeUndefined();
     expect(spec.env?.["WIZ_AUTH_URL"]).toBeUndefined();
   });
@@ -543,8 +495,6 @@ describe("phase3AddWizMcp", () => {
     expect(spec.env?.["WIZ_AUTH_URL"]).toBe("https://auth.us2.app.wiz.io/oauth/token");
   });
 });
-
-// ─── phase3AddLaunchdarklyMcp ────────────────────────────────────────────────
 
 describe("phase3AddLaunchdarklyMcp", () => {
   test("no-op without launchdarkly.token", async () => {
@@ -587,8 +537,6 @@ describe("phase3AddLaunchdarklyMcp", () => {
   });
 });
 
-// ─── phase3AddFlagsmithMcp ───────────────────────────────────────────────────
-
 describe("phase3AddFlagsmithMcp", () => {
   test("no-op without flagsmith.token", async () => {
     const vault = createMockVault();
@@ -629,8 +577,6 @@ describe("phase3AddFlagsmithMcp", () => {
     expect(spec.env?.["FLAGSMITH_API_BASE"]).toBe("https://flagsmith.internal.example.com");
   });
 });
-
-// ─── phase3AddArgocdMcp ──────────────────────────────────────────────────────
 
 describe("phase3AddArgocdMcp", () => {
   test("no-op without argocd.url + argocd.token", async () => {
@@ -693,8 +639,6 @@ describe("phase3AddArgocdMcp", () => {
   });
 });
 
-// ─── phase3AddFluxMcp ────────────────────────────────────────────────────────
-
 describe("phase3AddFluxMcp", () => {
   test("no-op without flux.api_url + flux.token", async () => {
     const vault = createMockVault();
@@ -756,8 +700,6 @@ describe("phase3AddFluxMcp", () => {
   });
 });
 
-// ─── phase3AddDbtMcp ─────────────────────────────────────────────────────────
-
 describe("phase3AddDbtMcp", () => {
   test("no-op without dbt.token", async () => {
     const vault = createMockVault();
@@ -798,8 +740,6 @@ describe("phase3AddDbtMcp", () => {
     expect(spec.env?.["DBT_API_BASE"]).toBe("https://emea.dbt.com");
   });
 });
-
-// ─── phase3AddMetabaseMcp ────────────────────────────────────────────────────
 
 describe("phase3AddMetabaseMcp", () => {
   test("no-op without metabase.url + metabase.api_key", async () => {
@@ -861,8 +801,6 @@ describe("phase3AddMetabaseMcp", () => {
     expect(spec.env?.["METABASE_URL"]).toBe("not a url");
   });
 });
-
-// ─── phase3AddSupersetMcp ────────────────────────────────────────────────────
 
 describe("phase3AddSupersetMcp", () => {
   test("no-op without any of url / username / password", async () => {
@@ -940,8 +878,6 @@ describe("phase3AddSupersetMcp", () => {
   });
 });
 
-// ─── phase3AddDatabricksMcp ──────────────────────────────────────────────────
-
 describe("phase3AddDatabricksMcp", () => {
   test("no-op without databricks.host + databricks.token", async () => {
     const vault = createMockVault();
@@ -1002,8 +938,6 @@ describe("phase3AddDatabricksMcp", () => {
     expect(spec.env?.["DATABRICKS_HOST"]).toBe("not a url");
   });
 });
-
-// ─── phase3AddMlflowMcp ──────────────────────────────────────────────────────
 
 describe("phase3AddMlflowMcp", () => {
   test("no-op without mlflow.host + mlflow.token", async () => {
@@ -1066,8 +1000,6 @@ describe("phase3AddMlflowMcp", () => {
   });
 });
 
-// ─── phase3AddVercelMcp ──────────────────────────────────────────────────────
-
 describe("phase3AddVercelMcp", () => {
   test("no-op without vercel.token", async () => {
     const vault = createMockVault();
@@ -1109,8 +1041,6 @@ describe("phase3AddVercelMcp", () => {
   });
 });
 
-// ─── phase3AddNetlifyMcp ─────────────────────────────────────────────────────
-
 describe("phase3AddNetlifyMcp", () => {
   test("no-op without netlify.token", async () => {
     const vault = createMockVault();
@@ -1139,8 +1069,6 @@ describe("phase3AddNetlifyMcp", () => {
     expect(spec.env?.["NETLIFY_TOKEN"]).toBe("nf-test-token");
   });
 });
-
-// ─── phase3AddStripeMcp ──────────────────────────────────────────────────────
 
 describe("phase3AddStripeMcp", () => {
   test("no-op without stripe.api_key", async () => {
@@ -1171,8 +1099,6 @@ describe("phase3AddStripeMcp", () => {
   });
 });
 
-// ─── phase3AddMercuryMcp ─────────────────────────────────────────────────────
-
 describe("phase3AddMercuryMcp", () => {
   test("no-op without mercury.token", async () => {
     const vault = createMockVault();
@@ -1201,8 +1127,6 @@ describe("phase3AddMercuryMcp", () => {
     expect(spec.env?.["MERCURY_TOKEN"]).toBe("mercury_test_token");
   });
 });
-
-// ─── phase3AddReadwiseMcp ────────────────────────────────────────────────────
 
 describe("phase3AddReadwiseMcp", () => {
   test("no-op without readwise.token", async () => {
@@ -1233,8 +1157,6 @@ describe("phase3AddReadwiseMcp", () => {
   });
 });
 
-// ─── phase3AddRaindropMcp ────────────────────────────────────────────────────
-
 describe("phase3AddRaindropMcp", () => {
   test("no-op without raindrop.token", async () => {
     const vault = createMockVault();
@@ -1264,8 +1186,6 @@ describe("phase3AddRaindropMcp", () => {
   });
 });
 
-// ─── phase3AddIntercomMcp ────────────────────────────────────────────────────
-
 describe("phase3AddIntercomMcp", () => {
   test("no-op without intercom.token", async () => {
     const vault = createMockVault();
@@ -1294,8 +1214,6 @@ describe("phase3AddIntercomMcp", () => {
     expect(spec.env?.["INTERCOM_TOKEN"]).toBe("intercom_test_token");
   });
 });
-
-// ─── phase3AddZendeskMcp ─────────────────────────────────────────────────────
 
 describe("phase3AddZendeskMcp", () => {
   test("no-op without any of url / email / api_token", async () => {
@@ -1373,8 +1291,6 @@ describe("phase3AddZendeskMcp", () => {
   });
 });
 
-// ─── phase3AddLeverMcp ───────────────────────────────────────────────────────
-
 describe("phase3AddLeverMcp", () => {
   test("no-op without lever.api_key", async () => {
     const vault = createMockVault();
@@ -1403,8 +1319,6 @@ describe("phase3AddLeverMcp", () => {
     expect(spec.env?.["LEVER_API_KEY"]).toBe("lever_test_key");
   });
 });
-
-// ─── phase3AddGreenhouseMcp ──────────────────────────────────────────────────
 
 describe("phase3AddGreenhouseMcp", () => {
   test("no-op without greenhouse.api_key", async () => {
@@ -1435,8 +1349,6 @@ describe("phase3AddGreenhouseMcp", () => {
   });
 });
 
-// ─── phase3AddPipedriveMcp ───────────────────────────────────────────────────
-
 describe("phase3AddPipedriveMcp", () => {
   test("no-op without pipedrive.token", async () => {
     const vault = createMockVault();
@@ -1465,8 +1377,6 @@ describe("phase3AddPipedriveMcp", () => {
     expect(spec.env?.["PIPEDRIVE_TOKEN"]).toBe("pipedrive_test_token");
   });
 });
-
-// ─── phase3AddStackoverflowMcp ───────────────────────────────────────────────
 
 describe("phase3AddStackoverflowMcp", () => {
   test("no-op without either stackoverflow key", async () => {
@@ -1516,8 +1426,6 @@ describe("phase3AddStackoverflowMcp", () => {
   });
 });
 
-// ─── buildPhase3Servers (aggregator) ────────────────────────────────────────
-
 describe("buildPhase3Servers", () => {
   test("returns an empty map when the vault has no Phase-3 creds", async () => {
     const vault = createMockVault();
@@ -1547,7 +1455,6 @@ describe("buildPhase3Servers", () => {
     expect(Object.keys(servers).sort()).toEqual(
       ["aws", "azure", "datadog", "gcp", "grafana", "iac", "newrelic", "sentry", "snyk"].sort(),
     );
-    // Each server should be wrapped via the sandbox wrapper.
     for (const id of Object.keys(servers)) {
       expectSandboxed(servers[id] as ServerSpec);
     }
@@ -1555,7 +1462,6 @@ describe("buildPhase3Servers", () => {
 
   test("skips services whose preconditions fail (partial seed)", async () => {
     const vault = createMockVault();
-    // Only AWS minimum and GCP — others must not appear.
     await vault.set("aws.access_key_id", "AKIA0");
     await vault.set("aws.secret_access_key", "S0");
     await vault.set("aws.default_region", "us-east-1");

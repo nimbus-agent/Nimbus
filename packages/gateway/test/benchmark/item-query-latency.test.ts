@@ -1,8 +1,3 @@
-/**
- * Soft benchmark for structured item list queries (Phase 3.5 roadmap: query latency budget).
- * Not enforced in default CI — set NIMBUS_RUN_QUERY_BENCH=1 to enable the timing assertion.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 

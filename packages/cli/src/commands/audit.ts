@@ -43,10 +43,6 @@ async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runAudit(args)` and the
- * colocated `audit.test.ts`. Do not call from other command files.
- */
 export async function runAuditList(client: IPCClient, limit: number): Promise<void> {
   const rows = await client.call<AuditRow[]>("audit.list", { limit });
   console.log(`${"Timestamp".padEnd(20)} ${"Action".padEnd(22)} ${"Status".padEnd(14)} Reason`);
@@ -69,10 +65,6 @@ export async function runAuditList(client: IPCClient, limit: number): Promise<vo
   }
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runAudit(args)` and the
- * colocated `audit.test.ts`. Do not call from other command files.
- */
 export async function runAuditVerify(client: IPCClient, full: boolean): Promise<void> {
   const out = await client.call<{
     ok: boolean;
@@ -91,13 +83,6 @@ export async function runAuditVerify(client: IPCClient, full: boolean): Promise<
   }
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runAudit(args)` and the
- * colocated `audit.test.ts`. Do not call from other command files.
- *
- * `writeFile` is a seam for tests so the dispatcher can pass `Bun.write`
- * in production and a no-op stub in tests.
- */
 export async function runAuditExport(
   client: IPCClient,
   outPath: string,

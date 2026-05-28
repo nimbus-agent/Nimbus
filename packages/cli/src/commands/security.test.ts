@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -109,7 +109,6 @@ describe("formatScanPretty", () => {
 
   test("emits ANSI color codes when tty=true AND noColor=false", () => {
     const out = formatScanPretty(RESULT_FIXTURE, { tty: true, noColor: false });
-    // Yellow (skipped) + red (pattern_name) escapes should appear.
     expect(out.includes("\x1b[33m")).toBe(true);
     expect(out.includes("\x1b[31m")).toBe(true);
   });
@@ -128,10 +127,6 @@ describe("formatScanPretty", () => {
     expect(out).toContain("v1 pattern set");
   });
 });
-
-// ----------------------------------------------------------------------
-// runSecurity — dispatcher.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];

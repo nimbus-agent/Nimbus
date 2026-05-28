@@ -15,11 +15,6 @@ const SERVICE_ID = "zoom";
 const CURSOR_PREFIX = "nimbus-zoom1:";
 const BASE = "https://api.zoom.us";
 const PAGE_SIZE = 100;
-// MAX_PAGES * PAGE_SIZE = 2 000 meetings/cycle. Matches every other Tier-1
-// connector's cap; the median Zoom user has well under that. Heavy users
-// (years of recurring meetings) would see truncation here — raising the cap
-// is a deliberate follow-up paired with cursor-persistence across cycles,
-// not a v1 change.
 const MAX_PAGES = 20;
 
 type ZoomCursorV1 = { pass: number };
@@ -50,7 +45,6 @@ function meetingsPath(pageToken: string): string {
 
 async function zoomGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Bearer auth — the token is never logged. Path-only logging on error.
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
@@ -92,13 +86,6 @@ function upsertMeetings(ctx: SyncContext, meetings: readonly unknown[], now: num
   return upserted;
 }
 
-/**
- * Walk A only — `GET /v2/users/me/meetings?type=scheduled&page_size=100`,
- * following `next_page_token`, capped at MAX_PAGES. Walk B (recordings +
- * transcripts) is PR-3. The first-page http/parse error path maps to the
- * pass-cursor-empty result so a transient Zoom outage doesn't lose the
- * cursor; later-page errors break and keep whatever was already upserted.
- */
 export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,

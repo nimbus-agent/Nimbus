@@ -37,7 +37,7 @@ describe("connector reindex", () => {
 
   test("deepen leaves existing rows in place and does not write a prune audit entry", async () => {
     const idx = makeIdx();
-    seed(idx, "github", null); // metadata-only existing item
+    seed(idx, "github", null);
     const result = await reindexConnector({ index: idx, service: "github", depth: "full" });
     expect(result.itemsAffected).toBe(0);
     const audit = idx.listAuditWithChain(10);

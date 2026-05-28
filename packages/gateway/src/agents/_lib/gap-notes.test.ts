@@ -10,15 +10,9 @@ import {
 
 function freshDb(): Database {
   const db = new Database(":memory:");
-  // Use the canonical helper — matches every existing scenario test's pattern.
-  // LocalIndex.ensureSchema applies all migrations onto :memory: and gives us
-  // the real table names (item / person / graph_entity / graph_relation).
-  // F5: do not use ad-hoc CREATE TABLE — those table names will not match
-  // what the production code expects.
   return db;
 }
 
-// Helper: applied at the top of each test that needs a real schema.
 import { LocalIndex } from "../../index/local-index.ts";
 
 function withSchema(db: Database): Database {
@@ -37,8 +31,6 @@ describe("detectEmptyIndex", () => {
 
   test("returns null when item has rows", () => {
     const db = withSchema(freshDb());
-    // Use a minimal upsert via the established item-store helper if available,
-    // otherwise raw INSERT against the real columns from unified-item-v3-sql.ts.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES ('github:x', 'github', 'pr', 'x', 't', 0, 0)`,
@@ -57,10 +49,6 @@ describe("detectMissingConnector", () => {
 
   test("returns null when the service is registered", () => {
     const db = withSchema(freshDb());
-    // F11 — sync_state's PK is connector_id (not `service`); see
-    // packages/gateway/src/index/schema-sql.ts. local-index.ts passes the
-    // serviceId as connector_id throughout, so the column doubles as the
-    // service identifier.
     db.run("INSERT INTO sync_state (connector_id) VALUES ('pagerduty')");
     expect(detectMissingConnector(db, "pagerduty")).toBeNull();
   });
@@ -117,7 +105,6 @@ describe("detectMissingRelationEmit", () => {
 
   test("returns null when graph_relation has at least one row of the type", () => {
     const db = withSchema(freshDb());
-    // Seed: two graph_entity rows + a graph_relation linking them.
     db.run(
       `INSERT INTO graph_entity (id, type, external_id, label, service)
        VALUES ('e1', 'pr', 'r/x#1', 'PR x', 'github'),

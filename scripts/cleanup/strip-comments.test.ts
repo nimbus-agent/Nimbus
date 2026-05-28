@@ -16,6 +16,14 @@ describe("shouldPreserveComment", () => {
   test("preserves cross-platform-ok", () => {
     expect(shouldPreserveComment("// cross-platform-ok")).toBe(true);
   });
+  test("preserves audit-ignore-next-line", () => {
+    expect(shouldPreserveComment("// audit-ignore-next-line D11-vault-key")).toBe(true);
+  });
+  test("preserves triple-slash references", () => {
+    expect(shouldPreserveComment('/// <reference types="vite/client" />')).toBe(true);
+    expect(shouldPreserveComment('/// <reference types="bun-types" />')).toBe(true);
+    expect(shouldPreserveComment('/// <reference path="content.d.ts" />')).toBe(true);
+  });
   test("does not preserve regular comments", () => {
     expect(shouldPreserveComment("// just a comment")).toBe(false);
     expect(shouldPreserveComment("/* block */")).toBe(false);

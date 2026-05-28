@@ -12,7 +12,7 @@ function makeCtx(db: Database) {
 
 function freshDb(): Database {
   const db = new Database(":memory:");
-  LocalIndex.ensureSchema(db); // F5 — canonical schema setup.
+  LocalIndex.ensureSchema(db);
   return db;
 }
 
@@ -57,7 +57,6 @@ describe("dispatchAgentsRpc", () => {
   test("agents.expert eventually emits expert.briefReady", async () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx);
-    // Wait for the background coroutine to settle.
     await new Promise((r) => setTimeout(r, 50));
     const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;
     const briefReady = calls.find((c) => c[0] === "expert.briefReady");
@@ -176,9 +175,6 @@ describe("dispatchAgentsRpc — agents.catchup", () => {
   test("agents.catchup eventually emits catchup.briefReady", async () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.catchup", {}, ctx);
-    // catchup spawns `git config user.email` for self-person resolution and
-    // runs five parallel sub-agents; poll up to 5 s rather than racing a
-    // fixed-time setTimeout to keep this test deterministic when contended.
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
       const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;

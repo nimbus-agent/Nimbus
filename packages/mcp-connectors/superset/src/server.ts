@@ -1,20 +1,3 @@
-/**
- * nimbus-mcp-superset — Apache Superset API MCP server (read-only).
- *
- * Credentials arrive as SUPERSET_URL + SUPERSET_USERNAME + SUPERSET_PASSWORD
- * env, injected at spawn time (all three required — Superset has no universal
- * SaaS host and no static API key). The connector authenticates with
- * `POST /api/v1/security/login` (`{ username, password, provider: "db",
- * refresh: true }`) to obtain a JWT `access_token`, caches it for the process
- * lifetime, and sends `Authorization: Bearer <access_token>` on every
- * subsequent GET. Requests go to `${url}/api/v1/...`.
- *
- * Superset's list endpoint paginates via a Rison `q` query param and wraps
- * results in a `{ result: [...], count: N }` envelope.
- *
- * v1 indexes dashboards only — charts, datasets, saved queries, and write
- * tools are a deferred follow-up.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -45,7 +28,6 @@ function requiredEnv(name: string): string {
   return v;
 }
 
-// JWT access token, cached for the process lifetime after the first login.
 let cachedToken: string | null = null;
 
 async function login(): Promise<string> {
@@ -88,7 +70,6 @@ async function supersetGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the dashboard array out of a Superset list response (`.result`, else a bare array). */
 function dashboardsFrom(root: unknown): unknown[] {
   const result = (root as { result?: unknown } | null)?.result;
   if (Array.isArray(result)) {
@@ -97,9 +78,7 @@ function dashboardsFrom(root: unknown): unknown[] {
   return Array.isArray(root) ? root : [];
 }
 
-/** Build the Rison `q` page query string for `/api/v1/dashboard/`. */
 function dashboardListPath(page: number, pageSize: number): string {
-  // Rison literal — encode the whole `(page:N,page_size:M)` term.
   const q = encodeURIComponent(`(page:${String(page)},page_size:${String(pageSize)})`);
   return `/api/v1/dashboard/?q=${q}`;
 }

@@ -1,14 +1,10 @@
 #!/usr/bin/env bun
-// D4: raw LOC per source file in packages/*/src/**, excluding tests.
-// Sorted descending by LOC. Default threshold for "miss": > 800.
-// Spec rationale: raw LOC, comments and blanks count.
 
 import { auditOutputPath, iterateSourceFiles } from "./lib.ts";
 
 export function rawLoc(src: string): number {
   if (src.length === 0) return 0;
   const newlines = (src.match(/\n/g) ?? []).length;
-  // If the file ends with a newline, the count is newlines; otherwise newlines + 1.
   return src.endsWith("\n") ? newlines : newlines + 1;
 }
 

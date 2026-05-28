@@ -1,30 +1,3 @@
-/**
- * Pure mapping from a Mercury `GET /api/v1/accounts` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `mercury-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "mercury", type = "account"` rows — a single item type.
- * `external_id = <account id>` (verbatim). The conceptual item identity is
- * `mercury:account`; the `item.id` ends up `mercury:<accountId>`. The `account`
- * type is sparse/structured (id, name, status, balances), so it stays on local
- * MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * IMPORTANT: Mercury's `createdAt` is an ISO-8601 STRING (e.g.
- * `"2024-03-01T12:00:00.000Z"`), like Netlify's timestamps and UNLIKE the
- * epoch-ms / epoch-seconds number APIs. Parse it to epoch-ms with
- * {@link parseIsoMs} — never pass the ISO string through verbatim, and never
- * treat it as epoch seconds.
- *
- * SENSITIVE: the full `accountNumber` is NEVER stored. Only the last 4 digits
- * are surfaced as `account_number_last4` via {@link last4}. Balances
- * (`availableBalance`, `currentBalance`) are USD MAJOR units — Mercury returns
- * dollars as a number, NOT cents — and are passed through verbatim.
- *
- * Mercury accounts have no stable per-account public URL (same as the Flux "no
- * web UI" pattern), so `canonical_url` / `url` are always null.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface MercuryMappingContext {
@@ -48,10 +21,6 @@ function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-/**
- * Last 4 characters of an account number, or null when absent. Mercury account
- * numbers are sensitive — only the last 4 digits are ever stored.
- */
 export function last4(accountNumber: string | null): string | null {
   if (accountNumber === null || accountNumber === "") {
     return null;
@@ -85,14 +54,10 @@ export function mapMercuryAccountToItem(
 
   const createdAt = parseIsoMs(row["createdAt"]);
 
-  // Mercury accounts have no stable per-account public URL — canonical/url null.
   const canonicalUrl: string | null = null;
 
-  // title: account `name`; fall back to `Account <id>`.
   const title = name !== null && name !== "" ? name : `Account ${id}`;
 
-  // bodyPreview: `<kind||type> — <currentBalance> USD` when a balance is
-  // present, else just the kind/type label, else the title.
   const label = kind ?? type ?? "";
   const bodyPreview =
     currentBalance !== null

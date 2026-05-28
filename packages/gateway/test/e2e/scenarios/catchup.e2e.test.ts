@@ -1,12 +1,3 @@
-/**
- * Phase 5 T3 PR 3 — `nimbus catchup` end-to-end (in-process).
- *
- * Seeds two services with different authorship density for a single
- * self-person. The roadmap acceptance criterion is: the brief's first
- * section must be the higher-activity service. Also asserts the brief
- * shape, latency budget (<15 s), and the structural HITL-free contract.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { isCatchupBrief } from "../../../src/agents/_lib/findings.ts";
@@ -30,8 +21,6 @@ function seedTwoServices(db: Database): void {
     linked: false,
     metadata: {},
   });
-  // GitHub: 8 PRs authored in the last 90 days → service is "owned".
-  // Window: each PR was modified within the last 3 days.
   const stmt = db.prepare(
     "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned, author_id) " +
       "VALUES (?, ?, ?, ?, ?, '', ?, ?, 0, ?)",
@@ -48,8 +37,6 @@ function seedTwoServices(db: Database): void {
       "p-self",
     );
   }
-  // Linear: 1 issue authored in the last 90 days → service is NOT "owned"
-  // (threshold is ≥5). Window has 1 item.
   stmt.run("lin:1", "linear", "issue", "lin-1", "linear issue 1", now - 1_000, now, "p-self");
 }
 
@@ -73,9 +60,7 @@ describe("nimbus catchup (e2e, in-process)", () => {
     expect(isCatchupBrief(brief)).toBe(true);
     expect(brief.selfPersonId).toBe("p-self");
     expect(brief.sections.length).toBeGreaterThan(0);
-    // Acceptance criterion: github ranks first because it has 8 items vs linear's 1.
     expect(brief.sections[0]?.serviceId).toBe("github");
-    // Owned-service signal lifted github items above the default-only floor.
     expect(brief.involvement.ownedServices).toContain("github");
     expect(brief.involvement.ownedServices).not.toContain("linear");
   });

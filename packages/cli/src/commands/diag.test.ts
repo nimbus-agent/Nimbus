@@ -1,7 +1,6 @@
-// packages/cli/src/commands/diag.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -117,7 +116,6 @@ describe("runDiag (slow-queries)", () => {
     await runDiag(["slow-queries", "--since", "1h"]);
     const after = Date.now();
     const params = ipc.calls[0]?.params as { limit: number; sinceMs: number };
-    // sinceMs is Date.now() - <window>; for --since 1h that's roughly now - 3_600_000.
     const expectedMin = before - 3_600_000;
     const expectedMax = after - 3_600_000;
     expect(params.sinceMs).toBeGreaterThanOrEqual(expectedMin);

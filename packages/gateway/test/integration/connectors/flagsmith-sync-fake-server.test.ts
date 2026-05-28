@@ -48,7 +48,6 @@ function startFakeFs(config: FakeFsConfig): FakeFs {
         search: u.searchParams,
       });
       if (u.pathname === "/api/v1/projects/") {
-        // Bare array response (not wrapped).
         return Response.json(config.projects);
       }
       const tagsMatch = /^\/api\/v1\/projects\/([^/]+)\/tags\/$/.exec(u.pathname);
@@ -113,7 +112,6 @@ function startHarness(config: FakeFsConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         flagsmith: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -160,7 +158,6 @@ describe("flagsmith-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-flagsmith1:")).toBe(true);
 
-    // Authorization is exactly `Token <token>`.
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("Token fs-test-token");
     }

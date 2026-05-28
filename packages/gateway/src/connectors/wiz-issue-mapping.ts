@@ -1,16 +1,3 @@
-/**
- * Pure mapping from a Wiz GraphQL `issue` node to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `wiz-sync.ts` so the GraphQL path and the indexing path can be
- * tested independently.
- *
- * The Wiz `Issue` GraphQL type carries the rule that produced it
- * (`sourceRule`), the affected cloud entity (`entity`), and zero or
- * more `projects` the issue is scoped to. We surface those plus
- * severity / status / type / description / remediation / timestamps
- * — same shape Phase 5 roadmap calls out for `cloud_finding`.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
@@ -26,7 +13,6 @@ type Status = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "REJECTED";
 const STATUSES: ReadonlySet<string> = new Set(["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"]);
 
 export interface WizMappingContext {
-  /** API base URL — used to construct canonical issue URLs. */
   readonly apiBaseUrl: string;
   readonly syncedAt: number;
 }
@@ -45,11 +31,6 @@ export interface WizMappedRow {
 }
 
 export function issueUrl(apiBaseUrl: string, issueId: string): string {
-  // Wiz UI hosts at the auth-sibling hostname (`app.wiz.io`). The API
-  // URL we're given is `https://api[.region].app.wiz.io/graphql` — strip
-  // the leading `api.` segment (or `api.<region>.` segment) and the
-  // trailing `/graphql` to derive the user-facing host. Falls back to
-  // the API URL itself if the prefix doesn't match.
   try {
     const u = new URL(apiBaseUrl);
     const host = u.hostname.startsWith("api.") ? u.hostname.slice(4) : u.hostname;

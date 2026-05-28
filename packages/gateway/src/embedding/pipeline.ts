@@ -16,9 +16,6 @@ export type SqliteEmbeddingPipelineOptions = {
   chunkOptions?: Partial<ChunkOptions>;
 };
 
-/**
- * Writes embeddings to `vec_items_384` + `embedding_chunk` for the local index (schema v6+).
- */
 export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
   private readonly db: Database;
   private readonly embedder: Embedder;
@@ -47,7 +44,6 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     return this.embedder.dims;
   }
 
-  /** Embed arbitrary text (e.g. search query) using the same model as item chunks. */
   async embedTexts(texts: string[]): Promise<Float32Array[]> {
     return this.embedder.embed(texts);
   }
@@ -155,14 +151,6 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     }
   }
 
-  /**
-   * Routing-aware backfill: same `WHERE NOT EXISTS … model = ?` semantics as
-   * `backfillAll` plus a fixed-set membership filter on `(service||':'||type)`.
-   *
-   * `scope.in` includes items whose routing key IS in the set; `scope.notIn`
-   * includes items whose routing key is NOT in the set. Used by
-   * `RoutingEmbeddingPipeline` to scope each inner pipeline to its slice.
-   */
   async backfillForRoutingKeys(
     scope: { in: readonly string[] } | { notIn: readonly string[] },
     onProgress?: (done: number, total: number) => void,
@@ -170,8 +158,6 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     const model = this.embedder.model;
     const keys = "in" in scope ? scope.in : scope.notIn;
     if (keys.length === 0) {
-      // Empty `in` scope is a no-op; empty `notIn` scope means "match everything",
-      // which is identical to backfillAll — fall through to it.
       if ("in" in scope) {
         return;
       }

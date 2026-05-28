@@ -5,12 +5,6 @@ import type { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import { isProseHeavy, PROSE_HEAVY_TYPES } from "./routing.ts";
 import type { EmbeddingPipeline, IndexedItem } from "./types.ts";
 
-/**
- * Routes each item to the local (MiniLM 384) or OpenAI (1536) inner pipeline
- * based on `(service, type)` membership in `PROSE_HEAVY_TYPES`. Implements
- * `EmbeddingPipeline` so the lazy / worker runtimes treat it as a drop-in
- * replacement for `SqliteEmbeddingPipeline`.
- */
 export class RoutingEmbeddingPipeline implements EmbeddingPipeline {
   constructor(
     private readonly db: Database,
@@ -24,8 +18,6 @@ export class RoutingEmbeddingPipeline implements EmbeddingPipeline {
   }
 
   async deleteItemEmbeddings(itemId: string): Promise<void> {
-    // The dim-aware delete triggers on `embedding_chunk` (V30) fan out to
-    // vec_items_384 / vec_items_1536 automatically; one delete is enough.
     dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);
   }
 

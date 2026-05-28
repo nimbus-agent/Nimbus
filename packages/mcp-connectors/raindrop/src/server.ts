@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-raindrop — Raindrop.io REST API MCP server (read-only).
- * Credentials arrive as RAINDROP_TOKEN env, injected at spawn time. Raindrop
- * uses Bearer auth: `Authorization: Bearer <token>` (a Raindrop.io test token
- * or OAuth access token; never logged). The API host is fixed at
- * api.raindrop.io (no host override). v1 indexes bookmarks only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

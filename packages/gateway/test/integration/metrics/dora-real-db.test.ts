@@ -1,9 +1,3 @@
-/**
- * Integration test: DORA calculators against a real SQLite DB seeded with
- * a 30-day synthetic `payment-service` fixture. Asserts the four metrics
- * land within ±5 % of their hand-computed values.
- */
-
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -66,8 +60,6 @@ describe("DORA real-db integration", () => {
       "mttr",
     ] as const;
 
-    // lead_time_for_changes.sample = 18: 22 merged PRs → minus 3 revert-labeled → minus 1 extra PR
-    // whose same-SHA deploy precedes the PR merge → 18 surviving lead-time samples.
     for (const key of keys) {
       const got = result.metrics[key];
       const want = expected[key];

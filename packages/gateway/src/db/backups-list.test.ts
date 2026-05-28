@@ -11,7 +11,6 @@ function tmp(): string {
 describe("listMigrationBackups", () => {
   test("returns empty array when backups dir does not exist", () => {
     const dataDir = tmp();
-    // dataDir exists but has no "backups" subdirectory
     const result = listMigrationBackups(dataDir);
     expect(result).toEqual([]);
   });
@@ -28,13 +27,11 @@ describe("listMigrationBackups", () => {
     const backupsDir = join(dataDir, "backups");
     mkdirSync(backupsDir);
 
-    // Create two valid backup files
     const older = join(backupsDir, "pre-migration-V28-older.db.gz");
     const newer = join(backupsDir, "pre-migration-V29-newer.db.gz");
     writeFileSync(older, "older-content");
     writeFileSync(newer, "newer-content");
 
-    // Set explicit mtime values at least 10 ms apart to avoid races
     const olderMtime = new Date(1700000000000);
     const newerMtime = new Date(1700000001000);
     utimesSync(older, olderMtime, olderMtime);
@@ -43,7 +40,6 @@ describe("listMigrationBackups", () => {
     const result = listMigrationBackups(dataDir);
 
     expect(result).toHaveLength(2);
-    // Sorted descending by mtimeMs: newer first
     expect(result[0]?.filename).toBe("pre-migration-V29-newer.db.gz");
     expect(result[1]?.filename).toBe("pre-migration-V28-older.db.gz");
     expect(result[0]?.mtimeMs ?? 0).toBeGreaterThan(result[1]?.mtimeMs ?? 0);
@@ -54,18 +50,14 @@ describe("listMigrationBackups", () => {
     const backupsDir = join(dataDir, "backups");
     mkdirSync(backupsDir);
 
-    // Valid backup
     const valid = join(backupsDir, "pre-migration-V30-valid.db.gz");
     writeFileSync(valid, "valid");
     utimesSync(valid, new Date(1700000002000), new Date(1700000002000));
 
-    // Malformed: correct suffix but wrong prefix
     writeFileSync(join(backupsDir, "snapshot-V30.db.gz"), "bad-prefix");
 
-    // Malformed: correct prefix but wrong suffix
     writeFileSync(join(backupsDir, "pre-migration-V30-noext.db"), "bad-suffix");
 
-    // Malformed: neither prefix nor suffix
     writeFileSync(join(backupsDir, "random.txt"), "random");
 
     const result = listMigrationBackups(dataDir);

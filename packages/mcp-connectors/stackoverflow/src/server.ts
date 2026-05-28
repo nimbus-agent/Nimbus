@@ -1,13 +1,3 @@
-/**
- * nimbus-mcp-stackoverflow — Stack Overflow for Teams v3 REST API MCP server
- * (read-only). Credentials arrive as STACKOVERFLOW_TOKEN + STACKOVERFLOW_TEAM
- * env, injected at spawn time. Stack Overflow for Teams uses Bearer auth:
- * `Authorization: Bearer <token>` (a Stack Overflow for Teams Personal Access
- * Token; never logged) plus the `Accept: application/json` request header. The
- * API host is fixed at api.stackoverflowteams.com (the v3 API — no host
- * override); the team slug is URL-encoded into the request path. v1 indexes
- * questions only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -49,7 +39,6 @@ async function stackOverflowGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** `/v3/teams/<team>/questions` — the team slug is URL-encoded into the path. */
 function questionsBasePath(): string {
   return `/v3/teams/${encodeURIComponent(teamSlug())}/questions`;
 }

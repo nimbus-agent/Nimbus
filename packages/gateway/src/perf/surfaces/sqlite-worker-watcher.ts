@@ -1,12 +1,4 @@
 #!/usr/bin/env bun
-/**
- * S10 watcher writer Worker — inserts watcher_event rows via the
- * production `dbRun` wrapper. Pre-seeds one watcher row at init so the
- * `watcher_event.watcher_id → watcher.id` FK constraint passes (FKs
- * are turned ON by `LocalIndex.ensureSchema`).
- *
- * INSERT shape matches `automation/watcher-store.ts:99-103`.
- */
 
 import { Database } from "bun:sqlite";
 

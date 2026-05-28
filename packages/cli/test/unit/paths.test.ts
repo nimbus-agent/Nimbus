@@ -31,7 +31,6 @@ describe("resolveSocketPath", () => {
     process.env["NIMBUS_GATEWAY_SOCKET"] = "";
     try {
       const p = resolveSocketPath();
-      // Must not be the empty string — falls back to platform default
       expect(p.length).toBeGreaterThan(0);
     } finally {
       if (prev === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];

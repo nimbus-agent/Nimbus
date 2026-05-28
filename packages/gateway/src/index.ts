@@ -1,10 +1,3 @@
-/**
- * Nimbus Gateway — Headless Bun process
- *
- * Startup: PAL → SQLite index → MCP filesystem mesh → IPC (agent.invoke → runAsk).
- * See architecture.md §Nimbus Gateway: Process Lifecycle.
- */
-
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 
@@ -18,15 +11,6 @@ import { createPlatformServices } from "./platform/index.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
 import { GATEWAY_VERSION } from "./version.ts";
 
-/**
- * Emit the T2 PR 1 "degraded sandbox" warning to (a) the structured logger
- * (always) and (b) stderr as a multi-line banner (TTY-only — TTY-gated so
- * CI logs and piped consumers are not polluted).
- *
- * Always-emitted log line shape is asserted in
- * `packages/gateway/src/security-invariants.test.ts` and parsed by the
- * release smoke checklist.
- */
 function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
   if (runner.isFullyActive()) return;
   const reason = runner.degradedReason() ?? "unknown";
@@ -52,15 +36,10 @@ function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
 }
 
 async function main(): Promise<void> {
-  // Plain stdout writes (not pino) so the CLI's progress tail surfaces them
-  // regardless of NIMBUS_LOG_LEVEL.
   process.stdout.write("[gateway] initializing platform services\n");
   const platform = await createPlatformServices();
   process.stdout.write("[gateway] platform services ready; wiring engine\n");
   const mcp = platform.connectorMesh;
-  // S8-F3 / chain C4 — the planner-side dispatcher consumes the BARE tool map
-  // (structured results) so ToolExecutor / HITL gate see normal objects.
-  // The Mastra-visible mesh.listTools() returns envelope-wrapped strings.
   const dispatcherClient: McpToolListingClient = {
     listTools: () => mcp.listToolsForDispatcher(),
     getToolsEpoch: () => mcp.getToolsEpoch(),
@@ -144,11 +123,6 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
 
-  // T2 PR 1 (Task 20) — surface the per-platform sandbox posture before
-  // accepting IPC connections so operators see the banner alongside the
-  // "binding IPC" / "ready" log lines. The structured `logger.warn` line is
-  // always emitted on a degraded runner; the stderr multi-line banner is
-  // TTY-gated to keep CI logs and piped consumers clean.
   emitSandboxPostureBannerIfDegraded(platform.sandboxRunner);
 
   process.stdout.write("[gateway] binding IPC\n");

@@ -1,9 +1,3 @@
-/**
- * Maps each Outlook MCP tool to minimum Microsoft Graph *delegated* permissions.
- * When `MICROSOFT_OAUTH_SCOPES` is set (space-separated), only tools whose required
- * scopes are satisfied are registered. When unset, all tools register (backward compatible).
- */
-
 const OUTLOOK_TOOL_MIN_SCOPES: Readonly<Record<string, readonly string[]>> = {
   outlook_mail_folders: ["Mail.Read"],
   outlook_mail_list: ["Mail.Read"],
@@ -30,7 +24,6 @@ function scopeSatisfied(granted: ReadonlySet<string>, required: string): boolean
   return false;
 }
 
-/** @internal exported for tests */
 export function outlookToolAllowed(toolId: string, grantedScopes: readonly string[]): boolean {
   const reqs = OUTLOOK_TOOL_MIN_SCOPES[toolId];
   if (reqs === undefined) {
@@ -40,10 +33,6 @@ export function outlookToolAllowed(toolId: string, grantedScopes: readonly strin
   return reqs.every((r) => scopeSatisfied(g, r));
 }
 
-/**
- * Returns `undefined` when the env var is absent — caller should register all tools.
- * Empty or whitespace-only string is treated as `undefined` (register all).
- */
 export function parseMicrosoftOAuthScopesFromEnv(): string[] | undefined {
   const raw = process.env["MICROSOFT_OAUTH_SCOPES"];
   if (raw === undefined) {

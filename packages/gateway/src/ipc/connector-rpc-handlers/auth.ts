@@ -599,8 +599,6 @@ async function connectorAuthOAuthPkce(
     redirectPort === undefined ? merged : { ...merged, redirectPort };
   const tokens = await runPKCEFlow(pkceFlowInput);
 
-  // Mirror the token to the per-service vault key so each connector reads
-  // only its own key (scope isolation).
   let sharedKey: string | undefined;
   if (profile.provider === "google") {
     sharedKey = sharedOAuthKey("google");

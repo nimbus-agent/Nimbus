@@ -16,7 +16,6 @@ import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ServerCtx } from "./context.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
-// File-private — only used by buildWorkflowRunContext below.
 function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key: string): string {
   if (rec === undefined) {
     throw new RpcMethodError(-32602, `Missing or invalid ${key}`);
@@ -28,7 +27,6 @@ function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key:
   return v.trim();
 }
 
-// File-private — only used by buildWorkflowRunContext below.
 function parseOptionalString(
   rec: Record<string, unknown> | undefined,
   key: string,
@@ -66,10 +64,6 @@ export async function dispatchAgentInvoke(
   const agentRaw = rec?.["agent"];
   const agent =
     typeof agentRaw === "string" && agentRaw.trim() !== "" ? agentRaw.trim() : undefined;
-  // Capture-once: read the handler at the same point the original closure read
-  // it, then use the local `handler` for the rest of the call. Re-reading
-  // ctx.getAgentInvokeHandler() inside the async block would let setter mutations
-  // affect a call mid-flight (regression).
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
@@ -160,7 +154,6 @@ export async function dispatchWorkflowRunRpc(
   if (ctx.options.localIndex === undefined) {
     throw new RpcMethodError(-32603, "Local index is not available");
   }
-  // Capture-once (same rationale as dispatchAgentInvoke).
   const handler = ctx.getWorkflowRunHandler();
   if (handler === undefined) {
     throw new RpcMethodError(-32603, "Workflow runner is not configured");
@@ -273,9 +266,6 @@ export function dispatchEngineAskStream(
       ? sessionIdRaw.trim()
       : undefined;
 
-  // Capture-once (same rationale as dispatchAgentInvoke). The factory's
-  // agentInvokeHandler callback uses this captured local; never re-read the
-  // getter inside the async IIFE.
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     throw new RpcMethodError(-32603, "No agent handler configured for engine.askStream");
@@ -298,11 +288,6 @@ export function dispatchEngineAskStream(
         sendChunk: innerCtx.sendChunk ?? (() => undefined),
       };
       if (innerCtx.sessionId !== undefined) payload.sessionId = innerCtx.sessionId;
-      // NOTE: signal is intentionally NOT plumbed into AgentInvokeContext yet because
-      // the existing AgentInvokeContext type doesn't support it. That plumbing is a
-      // future task; for now the AbortController only short-circuits sendChunk and
-      // the post-completion done/error notification, which is enough for cancelStream
-      // (Task 9) to terminate observable behaviour.
       return await handler(payload);
     },
   });

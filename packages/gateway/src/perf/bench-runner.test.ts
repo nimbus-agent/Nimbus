@@ -46,7 +46,6 @@ describe("runBenchRunnerMain", () => {
     ]);
     expect(exitCode).toBe(0);
     const parsed = JSON.parse(historyContents.trim());
-    // run_id must be a UUID-shaped string (8-4-4-4-12 hex), not a placeholder.
     expect(parsed.run_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
@@ -96,7 +95,6 @@ describe("runBenchRunnerMain", () => {
       "--reference",
     ]);
     expect(exitCode).not.toBe(0);
-    // history.jsonl must not exist or must be empty when the gate trips.
     expect(historyContents.trim()).toBe("");
   });
 
@@ -114,8 +112,6 @@ describe("runBenchRunnerMain", () => {
     expect(exitCode).toBe(0);
     const parsed = JSON.parse(historyContents.trim());
     expect(parsed.runner).toMatch(/^gha-/);
-    // The reference-protocol-compliant field is only set on reference runs;
-    // a --gha run with --protocol-confirmed must NOT carry this field.
     expect(parsed.reference_protocol_compliant).toBeUndefined();
   });
 });

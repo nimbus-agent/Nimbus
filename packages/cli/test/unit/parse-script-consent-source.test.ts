@@ -1,12 +1,3 @@
-/**
- * Tests for parseScriptConsentSource, assertDestructiveDeleteAllowed (data.ts),
- * and selectConsentHandler (interactive-ipc-handlers.ts).
- *
- * Fix 1: parseScriptConsentSource must throw when the flag is supplied without a value.
- * Fix 2: selectConsentHandler priority dispatch + mutual-exclusivity warning.
- * Fix 3: assertDestructiveDeleteAllowed must lock in the d266faa3 guard.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,10 +8,6 @@ import {
   parseScriptConsentSource,
 } from "../../src/lib/data-helpers.ts";
 import { selectConsentHandler } from "../../src/lib/interactive-ipc-handlers.ts";
-
-// ---------------------------------------------------------------------------
-// Shared fake-client factory
-// ---------------------------------------------------------------------------
 
 interface RecordedCall {
   method: string;
@@ -55,10 +42,6 @@ function makeFakeClient(): {
 
   return { client: fake as unknown as IPCClient, fireConsent, calls, registeredMethods };
 }
-
-// ---------------------------------------------------------------------------
-// Fix 1: parseScriptConsentSource
-// ---------------------------------------------------------------------------
 
 describe("parseScriptConsentSource", () => {
   const ENV_KEY = "NIMBUS_SCRIPT_CONSENT_SOURCE";
@@ -108,10 +91,6 @@ describe("parseScriptConsentSource", () => {
     expect(result).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Fix 2: selectConsentHandler
-// ---------------------------------------------------------------------------
 
 describe("selectConsentHandler", () => {
   let tmpDir: string;
@@ -204,7 +183,6 @@ describe("selectConsentHandler", () => {
       process.stderr.write = originalStderr;
     }
 
-    // auto-approve logs to stderr, but NOT the script-override warning
     expect(stderrOutput).not.toContain("--script-consent-source overrides --yes");
     expect(stderrOutput).toContain("auto-approving");
     expect(calls).toEqual([
@@ -219,15 +197,10 @@ describe("selectConsentHandler", () => {
       selectConsentHandler(client, { yes: false });
     });
 
-    // Prompt handler registers for consent.request but doesn't fire auto-approve
     expect(warning).toBe("");
     expect(registeredMethods).toContain("consent.request");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Fix 3: assertDestructiveDeleteAllowed
-// ---------------------------------------------------------------------------
 
 describe("assertDestructiveDeleteAllowed", () => {
   test("yes:true, scriptConsentSource:undefined → no throw", () => {

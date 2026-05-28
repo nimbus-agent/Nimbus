@@ -1,7 +1,3 @@
-/**
- * Minimal Jenkins REST helpers (Classic UI). Credentials via env only.
- */
-
 import { encodeBasicAuthHeader } from "../../shared/mcp-tool-kit.ts";
 import { stripTrailingSlashes } from "../../shared/strip-trailing-slashes.ts";
 
@@ -26,7 +22,6 @@ export type JenkinsCrumb = { field: string; value: string };
 
 let crumbCache: JenkinsCrumb | null | undefined;
 
-/** Test-only: reset the module-level crumb cache so each test starts clean. */
 export function __resetJenkinsCrumbCacheForTests(): void {
   crumbCache = undefined;
 }

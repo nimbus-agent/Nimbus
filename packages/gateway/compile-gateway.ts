@@ -1,8 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Windows: `bun build --compile` cannot replace `dist/nimbus-gateway.exe` while it is running (EPERM).
- * Terminate the compiled gateway process, rotate the existing binary aside, then compile.
- */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -37,7 +33,6 @@ function rotateExistingBinaryOrThrow(): void {
   }
 }
 
-// `process.platform === "win32"` but the npm sub-package uses "windows".
 function npmOsSegment(platform: NodeJS.Platform): string {
   if (platform === "win32") return "windows";
   if (platform === "darwin") return "darwin";
@@ -50,10 +45,6 @@ function vec0Filename(platform: NodeJS.Platform): string {
   return "vec0.so";
 }
 
-// Two-step resolve: `sqlite-vec-{os}-{arch}` is an optionalDependency of sqlite-vec,
-// not of @nimbus/gateway. Under Bun's isolated install layout, createRequire rooted
-// at this file can't see it; createRequire rooted at the resolved sqlite-vec entry
-// point can — same trick upstream sqlite-vec/index.cjs uses internally.
 function resolveVec0SourceOrThrow(): string {
   const pkg = `sqlite-vec-${npmOsSegment(process.platform)}-${process.arch}`;
   const fname = vec0Filename(process.platform);

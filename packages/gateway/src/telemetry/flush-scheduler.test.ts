@@ -1,18 +1,3 @@
-/**
- * Coverage for flush-scheduler.ts — timer-driven telemetry flush.
- *
- * Timer strategy: stub `globalThis.setInterval` / `globalThis.clearInterval`
- * so tests can capture the registered callback and invoke it synchronously.
- * This avoids real wall-clock waits and exercises all branches deterministically.
- *
- * Fetch strategy: replace `globalThis.fetch` with a counting closure that
- * records call count and last request body, then restore in afterEach.
- *
- * Filesystem: real temp dirs + real TOML files so `readFileSync` / `existsSync`
- * calls behave naturally; the DB is migrated to V30 so `collectIndexMetrics`
- * finds all expected tables (item, embedding_chunk, sync_state).
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -21,13 +6,8 @@ import { join } from "node:path";
 import pino from "pino";
 import { startTelemetryFlushScheduler } from "./flush-scheduler.ts";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 type TickFn = () => void;
 
-/** Replaces globalThis.setInterval with a stub that captures the callback. */
 function installFakeTimers(): {
   capturedTick: () => TickFn | undefined;
   capturedIntervalMs: () => number | undefined;
@@ -46,7 +26,7 @@ function installFakeTimers(): {
   (globalThis as any).setInterval = (cb: TickFn, ms: number) => {
     capturedCb = cb;
     capturedMs = ms;
-    return 999_999; // fake handle id
+    return 999_999;
   };
   // biome-ignore lint/suspicious/noExplicitAny: stubbing a global
   (globalThis as any).clearInterval = clearIntervalMock;
@@ -64,7 +44,6 @@ function installFakeTimers(): {
   };
 }
 
-/** Replaces globalThis.fetch with a counting spy. */
 function installFetchSpy(opts: { ok: boolean; status?: number; throws?: string }): {
   callCount: () => number;
   lastBody: () => unknown;
@@ -107,19 +86,6 @@ type Harness = {
   cleanup: () => void;
 };
 
-/**
- * Creates a temp dir for the TOML + telemetry session files, plus an
- * in-memory DB with only the tables `collectIndexMetrics` reads.
- *
- * Previous shape ran the full V1-V30 migration sequence against an on-disk
- * SQLite file. That made `beforeEach` perform ~30 transactions of disk I/O
- * and `afterEach` `rmSync` the .db + WAL alongside the temp dir — both
- * sometimes exceeded the bun test hook timeout (~5 s) under loaded CI
- * workers, surfacing as the spurious "calls fetch immediately on start"
- * timeout. `:memory:` eliminates both classes of slowness, and the minimal
- * schema below covers everything `collectIndexMetrics` queries (see
- * `packages/gateway/src/db/metrics.ts`).
- */
 function makeHarness(tomlContent?: string): Harness {
   const dataDir = mkdtempSync(join(tmpdir(), "nimbus-flush-sched-"));
   const tomlPath = join(dataDir, "nimbus.toml");
@@ -128,9 +94,6 @@ function makeHarness(tomlContent?: string): Harness {
     `[telemetry]\nenabled = true\nflush_interval_seconds = 60\nendpoint = "https://example.com/ingest"\n`;
   writeFileSync(tomlPath, content, "utf8");
   const db = new Database(":memory:");
-  // Minimal schema for collectIndexMetrics — items grouped by service,
-  // embedding coverage via embedding_chunk.item_id, sync_state per connector.
-  // Keep these column lists in lock-step with `packages/gateway/src/db/metrics.ts`.
   db.exec(`
     CREATE TABLE item (
       id TEXT PRIMARY KEY,
@@ -166,18 +129,9 @@ function makeHarness(tomlContent?: string): Harness {
 
 const silentLogger = pino({ level: "silent" });
 
-/**
- * Yield for `ms` milliseconds using the *real* setTimeout, bypassing the stub.
- * We capture globalThis.setTimeout before the test suite modifies setInterval —
- * since we only stub setInterval, globalThis.setTimeout is the real one at call time.
- */
 function yieldMs(ms = 80): Promise<void> {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
-
-// ---------------------------------------------------------------------------
-// Test suites
-// ---------------------------------------------------------------------------
 
 describe("startTelemetryFlushScheduler — initial tick on start", () => {
   let fakeTimers: ReturnType<typeof installFakeTimers>;
@@ -205,7 +159,6 @@ describe("startTelemetryFlushScheduler — initial tick on start", () => {
       logger: silentLogger,
     });
 
-    // Yield so the fire-and-forget fetch promise chain settles.
     await yieldMs(80);
 
     expect(fetchSpy.callCount()).toBeGreaterThan(0);
@@ -222,7 +175,6 @@ describe("startTelemetryFlushScheduler — initial tick on start", () => {
     });
 
     const ms = fakeTimers.capturedIntervalMs();
-    // TOML says 60 s; source clamps to [60_000, 86_400_000].
     expect(ms).toBe(60_000);
     handle.stop();
   });
@@ -258,7 +210,6 @@ describe("startTelemetryFlushScheduler — timer-driven subsequent tick (re-arm)
     const callsAfterStart = fetchSpy.callCount();
     expect(callsAfterStart).toBeGreaterThan(0);
 
-    // Manually fire the interval callback (simulates the timer firing a second time).
     const tick = fakeTimers.capturedTick();
     expect(tick).toBeDefined();
     tick?.();
@@ -288,7 +239,6 @@ describe("startTelemetryFlushScheduler — disabled telemetry marker file", () =
   });
 
   it("skips fetch when .nimbus-telemetry-disabled marker file exists", async () => {
-    // Create the disabled marker before the scheduler starts.
     writeFileSync(join(harness.dataDir, ".nimbus-telemetry-disabled"), "", "utf8");
 
     const handle = startTelemetryFlushScheduler({
@@ -314,7 +264,6 @@ describe("startTelemetryFlushScheduler — cfg.enabled = false", () => {
   beforeEach(() => {
     fakeTimers = installFakeTimers();
     fetchSpy = installFetchSpy({ ok: true });
-    // TOML with enabled = false
     harness = makeHarness(
       `[telemetry]\nenabled = false\nflush_interval_seconds = 60\nendpoint = "https://example.com/ingest"\n`,
     );
@@ -371,10 +320,8 @@ describe("startTelemetryFlushScheduler — stop / shutdown", () => {
     await yieldMs(80);
     handle.stop();
 
-    // clearInterval must have been called with the fake handle id.
     expect(fakeTimers.clearIntervalMock.mock.calls.length).toBeGreaterThan(0);
 
-    // Subsequent interval ticks must be no-ops (stopped = true guard).
     const callsBefore = fetchSpy.callCount();
     const tick = fakeTimers.capturedTick();
     tick?.();
@@ -442,7 +389,6 @@ describe("startTelemetryFlushScheduler — HTTP error response", () => {
       logger: warnLogger,
     });
 
-    // Give enough time for the fire-and-forget .then() chain to complete.
     await yieldMs(150);
     handle.stop();
 
@@ -494,7 +440,6 @@ describe("startTelemetryFlushScheduler — fetch throws network error", () => {
       logger: warnLogger,
     });
 
-    // Give enough time for the fire-and-forget .catch() chain to complete.
     await yieldMs(150);
     handle.stop();
 

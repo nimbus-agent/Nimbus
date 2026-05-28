@@ -149,7 +149,6 @@ describe("gcp-sync — with shared fixture", () => {
       fixture.spawnMock.respond("gcloud", { exitCode: 0, stdout: "{}" });
       await createGcpSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(fixture.spawnMock.calls[0]!.argv).toContain(PROJECT_ID);
-      // Confirm the untrimmed form is not present.
       expect(fixture.spawnMock.calls[0]!.argv).not.toContain(`  ${PROJECT_ID}  `);
     });
   });
@@ -191,8 +190,6 @@ describe("gcp-sync — with shared fixture", () => {
     });
 
     test("non-record root → still upserts project (name falls back to projectId)", async () => {
-      // asRecord returns undefined → stringField on {} returns undefined →
-      // name defaults to projectId.
       fixture.spawnMock.respond("gcloud", { exitCode: 0, stdout: "[1,2,3]" });
       const res = await createGcpSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(1);
@@ -203,10 +200,6 @@ describe("gcp-sync — with shared fixture", () => {
     });
 
     test("empty-string name → stored as empty title (stringField accepts empty)", async () => {
-      // stringField only checks the typeof — it returns the empty string
-      // verbatim. `name ?? projectId` only fires on undefined/null, so the
-      // empty string is passed through. This is regression-pinning behaviour;
-      // if production switches to a falsy guard, this test should flip.
       fixture.spawnMock.respond("gcloud", {
         exitCode: 0,
         stdout: JSON.stringify({ name: "" }),

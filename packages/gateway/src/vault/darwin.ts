@@ -1,9 +1,3 @@
-/**
- * macOS Keychain vault — SecKeychain generic-password API via Bun FFI.
- * Listing uses a non-secret JSON index under configDir/vault (names only); the
- * OS stores encrypted secret material.
- */
-
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -226,7 +220,6 @@ export class DarwinKeychainVault implements NimbusVault {
     }
   }
 
-  /** Delete keychain item if present; ignores not-found. */
   private async deleteKeychainOnly(key: string): Promise<void> {
     const { status, passwordLengthBuf, passwordDataOutBuf, itemRefBuf } =
       this.keychainFindGenericPassword(key);

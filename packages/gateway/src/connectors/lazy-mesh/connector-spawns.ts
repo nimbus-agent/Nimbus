@@ -25,20 +25,10 @@ import { buildPhase3Servers } from "./phase3-config.ts";
 import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
-/**
- * I15 (T2 PR 1) — wrap a first-party ServerSpec via the sandbox-wrapper
- * script using the static `manifestForFirstParty(serviceId)` registry +
- * the context-supplied sandbox cwd. Every `servers: { id: spec }` literal
- * in this file routes through this helper so the I15 enforcement test
- * sees the wiring on every spawn site.
- */
 function wrap(spec: ServerSpec, serviceId: string, ctx: MeshSpawnContext): ServerSpec {
   return wrapServerSpec(spec, manifestForFirstParty(serviceId), ctx.sandboxCwd);
 }
 
-/**
- * Starts the Phase 3 MCP bundle (any of AWS / Azure / GCP / IaC / observability) when vault keys are present.
- */
 export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.phase3Bundle;
   ctx.clearLazyIdle(slotKey);
@@ -46,11 +36,6 @@ export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void
     ctx.scheduleLazyDisconnect(slotKey);
     return;
   }
-  // I15 (T2 PR 1) — `buildPhase3Servers` itself wraps each ServerSpec
-  // via `wrapServerSpec(...)` before returning, so this call site holds
-  // already-sandboxed specs. The `ctx.sandboxCwd` thread-through is
-  // load-bearing: a regression that drops it leaves the phase3 servers
-  // unwrapped and silently fails the I15 enforcement test.
   const servers = await buildPhase3Servers(ctx.vault, ctx.sandboxCwd);
   if (Object.keys(servers).length === 0) {
     return;
@@ -277,9 +262,6 @@ export async function ensureGitlabMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Bitbucket Cloud MCP when `bitbucket.username` + `bitbucket.app_password` exist in the Vault.
- */
 export async function ensureBitbucketMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.bitbucket;
   ctx.clearLazyIdle(slotKey);
@@ -393,9 +375,6 @@ export async function ensureLinearMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Jira MCP when `jira.api_token`, `jira.email`, and `jira.base_url` are present in the Vault.
- */
 export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.jira;
   ctx.clearLazyIdle(slotKey);
@@ -486,9 +465,6 @@ export async function ensureNotionMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Confluence MCP when Confluence vault keys are present.
- */
 export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.confluence;
   ctx.clearLazyIdle(slotKey);
@@ -534,9 +510,6 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Discord MCP when `discord.enabled` is `1` and `discord.bot_token` is set (opt-in).
- */
 export async function ensureDiscordMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.discord;
   ctx.clearLazyIdle(slotKey);
@@ -570,9 +543,6 @@ export async function ensureDiscordMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Jenkins MCP when `jenkins.base_url`, `jenkins.username`, and `jenkins.api_token` are present in the Vault.
- */
 export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.jenkins;
   ctx.clearLazyIdle(slotKey);
@@ -594,11 +564,6 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const base = stripTrailingSlashes(baseRaw.trim());
-  // I15 (T2 PR 1) — Jenkins is always user-configured; extend the static
-  // (empty) network list with the hostname parsed from JENKINS_BASE_URL
-  // so the sandbox lets the connector reach the user's CI server. If the
-  // URL fails to parse we fall through with the base manifest — the
-  // sandbox will reject the network call, which is the safe outcome.
   const jenkinsHost = hostnameFromUrl(base);
   const jenkinsManifest = manifestWithExtraNetworkHosts(
     "jenkins",
@@ -629,9 +594,6 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts CircleCI MCP when `circleci.api_token` is present in the Vault.
- */
 export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.circleci;
   ctx.clearLazyIdle(slotKey);
@@ -664,9 +626,6 @@ export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts PagerDuty MCP when `pagerduty.api_token` is present in the Vault.
- */
 export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.pagerduty;
   ctx.clearLazyIdle(slotKey);
@@ -699,9 +658,6 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts Kubernetes MCP when `kubernetes.kubeconfig` is set (path to kubeconfig file).
- */
 export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.kubernetes;
   ctx.clearLazyIdle(slotKey);
@@ -739,12 +695,6 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-/**
- * Starts the Obsidian MCP child when `[[filesystem.roots]]` are configured.
- * Obsidian indexing is purely local — the connector reads no vault credentials.
- * Vault paths are passed via `OBSIDIAN_VAULT_PATHS_JSON` (the MCP server then
- * discovers `.obsidian/` markers within those paths itself).
- */
 export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.obsidian;
   ctx.clearLazyIdle(slotKey);
@@ -756,11 +706,6 @@ export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   if (vaultPaths.length === 0) {
     return;
   }
-  // I15 (T2 PR 1) — Obsidian needs read access to user vault paths
-  // (configured via `[[filesystem.roots]]`). Extend the base manifest's
-  // `filesystem.read` at spawn time before wrapping. The connector has
-  // no network — manifestForFirstParty("obsidian") declares
-  // `network: []` and the wrap function preserves that.
   const obsidianBase = manifestForFirstParty("obsidian");
   const obsidianManifest = {
     ...obsidianBase,

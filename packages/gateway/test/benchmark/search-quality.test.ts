@@ -1,9 +1,3 @@
-/**
- * Phase 3 — hybrid vs BM25 quality gate (MRR@10 on a tiny held-out set).
- *
- * Uses synthetic embeddings (not Xenova) so CI stays deterministic. The plan checklist
- * references `search-quality.bench.ts`; this file is that gate under Bun's `*.test.ts` discovery.
- */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { upsertIndexedItem } from "../../src/index/item-store.ts";
@@ -90,7 +84,6 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     LocalIndex.ensureSchema(db);
     const now = Date.now();
 
-    // --- Case A: keyword chaff in title; relevant doc only in body without OAuth token wording ---
     upsertIndexedItem(db, {
       service: "bench",
       type: "doc",
@@ -130,7 +123,6 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     expect(mrrBm25A).toBe(0);
     expect(mrrHybridA).toBeGreaterThan(0);
 
-    // --- Case B: same shape as hybrid.test — vector-only relevant row for the query term ---
     upsertIndexedItem(db, {
       service: "bench",
       type: "file",
@@ -168,7 +160,6 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     expect(mrrBm25B).toBe(0);
     expect(mrrHybridB).toBeGreaterThan(0);
 
-    // --- Case C: both rows in BM25; decoy ranks ahead unless vector pulls the target up ---
     upsertIndexedItem(db, {
       service: "bench",
       type: "note",

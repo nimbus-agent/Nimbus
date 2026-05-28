@@ -1,18 +1,3 @@
-/**
- * nimbus-mcp-flux — Flux (GitOps Toolkit) MCP server (read-only).
- *
- * Credentials arrive as FLUX_API_URL + FLUX_TOKEN env, injected at spawn time.
- * FLUX_TOKEN is a read-only Kubernetes ServiceAccount JWT, sent as
- * `Authorization: Bearer <token>`. Flux has no central API: state lives in
- * Kubernetes Custom Resources read via the API server's REST surface
- * (`GET ${FLUX_API_URL}/apis/<group>/<version>/<plural>`). Flux is always
- * self-hosted, so there is no SaaS default for FLUX_API_URL — it must be set.
- *
- * TLS note: K8s API servers commonly use self-signed certs that Bun's fetch
- * rejects; v1 relies on FLUX_API_URL pointing at a CA-trusted endpoint (a
- * TLS-terminating ingress or `kubectl proxy`). Custom-CA / insecure-TLS
- * handling is a deferred follow-up.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -23,11 +8,6 @@ import {
 } from "../../shared/mcp-tool-kit.ts";
 import { filterFluxResources } from "./search-filter.ts";
 
-/**
- * Flux CRD walk table — the set of GitOps-Toolkit Custom Resources we index.
- * Duplicated (intentionally) from the gateway-side sync handler so this MCP
- * server has no dependency on gateway internals.
- */
 interface FluxKindEntry {
   readonly kind: string;
   readonly group: string;
@@ -121,7 +101,6 @@ async function agGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the `items` array out of a Kubernetes List response (or a bare array). */
 function itemsFrom(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;
@@ -130,7 +109,6 @@ function itemsFrom(root: unknown): unknown[] {
   return Array.isArray(items) ? items : [];
 }
 
-/** Build the all-namespaces or namespaced list path for a kind. */
 function listPath(entry: FluxKindEntry, namespace?: string): string {
   const prefix = `/apis/${entry.group}/${entry.version}`;
   if (namespace !== undefined && namespace !== "") {

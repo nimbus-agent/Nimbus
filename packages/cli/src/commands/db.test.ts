@@ -1,7 +1,6 @@
-// packages/cli/src/commands/db.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -256,7 +255,7 @@ describe("runDb restore", () => {
   });
 
   it("prints the safety hint when --yes is absent (gateway not running)", async () => {
-    setFixture({}); // gateway not running → state === undefined; restore proceeds with hint
+    setFixture({});
     await runDb(["restore", "/tmp/x.db.gz"]);
     expect(out.stdout).toContain("Restoring overwrites");
     expect(out.stdout).toContain("/tmp/x.db.gz");

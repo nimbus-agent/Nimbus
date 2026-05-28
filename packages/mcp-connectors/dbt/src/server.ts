@@ -1,19 +1,3 @@
-/**
- * nimbus-mcp-dbt — dbt Cloud Administrative API MCP server (read-only).
- *
- * Credentials arrive as DBT_TOKEN env (+ optional DBT_API_BASE), injected at
- * spawn time. The dbt Cloud service/user API token is sent as
- * `Authorization: Token <token>` — the literal word `Token`, a space, then the
- * raw token (no Bearer prefix). Requests go to `${api_base}/api/v2/...`.
- *
- * Default host `https://cloud.getdbt.com`; regional / custom-access-URL
- * instances override DBT_API_BASE. dbt Cloud wraps list responses in a `data`
- * array (not `items` / `results`).
- *
- * v1 indexes jobs + their latest run status only. Model-level lineage
- * (`data_model` upstream/downstream refs) requires the separate dbt Discovery
- * GraphQL API and is a deferred follow-up.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -52,7 +36,6 @@ async function dbtGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the `data` array out of a dbt Cloud list envelope (or a bare array). */
 function dataFrom(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;

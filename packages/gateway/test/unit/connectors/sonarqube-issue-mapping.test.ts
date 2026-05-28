@@ -2,12 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { mapSonarIssueToItem } from "../../../src/connectors/sonarqube-issue-mapping.ts";
 
-// Build a realistic SonarQube /api/issues/search issue row. The fields we
-// surface are documented at
-// https://next.sonarqube.com/sonarqube/web_api/api/issues/search. Tests
-// below mutate this fixture and assert specific mapping behaviours —
-// they document the contract `mapSonarIssueToItem` owes the gateway's
-// `sonarqube-sync.ts` integration.
 function makeIssue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base: Record<string, unknown> = {
     key: "AYxr_random_issue_key",

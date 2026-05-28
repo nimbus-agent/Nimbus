@@ -17,14 +17,6 @@ function ctx(client: StubIpcClient): IpcContextValue {
   };
 }
 
-/**
- * BUG-003 regression coverage. The TUI was calling the non-existent IPC
- * method `connector.list` with a fictional `{ service, status: ok|degraded|down }`
- * shape, while the Gateway exposes `connector.listStatus` returning
- * `SyncStatus` rows shaped `{ serviceId, status: ok|syncing|paused|backoff|error, ... }`.
- * These tests now stub the real method+shape; the previous tests passed
- * because they aligned the stub to the broken caller, masking the drift.
- */
 describe("ConnectorHealth", () => {
   test("renders a line per connector with a status glyph", async () => {
     const stub = new StubIpcClient({
@@ -46,9 +38,9 @@ describe("ConnectorHealth", () => {
     expect(frame).toContain("github");
     expect(frame).toContain("slack");
     expect(frame).toContain("notion");
-    expect(frame).toContain("●"); // ok
-    expect(frame).toContain("◐"); // paused (in-flight / held)
-    expect(frame).toContain("○"); // error (failure)
+    expect(frame).toContain("●");
+    expect(frame).toContain("◐");
+    expect(frame).toContain("○");
     unmount();
   });
 
@@ -85,7 +77,6 @@ describe("ConnectorHealth", () => {
         <ConnectorHealth mode="idle" />
       </IpcContext.Provider>,
     );
-    // BUG-004: placeholder copy is a full sentence, not a bare "loading…".
     expect(lastFrame() ?? "").toContain("Loading connector status…");
     unmount();
   });

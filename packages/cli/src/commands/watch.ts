@@ -2,19 +2,11 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-/**
- * Test entry point — invoked by the dispatcher `runWatch(args)` and the
- * colocated `watch.test.ts`. Do not call from other command files.
- */
 export async function runWatchList(client: IPCClient): Promise<void> {
   const out = await client.call<{ watchers: unknown }>("watcher.list", {});
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWatch(args)` and the
- * colocated `watch.test.ts`. Do not call from other command files.
- */
 export async function runWatchPause(client: IPCClient, id: string): Promise<void> {
   if (id === "") {
     throw new Error("Usage: nimbus watch pause <id>");
@@ -23,10 +15,6 @@ export async function runWatchPause(client: IPCClient, id: string): Promise<void
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-/**
- * Test entry point — invoked by the dispatcher `runWatch(args)` and the
- * colocated `watch.test.ts`. Do not call from other command files.
- */
 export async function runWatchResume(client: IPCClient, id: string): Promise<void> {
   if (id === "") {
     throw new Error("Usage: nimbus watch resume <id>");

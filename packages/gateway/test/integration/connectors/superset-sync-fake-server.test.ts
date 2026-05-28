@@ -29,7 +29,6 @@ interface FakeSuperset {
   stop(): void;
 }
 
-/** Decode the Rison `q=(page:N,page_size:M)` param into the page number. */
 function pageFromRison(q: string | null): string | null {
   if (q === null) {
     return null;
@@ -52,7 +51,6 @@ function startFakeSuperset(config: FakeSupersetConfig): FakeSuperset {
         page: pageFromRison(u.searchParams.get("q")),
       });
       if (u.pathname === "/api/v1/security/login") {
-        // Drain the body so the request fully completes.
         await req.text();
         if (config.loginStatus !== undefined && config.loginStatus !== 200) {
           return new Response("login error", { status: config.loginStatus });
@@ -99,7 +97,6 @@ function startHarness(config: FakeSupersetConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         superset: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -152,13 +149,11 @@ describe("superset-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-superset1:")).toBe(true);
 
-    // The login POST happened exactly once.
     const logins = h.fake.requests.filter(
       (r) => r.path === "/api/v1/security/login" && r.method === "POST",
     );
     expect(logins).toHaveLength(1);
 
-    // Every dashboard GET carries the Bearer token from the login response.
     const gets = h.fake.requests.filter((r) => r.path === "/api/v1/dashboard/");
     expect(gets.length).toBeGreaterThanOrEqual(1);
     for (const r of gets) {
@@ -170,7 +165,6 @@ describe("superset-sync against Bun.serve fake API", () => {
         "SELECT external_id, metadata FROM item WHERE service = 'superset' ORDER BY external_id",
       )
       .all();
-    // external_id = String(id); ordered "10","20" lexically.
     expect(rows.map((r) => r.external_id)).toEqual(["10", "20"]);
 
     const first = JSON.parse(rows[0]?.metadata ?? "{}") as Record<string, unknown>;
@@ -181,7 +175,6 @@ describe("superset-sync against Bun.serve fake API", () => {
 
   test("noop when any of url/username/password unset — no requests", async () => {
     h = startHarness({ dashboards: [dashboard(1)] });
-    // Only two of three keys set → still a no-op.
     await h.ctx.vault.set("superset.url", h.fake.baseUrl);
     await h.ctx.vault.set("superset.username", "reader");
     const syncable = createSupersetSyncable({ ensureSupersetMcpRunning: async () => {} });
@@ -197,7 +190,6 @@ describe("superset-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-superset1:")).toBe(true);
-    // The login was attempted; no dashboard GET followed.
     expect(h.fake.requests.filter((r) => r.path === "/api/v1/security/login")).toHaveLength(1);
     expect(h.fake.requests.filter((r) => r.path === "/api/v1/dashboard/")).toHaveLength(0);
   });

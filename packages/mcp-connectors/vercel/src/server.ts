@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-vercel — Vercel REST API MCP server (read-only).
- * Credentials arrive as VERCEL_TOKEN (+ optional VERCEL_TEAM_ID) env, injected
- * at spawn time. Vercel uses a standard `Authorization: Bearer <token>` header.
- * The API host is fixed at api.vercel.com (no host override).
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -33,7 +27,6 @@ function authHeader(): Record<string, string> {
   return { Authorization: `Bearer ${token()}`, Accept: "application/json" };
 }
 
-/** Append `&teamId=<id>` (or `?teamId=<id>`) when a team is configured. */
 function withTeam(path: string): string {
   const team = teamId();
   if (team === undefined) {

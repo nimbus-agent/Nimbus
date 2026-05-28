@@ -1,39 +1,8 @@
-/**
- * Pure-string render helpers for the chat Webview. No DOM access, no
- * acquireVsCodeApi — main.ts owns those side effects. Keeping this module
- * pure makes it unit-testable under vitest without a jsdom environment.
- *
- * Markdown is rendered via `marked` with sanitisation handled by:
- *   1. A strict CSP injected by extension.ts (script-src nonce, style-src
- *      'unsafe-inline' on the webview cspSource).
- *   2. `escapeHtml` for any user-controlled string that bypasses marked
- *      (turn metadata, sub-task status, error messages, prompt text).
- *
- * Streamed assistant content is re-rendered every token: marked is a one-shot
- * function and incremental rendering is not worth the complexity for the
- * size of replies the webview shows.
- */
-
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
-/**
- * Render a markdown string to safe HTML. Two-stage:
- *   1. `marked.parse(...)` produces HTML from the markdown source.
- *   2. `DOMPurify.sanitize(...)` strips any raw `<script>`, `<iframe>`, event
- *      handlers, `javascript:` URLs, etc. that a hostile LLM (or a piece of
- *      indexed content the agent quotes back) might smuggle in.
- *
- * The CSP set by extension.ts already blocks inline script execution, but
- * sanitisation here is the second line of defence — a webview that ever
- * relaxes CSP for `unsafe-eval` (e.g. for a future code highlighter) would
- * otherwise be exposed.
- */
 export function renderMarkdown(src: string): string {
   if (src.length === 0) return "";
-  // marked.parse can return a Promise depending on options; with the
-  // synchronous options below (no async tokenizer / walkTokens / extensions),
-  // it returns a string. The cast keeps the call site simple.
   const raw = marked.parse(src, {
     async: false,
     breaks: true,
@@ -54,10 +23,6 @@ export function escapeHtml(s: string): string {
   return s.replaceAll(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
-// ---------------------------------------------------------------------------
-// Higher-level fragments. Each renders a single message or pane to a string
-// of HTML the calling DOM module appends to the transcript container.
-
 export type TurnRole = "user" | "assistant";
 
 export interface TurnRenderInput {
@@ -66,11 +31,6 @@ export interface TurnRenderInput {
   timestamp?: number;
 }
 
-/**
- * Render a single completed turn. User messages are escaped + wrapped in a
- * <pre> so leading whitespace and code-like inputs render as written;
- * assistant messages go through markdown.
- */
 export function renderTurn(turn: TurnRenderInput): string {
   const stamp =
     turn.timestamp !== undefined && turn.timestamp > 0
@@ -84,12 +44,6 @@ export function renderTurn(turn: TurnRenderInput): string {
   return `<article class="turn turn-assistant"><header class="turn-header">Nimbus${stamp}</header><div class="markdown">${inner}</div></article>`;
 }
 
-/**
- * Inline HITL consent card. Shown when an `agent.hitlBatch` arrives while
- * the chat panel is visible+focused. The card is replaced by a "Decision
- * recorded" stub once the user clicks Approve / Reject — the underlying
- * agent.hitlBatch is owned by the gateway, not the webview.
- */
 export interface HitlCardInput {
   requestId: string;
   prompt: string;
@@ -113,11 +67,6 @@ ${detailsJson}
 </section>`;
 }
 
-/**
- * Sub-task progress strip — rendered in a sticky status row above the
- * input box while a stream is in flight. Multiple sub-tasks accumulate by
- * subTaskId; status is the last value the gateway emitted.
- */
 export interface SubTaskRowInput {
   subTaskId: string;
   status: string;
@@ -135,9 +84,6 @@ export function renderSubTaskRow(row: SubTaskRowInput): string {
   return `<li class="subtask-row" data-subtask-id="${id}"><span class="subtask-id">${id}</span><span class="subtask-status">${status}</span>${pct}</li>`;
 }
 
-/**
- * Empty-state placeholder. Different copy depending on `sub`.
- */
 export interface EmptyStateInput {
   sub: "no-transcript" | "disconnected" | "permission-denied";
   socketPath?: string;
@@ -161,7 +107,6 @@ export function renderEmptyState(inp: EmptyStateInput): string {
 ${path}
 </div>`;
   }
-  // permission-denied
   const path =
     inp.socketPath !== undefined && inp.socketPath.length > 0
       ? `<p class="muted">Socket: <code>${escapeHtml(inp.socketPath)}</code></p>`
@@ -174,7 +119,6 @@ ${path}
 </div>`;
 }
 
-/** Format a unix-ms timestamp as a short HH:MM string for the turn header. */
 function formatTimestamp(ms: number): string {
   const d = new Date(ms);
   const hh = String(d.getHours()).padStart(2, "0");

@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `greenhouse_search`. Extracted from
- * `server.ts` so the matching logic can be unit-tested without spawning an MCP
- * stdio transport. The server keeps the HTTP wrapper; this module owns the
- * name/status/requisition_id/department-name/office-name/office-location
- * haystack + case-insensitive substring match.
- */
-
 export interface GreenhouseSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;
@@ -16,7 +8,6 @@ function stringField(row: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Join the `name` field of each entry of an array of `{ name }` objects. */
 function namedArrayText(row: Record<string, unknown>, key: string): string {
   const arr = row[key];
   if (!Array.isArray(arr)) {
@@ -35,7 +26,6 @@ function namedArrayText(row: Record<string, unknown>, key: string): string {
   return names.join(" ");
 }
 
-/** Office locations from a Greenhouse `offices: [{ location: { name } }]` array. */
 function officeLocationText(row: Record<string, unknown>): string {
   const arr = row["offices"];
   if (!Array.isArray(arr)) {

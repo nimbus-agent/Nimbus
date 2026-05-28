@@ -2,12 +2,6 @@ import { type SpawnOptions, spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import { win32 as pathWin32 } from "node:path";
 
-/**
- * Opens a URL in the user's default browser (PAL — all platforms).
- * Does not validate the URL; callers must pass a trusted https/http URL.
- *
- * Spawns only fixed, absolute binaries (no PATH lookup for argv0 — Sonar S4036).
- */
 export async function openUrlInDefaultBrowser(url: string): Promise<void> {
   const detachedIgnore: SpawnOptions = { detached: true, stdio: "ignore" };
 
@@ -17,8 +11,6 @@ export async function openUrlInDefaultBrowser(url: string): Promise<void> {
     if (os === "win32") {
       const systemRoot =
         process.env["SystemRoot"] ?? process.env["windir"] ?? String.raw`C:\Windows`;
-      // Avoid `cmd /c start <url>` — unquoted `&` in query strings is treated as a command
-      // separator, so OAuth URLs lose params (e.g. `response_type`) before the browser loads.
       const rundll32 = pathWin32.join(systemRoot, "System32", "rundll32.exe");
       child = spawn(rundll32, ["url.dll,FileProtocolHandler", url], {
         ...detachedIgnore,

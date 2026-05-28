@@ -1,16 +1,3 @@
-/**
- * `security.scan` JSON-RPC handler.
- *
- * Builds a per-connector depth map from `sync_state.depth`, streams `item`
- * rows from services at `summary` or `full` depth, calls the pure scanner,
- * writes a single summary audit row, returns the envelope. CLI-only —
- * present in `FORBIDDEN_OVER_LAN` (I5); NOT in Tauri `ALLOWED_METHODS` (I7);
- * no HTTP route.
- *
- * The full secret value never appears in the response, audit row, or any
- * field of the envelope.
- */
-
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { type ScanItem, type SecurityFinding, scanItemsForSecrets } from "../security/scan.ts";
@@ -55,13 +42,6 @@ interface ItemRow {
   url: string | null;
 }
 
-/**
- * Stream scannable items via a single SQL JOIN that excludes metadata_only
- * connectors at the storage layer — so the (potentially large) `body_preview`
- * column is never materialised in JS for items we are going to discard
- * anyway. The LEFT JOIN preserves rows from services that have no
- * `sync_state` row at all (which default to 'summary' per V21).
- */
 function* iterateScannableItems(db: Database): Generator<ScanItem> {
   const rows = db
     .query(
@@ -86,12 +66,6 @@ function* iterateScannableItems(db: Database): Generator<ScanItem> {
   }
 }
 
-/**
- * Aggregate counts for the skipped-depth surface. Counted at the SQL layer
- * to avoid loading items just to discard them. Returns the list of
- * metadata_only services (including those with zero items synced) plus the
- * total item count across those services.
- */
 function loadSkippedDepth(db: Database): {
   skipped_connectors: SkippedConnector[];
   items_skipped_depth: number;
@@ -136,7 +110,6 @@ export async function dispatchSecurityRpc(
     skipped_connectors,
   };
 
-  // Summary-only audit row — never includes findings (they are credentials).
   appendAuditEntry(ctx.db, {
     actionType: "security.scan_completed",
     hitlStatus: "not_required",

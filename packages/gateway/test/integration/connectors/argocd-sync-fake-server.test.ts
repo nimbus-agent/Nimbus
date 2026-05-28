@@ -90,7 +90,6 @@ function startHarness(config: FakeAgConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         argocd: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -152,11 +151,9 @@ describe("argocd-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-argocd1:")).toBe(true);
 
-    // Authorization is exactly `Bearer <token>`.
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("Bearer jwt-test-token");
     }
-    // Single GET, no pagination.
     expect(h.fake.requests.filter((r) => r.path === "/api/v1/applications")).toHaveLength(1);
 
     const rows = h.db

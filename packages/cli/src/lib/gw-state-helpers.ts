@@ -1,20 +1,3 @@
-// Real implementation of the gateway-state helpers, owned independently
-// from `gateway-process.ts`.
-//
-// The colocated unit test (`gateway-process.test.ts`) imports from THIS
-// file so it exercises the real implementation regardless of the harness
-// state. `gateway-process.ts` declares its own copy of these functions
-// (NOT a re-export from this file) so the harness's
-// `mock.module("../../src/lib/gateway-process.ts", ...)` cannot reach
-// the bindings here via ESM re-export live-binding propagation.
-//
-// The duplication is small (≈80 lines) and the cost of keeping the two
-// files in sync is recouped by structural isolation: the file the test
-// targets and the file the harness mocks are independent module records
-// with independent export bindings. If either implementation diverges in
-// behaviour, the unit test catches it (`gateway-process.test.ts` covers
-// every branch).
-
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +23,6 @@ function isGatewayStateRaw(
 export type GatewayStateFile = {
   pid: number;
   socketPath: string;
-  /** Absolute path to the gateway log file for this spawn (if known). */
   logPath?: string;
 };
 

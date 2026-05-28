@@ -1,26 +1,3 @@
-// packages/cli/src/commands/doctor-core.ts
-//
-// Dependency-injected `nimbus doctor` logic. This file is the testable twin of
-// the thin `doctor.ts` wrapper (same split as `repl-core.ts` ↔ `repl.ts`,
-// `gw-state-helpers.ts` ↔ `gateway-process.ts`).
-//
-// Why the split exists: the colocated test must run alongside the shared CLI
-// mock harness (`cli-mocks.ts`), which installs process-global `mock.module`
-// registrations for `ipc-client/index.ts`, `lib/gateway-process.ts`, and
-// `@clack/prompts`. Even with the mocks in place Bun's coverage instrumenter
-// still walks every transitively-imported source — including `paths.ts`,
-// whose three platform branches naturally line-cover ~45 % on any single OS.
-// On the Linux CI gate that drags `All files` below the 80 % threshold and
-// fails `bun run test:coverage:doctor`, even though the real target
-// (`doctor.ts`) sits at ~83 %.
-//
-// `doctor-core.ts` therefore imports NONE of the production-only modules as
-// values — only Node builtins and type-only references — and takes its real
-// dependencies via a `DoctorCoreDeps` object. The test imports this file
-// directly and injects fakes, so it never needs `cli-mocks.ts`; the
-// module-under-test has a clean graph and a stable coverage scope on every
-// platform. `doctor.ts` supplies the production deps and is the
-// (coverage-exempt) wiring shim.
 import { existsSync, readFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
@@ -49,18 +26,11 @@ type ConnectorHealthRow = {
   state?: unknown;
 };
 
-/** Minimal shape of the recorded gateway state `runDoctor` reads. */
 export interface DoctorGatewayState {
   readonly socketPath: string;
   readonly pid: number;
 }
 
-/**
- * The real dependencies `doctor.ts` wires in. Injected (never statically
- * imported here) so this module stays out of the cli-mocks blast radius.
- * Signatures mirror `packages/cli/src/lib/gateway-process.ts` exactly so the
- * production shim can wire `productionDeps` without conversion shims.
- */
 export interface DoctorCoreDeps {
   readonly getCliPlatformPaths: () => CliPlatformPaths;
   readonly readGatewayState: (paths: CliPlatformPaths) => Promise<DoctorGatewayState | undefined>;
@@ -69,10 +39,6 @@ export interface DoctorCoreDeps {
   readonly makeClient: (socketPath: string) => IPCClient;
 }
 
-/**
- * Test entry point — invoked by helpers in `doctor-core.ts` and the colocated
- * `doctor-core.test.ts`. Do not call from other command files.
- */
 export function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail" {
   let worst: "ok" | "warn" | "fail" = "ok";
   for (const r of rows) {
@@ -88,10 +54,6 @@ export function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" |
   return worst;
 }
 
-/**
- * Test entry point — invoked by helpers in `doctor-core.ts` and the colocated
- * `doctor-core.test.ts`. Do not call from other command files.
- */
 export function healthStateMark(st: string): string {
   if (st === "healthy" || st === "paused") {
     return "[ok]";
@@ -127,10 +89,6 @@ function doctorPrintVaultCheck(): number {
   return 0;
 }
 
-/**
- * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
- * `doctor-core.test.ts`. Do not call from other command files.
- */
 export function doctorPrintConfigValidation(val: {
   ok: boolean;
   errors: string[];
@@ -155,10 +113,6 @@ export function doctorPrintConfigValidation(val: {
   return exit;
 }
 
-/**
- * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
- * `doctor-core.test.ts`. Do not call from other command files.
- */
 export function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unknown } }): number {
   const total = snap.index?.totalItems;
   const nItems =
@@ -171,10 +125,6 @@ export function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unkn
   return 0;
 }
 
-/**
- * Test entry point — invoked by `doctorRunGatewayRpcs` and the colocated
- * `doctor-core.test.ts`. Do not call from other command files.
- */
 export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {
   const healthRaw = snap.connectorHealth;
   const health: ConnectorHealthRow[] = Array.isArray(healthRaw)
@@ -215,11 +165,6 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   return exit;
 }
 
-/**
- * The full `nimbus doctor` dispatcher, dependency-injected. `doctor.ts`
- * builds the production deps and delegates here; tests pass a `DoctorCoreDeps`
- * fake so the run never touches the real IPC, vault, or gateway state files.
- */
 export async function runDoctor(_args: string[], deps: DoctorCoreDeps): Promise<void> {
   const paths = deps.getCliPlatformPaths();
   let exit = 0;
@@ -266,8 +211,6 @@ export async function runDoctor(_args: string[], deps: DoctorCoreDeps): Promise<
 
   process.exitCode = exit;
 }
-
-// ─── Voice doctor helpers ────────────────────────────────────────────────────
 
 export type DoctorVoiceConfig = {
   enabled: boolean;

@@ -8,7 +8,6 @@ export function rrfTerm(rank: number, k: number): number {
   return 1 / (k + rank);
 }
 
-/** Best (smallest) 1-based rank per item in chunk order. */
 export function bestVectorRanksByItem(hits: readonly { itemId: string }[]): Map<string, number> {
   const m = new Map<string, number>();
   for (let i = 0; i < hits.length; i++) {

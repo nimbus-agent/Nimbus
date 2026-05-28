@@ -23,7 +23,6 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
       if (!uxIds.has(row.surfaceId)) continue;
       expect(row.gated).toBe(true);
       expect(typeof row.refMax).toBe("number");
-      // S2-c is reference-only on GHA; ghaMax = "skipped".
       if (row.surfaceId === "S2-c") {
         expect(row.ghaMax).toBe("skipped");
       } else {

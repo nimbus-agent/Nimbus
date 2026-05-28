@@ -54,40 +54,24 @@ describe("verifyIndex", () => {
   test("detects FTS5 inconsistency after manual shadow-table corruption", () => {
     const db = makeDb();
 
-    // Insert an item — this populates item_fts via triggers
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES ('test:1', 'test', 'file', '1', 'Hello World', 1000, 1000)`,
     );
 
-    // Manually delete from the FTS shadow content without going through the trigger
-    // by removing the underlying item row but leaving the FTS entry stale.
     db.run(`DELETE FROM item WHERE id = 'test:1'`);
-    // Now item is gone but item_fts still has a dangling entry — FTS5 integrity
-    // check will fail because content='' mode detects the mismatch.
 
-    // Actually the content= mode only checks on explicit integrity-check command.
-    // To reliably trigger a fail we need to bypass the delete trigger.
-    // We do this by deleting directly from the FTS content shadow table.
-    // The fts5 shadow tables are named item_fts_content, item_fts_data, etc.
-    // Inserting a row directly into item bypassing the trigger creates a genuine mismatch.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES ('test:2', 'test', 'file', '2', 'Orphan Item', 2000, 2000)`,
     );
-    // Delete the FTS entry for this row directly (bypassing the delete trigger)
-    // by using the FTS delete command — this leaves item row without FTS entry,
-    // which causes integrity-check to find a mismatch.
     db.run(
       `INSERT INTO item_fts(item_fts, rowid, title, body_preview)
        VALUES('delete', (SELECT rowid FROM item WHERE id = 'test:2'), 'Orphan Item', NULL)`,
     );
-    // Now the item row exists but item_fts has 0 net rows for it → mismatch
 
     const result = verifyIndex(db, LocalIndex.SCHEMA_VERSION);
     const fts = result.findings.find((f) => f.label === "fts5_consistency");
-    // integrity-check may or may not flag depending on content= internals;
-    // at minimum the check should run without crashing
     expect(fts).toBeDefined();
     db.close();
   });
@@ -95,7 +79,6 @@ describe("verifyIndex", () => {
   test("detects orphaned sync tokens", () => {
     const db = makeDb();
 
-    // Insert a sync_state row with a connector_id that has no scheduler_state entry
     db.run(
       `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token)
        VALUES ('ghost_connector', ${String(Date.now())}, 'tok')`,

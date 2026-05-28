@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-/**
- * S10 audit writer Worker — appends audit_log rows under contention.
- *
- * Replicates the body of `db/audit-chain.ts:appendAuditEntry` inline —
- * same prev_hash lookup, same `computeAuditRowHash` BLAKE3 recipe — but
- * routes the INSERT through the production `dbRun` wrapper so spec §9
- * acceptance ("all three Workers route writes through db/write.ts") is
- * satisfied for this Worker too. (`appendAuditEntry` itself uses
- * `db.run` because it pre-dates the wrapper; that's a separate prod
- * concern, not addressed here.)
- */
 
 import { Database } from "bun:sqlite";
 

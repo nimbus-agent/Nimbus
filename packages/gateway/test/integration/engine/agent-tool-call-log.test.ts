@@ -12,9 +12,6 @@ function freshAuditDb(): Database {
   return db;
 }
 
-// Minimal LocalIndex stub — createNimbusEngineAgent uses it for searchLocalIndex
-// metadata, not for the audit-write path. We only need the methods the
-// constructor actually touches.
 function stubLocalIndex(): LocalIndex {
   return {
     searchRankedAsync: async () => [],
@@ -36,8 +33,6 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
       string,
       { execute?: (input: unknown, ctx?: unknown) => Promise<string> }
     >;
-    // Pick searchLocalIndex — a deterministic tool whose execute returns
-    // structured data. The wrapped execute should land an audit row.
     const searchExecute = tools["searchLocalIndex"]?.execute;
     expect(searchExecute).toBeDefined();
     if (searchExecute === undefined) throw new Error("unreachable");
@@ -60,9 +55,6 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
 
   test("writes a status='error' row when the wrapped tool throws (and re-throws)", async () => {
     const auditDb = freshAuditDb();
-    // Use a localIndex whose `searchRankedAsync` throws. createNimbusEngineAgent's
-    // searchLocalIndex tool calls localIndex.searchRankedAsync(query) — when it
-    // throws, the wrapper catches, logs, and re-throws.
     const throwingIndex = {
       ...stubLocalIndex(),
       searchRankedAsync: () => {
@@ -109,7 +101,6 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
     >;
     const searchExecute = tools["searchLocalIndex"]?.execute;
     if (searchExecute === undefined) throw new Error("unreachable");
-    // Call WITHOUT agentRequestContext.run — getAgentRequestSessionId returns undefined.
     await searchExecute({ name: "x", limit: 1 });
 
     const result = readToolCallLog(auditDb, {});
@@ -118,7 +109,6 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
   });
 
   test("does not break the LLM-facing path when auditDb is undefined", async () => {
-    // No auditDb passed in deps — wrapper degrades gracefully.
     const { agent } = createNimbusEngineAgent({
       localIndex: stubLocalIndex(),
       agentModel: "openai/gpt-4o-mini",

@@ -1,19 +1,3 @@
-/**
- * Single source of truth for the SLO thresholds enforced by `_perf.yml`
- * and rendered into `docs/perf/slo.md` (via `scripts/regen-slo.ts`).
- *
- * UX rows (S1, S2-a/b/c, S3, S4, S5, S11-a/b) carry concrete values
- * from spec § 3.2. Workload rows (S6, S7, S8 cells, S9, S10) are
- * scaffolded with `ghaMax: "tbd-c2"` and `gated: false` until PR-C-2
- * fills them from the M1 Air reference run.
- *
- * The `slo.md` file in the repo is generated from this const — never
- * hand-edited. CI runs `bun scripts/regen-slo.ts --check` to fail the
- * build on drift.
- *
- * Spec source: the B2 perf audit design § 3.2.
- */
-
 import { type BenchSurfaceId, S8_BATCHES, S8_LENGTHS } from "./types.ts";
 
 export interface SloThreshold {
@@ -25,28 +9,16 @@ export interface SloThreshold {
     | "rss_bytes_p95"
     | "tokens_per_sec"
     | "first_token_ms";
-  /** Reference threshold (M1 Air); undefined if reference-only/skipped. */
   refMax?: number;
-  /** Absolute GHA threshold; "tbd-c2" = workload row pending PR-C-2; "skipped" = reference-only on GHA. */
   ghaMax: number | "tbd-c2" | "skipped";
-  /**
-   * Whether this row gates the build. UX rows in C-1 are `true`. Workload
-   * rows are `false` until C-2 fills `ghaMax` from the reference run.
-   * Explicit boolean rather than inferring from the `ghaMax` sentinel
-   * (D-K in the design spec).
-   */
   gated: boolean;
-  /** Delta-fail threshold (relative %, spec § 3.1). */
   noiseFloorPct: number;
-  /** Delta-fail floor (absolute, units match `noiseFloorAbsUnit`). */
   noiseFloorAbs: number;
   noiseFloorAbsUnit: "ms" | "items_per_sec" | "bytes" | "tps";
-  /** S7-a/b/c only — gate on Linux only (spec § 3.3). */
   linuxOnlyGate?: true;
 }
 
 const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
-  // ----- UX surfaces (gated) -----
   {
     surfaceId: "S1",
     metric: "p95_ms",
@@ -123,14 +95,6 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     refMax: 300,
     ghaMax: 1_500,
     gated: true,
-    // 2026-05-06: bumped `noiseFloorPct` from 25 % → 40 % to match S11-b's
-    // existing 40 % floor. Both surfaces share the same Bun process-spawn
-    // overhead path on the same `windows-2025` runner, so they exhibit the
-    // same ≈18-25 % p95-to-p95 noise envelope. The 25 % floor was tripping
-    // delta-fail on Windows for docs-only PRs (e.g. ffa0733 vs b7dd19d
-    // showed +41.3 % S11-a-cold drift with zero relevant code change).
-    // S11-b was already adjusted on 2026-04-30 for the same reason; this
-    // closes the matching gap on S11-a-cold.
     noiseFloorPct: 40,
     noiseFloorAbs: 50,
     noiseFloorAbsUnit: "ms",
@@ -139,27 +103,6 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     surfaceId: "S11-b",
     metric: "p95_ms",
     refMax: 50,
-    // Spec § 3.2 originally proposed `ghaMax: 250` (5× refMax). Empirical
-    // GHA data on PR-C-1 / PR-C-2a shows Linux ~190-210 ms, macOS ~135-
-    // 195 ms, and Windows 359-425 ms across recent runs — Bun process-spawn
-    // overhead on `windows-2025` is intrinsically higher than on
-    // `ubuntu-24.04`, and the runner exhibits ≈18 % p95-to-p95 variance
-    // across same-sha runs (359 → 425 ms). The 5× rule of thumb breaks
-    // down on fast UX surfaces where OS spawn cost dominates. Bumped to
-    // 600 ms (12× refMax, ~40 % headroom over the observed Windows peak
-    // of 425 ms) so the GHA threshold is achievable on all three runners
-    // without false-failing on Windows infrastructure noise. Refines
-    // spec § 3.2; the `refMax` budget is unchanged (PR-C-2 will
-    // recalibrate from a real M1 Air measurement). The `gated: true`
-    // delta check still catches a real regression.
-    //
-    // 2026-04-30: bumped `noiseFloorPct` from 25 % → 40 %. macOS-15 GHA
-    // runners showed ~18 % p95-to-p95 variance across two same-sha runs
-    // (135 → 144 → 170 ms on `22f6564`); the 25 % floor was tripping
-    // delta-fail on noise alone. 40 % matches the empirical envelope
-    // and still flags a real ≥40 % regression. `noiseFloorAbs: 10` is
-    // unchanged — bumping it would loosen the M1 Air reference path
-    // (where prev ≈ refMax = 50 ms) far more than intended.
     ghaMax: 600,
     gated: true,
     noiseFloorPct: 40,
@@ -167,9 +110,6 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     noiseFloorAbsUnit: "ms",
   },
 
-  // ----- Workload surfaces (record-only until C-2) -----
-  // S6 is one logical SLO row covering Drive / Gmail / GitHub connectors
-  // (spec § 3.2 lists S6 as a single surface; sub-connector drivers share this threshold).
   {
     surfaceId: "S6-drive",
     metric: "throughput_per_sec",

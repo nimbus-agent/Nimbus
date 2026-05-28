@@ -19,7 +19,6 @@ import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } fr
 
 type AuditRecord = Parameters<AuditSink["recordAudit"]>[0];
 
-/** Avoid hardcoded `/tmp/…` literals in tests (world-writable; Sonar S5443). */
 const HITL_TEST_TARGET_PATH = join(tmpdir(), "nimbus-engine-hitl-test-target");
 const HITL_TEST_IAC_TF_DIR = mkdtempSync(join(tmpdir(), "nimbus-engine-iac-tf-"));
 const HITL_TEST_IAC_PU_DIR = mkdtempSync(join(tmpdir(), "nimbus-engine-iac-pu-"));
@@ -1068,7 +1067,7 @@ describe("ToolExecutor.gate()", () => {
     expect(result).toBe("proceed");
     expect(m.consentCalls.length).toBe(1);
     expect(m.auditCalls[0]?.hitlStatus).toBe("approved");
-    expect(m.dispatchCalls.length).toBe(0); // gate() does not dispatch
+    expect(m.dispatchCalls.length).toBe(0);
   });
 
   test("gate() returns rejected ActionResult when user declines", async () => {

@@ -26,17 +26,14 @@ describe("V24 migration — audit_log.session_id", () => {
 
   test("old rows inserted before migration have NULL session_id", () => {
     const db = new Database(":memory:");
-    // Bootstrap to V23 so audit_log exists without session_id
     runIndexedSchemaMigrations(db, 23);
 
-    // Insert a legacy row (no session_id column yet)
     db.run(
       `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash)
        VALUES (?, ?, ?, ?, ?, ?)`,
       ["test.legacy", "not_required", "{}", 1000, "a".repeat(64), "0".repeat(64)],
     );
 
-    // Now apply V24
     runIndexedSchemaMigrations(db, 24);
 
     const row = db

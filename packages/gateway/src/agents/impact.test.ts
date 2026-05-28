@@ -21,17 +21,12 @@ describe("runImpact", () => {
     expect(brief.query.fileOrPrUrl).toBe("src/billing/retry.ts");
     expect(Array.isArray(brief.affected)).toBe(true);
     expect(Array.isArray(brief.gaps)).toBe(true);
-    // Empty index → at least one empty_index gap.
     expect(brief.gaps.some((g) => g.category === "empty_index")).toBe(true);
-    // Latency captured.
     expect(typeof brief.latencyMs).toBe("number");
   });
 
   test("resolves a PR URL to a graph_entity and emits a downstream_repo finding", async () => {
     const db = freshDb();
-    // Seed a `pr` graph_entity matching the PR URL → resolveStartEntity hits
-    // PR_URL_RE branch (Branch 1). Also seed a `repo` graph_entity so
-    // subDownstreamRepos returns a finding instead of an empty result.
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:pr:1', 'pr', 'github:acme/payment#501', 'acme/payment#501', 'github', '{}')",
@@ -45,7 +40,6 @@ describe("runImpact", () => {
       { db, sessionId: "t-pr", notify: () => {} },
     );
     expect(brief.startEntityId).toBe("graph:pr:1");
-    // subDownstreamRepos finds the linked repo (service-bucket finding).
     const serviceFindings = brief.affected.filter((f) => f.category === "service");
     expect(serviceFindings.length).toBe(1);
     expect(serviceFindings[0]?.affectedItemId).toBe("graph:repo:1");
@@ -59,16 +53,12 @@ describe("runImpact", () => {
       {
         db,
         sessionId: "t-emit",
-        // No `llm` → synthesize() falls through to deterministicRender (the
-        // _lib/render.ts renderImpact path).
         notify: (method, params) => {
           received.push({ method, params });
         },
       },
     );
     expect(handle.sessionId).toBe("t-emit");
-    // Wait for the fire-and-forget async to land. Three short ticks is enough
-    // because runImpact on an empty DB performs only constant-time SQL.
     for (let i = 0; i < 20 && received.length === 0; i += 1) {
       await new Promise<void>((r) => setTimeout(r, 5));
     }
@@ -77,23 +67,16 @@ describe("runImpact", () => {
     expect(evt?.method).toBe("impact.briefReady");
     const params = evt?.params as { sessionId: string; brief: string };
     expect(params.sessionId).toBe("t-emit");
-    // Deterministic Markdown header proves _lib/render.ts ran.
     expect(params.brief).toContain("# Impact: src/missing.ts");
     expect(typeof params.brief).toBe("string");
   });
 
   test("aggregates near-duplicate missing-entity gaps into one combined note", async () => {
     const db = freshDb();
-    // Seed one item so detectEmptyIndex passes.
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
         "('seed', 'github', 'pr', 'acme/x#1', 't', '', 0, 0, 0)",
     );
-    // Seed a `symbol` graph_entity so resolveStartEntity returns non-null and
-    // sub-agents reach their SQL bodies (instead of early-returning on null start).
-    // subPipelines will emit detectMissingEntityType(db, "pipeline_run") gap;
-    // subDashboards will emit detectMissingEntityType(db, "dashboard") gap.
-    // Two missing_entity_type gaps → aggregateMissingEntityTypes folds them into one.
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:symbol:test', 'symbol', 'item:filesystem:src/x.ts', 'src/x.ts', 'filesystem', '{}')",
@@ -102,28 +85,21 @@ describe("runImpact", () => {
       { fileOrPrUrl: "src/x.ts" },
       { db, sessionId: "t-2", notify: () => {} },
     );
-    // Two missing_entity_type gaps fire (pipeline_run + dashboard); aggregator
-    // collapses them into exactly one combined note.
     const missingEntityGaps = brief.gaps.filter((g) => g.category === "missing_entity_type");
     expect(missingEntityGaps.length).toBe(1);
     expect(missingEntityGaps[0]?.detail).toMatch(/categories blocked/);
   });
 
   test("subDownstreamCode emits a downstream_repo finding via reverse `depends_on`", async () => {
-    // Covers lines 272-285 — reverse depends_on walk from the resolved start.
     const db = freshDb();
-    // Seed one item so detectEmptyIndex passes.
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
         "('seed', 'github', 'pr', 'acme/x#1', 't', '', 0, 0, 0)",
     );
-    // Resolved start: a `symbol` entity for src/target.ts.
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:symbol:target', 'symbol', 'item:filesystem:src/target.ts', 'src/target.ts', 'filesystem', '{}')",
     );
-    // Upstream consumer entity that `depends_on` the target — reverse traversal
-    // (r.to_id = start, return r.from_id) finds this row.
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:symbol:consumer', 'symbol', 'item:filesystem:src/consumer.ts', 'src/consumer.ts', 'filesystem', '{}')",
@@ -143,9 +119,6 @@ describe("runImpact", () => {
   });
 
   test("subOncall surfaces a missing_connector gap when PagerDuty is not configured", async () => {
-    // Covers lines 353-354 — detectMissingConnector returns the gap BEFORE the
-    // SQL traversal even runs. Confirms PagerDuty absence yields a structured
-    // gap (not silent emptiness) with the recommended remediation.
     const db = freshDb();
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
@@ -166,14 +139,11 @@ describe("runImpact", () => {
   });
 
   test("subOncall emits an oncall_rotation finding via `belongs_to` when PagerDuty is configured", async () => {
-    // Covers lines 364-385 — service → belongs_to → oncall_rotation traversal.
     const db = freshDb();
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
         "('seed', 'github', 'pr', 'acme/x#1', 't', '', 0, 0, 0)",
     );
-    // PagerDuty is "configured" → sync_state row makes detectMissingConnector
-    // return null and the SQL traversal proceeds.
     db.run(
       "INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token) VALUES " +
         "('pagerduty', 0, '')",
@@ -201,8 +171,6 @@ describe("runImpact", () => {
   });
 
   test("subDashboards emits a dashboard finding via `upstream_refs` when dashboard entities exist", async () => {
-    // Covers lines 398-423 — start non-null + dashboard entity present means
-    // detectMissingEntityType returns null and the SQL traversal runs.
     const db = freshDb();
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
@@ -216,9 +184,6 @@ describe("runImpact", () => {
       "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES " +
         "('graph:dash:1', 'dashboard', 'metabase:42', 'Revenue Dashboard', 'metabase', '{}')",
     );
-    // `upstream_refs` isn't pre-populated in graph_relation_type by current
-    // migrations — register it just to satisfy the FK so we can exercise the
-    // sub-agent's SQL.
     db.run(
       "INSERT OR IGNORE INTO graph_relation_type (name, directed) VALUES ('upstream_refs', 1)",
     );
@@ -237,8 +202,6 @@ describe("runImpact", () => {
   });
 
   test("resolveStartEntity branch 3 — topic FTS on item.body_preview", async () => {
-    // Covers line 219 — when neither a PR URL nor a symbol matches but item
-    // title/body_preview LIKE matches, returns entityId = `item:<id>`.
     const db = freshDb();
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned) VALUES " +
@@ -248,13 +211,10 @@ describe("runImpact", () => {
       { fileOrPrUrl: "OAuth refresh token" },
       { db, sessionId: "t-topic", notify: () => {} },
     );
-    // Start entity matched the topic FTS branch (returns "item:<id>").
     expect(brief.startEntityId).toBe("item:topic:1");
   });
 
   test("emitImpactBrief routes synchronous errors in runImpact to impact.briefError", async () => {
-    // Covers lines 137-140 — the .catch handler on the fire-and-forget IIFE.
-    // Closing the DB before runImpact runs makes the first SQL query throw.
     const db = freshDb();
     db.close();
     const received: Array<{ method: string; params: unknown }> = [];

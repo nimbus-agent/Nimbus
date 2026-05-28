@@ -1,18 +1,4 @@
 #!/usr/bin/env bun
-// D8: counts `any`/`as any`/`<any>` in packages/*/src/** excluding tests.
-//
-// Modes:
-//   --check   exit non-zero on regression OR reduction (CI mode); read baseline file
-//   --update  rewrite the baseline file with the current count (local-only; never CI)
-//   (default) print the current count and per-file breakdown to stdout
-//
-// Flags:
-//   --baseline <path>   override path to baseline JSON (default: docs/structure-audit/any-baseline.json)
-//
-// Exit codes:
-//   0  baseline matches current count (--check) or update succeeded (--update)
-//   1  regression: current > baseline, OR reduction without --update: current < baseline
-//   2  usage error
 
 import { auditOutputPath, countAnyInSource, iterateSourceFiles } from "./lib.ts";
 
@@ -67,7 +53,6 @@ async function run(): Promise<void> {
     return;
   }
 
-  // mode === "check"
   const baselineFile = Bun.file(baselinePath);
   if (!(await baselineFile.exists())) {
     console.error(`baseline file not found: ${baselinePath}`);

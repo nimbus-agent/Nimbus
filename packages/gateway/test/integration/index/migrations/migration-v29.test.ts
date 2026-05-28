@@ -57,7 +57,7 @@ describe("V29 — tool_call_log audit table migration", () => {
     }>;
     const colMap = new Map(cols.map((c) => [c.name, c]));
     expect(colMap.get("id")?.type).toBe("INTEGER");
-    expect(colMap.get("session_id")?.notnull).toBe(0); // nullable per spec §5.1
+    expect(colMap.get("session_id")?.notnull).toBe(0);
     expect(colMap.get("tool_id")?.notnull).toBe(1);
     expect(colMap.get("service")?.notnull).toBe(1);
     expect(colMap.get("called_at")?.notnull).toBe(1);
@@ -82,8 +82,6 @@ describe("V29 — tool_call_log audit table migration", () => {
   });
 
   test("pre-migration backup is written when backupOptions is provided", () => {
-    // Step from V28 → V29 specifically. Run V0→V28 first WITHOUT backup so we
-    // can assert ONLY the V29 backup lands.
     runIndexedSchemaMigrations(db, 28);
     expect(readIndexedUserVersion(db)).toBe(28);
 

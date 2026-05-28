@@ -1,10 +1,3 @@
-/**
- * nimbus-mcp-readwise — Readwise REST API MCP server (read-only).
- * Credentials arrive as READWISE_TOKEN env, injected at spawn time. Readwise
- * uses Django-REST-Framework token auth: `Authorization: Token <api-token>`
- * (the literal word "Token", NOT "Bearer"; never logged). The API host is fixed
- * at readwise.io (no host override). v1 indexes highlights only.
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -26,7 +19,6 @@ function apiToken(): string {
 }
 
 function authHeader(): Record<string, string> {
-  // Readwise uses DRF token auth: the literal word "Token", NOT "Bearer".
   return { Authorization: `Token ${apiToken()}`, Accept: "application/json" };
 }
 

@@ -1,15 +1,3 @@
-/**
- * Phase 5 T4 PR 2 — `metrics.dora` JSON-RPC handler.
- *
- * Validates the `{ service, since }` params, resolves the
- * `[metrics.dora.<service-id>]` config (via the caller-provided `loadConfig`
- * thunk so the dispatcher owns profile/configDir resolution), and either
- * returns the computed metrics or — when the service id has no matching
- * config — a null-everywhere envelope with `gap='no_repos'`. The latter
- * lets a UI render the panel without an error state before any DORA config
- * exists, mirroring how `deploymentFrequency` shapes its empty-repos return.
- */
-
 import type { Database } from "bun:sqlite";
 import { computeDoraMetrics, type DoraMetricsResult } from "../metrics/dora.ts";
 import type { DoraServiceConfig } from "../metrics/dora-config.ts";

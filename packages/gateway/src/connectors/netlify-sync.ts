@@ -29,11 +29,6 @@ interface NetlifyCreds {
   readonly token: string;
 }
 
-/**
- * `netlify.token` is required. Netlify's API host is a fixed SaaS host
- * (`api.netlify.com`) — there is no host override key. The connector no-ops
- * unless the token is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<NetlifyCreds | null> {
   const token = (await readConnectorSecret(ctx.vault, "netlify", "token"))?.trim() ?? "";
   if (token === "") {
@@ -47,7 +42,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/** Build `/api/v1/sites?per_page=100&page=N`. */
 function sitesPath(page: number): string {
   const params = new URLSearchParams({ per_page: String(PAGE_SIZE), page: String(page) });
   return `/api/v1/sites?${params.toString()}`;
@@ -59,7 +53,6 @@ async function netlifyGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Netlify uses a standard `Authorization: Bearer <token>` header.
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -75,7 +68,6 @@ async function netlifyGet(
   }
 }
 
-/** `GET /api/v1/sites` returns a bare JSON array of site objects. */
 function extractSites(parsed: unknown): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
@@ -110,11 +102,6 @@ export function createNetlifySyncable(options: NetlifySyncableOptions): Syncable
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      // The sites walk is the gating call: a FIRST-page http/parse error maps
-      // to the pass-cursor-empty result. Later-page errors just break,
-      // preserving whatever was already collected. Netlify page-paginates:
-      // increment `page` from 1; stop when a page returns fewer than per_page
-      // items (or an empty array).
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await netlifyGet(ctx, creds, sitesPath(page));
         totalBytes += outcome.bytes;

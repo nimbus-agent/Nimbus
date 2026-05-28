@@ -29,7 +29,6 @@ export type DbtSyncableOptions = {
 interface DbtCreds {
   readonly token: string;
   readonly apiBase: string;
-  /** When set, restrict the walk to this single account (no `/accounts/` call). */
   readonly accountId: number | null;
 }
 
@@ -59,7 +58,6 @@ type FetchOutcome =
 
 async function dbtGet(ctx: SyncContext, creds: DbtCreds, path: string): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // dbt Cloud API token is sent as `Authorization: Token <token>` (not Bearer).
   const res = await fetch(`${creds.apiBase}/api/v2${path}`, {
     headers: { Authorization: `Token ${creds.token}`, Accept: "application/json" },
   });
@@ -75,10 +73,6 @@ async function dbtGet(ctx: SyncContext, creds: DbtCreds, path: string): Promise<
   }
 }
 
-/**
- * Coerce a dbt Cloud list response into an array. dbt wraps lists in a `data`
- * array (NOT `items` / `results`); defensively fall back to a bare array.
- */
 function extractData(parsed: unknown): unknown[] {
   const data = asRecord(parsed)?.["data"];
   if (Array.isArray(data)) {
@@ -87,7 +81,6 @@ function extractData(parsed: unknown): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-/** Collect numeric account ids from a `/accounts/` response. */
 function extractAccountIds(parsed: unknown): number[] {
   const out: number[] = [];
   for (const a of extractData(parsed)) {
@@ -134,12 +127,6 @@ type AccountsOutcome =
   | { readonly accountIds: number[]; readonly bytes: number }
   | { readonly error: "http_error" | "parse_error"; readonly bytes: number };
 
-/**
- * Resolve the set of account ids to walk. When `dbt.account_id` is set, use it
- * directly (no `/accounts/` round-trip). Otherwise discover all accounts; the
- * `/accounts/` call is the one whose http/parse error maps to the
- * pass-cursor-empty result.
- */
 async function resolveAccounts(ctx: SyncContext, creds: DbtCreds): Promise<AccountsOutcome> {
   if (creds.accountId !== null) {
     return { accountIds: [creds.accountId], bytes: 0 };
@@ -151,7 +138,6 @@ async function resolveAccounts(ctx: SyncContext, creds: DbtCreds): Promise<Accou
   return { error: outcome.kind, bytes: outcome.bytes };
 }
 
-/** Walk one account's jobs (offset-paged, capped) and upsert them. */
 async function syncAccountJobs(
   ctx: SyncContext,
   creds: DbtCreds,
@@ -166,8 +152,6 @@ async function syncAccountJobs(
     const outcome = await dbtGet(ctx, creds, jobsPath(accountId, offset));
     bytes += outcome.bytes;
     if (outcome.kind !== "ok") {
-      // A non-ok per-account jobs response is non-fatal — log and move on
-      // to the next account (same spirit as Flagsmith's tags handling).
       ctx.logger.warn(
         { serviceId: SERVICE_ID, accountId },
         "dbt jobs GET failed; skipping account",

@@ -53,7 +53,7 @@ describe("VoiceService microphone arbiter", () => {
 
     await svc.transcribe(import.meta.path);
     expect(det.stopCalls).toBe(1);
-    expect(det.startCalls).toBe(2); // initial + resume
+    expect(det.startCalls).toBe(2);
     expect(det.isRunning).toBe(true);
   });
 

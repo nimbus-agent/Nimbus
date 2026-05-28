@@ -13,7 +13,6 @@ import { asRecord } from "./unknown-record.ts";
 const SERVICE_ID = "stackoverflow";
 const CURSOR_PREFIX = "nimbus-stackoverflow1:";
 const BASE = "https://api.stackoverflowteams.com";
-// The v3 API page-paginates by page number, 1-based. `pagesize` max is 100.
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20;
 
@@ -32,12 +31,6 @@ interface StackOverflowCreds {
   readonly team: string;
 }
 
-/**
- * Both `stackoverflow.token` (the Personal Access Token) and
- * `stackoverflow.team` (the team slug used in the URL path) are required. The
- * API host is a fixed SaaS host (`api.stackoverflowteams.com`) — there is no
- * host override key. The connector no-ops unless BOTH are non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<StackOverflowCreds | null> {
   const token = (await readConnectorSecret(ctx.vault, "stackoverflow", "token"))?.trim() ?? "";
   const team = (await readConnectorSecret(ctx.vault, "stackoverflow", "team"))?.trim() ?? "";
@@ -52,10 +45,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/**
- * Build `/v3/teams/<team>/questions?page=N&pagesize=100&sort=creation&order=desc`.
- * The team slug is URL-encoded into the PATH (not a query param).
- */
 function questionsPath(team: string, page: number): string {
   const params = new URLSearchParams({
     page: String(page),
@@ -72,8 +61,6 @@ async function stackOverflowGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Stack Overflow for Teams uses Bearer auth: `Authorization: Bearer <token>`
-  // (a Personal Access Token; the token is never logged).
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -92,12 +79,6 @@ async function stackOverflowGet(
   }
 }
 
-/**
- * `GET /v3/teams/<team>/questions` returns the v3 envelope
- * `{ items, totalCount, pageSize, page, totalPages, sort, order }`. Extract the
- * `items` array and `totalPages` defensively — a missing/malformed envelope
- * yields an empty page + totalPages 0 so the walk terminates.
- */
 function extractPage(parsed: unknown): { items: unknown[]; totalPages: number } {
   const root = asRecord(parsed);
   if (root === undefined) {
@@ -141,12 +122,6 @@ export function createStackOverflowSyncable(options: StackOverflowSyncableOption
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      // The questions walk is the gating call: a FIRST-page http/parse error
-      // maps to the pass-cursor-empty result. Later-page errors just break,
-      // preserving whatever was already collected. The v3 API page-paginates by
-      // PAGE NUMBER, 1-based: start at `page=1`; continue while `page <
-      // totalPages` AND `items` is non-empty; stop on an empty page, when the
-      // last page is reached, or when the MAX_PAGES cap stops the walk.
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await stackOverflowGet(ctx, creds, questionsPath(creds.team, page));
         totalBytes += outcome.bytes;

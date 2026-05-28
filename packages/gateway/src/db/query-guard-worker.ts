@@ -1,7 +1,3 @@
-// Worker entry point — opens a fresh readonly handle, runs the SELECT,
-// posts the rows back. The parent process owns the AbortController and
-// terminates this worker via worker.terminate() on timeout.
-
 import { Database } from "bun:sqlite";
 
 import { isAcceptableWorkerOrigin } from "../platform/worker-security.ts";

@@ -19,7 +19,6 @@ import {
 import { type CreateIpcServerOptions, createIpcServer } from "./server/index.ts";
 import type { IPCServer } from "./types.ts";
 
-/** Accumulate UTF-8 chunks and return the first complete line (excluding `\n`) when present. */
 function appendAndTakeFirstLine(buffer: string, chunk: string): { next: string; line?: string } {
   const combined = buffer + chunk;
   const nl = combined.indexOf("\n");
@@ -172,11 +171,6 @@ async function rpcCall(listenPath: string, method: string, params: unknown): Pro
   return exchangeFirstNdjsonLine(listenPath, jsonRpcNdjsonLine(method, 42, params));
 }
 
-/**
- * Shared fixture for the workflow.run paramsOverride tests: boots an IPC server
- * with an in-memory LocalIndex seeded with one workflow, registers a handler
- * that records the received context, and returns everything the caller needs.
- */
 async function makeWorkflowRunCapture(workflowName: string): Promise<{
   readonly server: IPCServer;
   readonly listenPath: string;

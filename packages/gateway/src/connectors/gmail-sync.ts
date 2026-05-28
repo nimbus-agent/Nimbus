@@ -205,9 +205,6 @@ async function fetchMessageMetadata(
   return asUnknownObjectRecord(json) as GmailMessageResource;
 }
 
-// `messages.list` and `history.list` may report ids that `messages.get` cannot
-// resolve (permanently deleted / expunged messages). Tolerate per-message 404
-// so a single missing id does not abort the whole sync.
 async function fetchMessageMetadataOrNullOn404(
   ctx: SyncContext,
   token: string,
@@ -316,9 +313,6 @@ export type GmailSyncableOptions = {
   ensureGoogleMcpRunning: () => Promise<void>;
 };
 
-/**
- * Gmail {@link Syncable}: windowed `messages.list`, then `history.list` with persisted `historyId`.
- */
 export function createGmailSyncable(options: GmailSyncableOptions): Syncable {
   const ensure = options.ensureGoogleMcpRunning;
   const initialSyncDepthDays = 30;

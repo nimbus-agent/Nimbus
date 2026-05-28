@@ -36,22 +36,15 @@ import { type LazyMeshToolMap, listLazyMeshClientTools, mergeToolMapsOrThrow } f
 import { ensureUserMcpClient } from "./user-mcp.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
-/**
- * Eager filesystem MCP + lazily spawned Google MCP bundle (Drive + Gmail + Photos) + Microsoft bundle (OneDrive + Outlook + Teams) + GitHub (includes GitHub Actions MCP child) / GitLab / Bitbucket / Slack / Linear / Jira / Notion / Confluence / Jenkins / CircleCI / PagerDuty / Kubernetes credential MCP when vault keys exist; Phase 3 bundle (AWS, Azure, GCP, IaC, Grafana, Sentry, New Relic, Datadog) when matching vault keys exist; Discord MCP when **`discord.enabled`** + **`discord.bot_token`** are set (Q2 §1.6 / Phase 2–5 + §4.3).
- */
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
-  /** Lazy MCP stdio children: built-in bundles use `LAZY_MESH.*`; user MCP uses `mesh:user:<serviceId>`. */
   private readonly lazySlots = new Map<string, LazyMcpSlot>();
   private readonly listUserMcpConnectors: () => readonly UserMcpConnectorRow[];
   private readonly inactivityMs: number;
-  /** S8-F9 — optional db + logger so args_json failures can transition health and log. */
   private readonly healthDb: import("bun:sqlite").Database | undefined;
-  /** Phase 5 T6 PR 2 — when supplied, listTools' wrapped execute writes tool_call_log rows. */
   private readonly auditDb: import("bun:sqlite").Database | undefined;
   private readonly logger: MeshLogger | undefined;
   private toolsEpoch = 0;
-  /** Constructor-bound facade exposing the slot state-machine to extracted free functions. */
   private readonly spawnContext: MeshSpawnContext;
 
   constructor(
@@ -60,17 +53,9 @@ export class LazyConnectorMesh {
     options?: {
       inactivityMs?: number;
       listUserMcpConnectors?: () => readonly UserMcpConnectorRow[];
-      /** S8-F9 — when supplied, args_json parse failures call transitionHealth. */
       healthDb?: import("bun:sqlite").Database;
-      /** S8-F9 — when supplied, args_json parse failures emit a warn line. */
       logger?: MeshLogger;
-      /** Phase 5 T6 PR 2 — when supplied, listTools' wrapped execute writes tool_call_log rows. */
       auditDb?: import("bun:sqlite").Database;
-      /**
-       * Wave A PR 2 — absolute paths of `[[filesystem.roots]]` discovered at
-       * gateway boot. Threaded into `MeshSpawnContext.obsidianVaultPaths`
-       * for `ensureObsidianMcp`. Empty/undefined → obsidian MCP not started.
-       */
       obsidianVaultPaths?: readonly string[];
     },
   ) {
@@ -79,12 +64,6 @@ export class LazyConnectorMesh {
     this.healthDb = options?.healthDb;
     this.auditDb = options?.auditDb;
     this.logger = options?.logger;
-    // I15 (T2 PR 1) — every lazy-mesh ServerSpec goes through
-    // `wrapServerSpec` so MCPClient's internal child process lands in
-    // `sandbox-wrapper.ts` → the platform sandbox runner. The filesystem
-    // connector needs read access to `paths.dataDir`; we extend the
-    // base manifest's `filesystem.read` at runtime because dataDir is
-    // user-scoped (not known until Gateway boot).
     const fsBaseManifest = manifestForFirstParty("filesystem");
     const fsManifest = {
       ...fsBaseManifest,
@@ -171,9 +150,6 @@ export class LazyConnectorMesh {
     if (slot === undefined) {
       return;
     }
-    // S8-F7 — wait for in-flight calls before tearing down. Hard cap at
-    // 10 minutes total so a stuck tool call cannot indefinitely defer
-    // disconnect; beyond that, force-disconnect anyway.
     if (slot.drain.count > 0) {
       await Promise.race([
         slot.drain.awaitDrain(),
@@ -199,26 +175,11 @@ export class LazyConnectorMesh {
     await this.stopLazyClient(userMcpMeshKey(serviceId));
   }
 
-  /**
-   * S7-F10 — terminate the running MCP child process for an extension.
-   * Called by `extension.disable` IPC and by `verifyExtensionsBestEffort`
-   * when a hash mismatch is detected. Extension MCPs are stored under the
-   * same `mesh:user:<id>` slot pattern as user MCPs, so we route through
-   * the existing user-mesh teardown. We also attempt the bare extension-id
-   * slot in case a future code path registers extensions there directly.
-   *
-   * Limitation: this only kills the immediate MCP child. Subprocesses
-   * spawned BY the extension (helper daemons, background watchers) keep
-   * running until they exit on their own. Closing that gap requires
-   * platform-specific machinery (POSIX process groups, Windows Job
-   * Objects) and is tracked under Phase 7 sandbox work.
-   */
   public async stopExtensionClient(extensionId: string): Promise<void> {
     await this.stopUserMcpClient(extensionId);
     await this.stopLazyClient(extensionId);
   }
 
-  /** Ensures the persisted user MCP server for `serviceId` is spawned (sync + agent tool listing). */
   async ensureUserMcpRunning(serviceId: string): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const row = rows.find((r) => r.service_id === serviceId);
@@ -244,8 +205,6 @@ export class LazyConnectorMesh {
       await ensureUserMcpClient(this.spawnContext, row);
     }
   }
-
-  // --- per-connector ensure shells (delegate to free functions) ---
 
   async ensurePhase3BundleRunning(): Promise<void> {
     return ensurePhase3BundleMcp(this.spawnContext);
@@ -319,9 +278,6 @@ export class LazyConnectorMesh {
     return ensureZoomMcp(this.spawnContext);
   }
 
-  // --- tool aggregation (kept; needs raw slot map access) ---
-
-  /** Collect tool maps from all built-in lazy slots. */
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -350,7 +306,6 @@ export class LazyConnectorMesh {
     ];
   }
 
-  /** Merge tool maps from every active user MCP slot. */
   private async collectUserMcpToolMap(): Promise<LazyMeshToolMap> {
     let merged: LazyMeshToolMap = {};
     for (const [meshKey, slot] of this.lazySlots) {
@@ -362,7 +317,6 @@ export class LazyConnectorMesh {
     return merged;
   }
 
-  /** Index every tool key to its owning slot's drain tracker. Best-effort; races with disconnect are ignored. */
   private async buildSlotForToolMap(): Promise<Map<string, LazyDrainTracker>> {
     const slotForTool = new Map<string, LazyDrainTracker>();
     for (const slot of this.lazySlots.values()) {
@@ -379,11 +333,6 @@ export class LazyConnectorMesh {
     return slotForTool;
   }
 
-  /**
-   * S8-F7 — wrap each tool's execute with bump/drop counters keyed to the
-   * owning slot, so stopLazyClient can defer disconnect while calls are in
-   * flight.
-   */
   private wrapMergedToolsWithRefcount(
     merged: LazyMeshToolMap,
     slotForTool: ReadonlyMap<string, LazyDrainTracker>,
@@ -406,11 +355,6 @@ export class LazyConnectorMesh {
     }
   }
 
-  /**
-   * Bare tool map — for the planner path (`ConnectorDispatcher` →
-   * `ToolExecutor`). Returns refcount-wrapped but otherwise structured tool
-   * results so `ToolExecutor` consumers see the same shape as upstream MCPs.
-   */
   async listToolsForDispatcher(): Promise<
     Record<string, { execute?: (input: unknown, context?: unknown) => Promise<unknown> }>
   > {
@@ -425,11 +369,6 @@ export class LazyConnectorMesh {
     return merged;
   }
 
-  /**
-   * Envelope-wrapped tool map — for the LLM-visible surface via Mastra. Each
-   * tool's execute returns a `<tool_output>`-tagged string. Use this for the
-   * agent / Mastra path; use `listToolsForDispatcher` for the planner path.
-   */
   async listTools(): Promise<
     Record<string, { execute?: (input: unknown, context?: unknown) => Promise<unknown> }>
   > {

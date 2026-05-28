@@ -1,11 +1,10 @@
-// packages/cli/src/commands/config.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -109,7 +108,6 @@ describe("runConfigGet", () => {
     const tomlPath = join(tmp, "nimbus.toml");
     writeFileSync(tomlPath, "[telemetry]\nenabled = true\n", "utf8");
     runConfigGet(tomlPath, "telemetry.enabled");
-    // toml value comes back as string per getTomlValueFromFile
     expect(out.stdout.trim().length).toBeGreaterThan(0);
   });
 
@@ -177,7 +175,6 @@ describe("runConfigEdit", () => {
     ): EventEmitter => {
       calls.push({ cmd, args });
       const emitter = new EventEmitter();
-      // Defer the close event so the on() handlers are wired first.
       queueMicrotask(() => {
         emitter.emit("close", 0);
       });

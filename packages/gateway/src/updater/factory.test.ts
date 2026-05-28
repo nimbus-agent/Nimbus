@@ -34,9 +34,6 @@ describe("createUpdaterFromConfig", () => {
       ...DEFAULT_NIMBUS_UPDATER_TOML,
       enabled: true,
     };
-    // Platform override forces a supported target so the test runs on
-    // any host. The production callsite uses no override so it picks up
-    // the actual `process.platform` + `process.arch`.
     const result = createUpdaterFromConfig({
       ...baseArgs,
       updaterCfg,

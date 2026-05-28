@@ -73,13 +73,10 @@ interface RowProps {
 function ConnectorRow({ row, inFlight, writeDisabled, highlighted, onPatch }: RowProps) {
   const init = fromMs(row.intervalMs);
   const [parts, setParts] = useState<IntervalParts>(init);
-  // Separate display string so clearing the input doesn't immediately clamp to 1,
-  // which would cause subsequent typed characters to append to "1" instead of replacing it.
   const [displayValue, setDisplayValue] = useState<string>(String(init.value));
   const [validationError, setValidationError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Resync when the upstream row changes (e.g. configChanged reconcile).
   useEffect(() => {
     const next = fromMs(row.intervalMs);
     setParts(next);
@@ -97,16 +94,11 @@ function ConnectorRow({ row, inFlight, writeDisabled, highlighted, onPatch }: Ro
     [onPatch],
   );
 
-  /**
-   * Validate immediately (synchronous state update so the error spans show without
-   * waiting for the debounce) and schedule the save only when valid.
-   */
   const validateAndSchedule = useCallback(
     (next: IntervalParts) => {
       const ms = toMs(next);
       if (ms < MIN_INTERVAL_MS) {
         setValidationError("minimum 60 seconds");
-        // Clear any pending save so an invalid value never reaches onPatch.
         if (debounceRef.current !== null) {
           clearTimeout(debounceRef.current);
           debounceRef.current = null;
@@ -124,7 +116,6 @@ function ConnectorRow({ row, inFlight, writeDisabled, highlighted, onPatch }: Ro
       setDisplayValue(raw);
       const v = Number.parseInt(raw, 10);
       if (!Number.isFinite(v) || v < 1) {
-        // Don't clamp yet — the user may still be typing (e.g. cleared the field).
         return;
       }
       const next: IntervalParts = { ...parts, value: v };
@@ -239,13 +230,11 @@ export function ConnectorsPanel() {
   const offline = connectionState === "disconnected";
   const writeDisabled = offline;
 
-  // Sync ?highlight=<service> → store.
   useEffect(() => {
     const q = searchParams.get("highlight");
     setHighlightService(q ?? null);
   }, [searchParams, setHighlightService]);
 
-  // Poll listStatus every 30 s so background health transitions surface without a dedicated notification.
   const {
     data: listStatusRows,
     error: fetchError,
@@ -257,7 +246,6 @@ export function ConnectorsPanel() {
     setConnectorsList(listStatusRows.map(asPersistedRow));
   }, [listStatusRows, setConnectorsList]);
 
-  // Consume `connector.configChanged` for cross-window reconcile.
   const onNotification = useCallback(
     (n: JsonRpcNotification) => {
       if (n.method !== "connector.configChanged") return;
@@ -296,7 +284,6 @@ export function ConnectorsPanel() {
         setConnectorInFlight(service, true);
         try {
           await createIpcClient().connectorSetConfig(service, patch);
-          // Optimistically patch locally; the configChanged notification will converge.
           patchConnectorRow(service, patch);
         } finally {
           setConnectorInFlight(service, false);

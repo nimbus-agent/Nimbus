@@ -1,8 +1,3 @@
-/**
- * CI-friendly check: a no-op terraform-shaped CLI accepts the same argv the IaC MCP
- * server uses for plan/apply (exit 0). Uses an explicit mock path so Windows resolves
- * `terraform.cmd` reliably under Bun.spawn.
- */
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

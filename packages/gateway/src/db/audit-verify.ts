@@ -2,7 +2,6 @@ import type { LocalIndex } from "../index/local-index.ts";
 import { computeAuditRowHash, GENESIS_HASH } from "./audit-chain.ts";
 
 export type AuditVerifyOptions = {
-  /** Begin verification strictly after this id. Use 0 for a full scan. */
   fromId: number;
 };
 

@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-flagsmith — Flagsmith admin API MCP server (read-only).
- * Credentials arrive as FLAGSMITH_TOKEN env, injected at spawn time.
- * Flagsmith sends the admin token as `Authorization: Token <token>` —
- * the literal word `Token`, a space, then the raw token (no Bearer prefix).
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -38,7 +32,6 @@ async function fsGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-/** Pull the `results` array out of a DRF features page (or a bare array). */
 function featuresFromPage(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;

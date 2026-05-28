@@ -72,8 +72,6 @@ describe("WatcherPane", () => {
     await new Promise((r) => setTimeout(r, 20));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("No watchers configured");
-    // The bare-numbers `0 active, 0 firing` line is a poor empty-state hint
-    // for a first-time user; the sentence form replaces it.
     expect(frame).not.toContain("0 active, 0 firing");
     unmount();
   });

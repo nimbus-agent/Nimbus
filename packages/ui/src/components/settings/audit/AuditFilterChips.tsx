@@ -3,14 +3,12 @@ import type { AuditFilter, AuditOutcomeFilter } from "../../../store/slices/audi
 
 interface Props {
   readonly filter: AuditFilter;
-  /** All distinct service names harvested from the current row set, sorted ascending. */
   readonly availableServices: ReadonlyArray<string>;
   readonly onChange: (patch: Partial<AuditFilter>) => void;
   readonly onReset: () => void;
   readonly disabled?: boolean;
 }
 
-/** Convert "" or undefined to `null` for the date inputs; ISO 8601 date string → ms epoch otherwise. */
 function dateInputToMs(value: string): number | null {
   if (value === "") return null;
   const ms = Date.parse(value);
@@ -19,7 +17,6 @@ function dateInputToMs(value: string): number | null {
 
 function msToDateInput(ms: number | null): string {
   if (ms === null) return "";
-  // <input type="date"> wants YYYY-MM-DD in local time.
   const d = new Date(ms);
   const yyyy = d.getFullYear().toString().padStart(4, "0");
   const mm = (d.getMonth() + 1).toString().padStart(2, "0");

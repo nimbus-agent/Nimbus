@@ -153,7 +153,6 @@ describe("mapDatabricksJobToItem", () => {
     expect(m["latest_run_cluster_id"]).toBe("0712-abc-xyz");
     expect(m["latest_run_triggered_by"]).toBe("scheduler@acme.com");
     expect(row.bodyPreview).toBe("Nightly ETL — TERMINATED/SUCCESS");
-    // modifiedAt prefers the run start time over created_at.
     expect(row.modifiedAt).toBe(RUN_START_MS);
   });
 

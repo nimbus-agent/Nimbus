@@ -1,32 +1,12 @@
-/**
- * Cross-process measurement primitive for surfaces that need to time a fresh
- * child invocation (S1 cold start, S4 TUI first-paint, S11 CLI overhead).
- *
- * Two modes:
- *   - "marker" — elapsed ms from spawn to first stdout/stderr regex match.
- *                The child is then sent SIGTERM and awaited.
- *   - "exit"   — elapsed ms from spawn to clean exit. The child must exit
- *                on its own.
- *
- * A timeout (default 30 s) protects against a hung child.
- *
- * See the B2 perf audit design §3.2 (S1, S4,
- * S11 surfaces) and the PR-B-2a plan for the call sites.
- */
-
 export type SpawnMode = "marker" | "exit";
 
 export interface SpawnAndTimeOptions {
   cmd: string;
   args: string[];
   mode: SpawnMode;
-  /** Required when mode === "marker". */
   marker?: RegExp;
-  /** Default 30000 ms. */
   timeoutMs?: number;
-  /** Test-injectable spawn (defaults to Bun.spawn). */
   spawn?: typeof Bun.spawn;
-  /** Optional env overrides. */
   env?: Record<string, string>;
 }
 
@@ -120,8 +100,6 @@ async function runMarkerMode(
   let elapsed = 0;
   const ac = new AbortController();
 
-  // matchedPromise resolves only when onMatch fires — stream readers returning
-  // void (no match found in their chunk stream) must NOT win the race.
   let resolveMatched!: () => void;
   const matchedPromise = new Promise<void>((resolve) => {
     resolveMatched = resolve;
@@ -135,15 +113,9 @@ async function runMarkerMode(
     resolveMatched();
   };
 
-  // Kick off both stream readers; they call onMatch if the marker appears.
-  // They do NOT participate in the race directly — only matchedPromise does.
   void readUntilMatch(proc.stdout, marker, onMatch, ac.signal);
   void readUntilMatch(proc.stderr, marker, onMatch, ac.signal);
 
-  // Race: marker matched, timeout, OR child exits before marker. The exit
-  // racer guards against the case where the child crashes pre-marker
-  // (missing dep, port collision, invalid config) — without it the helper
-  // would hang until timeoutMs.
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const racers: Promise<unknown>[] = [
     matchedPromise,
@@ -181,10 +153,6 @@ async function runMarkerMode(
   return elapsed;
 }
 
-/**
- * Spawn a child and return the elapsed ms in the requested mode.
- * Throws on timeout or non-zero exit (in "exit" mode).
- */
 export async function spawnAndTimeToMarker(opts: SpawnAndTimeOptions): Promise<number> {
   validateMarkerOpts(opts);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;

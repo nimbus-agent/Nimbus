@@ -1,15 +1,12 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { argon2id } from "@noble/hashes/argon2.js";
 
-// Default: Argon2id — 3 iterations, 64 MB memory, 1 lane.
 export type KdfParams = { t: number; m: number; p: number };
 const DEFAULT_KDF: KdfParams = { t: 3, m: 64 * 1024, p: 1 };
 
 export type VaultManifestBlob = {
   version: 1;
-  /** base64, 12-byte AES-GCM IV for the manifest cipher */
   iv: string;
-  /** base64 ciphertext including the 16-byte GCM tag */
   ciphertext: string;
   wraps: {
     passphrase: { salt: string; iv: string; wrapped: string };
@@ -18,8 +15,8 @@ export type VaultManifestBlob = {
   kdf: KdfParams;
 };
 
-const DEK_LEN = 32; // AES-256 key
-const IV_LEN = 12; // AES-GCM recommended IV length
+const DEK_LEN = 32;
+const IV_LEN = 12;
 const TAG_LEN = 16;
 
 function toB64(b: Uint8Array | Buffer): string {
@@ -86,23 +83,6 @@ export async function encryptVaultManifest(input: {
   };
 }
 
-/**
- * KDF parameter allowlist (S2-F10).
- *
- * Bundles whose `kdf` field deviates from this list are rejected on import,
- * defending against attacker-substituted weak Argon2id parameters during
- * forensic-image attacks.
- *
- * Migration ordering rule: when raising Argon2id costs in a future release,
- * the NEW profile MUST be added to this list at least one release cycle
- * BEFORE any client begins emitting bundles with the new params. Otherwise
- * older Nimbus installs cannot import bundles produced by newer ones — and
- * passphrase-based recovery from a current export becomes impossible without
- * manually downgrading the user's install. Order:
- *   (1) ship a release that *accepts* the new profile;
- *   (2) wait for the install base to converge;
- *   (3) ship a release that *emits* the new profile.
- */
 const ACCEPTED_KDF_PROFILES_BACKING: KdfParams[] = [{ t: 3, m: 64 * 1024, p: 1 }];
 
 function isAcceptedKdf(p: KdfParams): boolean {
@@ -111,11 +91,6 @@ function isAcceptedKdf(p: KdfParams): boolean {
   );
 }
 
-/**
- * Test-only — temporarily add a KDF profile to the allowlist so existing
- * round-trip tests can keep using fast Argon2id parameters. Returns a
- * restore function. Production code must never call this.
- */
 export function _addTestKdfProfile(profile: KdfParams): () => void {
   ACCEPTED_KDF_PROFILES_BACKING.push(profile);
   return () => {

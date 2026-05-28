@@ -112,7 +112,6 @@ describe("verifyExtensionsBestEffort", () => {
     expect(row.enabled).toBe(0);
   });
 
-  // S7-F10
   test("manifest hash mismatch calls mesh.stopExtensionClient when mesh is supplied", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
@@ -228,7 +227,6 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
       pubkey,
       privkey,
     });
-    // intentionally skip writePublisherKey
     await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
     const row = listExtensions(db).find((r) => r.id === "ext-test-pub");
     expect(row?.enabled).toBe(0);
@@ -247,8 +245,6 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
       pubkey,
       privkey,
     });
-    // Tamper with version. Re-stamp manifest_hash so the existing
-    // SHA-256 sweep doesn't catch the row via a different code path.
     const mfPath = join(installPath, "nimbus.extension.json");
     const orig = JSON.parse(readFileSync(mfPath, "utf8")) as Record<string, unknown>;
     orig["version"] = "9.9.9";
@@ -295,8 +291,6 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
     const { logger } = memoryLogger();
     try {
       const id = "com.example.crash-recover";
-      // Build <extRoot>/<id>/_prev/1.0.0/ as the only on-disk artifact;
-      // active/ is intentionally absent (mid-swap crash).
       const extRoot = join(extensionsDir, id);
       const prevDir = join(extRoot, "_prev", "1.0.0");
       mkdirSync(prevDir, { recursive: true });
@@ -312,7 +306,6 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
         .update(readFileSync(join(prevDir, "dist", "index.js")))
         .digest("hex");
 
-      // Insert with install_path pointing at the missing active/ dir.
       insertExtensionRow(db, {
         id,
         version: "1.1.0", // pretend we were rolling 1.0.0 → 1.1.0 when we crashed
@@ -326,16 +319,13 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
 
       await verifyExtensionsBestEffort(db, logger);
 
-      // active/ now exists (promoted from _prev/1.0.0).
       expect(readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8")).toBe(
         manifestText,
       );
-      // extension row was rolled back to the recovered version.
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.version).toBe("1.0.0");
       expect(row?.enabled).toBe(1);
 
-      // Audit row appended with the structured payload.
       const auditRow = db
         .query(
           `SELECT action_type, action_json FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`,
@@ -362,8 +352,7 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
     try {
       const id = "com.example.crash-fail";
       const extRoot = join(extensionsDir, id);
-      mkdirSync(extRoot, { recursive: true }); // empty — no active/, no _prev/
-
+      mkdirSync(extRoot, { recursive: true });
       insertExtensionRow(db, {
         id,
         version: "1.0.0",
@@ -405,7 +394,6 @@ describe("verifyExtensionsBestEffort — dep-graph backfill (Task 12)", () => {
       const idA = "com.shared.A";
       const idB = "com.example.B";
 
-      // Create on-disk layout for A (no deps).
       const dirA = join(extensionsDir, idA);
       mkdirSync(join(dirA, "dist"), { recursive: true });
       const mfBytesA = Buffer.from(
@@ -416,7 +404,6 @@ describe("verifyExtensionsBestEffort — dep-graph backfill (Task 12)", () => {
       const entryTextA = "export default {};";
       writeFileSync(join(dirA, "dist", "index.js"), entryTextA);
 
-      // Create on-disk layout for B (depends on A).
       const dirB = join(extensionsDir, idB);
       mkdirSync(join(dirB, "dist"), { recursive: true });
       const mfBytesB = Buffer.from(
@@ -454,18 +441,15 @@ describe("verifyExtensionsBestEffort — dep-graph backfill (Task 12)", () => {
         last_verified_at: now,
       });
 
-      // No rows in extension_dependency yet.
       expect(forwardDeps(db, idB)).toHaveLength(0);
 
       await verifyExtensionsBestEffort(db, logger);
 
-      // After backfill, B should have a forward dep edge to A.
       const deps = forwardDeps(db, idB);
       expect(deps).toHaveLength(1);
       expect(deps[0]?.id).toBe(idA);
       expect(deps[0]?.range).toBe("^1.0.0");
 
-      // A has no dependsOn — its forward edges remain empty.
       expect(forwardDeps(db, idA)).toHaveLength(0);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
@@ -479,7 +463,6 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const { logger } = memoryLogger();
     try {
-      // Create an orphan dir (no DB row).
       const orphanDir = join(extensionsDir, "com.orphan");
       mkdirSync(join(orphanDir, "dist"), { recursive: true });
       writeFileSync(
@@ -488,7 +471,6 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
         "utf8",
       );
 
-      // Create a real extension (has a DB row).
       const realId = "com.real";
       const realDir = join(extensionsDir, realId);
       mkdirSync(join(realDir, "dist"), { recursive: true });
@@ -511,12 +493,9 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
         last_verified_at: now,
       });
 
-      // Pass extensionsRoot as 5th arg to trigger the orphan sweep.
       await verifyExtensionsBestEffort(db, logger, undefined, undefined, extensionsDir);
 
-      // Orphan dir must be gone.
       expect(existsSync(orphanDir)).toBe(false);
-      // Real extension dir must still exist.
       expect(existsSync(realDir)).toBe(true);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
@@ -525,11 +504,6 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Helper: stage a minimal on-disk extension layout (manifest + entry) and
-// insert the corresponding `extension` row with correct hashes.
-// Returns the install dir path.
-// ---------------------------------------------------------------------------
 function stageMinimalExtension(
   db: Database,
   extensionsDir: string,
@@ -566,11 +540,9 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const { logger } = memoryLogger();
     try {
-      // B is installed; A is NOT installed.
       const idB = "com.example.B";
       stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
 
-      // Pre-insert the dependency row (B → A, "^1.0.0").
       const now = Date.now();
       dbRun(
         db,
@@ -598,11 +570,9 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
     try {
       const idA = "com.shared.A";
       const idB = "com.example.B";
-      // A is installed at 0.9.0 — does NOT satisfy "^1.0.0".
       stageMinimalExtension(db, extensionsDir, idA, "0.9.0");
       stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
 
-      // Pre-insert dependency row: B → A, "^1.0.0".
       const now = Date.now();
       dbRun(
         db,
@@ -630,13 +600,11 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const { logger } = memoryLogger();
     try {
-      // B and C are installed; A is NOT installed.
       const idB = "com.example.B";
       const idC = "com.example.C";
       stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
       stageMinimalExtension(db, extensionsDir, idC, "1.0.0");
 
-      // B depends on missing A; C depends on B.
       const now = Date.now();
       dbRun(
         db,
@@ -653,16 +621,13 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
 
       await verifyExtensionsBestEffort(db, logger);
 
-      // B is disabled because A is missing.
       expect(missingDependencyRegistry.has(idB)).toBe(true);
       expect(missingDependencyRegistry.reasonFor(idB)?.reason).toBe("dependency_missing");
       expect(missingDependencyRegistry.reasonFor(idB)?.missingDepId).toBe("com.shared.A");
 
-      // C is disabled because B is now in the missing registry (cascade).
       expect(missingDependencyRegistry.has(idC)).toBe(true);
       const cEntry = missingDependencyRegistry.reasonFor(idC);
       expect(cEntry?.reason).toBe("dependency_missing");
-      // C's missing dep is B (the proximate cause), not A.
       expect(cEntry?.missingDepId).toBe(idB);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
@@ -678,7 +643,6 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
     try {
       const idA = "com.shared.A";
       const idB = "com.example.B";
-      // Both A and B are installed; range is intentionally malformed.
       stageMinimalExtension(db, extensionsDir, idA, "1.0.0");
       stageMinimalExtension(db, extensionsDir, idB, "1.0.0");
 
@@ -690,10 +654,8 @@ describe("verify-extensions — completeness guard (Task 13)", () => {
         [idB, idA, "not-a-range", now],
       );
 
-      // Must not throw even with a corrupt range value.
       await verifyExtensionsBestEffort(db, logger);
 
-      // B should be marked unsatisfied because semver.satisfies throws on the bad range.
       expect(missingDependencyRegistry.has(idB)).toBe(true);
       expect(missingDependencyRegistry.reasonFor(idB)?.reason).toBe("dependency_unsatisfied");
     } finally {

@@ -27,7 +27,7 @@ describe("NdjsonLineReader", () => {
   });
   test("decodes multi-byte UTF-8 split across chunk boundaries", () => {
     const r = new NdjsonLineReader();
-    const full = new TextEncoder().encode('"é"\n'); // é = 0xC3 0xA9
+    const full = new TextEncoder().encode('"é"\n');
     const cut = 2;
     expect(r.push(full.slice(0, cut))).toEqual([]);
     expect(r.push(full.slice(cut))).toEqual(['"é"']);
@@ -58,9 +58,6 @@ describe("NdjsonLineReader", () => {
   });
   test("flush() drains a partial multi-byte codepoint held by the decoder", () => {
     const r = new NdjsonLineReader();
-    // 0xC3 is the first byte of the 2-byte 'é'; no newline, so it stays pending
-    // inside the streaming TextDecoder. flush()'s terminal decode() releases it
-    // as the U+FFFD replacement char (decoder is non-fatal).
     expect(r.push(new Uint8Array([0xc3]))).toEqual([]);
     expect(r.flush()).toEqual(["�"]);
   });

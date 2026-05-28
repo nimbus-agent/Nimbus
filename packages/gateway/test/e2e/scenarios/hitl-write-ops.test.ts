@@ -1,24 +1,3 @@
-/**
- * Q2 §7.3 — HITL write-ops scenario
- *
- * Verifies that every Q2 write action type routes through the consent gate BEFORE
- * the connector dispatcher is called.  Tests cover:
- *   - Google Drive (file.create)
- *   - Slack (slack.message.post)
- *   - Teams (teams.message.post, teams.message.postChat)
- *   - Linear (linear.issue.create, linear.issue.update, linear.comment.create)
- *   - Jira (jira.issue.create, jira.issue.update, jira.comment.add)
- *   - Notion (notion.page.create, notion.page.update, notion.block.append, notion.comment.create)
- *   - Confluence (confluence.page.create, confluence.page.update, confluence.comment.add)
- *   - Jenkins (jenkins.build.trigger, jenkins.build.abort)
- *   - GitHub Actions (github_actions.run.trigger, github_actions.run.cancel)
- *   - CircleCI (circleci.pipeline.trigger, circleci.job.cancel)
- *   - GitLab CI (gitlab.pipeline.retry, gitlab.pipeline.cancel)
- *   - Phase 3 cloud / IaC / K8s / PagerDuty HITL action ids (see executor.ts)
- *
- * No subprocess, no cloud.  Uses the real ToolExecutor with mock consent / audit / dispatcher.
- */
-
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +10,6 @@ import type {
   PlannedAction,
 } from "../../../src/engine/types.ts";
 
-/** All Q2 write action types that must trigger HITL. */
 const Q2_WRITE_ACTIONS: ReadonlyArray<string> = [
   "file.create",
   "slack.message.post",
@@ -81,7 +59,6 @@ const Q2_WRITE_ACTIONS: ReadonlyArray<string> = [
 const HITL_E2E_IAC_TF_DIR = mkdtempSync(join(tmpdir(), "nimbus-hitl-e2e-iac-tf-"));
 const HITL_E2E_IAC_PU_DIR = mkdtempSync(join(tmpdir(), "nimbus-hitl-e2e-iac-pu-"));
 
-/** Minimal representative payload for each write action type. */
 const HITL_WRITE_PAYLOADS: Record<string, Record<string, unknown>> = {
   "file.create": { mcpToolId: "google_drive_gdrive_file_create", input: { name: "report.md" } },
   "slack.message.post": {

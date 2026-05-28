@@ -2,11 +2,6 @@ import { type ReactNode, useState } from "react";
 
 interface Props {
   readonly details?: Record<string, unknown> | undefined;
-  /**
-   * T2 PR 3 — when set to one of the auto-update HITL action types, the
-   * preview switches to a typed renderer (version pair, changelog, permission
-   * diff). For any other action type, the generic recursive renderer is used.
-   */
   readonly action?: string;
 }
 
@@ -80,8 +75,6 @@ function Value({ v, depth }: { readonly v: unknown; readonly depth: number }): R
   }
   return null;
 }
-
-// ─── T2 PR 3 — auto-update HITL preview ────────────────────────────────────
 
 interface AutoUpdatePayload {
   displayName?: string;

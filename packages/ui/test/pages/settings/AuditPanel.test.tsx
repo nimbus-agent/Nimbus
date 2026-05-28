@@ -203,8 +203,6 @@ describe("AuditPanel", () => {
   });
 });
 
-// ── runId deep-link tests ──────────────────────────────────────────────────────
-
 const WORKFLOW_ROWS = [
   {
     id: 10,
@@ -249,9 +247,7 @@ describe("AuditPanel runId deep-link", () => {
 
   test("filters rows by runId extracted from actionJson when ?runId=<id> is present", async () => {
     renderAt("/settings/audit?runId=run-abc");
-    // Only the run-abc row should be visible; run-xyz row should be filtered out.
     await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(1));
-    // The "1 of 2" counter confirms the runId filter is on top of the full list.
     expect(screen.getByText("1 of 2 rows")).toBeTruthy();
   });
 
@@ -270,7 +266,6 @@ describe("AuditPanel runId deep-link", () => {
 
   test("shows a pruning-semantics banner when runId matches no entries", async () => {
     renderAt("/settings/audit?runId=run-missing");
-    // The banner text spans a <p> with an inner <code>; query the container by testid.
     await waitFor(() => expect(screen.getByTestId("audit-runid-banner")).toBeInTheDocument());
     expect(screen.getByTestId("audit-runid-banner").textContent).toMatch(
       /no audit entries found for run run-missing/i,

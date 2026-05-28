@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `bitrise_search`. Lives separately from
- * `server.ts` so the matching logic can be unit-tested without spawning an
- * MCP stdio transport. The server keeps the HTTP / envelope wrapper; this
- * module owns the branch/commit/workflow/status haystack construction and
- * the case-insensitive substring match.
- */
-
 export interface BitriseSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

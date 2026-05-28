@@ -6,7 +6,6 @@ import {
   officeLocationNames,
 } from "../../../src/connectors/greenhouse-job-mapping.ts";
 
-// Greenhouse created_at / updated_at are ISO-8601 STRINGS — parsed to epoch-ms.
 const CREATED_ISO = "2024-03-01T12:00:00.000Z";
 const UPDATED_ISO = "2024-03-02T12:00:00.000Z";
 const OPENED_ISO = "2024-03-01T12:30:00.000Z";
@@ -51,7 +50,6 @@ describe("mapGreenhouseJobToItem", () => {
     const noId = makeJob();
     delete (noId as Record<string, unknown>)["id"];
     expect(mapGreenhouseJobToItem(noId, { syncedAt: NOW })).toBeNull();
-    // A string id is rejected (Greenhouse ids are numeric).
     expect(mapGreenhouseJobToItem(makeJob({ id: "4001234" }), { syncedAt: NOW })).toBeNull();
   });
 

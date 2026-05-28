@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `wiz_search`. Extracted from
- * `server.ts` so the matching logic can be unit-tested without
- * spawning an MCP stdio transport. The server keeps the GraphQL /
- * envelope wrapper; this module owns the source-rule/entity/project
- * haystack construction + case-insensitive substring match.
- */
-
 export interface WizSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

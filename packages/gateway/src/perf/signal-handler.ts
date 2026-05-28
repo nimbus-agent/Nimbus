@@ -1,11 +1,3 @@
-/**
- * SIGTERM / SIGINT handler: writes an `incomplete: true` HistoryLine and
- * exits non-zero. Installed by the bench CLI before the surface loop begins.
- *
- * See the B2 perf audit design §10 PR-B-1
- * deliverables — SIGTERM behaviour.
- */
-
 import { appendHistoryLine, type HistoryLine } from "./history-line.ts";
 import type { RunnerKind } from "./types.ts";
 
@@ -34,10 +26,6 @@ export function writeIncompleteLine(historyPath: string, ctx: IncompleteContext)
   appendHistoryLine(historyPath, line);
 }
 
-/**
- * Install signal handlers for SIGINT / SIGTERM that flush an incomplete line
- * and exit non-zero. Returns an `uninstall` callback for tests.
- */
 export function installIncompleteSignalHandler(
   historyPath: string,
   ctxFactory: () => IncompleteContext,
@@ -47,7 +35,6 @@ export function installIncompleteSignalHandler(
       const ctx = ctxFactory();
       writeIncompleteLine(historyPath, { ...ctx, reason: `interrupted-by-${signal}` });
     } finally {
-      // 130 = standard exit code for terminate-by-signal (SIGINT).
       process.exit(130);
     }
   };

@@ -28,9 +28,6 @@ export function useIpcQuery<T>(
   const generationRef = useRef(0);
   const connectionState = useNimbusStore((s) => s.connectionState);
 
-  // paramsKey is the stringified form of params — using it in the dep list
-  // tracks shape changes without re-firing on every render from object
-  // identity changes when the caller passes an inline literal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: paramsKey proxies params
   const run = useCallback(async () => {
     const gen = ++generationRef.current;

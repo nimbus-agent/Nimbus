@@ -1,11 +1,4 @@
 #!/usr/bin/env bun
-// Drift detector for the exclusion registry.
-//
-// Reads sonar-project.properties' sonar.coverage.exclusions and verifies
-// that every pattern there is "covered" by an entry in
-// scripts/coverage-floor/exclusions.ts. The reverse direction (a local
-// exemption with no sonar counterpart) is permitted — sonar's gate is
-// looser than ours; the floor adds discipline sonar wouldn't.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -15,14 +8,7 @@ import { isExempt } from "./exclusions.ts";
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 
 function patternToSampleRelPaths(pattern: string): string[] {
-  // Convert a glob-ish sonar exclusion to a couple of representative
-  // repo-relative path samples. We just check that isExempt() returns true
-  // for those samples — i.e. the local registry covers the same territory.
-  //
-  // We don't synthesize a full glob expander; instead, we pick canonical
-  // samples for each pattern shape the project actually uses.
   const samples: string[] = [];
-  // `**/index/*-v[0-9]*-sql.ts` → sample under packages/gateway/src/
   if (pattern === "**/index/*-v[0-9]*-sql.ts") {
     samples.push("packages/gateway/src/index/vec-items-1536-v30-sql.ts");
     samples.push("packages/gateway/src/index/audit-session-v24-sql.ts");
@@ -49,7 +35,6 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/mcp-connectors/sonarqube/src/server.ts");
     return samples;
   }
-  // Direct paths: treat the pattern itself as the sample.
   samples.push(pattern);
   return samples;
 }
@@ -64,13 +49,6 @@ export function findParityGaps(sonarPatterns: readonly string[]): string[] {
   return gaps;
 }
 
-// Minimal .properties extractor. Tolerates optional whitespace around the
-// `=` and a leading `!`/`#`-prefixed comment line, but does NOT implement
-// the full Java .properties spec (no multi-line `\` continuation, no
-// unicode escapes). sonar-project.properties is project-controlled and
-// single-line for sonar.coverage.exclusions; if a future edit introduces
-// a continuation, this script fails CLOSED (reports the patterns it can
-// see as a gap) and the maintainer fixes the parser in the same PR.
 function readSonarCoverageExclusions(): string[] {
   const propsPath = resolve(REPO_ROOT, "sonar-project.properties");
   if (!existsSync(propsPath)) return [];

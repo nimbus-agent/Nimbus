@@ -3,7 +3,6 @@ import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const SRC_ROOT = import.meta.dir;
-// SRC_ROOT = packages/gateway/src → REPO_ROOT three levels up
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
 
 async function read(relPathFromRepoRoot: string): Promise<string> {
@@ -17,20 +16,6 @@ async function readDirConcat(relDirFromRepoRoot: string): Promise<string> {
   const contents = await Promise.all(tsFiles.map((f) => readFile(resolve(dir, f), "utf8")));
   return contents.join("\n");
 }
-
-/**
- * Enforcement tests for {@link ../../docs/SECURITY-INVARIANTS.md SECURITY-INVARIANTS.md}.
- *
- * These tests pin structural defenses to the production source. The B1 audit
- * (B1 internal audit, 2026-04-25) found that
- * several defenses (extensionProcessEnv, checkLanMethodAllowed, the
- * <tool_output> envelope) existed in the codebase but had zero production
- * callers. Each test below fails if the corresponding defense is removed,
- * orphaned, or routed around.
- *
- * If you change a wiring site referenced here, update both this test and the
- * matching invariant in SECURITY-INVARIANTS.md in the same commit.
- */
 
 describe("I1 — extensionProcessEnv is the only env source for spawned MCP children", () => {
   test("lazy-mesh/ contains no raw `{ ...process.env }` spread", async () => {
@@ -47,7 +32,6 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
   test("extensionProcessEnv uses an allowlist (BASELINE_KEYS) — denylist would let new secrets leak by default", async () => {
     const src = await read("packages/gateway/src/extensions/spawn-env.ts");
     expect(src).toMatch(/BASELINE_KEYS/);
-    // Verify it is an allowlist construction over a literal key list, not a process.env spread.
     expect(src).not.toMatch(/\.\.\.process\.env/);
     expect(src).toMatch(/process\.env\[k\]/);
   });
@@ -75,7 +59,6 @@ describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => 
   test("executor.gate looks up HITL_REQUIRED.has(action.type), not the routing-only mcpToolId", async () => {
     const src = await read("packages/gateway/src/engine/executor.ts");
     expect(src).toMatch(/HITL_REQUIRED\.has\(action\.type\)/);
-    // Negative: must NOT consult mcpToolId for the HITL decision (commit 2c9ff06 reverted that — it was a bypass).
     expect(src).not.toMatch(/HITL_REQUIRED\.has\(\s*action\.payload/);
     expect(src).not.toMatch(/HITL_REQUIRED\.has\(\s*resolvedToolId\s*\)/);
   });
@@ -191,8 +174,6 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
 
   test("the envelope helper escapes literal </tool_output> sequences inside tool bodies", async () => {
     const src = await read("packages/gateway/src/engine/tool-output-envelope.ts");
-    // Body must replace </tool_output> with the escaped form so an attacker-controlled
-    // tool result cannot terminate the envelope and re-enter "instruction mode".
     expect(src).toMatch(/replaceAll\("<\/tool_output>"/);
   });
 
@@ -224,12 +205,6 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
   });
 
   test("http-server.ts opens at most one writable Database handle (and only inside the server-context wiring)", async () => {
-    // The readonly handle uses `{ readonly: true, create: false }`. Any other
-    // `new Database(...)` call in http-server.ts is a candidate writable handle —
-    // there must be at most one, and it must be the write-surface handle gated
-    // by the resolveDeploymentToken option. Regex-scoped to this single file
-    // only; legitimate writes in db/, sync/, audit, etc. are explicitly out of
-    // scope for this invariant.
     const src = await read("packages/gateway/src/ipc/http-server.ts");
     const readonlyOpens = (src.match(/new Database\([^)]*readonly:\s*true/g) ?? []).length;
     const allOpens = (src.match(/new Database\(/g) ?? []).length;
@@ -257,7 +232,6 @@ describe("I14 — all SQLite write paths route through dbRun/dbExec/dbStmtRun", 
     ];
     for (const rel of samples) {
       const src = await read(rel);
-      // Matches both relative ("./write.ts") and parent-relative ("../db/write.ts", "../../db/write.ts") imports.
       expect(src).toMatch(/from\s+"[^"]*write\.ts"/);
     }
   });
@@ -270,9 +244,7 @@ describe("I14 — all SQLite write paths route through dbRun/dbExec/dbStmtRun", 
     ];
     for (const rel of checks) {
       const src = await read(rel);
-      // Positive: at least one wrapper call.
       expect(src).toMatch(/\bdb(?:Run|Exec|StmtRun)\s*\(/);
-      // Negative: no direct db.run/db.exec.
       expect(src).not.toMatch(/\bdb\.(?:run|exec)\s*\(/);
     }
   });
@@ -281,7 +253,6 @@ describe("I14 — all SQLite write paths route through dbRun/dbExec/dbStmtRun", 
     const src = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(src).toMatch(/DB_RUN_EXEC_ALLOW_LIST/);
     expect(src).toMatch(/"packages\/gateway\/src\/db\/write\.ts"/);
-    // Negative: any allow-list entry under packages/ that is not write.ts is a regression.
     const m = src.match(/DB_RUN_EXEC_ALLOW_LIST[^\]]*?\]/s);
     expect(m).toBeTruthy();
     const block = m?.[0] ?? "";
@@ -372,7 +343,6 @@ describe("I16 — Verified-publisher invariant", () => {
       installed_at: Date.now(),
       last_verified_at: Date.now(),
     });
-    // intentionally skip writePublisherKey — vault key is missing
 
     try {
       await verifyExtensionsBestEffort(db, pino({ level: "silent" }), undefined, { vault });
@@ -431,8 +401,6 @@ describe("I16 — Verified-publisher invariant", () => {
       installed_at: Date.now(),
       last_verified_at: Date.now(),
     });
-    // Mutate the on-disk manifest version (signature stays the same — now invalid).
-    // Re-stamp manifest_hash so PR 1's SHA-256 sweep doesn't fire first.
     const tampered = Buffer.from(JSON.stringify({ ...base, version: "9.9.9", signature }), "utf8");
     writeFileSync(join(dir, "nimbus.extension.json"), tampered);
     const newHash = createHash("sha256").update(tampered).digest("hex");
@@ -459,8 +427,6 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
 
   test("extension.install stays absent from ALLOWED_METHODS (chain C1 / B1 audit)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    // The ALLOWED_METHODS array entry would be a quoted string on its own
-    // line; the absence of that exact pattern locks in the security fix.
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 

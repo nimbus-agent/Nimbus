@@ -1,25 +1,3 @@
-/**
- * Pure mapping from a Netlify `GET /api/v1/sites` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `netlify-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "netlify", type = "site"` rows — a single item type.
- * `external_id = <site id>` (verbatim). The conceptual item identity is
- * `netlify:site`; the `item.id` ends up `netlify:<siteId>`. The `site` type is
- * sparse/structured (id, name, URLs, deploy state, commit ref), so it stays on
- * local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * IMPORTANT: Netlify timestamps are ISO-8601 STRINGS (e.g.
- * `"2024-03-01T12:00:00.000Z"`), UNLIKE Vercel's epoch-ms numbers. Parse them
- * to epoch-ms with {@link parseIsoMs} — never pass the ISO string through
- * verbatim.
- *
- * Nested access (`build_settings`, `published_deploy`) descends defensively
- * with {@link asRecord} so a missing sub-object yields nulls rather than
- * throwing.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface NetlifyMappingContext {
@@ -43,10 +21,6 @@ function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-/**
- * Build the canonical (user-facing) URL for a site. Prefers the Netlify
- * dashboard `admin_url`; else the `ssl_url`; else the bare `url`; else null.
- */
 export function siteUrl(
   adminUrl: string | null,
   sslUrl: string | null,

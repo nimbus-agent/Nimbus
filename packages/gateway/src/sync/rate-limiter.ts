@@ -1,8 +1,3 @@
-/**
- * Shared token-bucket rate limiter per upstream provider.
- * One instance per Gateway process; injected via `SyncContext`.
- */
-
 export type Provider =
   | "google"
   | "microsoft"
@@ -61,7 +56,6 @@ export interface ProviderQuota {
   burstSize: number;
 }
 
-/** Conservative defaults; override via constructor or future `nimbus.toml` wiring. */
 export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   google: { requestsPerMinute: 600, burstSize: 20 },
   microsoft: { requestsPerMinute: 600, burstSize: 20 },
@@ -127,7 +121,6 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Serializes async work per provider so bucket math stays consistent with `penalise`. */
 class ProviderMutex {
   private tail: Promise<void> = Promise.resolve();
 
@@ -205,10 +198,6 @@ export class ProviderRateLimiter {
     return s;
   }
 
-  /**
-   * Waits until `tokens` permits are available (default 1), then consumes them.
-   * Call once per outbound HTTP batch for that provider.
-   */
   async acquire(provider: Provider, tokens = 1): Promise<void> {
     if (!Number.isInteger(tokens) || tokens < 1) {
       throw new Error("acquire tokens must be a positive integer");
@@ -242,9 +231,6 @@ export class ProviderRateLimiter {
     }
   }
 
-  /**
-   * Drains the bucket and blocks new acquires until `retryAfterMs` has elapsed (429 backoff).
-   */
   penalise(provider: Provider, retryAfterMs: number): void {
     if (!Number.isFinite(retryAfterMs) || retryAfterMs < 0) {
       return;

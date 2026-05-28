@@ -1,23 +1,6 @@
-/**
- * Pure mapping from an ArgoCD `Application` resource to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `argocd-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "argocd", type = "application"` rows. The `application`
- * type is sparse/structured (name, sync/health status, repo + path), so it
- * stays on local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- *
- * The ArgoCD Application object is nested: `metadata` (name, namespace,
- * creationTimestamp), `spec` (project, source, destination), and `status`
- * (sync, health). We descend defensively with {@link asRecord} so a missing
- * sub-object yields nulls rather than throwing.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface ArgocdMappingContext {
-  /** ArgoCD server base URL — used to build canonical application URLs. */
   readonly baseUrl: string;
   readonly syncedAt: number;
 }
@@ -39,11 +22,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Build the canonical URL for an application. ArgoCD's UI and API share the
- * same host (unlike Flagsmith's api./app. split), so there is no host
- * rewrite — the application page lives at `<base>/applications/<name>`.
- */
 export function applicationUrl(baseUrl: string, name: string): string {
   return `${trimTrailingSlash(baseUrl)}/applications/${encodeURIComponent(name)}`;
 }

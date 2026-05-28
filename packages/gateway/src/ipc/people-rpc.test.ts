@@ -4,12 +4,6 @@ import { createRpcFixture, type RpcFixture } from "../../test/helpers/rpc-harnes
 import { insertPerson } from "../people/person-store.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "./people-rpc.ts";
 
-/**
- * Direct INSERT into `item` — production code is gated by invariant I14
- * (`dbRun` only), but test files are filtered out by the static auditor
- * (`iterateSourceFiles` in scripts/structure-audit/lib.ts skips
- * `*.test.ts`), so the call is safe here.
- */
 function seedItem(
   db: Database,
   args: {
@@ -165,7 +159,6 @@ describe("optionalLimit — error paths", () => {
     const r = call("people.list", { limit: 1.9 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    // Math.floor(1.9) = 1, listPersons clamps to >= 1.
     expect((r.value as unknown[]).length).toBe(1);
   });
 });
@@ -339,8 +332,6 @@ describe("people.items", () => {
     const r = call("people.items", { personId: "p1" });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    // rowToItem strips the `<service>:` prefix from the row's primary key,
-    // so the returned `id` is the external_id portion.
     const items = r.value as Array<Record<string, unknown>>;
     expect(items.map((i) => i["id"])).toEqual(["i_new", "i_old"]);
   });
@@ -416,11 +407,6 @@ describe("people.merge", () => {
   });
 
   test("happy path merges handles and reassigns items (both emails null)", () => {
-    // Both canonical_email = null avoids the UNIQUE constraint on
-    // person.canonical_email: updatePersonHandles runs BEFORE p_drop is
-    // deleted, so if p_drop holds the merged email the update on p_keep
-    // would fail. The null-email path also exercises the
-    // `linked = a.linked || b.linked` branch.
     seedPerson(fixture.db, {
       id: "p_keep",
       displayName: "Keeper",
@@ -446,10 +432,9 @@ describe("people.merge", () => {
     expect(v.survivorId).toBe("p_keep");
     expect(v.person["githubLogin"]).toBe("ghuser");
     expect(v.person["canonicalEmail"]).toBeNull();
-    expect(v.person["linked"]).toBe(true); // a.linked || b.linked
+    expect(v.person["linked"]).toBe(true);
     expect(v.person["itemCount"]).toBe(1);
 
-    // p_drop should be deleted.
     const dropRow = fixture.db.query("SELECT id FROM person WHERE id = ?").get("p_drop") as {
       id: string;
     } | null;
@@ -457,10 +442,6 @@ describe("people.merge", () => {
   });
 
   test("UNIQUE-constraint conflict surfaces as -32603 (catchall)", () => {
-    // p_drop holds the merged email; mergePeople tries to copy it onto
-    // p_keep BEFORE deleting p_drop, hitting `UNIQUE person.canonical_email`.
-    // The catch arm wraps it as -32603 (INTERNAL_ERROR) since the message
-    // doesn't match the known -32602 prefixes.
     seedPerson(fixture.db, { id: "p_keep" });
     seedPerson(fixture.db, { id: "p_drop", canonicalEmail: "x@example.com" });
     try {

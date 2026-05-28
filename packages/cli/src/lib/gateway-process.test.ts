@@ -1,14 +1,3 @@
-// packages/cli/src/lib/gateway-process.test.ts
-//
-// Phase 6 commit 5 of 14 — covers the gateway-process helpers
-// (`gatewayStatePath`, `readGatewayState`, `isProcessAlive`,
-// `ensureGatewayDirs`).
-//
-// IMPORTANT: this file does NOT import the shared `cli-mocks.ts` harness.
-// The harness installs `mock.module("../../src/lib/gateway-process.ts", ...)`
-// which would shadow the real module under test. The cases below exercise
-// the REAL implementation against a real tmp dir + real subprocesses.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -16,13 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
-// Import the impl file (not the re-export) so this colocated unit test
-// exercises the REAL implementation under `bun test --coverage`, where
-// the shared `cli-mocks.ts` harness has already registered
-// `mock.module("../../src/lib/gateway-process.ts", ...)` against the
-// re-export path. The impl file's name (`gw-state-helpers.ts`) has no
-// prefix overlap with `gateway-process.ts` so Bun's mock-resolution
-// cannot conflate them.
 import {
   ensureGatewayDirs,
   gatewayStatePath,
@@ -66,9 +48,6 @@ function makePaths(root: string): CliPlatformPaths {
 }
 
 function spawnNoop(): Bun.Subprocess {
-  // A short-lived no-op subprocess that blocks on stdin. We kill it in
-  // afterEach. `bun -e` runs an inline script; the script registers a
-  // stdin reader so the process stays alive until we kill it.
   const proc = Bun.spawn(["bun", "-e", "process.stdin.on('data', () => {});"], {
     stdin: "pipe",
     stdout: "ignore",
@@ -99,15 +78,12 @@ describe("isProcessAlive", () => {
     const proc = spawnNoop();
     const pid = proc.pid;
     expect(typeof pid).toBe("number");
-    if (typeof pid !== "number") return; // narrow for TS
+    if (typeof pid !== "number") return;
     expect(isProcessAlive(pid)).toBe(true);
 
     proc.kill();
     liveProcs.delete(proc);
     await proc.exited;
-    // The pid is now reclaimable; allow a small grace period race window —
-    // but on Bun.exited the kernel has reaped the entry so `kill(pid, 0)`
-    // should fail with ESRCH.
     expect(isProcessAlive(pid)).toBe(false);
   });
 
@@ -224,10 +200,6 @@ describe("readGatewayState", () => {
 
   it("returns undefined when pid is non-finite (NaN)", async () => {
     const stateFile = gatewayStatePath(paths);
-    // JSON does not encode NaN; simulate the post-parse failure by writing
-    // the string "NaN" via a custom serializer-equivalent payload. The
-    // simplest portable trigger: write a numeric-looking but non-finite
-    // value via a JSON.stringify replacer.
     writeFileSync(stateFile, '{"pid": "Infinity-bad", "socketPath": "/tmp/x.sock"}', "utf8");
     const state = await readGatewayState(paths);
     expect(state).toBeUndefined();
@@ -278,7 +250,6 @@ describe("readGatewayState", () => {
     expect(state?.pid).toBe(pid);
     expect(isProcessAlive(pid)).toBe(true);
 
-    // sanity: the file is exactly what we wrote
     const onDisk = JSON.parse(readFileSync(stateFile, "utf8")) as { pid: number };
     expect(onDisk.pid).toBe(pid);
   });

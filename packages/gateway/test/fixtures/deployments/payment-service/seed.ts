@@ -1,23 +1,7 @@
-/**
- * Fixture seeder for the post-deploy annotation × DORA mixing scenario.
- *
- * Seeds a `payment-service` window with both data sources so the
- * `deploymentFrequency` source-preference + `mixed_source` gap can be
- * exercised end-to-end:
- *   - 3 annotated deploys via `annotateDeployment` (success, success, success),
- *     spread across the first three days.
- *   - 2 regex-matched `ci_run` rows whose titles start with "Deploy" — these
- *     should be ignored once the annotated rows are present.
- *
- * Returns the `nowMs` the test should pass to `deploymentFrequency` so the
- * 30-day window covers every seeded row.
- */
-
 import type { Database } from "bun:sqlite";
 import { annotateDeployment } from "../../../../src/deployment/annotate.ts";
 
-const BASE_TIME = 1_746_000_000_000; // 2025-04-30T07:00:00Z (within annotate's [now-365d, now+1h] guard)
-
+const BASE_TIME = 1_746_000_000_000;
 export function seedPaymentServiceFixture(db: Database): { nowMs: number } {
   const t0 = BASE_TIME;
   const t1 = BASE_TIME + 86_400_000;

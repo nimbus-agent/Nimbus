@@ -56,9 +56,6 @@ describe("azure-sync — credential short-circuits", () => {
         iso.createSyncContext(),
         "preserved-cursor",
       );
-      // sync() passes the tenant gate, but azureCliJson short-circuits
-      // before spawn because client_id is empty. The HTTP-empty pass
-      // cursor branch preserves the incoming cursor.
       expect(iso.spawnMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
       expect(res.cursor).toBe("preserved-cursor");
@@ -72,7 +69,6 @@ describe("azure-sync — credential short-circuits", () => {
       const res = await createAzureSyncable(ENSURE_MCP).sync(iso.createSyncContext(), null);
       expect(iso.spawnMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);
-      // null incoming cursor → falls back to pass-1 default.
       expect(res.cursor).toBe(PASS_1_CURSOR);
     });
   });
@@ -218,8 +214,6 @@ describe("azure-sync — with shared fixture", () => {
     });
 
     test("non-record root → still upserts a 'default' subscription", async () => {
-      // asRecord returns undefined → stringField on {} returns undefined for
-      // both id and name → falls through to 'default'/'default' upsert.
       fixture.spawnMock.respond("az", { exitCode: 0, stdout: "[1,2,3]" });
       const res = await createAzureSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(1);

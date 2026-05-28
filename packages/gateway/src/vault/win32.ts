@@ -1,16 +1,3 @@
-/**
- * Windows DPAPI vault — encrypted blobs under configDir/vault/*.enc
- *
- * S2-F4 — every CryptProtectData / CryptUnprotectData call now passes an
- * `pOptionalEntropy` blob loaded from <vaultDir>/.entropy. The entropy file
- * is generated on first use, written 0o600, and (best-effort) marked
- * Hidden + System so casual file-explorer browsing does not surface it.
- * This raises the bar for vault decryption from "any same-uid process" to
- * "any process that can read .entropy". Pre-fix entries (encrypted without
- * entropy) decrypt via a legacy fallback and are silently re-encrypted with
- * entropy on the next read.
- */
-
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -88,18 +75,11 @@ function pointerToBigInt(p: unknown): bigint {
   throw new Error("Unexpected pointer type from FFI");
 }
 
-/** Deep-copy bytes from an FFI pointer — `toArrayBuffer` views may alias reused memory across awaits. */
 function bufferFromPointer(addr: bigint, byteLength: number): Buffer {
   const src = new Uint8Array(toArrayBuffer(addressAsPointer(addr), 0, byteLength));
   return Buffer.from(src.slice());
 }
 
-/**
- * Load existing entropy from `<vaultDir>/.entropy` or generate fresh 32 bytes.
- *
- * Race-safe: write uses `wx` so a concurrent boot losing the create race
- * falls back to reading the winner's file.
- */
 function loadOrCreateEntropy(vaultDir: string): Buffer {
   const path = join(vaultDir, ENTROPY_FILENAME);
   try {
@@ -120,14 +100,6 @@ function loadOrCreateEntropy(vaultDir: string): Buffer {
   const generated = randomBytes(ENTROPY_LEN);
   try {
     writeFileSync(path, generated, { mode: 0o600, flag: "wx" });
-    // Hidden + System so a casual file-explorer browse does not surface the
-    // entropy file. Defense against accidental deletion — losing .entropy
-    // makes every vault entry unrecoverable until rotation.
-    //
-    // Use the absolute path under the Windows directory rather than relying
-    // on PATH lookup, so a poisoned PATH (e.g. attacker-controlled directory
-    // earlier in PATH containing a binary named `attrib.exe`) cannot
-    // hijack this call.
     if (process.platform === "win32") {
       try {
         const winDir = process.env["SystemRoot"] ?? process.env["windir"] ?? String.raw`C:\Windows`;
@@ -228,7 +200,6 @@ function dpapiDecrypt(encrypted: Buffer, entropy: Buffer | null): Buffer | null 
   }
 }
 
-/** Test-only helper — encrypts without entropy to simulate pre-fix vault entries. */
 export function _legacyEncryptForTest(plaintext: string): Buffer {
   return dpapiEncrypt(Buffer.from(plaintext, "utf8"), null);
 }
@@ -260,8 +231,6 @@ export class DpapiVault implements NimbusVault {
 
     const b64 = encrypted.toString("base64");
     const finalPath = this.encPath(key);
-    // S2-F3 — atomic write: write to a per-process per-call random temp file
-    // in the same directory (so rename is atomic on NTFS/ReFS), fsync, then rename.
     const tag = `${process.pid}.${randomBytes(8).toString("hex")}`;
     const tmpPath = `${finalPath}.tmp.${tag}`;
     const handle = await open(tmpPath, "w", 0o600);
@@ -282,7 +251,6 @@ export class DpapiVault implements NimbusVault {
       throw err;
     }
 
-    // Sweep stale .tmp.* fragments from prior crashes (best-effort).
     await this.sweepStaleTempFiles(key);
   }
 
@@ -333,8 +301,6 @@ export class DpapiVault implements NimbusVault {
     if (withEntropy !== null) {
       return withEntropy.toString("utf8");
     }
-    // S2-F4 — legacy migration: try without entropy. On success, re-encrypt
-    // with entropy via set() so the next read takes the fast path.
     const legacy = dpapiDecrypt(encrypted, null);
     if (legacy === null) {
       throw new Error("Vault decryption failed");

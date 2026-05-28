@@ -1,7 +1,3 @@
-/**
- * Q2 unified `item` + `person` + FTS5 (user_version 3).
- * Migrates legacy `items` / `items_fts` rows then drops legacy tables.
- */
 export const UNIFIED_ITEM_V3_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS person (
   id                TEXT PRIMARY KEY,
@@ -59,7 +55,6 @@ CREATE TRIGGER IF NOT EXISTS item_fts_update AFTER UPDATE ON item BEGIN
 END;
 `;
 
-/** Run after UNIFIED_ITEM_V3_SCHEMA_SQL inside a single migration step. */
 export const UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL = `
 INSERT INTO item (
   id, service, type, external_id, title, body_preview, url, canonical_url,

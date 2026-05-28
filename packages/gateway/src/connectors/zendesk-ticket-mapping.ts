@@ -1,33 +1,6 @@
-/**
- * Pure mapping from a Zendesk `GET /api/v2/tickets.json` list element to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `zendesk-sync.ts` so the REST path and the indexing path can be tested
- * independently.
- *
- * Emits `service = "zendesk", type = "ticket"` rows — a single item type.
- * `external_id = String(<ticket id>)`. The conceptual item identity is
- * `zendesk:ticket`; the `item.id` ends up `zendesk:<id>`. A ticket is short
- * (a subject plus the first comment), so it stays on local MiniLM embeddings —
- * NOT added to `PROSE_HEAVY_TYPES` (avoids surprise OpenAI spend on the whole
- * ticket corpus for every hybrid-mode user; promotion is a documented
- * follow-up).
- *
- * Zendesk is PER-TENANT: the canonical URL is built from the configured base
- * URL passed through {@link ZendeskMappingContext.baseUrl} (the ArgoCD pattern),
- * so the mapper can produce a clickable agent-UI deep link
- * `<base>/agent/tickets/<id>`.
- *
- * IMPORTANT: Zendesk's `created_at` and `updated_at` are ISO-8601 STRINGS
- * (e.g. `"2024-03-01T12:00:00Z"`), like Raindrop's / Readwise's timestamps and
- * UNLIKE the epoch-ms / epoch-seconds number APIs. Parse them to epoch-ms with
- * {@link parseIsoMs} — never pass the ISO string through verbatim, never treat
- * it as epoch seconds.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface ZendeskMappingContext {
-  /** Zendesk instance base URL (`https://<subdomain>.zendesk.com`) — used to build canonical URLs. */
   readonly baseUrl: string;
   readonly syncedAt: number;
 }
@@ -53,10 +26,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Tag strings from a Zendesk `tags: ["a", "b"]` array. Non-array input and
- * non-string entries are tolerated (skipped).
- */
 export function tagStrings(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -70,11 +39,6 @@ export function tagStrings(raw: unknown): string[] {
   return names;
 }
 
-/**
- * Zendesk ids are numbers in the JSON, but tolerate a numeric string too
- * (mirrors the Raindrop `_id` skip logic + Intercom's numeric-string accept).
- * Returns the stringified id, or `undefined` when missing/non-numeric.
- */
 function numericIdString(row: Record<string, unknown>, key: string): string | undefined {
   const n = numberField(row, key);
   if (n !== undefined) {
@@ -96,7 +60,6 @@ export function mapZendeskTicketToItem(
     return null;
   }
 
-  // `id` is a number — stringify for external_id; skip the row if missing/non-numeric.
   const id = numericIdString(row, "id");
   if (id === undefined) {
     return null;
@@ -113,23 +76,17 @@ export function mapZendeskTicketToItem(
   const organizationId = numberField(row, "organization_id") ?? null;
   const tags = tagStrings(row["tags"]);
 
-  // `via.channel` — defensive nested access.
   const via = asRecord(row["via"]) ?? {};
   const viaChannel = stringField(via, "channel") ?? null;
 
   const createdAt = parseIsoMs(row["created_at"]);
   const updatedAt = parseIsoMs(row["updated_at"]);
 
-  // canonical/url: the agent-UI deep link `<base>/agent/tickets/<id>` (the base
-  // URL is always known here, unlike Intercom). Null only when baseUrl is empty.
   const base = trimTrailingSlash(ctx.baseUrl.trim());
   const canonicalUrl = base === "" ? null : `${base}/agent/tickets/${id}`;
 
-  // title: the subject when present, else `Ticket <id>`.
   const titleText = subject !== null && subject.trim() !== "" ? subject : `Ticket ${id}`;
 
-  // bodyPreview: the description (Zendesk's `description` is already plain text —
-  // the first comment) when present, else the status label, else the title.
   const bodyPreview =
     description !== null && description !== ""
       ? description

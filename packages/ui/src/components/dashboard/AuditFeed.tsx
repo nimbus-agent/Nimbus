@@ -22,7 +22,6 @@ function outcomeColour(o: AuditEntry["hitlStatus"]): string {
   }
 }
 
-/** Best-effort `subject` extraction from `actionJson`; never throws. */
 function extractSubject(actionJson: string): string | undefined {
   if (actionJson === "" || actionJson === "{}") return undefined;
   try {

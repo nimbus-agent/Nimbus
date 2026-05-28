@@ -1,11 +1,3 @@
-/**
- * `nimbus security scan` — local credential-hygiene scan over the index.
- *
- * Read-only. CLI-only. The Gateway's `security.scan` JSON-RPC method is
- * NOT in the Tauri renderer allowlist and NOT callable over LAN (it is in
- * `FORBIDDEN_OVER_LAN`). See the design spec for the full posture rationale.
- */
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";

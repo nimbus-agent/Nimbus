@@ -4,7 +4,6 @@ import { runBench } from "./bench-harness.ts";
 describe("runBench", () => {
   test("invokes the surface fn `runs` times and returns median-of-medians", async () => {
     let calls = 0;
-    // Each invocation returns 100 deterministic samples.
     const fn = async (): Promise<number[]> => {
       calls += 1;
       return Array.from({ length: 100 }, (_, i) => i + calls);
@@ -17,8 +16,6 @@ describe("runBench", () => {
     expect(calls).toBe(5);
     expect(result.surfaceId).toBe("S2-a");
     expect(result.samplesCount).toBe(500);
-    // Across-runs aggregate is median of [p95(samples + 1), …, p95(samples + 5)]
-    // which is p95(samples + 3) ≈ 98.
     expect(result.p95Ms).toBeGreaterThan(95);
     expect(result.p95Ms).toBeLessThan(105);
   });
@@ -92,9 +89,7 @@ describe("runBench — busyRetries side-channel (S10)", () => {
   test("BenchSurfaceResult preserves a busyRetries field that callers attach post-hoc", async () => {
     const fn = async (): Promise<number[]> => [100, 200, 300];
     const result = await runBench("S10", fn, { runs: 1, runner: "local-dev" }, {}, "throughput");
-    // runBench itself does not set busyRetries — that's the caller's job.
     expect(result.busyRetries).toBeUndefined();
-    // Callers attach it post-hoc and the resulting object is well-formed.
     const withRetries: typeof result = { ...result, busyRetries: 42 };
     expect(withRetries.busyRetries).toBe(42);
     expect(withRetries.surfaceId).toBe("S10");

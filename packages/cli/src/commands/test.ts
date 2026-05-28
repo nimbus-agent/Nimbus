@@ -9,20 +9,11 @@ export const MANIFEST = "nimbus.extension.json";
 
 export type TestArgs = { root: string };
 
-/**
- * Pure argv parser for `nimbus test`. Returns the resolved connector root
- * (default: cwd).
- */
 export function parseTestArgs(args: string[], cwd: string = process.cwd()): TestArgs {
   const rootArg = args[0]?.trim() ?? "";
   return { root: rootArg === "" ? cwd : rootArg };
 }
 
-/**
- * Reads and validates a connector manifest. Pure (filesystem read only — no
- * spawn, no IPC). Throws on missing/invalid JSON/non-object roots; returns
- * the manifest otherwise.
- */
 export function loadAndValidateManifest(root: string): ExtensionManifest {
   const manifestPath = join(root, MANIFEST);
   if (!existsSync(manifestPath)) {
@@ -40,11 +31,6 @@ export function loadAndValidateManifest(root: string): ExtensionManifest {
   return raw as ExtensionManifest;
 }
 
-/**
- * Reads `package.json` if present and returns the `scripts.test` string when
- * defined + non-empty. Returns `undefined` otherwise (no package, no script,
- * or anything malformed). Pure — does not spawn anything.
- */
 export function getTestScript(pkgPath: string): string | undefined {
   if (!existsSync(pkgPath)) {
     return undefined;

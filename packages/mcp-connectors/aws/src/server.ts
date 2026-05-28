@@ -1,7 +1,3 @@
-/**
- * nimbus-mcp-aws — AWS CLI MCP. Mutations require Gateway HITL.
- */
-
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

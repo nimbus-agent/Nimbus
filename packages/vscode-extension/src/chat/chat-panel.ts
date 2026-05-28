@@ -1,10 +1,3 @@
-/**
- * ChatPanel is constructed via real `vscode` API in extension.ts; this module
- * exposes the contract any caller needs. Keeping it as a pure interface lets
- * the controller be unit-tested with a fake WebviewPanel.
- */
-
-// VS Code declares Thenable as a global, but it is not in the standard TS lib.
 type Thenable<T> = PromiseLike<T>;
 
 export interface WebviewLike {
@@ -41,10 +34,6 @@ export interface ChatPanelFactory {
   current(): ChatPanel | undefined;
 }
 
-/**
- * Default no-op factory used in unit tests. Real factory is constructed in
- * extension.ts using `vscode.window.createWebviewPanel`.
- */
 export function createNoopChatPanel(): ChatPanel {
   let disposed = false;
   const disposeListeners: Array<() => void> = [];
@@ -59,7 +48,6 @@ export function createNoopChatPanel(): ChatPanel {
     onDispose: (h) => {
       disposeListeners.push(h);
     },
-    // Noop fixture — never delivers messages, so no need to track handlers.
     onMessage: () => undefined,
     postMessage: () => Promise.resolve(true),
     isVisible: () => false,

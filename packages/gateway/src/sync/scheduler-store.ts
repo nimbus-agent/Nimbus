@@ -252,7 +252,6 @@ export type SyncTelemetryRow = {
   errorMsg: string | null;
 };
 
-/** Recent sync runs for `connector status --stats` (newest first). */
 export function listRecentSyncTelemetry(
   db: Database,
   service: string,

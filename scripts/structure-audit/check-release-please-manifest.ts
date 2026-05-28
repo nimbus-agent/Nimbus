@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-// Asserts every path in .release-please-manifest.json points at an existing
-// package.json whose `version` field matches the manifest. Drift here would
-// cause the next release-please run to compute the next version from a stale
-// base.
-//
-// Used by `bun run audit:release-please` and the `_structure.yml` CI gate.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

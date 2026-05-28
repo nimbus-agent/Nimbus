@@ -1,14 +1,3 @@
-/**
- * V29 migration — `tool_call_log` audit table for LLM-facing tool calls
- * (Phase 5 T6 PR 2). Complement to invariant `I11` (the `<tool_output>`
- * envelope): the envelope wraps the LLM-facing result string at runtime;
- * this table records the envelope's contents at audit time.
- *
- * Posture: write-only from `engine/agent.ts:wrapToolForLlm` and
- * `connectors/lazy-mesh/mesh.ts:listTools`; read-only from `audit.toolCalls`
- * (IPC-only — NOT LAN-callable per `I5`, NOT in Tauri allowlist per `I7`).
- */
-
 export const TOOL_CALL_LOG_V29_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS tool_call_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,

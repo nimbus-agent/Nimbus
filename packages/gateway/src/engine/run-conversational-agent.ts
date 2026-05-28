@@ -15,13 +15,6 @@ export type RunConversationalAgentParams = {
   input: string;
   stream: boolean;
   sendChunk: (text: string) => void;
-  /**
-   * BUG-005: prior turns (oldest-first) loaded by the caller from
-   * `SessionMemoryStore.getRecentTurns`. When non-empty, the Mastra agent
-   * receives a `[...priorTurns, currentUserMessage]` array instead of a
-   * raw string prompt — the LLM can now see what was just said. When
-   * empty/omitted, behavior is identical to the pre-fix path.
-   */
   priorTurns?: ReadonlyArray<{ role: "user" | "assistant" | "tool"; text: string }>;
 };
 
@@ -44,9 +37,6 @@ function isTextDeltaChunk(chunk: unknown): chunk is {
   return typeof text === "string";
 }
 
-/**
- * Mastra agent turn with local index tools — `nimbus ask` conversational path.
- */
 export async function runConversationalAgent(
   p: RunConversationalAgentParams,
 ): Promise<{ reply: string }> {
@@ -69,10 +59,6 @@ export async function runConversationalAgent(
     ? `The user may be asking about relationships between indexed items (including incidents). If you have a concrete item id from searchLocalIndex, call traverseGraph before answering.\n\n${trimmed}`
     : trimmed;
 
-  // BUG-005: when prior turns are provided, build a messages array so the
-  // LLM sees the conversation history. When absent (or empty), fall back to
-  // the original string-prompt call so existing callers / tests are
-  // unaffected.
   const priorTurns = p.priorTurns ?? [];
   const promptArg: string | Array<{ role: "user" | "assistant" | "tool"; content: string }> =
     priorTurns.length > 0
@@ -84,9 +70,6 @@ export async function runConversationalAgent(
 
   try {
     if (!p.stream) {
-      // Mastra's `generate(messages | string, options)` accepts both shapes.
-      // The `as never` cast is unfortunate but unavoidable — Mastra's overload
-      // exposes a complex generic and the runtime accepts our payload.
       const out = await p.agent.generate(promptArg as never, { maxSteps });
       return { reply: out.text };
     }

@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-pagerduty — PagerDuty REST v2 MCP.
- * Mutations require Gateway HITL: pagerduty.incident.* (acknowledge / resolve / escalate).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

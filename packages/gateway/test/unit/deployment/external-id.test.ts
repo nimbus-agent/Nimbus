@@ -36,8 +36,6 @@ describe("computeDeploymentExternalId", () => {
   });
 
   test("helper trusts the caller for sha case — does not lowercase", () => {
-    // The annotate validator lowercases sha before computing the id; the helper
-    // itself does NOT lowercase, so callers get the deterministic key they expect.
     expect(computeDeploymentExternalId({ ...base, sha: "A1B2C3D" })).toBe(
       "payment-service:prod:A1B2C3D",
     );

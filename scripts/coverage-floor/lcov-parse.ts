@@ -1,22 +1,7 @@
-// Pure LCOV-format parser. Consumes the merged coverage/lcov.info written by
-// the CI test step (which concatenates per-package lcov reports after
-// rewriting their SF: prefixes to be workspace-relative).
-//
-// We only consume two record kinds:
-//   SF:<relPath>     start of a file's record
-//   DA:<line>,<hit>  per-line hit count
-//   end_of_record    terminates the file's record
-//
-// Other record kinds (TN, FN, FNDA, FNF, FNH, BRDA, BRF, BRH, LF, LH) are
-// ignored. We compute lines + covered from the DA records ourselves rather
-// than trusting LF/LH, because the floor's contract is "fraction of
-// executable source lines covered" and LF/LH semantics vary slightly across
-// emitters.
-
 export interface FileCoverage {
-  readonly lines: number; // count of DA records
-  readonly covered: number; // count of DA records with hit > 0
-  readonly pct: number; // 100 * covered / lines, or 100 when lines === 0
+  readonly lines: number;
+  readonly covered: number;
+  readonly pct: number;
 }
 
 export function parseLcov(text: string): Map<string, FileCoverage> {
@@ -42,8 +27,7 @@ export function parseLcov(text: string): Map<string, FileCoverage> {
       continue;
     }
     if (line === "end_of_record" && currentFile !== null) {
-      const pct = lines === 0 ? 100 : Math.round(((100 * covered) / lines) * 100) / 100; // 2 decimal places
-      // Duplicate SF: last-wins (mirrors typical lcov-merge semantics).
+      const pct = lines === 0 ? 100 : Math.round(((100 * covered) / lines) * 100) / 100;
       out.set(currentFile, { lines, covered, pct });
       currentFile = null;
       lines = 0;

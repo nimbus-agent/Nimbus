@@ -1,9 +1,3 @@
-/**
- * Pure substring search over a Zoom meetings list. The MCP server uses this
- * to power `zoom_search` against the first page of `GET /v2/users/me/meetings`
- * — no API call is made (the search is local to the already-fetched page).
- */
-
 export interface ZoomSearchOptions {
   readonly query: string;
   readonly limit?: number;

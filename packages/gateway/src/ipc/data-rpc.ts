@@ -16,11 +16,8 @@ export type DataRpcContext = {
   platform: "win32" | "darwin" | "linux";
   nimbusVersion: string;
   schemaVersion?: number;
-  /** Optional — tests override Argon2id params to keep runtime small. */
   kdfParams?: KdfParams;
-  /** Optional — emit JSON-RPC notifications back to the caller. */
   notify?: (method: string, params: Record<string, unknown>) => void;
-  /** Required for data.delete — runs HITL gate before deletion. */
   toolExecutor?: ToolExecutor;
 };
 
@@ -62,9 +59,6 @@ async function handleDataExport(
     throw new DataRpcError(-32602, "Missing param: output");
   if (typeof passphrase !== "string" || passphrase === "")
     throw new DataRpcError(-32602, "Missing param: passphrase");
-  // S2-F5 — gate before unpacking. The encrypted bundle contains a vault dump,
-  // so producing one is a destructive credential operation that must require
-  // user consent.
   const executor = ctx.toolExecutor;
   if (executor === undefined) {
     throw new DataRpcError(-32603, "data.export requires a toolExecutor in context");

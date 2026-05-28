@@ -7,9 +7,6 @@ import type { ServerCtx } from "./context.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 import { dispatchVaultGated, rpcVaultOrMethodNotFound } from "./vault-dispatch.ts";
 
-// dispatchVaultGated is exported; dispatchVaultIfPresent is internal but
-// reachable by calling dispatchVaultGated with toolExecutor=undefined.
-
 let vault: NimbusVault;
 
 beforeEach(async () => {

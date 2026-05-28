@@ -2,9 +2,8 @@ import { randomBytes } from "node:crypto";
 import bs58 from "bs58";
 import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 
-/** 120-bit entropy → 20 base58 characters. */
 export function generatePairingCode(): string {
-  const raw = new Uint8Array(randomBytes(15)); // 15 bytes = 120 bits
+  const raw = new Uint8Array(randomBytes(15));
   const encoded = bs58.encode(raw);
   if (encoded.length >= 20) return encoded.slice(0, 20);
   return encoded.padStart(20, "1");

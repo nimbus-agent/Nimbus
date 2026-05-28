@@ -54,14 +54,14 @@ async function runFirstConnect(args: RunFirstConnectArgs): Promise<void> {
   if (args.firstConnectHandled.current) {
     return;
   }
-  args.firstConnectHandled.current = true; // claim before any await to block concurrent invocations
+  args.firstConnectHandled.current = true;
   for (let attempt = 0; attempt < FIRST_CONNECT_ATTEMPTS; attempt++) {
     const result = await tryFirstConnectOnce(args);
     if (result !== "failed") {
       return;
     }
     if (attempt === FIRST_CONNECT_ATTEMPTS - 1) {
-      args.firstConnectHandled.current = false; // all attempts exhausted — allow next event to retry
+      args.firstConnectHandled.current = false;
       return;
     }
     await new Promise((r) => setTimeout(r, FIRST_CONNECT_BACKOFF_MS[attempt]));
@@ -77,9 +77,6 @@ export function GatewayConnectionProvider({ children }: PropsWithChildren) {
     const client = createIpcClient();
     let stopState: (() => void) | null = null;
     let stopNotif: (() => void) | null = null;
-    // Guards against post-unmount work: the retry loop above sleeps for seconds
-    // and would otherwise continue after the component is gone, calling navigate
-    // on a stale closure and consuming IPC against an unrelated test's mock.
     let cancelled = false;
     const isCancelled = () => cancelled;
 

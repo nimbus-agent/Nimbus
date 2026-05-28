@@ -1,24 +1,4 @@
 #!/usr/bin/env bun
-// OpenAPI ↔ handler drift detector.
-//
-// Asserts that every `path × method` documented in
-// packages/gateway/openapi/v1.yaml has a corresponding entry in
-// packages/gateway/src/ipc/http-routes.ts (HTTP_ROUTES) and
-// vice versa. Comparison is keyed by `${METHOD} ${PATH}` so a method
-// change (GET → POST) on the same path surfaces as drift.
-//
-// Paths flagged with `x-nimbus-status: reserved` in the YAML are exempt
-// from the "must have a handler" half — they're placeholders for upcoming
-// work.
-//
-// Modes:
-//   --check (default)  exit non-zero on any drift; prints GitHub annotations
-//   --report           list every drift item; exit non-zero if any
-//
-// Exit codes:
-//   0  no drift
-//   1  drift detected
-//   2  usage error / could not read schema
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,10 +20,6 @@ const RESERVED_VALUE = "reserved";
 
 const DEFAULT_SCHEMA_PATH = resolve(REPO_ROOT, "packages", "gateway", "openapi", "v1.yaml");
 
-/**
- * Pure function — exported for testing. Reads the YAML, walks `paths`, and
- * compares against the supplied route table.
- */
 export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[]): DriftIssue[] {
   const issues: DriftIssue[] = [];
   let parsed: unknown;
@@ -82,7 +58,6 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
     ];
   }
 
-  // Build the schema-side set: { method:GET path:/v1/health, ... } excluding reserved.
   const schemaSet = new Set<string>();
   for (const [pathKey, pathValueRaw] of Object.entries(paths as Record<string, unknown>)) {
     if (typeof pathValueRaw !== "object" || pathValueRaw === null) {
@@ -91,7 +66,6 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
     const pathValue = pathValueRaw as Record<string, unknown>;
     const status = pathValue[RESERVED_TAG];
     if (status === RESERVED_VALUE) {
-      // Reserved slot — skipped entirely (no handler check, no method check).
       continue;
     }
     for (const verb of ["get", "post", "put", "patch", "delete", "head", "options"]) {
@@ -101,13 +75,11 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
     }
   }
 
-  // Build the route-side set.
   const routeSet = new Set<string>();
   for (const r of routes) {
     routeSet.add(`${r.method} ${r.path}`);
   }
 
-  // Schema-side entries missing from routes.
   for (const key of schemaSet) {
     if (!routeSet.has(key)) {
       const [method, ...rest] = key.split(" ");
@@ -119,7 +91,6 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
       });
     }
   }
-  // Route-side entries missing from schema.
   for (const key of routeSet) {
     if (!schemaSet.has(key)) {
       const [method, ...rest] = key.split(" ");
@@ -160,7 +131,6 @@ async function run(): Promise<void> {
     console.log(`${issues.length} drift items`);
     process.exit(issues.length === 0 ? 0 : 1);
   }
-  // mode === "check"
   if (issues.length === 0) {
     console.log(
       `OpenAPI drift check: schema and HTTP_ROUTES agree (${HTTP_ROUTES.length} routes).`,

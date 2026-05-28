@@ -1,20 +1,3 @@
-/**
- * Task 13 / spec §4.4 part 2 — startup completeness guard registry.
- *
- * Tracks extensions that are effectively disabled because one or more of their
- * declared dependencies is missing from the installed set, hard-disabled by a
- * prior pipeline stage (pre-T2 or signature-verify), or installed at a version
- * that no longer satisfies the declared semver range.
- *
- * Parallels {@link signatureDisabledRegistry} and {@link preT2DisabledRegistry}
- * in `hard-disable.ts` — module-level singleton, rebuilt on every
- * `verifyExtensionsBestEffort` run by the completeness guard pass.
- *
- * The connector spawn site (which would refuse to spawn an extension whose id
- * appears here) is **deferred** — see Task 13 report. The registry itself and
- * its population are what Task 13 delivers.
- */
-
 export type MissingDependencyReason = "dependency_missing" | "dependency_unsatisfied";
 
 export interface MissingDependencyEntry {
@@ -57,10 +40,8 @@ class MissingDependencyRegistry {
   }
 }
 
-/** Module singleton — parallels `preT2DisabledRegistry` and `signatureDisabledRegistry`. */
 export const missingDependencyRegistry = new MissingDependencyRegistry();
 
-/** Test-only reset helper. Production code should call `missingDependencyRegistry.reset()` directly inside the startup pass. */
 export function _resetMissingDependencyRegistry(): void {
   missingDependencyRegistry.reset();
 }

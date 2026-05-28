@@ -2,19 +2,10 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { SttProvider, SttResult } from "./types.ts";
 
 type WhisperSttOptions = {
-  /** Resolved path to the whisper-cli binary, or name to search on PATH. */
   whisperBin?: string;
-  /** Model name passed to whisper via -m flag (e.g. "base.en", "small"). */
   modelName?: string;
 };
 
-/**
- * Discover the Whisper binary in priority order:
- *  1. explicit `configuredPath` argument (from nimbus.toml whisper_path)
- *  2. NIMBUS_WHISPER_PATH env var
- *  3. "whisper-cli" on PATH
- *  4. "main" on PATH (older Whisper.cpp build name)
- */
 export function resolveWhisperBin(configuredPath?: string): string {
   if (configuredPath !== undefined && configuredPath !== "") return configuredPath;
   const envPath = processEnvGet("NIMBUS_WHISPER_PATH");
@@ -52,7 +43,6 @@ export class WhisperSttProvider implements SttProvider {
       throw new Error(`Audio file not found: ${audioPath}`);
     }
 
-    // -nt suppresses timestamps; do NOT add --output-txt (that writes a .txt file, not stdout)
     const cmd: string[] = [this.whisperBin, "-f", audioPath, "-nt"];
     if (this.modelName !== undefined && this.modelName !== "") {
       cmd.push("-m", this.modelName);

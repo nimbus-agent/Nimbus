@@ -74,8 +74,7 @@ export function handleConnectorSetConfig(ctx: ConnectorRpcHandlerContext): Conne
   const id = requireRegisteredSchedulerServiceId(rec, localIndex);
   const intervalMs = rec?.["intervalMs"];
   const depth = rec?.["depth"];
-  const enabled = rec?.["enabled"]; // NOSONAR
-
+  const enabled = rec?.["enabled"];
   if (typeof intervalMs === "number") {
     if (!Number.isFinite(intervalMs)) {
       throw new ConnectorRpcError(-32602, "Invalid intervalMs");
@@ -101,7 +100,6 @@ export function handleConnectorSetConfig(ctx: ConnectorRpcHandlerContext): Conne
   }
 
   if (enabled === true) {
-    // NOSONAR
     resumeConnector(id, syncScheduler, localIndex);
   } else if (enabled === false) {
     pauseConnector(id, syncScheduler, localIndex);

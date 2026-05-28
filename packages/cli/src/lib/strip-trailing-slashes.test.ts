@@ -1,4 +1,3 @@
-// packages/cli/src/lib/strip-trailing-slashes.test.ts
 import { describe, expect, it } from "bun:test";
 
 import { stripTrailingSlashes } from "./strip-trailing-slashes.ts";

@@ -9,10 +9,6 @@ export type StopDecision =
   | { action: "no-state"; reason: "no gateway state recorded" }
   | { action: "signal"; pid: number };
 
-/**
- * Pure decision: derives the action runStop should take given the recorded
- * gateway state. Extracted for unit testing without touching real processes.
- */
 export function decideStopAction(state: { pid: number } | undefined): StopDecision {
   if (state === undefined) {
     return { action: "no-state", reason: "no gateway state recorded" };

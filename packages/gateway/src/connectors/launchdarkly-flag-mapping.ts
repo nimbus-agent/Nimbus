@@ -1,23 +1,10 @@
-/**
- * Pure mapping from a LaunchDarkly v2 feature-flag rep to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `launchdarkly-sync.ts` so the REST path and the indexing path can be
- * tested independently.
- *
- * Emits `service = "launchdarkly", type = "feature_flag"` rows. The
- * `feature_flag` type is sparse/structured (key, name, state), so it stays
- * on local MiniLM embeddings — NOT added to `PROSE_HEAVY_TYPES`.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Kind = "boolean" | "multivariate";
 const KINDS: ReadonlySet<string> = new Set(["boolean", "multivariate"]);
 
 export interface LaunchDarklyMappingContext {
-  /** App base URL — used to construct canonical flag URLs. */
   readonly baseUrl: string;
-  /** Project key the flag belongs to. */
   readonly projectKey: string;
   readonly syncedAt: number;
 }
@@ -59,7 +46,6 @@ function extractTags(value: unknown): string[] {
   return value.filter((t): t is string => typeof t === "string");
 }
 
-/** Returns { envKeys (sorted), states (envKey→on bool), maxLastModified }. */
 function extractEnvironments(value: unknown): {
   readonly envKeys: string[];
   readonly states: Record<string, boolean>;

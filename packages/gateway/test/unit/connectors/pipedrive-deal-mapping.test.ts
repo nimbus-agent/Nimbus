@@ -5,7 +5,6 @@ import {
   pipedriveTimeMs,
 } from "../../../src/connectors/pipedrive-deal-mapping.ts";
 
-// Pipedrive timestamps are "YYYY-MM-DD HH:MM:SS" UTC strings (space, no Z).
 const ADD_PD = "2024-01-15 10:30:00";
 const ADD_MS = Date.parse("2024-01-15T10:30:00Z");
 const UPDATE_PD = "2024-02-01 08:00:00";
@@ -46,7 +45,6 @@ function meta(row: { metadata: Record<string, unknown> }): Record<string, unknow
 
 describe("pipedriveTimeMs", () => {
   test('"2024-01-15 10:30:00" parses to the correct UTC epoch-ms', () => {
-    // The space→T + Z conversion must read the value as UTC.
     expect(pipedriveTimeMs("2024-01-15 10:30:00")).toBe(Date.parse("2024-01-15T10:30:00Z"));
     expect(pipedriveTimeMs("2024-01-15 10:30:00")).toBe(1_705_314_600_000);
   });
@@ -149,7 +147,6 @@ describe("mapPipedriveDealToItem", () => {
     expect(meta(row)["update_time"]).toBe(UPDATE_MS);
     expect(meta(row)["won_time"]).toBe(WON_MS);
     expect(meta(row)["close_time"]).toBe(WON_MS);
-    // Explicit: the space→T + Z conversion reads the value as UTC.
     expect(meta(row)["add_time"]).toBe(Date.parse("2024-01-15T10:30:00Z"));
   });
 
@@ -194,7 +191,6 @@ describe("mapPipedriveDealToItem", () => {
       person_id: { value: 777, name: "Jane Roe" },
       org_id: { value: 999, name: "Acme Corporation" },
     });
-    // Drop the denormalized top-level names so the nested `.name` path is used.
     delete (nested as Record<string, unknown>)["person_name"];
     delete (nested as Record<string, unknown>)["org_name"];
     const row = mapPipedriveDealToItem(nested, { syncedAt: NOW });

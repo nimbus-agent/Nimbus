@@ -372,7 +372,6 @@ function listCodeFiles(root: string, exclude: readonly string[], maxFiles: numbe
   return found;
 }
 
-/** Source window around the export line so FTS / embeddings can match docstrings and implementation text. */
 function excerptAroundExportedSymbol(source: string, symbolName: string, maxChars: number): string {
   const lines = source.split(/\r?\n/);
   let hit = -1;
@@ -425,7 +424,6 @@ function extractExportedSymbols(
   add(exportClass, "class");
   add(exportType, "type");
   if (out.length === 0 && filePath !== "") {
-    /* allow search by path basename */
     return [];
   }
   return out;

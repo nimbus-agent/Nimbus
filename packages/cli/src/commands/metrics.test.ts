@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -79,8 +79,6 @@ describe("renderMetricRow", () => {
     };
     const out = renderMetricRow(row, { tty: true, noColor: false });
     expect(out).not.toContain(WARN_PREFIX);
-    // The gap bracket is still coloured, but the leading ⚠ icon is reserved
-    // for mixed_source only.
     expect(out).toContain("[low_sample]");
   });
 
@@ -114,10 +112,6 @@ describe("renderMixedSourceHint", () => {
     expect(hint).toContain("Annotate consistently");
   });
 });
-
-// ----------------------------------------------------------------------
-// formatDoraPretty — envelope-level renderer.
-// ----------------------------------------------------------------------
 
 function metric(
   value: number | null,
@@ -177,10 +171,6 @@ describe("formatDoraPretty", () => {
     expect(out).toContain("—");
   });
 });
-
-// ----------------------------------------------------------------------
-// runMetricsCli — dispatcher.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];

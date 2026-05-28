@@ -4,7 +4,6 @@ import { NimbusClient } from "../src/nimbus-client.ts";
 
 describe("NimbusClient typed surface", () => {
   test("instance exposes new methods", () => {
-    // We can't connect without a real socket, but we can introspect the prototype
     expect(typeof (NimbusClient.prototype as unknown as Record<string, unknown>).askStream).toBe(
       "function",
     );

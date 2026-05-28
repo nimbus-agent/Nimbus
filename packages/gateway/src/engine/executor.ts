@@ -12,12 +12,7 @@ import type {
   PlannedAction,
 } from "./types.ts";
 
-/**
- * HITL whitelist — immutable at runtime.
- * Source of truth: `architecture.md` §HITL Consent Gate — Implementation Contract.
- */
 const HITL_REQUIRED_BACKING = new Set<string>([
-  // Cloud storage & communication
   "file.delete",
   "file.move",
   "file.rename",
@@ -33,7 +28,6 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "slack.message.post",
   "teams.message.post",
   "teams.message.postChat",
-  // Linear
   "linear.issue.create",
   "linear.issue.update",
   "linear.comment.create",
@@ -48,13 +42,11 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "confluence.page.create",
   "confluence.page.update",
   "confluence.comment.add",
-  // Source control
   "repo.pr.merge",
   "repo.pr.close",
   "repo.branch.delete",
   "repo.tag.create",
   "repo.commit.push",
-  // CI/CD
   "pipeline.trigger",
   "pipeline.cancel",
   "pipeline.rerun",
@@ -66,7 +58,6 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "circleci.job.cancel",
   "gitlab.pipeline.retry",
   "gitlab.pipeline.cancel",
-  // Cloud & infra (tool ids in registry.ts / connector packages)
   "aws.ecs.service.update",
   "aws.lambda.invoke",
   "aws.ec2.instance.stop",
@@ -85,7 +76,6 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "pagerduty.incident.acknowledge",
   "pagerduty.incident.resolve",
   "pagerduty.incident.escalate",
-  // Deployments & infrastructure
   "deployment.apply",
   "deployment.rollback",
   "infra.apply",
@@ -95,12 +85,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "k8s.rollout.restart",
   "cloud.resource.scale",
   "cloud.resource.stop",
-  // Monitoring & incidents
   "alert.acknowledge",
   "alert.silence",
   "incident.escalate",
   "incident.resolve",
-  // IPC-native destructive operations
   "data.delete",
   "connector.remove",
   "extension.autoUpdate",
@@ -109,14 +97,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "connector.addMcp",
   "data.export",
   "connector.reindex",
-  // Vault writes — any IPC client planting / overwriting / deleting a
-  // secret requires a consent prompt. Internal callers holding a typed
-  // NimbusVault reference bypass the gate by design (S2-F8).
   "vault.set",
   "vault.delete",
 ]);
 
-/** Runtime value is an immutable facade; typed as `ReadonlySet` for call sites (`.has`, iteration). */
 export const HITL_REQUIRED = Object.freeze({
   has(x: string): boolean {
     return HITL_REQUIRED_BACKING.has(x);
@@ -153,7 +137,6 @@ export const HITL_REQUIRED = Object.freeze({
 
 const SENSITIVE_PAYLOAD_KEY = /(token|key|secret|password|credential|bearer|auth)/i;
 
-/** Deep-redact object keys that may hold credentials before consent UI / IPC. */
 export function redactPayloadForConsentDisplay(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
@@ -190,15 +173,6 @@ export class ToolExecutor {
     private readonly connectors: ConnectorDispatcher,
   ) {}
 
-  /**
-   * Runs the HITL consent gate and writes the audit record.
-   * Returns `"proceed"` when the action is approved or not gate-required.
-   * Returns an `ActionResult` with status `"rejected"` when the user declines
-   * or the consent channel disconnects — audit already written, do NOT write again.
-   *
-   * Use this when the caller owns execution (not MCP dispatch). For MCP dispatch
-   * use `execute()` which calls `gate()` internally.
-   */
   async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
     const requiresHITL = HITL_REQUIRED.has(action.type);
 
@@ -228,7 +202,6 @@ export class ToolExecutor {
       }
     }
 
-    // ALWAYS write audit record BEFORE any execution
     const sessionId = getAgentRequestSessionId();
     this.audit.recordAudit({
       actionType: action.type,
@@ -254,9 +227,6 @@ export class ToolExecutor {
   }
 }
 
-/**
- * Binds IPC consent to a single client for use inside `ToolExecutor`.
- */
 export function bindConsentChannel(
   coordinator: ConsentCoordinator,
   clientId: string,

@@ -13,7 +13,6 @@ let server: ReturnType<typeof Bun.listen> | undefined;
 const sockets = new Set<{ write: (s: string) => void; end: () => void }>();
 
 beforeEach(() => {
-  // Canonical mkdtempSync sanitizer (CodeQL js/file-system-race).
   tmp = mkdtempSync(join(tmpdir(), "nimbus-ipc-"));
   socketPath = join(tmp, "gw.sock");
 });
@@ -24,7 +23,6 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-/** Start a unix-socket echo server that replies to each line via `respond`. */
 function startServer(respond: (line: string, write: (s: string) => void) => void): void {
   server = Bun.listen({
     unix: socketPath,
@@ -75,7 +73,6 @@ describe("IPCClient", () => {
   test.skipIf(isWin)("dispatches notifications to onNotification handlers", async () => {
     startServer((line, write) => {
       const req = JSON.parse(line) as { id: string };
-      // emit a notification, then answer the request
       write(`${JSON.stringify({ jsonrpc: "2.0", method: "evt.ping", params: { n: 1 } })}\n`);
       write(`${JSON.stringify({ jsonrpc: "2.0", id: req.id, result: null })}\n`);
     });

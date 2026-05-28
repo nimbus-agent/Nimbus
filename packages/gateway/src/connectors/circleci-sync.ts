@@ -59,7 +59,6 @@ function circleciProjectPath(slug: string): string {
     .join("/");
 }
 
-/** App URL for GitHub-backed CircleCI projects only. */
 function appPipelineUrl(projectSlug: string, pipelineNumber: number): string | null {
   const parts = projectSlug.split("/").filter((s) => s.trim() !== "");
   if (parts.length < 3 || parts[0] !== "gh") {

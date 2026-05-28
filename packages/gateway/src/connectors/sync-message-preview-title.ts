@@ -1,7 +1,3 @@
-/**
- * Short display title from a plain-text message preview (Slack / Teams sync).
- * Centralizes truncation so connector modules do not duplicate nested ternaries.
- */
 export function shortIndexedMessageTitleFromPreview(
   preview: string,
   whenTrimmedEmpty: string,

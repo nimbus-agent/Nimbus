@@ -1,5 +1,3 @@
-// Sign each platform artifact's SHA-256 digest with the updater Ed25519 key.
-
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import nacl from "tweetnacl";

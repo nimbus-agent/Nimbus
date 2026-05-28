@@ -1,19 +1,3 @@
-/**
- * Tests for the connector health state machine (connectors/health.ts).
- *
- * Plan §2.1 / §2.2 acceptance criteria:
- *  - sync_success         → healthy
- *  - rate_limited         → rate_limited; retry_after persisted
- *  - unauthenticated      → unauthenticated
- *  - transient_error      → degraded (below max); error (at max)
- *  - persistent_error     → error
- *  - paused / resumed     → paused / healthy
- *  - skipped_offline      → no state change; history row appended
- *  - getConnectorHealth   returns default healthy snapshot for unknown connector
- *  - history rows appended correctly
- *  - pruneConnectorHealthHistory removes old rows
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -31,7 +15,6 @@ let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
-  // Seed a sync_state row so health columns exist
   db.run(
     `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token)
      VALUES ('github', NULL, NULL)`,
@@ -44,7 +27,6 @@ afterEach(() => {
 
 describe("transitionHealth — basic transitions", () => {
   test("sync_success sets state to healthy and clears error fields", () => {
-    // First push into degraded
     transitionHealth(db, "github", { type: "transient_error", error: "timeout", attempt: 1 });
     const snap = transitionHealth(db, "github", { type: "sync_success" });
 
@@ -185,14 +167,12 @@ describe("history", () => {
 
 describe("pruneConnectorHealthHistory", () => {
   test("removes rows older than maxAgeDays", () => {
-    // Insert an old row directly
-    const oldMs = Date.now() - 10 * 24 * 60 * 60 * 1000; // 10 days ago
+    const oldMs = Date.now() - 10 * 24 * 60 * 60 * 1000;
     db.run(
       `INSERT INTO connector_health_history (connector_id, from_state, to_state, reason, occurred_at)
        VALUES ('github', 'healthy', 'degraded', 'old', ?)`,
       [oldMs],
     );
-    // Insert a recent row via transition
     transitionHealth(db, "github", { type: "sync_success" });
 
     const removed = pruneConnectorHealthHistory(db, 7);

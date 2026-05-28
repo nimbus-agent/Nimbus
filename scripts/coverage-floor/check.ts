@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-// Per-file coverage-floor gate.
-// Operator reference: docs/contributors/coverage.md.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,8 +16,6 @@ import { isExempt } from "./exclusions.ts";
 import { parseLcov } from "./lcov-parse.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
-
-// ─── Pure orchestrator (testable) ───────────────────────────────────────────
 
 export interface EvaluateInput {
   readonly sourceFiles: ReadonlyArray<string>;
@@ -42,10 +38,9 @@ export interface EvaluateResult {
 
 export function evaluateCheck(input: EvaluateInput): EvaluateResult {
   const violations: Violation[] = [];
-  // Rule 1+: every non-exempt source file gets a coverage check.
   for (const path of input.sourceFiles) {
     if (isExempt(path)) continue;
-    if (input.baseline.files.has(path)) continue; // baseline rules below
+    if (input.baseline.files.has(path)) continue;
     const actualPct = input.actual.get(path);
     if (actualPct === undefined) {
       violations.push({ kind: "missing_from_lcov", path });
@@ -53,7 +48,6 @@ export function evaluateCheck(input: EvaluateInput): EvaluateResult {
       violations.push({ kind: "below_floor", path, actual: actualPct });
     }
   }
-  // Rule 2-5: baseline-file ratchet.
   const diff = computeBaselineDiff(input.baseline, input.actual);
   for (const r of diff.regressions) {
     violations.push({ kind: "regression", path: r.path, baseline: r.baseline, actual: r.actual });
@@ -67,10 +61,6 @@ export function evaluateCheck(input: EvaluateInput): EvaluateResult {
   return { exitCode: violations.length === 0 ? 0 : 1, violations, diff };
 }
 
-// `--update-baseline` mode: raise must-raise watermarks, drop must-remove
-// entries. Regressions are NOT auto-fixed — the PR author must fix the
-// regression in code; updating the baseline downward would silently lose
-// progress (the whole point of the ratchet).
 export function computeUpdatedBaseline(
   baseline: Baseline,
   actual: ReadonlyMap<string, number>,
@@ -78,21 +68,15 @@ export function computeUpdatedBaseline(
   generatedAt: string,
 ): Baseline {
   const next = new Map<string, number>();
-  // Pass 1: existing baseline entries — apply ratchet rules.
   for (const [path, minPct] of baseline.files) {
     const actualPct = actual.get(path) ?? 0;
-    if (actualPct >= FLOOR_PCT) continue; // must-remove
+    if (actualPct >= FLOOR_PCT) continue;
     if (actualPct > minPct) {
-      next.set(path, actualPct); // must-raise
+      next.set(path, actualPct);
     } else {
-      next.set(path, minPct); // stable or regression (keep old watermark)
+      next.set(path, minPct);
     }
   }
-  // Pass 2: seed new entries for non-exempt source files not already in
-  // baseline that are below the floor. Files missing from lcov entirely
-  // are recorded at 0 so the first run's missing_from_lcov violations get
-  // baselined too — Phase 0's design assumes the seeded baseline accepts
-  // current state so CI goes green on merge.
   for (const path of sourceFiles) {
     if (isExempt(path)) continue;
     if (next.has(path)) continue;
@@ -104,16 +88,7 @@ export function computeUpdatedBaseline(
   return { version: 1, generated_at: generatedAt, files: next };
 }
 
-// ─── I/O boundary ───────────────────────────────────────────────────────────
-
 export async function discoverSourceFiles(): Promise<string[]> {
-  // Scope: packages whose coverage lcov is merged into coverage/lcov.info
-  // by scripts/coverage-floor/build-lcov.sh (mirroring CI). Excludes:
-  //   - packages/ui            (Vitest, separate lcov)
-  //   - packages/vscode-extension (Vitest, separate lcov)
-  //   - packages/docs          (no tests)
-  // A future phase can extend the gate to those packages by merging
-  // their Vitest lcov into coverage/lcov.info first.
   const seen = new Set<string>();
   const out: string[] = [];
   const globs = [

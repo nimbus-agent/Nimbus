@@ -102,7 +102,6 @@ function startHarness(config: FakeDbtConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         dbt: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -148,7 +147,6 @@ describe("dbt-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-dbt1:")).toBe(true);
 
-    // Authorization is exactly `Token <token>`.
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("Token dbt-test-token");
     }

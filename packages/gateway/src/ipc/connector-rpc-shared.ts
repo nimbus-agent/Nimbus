@@ -36,7 +36,6 @@ export function requireRegisteredConnector(localIndex: LocalIndex, id: Connector
   }
 }
 
-/** Built-in OAuth/PAT connector id or persisted `mcp_*` user MCP id. */
 export function requireRegisteredSchedulerServiceId(
   rec: Record<string, unknown> | undefined,
   localIndex: LocalIndex,

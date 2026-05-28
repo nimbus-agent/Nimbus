@@ -1,8 +1,3 @@
-/**
- * Linux vault — libsecret via `secret-tool` (stdin for secrets; no argv exposure).
- * Spawn uses the FHS path so execution does not depend on the process PATH (Sonar S4036).
- */
-
 import { spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
@@ -10,12 +5,10 @@ import { existsSync } from "node:fs";
 import { compareVaultKeysAlphabetically, validateVaultKeyOrThrow } from "./key-format.ts";
 import type { NimbusVault } from "./nimbus-vault.ts";
 
-/** FHS path when `secret-tool` is not on `PATH` (e.g. minimal systemd environments). */
 export const SECRET_TOOL_FALLBACK_PATH = "/usr/bin/secret-tool";
 
 const LABEL_PREFIX = "Nimbus: ";
 
-/** Resolves `secret-tool` for Linux vault and platform init (PATH first, then FHS). */
 export function resolveSecretToolExecutable(): string | null {
   const w = Bun.which("secret-tool");
   if (w !== null && w.length > 0) {
@@ -35,13 +28,6 @@ function nimbusLabel(key: string): string {
   return `${LABEL_PREFIX}${key}`;
 }
 
-/**
- * Parses `secret-tool search --all` output (see libsecret `secret-tool.c`):
- * - stdout: `label = Nimbus: <vaultKey>` per item
- * - stderr: `attribute.nimbus-key = <vaultKey>` per item (attributes use g_printerr)
- *
- * Exported for unit tests (runs on every OS); do not log or return secret values.
- */
 export function extractNimbusVaultKeysFromSecretToolSearchOutput(
   stdout: string,
   stderr?: string,

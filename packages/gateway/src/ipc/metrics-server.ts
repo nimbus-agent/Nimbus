@@ -1,14 +1,8 @@
-/**
- * Prometheus-compatible metrics on localhost only.
- * Uses the live gateway DB handle for accurate in-memory latency samples.
- */
-
 import type { Database } from "bun:sqlite";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { collectIndexMetrics } from "../db/metrics.ts";
 
 export type MetricsServerHandle = {
-  /** Bound port — equals `port` arg unless `port === 0`, in which case the OS assigned one. */
   readonly port: number;
   readonly stop: () => void;
 };
@@ -17,9 +11,6 @@ function escapeLabel(s: string): string {
   return s.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`).replaceAll("\n", " ");
 }
 
-/**
- * @param getDb Returns the gateway's primary SQLite handle (read queries only).
- */
 export function startMetricsServer(getDb: () => Database, port: number): MetricsServerHandle {
   const server = Bun.serve({
     hostname: "127.0.0.1",

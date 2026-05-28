@@ -1,7 +1,3 @@
-/**
- * Jenkins Classic `/api/json?tree=...` job folder shape.
- * Kept in sync with `nimbus-mcp-jenkins` `jenkins_job_list` depth.
- */
 export const JENKINS_JOBS_API_TREE =
   "jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url,jobs[name,fullname,url]]]]";
 

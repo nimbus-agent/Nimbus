@@ -57,11 +57,9 @@ import { createZoomSyncable } from "../connectors/zoom-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export type ConnectorMeshSyncableOptions = {
-  /** Phase 5 T4 wrap-up: hard cap on pages walked per pagerduty sync. */
   pagerdutyMaxPagesPerSync: number;
 };
 
-/** Registers all connector-backed sync jobs that lazily ensure MCP children via the mesh. */
 export function registerConnectorMeshSyncables(
   syncScheduler: SyncScheduler,
   connectorMesh: LazyConnectorMesh,

@@ -5,7 +5,6 @@ import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { createUserMcpSyncable } from "../connectors/user-mcp-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
-/** Registers noop sync jobs for every persisted user MCP row (call after mesh + scheduler exist). */
 export function registerUserMcpSyncablesFromDatabase(
   db: Database,
   syncScheduler: SyncScheduler,

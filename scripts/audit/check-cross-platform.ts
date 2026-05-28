@@ -27,22 +27,14 @@ export interface CrossPlatformIssue {
   readonly text: string;
 }
 
-// `toMatch` is intentionally excluded — it is overwhelmingly used with regexes /
-// substrings, the largest false-positive source. Add it back only behind AST v2.
 const ASSERTION_RE = /\.(toBe|toEqual|toStrictEqual|toContain)\(\s*(['"`])((?:\\.|(?!\2).)*)\2/g;
 
 function looksLikeWindowsPath(literal: string): boolean {
-  // `literal` is the RAW source between the quotes. A Windows separator inside a
-  // string literal is ALWAYS written as an escaped backslash `\\` (two chars in
-  // source); a lone backslash is an escape sequence (\t, \n, \r, …), never a path
-  // separator. So we match on `\\` pairs and never collapse — this structurally
-  // excludes the \t/\n false-positive class (e.g. "config\t1.yaml" has a single
-  // backslash and is correctly ignored, while "data\\nimbus.db" is flagged).
-  if (!literal.includes("\\\\")) return false; // no escaped backslash → not a Windows path
-  if (/^[A-Za-z]:\\\\/.test(literal)) return true; // drive-letter absolute: C:\\...
-  if (/^\\\\\\\\/.test(literal)) return true; // UNC root: \\\\server (escaped \\)
-  if (/^\.\.?\\\\/.test(literal)) return true; // explicit relative: .\\x or ..\\x
-  if (/\\\\[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(literal)) return true; // ...\\file.ext
+  if (!literal.includes("\\\\")) return false;
+  if (/^[A-Za-z]:\\\\/.test(literal)) return true;
+  if (/^\\\\\\\\/.test(literal)) return true;
+  if (/^\.\.?\\\\/.test(literal)) return true;
+  if (/\\\\[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(literal)) return true;
   return false;
 }
 

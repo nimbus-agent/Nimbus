@@ -1,16 +1,6 @@
-// packages/cli/src/commands/vault.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-// IMPORTANT: import-order discipline.
-//   1. `cli-mocks.ts` registers `mock.module()` for `@clack/prompts` +
-//      `../lib/gateway-process.ts`. These calls must execute BEFORE any
-//      module that statically imports those specifiers is evaluated.
-//   2. Because static ESM imports are hoisted, the module under test
-//      (`./vault.ts`) is imported via `await import(...)` AFTER the
-//      mocks are installed.
-//
-// Reference: `extension.test.ts` uses the same dynamic-import pattern.
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";

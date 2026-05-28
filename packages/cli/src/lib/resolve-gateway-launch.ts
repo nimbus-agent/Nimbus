@@ -26,7 +26,6 @@ function gatewayBinaryName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "nimbus-gateway.exe" : "nimbus-gateway";
 }
 
-/** Walk upward from `startDir` (inclusive), yielding absolute directory paths. */
 export function walkUpDirs(startDir: string): string[] {
   const out: string[] = [];
   let d = resolve(startDir);
@@ -58,10 +57,6 @@ export function isNimbusWorkspaceRoot(dir: string, exists: (path: string) => boo
   }
 }
 
-/**
- * Finds the monorepo root by walking up from each start directory (in order),
- * returning the first directory whose package.json matches the workspace root.
- */
 export function findNimbusRepoRootFromDirs(
   startDirs: readonly string[],
   exists: (path: string) => boolean,
@@ -128,8 +123,6 @@ function resolveFromRepoRoot(
   const exeThere = exists(distExe);
   const bunPath = resolveBunPath(execPath, whichBun);
 
-  // `scripts/build-debug` emits `dist/nimbus-gateway.js` only. A leftover `dist/nimbus-gateway(.exe)`
-  // from `compile-gateway` must not shadow a newer debug bundle — otherwise `nimbus start` runs stale code.
   if (
     jsThere &&
     bunPath !== undefined &&

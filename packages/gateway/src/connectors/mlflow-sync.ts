@@ -34,12 +34,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Both `mlflow.host` and `mlflow.token` are required and have no defaults —
- * MLflow has no universal SaaS host (every tracking server is a distinct
- * per-org URL). The connector no-ops unless both are non-empty after trim;
- * the host's trailing slash is trimmed.
- */
 async function loadCreds(ctx: SyncContext): Promise<MlflowCreds | null> {
   const host = (await readConnectorSecret(ctx.vault, "mlflow", "host"))?.trim() ?? "";
   const token = (await readConnectorSecret(ctx.vault, "mlflow", "token"))?.trim() ?? "";
@@ -60,7 +54,6 @@ async function mlflowGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // MLflow API token is sent as `Authorization: Bearer <token>`.
   const res = await fetch(`${creds.host}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -76,7 +69,6 @@ async function mlflowGet(
   }
 }
 
-/** Pull a named array out of an envelope (`<key>`, else []). */
 function extractArray(parsed: unknown, key: string): unknown[] {
   const v = asRecord(parsed)?.[key];
   return Array.isArray(v) ? v : [];
@@ -121,8 +113,6 @@ export function createMlflowSyncable(options: MlflowSyncableOptions): Syncable {
         return syncNoopResult(cursor, t0);
       }
 
-      // The registered-models walk is the gating call: a FIRST-page http/parse
-      // error maps to the pass-cursor-empty result. Later-page errors just break.
       const now = Date.now();
       let totalBytes = 0;
       let totalUpserted = 0;
@@ -137,7 +127,6 @@ export function createMlflowSyncable(options: MlflowSyncableOptions): Syncable {
               ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
               : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
           }
-          // A later-page failure is non-fatal: keep what we already indexed.
           break;
         }
 

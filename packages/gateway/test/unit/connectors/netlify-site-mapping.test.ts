@@ -174,7 +174,6 @@ describe("mapNetlifySiteToItem", () => {
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["created_at"]).toBe(CREATED_MS);
     expect(meta(row)["updated_at"]).toBe(UPDATED_MS);
-    // The values must be numbers, not the raw ISO strings.
     expect(typeof meta(row)["created_at"]).toBe("number");
     expect(typeof meta(row)["updated_at"]).toBe("number");
   });

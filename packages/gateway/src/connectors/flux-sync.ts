@@ -15,12 +15,6 @@ function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies FluxCursorV1);
 }
 
-/**
- * Flux CRD walk table — the GitOps-Toolkit Custom Resources we index. The user
- * chose "everything incl. image-automation". Duplicated (intentionally) in the
- * MCP server (`packages/mcp-connectors/flux/src/server.ts`) so neither side
- * depends on the other.
- */
 interface FluxKindEntry {
   readonly kind: string;
   readonly group: string;
@@ -88,11 +82,6 @@ function trimTrailingSlash(s: string): string {
   return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
-/**
- * Both `flux.api_url` and `flux.token` are required and have no defaults —
- * Flux is self-hosted (the Kubernetes API server), so there is no SaaS host to
- * fall back to. The connector no-ops unless both are non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<FluxCreds | null> {
   const apiUrl = (await readConnectorSecret(ctx.vault, "flux", "api_url"))?.trim() ?? "";
   const token = (await readConnectorSecret(ctx.vault, "flux", "token"))?.trim() ?? "";
@@ -108,7 +97,6 @@ type FetchOutcome =
 
 async function agGet(ctx: SyncContext, creds: FluxCreds, path: string): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // FLUX_TOKEN is a read-only Kubernetes ServiceAccount JWT.
   const res = await fetch(`${creds.apiUrl}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -123,7 +111,6 @@ async function agGet(ctx: SyncContext, creds: FluxCreds, path: string): Promise<
   }
 }
 
-/** A Kubernetes List response carries `{ items: [...] }`; coerce defensively. */
 function extractItems(parsed: unknown): unknown[] {
   const items = asRecord(parsed)?.["items"];
   return Array.isArray(items) ? items : [];
@@ -146,9 +133,6 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      // Walk each CRD kind. A non-ok outcome (CRD group not installed,
-      // version drift, transient 5xx) is non-fatal — log and continue to the
-      // next kind. A fully-unreachable API just yields 0 upserts.
       for (const entry of FLUX_KINDS) {
         const path = `/apis/${entry.group}/${entry.version}/${entry.plural}`;
         const outcome = await agGet(ctx, creds, path);

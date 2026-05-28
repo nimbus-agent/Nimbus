@@ -1,8 +1,3 @@
-/**
- * Q2 §7.8 structural invariant: credentials flow through Vault → lazy mesh env → MCP server;
- * connectors do not ship a parallel per-connector `auth.ts` module tree.
- */
-
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";

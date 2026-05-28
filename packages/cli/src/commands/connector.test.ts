@@ -1,14 +1,6 @@
-// packages/cli/src/commands/connector.test.ts
-//
-// Covers the `nimbus connector` subcommand surface via the top-level
-// dispatcher `runConnector(args)`. The dispatcher's `withIpc()` helper
-// reads the gateway state from the mocked `lib/gateway-process.ts` and
-// constructs an IPCClient — we route the IPC call through the harness's
-// fixture-provided fake client.
-
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -487,7 +479,6 @@ describe("runConnector auth (help / usage)", () => {
 
   it("prints help pointer when --help is passed with no service", async () => {
     await runConnector(["auth", "--help"]);
-    // Help pointer / known OAuth env help should appear somewhere in stdout.
     expect(out.stdout.length).toBeGreaterThan(0);
   });
 
@@ -534,8 +525,6 @@ describe("runConnector add", () => {
   });
 });
 
-// The apply* helpers read process.env directly; clear every credential key so
-// an ambient value can't turn a "missing flag" error case into a success.
 const AUTH_ENV_KEYS: string[] = [
   "NIMBUS_LINEAR_API_KEY",
   "NIMBUS_GITHUB_PAT",
@@ -756,7 +745,7 @@ describe("runConnector auth — help + flag edges", () => {
     try {
       const mock = createMockIpcClient([{ ok: true, serviceId: "github", scopesGranted: [] }]);
       setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
-      await runConnector(["auth", "github"]); // no --token => env fallback
+      await runConnector(["auth", "github"]);
       expect(out.stdout).toContain("Signed in: github");
     } finally {
       for (const k of Object.keys(process.env)) delete process.env[k];

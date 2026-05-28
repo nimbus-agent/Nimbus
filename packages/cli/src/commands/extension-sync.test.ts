@@ -82,8 +82,6 @@ describe("runExtensionSync exit codes", () => {
   });
 
   test("per-publisher failure framing is sync-context, not install-context", async () => {
-    // Plan-review #2b FIX: must NOT leak install-context "re-run the install"
-    // phrasing into sync output.
     const captured = captureStreams();
     await runExtensionSyncWithCaller({
       args: [],

@@ -30,11 +30,6 @@ interface LeverCreds {
   readonly apiKey: string;
 }
 
-/**
- * `lever.api_key` is required. Lever's API host is a fixed SaaS host
- * (`api.lever.co`) — there is no host override key. The connector no-ops unless
- * the key is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<LeverCreds | null> {
   const apiKey = (await readConnectorSecret(ctx.vault, "lever", "api_key"))?.trim() ?? "";
   if (apiKey === "") {
@@ -43,13 +38,6 @@ async function loadCreds(ctx: SyncContext): Promise<LeverCreds | null> {
   return { apiKey };
 }
 
-/**
- * Build the Basic auth header. Lever's scheme makes the API key the USERNAME
- * and the password EMPTY, so the header is `Basic base64(<api_key>:)` — note
- * the trailing colon. The gateway cannot import the mcp-shared
- * `encodeBasicAuthHeader`, so the base64 is inlined here (the bitbucket-sync /
- * jenkins-sync pattern). The key is never logged.
- */
 function basicAuthHeader(apiKey: string): string {
   const b64 = Buffer.from(`${apiKey}:`, "utf8").toString("base64");
   return `Basic ${b64}`;
@@ -60,10 +48,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/**
- * Build `/v1/postings?limit=100`, optionally with an `offset` cursor (Lever's
- * `next` value from the previous page).
- */
 function postingsPath(offset: string | null): string {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (offset !== null) {
@@ -89,12 +73,6 @@ async function leverGet(ctx: SyncContext, creds: LeverCreds, path: string): Prom
   }
 }
 
-/**
- * `GET /v1/postings` returns the Lever envelope `{ data: [...], hasNext, next }`.
- * Extract the `data` array, the `hasNext` flag, and the `next` offset cursor
- * defensively — a missing/malformed envelope yields an empty page with
- * `hasNext: false` so the walk terminates.
- */
 function extractPostings(parsed: unknown): {
   postings: unknown[];
   hasNext: boolean;
@@ -141,12 +119,6 @@ export function createLeverSyncable(options: LeverSyncableOptions): Syncable {
       let totalUpserted = 0;
       let offset: string | null = null;
 
-      // The first postings page is the gating call: a FIRST-page http/parse
-      // error maps to the pass-cursor-empty result (http keeps the prior
-      // cursor, parse resets). Later-page errors just break, preserving whatever
-      // was already collected. Lever offset-paginates: follow `next` while
-      // `hasNext` is true AND `next` is a non-empty string (or the MAX_PAGES cap
-      // stops the walk).
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await leverGet(ctx, creds, postingsPath(offset));
         totalBytes += outcome.bytes;

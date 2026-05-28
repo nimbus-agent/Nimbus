@@ -1,23 +1,3 @@
-/**
- * Bitrise REST sync handler. Walks `/v0.1/me/apps` → for each app,
- * `/v0.1/apps/<slug>/builds?limit=50` and upserts the app + each build
- * into the unified `item` table as `service = "bitrise"`,
- * `type ∈ {"app", "build"}` via the pure mapping helpers in
- * {@link mapBitriseAppToItem} / {@link mapBitriseBuildToItem}.
- *
- * Single-pass cursor model (matches `snyk-sync.ts` / `sentry-sync.ts`):
- * every successful run emits a fresh `nimbus-bitrise1:{pass: 1}` cursor
- * so the scheduler does not re-queue immediately. Bitrise v0.1 has no
- * native delta endpoint for the recent-builds list; a full single-page
- * walk per cycle is acceptable at the 10-minute default cadence because
- * each `builds` response is bounded by Bitrise's max page size of 50.
- *
- * v1 surfaces only "apps" + the most recent builds per app. The
- * connector deliberately does NOT walk multi-page `next`-cursor build
- * history — the roadmap row scopes Bitrise to mobile CI observability,
- * not deep historical replay. Long-tail backfills are a follow-up.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,

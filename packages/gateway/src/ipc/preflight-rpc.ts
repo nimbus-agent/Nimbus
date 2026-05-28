@@ -1,12 +1,3 @@
-/**
- * Phase 5 T4 PR 3a — `deploy.preflight` JSON-RPC handler.
- *
- * Surface: CLI, HTTP, and the GitHub Action — NOT LLM-facing. Security
- * invariant I11 (wrapToolOutput) therefore does not apply here. If a future
- * built-in agent registers `deploy.preflight` as a tool, the wrap must be
- * added at the agent's tool-registration site per `nimbus-tool-output-envelope`
- * (wrap at the agent surface, not in the tool handler).
- */
 import type { Database } from "bun:sqlite";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { computeDeployPreflight, type DeployPreflightResult } from "../preflight/preflight.ts";

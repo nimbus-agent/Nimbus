@@ -28,7 +28,6 @@ export type TeamsSyncCursorV1 = {
   chanNext: string | null;
   pairs: { teamId: string; channelId: string }[];
   pairIdx: number;
-  /** Per team|channel: null = use initial delta URL; string = next request URL */
   deltaByKey: Record<string, string | null>;
 };
 
@@ -467,7 +466,6 @@ export function createTeamsSyncable(options: TeamsSyncableOptions): Syncable {
         };
       }
 
-      /* messages */
       if (state.pairs.length === 0) {
         return {
           cursor: encodeTeamsSyncCursor(state),

@@ -208,8 +208,6 @@ describe("workflow.listRuns", () => {
   });
 });
 
-// ─── Dispatcher / unknown method ─────────────────────────────────────────────
-
 describe("dispatchAutomationRpc — dispatcher behavior", () => {
   test("returns kind:miss for unknown method", async () => {
     const db = seededDb();
@@ -228,8 +226,6 @@ describe("dispatchAutomationRpc — dispatcher behavior", () => {
     expect(err.name).toBe("AutomationRpcError");
   });
 });
-
-// ─── watcher.list / create / pause / resume / delete ─────────────────────────
 
 describe("watcher.list", () => {
   test("returns empty list on a fresh db", async () => {
@@ -363,8 +359,6 @@ describe("watcher.create / pause / resume / delete", () => {
   });
 });
 
-// ─── workflow.list / save / delete ───────────────────────────────────────────
-
 describe("workflow.list / save / delete", () => {
   test("list returns empty array initially", async () => {
     const db = seededDb();
@@ -437,8 +431,6 @@ describe("workflow.list / save / delete", () => {
   });
 });
 
-// ─── extension.list / info / enable / disable / remove ───────────────────────
-
 function seedExtensionRow(db: Database, id: string, installPath: string): void {
   insertExtensionRow(db, {
     id,
@@ -479,7 +471,6 @@ describe("extension.list", () => {
       db,
     });
     expect(out.kind).toBe("hit");
-    // No extensions are pre-T2-disabled by default in this test.
     expect((out as { value: { extensions: unknown[] } }).value.extensions).toEqual([]);
   });
 
@@ -544,10 +535,8 @@ describe("extension.info", () => {
 
   test("returns forwardDeps + reverseDeps from extension_dependency table", async () => {
     const db = seededDb();
-    // Seed two extensions
     seedExtensionRow(db, "com.shared.A", "/p/a");
     seedExtensionRow(db, "com.example.B", "/p/b");
-    // Record that B depends on A
     recordInstall(
       db,
       "com.example.B",
@@ -556,7 +545,6 @@ describe("extension.info", () => {
       Date.now(),
     );
 
-    // Call extension.info for A (no forward deps, reverse dep from B)
     const outA = await dispatchAutomationRpc({
       method: "extension.info",
       params: { id: "com.shared.A" },
@@ -578,7 +566,6 @@ describe("extension.info", () => {
     expect(extA.forwardDeps).toEqual([]);
     expect(extA.reverseDeps).toEqual([{ extensionId: "com.example.B", range: "^1.0.0" }]);
 
-    // Call extension.info for B (forward dep on A, no reverse deps)
     const outB = await dispatchAutomationRpc({
       method: "extension.info",
       params: { id: "com.example.B" },
@@ -651,8 +638,6 @@ describe("extension.enable / disable / remove", () => {
       mesh,
     });
     expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
-    // mesh.stopExtensionClient runs synchronously up to the first await; the
-    // call should have been queued by the time dispatch returns.
     expect(stopped).toContain("com.example.a");
   });
 
@@ -687,7 +672,6 @@ describe("extension.enable / disable / remove", () => {
       expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
       expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.example.a")).toBeNull();
     } finally {
-      // tmpDir already removed by the handler; rmSync is harmless.
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -716,10 +700,8 @@ describe("extension.enable / disable / remove", () => {
 
   test("remove refuses when reverseDeps is non-empty and --force not set", async () => {
     const db = seededDb();
-    // Install A (the shared dep) and B (the consumer).
     seedExtensionRow(db, "com.shared.A", "/p/A");
     seedExtensionRow(db, "com.example.B", "/p/B");
-    // Record that B depends on A.
     recordInstall(
       db,
       "com.example.B",
@@ -728,7 +710,6 @@ describe("extension.enable / disable / remove", () => {
       Date.now(),
     );
 
-    // Attempt to remove A without --force — must throw.
     await expect(
       dispatchAutomationRpc({
         method: "extension.remove",
@@ -737,7 +718,6 @@ describe("extension.enable / disable / remove", () => {
       }),
     ).rejects.toThrow(/reverse_dep_blocked/);
 
-    // A row must still be present.
     expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.shared.A")).not.toBeNull();
   });
 
@@ -745,10 +725,8 @@ describe("extension.enable / disable / remove", () => {
     const db = seededDb();
     const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-force-rm-"));
     try {
-      // Install A (the shared dep — give it a real dir so rmSync succeeds) and B (consumer).
       seedExtensionRow(db, "com.shared.A", tmpDir);
       seedExtensionRow(db, "com.example.B", "/p/B");
-      // Record that B depends on A; give A its own (empty) dep set.
       recordInstall(
         db,
         "com.example.B",
@@ -765,15 +743,10 @@ describe("extension.enable / disable / remove", () => {
       });
       expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
 
-      // A must be gone from extension_state.
       expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.shared.A")).toBeNull();
 
-      // A's forward deps (the empty set) are cleared — idempotent by design.
       expect(forwardDeps(db, "com.shared.A")).toHaveLength(0);
 
-      // B's reverse dep edge (B → A) is NOT cleared by this path; B's manifest
-      // still claims A as a dep.  The startup completeness guard will hard-disable
-      // B on next start (Task 13 cascade).  We assert the edge is still present:
       expect(reverseDeps(db, "com.shared.A")).toHaveLength(1);
       expect(reverseDeps(db, "com.shared.A")[0]?.extensionId).toBe("com.example.B");
     } finally {
@@ -781,8 +754,6 @@ describe("extension.enable / disable / remove", () => {
     }
   });
 });
-
-// ─── extension.install ────────────────────────────────────────────────────────
 
 describe("extension.install", () => {
   test("rejects when extensionsDir is not configured", async () => {
@@ -847,8 +818,6 @@ describe("extension.install", () => {
     }
   });
 });
-
-// ─── extension.sync (T2 PR 2 Task 11) ────────────────────────────────────────
 
 describe("extension.sync", () => {
   test("returns SyncResult with publishersChecked=1 when extension is signed", async () => {

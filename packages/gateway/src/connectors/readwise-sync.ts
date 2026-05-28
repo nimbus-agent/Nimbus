@@ -30,11 +30,6 @@ interface ReadwiseCreds {
   readonly token: string;
 }
 
-/**
- * `readwise.token` is required. Readwise's API host is a fixed SaaS host
- * (`readwise.io`) — there is no host override key. The connector no-ops unless
- * the token is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<ReadwiseCreds | null> {
   const token = (await readConnectorSecret(ctx.vault, "readwise", "token"))?.trim() ?? "";
   if (token === "") {
@@ -48,7 +43,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/** Build `/api/v2/highlights/?page_size=1000&page=N`. */
 function highlightsPath(page: number): string {
   const params = new URLSearchParams({ page_size: String(PAGE_SIZE), page: String(page) });
   return `/api/v2/highlights/?${params.toString()}`;
@@ -60,8 +54,6 @@ async function readwiseGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Readwise uses Django-REST-Framework token auth: the literal word "Token",
-  // NOT "Bearer" (the token is never logged).
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Token ${creds.token}`, Accept: "application/json" },
   });
@@ -77,12 +69,6 @@ async function readwiseGet(
   }
 }
 
-/**
- * `GET /api/v2/highlights/` returns the Django-REST-Framework page envelope
- * `{ count, next, previous, results: [...] }`. Extract the `results` array and
- * the `next` page URL defensively — a missing/malformed envelope yields an empty
- * page with `next: null` so the walk terminates.
- */
 function extractHighlights(parsed: unknown): { highlights: unknown[]; next: string | null } {
   const root = asRecord(parsed);
   if (root === undefined) {
@@ -125,11 +111,6 @@ export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncab
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      // The highlights walk is the gating call: a FIRST-page http/parse error
-      // maps to the pass-cursor-empty result. Later-page errors just break,
-      // preserving whatever was already collected. Readwise page-paginates
-      // (DRF): increment `page` from 1; stop when a page is empty OR the
-      // envelope's `next` URL is null (or the MAX_PAGES cap stops the walk).
       for (let page = 1; page <= MAX_PAGES; page += 1) {
         const outcome = await readwiseGet(ctx, creds, highlightsPath(page));
         totalBytes += outcome.bytes;

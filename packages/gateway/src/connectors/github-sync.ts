@@ -42,12 +42,8 @@ function extractLabelNames(raw: unknown): string[] {
   return out;
 }
 
-// Tuning knobs for the mergeable_state refresh policy. Hardcoded for v0.1.0;
-// could be promoted to per-connector config (e.g., a [github.sync] block)
-// in a follow-up if user feedback asks for it — see plan review §3.2.
-const MERGEABLE_STATE_REFRESH_FRESHNESS_MS = 24 * 60 * 60 * 1000; // 24h
-const MERGEABLE_STATE_UPDATED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7d
-
+const MERGEABLE_STATE_REFRESH_FRESHNESS_MS = 24 * 60 * 60 * 1000;
+const MERGEABLE_STATE_UPDATED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export type MergeableStateRefreshInput = {
   readonly mergeableState: string | null;
   readonly mergeableStateFetchedAtMs: number | null;
@@ -55,21 +51,6 @@ export type MergeableStateRefreshInput = {
   readonly nowMs: number;
 };
 
-/**
- * Decides whether an open PR needs a detail-endpoint fetch to refresh
- * `mergeable_state` (Phase 5 T4 PR 3a). Returns true iff:
- *   - mergeable_state is null OR was fetched > 24h ago (thrash guard),
- *   - AND the PR's `updated_at` is within the last 7 days
- *     (avoids re-fetching long-stale PRs nobody is working on).
- *
- * NOTE: The github sync is currently events-driven (`/users/{login}/events`),
- * not a list-pass over `/repos/{owner}/{repo}/pulls`. PullRequestEvent
- * payloads populate `mergeable_state` whenever a PR is touched, but stale
- * open PRs that haven't had activity in the events feed do not refresh.
- * Driving this policy from a periodic refresh pass is deferred; the
- * preflight calculator handles missing state via its `unknown_mergeable_state`
- * gap branch.
- */
 export function shouldRefreshMergeableState(input: MergeableStateRefreshInput): boolean {
   const updatedAge = input.nowMs - input.updatedAtMs;
   if (updatedAge > MERGEABLE_STATE_UPDATED_WINDOW_MS) return false;
@@ -79,20 +60,6 @@ export function shouldRefreshMergeableState(input: MergeableStateRefreshInput): 
   return refreshAge > MERGEABLE_STATE_REFRESH_FRESHNESS_MS;
 }
 
-/**
- * Builds the metadata object stored alongside an indexed `pr` item.
- *
- * Phase 5 T4 PR 2 (DORA Lead Time): captures `merged_at` (ms) and
- * `merge_commit_sha` when the PR was merged, plus `labels`. The graph
- * populator emits a `pr → commit` `merged_as` edge when both signals
- * are present; the DORA calculator joins on this edge.
- *
- * Phase 5 T4 PR 3a (preflight): captures `mergeable` + `mergeable_state`
- * + `mergeable_state_fetched_at_ms` when present on the input payload.
- * PullRequestEvent payloads populate these fields when GitHub has
- * computed them; the preflight calculator surfaces conflicts via
- * `mergeable_state === "dirty"`.
- */
 export function extractPrMetadataForIndex(
   repoFull: string,
   pr: Record<string, unknown>,
@@ -139,8 +106,6 @@ function eventsUrlFor(login: string): string {
   return `https://api.github.com/users/${encodeURIComponent(login)}/events?per_page=100`;
 }
 
-// `login` is cached on the cursor so we only call `/user` on the first sync.
-// Older cursors (no login field) decode with login = null — re-resolves on next sync.
 type GithubSyncCursorV1 = { etag: string | null; login: string | null };
 
 function encodeCursor(c: GithubSyncCursorV1): string {
@@ -427,9 +392,6 @@ async function syncGithubUserEvents(
 ): Promise<SyncResult> {
   const prev = decodeCursor(cursor);
   let login = prev?.login ?? null;
-  // When login was missing from the cursor (legacy or first sync) the cached
-  // etag belonged to the wrong endpoint — drop it so the first /users/{login}/events
-  // call is unconditional.
   let etag = login === null ? null : (prev?.etag ?? null);
   let bytesTransferred = 0;
 

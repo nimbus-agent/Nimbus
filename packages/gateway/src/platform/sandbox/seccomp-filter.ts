@@ -1,14 +1,3 @@
-/**
- * Default Linux seccomp BPF filter for extension sandboxing (T2 PR 1, I15).
- *
- * Emits raw cBPF bytecode in the `struct sock_fprog` format `bwrap --seccomp`
- * consumes. No native libseccomp dependency. The allow-list / block-list /
- * kill-default policy is locked in the per-PR design spec §4 Linux.
- */
-
-// x86_64 syscall numbers (subset). The helper is x86_64-only at PR 1; ARM64
-// support is a tracked follow-up (the BPF arch check at filter entry will
-// kill-process on ARM64 until the second filter ships).
 const SYSCALL_NR: Record<string, number> = {
   read: 0,
   write: 1,
@@ -180,10 +169,7 @@ const SYSCALL_NR: Record<string, number> = {
   process_vm_readv: 310,
   process_vm_writev: 311,
   uname: 63,
-  // glibc 2.34+ uses clone3 for pthread_create
   clone3: 435,
-  // io_uring is blocked — it can bypass seccomp policy on kernel 5.1+
-  // and connectors have no legitimate use for it
   io_uring_setup: 425,
   io_uring_enter: 426,
   io_uring_register: 427,
@@ -353,8 +339,6 @@ export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
   "get_mempolicy",
   "userfaultfd",
   "perf_event_open",
-  // io_uring can bypass seccomp policy on kernel 5.1+ — connectors have
-  // no legitimate use for it
   "io_uring_setup",
   "io_uring_enter",
   "io_uring_register",
@@ -362,7 +346,6 @@ export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
 
 export const SYS_KILL_DEFAULT = true;
 
-// BPF opcodes
 const BPF_LD = 0x00,
   BPF_W = 0x00,
   BPF_ABS = 0x20;
@@ -374,7 +357,7 @@ const SECCOMP_DATA_NR_OFFSET = 0;
 const SECCOMP_DATA_ARCH_OFFSET = 4;
 const AUDIT_ARCH_X86_64 = 0xc000003e;
 const SECCOMP_RET_ALLOW = 0x7fff0000;
-const SECCOMP_RET_ERRNO_EPERM = 0x00050001; // ERRNO | 1 (EPERM)
+const SECCOMP_RET_ERRNO_EPERM = 0x00050001;
 const SECCOMP_RET_KILL_PROCESS = 0x80000000;
 
 interface SockFilter {
@@ -392,7 +375,7 @@ function emit(filters: SockFilter[]): Buffer {
   const buf = Buffer.alloc(filters.length * 8);
   for (let i = 0; i < filters.length; i++) {
     const f = filters[i];
-    if (f === undefined) continue; // unreachable: i is bounded by filters.length
+    if (f === undefined) continue;
     buf.writeUInt16LE(f.code, i * 8);
     buf.writeUInt8(f.jt, i * 8 + 2);
     buf.writeUInt8(f.jf, i * 8 + 3);
@@ -401,35 +384,13 @@ function emit(filters: SockFilter[]): Buffer {
   return buf;
 }
 
-/**
- * Build the cBPF program. Layout:
- *   LD A, [SECCOMP_DATA.arch]
- *   JEQ A == AUDIT_ARCH_X86_64, jt=continue, jf=KILL_PROCESS
- *   LD A, [SECCOMP_DATA.nr]
- *   for each allowed syscall:
- *     JEQ A == nr, return ALLOW
- *   for each block-EPERM syscall:
- *     JEQ A == nr, return ERRNO(EPERM)
- *   default: return KILL_PROCESS
- *
- * The arch guard is the first decision: if the kernel reports a non-x86_64
- * arch (e.g., a 32-bit syscall on an x86_64 host, or a future ARM64 build),
- * the syscall-number table is meaningless and we kill the process rather
- * than risk allowing the wrong syscall.
- */
 export function buildDefaultSeccompFilter(): Buffer {
   const program: SockFilter[] = [];
-  // Arch check (must be first).
   program.push(instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARCH_OFFSET));
-  // JEQ AUDIT_ARCH_X86_64, jt=1 (skip the kill below), jf=0 (fall through to kill)
   program.push(instr(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, AUDIT_ARCH_X86_64));
   program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
-  // Load A = SECCOMP_DATA.nr
   program.push(instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_NR_OFFSET));
 
-  // Allow syscalls: each gets `JEQ A == nr, jt=NEXT_ALLOW_RET, jf=NEXT_TEST`
-  // For simplicity emit `JEQ ?, 0, 1` (skip 1 if no match) followed by the
-  // RET-ALLOW. That makes each allow rule 2 instructions.
   for (const name of SYS_ALLOW) {
     const nr = SYSCALL_NR[name];
     if (nr === undefined) {
@@ -446,7 +407,6 @@ export function buildDefaultSeccompFilter(): Buffer {
     program.push(instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr));
     program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_EPERM));
   }
-  // Default: kill-process
   program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
   return emit(program);
 }

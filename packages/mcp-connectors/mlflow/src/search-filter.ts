@@ -1,21 +1,8 @@
-/**
- * Pure substring-match filter for `mlflow_search`. Extracted from
- * `server.ts` so the matching logic can be unit-tested without spawning an
- * MCP stdio transport. The server keeps the HTTP / envelope wrapper; this
- * module owns the haystack + case-insensitive substring match.
- *
- * An MLflow Model Registry `RegisteredModel` object carries the human name at
- * `name`, the free-text `description`, and `tags` as a `{ key, value }[]`
- * array. The haystack is built from the name, the description, and the
- * flattened `key=value` tag pairs.
- */
-
 export interface MlflowSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;
 }
 
-/** Non-array plain object, or undefined. */
 function asObject(v: unknown): Record<string, unknown> | undefined {
   if (v === null || typeof v !== "object" || Array.isArray(v)) {
     return undefined;
@@ -28,7 +15,6 @@ function stringAt(row: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Flatten a `{ key, value }[]` tag array into space-joined `key=value` pairs. */
 function tagsHaystack(row: Record<string, unknown>): string {
   const tags = row["tags"];
   if (!Array.isArray(tags)) {

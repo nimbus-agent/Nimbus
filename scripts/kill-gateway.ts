@@ -1,11 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Stop the Nimbus gateway: gateway.json PID + state file, then terminate any stray
- * `nimbus-gateway` / `nimbus-gateway.exe` process (covers missing state file).
- *
- * Run from repo root: `bun scripts/kill-gateway.ts`
- * Or: `bun run kill-gateway`
- */
 import { unlink } from "node:fs/promises";
 
 import { gatewayStatePath, readGatewayState } from "../packages/cli/src/lib/gateway-process.ts";

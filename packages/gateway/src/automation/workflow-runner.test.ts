@@ -14,25 +14,14 @@ import {
   upsertWorkflowByName,
 } from "./workflow-store.ts";
 
-// -----------------------------------------------------------------------------
-// Shared test helpers — collapse the ~44 lines of duplicated DB-setup + seed
-// workflow + runWorkflowExecution-parameter scaffolding across the tests below.
-// -----------------------------------------------------------------------------
-
 const noopAgent = {} as Agent;
 
-/** Fresh in-memory DB with the current schema applied. */
 function freshDb(): Database {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   return db;
 }
 
-/**
- * Insert a workflow row with a single named step. When `id` is omitted, a
- * deterministic id of `wf-<name>` is used so tests can scope follow-up queries
- * without another SELECT.
- */
 function seedOneStepWorkflow(
   db: Database,
   name: string,
@@ -49,10 +38,6 @@ function seedOneStepWorkflow(
   return { id };
 }
 
-/**
- * Build a `RunWorkflowExecutionParams` with boilerplate defaults (noop agent,
- * stream off, silent sendChunk). Callers override only what the test needs.
- */
 function makeRunParams(
   db: Database,
   workflowName: string,
@@ -72,10 +57,6 @@ function makeRunParams(
   };
 }
 
-/**
- * Read the most recently started workflow_run row for a given workflow name —
- * handy for assertions on the persisted run after runWorkflowExecution returns.
- */
 function lastRunRow<T>(db: Database, workflowName: string, columns: string): T {
   return db
     .query(
@@ -86,7 +67,6 @@ function lastRunRow<T>(db: Database, workflowName: string, columns: string): T {
     .get(workflowName) as T;
 }
 
-/** Read the most recent workflow.run.completed audit entry. */
 function lastRunCompletedAudit<T>(db: Database, columns: string): T {
   return db
     .query(
@@ -96,10 +76,6 @@ function lastRunCompletedAudit<T>(db: Database, columns: string): T {
     .get() as T;
 }
 
-/**
- * Seed `count` historical (already-finished) workflow_run rows for a given
- * workflow_id. Used by the retention tests to push totals near/past the cap.
- */
 function seedHistoricalRuns(
   db: Database,
   workflowId: string,
@@ -319,15 +295,12 @@ describe("runWorkflowExecution — run retention", () => {
       id: "wf-ret-1",
     });
     seedHistoricalRuns(db, workflowId, 100, 1_000, "hist");
-    // Now run — dry-run path completes without tool calls, still emits row 101.
     await runWorkflowExecution(makeRunParams(db, "retention-test", { dryRun: true }));
     const count = db
       .query(`SELECT COUNT(*) AS c FROM workflow_run WHERE workflow_id = ?`)
       .get(workflowId) as { c: number };
     expect(count.c).toBe(100);
-    // Oldest seeded row must be pruned.
     expect(db.query(`SELECT id FROM workflow_run WHERE id = 'hist-0'`).get()).toBeNull();
-    // A more-recent seeded row must remain (proves retention kept the newest 100).
     expect(db.query(`SELECT id FROM workflow_run WHERE id = 'hist-50'`).get()).not.toBeNull();
   });
 
@@ -341,6 +314,6 @@ describe("runWorkflowExecution — run retention", () => {
     const count = db
       .query(`SELECT COUNT(*) AS c FROM workflow_run WHERE workflow_id = ?`)
       .get(workflowId) as { c: number };
-    expect(count.c).toBe(6); // 5 seeded + 1 new
+    expect(count.c).toBe(6);
   });
 });

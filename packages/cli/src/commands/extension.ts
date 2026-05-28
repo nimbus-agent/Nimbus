@@ -30,7 +30,6 @@ export function stripFlags(args: string[]): string[] {
     const a = args[i];
     if (a === "--yes" || a === "-y" || a === "--json") continue;
     if (a === "--filter" || a === "--publisher-key") {
-      // skip flag + value
       i += 1;
       continue;
     }
@@ -46,8 +45,6 @@ type ExtensionListEntry = {
   needs_reinstall?: boolean;
   disabled_reason?: string;
   publisher?: { id: string; key?: string };
-  // T2 PR 4 Task 15 — deps fields added by extension.info (Task 14).
-  // extension.list does NOT return these; they are fetched lazily for --tree.
   forwardDeps?: Array<{ id: string; range: string }>;
   reverseDeps?: Array<{ extensionId: string; range: string }>;
 };
@@ -59,14 +56,6 @@ export interface ExtensionListTableRow {
   publisher?: { id: string; key?: string };
 }
 
-/**
- * Pure formatter for the tabular `nimbus extension list` output (T2 PR 2 Task 15).
- *
- * Columns: ID | Version | Publisher | Status. Rows without a publisher render
- * "(unverified)" — when the output is a TTY and NO_COLOR is unset, that token
- * is wrapped in ANSI dim-yellow so it stands out without becoming noisy. Manual
- * padding is used so the CLI gains no new dependency.
- */
 export function formatExtensionListTable(
   rows: readonly ExtensionListTableRow[],
   opts: { isTty: boolean; noColor: boolean },
@@ -115,11 +104,6 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   }
 
   if (tree) {
-    // N+1 calls — extension.list doesn't return forwardDeps, so we fetch
-    // extension.info for each installed extension individually. Acceptable for
-    // interactive CLI use (typically <50 extensions). A future optimisation
-    // could extend extension.list to return forwardDeps directly, but keeping
-    // the backend change small for this PR is intentional.
     const installed: InstalledExtensionForTree[] = [];
     for (const r of rows) {
       try {
@@ -132,8 +116,6 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
           forwardDeps: info.extension.forwardDeps ?? [],
         });
       } catch {
-        // best-effort: an extension we can't info-query still appears in the
-        // tree as a leaf so the user at least sees it is installed.
         installed.push({ id: r.id, version: r.version, forwardDeps: [] });
       }
     }
@@ -151,12 +133,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     return base;
   });
   const table = formatExtensionListTable(tableRows, { isTty, noColor });
-  // The formatter terminates with a trailing newline; console.log adds another,
-  // but routing through console.log keeps the output reachable by stdout
-  // capture in tests and respects existing CLI conventions.
   console.log(table.replace(/\n$/, ""));
-  // Preserve the per-row needs-reinstall annotations as a secondary line so
-  // existing scripts that grep for "[needs-reinstall]" still work.
   for (const r of rows) {
     if (r.needs_reinstall === true) {
       console.log(`  ${r.id}@${r.version} [needs-reinstall]`);
@@ -170,14 +147,6 @@ type DiagSnapshotResult = {
   };
 };
 
-/**
- * Fetch the sandbox posture from `diag.snapshot`. CLI runs in a separate
- * process from the Gateway, so the Gateway-side `SandboxRunner` singleton
- * is reachable only through IPC — the cleanest carrier is the existing
- * `diag.snapshot` payload (T2 PR 1 Task 20). Returns `null` on any error so
- * `extension info` still prints the rest of the row when the diagnostic
- * call fails (e.g. permission denied on the data dir).
- */
 export async function fetchSandboxPosture(
   client: IPCClient,
 ): Promise<SandboxPlatformCapabilities | null> {
@@ -189,13 +158,6 @@ export async function fetchSandboxPosture(
   }
 }
 
-/**
- * Pure formatter for the Publisher section of `nimbus extension info` human
- * output (T2 PR 2 Task 17). For signed extensions the publisher id + a
- * 16-character truncated key with an ellipsis are shown; for unsigned
- * extensions the section renders `Publisher: (unverified)`. The `--json`
- * path bypasses this formatter so external tooling sees the full key.
- */
 export function formatExtensionInfoHuman(info: {
   id: string;
   version: string;
@@ -239,9 +201,6 @@ export async function runExtensionInfo(
   console.log(`Extension: ${e.id}`);
   console.log(`Version:   ${e.version}`);
   console.log(`Enabled:   ${e.enabled === 1 ? "yes" : "no"}`);
-  // T2 PR 2 Task 17 — Publisher section. Signed extensions display the
-  // publisher id + a truncated key; unsigned extensions show (unverified).
-  // The full key is only emitted via the `--json` branch above.
   if (e.publisher !== undefined && typeof e.publisher.key === "string") {
     const shortKey = `${e.publisher.key.slice(0, 16)}…`;
     console.log(`Publisher: ${e.publisher.id}`);
@@ -255,9 +214,6 @@ export async function runExtensionInfo(
     console.log("");
     console.log(out.message);
   }
-  // T2 PR 4 Task 15 — opt-in dependency section. The gateway extension.info
-  // response includes forwardDeps and reverseDeps after Task 14; they are
-  // absent (undefined) on pre-T2-PR4 gateways, which is handled gracefully.
   if (hasFlag(args, "--deps")) {
     const fwd = e.forwardDeps ?? [];
     const rev = e.reverseDeps ?? [];
@@ -307,9 +263,6 @@ export async function runExtensionInstall(
     }
   }
   const sourcePath = resolve(process.cwd(), sourceRaw);
-  // T2 PR 2 Task 16 — optional `--publisher-key <path>` flag forwarded as
-  // params.publisherKeyPath. The Gateway side (automation-rpc.ts) reads this
-  // field and routes it into `installExtensionFromLocalDirectory`.
   const publisherKeyPath = takeFlagValue(args, "--publisher-key");
   const installParams: Record<string, unknown> = { sourcePath };
   if (publisherKeyPath !== undefined && publisherKeyPath !== "") {
@@ -375,17 +328,12 @@ export async function runExtensionRemove(
   }
 
   let out: { ok: boolean };
-  // Omit `force` from the payload when it's false so legacy callers (and
-  // the existing `--yes` happy-path test) keep observing the {id} shape.
-  // The gateway handler treats absent and `false` identically.
   const payload: { id: string; force?: true } = force ? { id, force: true } : { id };
   try {
     out = await client.call<{ ok: boolean }>("extension.remove", payload);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("reverse_dep_blocked")) {
-      // Extract the human-readable part after the code prefix (if present) or
-      // surface the full message which already contains the blocker list.
       process.stderr.write(`${msg}\nRe-run with --force to override.\n`);
       process.exit(1);
     }
@@ -404,12 +352,6 @@ export async function runExtensionKeygen(args: string[]): Promise<number> {
   }
   const { privkey, pubkey } = generateEd25519Keypair();
   mkdirSync(dirname(outPath), { recursive: true });
-  // Atomic create-or-fail to close the TOCTOU window between `existsSync` and
-  // `writeFileSync` — an attacker who can plant a symlink at `outPath` between
-  // those two calls would otherwise have the privkey clobber an arbitrary
-  // file the user can write. `wx` = O_CREAT|O_EXCL; falls through to EEXIST
-  // when the file already exists, even if it's a symlink. With `--force` we
-  // truncate via `w` (still atomic; no separate stat).
   try {
     writeFileSync(outPath, `${encodeBase64(privkey)}\n`, {
       flag: force ? "w" : "wx",
@@ -423,8 +365,6 @@ export async function runExtensionKeygen(args: string[]): Promise<number> {
     }
     throw e;
   }
-  // chmod is a no-op on the file we just created with mode=0o600 on POSIX
-  // umasks; explicit chmod keeps the 0o600 invariant if umask stripped bits.
   if (process.platform !== "win32") chmodSync(outPath, 0o600);
   process.stdout.write(`${encodeBase64(pubkey)}\n`);
   return 0;
@@ -487,16 +427,6 @@ export interface RunExtensionSyncOpts {
   writeStderr: (s: string) => void;
 }
 
-/**
- * Pure-logic core of `nimbus extension sync` — exposed for unit testing.
- * Returns the exit code; caller decides whether to `process.exit` or return.
- *
- * Exit codes (per T2 PR 2 Task 14 spec):
- *  - 0: ok (nothing changed, or rotations succeeded)
- *  - 2: at least one rotation caused re-verify failure
- *  - 3: air-gap is enforced
- *  - 4: every checked publisher failed transiently (registry unreachable)
- */
 export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Promise<number> {
   const dryRun = opts.args.includes("--dry-run");
   const json = opts.args.includes("--json");
@@ -527,7 +457,6 @@ export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Pr
         );
       }
     }
-    // Sync-context framing (plan-review #2b) — DO NOT say "re-run the install".
     for (const f of result.failures) {
       opts.writeStderr(
         `publisher ${f.id} unreachable (${f.reason}); cached key (if present) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
@@ -539,10 +468,6 @@ export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Pr
   return 0;
 }
 
-/**
- * `nimbus extension sync` adapter — wires the testable core to the real IPC
- * client and the process streams.
- */
 export async function runExtensionSync(client: IPCClient, args: string[]): Promise<number> {
   return runExtensionSyncWithCaller({
     args,
@@ -556,7 +481,6 @@ export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
 
-  // Local-only subcommands — no Gateway connection required.
   if (sub === "keygen") {
     const code = await runExtensionKeygen(rest);
     if (code !== 0) process.exit(code);
@@ -634,8 +558,6 @@ export async function runExtension(args: string[]): Promise<void> {
   }
 }
 
-// ─── T2 PR 3 — auto-update CLI ──────────────────────────────────────────────
-
 export interface AvailableUpdateCli {
   readonly id: string;
   readonly displayName: string;
@@ -677,7 +599,6 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
   const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
   const id = positional[0];
 
-  // No id → list cached pending updates (poll on --check).
   if (id === undefined) {
     const list = (await opts.caller("extension.checkForUpdates", {
       ...(isCheck ? { force: true } : {}),
@@ -694,7 +615,6 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
     return 0;
   }
 
-  // id supplied → check cache, then apply.
   const list = (await opts.caller("extension.checkForUpdates", {})) as AvailableUpdateCli[];
   const entry = list.find((e) => e.id === id);
   if (entry === undefined) {
@@ -749,11 +669,6 @@ export interface RunExtensionDowngradeOpts {
   writeStderr: (s: string) => void;
 }
 
-/**
- * Resolve the prev-version target for a downgrade by reading the cached
- * pending bumps. The CLI requires `--to <version>` because info doesn't yet
- * expose prevVersion (Task 18 may extend info; for v1 the user supplies it).
- */
 export async function runExtensionDowngradeWithCaller(
   opts: RunExtensionDowngradeOpts,
 ): Promise<number> {

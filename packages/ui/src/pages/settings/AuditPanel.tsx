@@ -19,7 +19,6 @@ const LIST_HEIGHT = 480;
 const POLL_MS = 60_000;
 const MAX_ROWS = 1_000;
 
-/** Best-effort extraction of `runId` from `action_json` for `workflow.run.completed` rows. */
 function extractRunId(actionType: string, actionJson: string): string | null {
   if (actionType !== "workflow.run.completed") return null;
   try {
@@ -91,7 +90,6 @@ export function AuditPanel() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // 60 s polling for the row list — gives near-real-time visibility without thrashing.
   const {
     data: rawRows,
     error: listError,
@@ -106,7 +104,6 @@ export function AuditPanel() {
     }>
   >("audit.list", POLL_MS, { limit: MAX_ROWS });
 
-  // Summary refresh whenever the row count changes (cheap server-side aggregation).
   const refreshSummary = useCallback(async () => {
     try {
       const next = await createIpcClient().auditGetSummary();
@@ -121,8 +118,6 @@ export function AuditPanel() {
     refreshSummary().catch(() => undefined);
   }, [refreshSummary, rawRows?.length]);
 
-  // New audit rows arriving via the gateway notification channel → refetch list immediately.
-  // Filter on the message method so we don't re-fetch on unrelated traffic.
   const onNotification = useCallback(
     (n: JsonRpcNotification) => {
       if (n.method === "audit.entryAppended" || n.method === "data.delete.completed") {
@@ -156,7 +151,7 @@ export function AuditPanel() {
       if (filter.outcome !== "all" && row.outcome !== filter.outcome) return false;
       const ms = Date.parse(row.tsIso);
       if (filter.sinceMs !== null && ms < filter.sinceMs) return false;
-      if (filter.untilMs !== null && ms > filter.untilMs + 86_399_000) return false; // inclusive end-of-day
+      if (filter.untilMs !== null && ms > filter.untilMs + 86_399_000) return false;
       return true;
     });
   }, [displayRows, filter]);
@@ -167,8 +162,6 @@ export function AuditPanel() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [displayRows]);
 
-  // runId is a URL-param-driven transient filter layered on top of the store-state filter.
-  // Does NOT mutate the store — intentionally separate from the service/outcome/since/until chips.
   const runIdFilteredRows = useMemo(() => {
     if (runIdFilter === null) return filteredRows;
     return filteredRows.filter((row) => row.runId === runIdFilter);
@@ -210,7 +203,7 @@ export function AuditPanel() {
           { name: "CSV", extensions: ["csv"] },
         ],
       });
-      if (path === null) return; // user cancelled
+      if (path === null) return;
       const rows: ReadonlyArray<AuditExportRow> = await createIpcClient().auditExport();
       const isCsv = path.toLowerCase().endsWith(".csv");
       const contents = isCsv ? rowsToCsv(rows) : JSON.stringify(rows.map(toDisplayRow), null, 2);

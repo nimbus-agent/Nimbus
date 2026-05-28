@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-netlify — Netlify REST API MCP server (read-only).
- * Credentials arrive as NETLIFY_TOKEN env, injected at spawn time. Netlify uses
- * a standard `Authorization: Bearer <token>` header (a personal access token).
- * The API host is fixed at api.netlify.com (no host override).
- */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

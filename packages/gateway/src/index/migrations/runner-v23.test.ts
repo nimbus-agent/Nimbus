@@ -43,7 +43,7 @@ test("V23 adds dry_run and params_override_json to workflow_run", () => {
 test("V23 is idempotent on re-apply", () => {
   const db = newDb();
   runIndexedSchemaMigrations(db, 23);
-  runIndexedSchemaMigrations(db, 23); // re-apply must not error
+  runIndexedSchemaMigrations(db, 23);
   expect(readIndexedUserVersion(db)).toBeGreaterThanOrEqual(23);
 });
 

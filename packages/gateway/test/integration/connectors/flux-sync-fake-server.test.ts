@@ -16,9 +16,7 @@ interface RecordedReq {
 }
 
 interface FakeFluxConfig {
-  /** plural → List items, by CRD plural (e.g. "kustomizations"). */
   lists: Record<string, unknown[]>;
-  /** plural → status code override (defaults to 200 when items present, 404 otherwise). */
   statusByPlural?: Record<string, number>;
 }
 
@@ -28,7 +26,6 @@ interface FakeFlux {
   stop(): void;
 }
 
-/** Extract the trailing CRD plural from `/apis/<group>/<version>/<plural>`. */
 function pluralFromPath(pathname: string): string | null {
   const m = /^\/apis\/[^/]+\/[^/]+\/([^/]+)$/.exec(pathname);
   return m === null ? null : (m[1] ?? null);
@@ -88,7 +85,6 @@ function startHarness(config: FakeFluxConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         flux: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -165,7 +161,6 @@ describe("flux-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-flux1:")).toBe(true);
 
-    // Authorization is exactly `Bearer <token>` on every request.
     expect(h.fake.requests.length).toBeGreaterThan(0);
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("Bearer sa-jwt-token");
@@ -223,7 +218,6 @@ describe("flux-sync against Bun.serve fake API", () => {
     const syncable = createFluxSyncable({ ensureFluxMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 
-    // helmreleases 500 is skipped; the kustomization still indexes.
     expect(result.itemsUpserted).toBe(1);
     expect(result.cursor?.startsWith("nimbus-flux1:")).toBe(true);
 

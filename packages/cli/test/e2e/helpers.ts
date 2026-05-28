@@ -8,12 +8,6 @@ export type CliResult = {
 
 const CLI_ENTRY = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 
-/**
- * Spawn the CLI as a real subprocess and capture stdout/stderr/exit code.
- * No Gateway is started — only CLI-local subcommands (keygen, sign, help)
- * are usable from this helper. IPC-required subcommands will fail with a
- * connection error.
- */
 export async function runCli(args: string[]): Promise<CliResult> {
   const proc = Bun.spawn({
     cmd: [process.execPath, "run", CLI_ENTRY, ...args],

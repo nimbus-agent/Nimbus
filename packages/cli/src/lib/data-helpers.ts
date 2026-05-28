@@ -1,17 +1,3 @@
-/**
- * Pure helper functions for the `nimbus data` subcommands, extracted here so
- * they can be unit-tested without pulling in the IPCClient / @nimbus-dev/client
- * dependency chain.
- */
-
-/**
- * Parse --script-consent-source <path> from args, with env-var fallback.
- * Returns the resolved path or undefined.
- *
- * Throws when the flag is supplied without a following path value (or when the
- * next token begins with `--`, indicating the path was omitted and the parser
- * consumed the next flag). Exported for unit testing.
- */
 export function parseScriptConsentSource(args: string[]): string | undefined {
   const idx = args.indexOf("--script-consent-source");
   if (idx >= 0) {
@@ -25,11 +11,6 @@ export function parseScriptConsentSource(args: string[]): string | undefined {
   return env !== undefined && env.length > 0 ? env : undefined;
 }
 
-/**
- * Confirms `data delete` has explicit non-interactive consent before running
- * the destructive call. Throws if neither --yes nor --script-consent-source
- * is provided. Exported for test coverage.
- */
 export function assertDestructiveDeleteAllowed(opts: {
   yes: boolean;
   scriptConsentSource: string | undefined;

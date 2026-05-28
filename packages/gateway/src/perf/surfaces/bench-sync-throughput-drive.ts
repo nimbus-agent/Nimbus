@@ -1,14 +1,3 @@
-/**
- * S6-drive — Drive sync throughput. Spawns gateway with MSW handlers
- * serving synthetic Drive pages; calls `connector.sync { service: "drive", full: true }`
- * via IPC; measures items landed by counting rows in the local index
- * before vs after.
- *
- * Loop, IPC contract, MSW lifecycle, and items/sec calculation live in
- * `bench-sync-throughput-shared.ts`; this file supplies only the
- * connector identity.
- */
-
 import { driveHandlers } from "../fixtures/msw-handlers.ts";
 import type { BenchRunOptions } from "../types.ts";
 import {

@@ -9,9 +9,6 @@ import {
 const ENSURE_MCP = { ensureSentryMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-sentry1:";
 
-// Exact-anchor regexes — the Sentry projects URL is a fixed path with no
-// optional query params. If a future change appends query params (e.g.
-// `?per_page=100`), drop the `$` anchor or convert to a `toMatch` substring.
 const PROJECTS_DEFAULT_RE = /^https:\/\/sentry\.io\/api\/0\/organizations\/test-org\/projects\/$/;
 const PROJECTS_CUSTOM_RE =
   /^https:\/\/sentry\.example\.com\/api\/0\/organizations\/test-org\/projects\/$/;
@@ -20,11 +17,6 @@ function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -96,11 +88,6 @@ describe("sentry-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it. Phase 2B's bitbucket reference
-// installed the fetch mock at module scope, but Phase 2C deliberately scopes
-// it here — the credential-short-circuit suite above uses `withIsolatedFixture`
-// and a module-level mock would nest under that helper's per-test install.
 describe("sentry-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 

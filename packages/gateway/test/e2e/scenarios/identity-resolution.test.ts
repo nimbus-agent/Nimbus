@@ -1,7 +1,3 @@
-/**
- * Q2 acceptance — cross-service identity without network (people graph + items by author).
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 

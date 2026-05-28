@@ -62,7 +62,6 @@ describe("canonicalize — object key sorting", () => {
 
   test("numeric string keys sort before alphabetic", () => {
     const result = canonicalize({ z: "z", "0": "zero", a: "a" });
-    // "0" < "a" < "z" in UTF-16 code-unit order
     expect(result).toBe('{"0":"zero","a":"a","z":"z"}');
   });
 
@@ -90,7 +89,6 @@ describe("canonicalize — error paths", () => {
   });
 
   test("exceeding MAX_DEPTH throws ManifestNestedTooDeep", () => {
-    // Build a 33-deep nested array to exceed MAX_DEPTH = 32.
     let deep: unknown = "leaf";
     for (let i = 0; i < 34; i++) {
       deep = [deep];
@@ -116,7 +114,6 @@ describe("canonicalizeManifest", () => {
   });
 
   test("keys are sorted in the output (id before version)", () => {
-    // "id" < "version" lexicographically, so sorted output has id first.
     const bytes = canonicalizeManifest({ version: "1.0.0", id: "ext.x" });
     const text = new TextDecoder().decode(bytes);
     expect(text.indexOf('"id"')).toBeLessThan(text.indexOf('"version"'));

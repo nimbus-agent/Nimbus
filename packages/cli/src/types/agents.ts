@@ -1,7 +1,3 @@
-// Slim CLI-side mirror of packages/gateway/src/agents/_lib/findings.ts.
-// Kept manually in sync to comply with the IPC-only package dependency rule.
-// Divergence is caught by e2e --json round-trip tests.
-
 export type Evidence = {
   itemId: string;
   type:
@@ -52,7 +48,6 @@ export type ExpertBrief = {
 
 export function isExpertBrief(x: unknown): x is ExpertBrief {
   if (x === null || typeof x !== "object") return false;
-  // Bracket access required by tsconfig's `noPropertyAccessFromIndexSignature: true`.
   const b = x as Record<string, unknown>;
   return (
     b["kind"] === "expert" &&

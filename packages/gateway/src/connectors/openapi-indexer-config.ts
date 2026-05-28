@@ -43,7 +43,6 @@ function parseGlobList(raw: string): readonly string[] {
     .filter((x) => x !== "");
 }
 
-/** Best-effort `[openapi]` block reader from a `nimbus.toml` source string. */
 export function parseOpenapiToml(source: string): OpenapiConfig {
   const lines = source.split(/\r?\n/);
   let inBlock = false;

@@ -2,14 +2,10 @@ import type { Embedder } from "./types.ts";
 
 export type CreateOpenAIEmbedderOptions = {
   apiKey: string;
-  /** Must match `vec_items_384` (384 floats). OpenAI supports `dimensions` on 3-* models. */
   model?: string;
   dimensions?: number;
 };
 
-/**
- * OpenAI embeddings with reduced dimensionality so vectors fit `vec_items_384`.
- */
 export async function createOpenAIEmbedder(
   options: CreateOpenAIEmbedderOptions,
 ): Promise<Embedder> {

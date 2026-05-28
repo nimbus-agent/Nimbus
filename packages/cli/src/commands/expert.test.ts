@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const mod = await import("./expert.ts");
@@ -41,10 +41,6 @@ describe("parseExpertArgs", () => {
     expect(out.topicOrFile).toBe("payment retry logic");
   });
 });
-
-// ----------------------------------------------------------------------
-// process.stdout / process.stderr / process.exit capture for dispatcher.
-// ----------------------------------------------------------------------
 
 const stdoutChunks: string[] = [];
 const stderrChunks: string[] = [];
@@ -112,8 +108,6 @@ describe("runExpertCli — dispatcher", () => {
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.expert") {
-            // Emit the briefReady asynchronously so the await on the
-            // initial call resolves and the briefPromise is awaited.
             setTimeout(() => {
               handlers.get("expert.briefReady")?.({
                 sessionId: "sess-1",
@@ -194,10 +188,6 @@ describe("runExpertCli — dispatcher", () => {
         },
       },
     });
-    // Note: the first process.exit(1) call throws our stubbed error, which the
-    // try/catch then handles and triggers a second process.exit(2). In real
-    // execution the process exits at the first call, but the stderr message
-    // is what matters — it must contain the empty-index hint.
     await expect(runExpertCli(["topic"])).rejects.toThrow(/process\.exit/);
     expect(stderrChunks.join("")).toContain("No data indexed yet");
   });

@@ -20,7 +20,6 @@ type BitbucketCursorV1 = {
   reposNext: string | null;
   activeRepo: string | null;
   prNext: string | null;
-  /** True once a repository list fetch returned no `next` link (all pages seen for this cycle). */
   repositoryPagesExhausted: boolean;
 };
 
@@ -88,7 +87,6 @@ function maxIso(a: string, b: string): string {
   return a > b ? a : b;
 }
 
-/** Bitbucket Cloud returns UUIDs wrapped in `{…}`; store normalized lowercase hex. */
 function normalizeBitbucketUserUuid(raw: string): string {
   return raw
     .replaceAll(/^\{|\}$/g, "")

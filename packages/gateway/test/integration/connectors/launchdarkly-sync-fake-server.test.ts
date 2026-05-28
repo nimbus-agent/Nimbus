@@ -90,7 +90,6 @@ function startHarness(config: FakeLdConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         launchdarkly: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -131,7 +130,6 @@ describe("launchdarkly-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-launchdarkly1:")).toBe(true);
 
-    // Raw token, no "Bearer " prefix.
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("api-test-token");
     }

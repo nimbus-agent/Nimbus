@@ -4,8 +4,6 @@ import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.t
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 
 function freshDb(): Database {
-  // `createMemoryIndexDb` calls `LocalIndex.ensureSchema`, which runs every
-  // migration up to `CURRENT_SCHEMA_VERSION` (bumped to 26 in Task 2).
   return createMemoryIndexDb();
 }
 
@@ -49,7 +47,6 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
   const b = "obsidian:abc#B.md";
   const c = "obsidian:abc#C.md";
 
-  // Seed B and C first.
   for (const id of [b, c]) {
     syncGraphFromIndexedItem(db, {
       id,
@@ -61,7 +58,6 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
     });
   }
 
-  // First parse: A → B
   syncGraphFromIndexedItem(db, {
     id: a,
     service: "obsidian",
@@ -71,7 +67,6 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
     metadata: { vault_id: "abc", resolved_wikilink_ids: [b] },
   });
 
-  // Second parse: A now → C (B removed)
   syncGraphFromIndexedItem(db, {
     id: a,
     service: "obsidian",
@@ -84,6 +79,5 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
   const rels = db
     .query("SELECT from_id, to_id, type FROM graph_relation WHERE type = 'backlinks'")
     .all() as Array<{ from_id: string; to_id: string; type: string }>;
-  // Exactly one backlinks edge survives, pointing A → C; the A → B edge is gone.
   expect(rels.length).toBe(1);
 });

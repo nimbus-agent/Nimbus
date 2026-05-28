@@ -86,9 +86,6 @@ describe("runBenchCli — PR-B-2a registrations", () => {
   });
 
   test("--surface S2-b on --gha measures the medium tier (override to small for test speed)", async () => {
-    // S2-b pins to the medium (100k-row) tier in production; `--corpus` does
-    // not override it. Use the wrapper's documented test-only `overrideTier`
-    // escape hatch to keep the fixture small so the test fits its budget.
     const exitCode = await runBenchCli(["--surface", "S2-b", "--runs", "1", "--gha"], {
       runId: "s2b-test",
       historyPath,
@@ -114,8 +111,6 @@ describe("runBenchCli — PR-B-2a registrations", () => {
         fixtureCacheDir: dir,
         stdout: () => {},
         stderr: () => {},
-        // Inject a S2-a driver that throws — exercises the bench-cli
-        // try/catch wrapper without depending on a real spawn.
         surfaceDriverOverrides: {
           "S2-a": () => Promise.reject(new Error("synthetic driver failure")),
         },
@@ -205,18 +200,12 @@ describe("runBenchCli — PR-B-2b-2 registrations", () => {
 
   test("--surface S10 (driver injected) accumulates busy_retries across runs (D-5)", async () => {
     const { S10_BUSY_RETRIES } = await import("./surfaces/bench-sqlite-contention.ts");
-    // Pre-seed the sentinel with garbage to prove bench-cli's defensive
-    // reset before the runBench loop wipes it (review S-3).
     S10_BUSY_RETRIES.value = 999;
     const exitCode = await runBenchCli(["--surface", "S10", "--runs", "3", "--gha"], {
       runId: "s10-test",
       historyPath,
       fixtureCacheDir: dir,
       stdout: () => {},
-      // Driver is called 3 times (runs=3); each call ADDS 5 retries to
-      // the sentinel, mirroring the production runSqliteContentionOnce
-      // accumulation pattern. After the loop: 999 → 0 (orchestrator
-      // reset) → 5 → 10 → 15.
       surfaceDriverOverrides: {
         S10: async () => {
           S10_BUSY_RETRIES.value += 5;
@@ -229,7 +218,7 @@ describe("runBenchCli — PR-B-2b-2 registrations", () => {
       surfaces: Record<string, { throughput_per_sec?: number; busy_retries?: number }>;
     };
     expect(raw.surfaces["S10"]?.throughput_per_sec).toBe(12_345);
-    expect(raw.surfaces["S10"]?.busy_retries).toBe(15); // 5 × 3 runs
+    expect(raw.surfaces["S10"]?.busy_retries).toBe(15);
   });
 
   test("S8 cells are registered: --surface S8-l50-b1 (driver injected) populates throughput_per_sec", async () => {
@@ -250,9 +239,6 @@ describe("runBenchCli — PR-B-2b-2 registrations", () => {
   });
 
   test("S8 has all 12 cross-product cells (length × batch)", async () => {
-    // We can't enumerate SURFACE_REGISTRY directly (it's module-private),
-    // but every S8 cell should respond to --surface <id>. Spot-check
-    // the corners: S8-l50-b1, S8-l50-b64, S8-l5000-b1, S8-l5000-b64.
     const corners = ["S8-l50-b1", "S8-l50-b64", "S8-l5000-b1", "S8-l5000-b64"] as const;
     for (const id of corners) {
       const exitCode = await runBenchCli(["--surface", id, "--runs", "1", "--gha"], {

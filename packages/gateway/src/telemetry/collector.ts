@@ -1,8 +1,3 @@
-/**
- * Opt-in telemetry — aggregate counters only; disabled by default.
- * `buildTelemetryPreview()` is safe to call for `nimbus telemetry show` before opt-in.
- */
-
 import type { Database } from "bun:sqlite";
 
 import { collectTelemetryDbAggregates } from "./db-aggregates.ts";
@@ -33,7 +28,6 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "cookie",
 ] as const;
 
-/** Thrown when a telemetry payload would violate the aggregate-only contract. */
 export class TelemetryPayloadUnsafeError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,9 +80,6 @@ function assertTelemetryValueSafe(v: unknown, path: string): void {
   throw new TelemetryPayloadUnsafeError(`telemetry payload has unsupported type at ${path}`);
 }
 
-/**
- * Validates the outbound JSON shape before `fetch` — aggregate-only, no credentials.
- */
 export function assertTelemetryPayloadSafe(payload: unknown): void {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     throw new TelemetryPayloadUnsafeError("telemetry payload must be a plain object");
@@ -133,9 +124,7 @@ export function buildTelemetryPreview(params: {
   queryLatencyP95Ms: number;
   queryLatencyP99Ms: number;
   sessionId?: string;
-  /** When set, merges aggregate connector/sync/extension stats (no free-text errors). */
   db?: Database;
-  /** Gateway assembly duration (ms) for this process — forwarded from the platform layer. */
   coldStartMs?: number;
 }): TelemetryPreviewPayload {
   const plat = process.platform;

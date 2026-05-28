@@ -1,7 +1,6 @@
-// packages/cli/src/commands/query.test.ts
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
+import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -139,7 +138,7 @@ describe("runQuery — --service path", () => {
     expect(p["services"]).toEqual(["slack"]);
     expect(p["types"]).toEqual(["message"]);
     expect(typeof p["sinceMs"]).toBe("number");
-    expect(p["limit"]).toBe(50); // default
+    expect(p["limit"]).toBe(50);
   });
 
   it("default-limits to 50 when --limit is missing or invalid", async () => {
@@ -214,7 +213,6 @@ describe("runQuery — --service path", () => {
       },
     });
     await runQuery(["--sql", "SELECT id, label, created_at FROM other", "--pretty"]);
-    // kv block path uses "── #1 ──"
     expect(out.stdout).toContain("#1");
     expect(out.stdout).toContain("id:");
     expect(out.stdout).toContain("label:");

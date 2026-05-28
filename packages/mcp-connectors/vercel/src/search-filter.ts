@@ -1,11 +1,3 @@
-/**
- * Pure substring-match filter for `vercel_search`. Extracted from `server.ts`
- * so the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns the
- * name/state/target/url/commit-message haystack + case-insensitive substring
- * match.
- */
-
 export interface VercelSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

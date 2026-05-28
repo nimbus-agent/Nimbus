@@ -4,7 +4,6 @@ import { Config } from "../config.ts";
 import { MockVault } from "../vault/mock.ts";
 import { getValidNotionAccessToken } from "./notion-access-token.ts";
 
-// Config is not Object.freeze-d at runtime — cast to allow temporary mutation in tests.
 const mutableConfig = Config as {
   oauthNotionClientId: string;
   oauthNotionClientSecret: string;
@@ -17,20 +16,17 @@ describe("getValidNotionAccessToken", () => {
 
   beforeEach(() => {
     vault = new MockVault();
-    // Restore env-driven Config fields to empty by default so each test has a clean slate.
     mutableConfig.oauthNotionClientId = "";
     mutableConfig.oauthNotionClientSecret = "";
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    // Restore Config after each test.
     mutableConfig.oauthNotionClientId = "";
     mutableConfig.oauthNotionClientSecret = "";
   });
 
   it("throws when notion.oauth vault key is absent (vault-miss path)", async () => {
-    // vault is empty — readConnectorSecret("notion", "oauth") returns null.
     await expect(getValidNotionAccessToken(vault)).rejects.toThrow("Notion OAuth not configured");
   });
 
@@ -40,7 +36,7 @@ describe("getValidNotionAccessToken", () => {
   });
 
   it("returns cached token immediately when expiresAt is well in the future (cache-hit path)", async () => {
-    const farFuture = Date.now() + 24 * 60 * 60 * 1000; // 24 h ahead
+    const farFuture = Date.now() + 24 * 60 * 60 * 1000;
     await vault.set(
       "notion.oauth",
       JSON.stringify({
@@ -50,7 +46,6 @@ describe("getValidNotionAccessToken", () => {
       }),
     );
 
-    // Ensure fetch is NOT called — a cache hit must not hit the network.
     let fetchCalled = false;
     globalThis.fetch = (async () => {
       fetchCalled = true;
@@ -63,7 +58,6 @@ describe("getValidNotionAccessToken", () => {
   });
 
   it("throws when token is expired but NIMBUS_OAUTH_NOTION_CLIENT_ID/SECRET are not set", async () => {
-    // expiresAt in the past — forces the refresh branch; client id/secret empty → throws.
     await vault.set(
       "notion.oauth",
       JSON.stringify({
@@ -73,12 +67,10 @@ describe("getValidNotionAccessToken", () => {
       }),
     );
 
-    // Config fields are already empty from beforeEach.
     await expect(getValidNotionAccessToken(vault)).rejects.toThrow("NIMBUS_OAUTH_NOTION_CLIENT_ID");
   });
 
   it("calls refreshNotionToken and returns new access token when token is expired (refresh-success path)", async () => {
-    // Token expired: expiresAt in the past.
     await vault.set(
       "notion.oauth",
       JSON.stringify({

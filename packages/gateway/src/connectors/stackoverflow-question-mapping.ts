@@ -1,34 +1,3 @@
-/**
- * Pure mapping from a Stack Overflow for Teams `GET /v3/teams/<team>/questions`
- * list element to the {@link upsertIndexedItemForSync} row shape. Lives
- * separately from `stackoverflow-sync.ts` so the REST path and the indexing
- * path can be tested independently.
- *
- * Emits `service = "stackoverflow", type = "question"` rows — a single item
- * type. `external_id = String(<question id>)`. The conceptual item identity is
- * `stackoverflow:question`; the `item.id` ends up `stackoverflow:<id>`. SO ids
- * are NUMBERS, so the row is skipped when `id` is missing/non-numeric (mirroring
- * Raindrop's `_id` numeric-skip).
- *
- * IMPORTANT: Stack Overflow for Teams' `creationDate`, `lastActivityDate`, and
- * `lastEditDate` are ISO-8601 STRINGS (e.g. `"2024-03-01T12:00:00.000Z"`), like
- * Readwise's / Raindrop's timestamps and UNLIKE the epoch-ms / epoch-seconds
- * number APIs. Parse them to epoch-ms with the local {@link parseIsoMs} — never
- * pass the ISO string through verbatim, and never treat it as epoch seconds.
- *
- * v3 `tags` may be objects `{ name }` OR plain strings; only the tag NAMES are
- * stored (as a string array), tolerating both shapes (mirroring Readwise's
- * `tagNames` tolerance). The question body is HTML; it is stripped to plain
- * text for the body preview (a simple tag-strip + whitespace collapse, no
- * dependency). The per-question `webUrl` is the canonical URL.
- *
- * A question body is genuinely prose, but the type is deliberately NOT added to
- * `PROSE_HEAVY_TYPES` (batch default + the routing-skill "default to omitting"
- * rule — promoting it would send every hybrid-mode user's whole Q&A corpus
- * through OpenAI on the next embed pass). It stays on local MiniLM embeddings;
- * promotion to `PROSE_HEAVY_TYPES` is a documented follow-up candidate.
- */
-
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface StackOverflowMappingContext {
@@ -48,17 +17,10 @@ export interface StackOverflowMappedRow {
   readonly syncedAt: number;
 }
 
-/** ISO-8601 string → epoch ms, or null for non-strings / unparseable input. */
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-/**
- * Strip HTML tags from a string to plain text. Removes `<...>` runs, collapses
- * runs of whitespace to a single space, and trims. Returns `""` for non-strings
- * or empty results. Intentionally simple — no HTML-entity decoding, no
- * dependency.
- */
 function stripHtml(raw: unknown): string {
   if (typeof raw !== "string") {
     return "";
@@ -69,11 +31,6 @@ function stripHtml(raw: unknown): string {
     .trim();
 }
 
-/**
- * Tag NAMES from a Stack Overflow `tags: [...]` array. v3 tags may be objects
- * `{ name }` OR plain strings — both are tolerated; non-object / non-string and
- * nameless entries are skipped. Non-array input yields `[]`.
- */
 export function tagNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -107,7 +64,6 @@ export function mapStackOverflowQuestionToItem(
     return null;
   }
 
-  // `id` is a number — stringify for external_id; skip the row if missing.
   const idNum = numberField(row, "id");
   if (idNum === undefined) {
     return null;
@@ -124,7 +80,6 @@ export function mapStackOverflowQuestionToItem(
   const isAnswered = typeof row["isAnswered"] === "boolean" ? row["isAnswered"] : null;
   const tags = tagNames(row["tags"]);
 
-  // owner_id / owner_name from the nested `owner` object, defensive.
   const owner = asRecord(row["owner"]);
   const ownerId = owner !== undefined ? (numberField(owner, "id") ?? null) : null;
   const ownerName = owner !== undefined ? (stringField(owner, "name") ?? null) : null;
@@ -133,15 +88,11 @@ export function mapStackOverflowQuestionToItem(
   const lastActivityDate = parseIsoMs(row["lastActivityDate"]);
   const lastEditDate = parseIsoMs(row["lastEditDate"]);
 
-  // canonical/url: the per-question webUrl when a non-empty string, else null.
   const canonicalUrl = webUrl !== null && webUrl !== "" ? webUrl : null;
 
-  // title: the trimmed question title when present, else `Question <id>`.
   const trimmedTitle = rawTitle !== null ? rawTitle.trim() : "";
   const title = trimmedTitle !== "" ? trimmedTitle : `Question ${id}`;
 
-  // bodyPreview: the HTML-stripped body, else the markdown body, else a tag
-  // summary, else the title.
   const strippedBody = stripHtml(bodyHtml);
   const tagSummary = tags.join(", ");
   const bodyPreview =

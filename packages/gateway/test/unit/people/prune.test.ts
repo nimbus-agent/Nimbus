@@ -1,13 +1,3 @@
-/**
- * Tests for prunePeopleAfterServiceRemoval (people/prune.ts).
- *
- * The function fires when a connector's index rows are removed: clears that
- * connector's handle column on every `person` row, then deletes any person no
- * longer referenced by `item.author_id`. The eight named services each take a
- * dedicated UPDATE branch; the default case skips the clear and goes straight
- * to the orphan-delete.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -25,8 +15,6 @@ afterEach(() => {
   db.close();
 });
 
-// Insert a person row populating every handle column so the per-service
-// branches can each be verified in isolation.
 function seedPersonAllHandles(id: string): void {
   db.run(
     `INSERT INTO person (
@@ -44,8 +32,6 @@ function getPerson(id: string): Record<string, unknown> | null {
   return db.query("SELECT * FROM person WHERE id = ?").get(id) as Record<string, unknown> | null;
 }
 
-// Insert an `item` referencing the given author so the orphan-delete query
-// preserves that person.
 function seedReferencingItem(authorId: string | null, itemId: string): void {
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, modified_at, author_id, synced_at)
@@ -69,12 +55,11 @@ describe("prunePeopleAfterServiceRemoval — per-service handle clears", () => {
   for (const { service, column } of cases) {
     test(`${service} → clears ${column}, preserves other handle columns`, () => {
       seedPersonAllHandles("p1");
-      seedReferencingItem("p1", "github:pr_1"); // keep the row alive for the assertions
+      seedReferencingItem("p1", "github:pr_1");
       prunePeopleAfterServiceRemoval(db, service);
       const person = getPerson("p1");
       expect(person).not.toBeNull();
       expect(person?.[column]).toBeNull();
-      // Sample two other handle columns to prove the clear is scoped.
       for (const other of cases.filter((c) => c.column !== column)) {
         expect(person?.[other.column]).not.toBeNull();
       }
@@ -107,7 +92,6 @@ describe("prunePeopleAfterServiceRemoval — orphan delete", () => {
 
   test("preserves person rows referenced by NULL-author items (no false-positive delete)", () => {
     seedPersonAllHandles("kept");
-    // Insert an item with a NULL author — must not affect orphan computation.
     seedReferencingItem(null, "github:pr_null");
     seedReferencingItem("kept", "github:pr_1");
     prunePeopleAfterServiceRemoval(db, "github");

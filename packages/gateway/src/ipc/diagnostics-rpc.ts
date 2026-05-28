@@ -1,7 +1,3 @@
-/**
- * JSON-RPC handlers for index diagnostics, `nimbus db *`, structured query, and `nimbus diag`.
- */
-
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -47,20 +43,7 @@ export type DiagnosticsRpcContext = {
   readonly consent: ConsentCoordinator;
   readonly gatewayVersion: string;
   readonly startedAtMs: number;
-  /**
-   * Per-platform sandbox runner (T2 PR 1). When present, `diag.snapshot`
-   * surfaces sandbox posture under `sandbox.platform_capabilities`. When
-   * undefined (older test fixtures, headless gateway without sandbox), the
-   * payload reports `network: "all_or_nothing"` with reason `"sandbox
-   * runner unavailable"`.
-   */
   readonly sandboxRunner?: SandboxRunner;
-  /**
-   * T2 PR 3 — auto-update state. When present, `diag.snapshot` adds an
-   * `extensions.auto_update` sub-block exposing `cached_updates_count`,
-   * `interval_hours`, and `air_gap_blocked`. When undefined the block is
-   * omitted (auto-update not configured for this Gateway).
-   */
   readonly autoUpdateDiag?: {
     cachedUpdatesCount: () => number;
     intervalHours: number;
@@ -68,11 +51,6 @@ export type DiagnosticsRpcContext = {
   };
 };
 
-/**
- * Build the `sandbox` block of `diag.snapshot`. Pure; exported for unit
- * tests so the posture serialization is asserted directly without a real
- * SandboxRunner.
- */
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
   platform_capabilities: { network: "per_host" | "all_or_nothing"; reason: string | null };
   linux_helper: { available: boolean; reason: string | null } | null;
@@ -85,9 +63,6 @@ export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
         reason: "sandbox runner unavailable",
       },
       linux_helper: null,
-      // PR 1 placeholder. The per-connector retry path (T2 Task 21+) will
-      // bump this when a stale iptables rule is observed; emitting 0 today
-      // keeps the field shape stable for downstream consumers.
       stale_rules_count: 0,
     };
   }
@@ -215,7 +190,6 @@ function resolvedPathOrLogical(dir: string): string {
   }
 }
 
-/** True when `candidate` resolves to the temp root or a subdirectory of it (multi-user temp risk). */
 function isResolvedDirUnderOsTemp(candidate: string): boolean {
   const tmpRoot = resolvedPathOrLogical(tmpdir());
   const dir = resolvedPathOrLogical(candidate);
@@ -468,16 +442,9 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       hitl: { pendingConsentRequests: pendingConsent },
       watchers,
       auditLogTail: audit,
-      // T2 PR 1 — pre-T2 extensions are hard-disabled at registry-load
-      // time. Surface the count so operators can see how many extensions
-      // need to be reinstalled after the T2 upgrade. T2 PR 2 adds the
-      // parallel `signature_disabled_count` from `SignatureDisabledRegistry`
-      // (every signed extension whose verification failed at startup).
       extensions: {
         disabled_pre_t2: preT2DisabledCount(),
         signature_disabled_count: signatureDisabledRegistry.count(),
-        // T2 PR 3 — auto-update posture. Omitted when the daemon was not
-        // constructed (no NIMBUS_EXTENSIONS_REGISTRY_URL).
         ...(ctx.autoUpdateDiag !== undefined
           ? {
               auto_update: {
@@ -488,11 +455,6 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
             }
           : {}),
       },
-      // T2 PR 1 (Task 20) — operator-visible sandbox posture. Three fields
-      // are intentionally separated: `platform_capabilities` is the live
-      // posture, `linux_helper` is Linux-only structured detail, and
-      // `stale_rules_count` is a PR-1 placeholder for a follow-up
-      // accumulator. See docs/sandbox.md#platform-asymmetry.
       sandbox: buildSandboxDiagPayload(ctx.sandboxRunner),
     },
   };

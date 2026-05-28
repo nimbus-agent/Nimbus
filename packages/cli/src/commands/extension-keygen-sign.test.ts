@@ -1,16 +1,9 @@
-// packages/cli/src/commands/extension-keygen-sign.test.ts
-//
-// Covers runExtensionKeygen + runExtensionSign — both touch only node:fs +
-// SDK crypto and return a numeric exit code. We assert on exit codes + fs
-// state (process.*.write output is intentionally not captured).
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
-
+import "../../test/helpers/cli-mocks.ts";
 const mod = await import("./extension.ts");
 const { runExtensionKeygen, runExtensionSign } = mod;
 
@@ -56,7 +49,7 @@ describe("runExtensionSign", () => {
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-"));
     keyPath = join(tmpDir, "publisher-key");
-    await runExtensionKeygen(["--out", keyPath]); // real 32-byte key
+    await runExtensionKeygen(["--out", keyPath]);
   });
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -81,7 +74,6 @@ describe("runExtensionSign", () => {
   });
 
   it("returns 2 when the manifest is unreadable", async () => {
-    // tmpDir has the key but no nimbus.extension.json
     expect(await runExtensionSign([tmpDir, "--key", keyPath])).toBe(2);
   });
 

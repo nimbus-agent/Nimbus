@@ -146,11 +146,6 @@ async function runReembedJob(
   let succeeded = 0;
   let skipped = 0;
   try {
-    // Validate model before any work — even dryRun must surface unsupported
-    // model names or missing openai.api_key as `index.reembedError`, since the
-    // operator's next call will use the same model. For dryRun we still skip
-    // the actual embedder construction (which would download weights), but
-    // openai:* requires the vault key check up front.
     if (p.model.startsWith("openai:")) {
       const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
       if (envKey === "") {

@@ -4,13 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * Lightweight smoke for `nimbus metrics dora`: spawn the CLI without a running
- * Gateway and verify usage errors + the "Gateway is not running" exit path +
- * help integration. Mirrors expert / impact smoke tests; the full CLI→Gateway
- * round-trip envelope contract is covered by the in-process e2e under
- * `packages/gateway/test/e2e/scenarios/metrics-dora.e2e.test.ts`.
- */
 describe("nimbus metrics e2e (no-Gateway smoke)", () => {
   const cliEntry = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 

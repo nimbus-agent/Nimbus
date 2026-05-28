@@ -11,6 +11,8 @@ const PRESERVE_PRAGMAS = [
   "dprint-ignore",
   "prettier-ignore",
   "cross-platform-ok",
+  "audit-ignore-next-line",
+  "<reference ",
 ];
 
 const PUBLISHED_JSDOC_PREFIXES = ["packages/sdk/src/", "packages/client/src/"];

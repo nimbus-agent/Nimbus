@@ -1,20 +1,3 @@
-/**
- * `nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]`
- *
- * Calls the Gateway `deploy.preflight` JSON-RPC method and renders the
- * `DeployPreflightResult` envelope. `--json` emits the envelope verbatim;
- * pretty mode prints a labelled card. NO_COLOR and non-TTY stdout
- * suppress ANSI codes.
- *
- * Exit codes (Phase 5 T4 PR 3a, plan review §2.4):
- *   0 = success (verdict ok, OR warn with mode≠block)
- *   1 = user/logic error: usage problems AND the explicit "block triggered"
- *       outcome. These share code 1 by design: from a CI script's POV, both
- *       mean "the deploy step should not proceed."
- *   2 = infrastructure: gateway not running, IPC error, malformed envelope.
- *       Distinguishes "couldn't check" from "checked and found things."
- */
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";

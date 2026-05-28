@@ -2,9 +2,6 @@ import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
-/**
- * Returns a valid Notion integration access token, refreshing when the synthetic vault expiry is near.
- */
 export async function getValidNotionAccessToken(vault: NimbusVault): Promise<string> {
   return getValidVaultAccessToken({
     descriptor: OAUTH_PROVIDERS.notion,

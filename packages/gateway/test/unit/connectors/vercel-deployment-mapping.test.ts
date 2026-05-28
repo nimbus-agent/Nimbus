@@ -75,7 +75,6 @@ describe("mapVercelDeploymentToItem", () => {
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["state"]).toBe("READY");
 
-    // readyState missing → falls back to state
     const noReady = makeDeployment({ state: "ERROR" });
     delete (noReady as Record<string, unknown>)["readyState"];
     const fallback = mapVercelDeploymentToItem(noReady, { syncedAt: NOW });

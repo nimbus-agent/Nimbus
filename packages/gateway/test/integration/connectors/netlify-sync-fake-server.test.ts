@@ -17,10 +17,8 @@ interface RecordedReq {
 }
 
 interface FakeNetlifyConfig {
-  /** Keyed by the incoming `page` query value (`"1"`, `"2"`, …). */
   pages?: Record<string, unknown[]>;
   status?: number;
-  /** When true, the sites route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -84,7 +82,6 @@ function startHarness(config: FakeNetlifyConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         netlify: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -108,8 +105,6 @@ function site(id: string, over: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-// The fake fakes api.netlify.com, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.netlify.com → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -122,7 +117,6 @@ function withRewrittenFetch(fakeBase: string): () => void {
   };
 }
 
-/** Build a full per_page (100) page of distinct sites with the given prefix. */
 function fullPage(prefix: string): unknown[] {
   return Array.from({ length: 100 }, (_, i) => site(`${prefix}_${String(i)}`));
 }
@@ -178,12 +172,10 @@ describe("netlify-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap: perpetual full pages stop after 20 pages", async () => {
-    // Every page returns a full per_page, so only the cap stops the walk.
     h = startHarness({});
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("netlify.token", "t");
 
-    // Rebuild the fake to always serve a full page of fresh sites.
     h.fake.stop();
     let serial = 0;
     const requests: RecordedReq[] = [];

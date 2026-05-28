@@ -1,14 +1,3 @@
-/**
- * Pure substring-match filter for `dbt_search`. Extracted from `server.ts` so
- * the matching logic can be unit-tested without spawning an MCP stdio
- * transport. The server keeps the HTTP / envelope wrapper; this module owns
- * the name/dbt_version/id haystack + case-insensitive substring match.
- *
- * A dbt Cloud job object carries `id` (number), `name` (string), and
- * `dbt_version` (string, may be absent). The haystack stringifies whatever is
- * present so a numeric id still contributes; name remains the primary path.
- */
-
 export interface DbtSearchMatchOptions {
   readonly query: string;
   readonly limit?: number | undefined;

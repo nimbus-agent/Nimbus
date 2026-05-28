@@ -1,15 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Canonical manifest name; gateway also accepts legacy nimbus-extension.json. */
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 
 export type ScaffoldArgs = { kind: "extension"; id: string };
 
-/**
- * Pure argv parser for `nimbus scaffold`. Extracted so the parse layer can be
- * unit-tested without touching the filesystem.
- */
 export function parseScaffoldArgs(args: string[]): ScaffoldArgs {
   const kind = args[0]?.trim() ?? "";
   if (kind !== "extension") {
@@ -24,13 +19,6 @@ export function parseScaffoldArgs(args: string[]): ScaffoldArgs {
 
 export type ScaffoldFile = { readonly path: readonly string[]; readonly content: string };
 
-/**
- * Builds the in-memory file plan for a scaffolded extension. Pure — does not
- * touch the filesystem. Tests can inspect the plan without writing to disk.
- *
- * The dispatcher (`runScaffold`) materializes the plan into the cwd-rooted
- * directory in a separate step.
- */
 export function buildScaffoldFiles(id: string): readonly ScaffoldFile[] {
   const manifest = {
     id,

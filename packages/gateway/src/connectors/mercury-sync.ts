@@ -28,11 +28,6 @@ interface MercuryCreds {
   readonly token: string;
 }
 
-/**
- * `mercury.token` is required. Mercury's API host is a fixed SaaS host
- * (`api.mercury.com`) — there is no host override key. The connector no-ops
- * unless the token is non-empty after trim.
- */
 async function loadCreds(ctx: SyncContext): Promise<MercuryCreds | null> {
   const token = (await readConnectorSecret(ctx.vault, "mercury", "token"))?.trim() ?? "";
   if (token === "") {
@@ -52,8 +47,6 @@ async function mercuryGet(
   path: string,
 ): Promise<FetchOutcome> {
   await ctx.rateLimiter.acquire(SERVICE_ID);
-  // Mercury uses a standard `Authorization: Bearer <api-token>` header
-  // (never logged).
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
@@ -69,11 +62,6 @@ async function mercuryGet(
   }
 }
 
-/**
- * `GET /api/v1/accounts` returns the object envelope `{ accounts: [...] }` — NOT
- * a bare array and NOT a paginated envelope. Extract the data array defensively;
- * a missing/malformed envelope yields an empty list.
- */
 function extractAccounts(parsed: unknown): unknown[] {
   const root = asRecord(parsed);
   if (root === undefined) {
@@ -111,10 +99,6 @@ export function createMercurySyncable(options: MercurySyncableOptions): Syncable
 
       const now = Date.now();
 
-      // Mercury returns the full account list in one call — there is no
-      // pagination. A single GET is the gating call: an http error maps to the
-      // pass-cursor-empty result, a parse error resets the cursor, and success
-      // upserts every account. Single-pass `nimbus-mercury1:` cursor.
       const outcome = await mercuryGet(ctx, creds, "/api/v1/accounts");
       if (outcome.kind !== "ok") {
         return outcome.kind === "http_error"

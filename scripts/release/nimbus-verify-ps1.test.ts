@@ -15,11 +15,6 @@ const GEN_KEY = toUnix(join(REPO_ROOT, "scripts", "release", "fixtures", "gen-te
 
 const IS_WIN = process.platform === "win32";
 
-// Resolve absolute paths for system tools to avoid PATH-based hijacking (Sonar S4036).
-// where.exe lives at its fixed Windows system path; which at its fixed POSIX path.
-// gpg's POSIX location varies: /usr/bin/gpg on Linux, /opt/homebrew/bin/gpg on
-// macOS arm64, /usr/local/bin/gpg on macOS Intel. SHA256SUMS is generated
-// in-process via node:crypto so no shell sha256sum binary is needed.
 const WHERE_CMD = IS_WIN ? String.raw`C:\Windows\System32\where.exe` : "/usr/bin/which";
 const BASH_BIN = IS_WIN ? "bash" : "/bin/bash";
 function resolveBin(candidates: readonly string[]): string {
@@ -32,9 +27,6 @@ const GPG_BIN = IS_WIN
   ? "gpg"
   : resolveBin(["/usr/bin/gpg", "/opt/homebrew/bin/gpg", "/usr/local/bin/gpg"]);
 
-// Resolve pwsh once at load time; store the absolute path so run() never hits PATH.
-// Skip entirely if pwsh (PowerShell 7+) is not installed — nimbus-verify.ps1 targets
-// PowerShell 7+ only; Windows PowerShell 5.1 is intentionally not supported.
 const PWSH_EXE = (() => {
   const r = spawnSync(WHERE_CMD, ["pwsh"], { encoding: "utf8" });
   if (r.status !== 0) return null;
@@ -44,8 +36,6 @@ const PWSH_EXE = (() => {
 const HAS_PWSH = PWSH_EXE !== null;
 
 if (!HAS_PWSH) {
-  // Surface the skip reason once so a developer running tests locally without
-  // pwsh knows WHY their PS1 tests were skipped (test.skipIf doesn't carry a reason).
   console.warn(
     "[nimbus-verify.ps1 tests] SKIPPED: 'pwsh' (PowerShell 7+) not found on PATH.\n" +
       "  - Install hint: macOS 'brew install powershell', Linux via https://learn.microsoft.com/powershell/,\n" +
@@ -88,9 +78,6 @@ beforeEach(() => {
   fingerprint = genRes.stdout.trim();
 
   writeFileSync(join(cwd, "hello.bin"), "hello world", "utf8");
-  // SHA256SUMS format mirrors `sha256sum filename`: "<64-hex-lower>  filename\n".
-  // Computed in-process so the test does not depend on coreutils being on PATH
-  // (macOS ships shasum, not sha256sum, and Windows has neither without MSYS2).
   const helloBytes = readFileSync(join(cwd, "hello.bin"));
   const hashHex = createHash("sha256").update(helloBytes).digest("hex");
   writeFileSync(join(cwd, "SHA256SUMS"), `${hashHex}  hello.bin\n`, "utf8");
@@ -115,8 +102,6 @@ afterEach(() => {
   if (work) rmSync(work, { recursive: true, force: true });
 });
 
-// Per-test timeout: pwsh cold-start + GPG chain verification can take 6–10s on
-// Windows GHA runners; the 5000ms default produced flakes.
 const PWSH_TEST_TIMEOUT_MS = 30000;
 
 test.skipIf(!HAS_PWSH)(

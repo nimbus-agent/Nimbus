@@ -28,7 +28,6 @@ function Consumer({ onPath }: { onPath: (p: string) => void }) {
   return null;
 }
 
-/** Renders the provider with a path-recording Consumer and fires a "connected" event. */
 async function renderAndConnect(initialEntry: string) {
   const seen: string[] = [];
   const { rerender } = render(
@@ -99,7 +98,6 @@ describe("GatewayConnectionProvider", () => {
     const { rerender } = await renderAndConnect("/");
     await waitFor(() => expect(callMock).toHaveBeenCalledTimes(2));
     const callCountAfterFirst = callMock.mock.calls.length;
-    // Fire connected a second time — firstConnectHandled guard should short-circuit
     connectionHandlers[0]?.("connected");
     await new Promise((r) => setTimeout(r, 50));
     expect(callMock.mock.calls.length).toBe(callCountAfterFirst);
@@ -121,7 +119,6 @@ describe("GatewayConnectionProvider", () => {
       connectionHandlers[0]?.("connected");
     });
     await vi.runAllTimersAsync();
-    // 5 attempts made, no unhandled rejection
     expect(callMock.mock.calls.length).toBeGreaterThanOrEqual(5);
     vi.useRealTimers();
   });

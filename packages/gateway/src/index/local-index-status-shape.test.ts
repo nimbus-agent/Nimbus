@@ -13,7 +13,6 @@ function setup(): { idx: LocalIndex; db: Database } {
 describe("LocalIndex.persistedConnectorStatuses — depth + enabled shape (V21)", () => {
   test("fresh connector returns depth='summary' and enabled=true", () => {
     const { idx, db } = setup();
-    // Seed a scheduler_state row (simulating connector registration).
     db.run(
       `INSERT INTO scheduler_state
          (service_id, cursor, interval_ms, last_sync_at, next_sync_at, status, error_msg, consecutive_failures, paused)
@@ -51,7 +50,6 @@ describe("LocalIndex.persistedConnectorStatuses — depth + enabled shape (V21)"
        VALUES (?, NULL, 60000, NULL, NULL, 'ok', NULL, 0, 0)`,
       ["github"],
     );
-    // Set depth via sync_state (as setConnectorDepth would do).
     db.run(
       `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth) VALUES (?, NULL, NULL, ?)`,
       ["github", "metadata_only"],

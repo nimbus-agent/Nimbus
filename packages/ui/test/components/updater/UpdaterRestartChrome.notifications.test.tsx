@@ -1,7 +1,6 @@
 import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Capture listen handlers so tests can fire events
 const listeners = new Map<string, Array<(payload: unknown) => void>>();
 
 vi.mock("@tauri-apps/api/event", () => ({

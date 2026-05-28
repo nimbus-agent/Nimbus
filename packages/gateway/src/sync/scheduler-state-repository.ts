@@ -18,9 +18,6 @@ export type { SchedulerStateRow } from "./scheduler-store.ts";
 
 export type SchedulerTelemetryInsert = Parameters<typeof insertSyncTelemetry>[1];
 
-/**
- * Persistence for {@link SyncScheduler} — SQLite implementation is default; inject a mock for unit tests.
- */
 export interface SchedulerStateRepository {
   loadState(serviceId: string): SchedulerStateRow | null;
   listAllStates(): SchedulerStateRow[];

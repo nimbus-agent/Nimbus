@@ -17,10 +17,8 @@ interface RecordedReq {
 }
 
 interface FakeZendeskConfig {
-  /** Pages of tickets, in order. Each entry becomes one `tickets` page. */
   pages?: unknown[][];
   status?: number;
-  /** When true, the tickets route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -51,9 +49,6 @@ function startFakeZendesk(config: FakeZendeskConfig): FakeZendesk {
           return new Response("{not json", { status: 200 });
         }
         const pages = config.pages ?? [[]];
-        // Cursor-based pagination: page index is carried in `page[after]` as the
-        // string "1", "2", … (page 0 omits it). The fake maps the cursor to the
-        // numeric page index.
         const after = u.searchParams.get("page[after]");
         const page = after === null ? 0 : Number(after);
         const tickets = pages[page] ?? [];
@@ -94,7 +89,6 @@ function startHarness(config: FakeZendeskConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         zendesk: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -120,12 +114,10 @@ function ticket(id: number, over: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-/** A page of 100 distinct tickets (the page[size] max), so the walk continues. */
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 100 }, (_, i) => ticket(base + i));
 }
 
-/** Seed all three required vault keys, pointing the base URL at the fake server. */
 async function seedCreds(h: Harness): Promise<void> {
   await h.ctx.vault.set("zendesk.url", h.fake.baseUrl);
   await h.ctx.vault.set("zendesk.email", "agent@acme.com");
@@ -150,15 +142,12 @@ describe("zendesk-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-zendesk1:")).toBe(true);
 
-    // Single page (has_more false) → the walk stopped after one GET.
     const reqs = h.fake.requests.filter((r) => r.path === "/api/v2/tickets.json");
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.query).toContain("page%5Bsize%5D=100");
-    // Basic auth = base64("agent@acme.com/token:zd_test_token"), never the raw token.
     const expected = `Basic ${Buffer.from("agent@acme.com/token:zd_test_token", "utf8").toString("base64")}`;
     for (const r of h.fake.requests) {
       expect(r.authorization).toBe(expected);
-      // The raw token must never appear in the header.
       expect(r.authorization?.includes("zd_test_token")).toBe(false);
     }
 
@@ -169,12 +158,10 @@ describe("zendesk-sync against Bun.serve fake API", () => {
       .all();
     expect(rows.map((r) => r.external_id)).toEqual(["1", "2"]);
     expect(rows.map((r) => r.id)).toEqual(["zendesk:1", "zendesk:2"]);
-    // Canonical URL is the agent-UI deep link built from the per-tenant base.
     expect(rows[0]?.canonical_url).toBe(`${h.fake.baseUrl}/agent/tickets/1`);
   });
 
   test("cursor walk: follows meta.after_cursor while has_more is true", async () => {
-    // 3 pages; page 0 + page 1 are full (continue), page 2 short (has_more false).
     h = startHarness({ pages: [fullPage(1), fullPage(101), [ticket(201)]] });
     await seedCreds(h);
 
@@ -184,14 +171,12 @@ describe("zendesk-sync against Bun.serve fake API", () => {
     expect(result.itemsUpserted).toBe(201);
     const reqs = h.fake.requests.filter((r) => r.path === "/api/v2/tickets.json");
     expect(reqs).toHaveLength(3);
-    // page 0 has no page[after]; pages 1 + 2 carry the prior after_cursor.
     expect(reqs[0]?.query.includes("page%5Bafter%5D")).toBe(false);
     expect(reqs[1]?.query).toContain("page%5Bafter%5D=1");
     expect(reqs[2]?.query).toContain("page%5Bafter%5D=2");
   });
 
   test("MAX_PAGES cap halts the walk", async () => {
-    // 25 full pages with has_more always true → the cap (20) stops it.
     const pages = Array.from({ length: 25 }, (_, i) => fullPage(i * 100 + 1));
     h = startHarness({ pages });
     await seedCreds(h);

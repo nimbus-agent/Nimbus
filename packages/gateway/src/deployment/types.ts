@@ -1,11 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — Post-deploy annotation types.
- *
- * Surface: HTTP POST /v1/deployments, IPC deployment.annotate,
- * CLI nimbus deploy annotate. NOT LLM-facing — see invariant I11 for
- * envelope rules at the LLM boundary.
- */
-
 export type DeploymentConclusion = "success" | "failure" | "cancelled" | "in_progress";
 
 export type DeploymentProvider =

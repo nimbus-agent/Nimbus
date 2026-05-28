@@ -135,9 +135,7 @@ describe("DataPanel", () => {
       exportFlow: { status: "running" },
       markDisconnected: mark,
     } as never);
-    // First render in connected state
     const { rerender } = render(<DataPanel />);
-    // Flip to disconnected
     useNimbusStore.setState({ connectionState: "disconnected" } as never);
     rerender(<DataPanel />);
     await vi.waitFor(() => {

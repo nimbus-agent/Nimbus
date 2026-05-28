@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-gmail — Gmail MCP server (read + compose/send tools).
- * OAuth access token is injected by the Gateway as GOOGLE_OAUTH_ACCESS_TOKEN (never logged).
- * Sends and draft mutations require Gateway HITL (`email.send`, `email.draft.send`, `email.draft.create`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

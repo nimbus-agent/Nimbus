@@ -1,10 +1,3 @@
-// packages/cli/src/types/agents.test.ts
-//
-// Runtime type guards for the CLI-side mirrors of the agent brief shapes.
-// These guards are the entry point for every IPC `*.briefReady` notification
-// the CLI subscribes to (expert / impact / catchup), so a regression here
-// silently misroutes briefs to the malformed-payload error branch.
-
 import { describe, expect, it } from "bun:test";
 
 import { isCatchupBrief, isExpertBrief, isImpactBrief } from "./agents.ts";

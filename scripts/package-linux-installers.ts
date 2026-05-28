@@ -1,29 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Build Linux release artifacts from the headless binary bundle:
- * - `nimbus-headless-linux-amd64-v<ver>.tar.gz`
- * - `nimbus-headless_<ver>_amd64.deb`
- * - `nimbus-headless-<ver>-x86_64.AppImage`
- *
- * Prerequisites: `tar`, `dpkg-deb`, `appimagetool` (or pass `--appimagetool <path>`
- * to use a pre-downloaded copy; tests use a stub). `libfuse2` must be installed at
- * runtime of `appimagetool`.
- *
- * The .deb declares `bubblewrap` as a hard runtime dep (T2 PR 1 sandbox); the
- * `nimbus-sandbox-helper` binary (compiled from packages/gateway/src-native/
- * sandbox-helper/) is installed at /usr/lib/nimbus/bin/ and granted
- * `cap_net_admin+ep` via the postinst script. The tarball bundles a separate
- * `linux-postinstall.sh` that prints a `bwrap` pre-check banner and runs
- * `setcap` on the helper after the user copies binaries into place.
- *
- * Usage:
- *   bun scripts/package-linux-installers.ts
- *   bun scripts/package-linux-installers.ts --bundle dist/headless-bundle --version 0.2.0
- *   bun scripts/package-linux-installers.ts --skip-appimage             # tests, offline builds
- *   bun scripts/package-linux-installers.ts --appimagetool /tmp/stub    # test injection
- *   bun scripts/package-linux-installers.ts --sandbox-helper /tmp/helper  # pre-built helper
- *   bun scripts/package-linux-installers.ts --skip-sandbox-helper       # CI without make/libcap
- */
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -38,7 +13,6 @@ import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
-/** Absolute paths avoid PATH hijack (Sonar S4036); script targets Debian/Ubuntu packagers. */
 const TAR_BIN = "/usr/bin/tar";
 const DPKG_DEB_BIN = "/usr/bin/dpkg-deb";
 const MAKE_BIN = "/usr/bin/make";
@@ -136,21 +110,6 @@ if (existsSync(outRoot)) {
 }
 mkdirSync(outRoot, { recursive: true });
 
-/**
- * Resolve the path to a `nimbus-sandbox-helper` binary for bundling.
- *
- * Resolution order:
- *   1. `--sandbox-helper <path>` (test injection, pre-built artifacts).
- *   2. `<bundleDir>/nimbus-sandbox-helper` (release pipelines that pre-stage
- *      it alongside the other compiled binaries).
- *   3. `packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper` if
- *      already built.
- *   4. `make -C packages/gateway/src-native/sandbox-helper` on the fly.
- *
- * Returns `null` if `--skip-sandbox-helper` is set, the make build fails, or
- * the helper cannot be found. The .deb still ships and declares the
- * `bubblewrap` dependency; only the setcap step + helper file are skipped.
- */
 function resolveSandboxHelper(): string | null {
   if (skipSandboxHelper) {
     return null;
@@ -194,13 +153,6 @@ function resolveSandboxHelper(): string | null {
 
 const sandboxHelper = resolveSandboxHelper();
 
-/**
- * Linux-specific post-install helper bundled alongside `install.sh` in the
- * tarball. Prints a `bwrap` pre-check banner (with per-distro install hints)
- * and applies `setcap cap_net_admin+ep` to the sandbox helper if it was
- * copied into `~/.local/bin/`. Kept separate from the cross-platform
- * `install.sh` to avoid coupling Linux sandbox concerns to the macOS path.
- */
 function linuxPostInstallScript(hasHelper: boolean): string {
   const helperBlock = hasHelper
     ? `HELPER="$HOME/.local/bin/nimbus-sandbox-helper"
@@ -278,16 +230,12 @@ ${helperNote}`,
     "utf8",
   );
 
-  // Bundle install scripts at the top level of the tarball so users can run
-  // ./install.sh immediately after extracting the archive.
   const installSrcDir = join(repoRoot, "scripts", "install", "unix");
   copyFileSync(join(installSrcDir, "install.sh"), join(tarStage, "install.sh"));
   copyFileSync(join(installSrcDir, "uninstall.sh"), join(tarStage, "uninstall.sh"));
   chmodSync(join(tarStage, "install.sh"), 0o755);
   chmodSync(join(tarStage, "uninstall.sh"), 0o755);
 
-  // Linux-specific post-install (bwrap banner + helper setcap). Shipped as a
-  // sibling to install.sh so the cross-platform installer stays untouched.
   writeFileSync(
     join(tarStage, "linux-postinstall.sh"),
     linuxPostInstallScript(sandboxHelper !== null),
@@ -334,9 +282,6 @@ function buildDeb(): string {
   chmodSync(join(debInst, "nimbus-gateway"), 0o755);
   chmodSync(join(debInst, "nimbus"), 0o755);
 
-  // Sandbox helper lives alongside the other gateway binaries. The postinst
-  // script grants it cap_net_admin+ep so the Gateway can spawn it without
-  // running as root (T2 PR 1 — invariant I15).
   if (sandboxHelper !== null) {
     copyFileSync(sandboxHelper, join(debInst, "nimbus-sandbox-helper"));
     chmodSync(join(debInst, "nimbus-sandbox-helper"), 0o755);
@@ -356,9 +301,6 @@ function buildDeb(): string {
   chmodSync(join(debBin, "nimbus-gateway"), 0o755);
 
   mkdirSync(join(debRoot, "DEBIAN"), { recursive: true });
-  // `Depends: bubblewrap` is a hard runtime dep — the Linux SandboxRunner
-  // refuses to spawn extensions without `bwrap` (T2 PR 1). `libcap2-bin`
-  // provides `setcap`, used by the postinst below.
   writeFileSync(
     join(debRoot, "DEBIAN", "control"),
     [
@@ -378,10 +320,6 @@ function buildDeb(): string {
     "utf8",
   );
 
-  // postinst: apply cap_net_admin+ep to the sandbox helper. Tolerates
-  // unavailable setcap (rare on Debian/Ubuntu since libcap2-bin is in
-  // Depends, but the warning makes the fallback path obvious).
-  // See docs/release/headless-postinst-linux-setcap.md.
   const postinst = `#!/bin/sh
 set -e
 HELPER="/usr/lib/nimbus/bin/nimbus-sandbox-helper"
@@ -423,27 +361,22 @@ function buildAppImage(toolPath: string): string {
   mkdirSync(usrBin, { recursive: true });
   mkdirSync(usrShare, { recursive: true });
 
-  // Binaries
   copyFileSync(gw, join(usrBin, "nimbus-gateway"));
   copyFileSync(cli, join(usrBin, "nimbus"));
   chmodSync(join(usrBin, "nimbus-gateway"), 0o755);
   chmodSync(join(usrBin, "nimbus"), 0o755);
 
-  // AppRun shim (must be at AppDir root, executable)
   const appRunSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.AppRun");
   const appRunDst = join(appDir, "AppRun");
   copyFileSync(appRunSrc, appRunDst);
   chmodSync(appRunDst, 0o755);
 
-  // Desktop entry with {{VERSION}} substituted
   const desktopSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.desktop");
   const desktopContent = readFileSync(desktopSrc, "utf8").replaceAll("{{VERSION}}", version);
   const desktopDst = join(appDir, "nimbus-headless.desktop");
   writeFileSync(desktopDst, desktopContent, "utf8");
-  // Copy to usr/share/applications as well (FreeDesktop convention)
   writeFileSync(join(usrShare, "nimbus-headless.desktop"), desktopContent, "utf8");
 
-  // Icon (must be at AppDir root with same base name as desktop Icon= field)
   const iconSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.png");
   copyFileSync(iconSrc, join(appDir, "nimbus-headless.png"));
 
@@ -483,8 +416,6 @@ if (!skipAppImage) {
   const appImagePath = buildAppImage(toolPath);
   console.log(`  ${appImagePath}`);
 
-  // Emit install scripts as siblings to the .AppImage so users who download
-  // just the AppImage can run ./install.sh from the same directory.
   const installSrcDir = join(repoRoot, "scripts", "install", "unix");
   const appImageInstall = join(outRoot, "install.sh");
   const appImageUninstall = join(outRoot, "uninstall.sh");

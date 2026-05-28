@@ -115,7 +115,6 @@ describe("PullDialog", () => {
       await waitFor(() => expect(llmPullModelMock).toHaveBeenCalledWith("ollama", "gemma:2b"));
       vi.advanceTimersByTime(15_000);
       await waitFor(() => expect(screen.getByText(/connecting…/i)).toBeInTheDocument());
-      // Next chunk clears the stall state.
       captured?.({
         method: "llm.pullProgress",
         params: {
@@ -152,7 +151,6 @@ describe("PullDialog", () => {
       llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true } });
       render(<PullDialog open onClose={() => {}} />);
       await waitFor(() => screen.getByLabelText(/model name/i));
-      // Before 15 s elapses, no stall.
       expect(screen.queryByText(/connecting…/i)).not.toBeInTheDocument();
       vi.advanceTimersByTime(15_000);
       await waitFor(() => expect(screen.getByText(/connecting…/i)).toBeInTheDocument());

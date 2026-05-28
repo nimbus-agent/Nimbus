@@ -1,30 +1,13 @@
-/**
- * Spawn-and-warm primitive for cluster-C drivers (S6, S7-a/b/c).
- *
- * Spawns a real gateway child, waits for a stdout marker (typically the
- * "[gateway] ready" line), then runs an arbitrary workload — with an
- * optional concurrent sampler (e.g., RSS poller) running in parallel —
- * and finally SIGTERMs the child and awaits its exit.
- *
- * Distinct from `process-spawn-bench.ts` which times spawn-to-marker;
- * this helper times *during* the warm phase.
- */
-
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 
 export interface SpawnGatewayForBenchOptions<W, S = void> {
   cmd: string;
   args: string[];
   readyMarker: RegExp;
-  /** Default 30_000 ms. */
   readyTimeoutMs?: number;
-  /** Runs once the child emits the readyMarker. Receives child PID. */
   workload: (ctx: { pid: number; signal: AbortSignal }) => Promise<W>;
-  /** Optional sampler started in parallel with workload. */
   sampler?: (ctx: { pid: number; signal: AbortSignal }) => Promise<S>;
-  /** Env passed to the child (merged over process.env). */
   env?: Record<string, string>;
-  /** Test-injectable spawn (defaults to Bun.spawn). */
   spawn?: typeof Bun.spawn;
 }
 

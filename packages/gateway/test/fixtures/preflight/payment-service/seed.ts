@@ -43,27 +43,11 @@ function ins(
   );
 }
 
-/**
- * Seeds a deterministic preflight fixture for the "payment-service" config:
- *   - 3 PagerDuty incidents (1 triggered P1, 1 resolved P1,
- *     1 triggered with no priority)                          → 1 active P1
- *     (the no-priority incident is excluded by the strict
- *     `severity = 'P1'` filter — locks spec §6 row 1)
- *   - 4 GitHub Actions CI runs (2 on main: 1 success, 1 failure; 2 on
- *     feature-x: both failures)                              → 1 failing CI on main
- *   - 3 GitHub PRs on main repo (1 dirty open, 1 clean open,
- *     1 open with null mergeable_state)                      → 1 conflict + gap
- *
- * Returns the matching `ServiceConfig` for the fixture window.
- */
 export async function seedPaymentServicePreflightFixture(
   db: Database,
 ): Promise<{ config: ServiceConfig }> {
   const now = PREFLIGHT_FIXTURE_NOW_MS;
 
-  // ---- Incidents ----
-  // Flow built incidents through the production parser so the preflight
-  // active-P1 check exercises the same pipeline production uses.
   const pdIncidents: unknown[] = [
     buildPagerdutyIncident({
       id: "inc_active",
@@ -84,8 +68,6 @@ export async function seedPaymentServicePreflightFixture(
       serviceId: "P12ABCD",
       priorityName: "P1",
     }),
-    // Strict-P1 exclusion case: triggered, urgent, on the right service, but
-    // priority is null. Preflight must NOT count it as an active P1.
     buildPagerdutyIncident({
       id: "inc_no_priority",
       title: "Triggered without priority",
@@ -104,7 +86,6 @@ export async function seedPaymentServicePreflightFixture(
     now,
   );
 
-  // ---- CI runs ----
   ins(db, {
     id: "github_actions:ci_main_pass",
     service: "github_actions",
@@ -166,7 +147,6 @@ export async function seedPaymentServicePreflightFixture(
     },
   });
 
-  // ---- PRs ----
   ins(db, {
     id: "github:pr_dirty",
     service: "github",

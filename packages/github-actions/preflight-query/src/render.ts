@@ -84,10 +84,6 @@ export function renderAnnotations(env: Envelope, mode: PreflightMode): Annotatio
   return out;
 }
 
-/**
- * Maps server verdict + mode + reachability to the Action's exit code.
- * Per spec §6.5 (with the allow-gateway-failure escape hatch).
- */
 export function decideExitCode(args: {
   verdict: "ok" | "warn";
   mode: PreflightMode;

@@ -3,7 +3,6 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { dbRun } from "./write.ts";
 
-/** Genesis hash used for the first audit row. 64 hex zeros. */
 export const GENESIS_HASH = "0".repeat(64);
 
 export type AuditRowHashInput = {
@@ -14,14 +13,6 @@ export type AuditRowHashInput = {
   timestamp: number;
 };
 
-/**
- * Compute `row_hash = BLAKE3(prev_hash || action_type || hitl_status || action_json || timestamp)`.
- *
- * Ordering and serialisation must stay stable: if we ever change field order,
- * every historical row_hash becomes invalid and `nimbus audit verify` breaks.
- * That is the point of the chain — so treat this function as a load-bearing
- * spec, not an implementation detail.
- */
 export function computeAuditRowHash(input: AuditRowHashInput): string {
   const encoder = new TextEncoder();
   const payload = encoder.encode(
@@ -35,16 +26,9 @@ export interface AppendAuditEntryFields {
   readonly hitlStatus: string;
   readonly actionJson: string;
   readonly timestamp: number;
-  /** Non-hashed metadata for transcript rehydration (Task 10). Not included in BLAKE3 chain. */
   readonly sessionId?: string;
 }
 
-/**
- * Reads the previous row hash, computes the new row hash, and INSERTs a new
- * audit_log row in one call. Both LocalIndex.recordAudit and the gateway's
- * out-of-band audit writers (e.g. emitRunCompletedAudit in workflow-runner)
- * delegate here so the chain-append recipe is single-sourced.
- */
 export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): void {
   const rawPrev = db.query(`SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1`).get() as
     | { row_hash: string | null }

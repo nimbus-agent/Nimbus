@@ -2,26 +2,6 @@ import { appendFileSync } from "node:fs";
 import { setOutput } from "./output.ts";
 import { type AnnotateResult, renderSummary } from "./render.ts";
 
-// -----------------------------------------------------------------------
-// Sanitization barriers for Gateway-derived data.
-//
-// CodeQL's js/http-to-file-access flags the appendFileSync sinks below
-// because their content originates from `fetch()`. The operator runs
-// their own local Gateway, so the real risk is bounded — but breaking
-// the dataflow cleanly is cheap and removes the alert.
-//
-// String fields are passed through a character allowlist
-// (`.replace(/<deny-class>/g, "")`) plus a length cap; numeric fields
-// are coerced through `Number()` + `Math.trunc()`. CodeQL recognises
-// each of these as a taint barrier for the `js/http-to-file-access` rule.
-// -----------------------------------------------------------------------
-
-// Conservative print-safe character class. Strips C0 control chars
-// below 0x20 except tab/LF/CR plus DEL 0x7F. Keeps printable ASCII
-// and UTF-8 multi-byte sequences. Used as the sanitizer barrier on
-// strings flowing into file-write sinks. The hex-escape form keeps the
-// source ASCII-only; the rule below is the explicit intent of this
-// barrier, not an accident.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit byte ranges define the sanitizer barrier
 const DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
@@ -59,7 +39,6 @@ function safeAnnotateEnvelope(raw: unknown): SanitizedAnnotateEnvelope {
 }
 
 function getInput(name: string): string {
-  // GitHub Actions inputs land in env as INPUT_<NAME> with hyphens → underscores.
   const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
   return process.env[envName] ?? "";
 }
@@ -76,24 +55,16 @@ function getIntInput(name: string, fallback: number): number {
   return Number.isInteger(n) ? n : fallback;
 }
 
-// Cap on bytes written to GITHUB_STEP_SUMMARY per Action run. GitHub's
-// own limit is 1 MiB; this is a tighter bound that also serves as a DoS
-// guard against an adversarial Gateway returning a multi-gigabyte body.
 const STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 
 function writeJobSummary(md: string): void {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (file === undefined) return;
-  // Truncate before write. The summary is rendered as markdown through
-  // GitHub's HTML sanitizer (raw <script>, event handlers, etc. are
-  // stripped server-side), so the remaining risk is markdown-injection
-  // phishing only — capped length prevents flooding.
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
   appendFileSync(file, `${safe}\n`);
 }
 
 function emitAnnotation(level: "warning" | "error", message: string): void {
-  // GitHub Actions workflow-command format.
   process.stdout.write(`::${level}::${message}\n`);
 }
 
@@ -149,7 +120,6 @@ async function postAnnotation(
       return { status: "ok", envelope };
     }
     if (res.status === 401) {
-      // Drain the body so the socket can be reused.
       await res.text();
       return { status: "auth_failed" };
     }
@@ -172,7 +142,6 @@ async function postAnnotation(
         ? { status: "surface_disabled" }
         : { status: "surface_disabled", hint };
     }
-    // Other 4xx/5xx → surface body text for diagnostics.
     const body = await res.text();
     return { status: "unreachable", body: `${res.status} ${body.slice(0, 200)}` };
   } catch (e) {
@@ -254,11 +223,6 @@ export async function main(): Promise<void> {
   const result = await postAnnotation(gatewayUrl, token, payload, timeoutMs);
 
   if (result.status === "ok") {
-    // Sanitize once. From here on, every value flowing into a file-write
-    // sink (setOutput → GITHUB_OUTPUT, writeJobSummary → GITHUB_STEP_SUMMARY)
-    // is a primitive (boolean / number) or a regex-allowlisted+length-capped
-    // string. This breaks the js/http-to-file-access taint flow at a single
-    // explicit boundary.
     const env = safeAnnotateEnvelope(result.envelope);
     setOutput("external-id", env.external_id);
     setOutput("is-new", env.is_new ? "true" : "false");
@@ -276,7 +240,6 @@ export async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Non-ok paths emit a warning annotation and honor allow-gateway-failure.
   let warning: string;
   if (result.status === "auth_failed") {
     warning =
@@ -286,9 +249,6 @@ export async function main(): Promise<void> {
     const retry = result.retryAfter === undefined ? "" : ` Retry-After: ${result.retryAfter}s.`;
     warning = `Nimbus Gateway rate-limited the annotation (429).${retry}`;
   } else if (result.status === "surface_disabled") {
-    // Per the I13 contract, the hint MUST flow verbatim to the workflow log
-    // so operators see the exact `nimbus vault set http_api.deployment_token …`
-    // instruction the Gateway returned.
     const hint =
       result.hint === undefined
         ? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'"

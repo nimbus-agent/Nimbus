@@ -17,8 +17,6 @@ function makeCapturingContext(): {
 } {
   const db = createMemoryIndexDb();
   const warns: CapturedWarn[] = [];
-  // Start from a silent base logger to suppress all other levels, then attach
-  // a child whose warn() captures into the array.
   const baseLogger = pino({ level: "silent" });
   const logger = Object.create(baseLogger) as typeof baseLogger;
   (logger as unknown as { warn: (...args: unknown[]) => void }).warn = (
@@ -87,7 +85,6 @@ describe("createUserMcpSyncable", () => {
 
     const result = await sync.sync(ctx, null);
 
-    // Sync still resolves successfully — the warning path must not propagate.
     expect(result.cursor).toBe("user_mcp");
     expect(result.itemsUpserted).toBe(0);
 
@@ -107,7 +104,6 @@ describe("createUserMcpSyncable", () => {
 
     const result = await sync.sync(ctx, "keep-me");
 
-    // The thrown literal must not propagate — sync resolves and preserves cursor.
     expect(result.cursor).toBe("keep-me");
     expect(warns).toHaveLength(1);
     expect(warns[0]?.obj["err"]).toBe("boom-string");
@@ -142,7 +138,7 @@ describe("createUserMcpSyncable", () => {
     const r2 = await sync.sync(ctx, null);
 
     expect(attempt).toBe(2);
-    expect(warns).toHaveLength(1); // only the first attempt warned
+    expect(warns).toHaveLength(1);
     expect(r1.cursor).toBe("user_mcp");
     expect(r2.cursor).toBe("user_mcp");
   });

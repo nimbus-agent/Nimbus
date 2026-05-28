@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { issueUrl, mapWizIssueToItem } from "../../../src/connectors/wiz-issue-mapping.ts";
 
-// Realistic Wiz `Issue` GraphQL node. Tests below mutate this fixture
-// and assert specific mapping behaviours.
 function makeIssue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base: Record<string, unknown> = {
     id: "abc-123",

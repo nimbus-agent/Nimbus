@@ -57,7 +57,6 @@ describe("data export", () => {
       kdfParams: { t: 1, m: 1024, p: 1 },
     });
     expect(second.recoverySeedGenerated).toBe(false);
-    // S2-F5 — subsequent exports must not re-disclose the seed.
     expect(second.recoverySeed).toBe("");
     expect(readdirSync(outDir).sort()).toEqual(["a.tar.gz", "b.tar.gz"]);
   });

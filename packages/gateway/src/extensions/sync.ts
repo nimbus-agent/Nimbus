@@ -1,9 +1,3 @@
-/**
- * Sync orchestrator for publisher pubkeys. Walks installed extensions,
- * collects distinct publisher ids, refreshes each from the registry, and
- * reverifies installed manifests when a key rotates.
- */
-
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 
@@ -24,9 +18,6 @@ function auditPublisherKeySynced(
   kind: SyncedKind,
   reason?: string,
 ): void {
-  // Spec §6.2: extension.publisher_key_synced — one audit row per publisher per
-  // sync run. dryRun runs do NOT emit audit (per spec §4.3 "dry-run writes
-  // nothing, audits nothing").
   if (dryRun) return;
   const payload: Record<string, unknown> = { id: publisherId, kind };
   if (reason !== undefined) payload["reason"] = reason;

@@ -4,12 +4,10 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export const RECOVERY_SEED_VAULT_KEY = "backup.recovery_seed";
 
-/** 24 words = 256 bits of entropy. */
 const MNEMONIC_STRENGTH_BITS = 256;
 
 export type EnsureSeedResult = {
   mnemonic: string;
-  /** True only on the call that generated a new seed. */
   generated: boolean;
 };
 

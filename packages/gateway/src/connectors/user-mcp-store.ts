@@ -10,7 +10,6 @@ export type UserMcpConnectorRow = {
   created_at: number;
 };
 
-/** Lowercase `mcp_*` service ids only; must not collide with first-party connector ids. */
 export const USER_MCP_SERVICE_ID_PATTERN = /^mcp_[a-z0-9_]{1,62}$/;
 
 export function normalizeUserMcpServiceId(raw: string): string | null {

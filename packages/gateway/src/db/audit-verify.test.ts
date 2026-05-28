@@ -25,7 +25,6 @@ describe("verifyAuditChain", () => {
     idx.recordAudit({ actionType: "a", hitlStatus: "approved", actionJson: "{}", timestamp: 1 });
     idx.recordAudit({ actionType: "b", hitlStatus: "approved", actionJson: "{}", timestamp: 2 });
     idx.recordAudit({ actionType: "c", hitlStatus: "approved", actionJson: "{}", timestamp: 3 });
-    // Tamper with row 2's payload directly.
     idx.rawDb.run(`UPDATE audit_log SET action_json = ? WHERE id = 2`, ['{"t":1}']);
     const result = verifyAuditChain(idx, { fromId: 0 });
     expect(result.ok).toBe(false);

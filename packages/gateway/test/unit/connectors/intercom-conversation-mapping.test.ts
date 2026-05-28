@@ -5,7 +5,6 @@ import {
   stripHtml,
 } from "../../../src/connectors/intercom-conversation-mapping.ts";
 
-// 1_700_000_000 s = 2023-11-14T22:13:20Z → ×1000 = 1_700_000_000_000 ms.
 const CREATED_S = 1_700_000_000;
 const CREATED_MS = 1_700_000_000_000;
 const UPDATED_S = 1_700_500_000;

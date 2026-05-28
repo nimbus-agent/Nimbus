@@ -1,29 +1,3 @@
-/**
- * Apache Superset dashboards sync handler. Superset has no static API key:
- * each cycle authenticates with username/password against
- * `POST /api/v1/security/login` to obtain a short-lived JWT, then walks
- * `GET /api/v1/dashboard/?q=(page:N,page_size:100)` with
- * `Authorization: Bearer <access_token>` and upserts each dashboard into the
- * unified `item` table as `service = "superset", type = "dashboard"` via
- * {@link mapSupersetDashboardToItem}.
- *
- * Auth posture: login failure (non-ok or no access_token) degrades the whole
- * sync to a graceful empty pass — we log a warning and return the pass-cursor
- * http-empty result, never throw. The password is never put in any logger
- * call.
- *
- * Single-pass cursor model (matches dbt/metabase/wiz): every successful run
- * emits a fresh `nimbus-superset1:{pass: 1}` cursor. The dashboards list is
- * Rison-paginated within a single cycle; we cap pages per cycle to bound cost.
- * The FIRST dashboards page is the gating call — its http/parse error maps to
- * the pass-cursor-empty result; a later-page non-ok just breaks the loop.
- *
- * All three vault keys (`superset.url` + `superset.username` +
- * `superset.password`) are required and have no defaults — Superset is
- * self-hosted with no universal SaaS host. The connector no-ops unless all
- * three are non-empty after trim.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -76,11 +50,6 @@ type FetchOutcome =
   | { kind: "http_error"; bytes: number }
   | { kind: "parse_error"; bytes: number };
 
-/**
- * Exchange username/password for a JWT access token. NEVER logs the password.
- * Returns the token plus the bytes transferred, or a null token on any failure
- * (caller maps that to the graceful empty pass).
- */
 async function supersetLogin(
   ctx: SyncContext,
   creds: SupersetCreds,
@@ -136,7 +105,6 @@ async function supersetGet(
   }
 }
 
-/** Coerce a Superset list response into an array (`.result`, else a bare array). */
 function extractResult(parsed: unknown): unknown[] {
   const result = asRecord(parsed)?.["result"];
   if (Array.isArray(result)) {
@@ -145,7 +113,6 @@ function extractResult(parsed: unknown): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-/** Build the Rison `q` page query string for `/api/v1/dashboard/`. */
 function dashboardListPath(page: number): string {
   const q = encodeURIComponent(`(page:${String(page)},page_size:${String(PAGE_SIZE)})`);
   return `/api/v1/dashboard/?q=${q}`;
@@ -182,8 +149,6 @@ export function createSupersetSyncable(options: SupersetSyncableOptions): Syncab
         return syncNoopResult(cursor, t0);
       }
 
-      // Authenticate first. A login failure degrades the whole sync to a
-      // graceful empty pass (no dashboard GET is attempted).
       const auth = await supersetLogin(ctx, creds);
       let totalBytes = auth.bytes;
       if (auth.token === null) {
@@ -196,8 +161,6 @@ export function createSupersetSyncable(options: SupersetSyncableOptions): Syncab
         const outcome = await supersetGet(ctx, creds, auth.token, dashboardListPath(page));
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
-          // The FIRST page is the gating call: its http/parse error maps to
-          // the pass-cursor-empty result. A later-page error just breaks.
           if (page === 0) {
             return outcome.kind === "http_error"
               ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())

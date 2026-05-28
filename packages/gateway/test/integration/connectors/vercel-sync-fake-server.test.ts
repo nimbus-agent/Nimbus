@@ -18,15 +18,12 @@ interface RecordedReq {
 
 interface DeploymentsPage {
   deployments: unknown[];
-  /** `pagination.next` — epoch-ms timestamp for the next page's `until`. */
   next?: number | null;
 }
 
 interface FakeVercelConfig {
-  /** Keyed by the incoming `until` query value; "" is the first page. */
   pages?: Record<string, DeploymentsPage>;
   status?: number;
-  /** When true, the deployments route returns invalid JSON. */
   badJson?: boolean;
 }
 
@@ -92,7 +89,6 @@ function startHarness(config: FakeVercelConfig): Harness {
       vault,
       db,
       logger: pino({ level: "silent" }),
-      // Use a very high burst so the rate limiter never sleeps in tests.
       rateLimiter: new ProviderRateLimiter({
         vercel: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
@@ -116,8 +112,6 @@ function deployment(uid: string, over: Record<string, unknown> = {}): Record<str
   };
 }
 
-// The fake fakes api.vercel.com, but the sync handler hardcodes the SaaS base.
-// We override the global fetch to rewrite api.vercel.com → the fake server.
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -187,13 +181,11 @@ describe("vercel-sync against Bun.serve fake API", () => {
   });
 
   test("MAX_PAGES cap: a perpetual next stops after 20 pages", async () => {
-    // Every page returns a fresh `next`, so only the cap stops the walk.
     const pages: Record<string, DeploymentsPage> = {};
     h = startHarness({ pages });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("vercel.token", "t");
 
-    // Rebuild the fake to serve an ever-incrementing next from any until.
     h.fake.stop();
     let counter = 0;
     const requests: RecordedReq[] = [];
