@@ -1,197 +1,195 @@
 ---
 name: nimbus-file-map
 description: >
-  Pointer index from "what subsystem owns X" to the file path holding the canonical implementation,
-  for the Nimbus monorepo. Use this skill when the user asks "where does X live?" or "where is the
-  HITL gate / vault / migration runner / Tauri allowlist / agents directory?", or when you are about
-  to grep for an entry-point and would benefit from a curated, semantically-described starting list.
-  This is faster and more accurate than `Glob` for high-traffic files like `engine/executor.ts`,
-  `vault/index.ts`, `connectors/`, `db/`, `llm/`, `ipc/`, agent surfaces (`agents/expert.ts`,
-  `agents/impact.ts`, `agents/_lib/*`), Tauri bridge (`gateway_bridge.rs`), and UI store slices.
-  Decay note: the table is curated by hand and lags real changes. If the user asks about something
-  recent (last 24 h) or a file you cannot find in the repo, treat the entry as a hint and verify
-  with `Glob` / `Grep` before recommending changes.
+  Pointer index from "where does X live?" to file path, for the Nimbus monorepo.
+  Use when the user asks where a subsystem, HITL gate, vault key, migration, Tauri
+  allowlist, agent, connector, or RPC handler lives — or when about to grep for an
+  entry-point. Faster than `Glob` for high-traffic files. Curated by hand and lags
+  recent changes — treat entries as hints and verify with `Glob` / `Grep` before
+  code changes.
 ---
 
 # Nimbus Key File Locations
 
-This is the curated pointer index. Source-of-truth is the working tree — verify a path with `Glob` before relying on it for code changes.
+Curated pointer index. Source of truth is the working tree — verify a path with `Glob` before editing.
 
 ## Engine + Security
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/engine/executor.ts` | HITL gate — `HITL_REQUIRED` frozen set; most security-critical file |
-| `packages/gateway/src/engine/coordinator.ts` | `AgentCoordinator` — multi-agent sub-task orchestration, depth + tool-call guards; `executeAll` runs sub-tasks in parallel (Phase 5 T3 PR 1) |
-| `packages/gateway/src/engine/sub-agent.ts` | `runSubAgent` — single sub-task executor with `sub_task_results` DB lifecycle |
-| `packages/gateway/src/engine/tool-output-envelope.ts` | `wrapToolOutput` — invariant `I11` envelope at the LLM-facing boundary |
-| `packages/gateway/src/db/tool-call-log.ts` | `writeToolCallLog` + `readToolCallLog` + `MAX_ENVELOPE_BYTES` — forensic complement to `I11` (Phase 5 T6 PR 2 / V29); called at both `wrapToolOutput` wiring sites in `engine/agent.ts` + `connectors/lazy-mesh/mesh.ts` |
-| `packages/gateway/src/index/tool-call-log-v29-sql.ts` | V29 migration SQL — `tool_call_log` table + 3 indexes (`session`, `tool_id+called_at`, `called_at`) |
-| `packages/gateway/src/ipc/audit-rpc.ts` | `dispatchAuditRpc` — `audit.verify` / `audit.exportAll` / `audit.getSummary` / `audit.toolCalls` (Phase 5 T6 PR 2). `audit.toolCalls` is IPC-only — NOT LAN-callable (I5), NOT in Tauri allowlist (I7), NOT exposed via the HTTP API |
+| `packages/gateway/src/engine/coordinator.ts` | `AgentCoordinator` — multi-agent orchestration; `executeAll` runs sub-tasks in parallel |
+| `packages/gateway/src/engine/sub-agent.ts` | `runSubAgent` — single sub-task executor; `sub_task_results` DB lifecycle |
+| `packages/gateway/src/engine/tool-output-envelope.ts` | `wrapToolOutput` — invariant `I11` envelope at LLM-facing boundary |
+| `packages/gateway/src/db/tool-call-log.ts` | `writeToolCallLog` + `readToolCallLog` + `MAX_ENVELOPE_BYTES` — forensic complement to `I11` (V29) |
+| `packages/gateway/src/index/tool-call-log-v29-sql.ts` | V29 — `tool_call_log` table + 3 indexes |
+| `packages/gateway/src/ipc/audit-rpc.ts` | `dispatchAuditRpc` — `audit.verify/exportAll/getSummary/toolCalls`; CLI-only (NOT LAN, NOT Tauri) |
 
 ## Platform Abstraction Layer
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/platform/index.ts` | PAL — `createPlatformServices()` dispatch |
-| `packages/gateway/src/platform/win32.ts` | Windows platform implementation |
-| `packages/gateway/src/platform/darwin.ts` | macOS platform implementation |
-| `packages/gateway/src/platform/linux.ts` | Linux platform implementation |
+| `packages/gateway/src/platform/win32.ts` | Windows platform impl |
+| `packages/gateway/src/platform/darwin.ts` | macOS platform impl |
+| `packages/gateway/src/platform/linux.ts` | Linux platform impl |
 
-## Extension Sandbox (T2 PR 1 — invariant `I15`)
-
-| File | Purpose |
-|---|---|
-| `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` PAL interface + `createSandboxRunner()` dispatcher (I15 entry point). |
-| `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script invoked by lazy-mesh ServerSpec entries — reads manifest from env, calls `runner.spawn`. **Single I15 execution boundary**. |
-| `packages/gateway/src/platform/sandbox/linux.ts` | Linux SandboxRunner — bwrap + nimbus-sandbox-helper + per-host iptables; `decideNetworkMode` + `buildBwrapArgv` exposed for unit tests. |
-| `packages/gateway/src/platform/sandbox/darwin.ts` | macOS SandboxRunner — sandbox-exec SBPL profile generator. |
-| `packages/gateway/src/platform/sandbox/win32.ts` | Windows SandboxRunner — AppContainer + `internetClient` capability + orphan-reap helpers; FFI WIP. |
-| `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode emit, no native libseccomp; includes AUDIT_ARCH_X86_64 guard. |
-| `packages/gateway/src/platform/sandbox/orphan-reap.ts` | Windows AppContainer orphan-reap at Gateway startup. |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint for every lazy-mesh ServerSpec. |
-| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | Static `FIRST_PARTY_MANIFESTS` registry — per-connector sandbox manifests (T2 PR 1 §6). |
-| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; enforce-and-exec mode + `--check-caps` probe; post-unshare AUDIT_ARCH guard + setns/unshare-killer. |
-| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for first- and third-party connector authors. |
-| `docs/sandbox.md` | Operator-facing sandbox reference; `#platform-asymmetry` + `#windows-platform-status` anchors. |
-
-## Extensions — Dependency Resolution (T2 PR 4)
+## Extension Sandbox (invariant `I15`)
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/extensions/dependency-types.ts` | Solver type contracts: `ResolvedDep`, `ResolvedNode`, `InstallPlan`, `RegistryFetcher`, `ExtensionManifestForSolver`, `ResolveClosureOptions`, `DependencyConstraint`, `DependencyConflict` (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` narrowing helpers (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — custom backtracking DFS solver; `ancestors: Set` separate from `pinned` so diamond DAGs aren't false-positive cycles (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` — `dbRun`-backed CRUD over V31 `extension_dependency` (T2 PR 4) |
-| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter; installed ids resolve from on-disk manifest without network (T2 PR 4) |
-| `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reason types (parallel to `PreT2DisabledRegistry` + `SignatureDisabledRegistry`, T2 PR 4) |
-| `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 SQL constant: `extension_dependency` table + `idx_extension_dependency_reverse` index (T2 PR 4) |
+| `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` interface + `createSandboxRunner()` dispatcher (I15 entry) |
+| `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script — reads manifest from env, calls `runner.spawn`. **Single I15 boundary** |
+| `packages/gateway/src/platform/sandbox/linux.ts` | Linux runner — bwrap + helper + iptables; `decideNetworkMode` / `buildBwrapArgv` exposed |
+| `packages/gateway/src/platform/sandbox/darwin.ts` | macOS runner — sandbox-exec SBPL profile generator |
+| `packages/gateway/src/platform/sandbox/win32.ts` | Windows runner — AppContainer + `internetClient` capability; FFI WIP |
+| `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode; AUDIT_ARCH_X86_64 guard |
+| `packages/gateway/src/platform/sandbox/orphan-reap.ts` | Windows AppContainer orphan-reap at Gateway startup |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint |
+| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | `FIRST_PARTY_MANIFESTS` — per-connector sandbox manifests |
+| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; setns/unshare-killer |
+| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for connector authors |
+| `docs/sandbox.md` | Operator-facing reference; `#platform-asymmetry` + `#windows-platform-status` |
+
+## Extensions — Dependency Resolution
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/extensions/dependency-types.ts` | Solver contracts: `ResolvedDep`, `InstallPlan`, `RegistryFetcher`, `DependencyConflict` |
+| `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` |
+| `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — backtracking DFS solver |
+| `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` over V31 `extension_dependency` |
+| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter |
+| `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reasons |
+| `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 — `extension_dependency` table + reverse index |
 
 ## Vault + Auth
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/vault/index.ts` | `NimbusVault` interface |
-| `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth token resolution — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
-| `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth token storage/refresh helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
-| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry (PR-1) — `OAUTH_PROVIDERS` descriptor table (`google`/`microsoft`/`slack`/`notion`/`zoom`) + `getValidVaultAccessToken` single-flight lock; single source of truth for `vaultKey` values, authorize-URL builder, and generic token exchange + refresh. D11 allow-list entry in `check-nimbus-invariants.ts`. |
-| `packages/gateway/src/auth/zoom-access-token.ts` | Zoom OAuth resolver (PR-2) — `getValidZoomAccessToken(vault)` delegates to `OAUTH_PROVIDERS.zoom` via the registry; constructs the `"zoom.oauth"` vault key in its `parseErrors` defaults; rotation-safe (Zoom invalidates the whole chain on refresh-token reuse). D11 allow-list entry in `check-nimbus-invariants.ts`. |
+| `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
+| `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
+| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom) + `getValidVaultAccessToken` single-flight |
+| `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
 
 ## Connectors + MCP Mesh
 
+Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper) + `mcp-connectors/<x>/src/server.ts` (read-only MCP tools `<x>_list/get/search`). For auth, pagination, deferred write tools — read the file.
+
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/connectors/` | MCP connector mesh (`lazy-mesh/` — Phase 3 bundle spawns AWS/Azure/GCP/IaC/observability MCPs when vault keys exist) |
-| `packages/gateway/src/connectors/health.ts` | Connector health state machine — `transitionHealth()`, `ConnectorHealthSnapshot` |
-| `packages/gateway/src/connectors/connector-vault.ts` | Per-service OAuth vault key helpers + typed connector-secret reader — `perServiceOAuthVaultKey()`, `writePerServiceOAuthKey()`, `migrateToPerServiceOAuthKeys()`, `readConnectorSecret()` |
-| `packages/gateway/src/connectors/connector-secrets-manifest.ts` | `CONNECTOR_VAULT_SECRET_KEYS` — per-connector PAT/API-key vault manifest; `clearConnectorVaultSecretKeys()` |
+| `packages/gateway/src/connectors/` | MCP connector mesh (`lazy-mesh/` bundle spawns AWS/Azure/GCP/IaC/observability MCPs when vault keys exist) |
+| `packages/gateway/src/connectors/health.ts` | Health state machine — `transitionHealth()`, `ConnectorHealthSnapshot` |
+| `packages/gateway/src/connectors/connector-vault.ts` | Per-service OAuth helpers — `perServiceOAuthVaultKey()`, `readConnectorSecret()` |
+| `packages/gateway/src/connectors/connector-secrets-manifest.ts` | `CONNECTOR_VAULT_SECRET_KEYS` — per-connector PAT/API-key manifest |
 | `packages/gateway/src/connectors/remove-intent.ts` | Connector removal — cascade vault + index cleanup via `executeRemoveIntent()` |
-| `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI / AsyncAPI spec indexer (Phase 5 Wave A PR 1); `getLastSyncStats()` exposes skipped-spec counters |
-| `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault connector (Phase 5 Wave A PR 2); emits `obsidian_note` items + `backlinks` graph edges |
-| `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP server — reads + HITL-gated `obsidian_append_to_daily_note` |
-| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulnerability connector (Phase 5 T2/Wave-A, 2026-05-21); walks `/v1/orgs → /v1/org/<id>/projects → aggregated-issues`; emits `snyk:vulnerability` items via `mapSnykAggregatedIssueToItem` |
-| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk aggregated-issue → `IndexedItem` mapper; surfaces `{ severity, cve_id, affected_package, fix_available, fix_version, project_url, ... }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP server — read-only tools `snyk_list` / `snyk_get` / `snyk_search`. `hitlRequired: []` — `snyk.issue.ignore` is a deferred Phase 8 follow-up |
-| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI connector (Phase 5 Wave B, 2026-05-21); walks `/v0.1/me/apps → /v0.1/apps/<slug>/builds`; emits `bitrise:app` + `bitrise:build` items via `mapBitriseAppToItem` / `mapBitriseBuildToItem` |
-| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` mappers; surfaces `{ status, status_code, workflow_id, app_slug, branch, commit_hash, commit_message, triggered_by, pull_request_id, triggered_at, started_at, finished_at, duration_ms }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP server — read-only tools `bitrise_list` / `bitrise_get` / `bitrise_search`. `hitlRequired: []` — trigger / abort writes are a deferred follow-up |
-| `packages/gateway/src/connectors/sonarqube-sync.ts` | SonarQube + SonarCloud code-quality connector (Phase 5 Tier 2, 2026-05-22); walks `GET /api/components/search?qualifiers=TRK → /api/issues/search` (paged 100/page, 20 pages/project cap); emits `sonarqube:code_issue` items via `mapSonarIssueToItem`. Default base `https://sonarcloud.io`; self-hosted via `sonarqube.url` vault key |
-| `packages/gateway/src/connectors/sonarqube-issue-mapping.ts` | Pure SonarQube issue → `IndexedItem` mapper; surfaces `{ severity, type (BUG/VULNERABILITY/CODE_SMELL), status, rule, component, project_key, file_path, line, tags, effort, debt, author, message, creation_date, update_date, canonical_url, organization }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/sonarqube/src/server.ts` | SonarQube MCP server — read-only tools `sonarqube_list` / `sonarqube_get` / `sonarqube_search`. `hitlRequired: []` — `sonarqube.hotspot.review` + `sonarqube.issue.transition` are deferred Phase 8 follow-ups |
-| `packages/gateway/src/connectors/semgrep-sync.ts` | Semgrep AppSec Platform SAST connector (Phase 5 Tier 2, 2026-05-22); walks `GET /api/v1/deployments → /api/v1/deployments/<slug>/findings` (paged 100/page, 20 pages/cycle cap); emits `semgrep:finding` items via `mapSemgrepFindingToItem`. Deployment slug auto-discovered when `semgrep.deployment_slug` is unset |
-| `packages/gateway/src/connectors/semgrep-finding-mapping.ts` | Pure Semgrep finding → `IndexedItem` mapper; surfaces `{ severity, confidence, rule_name, rule_message, categories, file_path, line, end_line, column, repository, branch, triage_state, status, created_at, relevant_since, line_of_code_url }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/semgrep/src/server.ts` | Semgrep MCP server — read-only tools `semgrep_list` / `semgrep_get` / `semgrep_search`. `hitlRequired: []` — `semgrep.finding.triage` (ignore/suppress/accept-risk) is a deferred Phase 8 follow-up |
-| `packages/gateway/src/connectors/wiz-sync.ts` | Wiz cloud-security (CSPM) connector (Phase 5 Tier 2, 2026-05-24); OAuth `client_credentials` auth at `auth.app.wiz.io`, then walks the `issues(first, after, filterBy)` GraphQL query at `api.app.wiz.io` (paged 100/page, 20 pages/cycle cap); emits `wiz:issue` items via `mapWizIssueToItem`. Regional override via `wiz.api_url` / `wiz.auth_url` vault keys |
-| `packages/gateway/src/connectors/wiz-issue-mapping.ts` | Pure Wiz GraphQL issue → `IndexedItem` mapper; surfaces `{ severity, status, type, source_rule_id, source_rule_name, entity_id, entity_name, entity_type, project_ids, project_names, description, remediation, created_at, updated_at, resolved_at, canonical_url }` in metadata; `issueUrl` derives the user-facing `app.wiz.io` host. Unit-tested independently of the GraphQL path |
-| `packages/mcp-connectors/wiz/src/server.ts` | Wiz MCP server — read-only tools `wiz_list` / `wiz_get` / `wiz_search`. `hitlRequired: []` — `wiz.issue.resolve` + `wiz.issue.assign` are deferred Phase 8 follow-ups |
-| `packages/gateway/src/connectors/launchdarkly-sync.ts` | LaunchDarkly feature-flag connector (Phase 5 Tier 1, 2026-05-24); API-token auth (raw `Authorization` header), walks `GET /api/v2/projects → /api/v2/flags/{projectKey}` (offset-paged 100/page, 20 pages/project cap); emits `launchdarkly:feature_flag` items via `mapLaunchDarklyFlagToItem`. Regional override via `launchdarkly.base_url`; single-project via `launchdarkly.project_key` |
-| `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts` | Pure LaunchDarkly flag → `IndexedItem` mapper; surfaces `{ key, name, kind, project_key, tags, temporary, archived, maintainer, maintainer_id, description, variation_count, environments, env_states, created_at, updated_at, canonical_url }` in metadata; `flagUrl` builds the project flag page URL. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/launchdarkly/src/server.ts` | LaunchDarkly MCP server — read-only tools `launchdarkly_list` / `launchdarkly_get` / `launchdarkly_search`. `hitlRequired: []` — `launchdarkly.flag.toggle` is a deferred Phase 8 follow-up |
-| `packages/gateway/src/connectors/flagsmith-sync.ts` | Flagsmith feature-flag connector (Phase 5 Tier 1, 2026-05-24); admin-API-token auth (`Authorization: Token <token>`), walks `GET /api/v1/projects/ → /api/v1/projects/{id}/features/` (DRF-paged 100/page, 20 pages/project cap) + one `/projects/{id}/tags/` call per project to resolve tag ids to labels; emits `flagsmith:feature_flag` items via `mapFlagsmithFeatureToItem`. Definitions-only (per-environment state + segments deferred). Regional / self-hosted host root via `flagsmith.api_base` |
-| `packages/gateway/src/connectors/flagsmith-feature-mapping.ts` | Pure Flagsmith feature → `IndexedItem` mapper; surfaces `{ name, type, default_enabled, initial_value, description, tags, is_archived, owner_count, project_id, project_name, created_at, canonical_url }` in metadata; `appBaseFromApiBase` derives the `app.` dashboard host from the `api.` host and `featureUrl` builds the project page URL. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/flagsmith/src/server.ts` | Flagsmith MCP server — read-only tools `flagsmith_list` / `flagsmith_get` / `flagsmith_search`. `hitlRequired: []` — `flagsmith.flag.toggle` is a deferred Phase 8 follow-up |
-| `packages/gateway/src/connectors/argocd-sync.ts` | ArgoCD GitOps connector (Phase 5 Tier 1, 2026-05-25); self-hosted Bearer-JWT auth (`Authorization: Bearer <token>`), single `GET /api/v1/applications` walk (no pagination — ArgoCD returns the full list); emits `argocd:application` items via `mapArgocdApplicationToItem`. Required vault keys `argocd.url` + `argocd.token` (no SaaS default); the sandbox network host is extended from `argocd.url` at spawn time (Grafana pattern). Applications-only — AppProjects + sync history deferred |
-| `packages/gateway/src/connectors/argocd-application-mapping.ts` | Pure ArgoCD Application → `IndexedItem` mapper; descends nested `metadata`/`spec`/`status` defensively, surfaces `{ name, namespace, project, sync_status, health_status, repo_url, path, target_revision, dest_server, dest_namespace, revision, created_at, canonical_url }` in metadata; `applicationUrl` builds `<base>/applications/<name>` (UI + API share the host). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/argocd/src/server.ts` | ArgoCD MCP server — read-only tools `argocd_list` / `argocd_get` / `argocd_search`. `hitlRequired: []` — `argocd.app.sync` / `argocd.app.delete` writes are deferred to Phase 6 |
-| `packages/gateway/src/connectors/flux-sync.ts` | Flux (GitOps Toolkit) connector (Phase 5 Tier 1, 2026-05-25); self-hosted SA-Bearer auth (`Authorization: Bearer <token>`), walks 9 CRD kinds via `GET /apis/<group>/<version>/<plural>` on the Kubernetes API (non-ok per kind is non-fatal — log + continue, tolerates version drift / uninstalled groups); emits a single `flux:resource` item type via `mapFluxResourceToItem`. Required vault keys `flux.api_url` (K8s API base) + `flux.token` (read-only ServiceAccount JWT); the sandbox network host is extended from `flux.api_url` at spawn time (Grafana pattern). TLS note: self-signed K8s certs are rejected by Bun fetch in v1 — needs a CA-trusted endpoint |
-| `packages/gateway/src/connectors/flux-resource-mapping.ts` | Pure Flux CR → `IndexedItem` mapper; single `flux:resource` type with `kind` discriminator, `external_id = <kind>/<namespace>/<name>` (`_` for cluster-scoped); descends nested `metadata`/`spec`/`status` defensively, surfaces `{ kind, name, namespace, ready_status, ready_reason, ready_message, suspend, url, path, last_applied_revision, last_attempted_revision, created_at, canonical_url }` in metadata from the `status.conditions` Ready entry; no web UI — `canonicalUrl` is a non-clickable `<kind>/<ns>/<name>` locator and the row `url` is null. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/flux/src/server.ts` | Flux MCP server — read-only tools `flux_list` / `flux_get` / `flux_search` over the 9-kind CRD walk table (kind enum). `hitlRequired: []` — `flux reconcile` / `flux suspend` writes are deferred to Phase 6 |
-| `packages/gateway/src/connectors/dbt-sync.ts` | dbt Cloud connector (Phase 5 Tier 1, 2026-05-25); SaaS-token auth (`Authorization: Token <token>`), walks `GET /api/v2/accounts/ → /api/v2/accounts/{id}/jobs/` (offset-paged 100/page, 20 pages/account cap); reads dbt's `.data` list envelope; the `/accounts/` http/parse error maps to the pass-cursor-empty result while a per-account jobs error is non-fatal (warn + continue); emits `dbt:job` items via `mapDbtJobToItem`. Single-account via `dbt.account_id` (skips `/accounts/`); regional / custom-access-URL host via `dbt.api_base` (default `https://cloud.getdbt.com`). Jobs + run status only — model lineage (Discovery GraphQL API) deferred |
-| `packages/gateway/src/connectors/dbt-job-mapping.ts` | Pure dbt Cloud job → `IndexedItem` mapper; single `dbt:job` type, `external_id = <accountId>:<jobId>`; surfaces `{ job_id, name, account_id, project_id, environment_id, dbt_version, state (1→active/2→deleted), schedule_cron, triggers, created_at, updated_at, most_recent_run_status, most_recent_run_finished_at, canonical_url }` in metadata; `jobUrl` builds the dbt Cloud job-UI deep link with an account-page fallback when project_id is absent. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/dbt/src/server.ts` | dbt Cloud MCP server — read-only tools `dbt_list` / `dbt_get` / `dbt_search` over accounts → jobs (Administrative API v2). `hitlRequired: []` — `dbt.job.trigger` is a deferred Phase 6 follow-up; model lineage (Discovery GraphQL API) is a separate deferred follow-up |
-| `packages/gateway/src/connectors/metabase-sync.ts` | Metabase BI connector (Phase 5 Tier 1, 2026-05-25); self-hosted API-key auth via the `x-api-key` header (NOT `Authorization`), one `GET /api/collection` call (non-fatal — resolves collection ids → names) + one `GET /api/dashboard` walk (no pagination — Metabase returns the full list; reads bare array, else `.data`); the `/api/dashboard` http/parse error maps to the pass-cursor-empty result; emits `metabase:dashboard` items via `mapMetabaseDashboardToItem`. Required vault keys `metabase.url` + `metabase.api_key` (no SaaS default); the sandbox network host is extended from `metabase.url` at spawn time (Grafana pattern). Dashboards-only — saved questions/cards + collections-as-items deferred |
-| `packages/gateway/src/connectors/metabase-dashboard-mapping.ts` | Pure Metabase dashboard → `IndexedItem` mapper; single `metabase:dashboard` type, `external_id = String(id)`; resolves `collection_name` from `ctx.collectionNames[String(collection_id)]` (collection id may be a number or the string `"root"`); surfaces `{ dashboard_id, name, description, collection_id, collection_name, creator_id, archived, card_count, created_at, updated_at, canonical_url }` in metadata; `dashboardUrl` builds `<base>/dashboard/<id>` (UI + API share the host). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/metabase/src/server.ts` | Metabase MCP server — read-only tools `metabase_list` / `metabase_get` / `metabase_search` over `/api/dashboard`. `hitlRequired: []` — saved questions (cards) + write tools are a deferred follow-up |
-| `packages/gateway/src/connectors/superset-sync.ts` | Apache Superset BI connector (Phase 5 Tier 1, 2026-05-25); self-hosted login-then-Bearer auth — `POST /api/v1/security/login` (`{ username, password, provider: "db", refresh: true }`) mints a JWT, then walks `GET /api/v1/dashboard/?q=(page:N,page_size:100)` (Rison-paged `result` envelope, `MAX_PAGES=20`) with `Authorization: Bearer`; a login failure or a first-page http/parse error maps to the pass-cursor-empty result (later-page non-ok just breaks); emits `superset:dashboard` items via `mapSupersetDashboardToItem`. Required vault keys `superset.url` + `superset.username` + `superset.password` (no SaaS default; the password is never logged); the sandbox network host is extended from `superset.url` at spawn time (Grafana pattern). Dashboards-only — charts/datasets/saved queries deferred |
-| `packages/gateway/src/connectors/superset-dashboard-mapping.ts` | Pure Apache Superset dashboard → `IndexedItem` mapper; single `superset:dashboard` type, `external_id = String(id)`; title falls back to `Dashboard <id>` when `dashboard_title` is missing/empty (the row is never nulled for a missing title); surfaces `{ dashboard_id, title, slug, published, status, owner_count, changed_by, changed_at, canonical_url }` in metadata (`changed_by` flattens the nested `{ first_name, last_name }`; `changed_at` parses `changed_on_utc`); `dashboardUrl` builds `<base>/superset/dashboard/<id>/` (UI + API share the host). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/superset/src/server.ts` | Apache Superset MCP server — read-only tools `superset_list` / `superset_get` / `superset_search` over `/api/v1/dashboard/`; logs in once per process (username/password → JWT, cached) and calls with a Bearer token. `hitlRequired: []` — charts/datasets/saved queries + write tools are a deferred follow-up |
-| `packages/gateway/src/connectors/databricks-sync.ts` | Databricks data-orchestration connector (Phase 5 Tier 1, 2026-05-25); per-workspace Bearer-PAT auth (`Authorization: Bearer <token>`), best-effort one-page `GET /api/2.1/jobs/runs/list` enrichment (non-fatal — builds a latest-run-per-job map) then a token-paginated `GET /api/2.1/jobs/list` walk (`page_token`, `MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `databricks:data_pipeline` items via `mapDatabricksJobToItem`. Required vault keys `databricks.host` + `databricks.token` (no SaaS default); the per-workspace host is extended into the sandbox network list from `databricks.host` at spawn time (Grafana pattern). Jobs + latest run status only — clusters / SQL warehouses / notebooks deferred |
-| `packages/gateway/src/connectors/databricks-job-mapping.ts` | Pure Databricks Jobs API 2.1 job → `IndexedItem` mapper; single `databricks:data_pipeline` type, `external_id = job_<jobId>`; descends nested `settings.name` + `settings.schedule.quartz_cron_expression` defensively, surfaces `{ job_id, name, creator_user_name, schedule_cron, format, created_at, latest_run_id, latest_run_status, latest_run_started_at, latest_run_duration_ms, latest_run_cluster_id, latest_run_triggered_by, canonical_url }` in metadata; Databricks timestamps are epoch milliseconds passed through verbatim (no `Date.parse`); latest-run enrichment via `ctx.runsByJobId`; title falls back to `Job <id>`; `jobUrl` builds `<host>/jobs/<jobId>`. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/databricks/src/server.ts` | Databricks MCP server — read-only tools `databricks_list` / `databricks_get` / `databricks_search` over the Jobs API 2.1 (`/api/2.1/jobs/list` + `/jobs/get`). Bearer-PAT auth via `DATABRICKS_HOST` + `DATABRICKS_TOKEN`. `hitlRequired: []` — clusters / SQL warehouses / notebooks reads + `job.trigger` / `job.cancel` / `cluster.restart` (HITL) writes are deferred Phase 6 follow-ups |
-| `packages/gateway/src/connectors/mlflow-sync.ts` | MLflow model-registry connector (Phase 5 Tier 1, 2026-05-25); tracking-server Bearer-token auth (`Authorization: Bearer <token>`), single token-paginated `GET /api/2.0/mlflow/registered-models/search` walk (`next_page_token`, `MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `mlflow:ml_model` items via `mapMlflowModelToItem`. Required vault keys `mlflow.host` + `mlflow.token` (no SaaS default); the tracking-server host is extended into the sandbox network list from `mlflow.host` at spawn time (Grafana pattern). Registered models only — experiments / runs / metrics / params / artifacts deferred |
-| `packages/gateway/src/connectors/mlflow-model-mapping.ts` | Pure MLflow `RegisteredModel` → `IndexedItem` mapper; single `mlflow:ml_model` type, `external_id = model_<name>`; selects the latest version (prefers the `Production`-stage entry, else the highest numeric `version`), surfaces `{ name, description, version_count, latest_version, latest_stage, latest_status, latest_run_id, created_at, updated_at, tags (key=value[]), canonical_url }` in metadata; MLflow timestamps are epoch milliseconds passed through verbatim (no `Date.parse`); `modelUrl` builds the `<host>/#/models/<name>` UI fragment route with the name URL-encoded. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/mlflow/src/server.ts` | MLflow MCP server — read-only tools `mlflow_list` / `mlflow_get` / `mlflow_search` over the Model Registry API (`/api/2.0/mlflow/registered-models/{search,get}`). Bearer auth via `MLFLOW_HOST` + `MLFLOW_TOKEN`. `hitlRequired: []` — experiments / runs / metrics / params / artifacts reads + `ml.model.promote` / `ml.model.transition-stage` (HITL) writes are deferred Phase 6 follow-ups |
-| `packages/gateway/src/connectors/vercel-sync.ts` | Vercel deployment connector (Phase 5 Tier 1, 2026-05-25); Bearer-token auth (`Authorization: Bearer <token>`), walks `GET /v6/deployments?limit=100` paginating via `pagination.next` (an epoch-ms `until` value, `MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `vercel:deployment` items via `mapVercelDeploymentToItem`. Required vault key `vercel.token` + optional `vercel.team_id` (appended as `&teamId`); the API host is the fixed SaaS host `api.vercel.com` (static sandbox network — no host override). Deployments-only — projects / domains / env vars / aliases / logs deferred |
-| `packages/gateway/src/connectors/vercel-deployment-mapping.ts` | Pure Vercel `/v6/deployments` element → `IndexedItem` mapper; single `vercel:deployment` type (the `type` column value `deployment` is shared with the CI/CD annotation pipeline but never collides — that pipeline keys rows under the CI-provider `service`), `external_id` = the verbatim `uid`; title `<name> — <state>` (state prefers `readyState` over `state`) with a `Deployment <uid>` fallback; bodyPreview = the commit message; `canonical_url`/`url` prefer `inspectorUrl`, else `https://<vercel.app host>`, else null; surfaces `{ uid, name, state, target, url, inspector_url, commit_sha, commit_message, commit_ref, pr_id, creator, created_at, canonical_url }` in metadata; `created` is epoch ms passed through verbatim (no `Date.parse`); nested `creator`/`meta` access is defensive via `asRecord`. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/vercel/src/server.ts` | Vercel MCP server — read-only tools `vercel_list` / `vercel_get` / `vercel_search` over the REST API (`/v6/deployments` + `/v13/deployments/{idOrUrl}`). Bearer auth via `VERCEL_TOKEN` + optional `VERCEL_TEAM_ID`. `hitlRequired: []` — redeploy / promote / cancel writes are deferred follow-ups; projects / domains / env vars / aliases / logs reads also deferred |
-| `packages/gateway/src/connectors/netlify-sync.ts` | Netlify site connector (Phase 5 Tier 1, 2026-05-25); Bearer-PAT auth (`Authorization: Bearer <token>`), page-paginated `GET /api/v1/sites?per_page=100&page=N` walk over a bare JSON array (`MAX_PAGES=20`, stop on a short/empty page); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `netlify:site` items via `mapNetlifySiteToItem`. Required vault key `netlify.token`; the API host is the fixed SaaS host `api.netlify.com` (static sandbox network — no host override). Sites + embedded published-deploy status only — per-deploy history / forms / functions / env vars / DNS deferred |
-| `packages/gateway/src/connectors/netlify-site-mapping.ts` | Pure Netlify `/api/v1/sites` element → `IndexedItem` mapper; single `netlify:site` type, `external_id` = the verbatim site `id`; title = site `name` with a `Site <id>` fallback; bodyPreview = the `published_deploy.title`; `canonical_url`/`url` prefer `admin_url`, else `ssl_url`, else `url`, else null; surfaces `{ site_id, name, url, admin_url, ssl_url, repo_url, repo_branch, deploy_state, deploy_id, deploy_branch, commit_ref, commit_url, deploy_url, account_name, created_at, updated_at, canonical_url }` in metadata; Netlify timestamps are ISO-8601 strings parsed to epoch-ms via `parseIsoMs` (NOT passed through verbatim); nested `build_settings`/`published_deploy` access is defensive via `asRecord`. Unit-tested independently of the REST path |
-| `packages/mcp-connectors/netlify/src/server.ts` | Netlify MCP server — read-only tools `netlify_list` / `netlify_get` / `netlify_search` over the REST API (`/api/v1/sites` + `/api/v1/sites/{siteId}`). Bearer-PAT auth via `NETLIFY_TOKEN`. `hitlRequired: []` — per-deploy history / forms / functions / env vars / DNS reads + deploy/site write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/stripe-sync.ts` | Stripe billing connector (Phase 5 Tier 1, 2026-05-25); Bearer secret-key auth (`Authorization: Bearer <sk_live_/sk_test_ key>`, never logged), cursor-paginated `GET /v1/invoices?limit=100` walk reading the `{ data, has_more }` list envelope, advancing `starting_after=<last invoice id>` until `has_more` is false (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `stripe:invoice` items via `mapStripeInvoiceToItem`. Required vault key `stripe.api_key`; the API host is the fixed SaaS host `api.stripe.com` (static sandbox network — no host override). Invoices-only — payments / customers / disputes / subscription events deferred |
-| `packages/gateway/src/connectors/stripe-invoice-mapping.ts` | Pure Stripe `/v1/invoices` element → `IndexedItem` mapper; single `stripe:invoice` type, `external_id` = the verbatim invoice `id`; title `Invoice <number\|\|id> — <status>` (drops the `— <status>` suffix when status is absent); bodyPreview = `description`, else `<customer name\|\|email> — <amount>`; `canonical_url`/`url` prefer `hosted_invoice_url`, else `invoice_pdf`, else null; surfaces `{ invoice_id, number, customer_id, customer_name, customer_email, status, amount_due, amount_paid, currency, subscription_id, hosted_invoice_url, invoice_pdf, created_at, due_date, period_start, period_end, canonical_url }` in metadata; Stripe timestamps are epoch SECONDS converted to epoch-ms via `secondsToMs` (×1000; `0`/missing → null, NOT `Date.parse`); amounts are integer minor units (cents). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/stripe/src/server.ts` | Stripe MCP server — read-only tools `stripe_list` / `stripe_get` / `stripe_search` over the REST API (`/v1/invoices` + `/v1/invoices/{id}`). Bearer secret-key auth via `STRIPE_API_KEY`. `hitlRequired: []` — payments / customers / disputes / subscription events reads + `stripe.refund` (HITL) write are deferred follow-ups |
-| `packages/gateway/src/connectors/mercury-sync.ts` | Mercury business-banking connector (Phase 5 Tier 1, 2026-05-25); Bearer API-token auth (`Authorization: Bearer <token>`, never logged), a single `GET /api/v1/accounts` reading the `{ accounts: [...] }` object envelope (no pagination — Mercury returns the full account list in one call); an http error maps to the pass-cursor-empty result while a parse error resets the cursor; emits `mercury:account` items via `mapMercuryAccountToItem`. Required vault key `mercury.token`; the API host is the fixed SaaS host `api.mercury.com` (static sandbox network — no host override). Accounts-only — transactions / bills / statements deferred |
-| `packages/gateway/src/connectors/mercury-account-mapping.ts` | Pure Mercury `/api/v1/accounts` element → `IndexedItem` mapper; single `mercury:account` type, `external_id` = the verbatim account `id`; title = account `name` with an `Account <id>` fallback; bodyPreview = `<kind\|\|type> — <currentBalance> USD` when a balance is present, else the kind/type label, else the title; `canonical_url`/`url` are always null (Mercury accounts have no per-account public URL); surfaces `{ account_id, name, status, type, kind, account_number_last4, routing_number, available_balance, current_balance, legal_business_name, created_at, canonical_url }` in metadata; the full account number is NEVER stored — only the last 4 digits via `last4`; balances are USD major units (dollars, not cents) passed through verbatim; `createdAt` is an ISO-8601 string parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/mercury/src/server.ts` | Mercury MCP server — read-only tools `mercury_list` / `mercury_get` / `mercury_search` over the REST API (`/api/v1/accounts` + `/api/v1/account/{id}`, note the singular `account` in the get-by-id path). Bearer API-token auth via `MERCURY_TOKEN`. `hitlRequired: []` — transactions / bills / statements reads + wire / ACH (HITL) transfer writes are deferred follow-ups |
-| `packages/gateway/src/connectors/readwise-sync.ts` | Readwise reading-app connector (Phase 5 Tier 1, 2026-05-25); DRF token auth (`Authorization: Token <token>`, NOT Bearer; never logged), page-number-paginated `GET /api/v2/highlights/?page_size=1000&page=N` walk reading the DRF `{ count, next, previous, results }` envelope, incrementing `page` while `results` is non-empty AND `next` is non-null (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result while later-page errors just break; emits `readwise:highlight` items via `mapReadwiseHighlightToItem`. Required vault key `readwise.token`; the API host is the fixed SaaS host `readwise.io` (static sandbox network — no host override). Highlights-only — books / documents / daily-review + the Reader v3 API deferred |
-| `packages/gateway/src/connectors/readwise-highlight-mapping.ts` | Pure Readwise `/api/v2/highlights/` element → `IndexedItem` mapper; single `readwise:highlight` type, `external_id` = `String(<numeric highlight id>)` (the row is skipped when `id` is missing/non-numeric); title = the first 80 chars of the trimmed highlight `text` (`…` when truncated) with a `Highlight <id>` fallback; bodyPreview = the user's `note`, else the highlight `text`; `canonical_url`/`url` = the source article `url` for web highlights (null for book highlights — no per-highlight public URL); surfaces `{ highlight_id, text, note, book_id, location, location_type, color, tags, source_url, highlighted_at, updated_at, canonical_url }` in metadata (`tags` reduced to the tag-NAME array via `tagNames`, tolerating non-object entries; the highlight `text` is stored in full); `highlighted_at` / `updated` are ISO-8601 strings parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds), `modifiedAt` = updated ?? highlighted_at ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/readwise/src/server.ts` | Readwise MCP server — read-only tools `readwise_list` / `readwise_get` / `readwise_search` over the REST API (`/api/v2/highlights/?page_size=1000` + `/api/v2/highlights/{id}/`). DRF token auth via `READWISE_TOKEN` (`Authorization: Token <token>`, NOT Bearer). `hitlRequired: []` — books / documents / daily-review reads + the Reader v3 API are deferred follow-ups |
-| `packages/gateway/src/connectors/raindrop-sync.ts` | Raindrop.io bookmarking connector (Phase 5 Tier 1, 2026-05-25); Bearer token auth (`Authorization: Bearer <token>`, never logged), page-number-paginated `GET /rest/v1/raindrops/0?perpage=50&page=N` walk (collection id `0` = the special "all raindrops" collection) reading the `{ result, items, count }` envelope, incrementing the 0-based `page` while `items` is non-empty AND a full page of `perpage=50` (a short page signals the last page; `MAX_PAGES=20`); a first-page http error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `raindrop:bookmark` items via `mapRaindropBookmarkToItem`. Required vault key `raindrop.token`; the API host is the fixed SaaS host `api.raindrop.io` (static sandbox network — no host override). Bookmarks-only — collections-as-items / highlights / per-collection filtering deferred |
-| `packages/gateway/src/connectors/raindrop-bookmark-mapping.ts` | Pure Raindrop `/rest/v1/raindrops/0` element → `IndexedItem` mapper; single `raindrop:bookmark` type, `external_id` = `String(<numeric _id>)` (the row is skipped when `_id` is missing/non-numeric); title = the bookmark `title`, else the `link`, else `Bookmark <id>`; bodyPreview = `excerpt`, else `note`, else `domain`, else the title; `canonical_url`/`url` = the bookmarked `link` (null when missing/empty); surfaces `{ bookmark_id, title, link, excerpt, note, domain, type, tags, collection_id, created_at, updated_at, canonical_url }` in metadata (`tags` is the tag string array stored verbatim via `tagStrings`, tolerating non-string entries; the `cover` field is deliberately NOT stored); `created` / `lastUpdate` are ISO-8601 strings parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds), `modifiedAt` = lastUpdate ?? created ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/raindrop/src/server.ts` | Raindrop MCP server — read-only tools `raindrop_list` / `raindrop_get` / `raindrop_search` over the REST API (`/rest/v1/raindrops/0?perpage=50` + `/rest/v1/raindrop/{id}`, note the SINGULAR `raindrop` in the get-by-id path). Bearer token auth via `RAINDROP_TOKEN`. `hitlRequired: []` — collections-as-items / highlights / per-collection filtering reads + bookmark write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/intercom-sync.ts` | Intercom support connector (Phase 5 Tier 1, 2026-05-25); Bearer access-token auth (`Authorization: Bearer <token>`, never logged) plus the `Intercom-Version: 2.11` + `Accept: application/json` request headers, cursor-paginated `GET /conversations?per_page=150` walk reading the `{ type: "conversation.list", conversations, pages, total_count }` envelope, following `pages.next.starting_after` while it is a non-empty string (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `intercom:conversation` items via `mapIntercomConversationToItem`. Required vault key `intercom.token`; the API host is the fixed SaaS host `api.intercom.io` (the US host — EU/AU regional hosts deferred; static sandbox network — no host override). Conversations-only — contacts / companies / tickets / admins-as-items deferred |
-| `packages/gateway/src/connectors/intercom-conversation-mapping.ts` | Pure Intercom `/conversations` element → `IndexedItem` mapper; single `intercom:conversation` type, `external_id` = `String(<numeric conversation id>)` (the row is skipped when the id is missing/non-numeric — accepts a numeric string or number, mirroring Raindrop's `_id` skip logic); title = `source.subject` (trimmed) else `Conversation <id>`; bodyPreview = the HTML-stripped `source.body` (a simple `<[^>]+>` tag-strip + whitespace collapse, no dependency) else the state label else the title; `canonical_url`/`url` = null (the Intercom inbox deep link needs the workspace app id, absent from the conversation payload — deferred; the Mercury null-canonical pattern); surfaces `{ conversation_id, title, state, priority, open, read, source_type, source_author_name, source_author_email, source_subject, contact_ids, assignee_id, team_assignee_id, tags, created_at, updated_at, canonical_url }` in metadata (`contact_ids` from `contacts.contacts[].id`; `assignee_id` = `admin_assignee_id` else nested `assignee.id`; `tags` is the tag-NAME array from `tags.tags[].name`, tolerating non-object entries); `created_at` / `updated_at` are epoch SECONDS converted to epoch-ms via the Stripe `secondsToMs` helper (×1000; re-used, NOT redefined, NOT `parseIsoMs`, NOT verbatim; 0/missing → null), `modifiedAt` = updated_at ?? created_at ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/intercom/src/server.ts` | Intercom MCP server — read-only tools `intercom_list` / `intercom_get` / `intercom_search` over the REST API (`/conversations?per_page=150` + `/conversations/{id}`, note the PLURAL `conversations` in the get-by-id path). Bearer access-token auth via `INTERCOM_TOKEN` plus the `Intercom-Version: 2.11` + `Accept: application/json` request headers. `hitlRequired: []` — contacts / companies / tickets / admins-as-items reads + reply / close / assign write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/zendesk-sync.ts` | Zendesk Support connector (Phase 5 Tier 1, 2026-05-25); PER-TENANT (NOT a fixed SaaS host) — reads `zendesk.url` (`https://<subdomain>.zendesk.com`) + `zendesk.email` + `zendesk.api_token` and no-ops unless all three are non-empty (the ArgoCD/Metabase multi-key `loadCreds` shape). HTTP **Basic** auth where the username is `<email>/token` and the password is the API token (`Authorization: Basic base64(<email>/token:<api_token>)`, inlined like bitbucket-sync / jenkins-sync; never logged), cursor-paginated `GET /api/v2/tickets.json?page[size]=100` walk reading the `{ tickets, meta: { has_more, after_cursor }, links }` envelope, following `meta.after_cursor` while `meta.has_more` is true AND the cursor is non-empty (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `zendesk:ticket` items via `mapZendeskTicketToItem`; single-pass `nimbus-zendesk1:` cursor. The per-tenant host is extended into the sandbox network list from `zendesk.url` at spawn time (Grafana/ArgoCD pattern). Tickets-only — comments / users / organizations / Help Center articles deferred |
-| `packages/gateway/src/connectors/zendesk-ticket-mapping.ts` | Pure Zendesk `/api/v2/tickets.json` element → `IndexedItem` mapper; single `zendesk:ticket` type, `external_id` = `String(<numeric ticket id>)` (the row is skipped when the id is missing/non-numeric — accepts a numeric string or number, mirroring Raindrop's `_id` skip + Intercom's numeric-string accept); takes the per-tenant base URL via `ctx.baseUrl` (the ArgoCD mapper pattern) so it can build the clickable agent-UI deep link `<base>/agent/tickets/<id>` (trailing slash stripped; null only when the base is empty); title = the `subject` (trimmed) else `Ticket <id>`; bodyPreview = the plain-text `description` (Zendesk's description is already the first comment) else the status label else the title; surfaces `{ ticket_id, subject, status, priority, type, requester_id, assignee_id, group_id, organization_id, tags, via_channel, created_at, updated_at, canonical_url }` in metadata (`tags` is the string array verbatim via `tagStrings`, tolerating non-strings; `via_channel` is the nested `via.channel` via defensive `asRecord`); `created_at` / `updated_at` are ISO-8601 strings parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds), `modifiedAt` = updated_at ?? created_at ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/zendesk/src/server.ts` | Zendesk MCP server — read-only tools `zendesk_list` / `zendesk_get` / `zendesk_search` over the REST API (`/api/v2/tickets.json?page[size]=100` + `/api/v2/tickets/{id}.json`). PER-TENANT base via `ZENDESK_URL`; HTTP Basic auth via `ZENDESK_EMAIL` + `ZENDESK_API_TOKEN` (username `<email>/token`, via the shared `encodeBasicAuthHeader`; never logged). `hitlRequired: []` — comments / users / organizations / Help Center articles reads + reply / solve / assign write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/lever-sync.ts` | Lever recruiting/ATS connector (Phase 5 Tier 1, 2026-05-25); HTTP Basic auth where the API key is the USERNAME and the password is EMPTY (`Authorization: Basic base64(<api_key>:)` — the trailing colon is the empty password; inlined via `Buffer.from` since the gateway cannot import the mcp-shared `encodeBasicAuthHeader`, the bitbucket-sync pattern; never logged), offset-cursor-paginated `GET /v1/postings?limit=100` walk reading the `{ data, hasNext, next }` envelope, following the `next` offset cursor (passed as `&offset=<next>`) while `hasNext` is true AND `next` is a non-empty string (`MAX_PAGES=20`); a first-page http error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `lever:posting` items via `mapLeverPostingToItem`. Required vault key `lever.api_key`; the API host is the fixed SaaS host `api.lever.co` (static sandbox network — no host override). Job postings only — opportunities / candidates deliberately deferred (candidate PII) |
-| `packages/gateway/src/connectors/lever-posting-mapping.ts` | Pure Lever `/v1/postings` element → `IndexedItem` mapper; single `lever:posting` type, `external_id` = `String(<posting id>)` (the row is skipped when `id` is missing/empty — Lever ids are UUID STRINGS, so any non-empty string id is accepted, NOT required numeric, unlike Raindrop's `_id`); title = the trimmed posting `text`, else `Posting <id>`; bodyPreview = a category summary joining the present team/department/location/commitment/level (e.g. "Engineering — Product — Remote — Full-time — Senior"), else the `state`, else the title; `canonical_url`/`url` = `hostedUrl`, else `urls.show`, else `applyUrl`, else null (defensive nested access via `asRecord`); surfaces `{ posting_id, text, state, team, department, location, commitment, level, tags, hosted_url, apply_url, req_code, created_at, updated_at, canonical_url }` in metadata (the `categories.*` sub-fields are flattened to top-level team/department/location/commitment/level; `tags` is the tag string array stored verbatim via `tagStrings`, tolerating non-strings; `req_code` = `reqCode` else first of `requisitionCodes`); `createdAt` / `updatedAt` are epoch MILLISECONDS passed through VERBATIM via the local `epochMs` helper (NO `parseIsoMs`, NO ×1000 — like Vercel; `0`/missing → null), `modifiedAt` = updatedAt ?? createdAt ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/lever/src/server.ts` | Lever MCP server — read-only tools `lever_list` / `lever_get` / `lever_search` over the Data API (`/v1/postings?limit=100` + `/v1/postings/{id}`). HTTP Basic auth via `LEVER_API_KEY` (the API key as the username with an empty password, via the shared `encodeBasicAuthHeader` with an empty token half; never logged). `hitlRequired: []` — opportunities / candidates reads + posting write tools are deferred follow-ups (candidate PII out of scope for v1) |
-| `packages/gateway/src/connectors/greenhouse-sync.ts` | Greenhouse recruiting/ATS connector (Phase 5 Tier 1, 2026-05-25); HTTP Basic auth where the Harvest API key is the USERNAME and the password is EMPTY (`Authorization: Basic base64(<api_key>:)` — the trailing colon is the empty password; inlined via `Buffer.from` since the gateway cannot import the mcp-shared `encodeBasicAuthHeader`, the bitbucket-sync / lever-sync pattern; never logged), page-number-paginated `GET /v1/jobs?per_page=100&page=N` walk over a **bare JSON array** (NOT an envelope — the Netlify pattern), incrementing `page` from 1 while the returned array is a full page of 100 (a short/empty page is the last page; `MAX_PAGES=20`; Greenhouse also sends an RFC-5988 `Link` header with rel="next" but the walk uses the full-page-length heuristic and does not parse it); a first-page http/parse error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `greenhouse:job` items via `mapGreenhouseJobToItem`. Required vault key `greenhouse.api_key`; the API host is the fixed SaaS host `harvest.greenhouse.io` (static sandbox network — no host override). Job openings only — candidates / applications deliberately deferred (candidate PII) |
-| `packages/gateway/src/connectors/greenhouse-job-mapping.ts` | Pure Greenhouse Harvest `/v1/jobs` element → `IndexedItem` mapper; single `greenhouse:job` type, `external_id` = `String(<job id>)` (the row is skipped when `id` is missing/non-numeric — Greenhouse ids are NUMBERS, so a numeric id is required, mirroring Raindrop's `_id`, NOT the Lever UUID-string accept); title = the trimmed job `name`, else `Job <id>`; bodyPreview = a summary joining the department names + office names/locations (e.g. "Engineering — San Francisco, CA"), else the `status`, else the title; `canonical_url`/`url` = null (the Harvest API exposes no per-job public URL without a board token — deferred; the Mercury null-canonical pattern); surfaces `{ job_id, name, status, requisition_id, confidential, department_names, office_names, office_locations, opened_at, closed_at, created_at, updated_at, canonical_url }` in metadata (`department_names` = `departments[].name` via `namedEntryNames`; `office_names` = `offices[].name`; `office_locations` = `offices[].location.name` via `officeLocationNames`, defensive nested access via `asRecord`); `created_at` / `updated_at` (and `opened_at` / `closed_at`) are ISO-8601 STRINGS parsed to epoch-ms via a LOCAL `parseIsoMs` helper (NOT verbatim, NOT epoch seconds), `modifiedAt` = updated_at ?? created_at ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/greenhouse/src/server.ts` | Greenhouse MCP server — read-only tools `greenhouse_list` / `greenhouse_get` / `greenhouse_search` over the Harvest API (`/v1/jobs?per_page=100` + `/v1/jobs/{id}`); the list endpoint returns a bare JSON array so `greenhouse_search` guards `Array.isArray(root)` before filtering. HTTP Basic auth via `GREENHOUSE_API_KEY` (the API key as the username with an empty password, via the shared `encodeBasicAuthHeader` with an empty token half; never logged). `hitlRequired: []` — candidates / applications reads + job write tools are deferred follow-ups (candidate PII out of scope for v1) |
-| `packages/gateway/src/connectors/pipedrive-sync.ts` | Pipedrive CRM connector (Phase 5 Tier 1, 2026-05-25); auth is via the API token IN THE QUERY STRING (`?api_token=<token>` — there is NO Authorization header), so the request URL itself carries the secret and the token is kept out of every error/log path: the URL-builder is documented as never-loggable, error diagnostics use the HTTP status + a token-free response-body slice only, and the failure-path warn logs just the status + the token-free `start` offset (NEVER the URL, NEVER the body). Offset-cursor-paginated `GET /v1/deals?limit=100&start=N` walk reading the `{ success, data, additional_data: { pagination: { more_items_in_collection, next_start } } }` envelope (a null `data` is treated as empty), advancing `start=<next_start>` while `more_items_in_collection` is true AND `next_start` is a number (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `pipedrive:deal` items via `mapPipedriveDealToItem`. Required vault key `pipedrive.token`; the API host is the fixed SaaS host `api.pipedrive.com` (static sandbox network — no host override). Deals-only — persons / organizations / activities / notes deferred |
-| `packages/gateway/src/connectors/pipedrive-deal-mapping.ts` | Pure Pipedrive `/v1/deals` element → `IndexedItem` mapper; single `pipedrive:deal` type, `external_id` = `String(<numeric deal id>)` (the row is skipped when `id` is missing/non-numeric — Pipedrive ids are numbers, mirroring Raindrop's `_id`); title = the deal `title`, else `Deal <id>`; bodyPreview = `<value> <currency> — <status>` when a value is present, else the status, else org_name/person_name, else the title; `canonical_url`/`url` = null (a deal deep link needs the company-specific `<company>.pipedrive.com` domain, absent from the token-only `api.pipedrive.com` base — deferred; the Mercury null-canonical pattern); surfaces `{ deal_id, title, value, currency, status, stage_id, pipeline_id, person_id, person_name, org_id, org_name, owner_name, probability, label, expected_close_date, won_time, close_time, add_time, update_time, canonical_url }` in metadata (`person_id`/`org_id` may themselves be `{ value, name }` objects, extracted defensively via `asRecord`; the denormalized person/org/owner names fall back to the nested `.name`); `add_time` / `update_time` (and `won_time` / `close_time`) are Pipedrive's non-ISO `"YYYY-MM-DD HH:MM:SS"` UTC strings parsed to epoch-ms via a local `pipedriveTimeMs` helper (rewrites the space to `T` + appends `Z` before `Date.parse`, NOT verbatim, NOT epoch seconds), `modifiedAt` = update_time ?? add_time ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES`). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/pipedrive/src/server.ts` | Pipedrive MCP server — read-only tools `pipedrive_list` / `pipedrive_get` / `pipedrive_search` over the REST API (`/v1/deals?limit=100` + `/v1/deals/{id}`). Auth is via the `?api_token=<token>` query parameter (`PIPEDRIVE_TOKEN`; NO Authorization header) — the request URL carries the secret, so the server never logs a URL and builds errors from the HTTP status + a resource label + a token-free body slice only. `hitlRequired: []` — persons / organizations / activities / notes reads + deal write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/stackoverflow-sync.ts` | Stack Overflow for Teams Q&A connector (Phase 5 Tier 1, 2026-05-25); Bearer-PAT auth (`Authorization: Bearer <token>` + `Accept: application/json`, never logged), reads TWO required vault keys `stackoverflow.token` + `stackoverflow.team` and no-ops unless BOTH are non-empty (the team slug is mandatory because it is URL-encoded into the request path via `encodeURIComponent`, not a host or query param); page-number-paginated `GET /v3/teams/<team>/questions?page=N&pagesize=100&sort=creation&order=desc` walk reading the v3 `{ items, totalCount, pageSize, page, totalPages, sort, order }` envelope, 1-based `page` continuing while `page < totalPages` AND `items` is non-empty (`MAX_PAGES=20`); a first-page http/parse error maps to the pass-cursor-empty result (http keeps the prior cursor, parse resets) while later-page errors just break; emits `stackoverflow:question` items via `mapStackOverflowQuestionToItem`; single-pass `nimbus-stackoverflow1:` cursor. The API host is the fixed SaaS host `api.stackoverflowteams.com` (static sandbox network — no host override). Questions-only — answers / articles / tags-as-items / users-as-items deferred |
-| `packages/gateway/src/connectors/stackoverflow-question-mapping.ts` | Pure Stack Overflow for Teams `/v3/teams/<team>/questions` element → `IndexedItem` mapper; single `stackoverflow:question` type, `external_id` = `String(<numeric question id>)` (the row is skipped when `id` is missing/non-numeric — SO ids are numbers, mirroring Raindrop's `_id`); title = the trimmed `title`, else `Question <id>`; bodyPreview = the HTML-stripped `body` (a simple `<[^>]+>` tag-strip + whitespace collapse, no dependency), else `bodyMarkdown`, else a comma-joined tag summary, else the title; `canonical_url`/`url` = the per-question `webUrl` (the v3 API provides a real per-question URL; null when missing/empty); surfaces `{ question_id, title, tags, score, view_count, answer_count, is_answered, owner_id, owner_name, creation_date, last_activity_date, last_edit_date, canonical_url }` in metadata (`tags` reduced to the tag-NAME array via `tagNames`, which tolerates v3 tags as either `{ name }` objects OR plain strings, mirroring Readwise's tolerance; owner_id/owner_name from the nested `owner` object via defensive `asRecord`); `creationDate` / `lastActivityDate` / `lastEditDate` are ISO-8601 strings parsed to epoch-ms via a LOCAL `parseIsoMs` (NOT verbatim, NOT epoch seconds), `modifiedAt` = lastActivityDate ?? lastEditDate ?? creationDate ?? syncedAt; stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — a documented promotion candidate since Q&A bodies are genuinely prose). Unit-tested independently of the REST path |
-| `packages/mcp-connectors/stackoverflow/src/server.ts` | Stack Overflow for Teams MCP server — read-only tools `stackoverflow_list` / `stackoverflow_get` / `stackoverflow_search` over the v3 REST API (`/v3/teams/<team>/questions?pagesize=100&sort=creation&order=desc` + `/v3/teams/<team>/questions/{id}`). Bearer-PAT auth via `STACKOVERFLOW_TOKEN` plus the `Accept: application/json` header; the team slug arrives separately as `STACKOVERFLOW_TEAM` and is URL-encoded into the request path. `hitlRequired: []` — answers / articles / tags-as-items / users-as-items reads + write tools are deferred follow-ups |
-| `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings connector (Phase 5 Tier 1 PR-2, 2026-05-28); 3-legged OAuth Bearer auth via `getValidZoomAccessToken`, walks `GET /v2/users/me/meetings?type=scheduled` (next-page-token, `MAX_PAGES=20`, `PAGE_SIZE=100`); emits `zoom:meeting` items via `mapZoomMeetingToItem`; no-ops unless `zoom.oauth` vault key present; fixed SaaS hosts `api.zoom.us` in sandbox. Recordings + transcripts deferred to PR-3. |
-| `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom `/v2/users/me/meetings?type=scheduled` element → `IndexedItem` mapper; single `zoom:meeting` type, `external_id = String(id)` (numeric, row skipped when missing/non-numeric — Raindrop pattern); surfaces `{ meeting_id, uuid, host_id, topic, type, start_time, duration_min, timezone, agenda, join_url, created_at, canonical_url }` in metadata; `join_url` is the `canonical_url`; ISO-8601 `start_time` / `created_at` parsed to epoch-ms via local `parseIsoMs`; `modifiedAt` = created_at ?? syncedAt (NOT start_time — future meeting dates corrupt recency queries); sparse-structured, NOT prose-heavy. Unit-tested independently of the REST path. |
-| `packages/mcp-connectors/zoom/src/server.ts` | Zoom MCP server — read-only tools `zoom_list` / `zoom_get` / `zoom_search` over `/v2/users/me/meetings?type=scheduled` + `/v2/meetings/{id}`. Bearer OAuth auth via `ZOOM_TOKEN`. `hitlRequired: []` — recordings / transcripts deferred to PR-3; write tools deferred to Phase 6. |
-| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards the sync scheduler against consuming backoff on offline events |
+| `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI/AsyncAPI spec indexer; `getLastSyncStats()` exposes skipped counters |
+| `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault — emits `obsidian_note` + `backlinks` edges |
+| `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP — reads + HITL-gated `obsidian_append_to_daily_note` |
+| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulns — emits `snyk:vulnerability` |
+| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk issue → `IndexedItem` |
+| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP — read-only `snyk_list/get/search` |
+| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI — emits `bitrise:app` + `bitrise:build` |
+| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` |
+| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP — read-only `bitrise_list/get/search` |
+| `packages/gateway/src/connectors/sonarqube-sync.ts` | SonarQube + SonarCloud — emits `sonarqube:code_issue` |
+| `packages/gateway/src/connectors/sonarqube-issue-mapping.ts` | Pure SonarQube issue → `IndexedItem` |
+| `packages/mcp-connectors/sonarqube/src/server.ts` | SonarQube MCP — read-only `sonarqube_list/get/search` |
+| `packages/gateway/src/connectors/semgrep-sync.ts` | Semgrep SAST — emits `semgrep:finding` |
+| `packages/gateway/src/connectors/semgrep-finding-mapping.ts` | Pure Semgrep finding → `IndexedItem` |
+| `packages/mcp-connectors/semgrep/src/server.ts` | Semgrep MCP — read-only `semgrep_list/get/search` |
+| `packages/gateway/src/connectors/wiz-sync.ts` | Wiz CSPM (GraphQL) — emits `wiz:issue` |
+| `packages/gateway/src/connectors/wiz-issue-mapping.ts` | Pure Wiz issue → `IndexedItem` |
+| `packages/mcp-connectors/wiz/src/server.ts` | Wiz MCP — read-only `wiz_list/get/search` |
+| `packages/gateway/src/connectors/launchdarkly-sync.ts` | LaunchDarkly flags — emits `launchdarkly:feature_flag` |
+| `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts` | Pure LaunchDarkly flag → `IndexedItem` |
+| `packages/mcp-connectors/launchdarkly/src/server.ts` | LaunchDarkly MCP — read-only `launchdarkly_list/get/search` |
+| `packages/gateway/src/connectors/flagsmith-sync.ts` | Flagsmith flags — emits `flagsmith:feature_flag` |
+| `packages/gateway/src/connectors/flagsmith-feature-mapping.ts` | Pure Flagsmith feature → `IndexedItem` |
+| `packages/mcp-connectors/flagsmith/src/server.ts` | Flagsmith MCP — read-only `flagsmith_list/get/search` |
+| `packages/gateway/src/connectors/argocd-sync.ts` | ArgoCD GitOps — emits `argocd:application` |
+| `packages/gateway/src/connectors/argocd-application-mapping.ts` | Pure ArgoCD Application → `IndexedItem` |
+| `packages/mcp-connectors/argocd/src/server.ts` | ArgoCD MCP — read-only `argocd_list/get/search` |
+| `packages/gateway/src/connectors/flux-sync.ts` | Flux GitOps Toolkit (9 CRD kinds) — emits `flux:resource` |
+| `packages/gateway/src/connectors/flux-resource-mapping.ts` | Pure Flux CR → `IndexedItem`; `kind` discriminator |
+| `packages/mcp-connectors/flux/src/server.ts` | Flux MCP — read-only `flux_list/get/search` |
+| `packages/gateway/src/connectors/dbt-sync.ts` | dbt Cloud — emits `dbt:job` |
+| `packages/gateway/src/connectors/dbt-job-mapping.ts` | Pure dbt Cloud job → `IndexedItem` |
+| `packages/mcp-connectors/dbt/src/server.ts` | dbt Cloud MCP — read-only `dbt_list/get/search` |
+| `packages/gateway/src/connectors/metabase-sync.ts` | Metabase BI — emits `metabase:dashboard` |
+| `packages/gateway/src/connectors/metabase-dashboard-mapping.ts` | Pure Metabase dashboard → `IndexedItem` |
+| `packages/mcp-connectors/metabase/src/server.ts` | Metabase MCP — read-only `metabase_list/get/search` |
+| `packages/gateway/src/connectors/superset-sync.ts` | Apache Superset BI — emits `superset:dashboard` |
+| `packages/gateway/src/connectors/superset-dashboard-mapping.ts` | Pure Superset dashboard → `IndexedItem` |
+| `packages/mcp-connectors/superset/src/server.ts` | Superset MCP — read-only `superset_list/get/search`; JWT cached per process |
+| `packages/gateway/src/connectors/databricks-sync.ts` | Databricks orchestration — emits `databricks:data_pipeline` |
+| `packages/gateway/src/connectors/databricks-job-mapping.ts` | Pure Databricks job → `IndexedItem` |
+| `packages/mcp-connectors/databricks/src/server.ts` | Databricks MCP — read-only `databricks_list/get/search` |
+| `packages/gateway/src/connectors/mlflow-sync.ts` | MLflow model registry — emits `mlflow:ml_model` |
+| `packages/gateway/src/connectors/mlflow-model-mapping.ts` | Pure MLflow `RegisteredModel` → `IndexedItem` |
+| `packages/mcp-connectors/mlflow/src/server.ts` | MLflow MCP — read-only `mlflow_list/get/search` |
+| `packages/gateway/src/connectors/vercel-sync.ts` | Vercel deployments — emits `vercel:deployment` |
+| `packages/gateway/src/connectors/vercel-deployment-mapping.ts` | Pure Vercel deployment → `IndexedItem` |
+| `packages/mcp-connectors/vercel/src/server.ts` | Vercel MCP — read-only `vercel_list/get/search` |
+| `packages/gateway/src/connectors/netlify-sync.ts` | Netlify sites — emits `netlify:site` |
+| `packages/gateway/src/connectors/netlify-site-mapping.ts` | Pure Netlify site → `IndexedItem` |
+| `packages/mcp-connectors/netlify/src/server.ts` | Netlify MCP — read-only `netlify_list/get/search` |
+| `packages/gateway/src/connectors/stripe-sync.ts` | Stripe billing — emits `stripe:invoice` |
+| `packages/gateway/src/connectors/stripe-invoice-mapping.ts` | Pure Stripe invoice → `IndexedItem` |
+| `packages/mcp-connectors/stripe/src/server.ts` | Stripe MCP — read-only `stripe_list/get/search` |
+| `packages/gateway/src/connectors/mercury-sync.ts` | Mercury banking — emits `mercury:account` |
+| `packages/gateway/src/connectors/mercury-account-mapping.ts` | Pure Mercury account → `IndexedItem`; stores `last4` only |
+| `packages/mcp-connectors/mercury/src/server.ts` | Mercury MCP — read-only `mercury_list/get/search` |
+| `packages/gateway/src/connectors/readwise-sync.ts` | Readwise — emits `readwise:highlight` |
+| `packages/gateway/src/connectors/readwise-highlight-mapping.ts` | Pure Readwise highlight → `IndexedItem` |
+| `packages/mcp-connectors/readwise/src/server.ts` | Readwise MCP — read-only `readwise_list/get/search` |
+| `packages/gateway/src/connectors/raindrop-sync.ts` | Raindrop.io bookmarks — emits `raindrop:bookmark` |
+| `packages/gateway/src/connectors/raindrop-bookmark-mapping.ts` | Pure Raindrop bookmark → `IndexedItem` |
+| `packages/mcp-connectors/raindrop/src/server.ts` | Raindrop MCP — read-only `raindrop_list/get/search` |
+| `packages/gateway/src/connectors/intercom-sync.ts` | Intercom support — emits `intercom:conversation` |
+| `packages/gateway/src/connectors/intercom-conversation-mapping.ts` | Pure Intercom conversation → `IndexedItem` |
+| `packages/mcp-connectors/intercom/src/server.ts` | Intercom MCP — read-only `intercom_list/get/search` |
+| `packages/gateway/src/connectors/zendesk-sync.ts` | Zendesk Support (per-tenant) — emits `zendesk:ticket` |
+| `packages/gateway/src/connectors/zendesk-ticket-mapping.ts` | Pure Zendesk ticket → `IndexedItem` |
+| `packages/mcp-connectors/zendesk/src/server.ts` | Zendesk MCP — read-only `zendesk_list/get/search` |
+| `packages/gateway/src/connectors/lever-sync.ts` | Lever recruiting/ATS — emits `lever:posting` (no candidate PII) |
+| `packages/gateway/src/connectors/lever-posting-mapping.ts` | Pure Lever posting → `IndexedItem` |
+| `packages/mcp-connectors/lever/src/server.ts` | Lever MCP — read-only `lever_list/get/search` |
+| `packages/gateway/src/connectors/greenhouse-sync.ts` | Greenhouse ATS (Harvest API) — emits `greenhouse:job` (no candidate PII) |
+| `packages/gateway/src/connectors/greenhouse-job-mapping.ts` | Pure Greenhouse job → `IndexedItem` |
+| `packages/mcp-connectors/greenhouse/src/server.ts` | Greenhouse MCP — read-only `greenhouse_list/get/search` |
+| `packages/gateway/src/connectors/pipedrive-sync.ts` | Pipedrive CRM — emits `pipedrive:deal`; token in query string (never logged) |
+| `packages/gateway/src/connectors/pipedrive-deal-mapping.ts` | Pure Pipedrive deal → `IndexedItem` |
+| `packages/mcp-connectors/pipedrive/src/server.ts` | Pipedrive MCP — read-only `pipedrive_list/get/search` |
+| `packages/gateway/src/connectors/stackoverflow-sync.ts` | Stack Overflow for Teams Q&A — emits `stackoverflow:question` |
+| `packages/gateway/src/connectors/stackoverflow-question-mapping.ts` | Pure SO question → `IndexedItem` |
+| `packages/mcp-connectors/stackoverflow/src/server.ts` | SO Teams MCP — read-only `stackoverflow_list/get/search` |
+| `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings (OAuth) — emits `zoom:meeting` |
+| `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
+| `packages/mcp-connectors/zoom/src/server.ts` | Zoom MCP — read-only `zoom_list/get/search` |
+| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/index/migrations/runner.ts` | Migration runner; orchestrates `INDEXED_SCHEMA_STEPS`; pre-migration backup; rollback on throw |
-| `packages/gateway/src/index/*-v<N>-sql.ts` | Migration SQL constants (e.g., `vec-items-1536-v30-sql.ts`, `obsidian-notes-v26-sql.ts`, `api-endpoint-v25-sql.ts`, `audit-session-v24-sql.ts`, `lan-peers-v19-sql.ts`) |
-| `packages/gateway/src/index/vec-items-1536-v30-sql.ts` | V30 migration SQL — `vec_items_1536` virtual table + dim-aware delete triggers (T6 PR 3). |
-| `packages/gateway/src/embedding/routing.ts` | `PROSE_HEAVY_TYPES` set + `EMBEDDING_DIM_*` constants + `routingKey` / `isProseHeavy` helpers (T6 PR 3). |
-| `packages/gateway/src/embedding/routing-pipeline.ts` | `RoutingEmbeddingPipeline` — wraps two `SqliteEmbeddingPipeline`s and dispatches by `(service, type)` (T6 PR 3). |
-| `packages/gateway/src/embedding/create-routing-runtime.ts` | `tryCreateRoutingEmbeddingRuntime` — hybrid-mode factory; falls back to MiniLM-only when `openai.api_key` missing (T6 PR 3). |
-| `packages/gateway/src/search/dual-search.ts` | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables, merge by distance (T6 PR 3). |
-| `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel` long-running handler (T6 PR 3). CLI-only — NOT LAN-callable (I5), NOT in Tauri allowlist (I7). |
+| `packages/gateway/src/index/migrations/runner.ts` | Migration runner; `INDEXED_SCHEMA_STEPS`; pre-migration backup; rollback on throw |
+| `packages/gateway/src/index/*-v<N>-sql.ts` | Migration SQL constants (e.g., `vec-items-1536-v30-sql.ts`, `audit-session-v24-sql.ts`) |
+| `packages/gateway/src/index/vec-items-1536-v30-sql.ts` | V30 — `vec_items_1536` virtual table + dim-aware delete triggers |
+| `packages/gateway/src/embedding/routing.ts` | `PROSE_HEAVY_TYPES` + `EMBEDDING_DIM_*` + `isProseHeavy` helper |
+| `packages/gateway/src/embedding/routing-pipeline.ts` | `RoutingEmbeddingPipeline` — dispatches by `(service, type)` |
+| `packages/gateway/src/embedding/create-routing-runtime.ts` | `tryCreateRoutingEmbeddingRuntime` — hybrid factory; MiniLM fallback |
+| `packages/gateway/src/search/dual-search.ts` | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables |
+| `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel`; CLI-only |
 | `packages/gateway/src/automation/graph-predicate.ts` | Graph predicate types/parser/evaluator |
-| `packages/gateway/src/automation/watcher-engine.ts` | Watcher evaluation loop; applies `graph_predicate_json` post-filter |
+| `packages/gateway/src/automation/watcher-engine.ts` | Watcher loop; applies `graph_predicate_json` post-filter |
 | `packages/gateway/src/db/verify.ts` | `nimbus db verify` — non-destructive integrity checks |
 | `packages/gateway/src/db/repair.ts` | `nimbus db repair` — targeted recovery, audit-logged |
 | `packages/gateway/src/db/snapshot.ts` | Manual + scheduled snapshots |
 | `packages/gateway/src/db/metrics.ts` | `IndexMetrics` — counts, embedding coverage, latency percentiles |
-| `packages/gateway/src/db/latency-ring-buffer.ts` | In-memory ring buffer; async batch flush to `query_latency_log` |
-| `packages/gateway/src/db/write.ts` | Central DB write wrapper — catches `SQLITE_FULL`, re-throws `DiskFullError` |
+| `packages/gateway/src/db/latency-ring-buffer.ts` | In-memory ring buffer → `query_latency_log` |
+| `packages/gateway/src/db/write.ts` | Central DB write wrapper — catches `SQLITE_FULL`, throws `DiskFullError` |
 
 ## LLM + Voice
 
@@ -210,10 +208,10 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents over PR/review/incident; emits `agents.expert.briefReady` |
-| `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius; emits `agents.impact.briefReady` |
-| `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking helpers |
-| `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector, missing entity, missing relation) |
+| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents; emits `agents.expert.briefReady` |
+| `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius |
+| `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking |
+| `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector/entity/relation) |
 | `packages/gateway/src/agents/_lib/render.ts` | Deterministic Markdown fallback renderer |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | LLM synthesis layer with deterministic fallback |
 
@@ -221,52 +219,52 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/metrics/dora.ts` | Four pure DORA calculators: `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr`. Returns `DoraMetricsResult` envelope. |
-| `packages/gateway/src/metrics/dora-config.ts` | `ServiceConfig` type (with `DoraServiceConfig` back-compat alias) + URN parser + provider→service-column map. |
-| `packages/gateway/src/preflight/preflight.ts` | Pure pre-deploy check: three counts (active P1 incidents, failing CI on target_ref, open PR conflicts). Returns `DeployPreflightResult` envelope. |
-| `packages/gateway/src/ipc/metrics-rpc.ts` | `dispatchMetricsRpc` — `metrics.dora` JSON-RPC handler. |
-| `packages/gateway/src/ipc/preflight-rpc.ts` | `dispatchPreflightRpc` — `deploy.preflight` JSON-RPC handler. |
-| `packages/cli/src/commands/metrics.ts` | `nimbus metrics dora --service <id> [--since 30d] [--json]`. |
-| `packages/cli/src/commands/deploy.ts` | `nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn\|block\|off] [--json]`. |
-| `packages/github-actions/preflight-query/` | First-party GitHub Action that wraps `GET /v1/preflight/deploy`. |
-| `packages/gateway/src/deployment/annotate.ts` | Pure post-deploy annotation calculator: validates payload, upserts `item` (`type='deployment'`) + the V28 `deployment_items` shadow row, writes one audit entry (Phase 5 T4 PR 3b). |
-| `packages/gateway/src/deployment/external-id.ts` | Stable `external_id` derivation for annotated deploys (provider + sha + env). |
-| `packages/gateway/src/deployment/types.ts` | `DeploymentAnnotateInput` / `DeploymentAnnotateResult` types shared by RPC + HTTP write route. |
-| `packages/gateway/src/ipc/deployment-rpc.ts` | `dispatchDeploymentRpc` — internal `deployment.annotate` JSON-RPC handler (NOT in renderer allowlist). |
-| `packages/gateway/src/ipc/http-write-routes.ts` | `WRITE_ROUTE_ALLOWLIST` + `dispatchWriteRoute` — invariant `I13` compile-time allowlist for HTTP write surface (Phase 5 T4 PR 3b). |
-| `packages/gateway/src/ipc/http-auth.ts` | `requireBearer` + `tokenFingerprint` — bearer-token auth for HTTP write routes; reads `http_api.deployment_token` from vault. |
-| `packages/gateway/src/ipc/http-rate-limit.ts` | `HttpWriteRateLimiter` — per-token sliding-window rate limit (60 req/min) for the HTTP write surface. |
-| `packages/cli/src/commands/deploy-annotate.ts` | `nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env> --status <s> --started-at <ms>`. |
-| `packages/github-actions/annotate-action/` | First-party GitHub Action that wraps `POST /v1/deployments`. |
+| `packages/gateway/src/metrics/dora.ts` | Four pure DORA calculators: `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr` |
+| `packages/gateway/src/metrics/dora-config.ts` | `ServiceConfig` type + URN parser + provider→service-column map |
+| `packages/gateway/src/preflight/preflight.ts` | Pure pre-deploy check — three counts (P1 incidents, failing CI, PR conflicts) |
+| `packages/gateway/src/ipc/metrics-rpc.ts` | `dispatchMetricsRpc` — `metrics.dora` |
+| `packages/gateway/src/ipc/preflight-rpc.ts` | `dispatchPreflightRpc` — `deploy.preflight` |
+| `packages/cli/src/commands/metrics.ts` | `nimbus metrics dora --service <id>` |
+| `packages/cli/src/commands/deploy.ts` | `nimbus deploy preflight --service <id> --target-ref <ref>` |
+| `packages/github-actions/preflight-query/` | First-party Action — wraps `GET /v1/preflight/deploy` |
+| `packages/gateway/src/deployment/annotate.ts` | Pure post-deploy annotation — upserts `item` + V28 `deployment_items` shadow + audit |
+| `packages/gateway/src/deployment/external-id.ts` | Stable `external_id` derivation (provider + sha + env) |
+| `packages/gateway/src/deployment/types.ts` | `DeploymentAnnotateInput` / `DeploymentAnnotateResult` |
+| `packages/gateway/src/ipc/deployment-rpc.ts` | `dispatchDeploymentRpc` — internal `deployment.annotate` (NOT in renderer allowlist) |
+| `packages/gateway/src/ipc/http-write-routes.ts` | `WRITE_ROUTE_ALLOWLIST` + `dispatchWriteRoute` — invariant `I13` |
+| `packages/gateway/src/ipc/http-auth.ts` | `requireBearer` + `tokenFingerprint` — reads `http_api.deployment_token` |
+| `packages/gateway/src/ipc/http-rate-limit.ts` | `HttpWriteRateLimiter` — per-token sliding window (60 req/min) |
+| `packages/cli/src/commands/deploy-annotate.ts` | `nimbus deploy annotate --service --sha --target-ref --env --status` |
+| `packages/github-actions/annotate-action/` | First-party Action — wraps `POST /v1/deployments` |
 
 ## IPC
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/ipc/` | JSON-RPC 2.0 IPC server (one file per namespace under `handlers/`) |
-| `packages/gateway/src/ipc/agents-rpc.ts` | `agents.expert` + `agents.impact` handlers; rejects array payloads |
+| `packages/gateway/src/ipc/` | JSON-RPC 2.0 server (one file per namespace under `handlers/`) |
+| `packages/gateway/src/ipc/agents-rpc.ts` | `agents.expert` + `agents.impact`; rejects array payloads |
 | `packages/gateway/src/ipc/llm-rpc.ts` | `dispatchLlmRpc` — `llm.listModels` / `llm.getStatus` |
-| `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` handlers |
-| `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus`/`checkNow`/`applyUpdate`/`rollback` |
-| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost` only, `SQLITE_OPEN_READONLY`) |
-| `packages/gateway/src/ipc/http-routes.ts` | `READ_ONLY_HTTP_ROUTES` — canonical route list; single source of truth for the OpenAPI drift CI gate (Phase 5 T4 PR 1) |
-| `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON parse for `GET /v1/openapi.json` (Phase 5 T4 PR 1) |
-| `packages/gateway/openapi/v1.yaml` | Hand-authored OpenAPI 3.1 schema for the read-only HTTP API; serves `/v1/metrics/dora` (T4 PR 2), `/v1/preflight/deploy` (T4 PR 3a), and `POST /v1/deployments` (T4 PR 3b). |
+| `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` |
+| `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus/checkNow/applyUpdate/rollback` |
+| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost`, `SQLITE_OPEN_READONLY`) |
+| `packages/gateway/src/ipc/http-routes.ts` | `READ_ONLY_HTTP_ROUTES` — source of truth for OpenAPI drift gate |
+| `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON for `GET /v1/openapi.json` |
+| `packages/gateway/openapi/v1.yaml` | OpenAPI 3.1 schema; serves `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |
 | `packages/gateway/src/ipc/metrics-server.ts` | Prometheus endpoint (`localhost`, off by default) |
 | `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` |
-| `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 pairing code, 5-min expiry |
-| `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding-window failure tracking |
+| `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 code, 5-min expiry |
+| `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding window |
 | `packages/gateway/src/ipc/lan-rpc.ts` | `LanError`, `checkLanMethodAllowed` — invariant `I5` |
-| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP server; length-framed NaCl-box RPC |
+| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed NaCl-box RPC |
 
 ## Updater
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/updater/updater.ts` | `Updater` state machine — manifest, semver compare, download, Ed25519 verify, install |
+| `packages/gateway/src/updater/updater.ts` | `Updater` state machine — manifest, semver, download, Ed25519 verify, install |
 | `packages/gateway/src/updater/manifest-fetcher.ts` | `fetchUpdateManifest` — typed fetch with `AbortController` timeout |
 | `packages/gateway/src/updater/signature-verifier.ts` | `verifyBinarySignature` — Ed25519 over SHA-256 |
-| `packages/gateway/src/updater/public-key.ts` | Embedded Ed25519 public key; `NIMBUS_DEV_UPDATER_PUBLIC_KEY` override for tests |
+| `packages/gateway/src/updater/public-key.ts` | Embedded Ed25519 pubkey; `NIMBUS_DEV_UPDATER_PUBLIC_KEY` override for tests |
 
 ## Telemetry + Config + Perf
 
@@ -291,10 +289,10 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/cli/src/commands/expert.ts` | `nimbus expert` — calls `agents.expert`, streams Markdown |
 | `packages/cli/src/commands/impact.ts` | `nimbus impact` — calls `agents.impact`; `--json` / `--service` filter |
 | `packages/cli/src/commands/bench.ts` | `nimbus bench` — `Bun.spawn` wrapper around `bench-runner.ts` |
-| `packages/cli/src/commands/index-cmd.ts` | `nimbus index reembed` — IPC-driven reembed CLI with progress streaming (T6 PR 3). |
+| `packages/cli/src/commands/index-cmd.ts` | `nimbus index reembed` — IPC-driven with progress streaming |
 | `packages/cli/src/commands/tui.tsx` | `nimbus tui` entry — gateway check, fallback detection, Ink |
 | `packages/cli/src/tui/App.tsx` | TUI root — state machine + Option-1 layout |
-| `packages/cli/src/tui/state.ts` | Top-level reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
+| `packages/cli/src/tui/state.ts` | Reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
 
 ## SDK / Client / VS Code
 
@@ -302,26 +300,26 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
 | `packages/client/src/index.ts` | `@nimbus-dev/client` — `NimbusClient`, `MockClient` |
-| `packages/vscode-extension/` | `nimbus-vscode` — Marketplace + Open VSX (current tag `vscode-v0.1.2`) |
+| `packages/vscode-extension/` | `nimbus-vscode` — Marketplace + Open VSX |
 
 ## Tauri UI (frontend + Rust bridge)
 
 | File | Purpose |
 |---|---|
-| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (62), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS` (`profile.switched`); invariant `I7` |
+| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (62), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
 | `packages/ui/src-tauri/src/tray.rs` | System tray icon, menu, state forwarding |
 | `packages/ui/src-tauri/src/quick_query.rs` | Quick Query window lifecycle |
 | `packages/ui/src-tauri/src/hitl_popup.rs` | HITL popup window lifecycle |
 | `packages/ui/src-tauri/src/lib.rs` | Tauri app entry — plugins, tray init, global shortcut, macOS accessory mode |
 | `packages/ui/src-tauri/capabilities/default.json` | Tauri capability set — windows, permissions |
 | `packages/ui/src-tauri/tauri.conf.json` | CSP + window config (invariant `I8`) |
-| `packages/ui/src/ipc/client.ts` | `NimbusIpcClient`, `createIpcClient()`, `parseError()`; credential redaction (5 forbidden keys) |
+| `packages/ui/src/ipc/client.ts` | `NimbusIpcClient`, `createIpcClient()`, `parseError()`; credential redaction |
 | `packages/ui/src/ipc/types.ts` | Shared IPC types |
 | `packages/ui/src/store/index.ts` | `useNimbusStore` — Zustand v5 + `persist`; 11 slices |
 | `packages/ui/src/store/partialize.ts` | `persistPartialize` — 5-key whitelist + 5-key forbidden deep-scrub |
 | `packages/ui/src/providers/GatewayConnectionProvider.tsx` | `onConnectionState` mirror + first-run routing |
 | `packages/ui/src/App.tsx` | `createBrowserRouter` — all UI routes |
-| `packages/ui/src/pages/` | Route-level pages: `QuickQuery`, `Onboarding`, `Dashboard`, `HitlPopup`, `Settings`, `settings/*` panels |
+| `packages/ui/src/pages/` | Route-level pages: `QuickQuery`, `Onboarding`, `Dashboard`, `HitlPopup`, `Settings/*` |
 | `packages/ui/src/components/hitl/HitlPopupPage.tsx` | Head-of-queue consent dialog → `consent.respond` |
 | `packages/ui/src/components/hitl/StructuredPreview.tsx` | XSS-safe recursive preview of `consent.request` details |
 | `packages/ui/src/hooks/useIpcQuery.ts` | Typed polling hook (pauses on hidden / disconnected) |
@@ -333,21 +331,21 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `scripts/structure-audit/lib.ts` | Shared B3 audit helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
+| `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (invariants `I1`, vault-key allow-list) |
-| `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — compares `v1.yaml` paths against `READ_ONLY_HTTP_ROUTES`; powers `audit:openapi-drift` CI gate (Phase 5 T4 PR 1) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist) |
+| `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `READ_ONLY_HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
-## Security Scan (Phase 5)
+## Security Scan
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/security/secret-patterns.ts` | `SECRET_PATTERNS` (v1: 21 prefix-anchored patterns) + `redactSecret` (first-4/last-4) + `buildContextSnippet` (±40 chars, `[REDACTED]` middle). |
-| `packages/gateway/src/security/scan.ts` | `scanItemsForSecrets` — pure scanner over `Iterable<ScanItem>`. No DB, no audit, no I/O. |
-| `packages/gateway/src/ipc/security-rpc.ts` | `dispatchSecurityRpc` — `security.scan` handler. Builds depth map from `sync_state.depth`, skips `metadata_only` (reported), writes one `security.scan_completed` audit row. CLI-only — NOT in Tauri allowlist (I7); namespace `security` is in `FORBIDDEN_OVER_LAN` (I5). |
-| `packages/cli/src/commands/security.ts` | `runSecurity` — `nimbus security scan [--json]`. Respects `NO_COLOR` + `isTTY`. |
-| `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Phase 5 acceptance test — AWS public example key in a `summary`-depth filesystem item. |
+| `packages/gateway/src/security/secret-patterns.ts` | `SECRET_PATTERNS` (21 prefix-anchored) + `redactSecret` + `buildContextSnippet` |
+| `packages/gateway/src/security/scan.ts` | `scanItemsForSecrets` — pure scanner over `Iterable<ScanItem>`; no I/O |
+| `packages/gateway/src/ipc/security-rpc.ts` | `dispatchSecurityRpc` — `security.scan`; CLI-only (NOT Tauri, NOT LAN) |
+| `packages/cli/src/commands/security.ts` | `nimbus security scan [--json]`; respects `NO_COLOR` + `isTTY` |
+| `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Acceptance — AWS public example key in a `summary`-depth filesystem item |
 
 ## Top-level docs
 
@@ -355,15 +353,15 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I16 rationale + anti-patterns + audit cross-references (I16 = Ed25519 publisher-signature verification at install + startup, T2 PR 2) |
-| `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist for headless releases; per-platform results matrix |
-| `docs/cli/use-in-ci.md` | Worked CI integration examples (GitHub Actions self-hosted, GitLab CI, Jenkins) using `nimbus query --json` (Phase 5 T4 PR 1) |
-| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1). Install + extend recipes live in [`docs/cli/pre-commit.md`](../../docs/cli/pre-commit.md). |
-| `docs/cli/pre-commit.md` | User-facing pre-commit hook docs — install, env-var knobs (`NIMBUS_HOOK_BLOCK_ON_*`), exit codes, extension patterns (Phase 5 T4 PR 1 wrap-up). |
+| `docs/SECURITY-INVARIANTS.md` | I1–I16 rationale + anti-patterns + audit cross-references |
+| `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
+| `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
+| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |
+| `docs/cli/pre-commit.md` | Pre-commit hook docs — install, env-var knobs, exit codes |
 | `docs/og-card.png` | OG social card PNG (1200×630, deterministic resvg-js render) |
 | `docs/assets/og-card.svg` | OG card source SVG |
-| `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular weight (SIL OFL 1.1) |
-| `docs/assets/fonts/JetBrainsMono-Bold.ttf` | Deterministic OG render font — Bold weight (SIL OFL 1.1) |
+| `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular (SIL OFL 1.1) |
+| `docs/assets/fonts/JetBrainsMono-Bold.ttf` | Deterministic OG render font — Bold (SIL OFL 1.1) |
 | `docs/assets/hero-cast-light.svg` | Rendered asciinema cast — light variant |
 | `docs/assets/hero-cast-dark.svg` | Rendered asciinema cast — dark variant |
 | `scripts/render-og-card.ts` | `bun run render:og-card` — resvg-js renderer for `docs/og-card.png` |
