@@ -21,17 +21,21 @@
 - [ ] **Step 1: Install workspace dependencies in the worktree**
 
 Run from worktree:
+
 ```bash
 cd .worktrees/cleanup-pass && bun install
 ```
+
 Expected: completes without errors. `node_modules/` populates in the worktree root.
 
 - [ ] **Step 2: Run preflight:fast as the baseline**
 
 Run from worktree:
+
 ```bash
 cd .worktrees/cleanup-pass && bun run preflight:fast
 ```
+
 Expected: all cheap gates pass. This is the green baseline we measure regressions against.
 
 - [ ] **Step 3: Capture the baseline state**
@@ -47,6 +51,7 @@ The output of Pass 1 IS the input to Passes 2–5. Every commit in those passes 
 ### Task 1.1: Create survey script directory and shared helpers
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/lib.ts`
 
 - [ ] **Step 1: Write the shared helper module**
@@ -107,6 +112,7 @@ EOF
 ### Task 1.2: Write the load-bearing-comments survey
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/survey-comments.ts`
 
 - [ ] **Step 1: Write the script**
@@ -199,6 +205,7 @@ await main();
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/survey-comments.ts
 ```
+
 Expected: prints `Wrote N hits to docs/superpowers/specs/punchlist/01-load-bearing-comments.md`. N will be in the hundreds.
 
 - [ ] **Step 3: Commit (script + output)**
@@ -216,6 +223,7 @@ EOF
 ### Task 1.3: Capture jscpd duplication output
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/docs/superpowers/specs/punchlist/02-duplication-clusters.md`
 
 - [ ] **Step 1: Run jscpd and capture output**
@@ -223,6 +231,7 @@ EOF
 ```bash
 cd .worktrees/cleanup-pass && bun run audit:duplication > /tmp/jscpd.out 2>&1; cat /tmp/jscpd.out
 ```
+
 Expected: jscpd report listing duplicated token sequences with file:line ranges. Note the report file path it writes (usually `.jscpd/jscpd-report.md` or similar).
 
 - [ ] **Step 2: Compose the section**
@@ -260,6 +269,7 @@ EOF
 ### Task 1.4: Write the shape-duplication survey (connector / RPC / mapping)
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/survey-shape-dupes.ts`
 
 - [ ] **Step 1: Write the script**
@@ -338,6 +348,7 @@ await main();
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/survey-shape-dupes.ts
 ```
+
 Expected: prints `Wrote shape-dupe survey to docs/superpowers/specs/punchlist/02b-shape-dupes.md`.
 
 - [ ] **Step 3: Commit**
@@ -355,6 +366,7 @@ EOF
 ### Task 1.5: Write the SRP-offender survey
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/survey-srp.ts`
 
 - [ ] **Step 1: Write the script**
@@ -408,6 +420,7 @@ await main();
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/survey-srp.ts
 ```
+
 Expected: prints `Wrote N SRP candidates to docs/superpowers/specs/punchlist/03-srp-offenders.md`.
 
 - [ ] **Step 3: Commit**
@@ -425,6 +438,7 @@ EOF
 ### Task 1.6: Write the open/closed-violation survey
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/survey-oc.ts`
 
 - [ ] **Step 1: Write the script**
@@ -564,6 +578,7 @@ await main();
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/survey-oc.ts
 ```
+
 Expected: prints `Wrote N OC candidates to docs/superpowers/specs/punchlist/04-oc-violations.md`.
 
 - [ ] **Step 3: Commit**
@@ -581,6 +596,7 @@ EOF
 ### Task 1.7: Compose master punch list
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/docs/superpowers/specs/2026-05-28-monorepo-cleanup-punchlist.md`
 
 - [ ] **Step 1: Write the index document**
@@ -644,6 +660,7 @@ One commit per docs-target file. Each commit cites the punch-list section 1 rows
 ### Task 2.1: Create internals docs skeleton
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/docs/internals/performance-tuning.md`
 - Create: `.worktrees/cleanup-pass/docs/internals/upstream-workarounds.md`
 - Create: `.worktrees/cleanup-pass/docs/internals/platform-quirks.md`
@@ -725,11 +742,13 @@ Each task below has the same shape. The executing worker iterates the correspond
 - [ ] **Task 2.2 — `docs/SECURITY-INVARIANTS.md` (I-numbered rows)**
 
 For each section-1 punch-list row tagged `I-numbered` or `HITL` or `security/timing`:
+
 1. Open `docs/SECURITY-INVARIANTS.md`, locate the matching `I<N>` row.
 2. Append the migrated entry under that row using the template above.
 3. Mark the punch-list row `[DOCS]`.
 
 After all such rows are processed, commit:
+
 ```bash
 git -C .worktrees/cleanup-pass add docs/SECURITY-INVARIANTS.md docs/superpowers/specs/punchlist/01-load-bearing-comments.md
 git -C .worktrees/cleanup-pass commit -m "$(cat <<'EOF'
@@ -799,6 +818,7 @@ EOF
 - [ ] **Task 2.7 — `docs/connectors/<name>.md` (per-connector)**
 
 For each connector that has at least one rationale row: create `docs/connectors/<name>.md` with intro:
+
 ```markdown
 # <Name> connector — quirks
 
@@ -807,6 +827,7 @@ and `packages/mcp-connectors/<name>/`.
 
 ## Entries
 ```
+
 Then append per-row entries. Commit:
 
 ```bash
@@ -886,6 +907,7 @@ Every row in punch-list section 1 is tagged `[DOCS]` or `[DELETE-ONLY]`. If any 
 ### Task 3.1: Write the strip-comments script
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/strip-comments.ts`
 - Create: `.worktrees/cleanup-pass/scripts/cleanup/strip-comments.test.ts`
 
@@ -1285,6 +1307,7 @@ describe("stripRustSource", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test scripts/cleanup/strip-comments.test.ts
 ```
+
 Expected: all tests pass.
 
 - [ ] **Step 4: Commit script + tests (no strip applied yet)**
@@ -1306,17 +1329,20 @@ EOF
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/strip-comments.ts --dry-run
 ```
+
 Expected: `[dry-run] Files: <N>, changed: <M>, bytes: <before> -> <after>`. The byte ratio should be 70–90% (we are removing comments, not code).
 
 - [ ] **Step 2: Spot-check a sample file**
 
 Pick five files at random from `packages/gateway/src/` and run the strip on a copy:
+
 ```bash
 for F in packages/gateway/src/engine/executor.ts packages/gateway/src/ipc/http-server.ts packages/gateway/src/db/write.ts packages/gateway/src/vault/win32.ts packages/gateway/src/llm/router.ts; do
   echo "=== $F ==="
   bun -e "import { stripTsSource, isPublishedJsdocFile } from './scripts/cleanup/strip-comments.ts'; import { readFile } from 'node:fs/promises'; const src = await readFile('$F', 'utf8'); console.log(stripTsSource(src, { keepJsdoc: isPublishedJsdocFile('$F') }))" | head -60
 done
 ```
+
 Visually verify: shebangs preserved, type pragmas preserved, code intact.
 
 ### Task 3.3: Apply the strip across the tree
@@ -1326,6 +1352,7 @@ Visually verify: shebangs preserved, type pragmas preserved, code intact.
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/strip-comments.ts
 ```
+
 Expected: `Files: <N>, changed: <M>, bytes: <before> -> <after>` (no `[dry-run]` prefix).
 
 - [ ] **Step 2: Run lint + typecheck sanity check**
@@ -1333,6 +1360,7 @@ Expected: `Files: <N>, changed: <M>, bytes: <before> -> <after>` (no `[dry-run]`
 ```bash
 cd .worktrees/cleanup-pass && bun run lint:fix && bun run typecheck
 ```
+
 Expected: both pass. Lint applies any Biome formatting changes that follow naturally from removed comments (e.g. trailing whitespace cleanup). Typecheck must be green — if it fails, a preserved pragma was missed or a comment was carrying a `//@ts-...` directive that was deleted; investigate.
 
 - [ ] **Step 3: Commit the strip**
@@ -1362,6 +1390,7 @@ EOF
 ```bash
 cd .worktrees/cleanup-pass && bun run test:ci
 ```
+
 Expected: every package's tests pass. Tests must not have been affected (they have no comments removed if they're under `test/` — yes they are, the script walks the whole tree; but assertions are unchanged, so they still pass).
 
 If any test fails: the failure indicates a pragma was missed, a `// biome-ignore` is missing, or a test was *parsing* the comment in some indirect way (unlikely but possible). Fix root cause; do not skip.
@@ -1371,6 +1400,7 @@ If any test fails: the failure indicates a pragma was missed, a `// biome-ignore
 ```bash
 cd .worktrees/cleanup-pass && bun run audit:invariants
 ```
+
 Expected: green. The static D-rules don't care about comments.
 
 ---
@@ -1380,6 +1410,7 @@ Expected: green. The static D-rules don't care about comments.
 ### Task 4.1: Create connector strategy library (Pagination)
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/pagination.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/pagination.test.ts`
 
@@ -1455,6 +1486,7 @@ describe("LinkHeaderPagination", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/pagination.test.ts
 ```
+
 Expected: FAIL with `Cannot find module './pagination.ts'`.
 
 - [ ] **Step 3: Write the implementation**
@@ -1517,6 +1549,7 @@ export class LinkHeaderPagination implements Pagination<string> {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/pagination.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1538,6 +1571,7 @@ EOF
 ### Task 4.2: Create AuthHeaderProvider library
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/auth.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/auth.test.ts`
 
@@ -1591,6 +1625,7 @@ describe("OAuthWithRefresh", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/auth.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -1647,6 +1682,7 @@ export class Anonymous implements AuthHeaderProvider {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/auth.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1666,6 +1702,7 @@ EOF
 ### Task 4.3: Create RateLimitObserver library
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/rate-limit-observer.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/rate-limit-observer.test.ts`
 
@@ -1717,6 +1754,7 @@ describe("NoopObserver", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/rate-limit-observer.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -1766,6 +1804,7 @@ export class NoopObserver implements RateLimitObserver {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/rate-limit-observer.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1783,6 +1822,7 @@ EOF
 ### Task 4.4: Create the HTTP client wrapper
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/http.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/http.test.ts`
 
@@ -1873,6 +1913,7 @@ describe("ConnectorHttpClient", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/http.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -1935,6 +1976,7 @@ export class ConnectorHttpClient {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/http.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1955,6 +1997,7 @@ EOF
 ### Task 4.5: Create the item-builder helper
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/item-builder.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/item-builder.test.ts`
 
@@ -2003,14 +2046,17 @@ describe("buildIndexedItem", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/item-builder.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
 
 Read the existing `IndexedItem` type first to keep field shape compatible:
+
 ```bash
 cd .worktrees/cleanup-pass && grep -n "export type IndexedItem\|export interface IndexedItem" packages/gateway/src/**/*.ts
 ```
+
 Then write `item-builder.ts` matching the existing `IndexedItem` shape:
 
 ```typescript
@@ -2056,6 +2102,7 @@ export function buildIndexedItem(input: BuildIndexedItemInput): IndexedItem {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/item-builder.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2076,6 +2123,7 @@ EOF
 ### Task 4.6: Create the runConnectorSync template
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/sync-runner.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/connectors/_lib/sync-runner.test.ts`
 
@@ -2189,6 +2237,7 @@ describe("runConnectorSync", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/sync-runner.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -2247,6 +2296,7 @@ export async function runConnectorSync<S, B, Item>(
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/_lib/sync-runner.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2273,6 +2323,7 @@ This step iterates the 30+ connectors. Each task: replace the bespoke sync loop 
 **Template per connector:**
 
 For each `<connector>` in:
+
 - snyk, bitrise, sonarqube, semgrep, wiz, launchdarkly, flagsmith, argocd, flux, dbt, metabase, superset, databricks, mlflow, vercel, netlify, stripe, mercury, readwise, raindrop, intercom, zendesk, lever, greenhouse, pipedrive, stackoverflow, zoom, obsidian, openapi-indexer, (and any others surfaced by Task 1.4 shape-dupe survey)
 
 Apply this checklist (one task per connector, one commit per connector):
@@ -2284,10 +2335,12 @@ Apply this checklist (one task per connector, one commit per connector):
   - Item-shape mapping function (often already in a sibling `*-mapping.ts`)
 
 - [ ] **Step 2: Decide opt-in vs opt-out.** If the connector is genuinely shaped differently (e.g. `openapi-indexer-sync.ts` indexes spec *files*, not paginated API responses), skip migration. Mark its punch-list row `[N/A — opted out]` and add a leading docs entry at the top of the file:
+
   ```typescript
   // Opt-out of runConnectorSync template — indexes filesystem specs, not
   // paginated HTTP. See docs/superpowers/specs/2026-05-28-monorepo-cleanup-design.md §"Pass 4".
   ```
+
   (This comment survives pass 3 because it carries a load-bearing rationale — but pass 3 has already shipped at this point, so this comment is added post-strip and we accept it as the documented exception.)
 
 - [ ] **Step 3: Rewrite the sync handler.** Replace the bespoke loop with `runConnectorSync` parameterised by the strategies. The connector keeps:
@@ -2297,6 +2350,7 @@ Apply this checklist (one task per connector, one commit per connector):
   - Its rate-limiter integration (existing per-provider rate limiter still owns the throttle decision)
 
   Example shape (using a hypothetical `acme` connector):
+
   ```typescript
   import { runConnectorSync } from "./_lib/sync-runner.ts";
   import { CursorPagination } from "./_lib/pagination.ts";
@@ -2339,6 +2393,7 @@ Apply this checklist (one task per connector, one commit per connector):
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/<connector>-sync.test.ts packages/gateway/src/connectors/<connector>-*-mapping.test.ts
 ```
+
 Expected: all existing tests still pass. They were not modified — they exercise the public sync handler entry point, which is unchanged in name and signature.
 
 - [ ] **Step 5: Run the contract test if one exists**
@@ -2346,6 +2401,7 @@ Expected: all existing tests still pass. They were not modified — they exercis
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/mcp-connectors/<connector>/
 ```
+
 Expected: contract tests still pass.
 
 - [ ] **Step 6: Commit the migration**
@@ -2365,6 +2421,7 @@ Repeat Step 1–Step 6 for every connector from the list above. Mark the punch-l
 ### Task 4.8: Extract registerReadOnlyConnectorTools to SDK
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/sdk/src/server-helpers.ts`
 - Create: `.worktrees/cleanup-pass/packages/sdk/src/server-helpers.test.ts`
 - Modify: `.worktrees/cleanup-pass/packages/sdk/src/index.ts`
@@ -2398,6 +2455,7 @@ describe("registerReadOnlyConnectorTools", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/sdk/src/server-helpers.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -2428,6 +2486,7 @@ export function registerReadOnlyConnectorTools<L, G, S>(
 - [ ] **Step 4: Export from SDK index**
 
 Edit `packages/sdk/src/index.ts` to re-export:
+
 ```typescript
 export { registerReadOnlyConnectorTools } from "./server-helpers.ts";
 export type { ReadOnlyConnectorTools } from "./server-helpers.ts";
@@ -2438,6 +2497,7 @@ export type { ReadOnlyConnectorTools } from "./server-helpers.ts";
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/sdk/src/server-helpers.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -2461,6 +2521,7 @@ For each `<connector>` in `packages/mcp-connectors/*/`:
 - [ ] **Step 1: Replace bespoke tool registrations**
 
 Open `packages/mcp-connectors/<connector>/src/server.ts`. Replace the three `server.registerTool("<connector>_list", ...)` / `_get` / `_search` blocks with:
+
 ```typescript
 import { registerReadOnlyConnectorTools } from "@nimbus-dev/sdk";
 
@@ -2477,6 +2538,7 @@ registerReadOnlyConnectorTools(server, {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/mcp-connectors/<connector>/
 ```
+
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -2494,6 +2556,7 @@ EOF
 ### Task 4.10: Create createRpcDispatcher
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/ipc/_lib/dispatcher.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/ipc/_lib/dispatcher.test.ts`
 
@@ -2531,6 +2594,7 @@ describe("createRpcDispatcher", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/ipc/_lib/dispatcher.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -2565,6 +2629,7 @@ export function createRpcDispatcher(methods: RpcMethodMap): RpcDispatcher {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/ipc/_lib/dispatcher.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2605,6 +2670,7 @@ export async function dispatchNamespaceRpc(method: string, params: unknown): Pro
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/test/unit/ipc/<namespace>*.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -2624,6 +2690,7 @@ Repeat for: agents-rpc, llm-rpc, voice-rpc, updater-rpc, metrics-rpc, preflight-
 ### Task 4.12: Create long-running IPC helper
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/ipc/_lib/long-running.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/ipc/_lib/long-running.test.ts`
 
@@ -2679,6 +2746,7 @@ describe("LongRunningJobRegistry", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/ipc/_lib/long-running.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -2750,6 +2818,7 @@ export class LongRunningJobRegistry {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/ipc/_lib/long-running.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2777,6 +2846,7 @@ Replace the bespoke job tracking with a `LongRunningJobRegistry({ emit: (m, p) =
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/test/unit/ipc/index-reembed*.test.ts packages/cli/test/e2e/scenarios/index-reembed*.e2e.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -2794,6 +2864,7 @@ EOF
 ### Task 4.14: Extract applySchemaStep migration helper
 
 **Files:**
+
 - Modify: `.worktrees/cleanup-pass/packages/gateway/src/index/migrations/runner.ts`
 - Modify: `.worktrees/cleanup-pass/packages/gateway/src/index/migrations/runner-v31.test.ts` (if needed)
 
@@ -2822,6 +2893,7 @@ export const INDEXED_SCHEMA_STEPS: IndexedSchemaStep[] = [
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/index/migrations/
 ```
+
 Expected: PASS — `runner-v31.test.ts` and any other migration tests exercise the same end-to-end behavior.
 
 - [ ] **Step 3: Commit**
@@ -2839,6 +2911,7 @@ EOF
 ### Task 4.15: Extract runReadOnlyAgent + migrate expert.ts and impact.ts
 
 **Files:**
+
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/agents/_lib/read-only-agent.ts`
 - Create: `.worktrees/cleanup-pass/packages/gateway/src/agents/_lib/read-only-agent.test.ts`
 - Modify: `.worktrees/cleanup-pass/packages/gateway/src/agents/expert.ts`
@@ -2867,6 +2940,7 @@ describe("runReadOnlyAgent", () => {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/agents/_lib/read-only-agent.test.ts
 ```
+
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -2900,6 +2974,7 @@ Refactor `runExpert` (or whatever it's called) so the parallel sub-agent decompo
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/test/e2e/scenarios/expert.e2e.test.ts packages/gateway/test/e2e/scenarios/impact.e2e.test.ts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -2923,11 +2998,13 @@ EOF
 ```bash
 cd .worktrees/cleanup-pass && bun run scripts/cleanup/survey-oc.ts
 ```
+
 Then open `docs/superpowers/specs/punchlist/04-oc-violations.md` and find every row whose discriminator is `service`/`provider` with literals matching OAuth providers (`google`, `microsoft`, `slack`, `notion`, `zoom`).
 
 - [ ] **Step 2: Replace each chain with a registry lookup**
 
 Pattern:
+
 ```typescript
 // Before
 if (provider === "google") { /* … */ }
@@ -2945,6 +3022,7 @@ if (!config) throw new Error(`Unknown OAuth provider: ${provider}`);
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/auth/
 ```
+
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -2970,10 +3048,12 @@ One commit per subsystem. Each cites the punch-list section 3 rows it resolves.
 - [ ] **Step 1: Audit `packages/gateway/src/engine/`**
 
 For each file in the directory:
+
 1. If `<file>` is in punch-list section 3 with proposed split, apply the split.
 2. If a module imports a non-injectable dependency (`pino`, raw `Database`, `fs/promises`) directly and the module is tested by mocking that import (`mock.module`), refactor to constructor injection — see the auto-memory entry `bun-mock-module-model-ts-leak`.
 
 **Constraints (do not violate):**
+
 - `HITL_REQUIRED` set and `ToolExecutor.gate()` stay in `executor.ts` per I2.
 - `wrapToolOutput` call sites at `engine/agent.ts:wrapToolForLlm` and `lazy-mesh/mesh.ts:397` are unchanged.
 
@@ -2982,6 +3062,7 @@ For each file in the directory:
 ```bash
 cd .worktrees/cleanup-pass && bun run test:coverage:engine
 ```
+
 Expected: PASS, coverage ≥85%.
 
 - [ ] **Step 3: Run security-invariants test**
@@ -2989,6 +3070,7 @@ Expected: PASS, coverage ≥85%.
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/security-invariants.test.ts
 ```
+
 Expected: PASS — all sixteen invariant assertions still green.
 
 - [ ] **Step 4: Commit**
@@ -3023,6 +3105,7 @@ If the file is the OpenAPI indexer or another genuine outlier with a leading opt
 ```bash
 cd .worktrees/cleanup-pass && bun run test:coverage:sync
 ```
+
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -3048,6 +3131,7 @@ For each `<namespace>-rpc.ts`, check that the dispatched handler signatures are 
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/test/unit/ipc/
 ```
+
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -3073,6 +3157,7 @@ EOF
 ```bash
 cd .worktrees/cleanup-pass && bun run test:coverage:db && bun run audit:invariants
 ```
+
 Expected: both PASS.
 
 - [ ] **Step 4: Commit**
@@ -3112,6 +3197,7 @@ EOF
 - [ ] **Step 1: Refactor `LlmRouter` to accept providers as constructor args**
 
 Today it likely imports `OllamaProvider` and `LlamaCppProvider` directly. Change to:
+
 ```typescript
 class LlmRouter {
   constructor(private readonly providers: { ollama: LlmProvider; llamaCpp: LlmProvider }) {}
@@ -3123,6 +3209,7 @@ class LlmRouter {
 ```bash
 cd .worktrees/cleanup-pass && bun test packages/gateway/src/llm/
 ```
+
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -3148,6 +3235,7 @@ Reference punch-list section 3 for the file list. Typical split: `<command>.ts` 
 ```bash
 cd .worktrees/cleanup-pass && cd packages/cli && bun test src/
 ```
+
 Expected: PASS. Remember the auto-memory note: `bun test packages/cli/src` is the combined run where `mock.module` can leak. If a test breaks, prefer DI over `mock.module`.
 
 - [ ] **Step 3: Commit**
@@ -3173,6 +3261,7 @@ Zustand store stays as is (slices are the split).
 ```bash
 cd .worktrees/cleanup-pass && cd packages/ui && bunx vitest run --coverage
 ```
+
 Expected: PASS, ≥80% lines / ≥75% branches.
 
 - [ ] **Step 3: Commit**
@@ -3198,6 +3287,7 @@ For each file: apply SOLID *only* where the change does not break the public API
 ```bash
 cd .worktrees/cleanup-pass && bun run test:coverage:sdk && bun run test:coverage:client
 ```
+
 Expected: PASS, ≥80%.
 
 - [ ] **Step 3: Commit (with any version bumps)**
@@ -3225,6 +3315,7 @@ The package is small. The pass is comment-strip verification + any obvious dedup
 ```bash
 cd .worktrees/cleanup-pass && cd packages/vscode-extension && bun run typecheck
 ```
+
 Expected: PASS. (Recall auto-memory `vscode-extension-types-node-conflict`: `tsconfig.json` must keep `compilerOptions.types: ["node"]`.)
 
 - [ ] **Step 3: Commit (if changes)**
@@ -3252,6 +3343,7 @@ No code changes in Pass 6. Pure verification. If anything fails, fix in a new co
 ```bash
 cd .worktrees/cleanup-pass && bun run preflight
 ```
+
 Expected: every gate PASS.
 
 If a gate fails: identify the gate, fix root cause, commit the fix with a clear message ("fix(<area>): <what>"), re-run.
@@ -3263,6 +3355,7 @@ If a gate fails: identify the gate, fix root cause, commit the fix with a clear 
 ```bash
 cd .worktrees/cleanup-pass && bun run audit:invariants
 ```
+
 Expected: PASS — D10 (I15), D12 (I14), vault-key allow-list all green.
 
 ### Task 6.3: Cross-platform audit
@@ -3272,6 +3365,7 @@ Expected: PASS — D10 (I15), D12 (I14), vault-key allow-list all green.
 ```bash
 cd .worktrees/cleanup-pass && bun run audit:cross-platform
 ```
+
 Expected: PASS.
 
 ### Task 6.4: OpenAPI drift
@@ -3281,6 +3375,7 @@ Expected: PASS.
 ```bash
 cd .worktrees/cleanup-pass && bun run audit:openapi-drift
 ```
+
 Expected: PASS — OpenAPI schema and `READ_ONLY_HTTP_ROUTES` agree.
 
 ### Task 6.5: Linux docker coverage-floor reproduce
@@ -3292,6 +3387,7 @@ cd .worktrees/cleanup-pass && docker run --rm -v "$PWD":/src:ro oven/bun:latest 
   'mkdir -p /app && (cd /src && tar --exclude=node_modules --exclude=.git -cf - .) | (cd /app && tar -xf -) \
    && cd /app && bun install && bun run audit:coverage-floor'
 ```
+
 Expected: PASS. This is the CI-Linux-authoritative coverage check. If it fails on Linux while Windows passes, investigate `mock.module` contamination per the auto-memory entry.
 
 ### Task 6.6: Tauri allowlist cargo tests
@@ -3301,6 +3397,7 @@ Expected: PASS. This is the CI-Linux-authoritative coverage check. If it fails o
 ```bash
 cd .worktrees/cleanup-pass && cd packages/ui/src-tauri && cargo test
 ```
+
 Expected: PASS — `allowlist_exact_size`, `allowlist_is_alphabetized`, `allowlist_has_no_duplicates`, `allowlist_rejects_vault_and_raw_db_writes`, `no_timeout_methods_*` all green.
 
 ### Task 6.7: Compose PR description
