@@ -1,4 +1,5 @@
 import type { ProfileManager } from "../config/profiles.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class ProfileRpcError extends Error {
   readonly rpcCode: number;
@@ -14,43 +15,48 @@ export type ProfileRpcContext = {
   notify?: (method: string, params: unknown) => void;
 };
 
+function requireName(params: unknown, action: string): string {
+  const p = params as { name?: unknown } | null;
+  if (p === null || typeof p.name !== "string") {
+    throw new ProfileRpcError(-32602, `${action} requires name`);
+  }
+  return p.name;
+}
+
+async function handleProfileList(_p: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+  const profiles = await ctx.manager.list();
+  const active = (await ctx.manager.getActive()) ?? null;
+  return { profiles, active };
+}
+
+async function handleProfileCreate(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+  const name = requireName(params, "profile.create");
+  await ctx.manager.create(name);
+  return { name };
+}
+
+async function handleProfileSwitch(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+  const name = requireName(params, "profile.switch");
+  await ctx.manager.switchTo(name);
+  ctx.notify?.("profile.switched", { name });
+  return { active: name };
+}
+
+async function handleProfileDelete(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+  const name = requireName(params, "profile.delete");
+  await ctx.manager.delete(name);
+  return { deleted: name };
+}
+
 export async function dispatchProfileRpc(
   method: string,
   params: unknown,
   ctx: ProfileRpcContext,
-): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
-  switch (method) {
-    case "profile.list": {
-      const profiles = await ctx.manager.list();
-      const active = (await ctx.manager.getActive()) ?? null;
-      return { kind: "hit", value: { profiles, active } };
-    }
-    case "profile.create": {
-      const p = params as { name?: unknown } | null;
-      if (p === null || typeof p.name !== "string") {
-        throw new ProfileRpcError(-32602, "profile.create requires name");
-      }
-      await ctx.manager.create(p.name);
-      return { kind: "hit", value: { name: p.name } };
-    }
-    case "profile.switch": {
-      const p = params as { name?: unknown } | null;
-      if (p === null || typeof p.name !== "string") {
-        throw new ProfileRpcError(-32602, "profile.switch requires name");
-      }
-      await ctx.manager.switchTo(p.name);
-      ctx.notify?.("profile.switched", { name: p.name });
-      return { kind: "hit", value: { active: p.name } };
-    }
-    case "profile.delete": {
-      const p = params as { name?: unknown } | null;
-      if (p === null || typeof p.name !== "string") {
-        throw new ProfileRpcError(-32602, "profile.delete requires name");
-      }
-      await ctx.manager.delete(p.name);
-      return { kind: "hit", value: { deleted: p.name } };
-    }
-    default:
-      return { kind: "miss" };
-  }
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<ProfileRpcContext>(method, params, ctx, {
+    "profile.list": handleProfileList,
+    "profile.create": handleProfileCreate,
+    "profile.switch": handleProfileSwitch,
+    "profile.delete": handleProfileDelete,
+  });
 }
