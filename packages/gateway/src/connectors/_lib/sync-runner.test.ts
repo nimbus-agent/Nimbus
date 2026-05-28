@@ -68,7 +68,7 @@ describe("runConnectorSync", () => {
       fetch: async () => {
         n++;
         const headers: Record<string, string> = { "content-type": "application/json" };
-        if (n === 1) headers.Link = '<https://api/p2>; rel="next"';
+        if (n === 1) headers["Link"] = '<https://api/p2>; rel="next"';
         return new Response(JSON.stringify({ items: [{ id: String(n) }] }), {
           status: 200,
           headers,

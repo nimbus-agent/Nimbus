@@ -41,13 +41,13 @@ export function buildIndexedItem(input: BuildIndexedItemInput): BuiltIndexedItem
     type: input.type,
     externalId: input.externalId,
     title: input.title,
-    bodyPreview: input.bodyPreview,
-    url: input.url,
-    canonicalUrl: input.canonicalUrl,
     modifiedAt: input.modifiedAt,
-    authorId: input.authorId,
     metadata: input.metadata ?? {},
-    pinned: input.pinned,
     syncedAt: input.syncedAt,
+    ...(input.bodyPreview !== undefined && { bodyPreview: input.bodyPreview }),
+    ...(input.url !== undefined && { url: input.url }),
+    ...(input.canonicalUrl !== undefined && { canonicalUrl: input.canonicalUrl }),
+    ...(input.authorId !== undefined && { authorId: input.authorId }),
+    ...(input.pinned !== undefined && { pinned: input.pinned }),
   };
 }
