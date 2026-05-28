@@ -53,6 +53,7 @@ import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
 import { createZendeskSyncable } from "../connectors/zendesk-sync.ts";
+import { createZoomSyncable } from "../connectors/zoom-sync.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export type ConnectorMeshSyncableOptions = {
@@ -335,6 +336,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createStackOverflowSyncable({
       ensureStackOverflowMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createZoomSyncable({
+      ensureZoomMcpRunning: () => connectorMesh.ensureZoomRunning(),
     }),
   );
 }

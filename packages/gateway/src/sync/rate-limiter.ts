@@ -53,7 +53,8 @@ export type Provider =
   | "lever"
   | "greenhouse"
   | "pipedrive"
-  | "stackoverflow";
+  | "stackoverflow"
+  | "zoom";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -112,6 +113,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   greenhouse: { requestsPerMinute: 60, burstSize: 10 },
   pipedrive: { requestsPerMinute: 60, burstSize: 10 },
   stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
+  zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
