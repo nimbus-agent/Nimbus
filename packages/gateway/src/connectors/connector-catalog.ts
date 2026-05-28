@@ -56,6 +56,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "greenhouse",
   "pipedrive",
   "stackoverflow",
+  "zoom",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -136,6 +137,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   greenhouse: MIN10,
   pipedrive: MIN10,
   stackoverflow: MIN10,
+  zoom: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -299,6 +301,15 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       };
     case "notion":
       return { provider: "notion", defaultScopes: [] };
+    case "zoom":
+      return {
+        provider: "zoom",
+        defaultScopes: [
+          "user:read:user",
+          "meeting:read:list_meetings",
+          "cloud_recording:read:list_user_recordings",
+        ],
+      };
     default:
       // All remaining ids are in `OAUTH_UNSUPPORTED_DETAILS` and threw above.
       // The throw is the actual control-flow exit; this branch only exists so
