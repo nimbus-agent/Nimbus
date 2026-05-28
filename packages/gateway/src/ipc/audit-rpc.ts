@@ -1,9 +1,9 @@
 import { verifyAuditChain } from "../db/audit-verify.ts";
 import { readToolCallLog, type ToolCallLogFilter } from "../db/tool-call-log.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export type AuditRpcContext = { index: LocalIndex | undefined };
-type RpcResult = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 export class AuditRpcError extends Error {
   readonly rpcCode: number;
@@ -107,35 +107,45 @@ function parseToolCallsParams(params: unknown): ToolCallLogFilter {
   return filter;
 }
 
+function handleAuditVerify(
+  params: unknown,
+  ctx: AuditRpcContext,
+): ReturnType<typeof verifyAuditChain> {
+  const idx = ensureIndex(ctx);
+  const full =
+    params !== null &&
+    typeof params === "object" &&
+    (params as Record<string, unknown>)["full"] === true;
+  const fromId = full ? 0 : idx.getAuditVerifiedThroughId();
+  const result = verifyAuditChain(idx, { fromId });
+  if (result.ok) idx.setAuditVerifiedThroughId(result.lastVerifiedId);
+  return result;
+}
+
+function handleAuditExport(_p: unknown, ctx: AuditRpcContext): unknown {
+  return ensureIndex(ctx).listAuditWithChain(10_000);
+}
+
+function handleAuditGetSummary(_p: unknown, ctx: AuditRpcContext): unknown {
+  return ensureIndex(ctx).getAuditSummary();
+}
+
+function handleAuditToolCalls(params: unknown, ctx: AuditRpcContext): unknown {
+  const filter = parseToolCallsParams(params);
+  const idx = ensureIndex(ctx);
+  return readToolCallLog(idx.getDatabase(), filter);
+}
+
 export async function dispatchAuditRpc(
   method: string,
   params: unknown,
   ctx: AuditRpcContext,
-): Promise<RpcResult> {
-  if (method === "audit.verify") {
-    const idx = ensureIndex(ctx);
-    const full =
-      params !== null &&
-      typeof params === "object" &&
-      (params as Record<string, unknown>)["full"] === true;
-    const fromId = full ? 0 : idx.getAuditVerifiedThroughId();
-    const result = verifyAuditChain(idx, { fromId });
-    if (result.ok) idx.setAuditVerifiedThroughId(result.lastVerifiedId);
-    return { kind: "hit", value: result };
-  }
-  if (method === "audit.exportAll" || method === "audit.export") {
-    const idx = ensureIndex(ctx);
-    return { kind: "hit", value: idx.listAuditWithChain(10_000) };
-  }
-  if (method === "audit.getSummary") {
-    const idx = ensureIndex(ctx);
-    return { kind: "hit", value: idx.getAuditSummary() };
-  }
-  if (method === "audit.toolCalls") {
-    const filter = parseToolCallsParams(params);
-    const idx = ensureIndex(ctx);
-    const db = idx.getDatabase();
-    return { kind: "hit", value: readToolCallLog(db, filter) };
-  }
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<AuditRpcContext>(method, params, ctx, {
+    "audit.verify": handleAuditVerify,
+    "audit.exportAll": handleAuditExport,
+    "audit.export": handleAuditExport,
+    "audit.getSummary": handleAuditGetSummary,
+    "audit.toolCalls": handleAuditToolCalls,
+  });
 }
