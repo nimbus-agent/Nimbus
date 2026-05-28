@@ -516,7 +516,6 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts:5` | I15 | sandbox-wrapper.ts is the single sandbox-execution boundary for all extension children |
 | `packages/gateway/src/platform/sandbox/seccomp-filter.ts:2` | I15 | Seccomp BPF filter is AUDIT_ARCH_X86_64-guarded; not loaded on non-x86-64 Linux |
 | `packages/gateway/src/search/vec-store.ts:16` | I9 | vec_items_* virtual-table identifier uses escapeIdentifier (not template literal) |
-| `packages/gateway/src/updater/updater.ts:172` | I10 | Updater uses sha256HexEqualConstantTime for binary integrity check |
 | `packages/gateway/src/util/timing-safe-compare.ts:4` | I10 | S6-F10/S7-F8 citation; sha256HexEqualConstantTime replaces direct !== on hash strings |
 | `packages/gateway/src/util/timing-safe-compare.ts:7` | I10 | Returns false (not throws) on length mismatch, non-64-char inputs, or malformed hex |
 | `packages/gateway/src/util/timing-safe-compare.ts:11` | I10 | Constant-time guarantee only covers valid-input fast path; invalid hex rejected before timingSafeEqual |
