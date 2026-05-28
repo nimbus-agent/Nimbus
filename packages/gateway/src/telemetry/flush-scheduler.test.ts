@@ -19,7 +19,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { startTelemetryFlushScheduler } from "./flush-scheduler.ts";
 
 // ---------------------------------------------------------------------------
@@ -109,9 +108,17 @@ type Harness = {
 };
 
 /**
- * Creates a temp dir with a TOML file and a migrated DB.
- * The DB is migrated to V30 so that `collectIndexMetrics` finds all expected
- * tables (item, embedding_chunk, sync_state) without throwing.
+ * Creates a temp dir for the TOML + telemetry session files, plus an
+ * in-memory DB with only the tables `collectIndexMetrics` reads.
+ *
+ * Previous shape ran the full V1-V30 migration sequence against an on-disk
+ * SQLite file. That made `beforeEach` perform ~30 transactions of disk I/O
+ * and `afterEach` `rmSync` the .db + WAL alongside the temp dir — both
+ * sometimes exceeded the bun test hook timeout (~5 s) under loaded CI
+ * workers, surfacing as the spurious "calls fetch immediately on start"
+ * timeout. `:memory:` eliminates both classes of slowness, and the minimal
+ * schema below covers everything `collectIndexMetrics` queries (see
+ * `packages/gateway/src/db/metrics.ts`).
  */
 function makeHarness(tomlContent?: string): Harness {
   const dataDir = mkdtempSync(join(tmpdir(), "nimbus-flush-sched-"));
@@ -120,8 +127,24 @@ function makeHarness(tomlContent?: string): Harness {
     tomlContent ??
     `[telemetry]\nenabled = true\nflush_interval_seconds = 60\nendpoint = "https://example.com/ingest"\n`;
   writeFileSync(tomlPath, content, "utf8");
-  const db = new Database(join(dataDir, "nimbus.db"));
-  runIndexedSchemaMigrations(db, 30);
+  const db = new Database(":memory:");
+  // Minimal schema for collectIndexMetrics — items grouped by service,
+  // embedding coverage via embedding_chunk.item_id, sync_state per connector.
+  // Keep these column lists in lock-step with `packages/gateway/src/db/metrics.ts`.
+  db.exec(`
+    CREATE TABLE item (
+      id TEXT PRIMARY KEY,
+      service TEXT NOT NULL
+    );
+    CREATE TABLE embedding_chunk (
+      id INTEGER PRIMARY KEY,
+      item_id TEXT NOT NULL
+    );
+    CREATE TABLE sync_state (
+      connector_id TEXT PRIMARY KEY,
+      last_sync_at INTEGER
+    );
+  `);
   return {
     db,
     dataDir,
