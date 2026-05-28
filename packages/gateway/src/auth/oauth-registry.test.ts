@@ -129,6 +129,48 @@ describe("notion descriptor hooks", () => {
   });
 });
 
+describe("zoom descriptor", () => {
+  test("table includes zoom with vaultKey, urls, and quirks", () => {
+    expect(OAUTH_PROVIDERS.zoom.id).toBe("zoom");
+    expect(OAUTH_PROVIDERS.zoom.vaultKey).toBe("zoom.oauth");
+    expect(OAUTH_PROVIDERS.zoom.authorizeUrl).toBe("https://zoom.us/oauth/authorize");
+    expect(OAUTH_PROVIDERS.zoom.tokenUrl).toBe("https://zoom.us/oauth/token");
+    expect(OAUTH_PROVIDERS.zoom.usesPkce).toBe(true);
+    expect(OAUTH_PROVIDERS.zoom.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.zoom.secretPlacement).toBe("basic_header");
+    expect(OAUTH_PROVIDERS.zoom.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.zoom.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.zoom.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params include S256 PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.zoom.buildAuthorizeParams({
+      clientId: "zoom-cid",
+      scopes: ["meeting:read:list_meetings", "user:read:user"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("zoom-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("meeting:read:list_meetings user:read:user");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBe("cc");
+    expect(p["code_challenge_method"]).toBe("S256");
+  });
+
+  test("parseTokenResponse delegates to parseStandardTokenResponse", () => {
+    const r = OAUTH_PROVIDERS.zoom.parseTokenResponse(
+      { access_token: "zoom-a", refresh_token: "zoom-r", expires_in: 3600 },
+      ["meeting:read:list_meetings"],
+    );
+    expect(r.accessToken).toBe("zoom-a");
+    expect(r.refreshToken).toBe("zoom-r");
+    expect(r.scopes).toEqual(["meeting:read:list_meetings"]);
+    expect(r.expiresAt).toBeGreaterThan(Date.now());
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {

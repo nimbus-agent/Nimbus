@@ -2,7 +2,7 @@ import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { parseStoredOAuthTokens } from "./oauth-vault-payload.ts";
 
-export type OAuthProvider = "google" | "microsoft" | "slack" | "notion";
+export type OAuthProvider = "google" | "microsoft" | "slack" | "notion" | "zoom";
 
 export interface PKCEResult {
   accessToken: string;
@@ -236,6 +236,28 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       state: a.state,
     }),
     parseTokenResponse: parseNotionTokenResponse,
+  },
+  zoom: {
+    id: "zoom",
+    vaultKey: "zoom.oauth",
+    authorizeUrl: "https://zoom.us/oauth/authorize",
+    tokenUrl: "https://zoom.us/oauth/token",
+    usesPkce: true,
+    clientSecret: "required",
+    secretPlacement: "basic_header",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge !== undefined
+        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
+        : {}),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
   },
 };
 
