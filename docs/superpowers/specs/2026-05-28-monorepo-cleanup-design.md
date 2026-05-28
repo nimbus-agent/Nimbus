@@ -37,8 +37,9 @@ The cleanup is aggressive on external API surfaces (IPC method names, CLI flags,
 Output: this design document plus a punch list at `docs/superpowers/specs/2026-05-28-monorepo-cleanup-punchlist.md`. The punch list has four sections:
 
 1. **Load-bearing comments** — every comment that has to survive as documentation somewhere.
-   - Discovery: `Grep` for `I[0-9]+`, `HITL`, `WHY:`, `NOTE:`, `WORKAROUND`, `BUG-`, perf-justifying numbers, bug-ticket refs (`#NNNN`), security/timing wording.
+   - Discovery: `Grep` for `I[0-9]+`, `HITL`, `WHY:`, `NOTE:`, `WORKAROUND`, `BUG-`, `TODO`, `FIXME`, `HACK`, `XXX`, perf-justifying numbers, bug-ticket refs (`#NNNN`), security/timing wording.
    - Row shape: `file:line` → comment text → suggested target doc.
+   - **TODO/FIXME/HACK/XXX triage rule:** a marker that names a concrete future task (cites a ticket, a date, a named follow-up) → row in `docs/internals/known-todos.md`. A vague "todo maybe" with no concrete task → captured as "delete-only" with no migration row. Markers older than 6 months without a ticket cite default to delete-only.
 2. **Duplication clusters** — `bun run audit:duplication` (jscpd) output, plus a manual grep pass for shape duplication that token-based jscpd misses (connector sync handlers, IPC RPC dispatchers, mapping files).
    - Row shape: cluster ID → list of `file:line` ranges → proposed extracted symbol + home.
 3. **Single-responsibility offenders** — files >500 LOC that export 3+ unrelated symbols, classes that mix I/O with business logic, modules that handle their own dependency lookup.
@@ -63,6 +64,8 @@ For each load-bearing comment in the punch list, the rationale moves to markdown
 | Connector-specific quirks | New per-connector `docs/connectors/<name>.md` (only when a connector actually has quirks worth preserving) |
 | DB migration WHY | New file `docs/internals/migration-history.md` |
 | Test fixture WHY | Inline in existing `docs/contributors/*.md`, or new `docs/internals/test-fixtures.md` |
+| Type-field narrative (e.g. "this field must be non-empty because X") | New file `docs/internals/types-reference.md` — preserves the *why* of complex internal types that loses JSDoc in pass 3 |
+| TODO/FIXME with a real future task | New file `docs/internals/known-todos.md` |
 
 Every migrated entry is dated (`Added 2026-05-28 from <file>:<line>`) so reverse-lookup is possible after the strip. Documents link to source files; source files do not link back (they have no comments after pass 3).
 
@@ -93,11 +96,19 @@ Each theme below is a separate commit. Each commit cites the jscpd cluster IDs a
 
 **Connector themes:**
 
-- `runConnectorSync({ fetchPage, mapItem, vaultKey, rateLimitProvider })` — extracted to `packages/gateway/src/connectors/_lib/sync-runner.ts`. Every `<connector>-sync.ts` collapses to ~40 lines of declaration.
-- HTTP client with retry + rate limit + audit — extracted to `packages/gateway/src/connectors/_lib/http.ts`.
-- Pagination strategies (cursor, offset, page-number, link-header) — extracted to `packages/gateway/src/connectors/_lib/paginate.ts`.
-- `buildIndexedItem({ service, type, externalId, ... })` — extracted to `packages/gateway/src/connectors/_lib/item-builder.ts`.
-- `registerReadOnlyConnectorTools(server, { list, get, search })` — extracted to `@nimbus-dev/sdk` so first-party and third-party MCP servers share the registration helper.
+Composition over parameters. The connector subsystem has 30+ files with similar shape but real per-API differences (pagination styles, OAuth refresh edge cases, rate-limit signaling). A single `runConnectorSync(opts)` with 15 flags becomes a god function fast. The extraction is structured as **strategy interfaces + a thin template** that composes them — connectors declare which strategy they use, the template orchestrates.
+
+- **`Pagination` interface** (`packages/gateway/src/connectors/_lib/paginate.ts`) — four concrete implementations: `CursorPagination`, `OffsetPagination`, `PageNumberPagination`, `LinkHeaderPagination`. The connector picks one; the template loop drives it.
+- **`AuthHeaderProvider` interface** (`packages/gateway/src/connectors/_lib/auth.ts`) — four concrete: `BearerPat`, `OAuthWithRefresh` (consumes `OAUTH_PROVIDERS` from `oauth-registry.ts`), `QueryStringToken`, `Anonymous`.
+- **`RateLimitObserver` interface** (`packages/gateway/src/connectors/_lib/rate-limit-observer.ts`) — reads response headers and informs the existing per-provider rate limiter. Two concrete: `GithubStyleHeaders`, `RetryAfterHeader`. Default observer is a no-op.
+- **`runConnectorSync` template function** (`packages/gateway/src/connectors/_lib/sync-runner.ts`) — takes `{ pagination, auth, rateLimitObserver, mapItem, dbWrite }` as constructor-style strategy injection, **not** as a flag bag. Loops until pagination is exhausted; each iteration: fetch page (auth + observer), map items, batch-write via `dbRun`. ~80 lines.
+- **HTTP client with retry + audit** (`packages/gateway/src/connectors/_lib/http.ts`) — wraps `fetch`; produces audit entries on retries and non-2xx; consumes the `AuthHeaderProvider` and `RateLimitObserver`. The HTTP client is the only place the auth strategy interacts with the wire.
+- **`buildIndexedItem({ service, type, externalId, … })`** — extracted to `packages/gateway/src/connectors/_lib/item-builder.ts`. Pure; no I/O. Every `*-mapping.ts` consumes it.
+- **`registerReadOnlyConnectorTools(server, { list, get, search })`** — extracted to `@nimbus-dev/sdk` so first-party and third-party MCP servers share the registration helper.
+
+**Opt-out clause:** connectors whose shape genuinely doesn't fit the template (the `openapi-indexer-sync.ts` is the obvious candidate — it indexes spec *files*, not paginated API responses) **keep their bespoke code**. The success criterion is not "every `<connector>-sync.ts` collapses to 40 lines"; it is "the median connector consumes the template, and any sync handler still >150 LOC after pass 4 has a documented reason in its file's leading docs entry."
+
+Pass 5's `connectors/` review then enforces the success criterion: any sync handler still >150 LOC without a documented exemption gets a second look.
 
 **IPC themes:**
 
@@ -124,7 +135,7 @@ Each subsystem is a separate commit, citing the punch-list rows it resolves.
 
 **Gateway/engine:** Single-responsibility split on `executor.ts` only if it has grown beyond the HITL gate + dispatch; `HITL_REQUIRED` and `ToolExecutor.gate` must stay in the same module per `I2` module-privacy. Dependency injection: modules importing `pino` / `Database` / `fs` directly accept them as constructor args.
 
-**Gateway/connectors:** After pass 4 lands, audit that new connectors require only adding a row to `connector-secrets-manifest.ts` and the new sync-runner declaration, never a code branch in a dispatcher.
+**Gateway/connectors:** After pass 4 lands, two checks. (a) Adding a new connector requires only adding a row to `connector-secrets-manifest.ts` plus a sync-runner declaration that picks pagination + auth strategies, never a code branch in a dispatcher (open/closed). (b) Any `<connector>-sync.ts` still >150 LOC after pass 4 must either consume the template with an additional documented strategy, or carry a leading docs entry in the file naming the reason it opts out (the OpenAPI indexer is the expected one). Files that fail both get split or refactored in this pass.
 
 **Gateway/ipc:** Interface segregation — per-method types instead of large union types in handler signatures.
 
@@ -185,6 +196,15 @@ These are load-bearing structural defenses, not API. Aggressive on externals doe
 - **Coverage-floor drift on Linux.** Mitigated by running the docker-based Linux check before opening the PR per CLAUDE.md.
 - **Invariant test failures from moved wiring sites.** Every refactor commit that moves a wiring site updates the matching `security-invariants.test.ts` assertion in the same commit. The triple rule (production wiring + docs entry + enforcement test) holds.
 - **`@nimbus-dev/sdk` / `@nimbus-dev/client` published API churn.** Mitigated by treating these as the most conservative packages in the tree — refactor only where it's a clean win, and bump the version with explicit migration notes if breaks ship.
+
+## Review-driven amendments (2026-05-28)
+
+After initial spec review (`2026-05-28-monorepo-cleanup-design-review.md`):
+
+- **JSDoc on internal code stays stripped** (reviewer suggested preserving). Honors the explicit "strip all comments" direction; type *shapes* still produce IDE tooltips via the TypeScript type system. Type-field *narrative* migrates to the new `docs/internals/types-reference.md` target in pass 2.
+- **TODO/FIXME/HACK/XXX added to the pass 1 grep.** Triage rule documented above — concrete-task markers migrate to `docs/internals/known-todos.md`; stale ones are delete-only.
+- **`runConnectorSync` god-function risk addressed.** Pass 4 now specifies composition via strategy interfaces (`Pagination`, `AuthHeaderProvider`, `RateLimitObserver`) over a parameter-flag bag. Outlier connectors opt out explicitly with a leading docs entry.
+- **One mega PR retained over two-PR split.** Honors the explicit delivery choice. Mitigations: pass 3 is a single-script mechanical commit reviewable by inspecting the script; passes 4–5 commits cite punch-list rows. If the PR is unreviewable in practice, splitting later is cheap (rebase passes 4–5 onto a fresh branch).
 
 ## Open questions
 
