@@ -6,6 +6,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -27,11 +28,6 @@ export type ZoomSyncableOptions = {
   ensureZoomMcpRunning: () => Promise<void>;
 };
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function meetingsPath(pageToken: string): string {
   const params = new URLSearchParams({
     type: "scheduled",
@@ -43,21 +39,10 @@ function meetingsPath(pageToken: string): string {
   return `/v2/users/me/meetings?${params.toString()}`;
 }
 
-async function zoomGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BASE}${path}`, {
+function zoomGet(ctx: SyncContext, token: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "zoom GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractPage(parsed: unknown): { meetings: unknown[]; nextPageToken: string } {
