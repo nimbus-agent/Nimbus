@@ -1,6 +1,6 @@
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { parseStoredOAuthTokens } from "./oauth-vault-tokens.ts";
+import { parseStoredOAuthTokens } from "./oauth-vault-payload.ts";
 
 export type OAuthProvider = "google" | "microsoft" | "slack" | "notion";
 

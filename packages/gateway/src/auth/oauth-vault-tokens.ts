@@ -3,48 +3,14 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MICROSOFT_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
 import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
 
-export type StoredOAuthTokens = {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-};
-
-export type ParseStoredOAuthErrors = {
-  invalidJson: string;
-  invalidPayload: string;
-  missingAccess: string;
-  missingRefresh: string;
-  missingExpiry: string;
-};
-
-export function parseStoredOAuthTokens(
-  raw: string,
-  errs: ParseStoredOAuthErrors,
-): StoredOAuthTokens {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    throw new TypeError(errs.invalidJson);
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new TypeError(errs.invalidPayload);
-  }
-  const rec = parsed as Record<string, unknown>;
-  const accessToken = rec["accessToken"];
-  const refreshToken = rec["refreshToken"];
-  const expiresAt = rec["expiresAt"];
-  if (typeof accessToken !== "string" || accessToken === "") {
-    throw new TypeError(errs.missingAccess);
-  }
-  if (typeof refreshToken !== "string" || refreshToken === "") {
-    throw new TypeError(errs.missingRefresh);
-  }
-  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
-    throw new TypeError(errs.missingExpiry);
-  }
-  return { accessToken, refreshToken, expiresAt };
-}
+// Re-exported from `oauth-vault-payload.ts` to preserve the existing import
+// surface (google-access-token.ts + oauth-vault-tokens.test.ts) while keeping
+// the runtime parser available to `oauth-registry.ts` without a cycle.
+export {
+  type ParseStoredOAuthErrors,
+  parseStoredOAuthTokens,
+  type StoredOAuthTokens,
+} from "./oauth-vault-payload.ts";
 
 export async function getValidVaultOAuthAccessToken(args: {
   vault: NimbusVault;
