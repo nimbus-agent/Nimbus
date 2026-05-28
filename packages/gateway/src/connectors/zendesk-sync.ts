@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -51,11 +52,6 @@ async function loadCreds(ctx: SyncContext): Promise<ZendeskCreds | null> {
   return { url: trimTrailingSlash(url), email, apiToken };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function ticketsPath(afterCursor: string | null): string {
   const params = new URLSearchParams({ "page[size]": String(PAGE_SIZE) });
   if (afterCursor !== null && afterCursor !== "") {
@@ -64,28 +60,13 @@ function ticketsPath(afterCursor: string | null): string {
   return `/api/v2/tickets.json?${params.toString()}`;
 }
 
-async function zendeskGet(
-  ctx: SyncContext,
-  creds: ZendeskCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.url}${path}`, {
+function zendeskGet(ctx: SyncContext, creds: ZendeskCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.url}${path}`, {
     headers: {
       Authorization: zendeskBasicAuthHeader(creds.email, creds.apiToken),
       Accept: "application/json",
     },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "zendesk GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractTickets(parsed: unknown): unknown[] {
