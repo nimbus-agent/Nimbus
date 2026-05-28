@@ -2,6 +2,7 @@ import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MICROSOFT_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
 import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
+import type { ParseStoredOAuthErrors } from "./oauth-vault-payload.ts";
 
 // Re-exported from `oauth-vault-payload.ts` to preserve the existing import
 // surface (google-access-token.ts + oauth-vault-tokens.test.ts) while keeping
