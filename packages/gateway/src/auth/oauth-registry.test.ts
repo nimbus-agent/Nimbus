@@ -19,7 +19,7 @@ describe("OAUTH_PROVIDERS table", () => {
 
   test("each descriptor's id matches its table key", () => {
     for (const [key, d] of Object.entries(OAUTH_PROVIDERS)) {
-      expect(d.id).toBe(key);
+      expect(d.id === key).toBe(true);
     }
   });
 });

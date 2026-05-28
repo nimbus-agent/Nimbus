@@ -1,7 +1,14 @@
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import {
+  buildAuthorizeUrl,
+  exchangeAuthorizationCode,
+  OAUTH_PROVIDERS,
+  type OAuthProvider,
+  type PKCEResult,
+} from "./oauth-registry.ts";
 
-export type OAuthProvider = "google" | "microsoft" | "slack" | "notion";
+export type { OAuthProvider, PKCEResult };
 
 /** Subset of `fetch` for tests and dependency injection (avoids Bun/undici `preconnect` typing drift). */
 export type PKCEFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -27,40 +34,19 @@ export interface PKCEOptions {
   onRandomPortFallback?: () => void;
 }
 
-export interface PKCEResult {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-  scopes: string[];
-}
-
 const CALLBACK_PATH = "/oauth/callback";
 const AUTH_TIMEOUT_MS = 5 * 60_000;
 
-const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
+// Token endpoint URLs + Notion specifics retained until Task 7 migrates the
+// refresh functions to delegate through the registry.
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
-
-const MS_AUTH = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 const MS_TOKEN = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
-
-const SLACK_AUTH = "https://slack.com/oauth/v2/authorize";
 const SLACK_OAUTH_V2_ACCESS = "https://slack.com/api/oauth.v2.access";
-
-const NOTION_AUTH = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN = "https://api.notion.com/v1/oauth/token";
 const NOTION_API_VERSION = "2022-06-28";
 
 function vaultKeyForProvider(provider: OAuthProvider): string {
-  switch (provider) {
-    case "google":
-      return "google.oauth";
-    case "microsoft":
-      return "microsoft.oauth";
-    case "slack":
-      return "slack.oauth";
-    case "notion":
-      return "notion.oauth";
-  }
+  return OAUTH_PROVIDERS[provider].vaultKey;
 }
 
 function assertValidPort(p: number): void {
@@ -293,45 +279,6 @@ function handlePkceCallbackRequest(
   });
 }
 
-function buildPkceAuthorizeUrl(
-  provider: "google" | "microsoft",
-  params: {
-    clientId: string;
-    scopes: string[];
-    redirectUri: string;
-    state: string;
-    codeChallenge: string;
-  },
-): URL {
-  const authUrl = new URL(provider === "google" ? GOOGLE_AUTH : MS_AUTH);
-  authUrl.searchParams.set("client_id", params.clientId);
-  authUrl.searchParams.set("redirect_uri", params.redirectUri);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", params.scopes.join(" "));
-  authUrl.searchParams.set("state", params.state);
-  authUrl.searchParams.set("code_challenge", params.codeChallenge);
-  authUrl.searchParams.set("code_challenge_method", "S256");
-  if (provider === "google") {
-    authUrl.searchParams.set("access_type", "offline");
-    authUrl.searchParams.set("prompt", "consent");
-  }
-  return authUrl;
-}
-
-function buildNotionAuthorizeUrl(params: {
-  clientId: string;
-  redirectUri: string;
-  state: string;
-}): URL {
-  const authUrl = new URL(NOTION_AUTH);
-  authUrl.searchParams.set("client_id", params.clientId);
-  authUrl.searchParams.set("redirect_uri", params.redirectUri);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("owner", "user");
-  authUrl.searchParams.set("state", params.state);
-  return authUrl;
-}
-
 function notionBasicAuthHeader(clientId: string, clientSecret: string): string {
   const raw = `${clientId}:${clientSecret}`;
   const b64 = Buffer.from(raw, "utf8").toString("base64");
@@ -369,120 +316,6 @@ function pkceResultFromNotionTokenJson(
     expiresAt: Date.now() + syntheticExpiresSec * 1000,
     scopes: requestedScopes,
   };
-}
-
-async function exchangeNotionAuthorizationCode(
-  fetchFn: PKCEFetch,
-  clientId: string,
-  clientSecret: string,
-  redirectUri: string,
-  authCode: string,
-  requestedScopes: string[],
-): Promise<PKCEResult> {
-  const res = await fetchFn(NOTION_TOKEN, {
-    method: "POST",
-    headers: {
-      Authorization: notionBasicAuthHeader(clientId, clientSecret),
-      "Content-Type": "application/json",
-      "Notion-Version": NOTION_API_VERSION,
-    },
-    body: JSON.stringify({
-      grant_type: "authorization_code",
-      code: authCode,
-      redirect_uri: redirectUri,
-    }),
-  });
-  const text = await res.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("Notion token endpoint returned non-JSON");
-  }
-  if (!res.ok) {
-    throw new Error("Notion token exchange failed");
-  }
-  return pkceResultFromNotionTokenJson(parsed, requestedScopes, false);
-}
-
-async function runNotionOAuthOnLocalPort(
-  options: PKCEOptions,
-  bindPort: number,
-  fetchFn: PKCEFetch,
-): Promise<PKCEResult> {
-  const { clientId, scopes, vault, openUrl } = options;
-  const clientSecret = options.oauthClientSecret;
-  if (clientSecret === undefined || clientSecret === "") {
-    throw new Error("Notion OAuth requires oauthClientSecret (integration client secret)");
-  }
-  const state = randomUrlSafeString(16);
-  const completion: { value?: OAuthCompletion } = {};
-
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: bindPort,
-    fetch(req) {
-      return handlePkceCallbackRequest(req, state, completion);
-    },
-  });
-
-  const boundPort = server.port;
-  const redirectUri = `http://127.0.0.1:${String(boundPort)}${CALLBACK_PATH}`;
-  const authUrl = buildNotionAuthorizeUrl({
-    clientId,
-    redirectUri,
-    state,
-  });
-
-  const abortTimer = setTimeout(() => {
-    completion.value ??= { error: "timeout" };
-  }, AUTH_TIMEOUT_MS);
-
-  try {
-    await openUrl(authUrl.toString());
-
-    while (completion.value === undefined) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-
-    const done = completion.value;
-    if ("error" in done) {
-      throw new Error("OAuth authorization did not complete");
-    }
-
-    const result = await exchangeNotionAuthorizationCode(
-      fetchFn,
-      clientId,
-      clientSecret,
-      redirectUri,
-      done.code,
-      scopes,
-    );
-
-    await persistTokens(vault, "notion", result);
-    return result;
-  } finally {
-    clearTimeout(abortTimer);
-    server.stop();
-  }
-}
-
-function buildSlackAuthorizeUrl(params: {
-  clientId: string;
-  userScopes: string[];
-  redirectUri: string;
-  state: string;
-  codeChallenge: string;
-}): URL {
-  const authUrl = new URL(SLACK_AUTH);
-  authUrl.searchParams.set("client_id", params.clientId);
-  authUrl.searchParams.set("user_scope", params.userScopes.join(","));
-  authUrl.searchParams.set("redirect_uri", params.redirectUri);
-  authUrl.searchParams.set("state", params.state);
-  authUrl.searchParams.set("code_challenge", params.codeChallenge);
-  authUrl.searchParams.set("code_challenge_method", "S256");
-  authUrl.searchParams.set("scope", "");
-  return authUrl;
 }
 
 async function slackOAuthV2Access(
@@ -562,138 +395,17 @@ function pkceResultFromSlackOAuthV2Access(json: unknown, requestedScopes: string
   };
 }
 
-async function exchangeSlackAuthorizationCode(
-  fetchFn: PKCEFetch,
-  clientId: string,
-  redirectUri: string,
-  codeVerifier: string,
-  authCode: string,
-  requestedScopes: string[],
-): Promise<PKCEResult> {
-  const json = await slackOAuthV2Access(fetchFn, {
-    client_id: clientId,
-    code: authCode,
-    redirect_uri: redirectUri,
-    code_verifier: codeVerifier,
-  });
-  return pkceResultFromSlackOAuthV2Access(json, requestedScopes);
-}
-
-async function runSlackOAuthOnLocalPort(
-  options: PKCEOptions,
-  bindPort: number,
-  fetchFn: PKCEFetch,
-): Promise<PKCEResult> {
-  const { clientId, scopes, vault, openUrl } = options;
-  const codeVerifier = randomUrlSafeString(32);
-  const codeChallenge = await pkceCodeChallengeS256(codeVerifier);
-  const state = randomUrlSafeString(16);
-  const completion: { value?: OAuthCompletion } = {};
-
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: bindPort,
-    fetch(req) {
-      return handlePkceCallbackRequest(req, state, completion);
-    },
-  });
-
-  const boundPort = server.port;
-  const redirectUri = `http://127.0.0.1:${String(boundPort)}${CALLBACK_PATH}`;
-  const authUrl = buildSlackAuthorizeUrl({
-    clientId,
-    userScopes: scopes,
-    redirectUri,
-    state,
-    codeChallenge,
-  });
-
-  const abortTimer = setTimeout(() => {
-    completion.value ??= { error: "timeout" };
-  }, AUTH_TIMEOUT_MS);
-
-  try {
-    await openUrl(authUrl.toString());
-
-    while (completion.value === undefined) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-
-    const done = completion.value;
-    if ("error" in done) {
-      throw new Error("OAuth authorization did not complete");
-    }
-
-    const result = await exchangeSlackAuthorizationCode(
-      fetchFn,
-      clientId,
-      redirectUri,
-      codeVerifier,
-      done.code,
-      scopes,
-    );
-    await persistTokens(vault, "slack", result);
-    return result;
-  } finally {
-    clearTimeout(abortTimer);
-    server.stop();
-  }
-}
-
-interface ExchangePkceParams {
-  fetchFn: PKCEFetch;
-  provider: "google" | "microsoft";
-  clientId: string;
-  redirectUri: string;
-  codeVerifier: string;
-  authCode: string;
-  requestedScopes: string[];
-  clientSecret?: string;
-}
-
-async function exchangePkceAuthorizationCode(params: ExchangePkceParams): Promise<PKCEResult> {
-  const tokenUrl = params.provider === "google" ? GOOGLE_TOKEN : MS_TOKEN;
-  const tokenBody: Record<string, string> = {
-    client_id: params.clientId,
-    grant_type: "authorization_code",
-    code: params.authCode,
-    redirect_uri: params.redirectUri,
-    code_verifier: params.codeVerifier,
-  };
-  if (params.clientSecret !== undefined && params.clientSecret !== "") {
-    tokenBody["client_secret"] = params.clientSecret;
-  }
-  const json = await postForm(params.fetchFn, tokenUrl, tokenBody);
-  const parsed = parseTokenJson(json);
-  const refreshTok = parsed.refresh_token;
-  if (refreshTok === undefined || refreshTok === "") {
-    throw new Error("No refresh token returned; try revoking app access and signing in again");
-  }
-  return {
-    accessToken: parsed.access_token,
-    refreshToken: refreshTok,
-    expiresAt: Date.now() + Math.floor(parsed.expires_in * 1000),
-    scopes: scopesFromTokenResponse(parsed.scope, params.requestedScopes),
-  };
-}
-
 async function runOnLocalPort(
   options: PKCEOptions,
   bindPort: number,
   fetchFn: PKCEFetch,
 ): Promise<PKCEResult> {
-  const { provider, clientId, scopes, vault, openUrl } = options;
-  if (provider === "slack") {
-    return await runSlackOAuthOnLocalPort(options, bindPort, fetchFn);
-  }
-  if (provider === "notion") {
-    return await runNotionOAuthOnLocalPort(options, bindPort, fetchFn);
-  }
-
-  const codeVerifier = randomUrlSafeString(32);
-  const codeChallenge = await pkceCodeChallengeS256(codeVerifier);
+  const descriptor = OAUTH_PROVIDERS[options.provider];
+  const usePkce = descriptor.usesPkce;
+  const codeVerifier = usePkce ? randomUrlSafeString(32) : undefined;
+  const codeChallenge =
+    codeVerifier !== undefined ? await pkceCodeChallengeS256(codeVerifier) : undefined;
   const state = randomUrlSafeString(16);
-
   const completion: { value?: OAuthCompletion } = {};
 
   const server = Bun.serve({
@@ -703,15 +415,13 @@ async function runOnLocalPort(
       return handlePkceCallbackRequest(req, state, completion);
     },
   });
-
-  const boundPort = server.port;
-  const redirectUri = `http://127.0.0.1:${String(boundPort)}${CALLBACK_PATH}`;
-  const authUrl = buildPkceAuthorizeUrl(provider, {
-    clientId,
-    scopes,
+  const redirectUri = `http://127.0.0.1:${String(server.port)}${CALLBACK_PATH}`;
+  const authUrl = buildAuthorizeUrl(descriptor, {
+    clientId: options.clientId,
+    scopes: options.scopes,
     redirectUri,
     state,
-    codeChallenge,
+    ...(codeChallenge !== undefined && { codeChallenge }),
   });
 
   const abortTimer = setTimeout(() => {
@@ -719,33 +429,27 @@ async function runOnLocalPort(
   }, AUTH_TIMEOUT_MS);
 
   try {
-    await openUrl(authUrl.toString());
-
+    await options.openUrl(authUrl.toString());
     while (completion.value === undefined) {
       await new Promise((r) => setTimeout(r, 50));
     }
-
     const done = completion.value;
     if ("error" in done) {
       throw new Error("OAuth authorization did not complete");
     }
 
-    const secret =
-      provider === "google" || provider === "microsoft"
-        ? (options.oauthClientSecret?.trim() ?? "")
-        : "";
-    const result = await exchangePkceAuthorizationCode({
+    const clientSecret = options.oauthClientSecret?.trim();
+    const result = await exchangeAuthorizationCode({
+      descriptor,
       fetchFn,
-      provider,
-      clientId,
+      clientId: options.clientId,
+      ...(clientSecret !== undefined && clientSecret !== "" && { clientSecret }),
       redirectUri,
-      codeVerifier,
+      ...(codeVerifier !== undefined && { codeVerifier }),
       authCode: done.code,
-      requestedScopes: scopes,
-      ...(secret !== "" && { clientSecret: secret }),
+      requestedScopes: options.scopes,
     });
-
-    await persistTokens(vault, provider, result);
+    await persistOAuthTokensToVaultKey(options.vault, descriptor.vaultKey, result);
     return result;
   } finally {
     clearTimeout(abortTimer);
