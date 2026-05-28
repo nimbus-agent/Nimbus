@@ -4,6 +4,7 @@ import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitExpertBrief } from "../agents/expert.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class AgentsRpcError extends Error {
   readonly rpcCode: number;
@@ -155,42 +156,49 @@ function newSessionId(kind: "expert" | "impact" | "catchup"): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
+async function handleExpert(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requireExpertParams(params);
+  const sessionId = newSessionId("expert");
+  const expertCtx =
+    ctx.llm === undefined
+      ? { db: ctx.db, notify: ctx.notify, sessionId }
+      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+  return await emitExpertBrief(input, expertCtx);
+}
+
+async function handleImpact(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requireImpactParams(params);
+  const sessionId = newSessionId("impact");
+  const impactCtx =
+    ctx.llm === undefined
+      ? { db: ctx.db, notify: ctx.notify, sessionId }
+      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+  return await emitImpactBrief(input, impactCtx);
+}
+
+async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requireCatchupParams(params);
+  const sessionId = newSessionId("catchup");
+  const userToml = ctx.configDir === undefined ? {} : loadNimbusUserFromConfigDir(ctx.configDir);
+  const catchupInput =
+    userToml.mePersonId === undefined
+      ? input
+      : { ...input, mePersonIdOverride: userToml.mePersonId };
+  const catchupCtx =
+    ctx.llm === undefined
+      ? { db: ctx.db, notify: ctx.notify, sessionId }
+      : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
+  return await emitCatchupBrief(catchupInput, catchupCtx);
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
   ctx: AgentsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: unknown }> {
-  if (method === "agents.expert") {
-    const input = requireExpertParams(params);
-    const sessionId = newSessionId("expert");
-    const expertCtx =
-      ctx.llm === undefined
-        ? { db: ctx.db, notify: ctx.notify, sessionId }
-        : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
-    return { kind: "hit", value: await emitExpertBrief(input, expertCtx) };
-  }
-  if (method === "agents.impact") {
-    const input = requireImpactParams(params);
-    const sessionId = newSessionId("impact");
-    const impactCtx =
-      ctx.llm === undefined
-        ? { db: ctx.db, notify: ctx.notify, sessionId }
-        : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
-    return { kind: "hit", value: await emitImpactBrief(input, impactCtx) };
-  }
-  if (method === "agents.catchup") {
-    const input = requireCatchupParams(params);
-    const sessionId = newSessionId("catchup");
-    const userToml = ctx.configDir === undefined ? {} : loadNimbusUserFromConfigDir(ctx.configDir);
-    const catchupInput =
-      userToml.mePersonId === undefined
-        ? input
-        : { ...input, mePersonIdOverride: userToml.mePersonId };
-    const catchupCtx =
-      ctx.llm === undefined
-        ? { db: ctx.db, notify: ctx.notify, sessionId }
-        : { db: ctx.db, llm: ctx.llm, notify: ctx.notify, sessionId };
-    return { kind: "hit", value: await emitCatchupBrief(catchupInput, catchupCtx) };
-  }
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<AgentsRpcContext>(method, params, ctx, {
+    "agents.expert": handleExpert,
+    "agents.impact": handleImpact,
+    "agents.catchup": handleCatchup,
+  });
 }
