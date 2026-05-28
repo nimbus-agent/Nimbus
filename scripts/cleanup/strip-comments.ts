@@ -26,20 +26,23 @@ export function isPublishedJsdocFile(relativePath: string): boolean {
 export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): string {
   const sf = ts.createSourceFile("f.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
   const removals: Array<{ start: number; end: number }> = [];
-  const visited = new Set<number>();
+  const visitedScans = new Set<string>();
+  const emittedStarts = new Set<number>();
 
   function isJsdoc(text: string): boolean {
     return text.startsWith("/**");
   }
 
   function scanCommentsAtPosition(pos: number, isLeading: boolean): void {
-    if (visited.has(pos)) return;
-    visited.add(pos);
+    const key = `${pos}:${isLeading ? "L" : "T"}`;
+    if (visitedScans.has(key)) return;
+    visitedScans.add(key);
     const ranges = isLeading
       ? ts.getLeadingCommentRanges(source, pos)
       : ts.getTrailingCommentRanges(source, pos);
     if (!ranges) return;
     for (const r of ranges) {
+      if (emittedStarts.has(r.pos)) continue;
       const text = source.slice(r.pos, r.end);
       if (shouldPreserveComment(text)) continue;
       if (opts.keepJsdoc && isJsdoc(text)) continue;
@@ -47,6 +50,7 @@ export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): str
       let end = r.end;
       if (r.hasTrailingNewLine) end = Math.min(source.length, end + 1);
       removals.push({ start, end });
+      emittedStarts.add(r.pos);
     }
   }
 

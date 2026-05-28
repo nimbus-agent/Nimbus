@@ -99,6 +99,26 @@ describe("stripTsSource", () => {
     const out = stripTsSource(src, { keepJsdoc: false });
     expect(out).not.toMatch(/\n{3,}/);
   });
+
+  test("removes JSDoc between two top-level statements", () => {
+    const src = `import { foo } from "bar";\n\n/**\n * Doc disappears.\n */\nexport const X = 1;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).not.toContain("Doc disappears");
+    expect(out).toContain('import { foo } from "bar"');
+    expect(out).toContain("export const X = 1");
+  });
+
+  test("removes line comment between two adjacent statements (regression: visited-set conflation)", () => {
+    const src = `const a = 1;\n// vanish\nconst b = 2;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).not.toContain("vanish");
+  });
+
+  test("removes block comment between two top-level statements", () => {
+    const src = `const a = 1;\n/* bye */\nconst b = 2;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).not.toContain("bye");
+  });
 });
 
 describe("stripRustSource", () => {
