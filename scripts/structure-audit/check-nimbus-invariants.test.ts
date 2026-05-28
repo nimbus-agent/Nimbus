@@ -107,7 +107,7 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 7 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 9 entries", () => {
     // Each entry has a documented structural reason. The first 5 land in the
     // structure-audit design spec § 4.4 (helper home, Google OAuth canonical
     // reader, Google PKCE writer, Microsoft provider-shared OAuth, OpenAI
@@ -116,7 +116,13 @@ describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
     // canonical declaration site for per-connector vault keys. The 7th —
     // extensions/publisher-keys.ts — was added in Phase 5 T2 PR 2 as the
     // declaration site for the `extension.publisher_key.<id>` namespace.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(7);
+    // The 8th — auth/oauth-registry.ts — was added in the OAuth-registry
+    // refactor (PR-1) as the single source of truth for descriptor.vaultKey
+    // values across google/microsoft/slack/notion. The 9th —
+    // auth/zoom-access-token.ts — was added in PR-2 as the Zoom OAuth
+    // resolver that constructs the "zoom.oauth" key in its parseErrors
+    // defaults.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(9);
   });
 });
 
