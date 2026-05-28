@@ -1,12 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  encodeBasicAuthHeader,
-  mcpJsonResult as jsonResult,
-} from "../../shared/mcp-tool-kit.ts";
+import { encodeBasicAuthHeader, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterZendeskTickets } from "./search-filter.ts";
 
 function trimTrailingSlash(s: string): string {
@@ -45,45 +39,41 @@ async function zendeskGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-const mcp = new McpServer({ name: "nimbus-zendesk", version: "0.1.0" });
-const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+await runReadOnlyMcpConnector("nimbus-zendesk", (reg) => {
+  reg(
+    "zendesk_list",
+    "List the user's Zendesk tickets (`GET /api/v2/tickets.json?page[size]=100`). Returns the cursor-pagination envelope `{ tickets: [...], meta: { has_more, after_cursor }, links: { next } }` — `tickets` holds the ticket objects.",
+    z.object({}),
+    async () => {
+      return jsonResult(await zendeskGet(`/api/v2/tickets.json?page[size]=100`));
+    },
+  );
 
-reg(
-  "zendesk_list",
-  "List the user's Zendesk tickets (`GET /api/v2/tickets.json?page[size]=100`). Returns the cursor-pagination envelope `{ tickets: [...], meta: { has_more, after_cursor }, links: { next } }` — `tickets` holds the ticket objects.",
-  z.object({}),
-  async () => {
-    return jsonResult(await zendeskGet(`/api/v2/tickets.json?page[size]=100`));
-  },
-);
+  reg(
+    "zendesk_get",
+    "Fetch one Zendesk ticket by its numeric id (`GET /api/v2/tickets/{id}.json`). Returns the `{ ticket: {...} }` envelope. Throws when no match is found.",
+    z.object({
+      id: z.string().min(1),
+    }),
+    async (p) => {
+      return jsonResult(await zendeskGet(`/api/v2/tickets/${encodeURIComponent(p.id)}.json`));
+    },
+  );
 
-reg(
-  "zendesk_get",
-  "Fetch one Zendesk ticket by its numeric id (`GET /api/v2/tickets/{id}.json`). Returns the `{ ticket: {...} }` envelope. Throws when no match is found.",
-  z.object({
-    id: z.string().min(1),
-  }),
-  async (p) => {
-    return jsonResult(await zendeskGet(`/api/v2/tickets/${encodeURIComponent(p.id)}.json`));
-  },
-);
-
-reg(
-  "zendesk_search",
-  "Substring search across the user's Zendesk tickets (first page only). Matches the query against the ticket subject, description, status, priority, type, and tags (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-  z.object({
-    query: z.string().min(1),
-    limit: z.number().int().min(1).max(100).optional(),
-  }),
-  async (p) => {
-    const root = await zendeskGet(`/api/v2/tickets.json?page[size]=100`);
-    const tickets = (root as { tickets?: unknown[] } | null)?.tickets;
-    const matches = Array.isArray(tickets)
-      ? filterZendeskTickets(tickets, { query: p.query, limit: p.limit })
-      : [];
-    return jsonResult({ matches });
-  },
-);
-
-const transport = new StdioServerTransport();
-await mcp.connect(transport);
+  reg(
+    "zendesk_search",
+    "Substring search across the user's Zendesk tickets (first page only). Matches the query against the ticket subject, description, status, priority, type, and tags (case-insensitive). Returns a `{ matches: [...] }` envelope.",
+    z.object({
+      query: z.string().min(1),
+      limit: z.number().int().min(1).max(100).optional(),
+    }),
+    async (p) => {
+      const root = await zendeskGet(`/api/v2/tickets.json?page[size]=100`);
+      const tickets = (root as { tickets?: unknown[] } | null)?.tickets;
+      const matches = Array.isArray(tickets)
+        ? filterZendeskTickets(tickets, { query: p.query, limit: p.limit })
+        : [];
+      return jsonResult({ matches });
+    },
+  );
+});
