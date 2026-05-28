@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { DoctorEnv, DoctorVoiceConfig } from "./doctor.ts";
-import { doctorVoiceLines } from "./doctor.ts";
+import type { DoctorEnv, DoctorVoiceConfig } from "./doctor-core.ts";
+import { doctorVoiceLines } from "./doctor-core.ts";
 
 const ENABLED_CFG: DoctorVoiceConfig = {
   enabled: true,
