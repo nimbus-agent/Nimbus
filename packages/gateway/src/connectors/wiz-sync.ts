@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -76,44 +77,32 @@ async function loadWizCreds(ctx: SyncContext): Promise<WizCreds | null> {
   };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 async function fetchAccessToken(
   ctx: SyncContext,
   creds: WizCreds,
 ): Promise<{ token: string | null; bytes: number; kind: "ok" | "http_error" | "parse_error" }> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: creds.clientId,
     client_secret: creds.clientSecret,
     audience: "wiz-api",
   });
-  const res = await fetch(creds.authUrl, {
+  const outcome = await connectorFetch(ctx, SERVICE_ID, creds.authUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn(
-      { serviceId: SERVICE_ID, status: res.status, path: "/oauth/token" },
-      "wiz auth failed",
-    );
-    return { token: null, bytes: text.length, kind: "http_error" };
+  if (outcome.kind === "http_error") {
+    return { token: null, bytes: outcome.bytes, kind: "http_error" };
   }
-  try {
-    const parsed = JSON.parse(text) as { access_token?: string };
-    if (typeof parsed.access_token !== "string" || parsed.access_token === "") {
-      return { token: null, bytes: text.length, kind: "parse_error" };
-    }
-    return { token: parsed.access_token, bytes: text.length, kind: "ok" };
-  } catch {
-    return { token: null, bytes: text.length, kind: "parse_error" };
+  if (outcome.kind === "parse_error") {
+    return { token: null, bytes: outcome.bytes, kind: "parse_error" };
   }
+  const parsed = outcome.parsed as { access_token?: string };
+  if (typeof parsed.access_token !== "string" || parsed.access_token === "") {
+    return { token: null, bytes: outcome.bytes, kind: "parse_error" };
+  }
+  return { token: parsed.access_token, bytes: outcome.bytes, kind: "ok" };
 }
 
 async function wizGraphql(
@@ -122,8 +111,7 @@ async function wizGraphql(
   token: string,
   variables: Record<string, unknown>,
 ): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(creds.apiUrl, {
+  const outcome = await connectorFetch(ctx, SERVICE_ID, creds.apiUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -132,21 +120,15 @@ async function wizGraphql(
     },
     body: JSON.stringify({ query: ISSUES_QUERY, variables }),
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status }, "wiz graphql failed");
-    return { kind: "http_error", bytes: text.length };
+  if (outcome.kind !== "ok") {
+    return outcome;
   }
-  try {
-    const parsed = JSON.parse(text) as { data?: unknown; errors?: unknown };
-    if (parsed.errors !== undefined) {
-      ctx.logger.warn({ serviceId: SERVICE_ID, errors: parsed.errors }, "wiz graphql errors");
-      return { kind: "parse_error", bytes: text.length };
-    }
-    return { kind: "ok", parsed: parsed.data ?? {}, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
+  const envelope = outcome.parsed as { data?: unknown; errors?: unknown };
+  if (envelope.errors !== undefined) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, errors: envelope.errors }, "wiz graphql errors");
+    return { kind: "parse_error", bytes: outcome.bytes };
   }
+  return { kind: "ok", parsed: envelope.data ?? {}, bytes: outcome.bytes };
 }
 
 function extractIssueNodes(parsed: unknown): {
