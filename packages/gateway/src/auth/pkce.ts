@@ -214,6 +214,21 @@ async function runOnLocalPort(
 }
 
 export async function runPKCEFlow(options: PKCEOptions): Promise<PKCEResult> {
+  // Pre-flight: providers whose descriptor declares `clientSecret: "required"`
+  // (notion, zoom) cannot complete a token exchange without one. Reject up
+  // front so the caller sees a fast error instead of the 5-minute callback
+  // timeout. The per-provider check used to live in the dropped
+  // `runNotionOAuthOnLocalPort` helper; the registry refactor unified all
+  // providers through `runOnLocalPort` and lost this guard.
+  const descriptor = OAUTH_PROVIDERS[options.provider];
+  if (descriptor.clientSecret === "required") {
+    const secret = options.oauthClientSecret?.trim();
+    if (secret === undefined || secret === "") {
+      throw new Error(
+        `${options.provider} OAuth requires oauthClientSecret (integration client secret)`,
+      );
+    }
+  }
   const fetchFn: PKCEFetch = options.fetchImpl ?? ((i, init) => globalThis.fetch(i, init));
   const sequence = buildPortSequence(options);
 
