@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapGreenhouseJobToItem } from "./greenhouse-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -42,35 +43,15 @@ function basicAuthHeader(apiKey: string): string {
   return `Basic ${b64}`;
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function jobsPath(page: number): string {
   const params = new URLSearchParams({ per_page: String(PAGE_SIZE), page: String(page) });
   return `/v1/jobs?${params.toString()}`;
 }
 
-async function greenhouseGet(
-  ctx: SyncContext,
-  creds: GreenhouseCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BASE}${path}`, {
+function greenhouseGet(ctx: SyncContext, creds: GreenhouseCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${BASE}${path}`, {
     headers: { Authorization: basicAuthHeader(creds.apiKey), Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "greenhouse GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractJobs(parsed: unknown): unknown[] {
