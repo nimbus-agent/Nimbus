@@ -125,14 +125,25 @@ jobs:
   # (BUG-009 cross-OS path-shape mismatch was the motivating example)
   # surface before the merge button is pressed. Scope is intentionally narrow:
   # no integration, no e2e, no coverage upload — just `bun test` on source.
+  #
+  # Gateway and CLI run as SEPARATE matrix entries so they execute in parallel,
+  # not back-to-back in one runner. This halves the critical-path wall time on
+  # Windows (the slowest leg of the PR matrix). The per-package isolation also
+  # remains a hard requirement: the CLI suite's mock harness
+  # (`packages/cli/test/helpers/cli-mocks.ts`) installs process-global
+  # `mock.module` registrations and assumes per-package process isolation —
+  # running gateway + CLI tests in one process let a gateway test's global
+  # `mock.restore()` corrupt CLI repl tests on macOS. Separate matrix entries
+  # restore that isolation by construction.
   pr-quality-cross-platform:
-    name: PR quality — Cross-platform (${{ matrix.os }})
+    name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
     if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
     needs: filter
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15, windows-2025]
+        pkg: [gateway, cli]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -167,26 +178,21 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
+      # Build + typecheck run on the gateway matrix entry only. Typecheck is
+      # monorepo-wide and identical between entries, so doing it twice per OS
+      # would be pure runner-minute waste with no signal gain — host-specific TS
+      # quirks still surface on the gateway entry. Client build is only needed
+      # for vscode-extension typecheck, which only runs alongside typecheck.
       - name: Build @nimbus-dev/client (for vscode-extension typecheck)
+        if: matrix.pkg == 'gateway'
         run: cd packages/client && bun run build
 
       - name: Typecheck (catches host-specific TS quirks)
+        if: matrix.pkg == 'gateway'
         run: bun run typecheck
 
-      - name: Gateway + CLI unit tests (retry once on slow runners)
+      - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
         shell: bash
-        # Gateway and CLI run in SEPARATE `bun test` processes. The CLI suite's
-        # mock harness (`packages/cli/test/helpers/cli-mocks.ts`) installs
-        # process-global `mock.module` registrations and explicitly assumes
-        # per-package process isolation ("serial-within-process"). Running
-        # `bun test packages/gateway/src packages/cli/src` in ONE process let a
-        # gateway test's global `mock.restore()` corrupt the CLI repl tests at
-        # collection time — observed as the whole repl.test.ts file failing
-        # (incl. the dependency-free parseReplArgs) intermittently on macOS.
-        # Separate invocations restore the isolation cli-mocks depends on; this
-        # matches how the push 3-OS matrix (`_test-suite.yml`) runs them per
-        # package.
-        #
         # Retry-once mirrors the macOS/Windows pattern in `_test-suite.yml`. Two
         # tests in `packages/gateway/src/perf/` and `packages/gateway/src/platform/`
         # observably exceed Bun's default 5 s timeout on cold Windows runners and
@@ -195,13 +201,8 @@ jobs:
         # from attempt 2 — so a genuine regression actually fails the job.
         run: |
           set +e
-          run_suite() {
-            bun test packages/gateway/src || return $?
-            bun test packages/cli/src || return $?
-            return 0
-          }
           for attempt in 1 2; do
-            run_suite
+            bun test "packages/${{ matrix.pkg }}/src"
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0
