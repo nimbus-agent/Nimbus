@@ -1,5 +1,6 @@
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { parseStoredOAuthTokens } from "./oauth-vault-tokens.ts";
 
 export type OAuthProvider = "google" | "microsoft" | "slack" | "notion";
 
@@ -349,4 +350,117 @@ export async function exchangeAuthorizationCode(a: ExchangeArgs): Promise<PKCERe
     grant,
     requestedScopes: a.requestedScopes,
   });
+}
+
+async function persistTokens(vault: NimbusVault, vaultKey: string, r: PKCEResult): Promise<void> {
+  validateVaultKeyOrThrow(vaultKey);
+  await vault.set(
+    vaultKey,
+    JSON.stringify({
+      accessToken: r.accessToken,
+      refreshToken: r.refreshToken,
+      expiresAt: r.expiresAt,
+      scopes: r.scopes,
+    }),
+  );
+}
+
+export interface RefreshArgs {
+  descriptor: OAuthProviderDescriptor;
+  refreshToken: string;
+  clientId: string;
+  vault: NimbusVault;
+  clientSecret?: string;
+  fetchFn?: RegistryFetch;
+  /** Persist to this key instead of descriptor.vaultKey (Google per-service keys). */
+  persistVaultKey?: string;
+}
+
+export async function refreshViaRegistry(a: RefreshArgs): Promise<PKCEResult> {
+  const fetchFn: RegistryFetch = a.fetchFn ?? ((i, init) => globalThis.fetch(i, init));
+  const partial = await postToken({
+    descriptor: a.descriptor,
+    fetchFn,
+    clientId: a.clientId,
+    ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+    grant: { grant_type: "refresh_token", refresh_token: a.refreshToken },
+    requestedScopes: [],
+  });
+  const result: PKCEResult = {
+    ...partial,
+    refreshToken: partial.refreshToken === "" ? a.refreshToken : partial.refreshToken,
+  };
+  const key =
+    a.persistVaultKey !== undefined && a.persistVaultKey.trim() !== ""
+      ? a.persistVaultKey.trim()
+      : a.descriptor.vaultKey;
+  await persistTokens(a.vault, key, result);
+  return result;
+}
+
+const REFRESH_MARGIN_MS = 120_000;
+// Single-flight: coalesce concurrent refreshes for the same persisted token.
+// Single-process invariant — see Task 5 plan note: only the Gateway process runs
+// `getValidVaultAccessToken`; connector child processes consume injected env tokens
+// and never read the Vault. An in-memory Map is therefore sufficient — no IPC/file
+// lock is needed under that invariant.
+const inFlightRefresh = new Map<string, Promise<string>>();
+
+export interface GetValidArgs {
+  descriptor: OAuthProviderDescriptor;
+  vault: NimbusVault;
+  clientId: string;
+  clientSecret?: string;
+  /** Read/persist key override (Google per-service); defaults to descriptor.vaultKey. */
+  vaultKey?: string;
+  notConfiguredError?: string;
+  parseErrors?: Parameters<typeof parseStoredOAuthTokens>[1];
+  emptyClientIdError?: string;
+  fetchFn?: RegistryFetch;
+}
+
+export async function getValidVaultAccessToken(a: GetValidArgs): Promise<string> {
+  const vaultKey = a.vaultKey ?? a.descriptor.vaultKey;
+  const raw = await a.vault.get(vaultKey);
+  if (raw === null || raw === "") {
+    throw new Error(a.notConfiguredError ?? `${a.descriptor.id} OAuth not configured`);
+  }
+  const parseErrors = a.parseErrors ?? {
+    invalidJson: `Invalid ${vaultKey} vault payload`,
+    invalidPayload: `Invalid ${vaultKey} vault payload`,
+    missingAccess: `Missing ${a.descriptor.id} access token`,
+    missingRefresh: `Missing ${a.descriptor.id} refresh token`,
+    missingExpiry: "Missing token expiry",
+  };
+  const parsed = parseStoredOAuthTokens(raw, parseErrors);
+  if (parsed.expiresAt > Date.now() + REFRESH_MARGIN_MS) {
+    return parsed.accessToken;
+  }
+  if (a.clientId === "") {
+    throw new Error(
+      a.emptyClientIdError ?? `Missing client id for ${a.descriptor.id} token refresh`,
+    );
+  }
+  // Lock is consulted only on the refresh path — after the cheap vault read +
+  // parse + expiry check. Cache-hit callers return immediately and never touch
+  // the lock; reordering this would force cache hits to block on unrelated
+  // in-flight refreshes, strictly worse for the common case.
+  const existing = inFlightRefresh.get(vaultKey);
+  if (existing !== undefined) return existing;
+  const p = (async () => {
+    const next = await refreshViaRegistry({
+      descriptor: a.descriptor,
+      refreshToken: parsed.refreshToken,
+      clientId: a.clientId,
+      vault: a.vault,
+      ...(a.clientSecret !== undefined && { clientSecret: a.clientSecret }),
+      ...(a.vaultKey !== undefined && { persistVaultKey: a.vaultKey }),
+      ...(a.fetchFn !== undefined && { fetchFn: a.fetchFn }),
+    });
+    return next.accessToken;
+  })().finally(() => {
+    inFlightRefresh.delete(vaultKey);
+  });
+  inFlightRefresh.set(vaultKey, p);
+  return p;
 }

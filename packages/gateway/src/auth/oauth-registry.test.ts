@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildAuthorizeUrl, exchangeAuthorizationCode, OAUTH_PROVIDERS } from "./oauth-registry.ts";
+import { createMemoryVault } from "../testing/bun-test-support.ts";
+import {
+  buildAuthorizeUrl,
+  exchangeAuthorizationCode,
+  getValidVaultAccessToken,
+  OAUTH_PROVIDERS,
+  refreshViaRegistry,
+} from "./oauth-registry.ts";
 
 describe("OAUTH_PROVIDERS table", () => {
   test("has an entry for every existing provider with its vault key", () => {
@@ -188,5 +195,82 @@ describe("exchangeAuthorizationCode", () => {
     }
     expect(threw).toContain("invalid_grant");
     expect(threw.includes("GOOGLE_WEB_SECRET")).toBe(false);
+  });
+});
+
+describe("refreshViaRegistry", () => {
+  test("persists merged refresh token (refresh_token ?? old) to the vault key", async () => {
+    const vault = createMemoryVault();
+    const r = await refreshViaRegistry({
+      descriptor: OAUTH_PROVIDERS.microsoft,
+      refreshToken: "old-refresh",
+      clientId: "cid",
+      vault,
+      fetchFn: async () =>
+        new Response(JSON.stringify({ access_token: "new-access", expires_in: 120 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    expect(r.accessToken).toBe("new-access");
+    expect(r.refreshToken).toBe("old-refresh");
+    expect(await vault.get("microsoft.oauth")).toContain("new-access");
+  });
+});
+
+describe("getValidVaultAccessToken single-flight", () => {
+  test("two concurrent near-expiry calls trigger exactly one refresh", async () => {
+    const vault = createMemoryVault();
+    await vault.set(
+      "microsoft.oauth",
+      JSON.stringify({ accessToken: "old", refreshToken: "r", expiresAt: 0 }),
+    );
+    let refreshCalls = 0;
+    const fetchFn = async () => {
+      refreshCalls += 1;
+      await new Promise((res) => setTimeout(res, 20));
+      return new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const [a, b] = await Promise.all([
+      getValidVaultAccessToken({
+        descriptor: OAUTH_PROVIDERS.microsoft,
+        vault,
+        clientId: "cid",
+        fetchFn,
+      }),
+      getValidVaultAccessToken({
+        descriptor: OAUTH_PROVIDERS.microsoft,
+        vault,
+        clientId: "cid",
+        fetchFn,
+      }),
+    ]);
+    expect(a).toBe("fresh");
+    expect(b).toBe("fresh");
+    expect(refreshCalls).toBe(1);
+  });
+
+  test("returns cached token without refresh when not near expiry", async () => {
+    const vault = createMemoryVault();
+    await vault.set(
+      "microsoft.oauth",
+      JSON.stringify({
+        accessToken: "cached",
+        refreshToken: "r",
+        expiresAt: Date.now() + 3_600_000,
+      }),
+    );
+    const token = await getValidVaultAccessToken({
+      descriptor: OAUTH_PROVIDERS.microsoft,
+      vault,
+      clientId: "cid",
+      fetchFn: async () => {
+        throw new Error("must not refresh on a cache hit");
+      },
+    });
+    expect(token).toBe("cached");
   });
 });
