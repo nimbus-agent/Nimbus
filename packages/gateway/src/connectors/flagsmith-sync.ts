@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapFlagsmithFeatureToItem } from "./flagsmith-feature-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -43,26 +44,10 @@ async function loadCreds(ctx: SyncContext): Promise<FlagsmithCreds | null> {
   };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function fsGet(ctx: SyncContext, creds: FlagsmithCreds, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.apiBase}/api/v1${path}`, {
+function fsGet(ctx: SyncContext, creds: FlagsmithCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.apiBase}/api/v1${path}`, {
     headers: { Authorization: `Token ${creds.token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "flagsmith GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractArray(parsed: unknown): unknown[] {
