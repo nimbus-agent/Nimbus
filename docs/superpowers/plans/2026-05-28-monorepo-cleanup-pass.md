@@ -2316,107 +2316,93 @@ EOF
 
 ### Task 4.7: Per-connector migration (one task per connector)
 
-This step iterates the 30+ connectors. Each task: replace the bespoke sync loop with `runConnectorSync(...)` + chosen strategies, keep the connector-specific mapping, keep the vault-key resolution and HITL tool declarations untouched.
+**Plan revision 2026-05-28 (session 2):** the original Task 4.7 template assumed a `ConnectorSyncHandler` shape with `runConnectorSync` + flat pagination. The actual codebase uses a `Syncable` envelope with `FetchOutcome` + `syncPassCursor*` helpers, and most connectors do tree-walks (orgs→projects→issues, apps→builds) rather than a single paginated loop. `runConnectorSync` was deleted and replaced with `connectorFetch`, which models the duplication that actually exists (~26 connectors copy the same rate-limit + fetch + bytes + parse + outcome-tagging block). The flat-pagination helpers (`auth.ts`, `http.ts`, `pagination.ts`, `item-builder.ts`) remain in `_lib/` for future connectors but do not drive existing migrations.
 
-**Time budget.** Task 4.7 is the longest single block of work in the plan — ~30 connectors × ~10 minutes each = 4–5 hours sequential. If executing subagent-driven, fan out 4–6 connector migrations in parallel; they share no state and each has its own test suite. The helper modules (Tasks 4.1–4.6) are the prerequisite — once they're in, the per-connector work parallelises freely.
+This step iterates the 30+ connectors. Each task: replace the bespoke `xGet` inner helper with `connectorFetch(ctx, SERVICE_ID, url, { headers })`, keep the `syncPassCursor*` envelope at the call site, keep tree-walks + the connector-specific mapping + vault-key resolution + HITL tool declarations untouched.
+
+**Time budget.** ~30 connectors × ~5 minutes each (smaller per-connector change than originally planned). Each migration is a self-contained 1-file diff with -15 to -25 lines net.
 
 **Template per connector:**
 
 For each `<connector>` in:
 
-- snyk, bitrise, sonarqube, semgrep, wiz, launchdarkly, flagsmith, argocd, flux, dbt, metabase, superset, databricks, mlflow, vercel, netlify, stripe, mercury, readwise, raindrop, intercom, zendesk, lever, greenhouse, pipedrive, stackoverflow, zoom, obsidian, openapi-indexer, (and any others surfaced by Task 1.4 shape-dupe survey)
+- snyk, bitrise, sonarqube, semgrep, wiz, launchdarkly, flagsmith, argocd ✅ (PoC), flux, dbt, metabase, superset, databricks, mlflow, vercel, netlify, stripe, mercury, readwise, raindrop, intercom, zendesk, lever, greenhouse, pipedrive, stackoverflow, zoom, obsidian, openapi-indexer, (and any others surfaced by Task 1.4 shape-dupe survey)
 
 Apply this checklist (one task per connector, one commit per connector):
 
-- [ ] **Step 1: Read the current `<connector>-sync.ts`** and identify:
-  - Pagination shape (`cursor` / `offset` / `page-number` / `link-header` / `none`)
-  - Auth shape (`BearerPat` / `OAuthWithRefresh` / `QueryStringToken` / `Anonymous`)
-  - Rate-limit headers (if any)
-  - Item-shape mapping function (often already in a sibling `*-mapping.ts`)
+- [ ] **Step 1: Read the current `<connector>-sync.ts`** and find:
+  - The inner `<x>Get` / `<x>Post` function that does `ctx.rateLimiter.acquire + fetch + text + ok/throw + JSON.parse → FetchOutcome`
+  - The auth shape (Bearer / Token / token / Basic / raw) — caller-built, will pass through unchanged
+  - The local `FetchOutcome` type alias (delete it; use the one re-exported from `_lib/fetch-outcome.ts`)
 
-- [ ] **Step 2: Decide opt-in vs opt-out.** If the connector is genuinely shaped differently (e.g. `openapi-indexer-sync.ts` indexes spec *files*, not paginated API responses), skip migration. Mark its punch-list row `[N/A — opted out]` and add a leading docs entry at the top of the file:
+- [ ] **Step 2: Decide opt-in vs opt-out.** Some connectors are genuinely shaped differently:
+  - `openapi-indexer-sync.ts` indexes spec *files*, not HTTP APIs — opt out, mark `[N/A — filesystem]`.
+  - Anything using `fetch` more than once with bespoke parameters (e.g. a discriminated `xPost`) — replace each call site separately; same helper.
+  - Anything that doesn't actually call `ctx.rateLimiter.acquire` (filesystem, kubernetes via library calls) — opt out.
+
+  For an opt-out, leave the source unchanged and add a brief leading comment:
 
   ```typescript
-  // Opt-out of runConnectorSync template — indexes filesystem specs, not
-  // paginated HTTP. See docs/superpowers/specs/2026-05-28-monorepo-cleanup-design.md §"Pass 4".
+  // connectorFetch opt-out: indexes filesystem specs, not paginated HTTP.
   ```
 
-  (This comment survives pass 3 because it carries a load-bearing rationale — but pass 3 has already shipped at this point, so this comment is added post-strip and we accept it as the documented exception.)
+- [ ] **Step 3: Replace each `<x>Get` / `<x>Post` callsite.** The pattern:
 
-- [ ] **Step 3: Rewrite the sync handler.** Replace the bespoke loop with `runConnectorSync` parameterised by the strategies. The connector keeps:
-  - Its `connectorId` constant
-  - Its `syncInterval` constant
-  - Its `sync(db, lastSyncToken)` entry point (still implements `ConnectorSyncHandler`)
-  - Its rate-limiter integration (existing per-provider rate limiter still owns the throttle decision)
-
-  Example shape (using a hypothetical `acme` connector):
-
+  Before:
   ```typescript
-  import { runConnectorSync } from "./_lib/sync-runner.ts";
-  import { CursorPagination } from "./_lib/pagination.ts";
-  import { BearerPat } from "./_lib/auth.ts";
-  import { GithubStyleHeaders } from "./_lib/rate-limit-observer.ts";
-  import { ConnectorHttpClient } from "./_lib/http.ts";
-  import { mapAcmeIssue } from "./acme-issue-mapping.ts";
-
-  export async function syncAcme(db: Database, lastSyncToken: string | null): Promise<SyncResult> {
-    const token = await readConnectorSecret("acme.api_token");
-    const client = new ConnectorHttpClient({
-      auth: new BearerPat(async () => token),
-      observer: new GithubStyleHeaders(),
+  async function agGet(ctx, creds, path): Promise<FetchOutcome> {
+    await ctx.rateLimiter.acquire(SERVICE_ID);
+    const res = await fetch(`${creds.url}/api/v1${path}`, {
+      headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
     });
-    const upserted: IndexedItem[] = [];
-    const result = await runConnectorSync({
-      pagination: new CursorPagination<{ next?: string }>(b => b.next),
-      fetchPage: (cursor) => {
-        const u = cursor ? `https://api.acme.com/issues?cursor=${cursor}` : "https://api.acme.com/issues";
-        return client.get<{ items: AcmeIssue[]; next?: string }>(u);
-      },
-      mapBody: (body) => body.items,
-      onItem: async (raw) => {
-        const item = mapAcmeIssue(raw);
-        await upsertIndexedItem(db, item);
-        upserted.push(item);
-      },
-    });
-    return {
-      upserted,
-      deleted: [],
-      nextSyncToken: new Date().toISOString(),
-      hasMore: false,
-    };
+    const text = await res.text();
+    if (!res.ok) { ctx.logger.warn(...); return { kind: "http_error", bytes: text.length }; }
+    try { return { kind: "ok", parsed: JSON.parse(text), bytes: text.length }; }
+    catch { return { kind: "parse_error", bytes: text.length }; }
   }
+  // ... outcome = await agGet(ctx, creds, "/applications");
   ```
 
-- [ ] **Step 4: Run the connector's existing tests**
+  After:
+  ```typescript
+  import { connectorFetch } from "./_lib/fetch-outcome.ts";
+  // ... agGet deleted entirely
+  // ... outcome = await connectorFetch(ctx, SERVICE_ID, `${creds.url}/api/v1/applications`, {
+  //       headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
+  //     });
+  ```
 
-```bash
-cd .worktrees/cleanup-pass && bun test packages/gateway/src/connectors/<connector>-sync.test.ts packages/gateway/src/connectors/<connector>-*-mapping.test.ts
-```
+  The connector keeps everything else — `SERVICE_ID`, cursor encoding, `syncPassCursor*` calls, tree-walk loops, `upsertIndexedItemForSync`, mapping functions.
 
-Expected: all existing tests still pass. They were not modified — they exercise the public sync handler entry point, which is unchanged in name and signature.
+- [ ] **Step 4: Delete the local `FetchOutcome` type alias** (now imported from `_lib/fetch-outcome.ts` via `connectorFetch`'s return type). If anything in the file still names `FetchOutcome` directly, `import type { FetchOutcome } from "./_lib/fetch-outcome.ts";`.
 
-- [ ] **Step 5: Run the contract test if one exists**
+- [ ] **Step 5: Run the connector's existing tests**
 
-```bash
-cd .worktrees/cleanup-pass && bun test packages/mcp-connectors/<connector>/
-```
+  ```bash
+  bun test packages/gateway/test/integration/connectors/<connector>-sync-fake-server.test.ts packages/gateway/test/unit/connectors/<connector>-*-mapping.test.ts
+  ```
 
-Expected: contract tests still pass.
+  (Test layout: integration in `test/integration/connectors/`, mapping unit in `test/unit/connectors/`. Test paths differ from the src-side `_lib` tests — the existing tests use fake `Bun.serve` HTTP servers driven via `createXSyncable(...)`.)
 
-- [ ] **Step 6: Commit the migration**
+  Expected: all existing tests still pass. The external behaviour (endpoint, headers, status handling) is unchanged.
 
-```bash
-git -C .worktrees/cleanup-pass add packages/gateway/src/connectors/<connector>-sync.ts docs/superpowers/specs/punchlist/02b-shape-dupes.md
-git -C .worktrees/cleanup-pass commit -m "$(cat <<'EOF'
-refactor(connectors/<connector>): adopt runConnectorSync template
+- [ ] **Step 6: Workspace typecheck** (`bun run typecheck`) — must stay green. The `Provider` literal union enforces `SERVICE_ID` matches a known provider; bad casts here surface as typecheck failures, not test failures.
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-EOF
-)"
-```
+- [ ] **Step 7: Commit the migration**
 
-Repeat Step 1–Step 6 for every connector from the list above. Mark the punch-list row `[EXTRACTED]` or `[N/A — opted out]` as appropriate.
+  ```bash
+  git -C .worktrees/cleanup-pass add packages/gateway/src/connectors/<connector>-sync.ts
+  git -C .worktrees/cleanup-pass commit -m "$(cat <<'EOF'
+  refactor(connectors/<connector>): adopt connectorFetch helper
+
+  Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+  EOF
+  )"
+  ```
+
+Repeat for every connector from the list above. Mark the punch-list row `[EXTRACTED]` or `[N/A — opted out]` as appropriate.
+
+**PoC commit (2026-05-28):** `argocd` migrated as 5a8f8bbf — 4 insertions, 23 deletions, 22 existing tests green. Validates the template.
 
 ### Task 4.8: Extract registerReadOnlyConnectorTools to SDK
 
