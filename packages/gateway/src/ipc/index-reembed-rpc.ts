@@ -8,6 +8,7 @@ import type { Embedder, IndexedItem } from "../embedding/types.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class IndexReembedRpcError extends Error {
   readonly rpcCode: number;
@@ -250,32 +251,37 @@ async function runReembedJob(
   }
 }
 
+function handleReembed(params: unknown, ctx: IndexReembedRpcContext): { jobId: string } {
+  const p = parseReembedParams(params);
+  const jobId = newJobId();
+  const controller = new AbortController();
+  activeReembeds.set(jobId, controller);
+  void runReembedJob(jobId, p, ctx, controller);
+  return { jobId };
+}
+
+function handleReembedCancel(params: unknown): { cancelled: boolean } {
+  const rec =
+    params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  const jobId = rec["jobId"];
+  if (typeof jobId !== "string") {
+    throw new IndexReembedRpcError(-32602, "params.jobId is required");
+  }
+  const controller = activeReembeds.get(jobId);
+  if (controller === undefined) {
+    return { cancelled: false };
+  }
+  controller.abort();
+  return { cancelled: true };
+}
+
 export async function dispatchIndexReembedRpc(
   method: string,
   params: unknown,
   ctx: IndexReembedRpcContext,
-): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
-  if (method === "index.reembed") {
-    const p = parseReembedParams(params);
-    const jobId = newJobId();
-    const controller = new AbortController();
-    activeReembeds.set(jobId, controller);
-    void runReembedJob(jobId, p, ctx, controller);
-    return { kind: "hit", value: { jobId } };
-  }
-  if (method === "index.reembedCancel") {
-    const rec =
-      params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
-    const jobId = rec["jobId"];
-    if (typeof jobId !== "string") {
-      throw new IndexReembedRpcError(-32602, "params.jobId is required");
-    }
-    const controller = activeReembeds.get(jobId);
-    if (controller === undefined) {
-      return { kind: "hit", value: { cancelled: false } };
-    }
-    controller.abort();
-    return { kind: "hit", value: { cancelled: true } };
-  }
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<IndexReembedRpcContext>(method, params, ctx, {
+    "index.reembed": handleReembed,
+    "index.reembedCancel": (p) => handleReembedCancel(p),
+  });
 }
