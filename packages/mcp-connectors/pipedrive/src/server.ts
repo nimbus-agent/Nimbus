@@ -1,11 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  mcpJsonResult as jsonResult,
-} from "../../shared/mcp-tool-kit.ts";
+import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterPipedriveDeals } from "./search-filter.ts";
 
 const BASE = "https://api.pipedrive.com";
@@ -32,45 +27,41 @@ async function pipedriveGet(path: string, resourceLabel: string): Promise<unknow
   return JSON.parse(text) as unknown;
 }
 
-const mcp = new McpServer({ name: "nimbus-pipedrive", version: "0.1.0" });
-const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+await runReadOnlyMcpConnector("nimbus-pipedrive", (reg) => {
+  reg(
+    "pipedrive_list",
+    "List the user's Pipedrive deals (`GET /v1/deals?limit=100`). Returns the `{ success, data: [...], additional_data: { pagination } }` envelope — `data` holds the deal objects (and may be null when there are no deals).",
+    z.object({}),
+    async () => {
+      return jsonResult(await pipedriveGet(`/v1/deals?limit=100`, "deals"));
+    },
+  );
 
-reg(
-  "pipedrive_list",
-  "List the user's Pipedrive deals (`GET /v1/deals?limit=100`). Returns the `{ success, data: [...], additional_data: { pagination } }` envelope — `data` holds the deal objects (and may be null when there are no deals).",
-  z.object({}),
-  async () => {
-    return jsonResult(await pipedriveGet(`/v1/deals?limit=100`, "deals"));
-  },
-);
+  reg(
+    "pipedrive_get",
+    "Fetch one Pipedrive deal by its id (`GET /v1/deals/{id}`). Returns the `{ success, data: {...} }` envelope. Throws when no match is found.",
+    z.object({
+      id: z.string().min(1),
+    }),
+    async (p) => {
+      return jsonResult(await pipedriveGet(`/v1/deals/${encodeURIComponent(p.id)}`, "deal"));
+    },
+  );
 
-reg(
-  "pipedrive_get",
-  "Fetch one Pipedrive deal by its id (`GET /v1/deals/{id}`). Returns the `{ success, data: {...} }` envelope. Throws when no match is found.",
-  z.object({
-    id: z.string().min(1),
-  }),
-  async (p) => {
-    return jsonResult(await pipedriveGet(`/v1/deals/${encodeURIComponent(p.id)}`, "deal"));
-  },
-);
-
-reg(
-  "pipedrive_search",
-  "Substring search across the user's Pipedrive deals (first page only). Matches the query against the deal title, status, organization name, person name, owner name, and label (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-  z.object({
-    query: z.string().min(1),
-    limit: z.number().int().min(1).max(100).optional(),
-  }),
-  async (p) => {
-    const root = await pipedriveGet(`/v1/deals?limit=100`, "deals");
-    const data = (root as { data?: unknown } | null)?.data;
-    const matches = Array.isArray(data)
-      ? filterPipedriveDeals(data, { query: p.query, limit: p.limit })
-      : [];
-    return jsonResult({ matches });
-  },
-);
-
-const transport = new StdioServerTransport();
-await mcp.connect(transport);
+  reg(
+    "pipedrive_search",
+    "Substring search across the user's Pipedrive deals (first page only). Matches the query against the deal title, status, organization name, person name, owner name, and label (case-insensitive). Returns a `{ matches: [...] }` envelope.",
+    z.object({
+      query: z.string().min(1),
+      limit: z.number().int().min(1).max(100).optional(),
+    }),
+    async (p) => {
+      const root = await pipedriveGet(`/v1/deals?limit=100`, "deals");
+      const data = (root as { data?: unknown } | null)?.data;
+      const matches = Array.isArray(data)
+        ? filterPipedriveDeals(data, { query: p.query, limit: p.limit })
+        : [];
+      return jsonResult({ matches });
+    },
+  );
+});
