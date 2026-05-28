@@ -431,84 +431,120 @@ EOF
 
 ```typescript
 // scripts/cleanup/survey-oc.ts
-// Heuristic finder: 3+ consecutive `if (x === "literal")` or `case "literal":`
-// blocks on the same discriminator variable. Candidates for registry refactor.
+// AST-based finder: 3+ if/else-if branches comparing the same discriminator
+// to string literals, or switch statements with 3+ string-literal case clauses.
+// Uses the TypeScript compiler API for accurate parsing — regex parsing of
+// source code trips on strings, commented-out code, and multi-line statements.
+// .rs files are excluded (Rust OC surface is small enough to audit by hand).
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import ts from "typescript";
 import { iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
 
-interface Cluster { file: string; startLine: number; discriminator: string; literals: string[]; }
+interface Cluster { file: string; startLine: number; discriminator: string; literals: string[]; kind: "if" | "switch"; }
 
-const IF_LITERAL_RE = /\bif\s*\(\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*===\s*["']([^"']+)["']/g;
-const CASE_LITERAL_RE = /\bcase\s+["']([^"']+)["']\s*:/g;
-
-function findIfChains(source: string, file: string): Cluster[] {
-  const lines = source.split(/\r?\n/);
-  const clusters: Cluster[] = [];
-  let current: Cluster | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    IF_LITERAL_RE.lastIndex = 0;
-    const m = IF_LITERAL_RE.exec(line);
-    if (m) {
-      const [, disc, lit] = m;
-      if (current && current.discriminator === disc) {
-        current.literals.push(lit);
-      } else {
-        if (current && current.literals.length >= 3) clusters.push(current);
-        current = { file, startLine: i + 1, discriminator: disc, literals: [lit] };
-      }
-    } else if (!/^\s*(\}\s*)?else\s+if\b/.test(line) && !/^\s*\}\s*$/.test(line) && current) {
-      if (current.literals.length >= 3) clusters.push(current);
-      current = null;
-    }
+function discriminatorText(expr: ts.Expression): string | null {
+  if (ts.isIdentifier(expr)) return expr.text;
+  if (ts.isPropertyAccessExpression(expr)) {
+    const base = discriminatorText(expr.expression);
+    return base ? `${base}.${expr.name.text}` : null;
   }
-  if (current && current.literals.length >= 3) clusters.push(current);
-  return clusters;
+  return null;
 }
 
-function findSwitchChains(source: string, file: string): Cluster[] {
-  const lines = source.split(/\r?\n/);
-  const clusters: Cluster[] = [];
-  let inSwitch: { startLine: number; discriminator: string; literals: string[] } | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const sw = /\bswitch\s*\(\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*\)/.exec(line);
-    if (sw) {
-      if (inSwitch && inSwitch.literals.length >= 3) {
-        clusters.push({ file, startLine: inSwitch.startLine, discriminator: inSwitch.discriminator, literals: inSwitch.literals });
+function extractIfLiteralBranch(node: ts.IfStatement): { discriminator: string; literal: string } | null {
+  const cond = node.expression;
+  if (!ts.isBinaryExpression(cond)) return null;
+  if (cond.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return null;
+  let identSide: ts.Expression;
+  let litSide: ts.Expression;
+  if (ts.isStringLiteral(cond.right)) { identSide = cond.left; litSide = cond.right; }
+  else if (ts.isStringLiteral(cond.left)) { identSide = cond.right; litSide = cond.left; }
+  else return null;
+  const disc = discriminatorText(identSide);
+  if (!disc) return null;
+  return { discriminator: disc, literal: (litSide as ts.StringLiteral).text };
+}
+
+function walkIfChain(node: ts.IfStatement, source: ts.SourceFile): Cluster | null {
+  const first = extractIfLiteralBranch(node);
+  if (!first) return null;
+  const literals: string[] = [first.literal];
+  const startLine = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+  let cur: ts.IfStatement | undefined = node;
+  while (cur?.elseStatement && ts.isIfStatement(cur.elseStatement)) {
+    const next = extractIfLiteralBranch(cur.elseStatement);
+    if (!next || next.discriminator !== first.discriminator) break;
+    literals.push(next.literal);
+    cur = cur.elseStatement;
+  }
+  if (literals.length < 3) return null;
+  return { file: source.fileName, startLine, discriminator: first.discriminator, literals, kind: "if" };
+}
+
+function walkSwitch(node: ts.SwitchStatement, source: ts.SourceFile): Cluster | null {
+  const disc = discriminatorText(node.expression);
+  if (!disc) return null;
+  const literals: string[] = [];
+  for (const clause of node.caseBlock.clauses) {
+    if (ts.isCaseClause(clause) && ts.isStringLiteral(clause.expression)) {
+      literals.push(clause.expression.text);
+    }
+  }
+  if (literals.length < 3) return null;
+  return {
+    file: source.fileName,
+    startLine: source.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+    discriminator: disc,
+    literals,
+    kind: "switch",
+  };
+}
+
+function scanFile(rel: string, sourceText: string): Cluster[] {
+  const sf = ts.createSourceFile(rel, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: Cluster[] = [];
+  const visitedIf = new Set<number>();
+  function walk(node: ts.Node): void {
+    if (ts.isIfStatement(node) && !visitedIf.has(node.getStart())) {
+      const cluster = walkIfChain(node, sf);
+      if (cluster) {
+        out.push(cluster);
+        // Mark every if in the chain as visited so we don't re-emit sub-chains.
+        let c: ts.IfStatement | undefined = node;
+        while (c) {
+          visitedIf.add(c.getStart());
+          c = c.elseStatement && ts.isIfStatement(c.elseStatement) ? c.elseStatement : undefined;
+        }
       }
-      inSwitch = { startLine: i + 1, discriminator: sw[1], literals: [] };
-      continue;
+    } else if (ts.isSwitchStatement(node)) {
+      const cluster = walkSwitch(node, sf);
+      if (cluster) out.push(cluster);
     }
-    if (inSwitch) {
-      CASE_LITERAL_RE.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = CASE_LITERAL_RE.exec(line))) inSwitch.literals.push(m[1]);
-    }
+    node.forEachChild(walk);
   }
-  if (inSwitch && inSwitch.literals.length >= 3) {
-    clusters.push({ file, startLine: inSwitch.startLine, discriminator: inSwitch.discriminator, literals: inSwitch.literals });
-  }
-  return clusters;
+  walk(sf);
+  return out;
 }
 
 async function main() {
   const all: Cluster[] = [];
   for await (const file of iterateSourceFiles(REPO_ROOT)) {
-    if (relPath(file).startsWith("scripts/cleanup/")) continue;
+    const rel = relPath(file);
+    if (rel.startsWith("scripts/cleanup/")) continue;
     if (file.endsWith(".rs")) continue;
     const source = await readFile(file, "utf8");
-    all.push(...findIfChains(source, relPath(file)));
-    all.push(...findSwitchChains(source, relPath(file)));
+    for (const c of scanFile(rel, source)) {
+      all.push({ ...c, file: rel });
+    }
   }
   all.sort((a, b) => b.literals.length - a.literals.length);
   const out: string[] = ["# Punch list — section 4: Open/closed violations (3+ literals)", ""];
   out.push(`Total clusters: ${all.length}`, "");
-  out.push("| File | Line | Discriminator | Literals |");
-  out.push("|---|---|---|---|");
+  out.push("| File | Line | Kind | Discriminator | Literals |");
+  out.push("|---|---|---|---|---|");
   for (const c of all) {
-    out.push(`| \`${c.file}\` | ${c.startLine} | \`${c.discriminator}\` | ${c.literals.length} (${c.literals.slice(0, 6).join(", ")}${c.literals.length > 6 ? "…" : ""}) |`);
+    out.push(`| \`${c.file}\` | ${c.startLine} | ${c.kind} | \`${c.discriminator}\` | ${c.literals.length} (${c.literals.slice(0, 6).join(", ")}${c.literals.length > 6 ? "…" : ""}) |`);
   }
   out.push("", "## Triage rule", "");
   out.push("- Discriminator is `service` / `provider` / `connector` / `type` / `kind` → strong registry candidate.");
@@ -938,94 +974,142 @@ export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): str
   return out.replace(/\n{3,}/g, "\n\n");
 }
 
-export function stripRustSource(source: string): string {
-  const lines = source.split(/\r?\n/);
+// Returns { stripped, abstained } — abstained === true means the file
+// contained a raw-string-like pattern (r"...", r#"..."#, r##"..."##, …) that
+// our parser could not bound safely. In that case the caller leaves the file
+// untouched and prints a warning so a human can audit + strip manually.
+export function stripRustSource(source: string): { stripped: string; abstained: boolean } {
+  // Char-level scan, single pass. Tracks four mutually exclusive states:
+  //   - normal code
+  //   - inside "..." string (escape-aware)
+  //   - inside r"...", r#"..."#, etc. raw string (no escape interpretation;
+  //     terminator is a quote followed by exactly N hashes matching the opener)
+  //   - inside /* ... */ block comment
   const out: string[] = [];
-  let inBlock = false;
-  for (const raw of lines) {
-    if (inBlock) {
-      const close = raw.indexOf("*/");
-      if (close >= 0) {
-        inBlock = false;
-        const rest = raw.slice(close + 2).trim();
-        if (rest.length > 0) out.push(rest);
+  let i = 0;
+  let abstained = false;
+  while (i < source.length) {
+    const c = source[i];
+    const c2 = source[i + 1];
+
+    // Raw string opener: r" or r#"… or r##"… etc.
+    if (c === "r" && (c2 === '"' || c2 === "#")) {
+      // Count hashes between 'r' and '"'.
+      let j = i + 1;
+      let hashes = 0;
+      while (j < source.length && source[j] === "#") { hashes++; j++; }
+      if (j < source.length && source[j] === '"') {
+        // Find matching terminator: " followed by `hashes` '#' chars.
+        const terminator = '"' + "#".repeat(hashes);
+        const end = source.indexOf(terminator, j + 1);
+        if (end < 0) { abstained = true; break; }
+        out.push(source.slice(i, end + terminator.length));
+        i = end + terminator.length;
+        continue;
       }
+      // 'r' followed by hashes but no quote — fall through to normal scan.
+    }
+
+    if (c === '"') {
+      // Regular string — copy until unescaped closing quote.
+      const start = i;
+      i++;
+      while (i < source.length) {
+        if (source[i] === "\\") { i += 2; continue; }
+        if (source[i] === '"') { i++; break; }
+        i++;
+      }
+      out.push(source.slice(start, i));
       continue;
     }
-    // Find line-comment outside string literals (cheap heuristic).
-    let outLine = "";
-    let i = 0;
-    let inStr: '"' | "'" | "`" | null = null;
-    while (i < raw.length) {
-      const c = raw[i];
-      const next = raw[i + 1];
-      if (!inStr) {
-        if (c === "/" && next === "/") { outLine = outLine.replace(/\s+$/, ""); break; }
-        if (c === "/" && next === "*") {
-          inBlock = true;
-          const close = raw.indexOf("*/", i + 2);
-          if (close >= 0) {
-            inBlock = false;
-            i = close + 2;
-            continue;
-          } else {
-            break;
-          }
-        }
-        if (c === '"' || c === "'") inStr = c;
-      } else {
-        if (c === "\\") { outLine += c; i += 2; if (i <= raw.length) outLine += raw[i - 1]; continue; }
-        if (c === inStr) inStr = null;
-      }
-      outLine += c;
+
+    if (c === "'") {
+      // Could be a char literal ('x', '\n', '\u{1F4A9}') or a lifetime ('a).
+      // Either way, no `//` inside — copy up to the next ' or to end-of-token.
+      const start = i;
       i++;
+      while (i < source.length && source[i] !== "'" && source[i] !== "\n") {
+        if (source[i] === "\\") { i += 2; continue; }
+        i++;
+      }
+      if (source[i] === "'") i++;
+      out.push(source.slice(start, i));
+      continue;
     }
-    if (outLine.trim().length > 0 || (raw.trim().length === 0 && out.length > 0 && out[out.length - 1] !== "")) {
-      out.push(outLine);
-    } else if (raw.trim().length === 0) {
-      out.push("");
+
+    if (c === "/" && c2 === "/") {
+      // Line comment — skip to end of line, leaving the newline.
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
     }
+
+    if (c === "/" && c2 === "*") {
+      // Block comment — skip to */.
+      const end = source.indexOf("*/", i + 2);
+      if (end < 0) { abstained = true; break; }
+      i = end + 2;
+      continue;
+    }
+
+    out.push(c);
+    i++;
   }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+  if (abstained) return { stripped: source, abstained: true };
+  return { stripped: out.join("").replace(/\n{3,}/g, "\n\n"), abstained: false };
 }
 
-export async function stripFile(file: string): Promise<{ before: number; after: number; }> {
+export async function stripFile(file: string): Promise<{ before: number; after: number; abstained?: boolean }> {
   const rel = relPath(file);
   if (rel.startsWith("scripts/cleanup/")) return { before: 0, after: 0 };
   const source = await readFile(file, "utf8");
   let next: string;
+  let abstained = false;
   if (file.endsWith(".rs")) {
-    next = stripRustSource(source);
+    const result = stripRustSource(source);
+    next = result.stripped;
+    abstained = result.abstained;
+    if (abstained) {
+      console.warn(`[abstain] ${rel} — raw-string parsing was inconclusive, file left untouched`);
+    }
   } else {
     next = stripTsSource(source, { keepJsdoc: isPublishedJsdocFile(rel) });
   }
   if (next !== source) {
     await writeFile(file, next, "utf8");
   }
-  return { before: source.length, after: next.length };
+  return { before: source.length, after: next.length, abstained };
 }
 
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
-  let totalBefore = 0, totalAfter = 0, fileCount = 0, changed = 0;
+  let totalBefore = 0, totalAfter = 0, fileCount = 0, changed = 0, abstained = 0;
   for await (const file of iterateSourceFiles(REPO_ROOT)) {
     fileCount++;
     if (dryRun) {
       const source = await readFile(file, "utf8");
-      const next = file.endsWith(".rs")
-        ? stripRustSource(source)
-        : stripTsSource(source, { keepJsdoc: isPublishedJsdocFile(relPath(file)) });
+      let nextText: string;
+      if (file.endsWith(".rs")) {
+        const r = stripRustSource(source);
+        if (r.abstained) { abstained++; console.warn(`[abstain] ${relPath(file)}`); }
+        nextText = r.stripped;
+      } else {
+        nextText = stripTsSource(source, { keepJsdoc: isPublishedJsdocFile(relPath(file)) });
+      }
       totalBefore += source.length;
-      totalAfter += next.length;
-      if (next !== source) changed++;
+      totalAfter += nextText.length;
+      if (nextText !== source) changed++;
     } else {
-      const { before, after } = await stripFile(file);
-      totalBefore += before;
-      totalAfter += after;
-      if (before !== after) changed++;
+      const result = await stripFile(file);
+      totalBefore += result.before;
+      totalAfter += result.after;
+      if (result.before !== result.after) changed++;
+      if (result.abstained) abstained++;
     }
   }
-  console.log(`${dryRun ? "[dry-run] " : ""}Files: ${fileCount}, changed: ${changed}, bytes: ${totalBefore} -> ${totalAfter}`);
+  console.log(`${dryRun ? "[dry-run] " : ""}Files: ${fileCount}, changed: ${changed}, abstained: ${abstained}, bytes: ${totalBefore} -> ${totalAfter}`);
+  if (abstained > 0) {
+    console.warn(`[!] ${abstained} .rs files were left untouched due to raw-string ambiguity. Audit them manually.`);
+  }
 }
 
 if (import.meta.main) await main();
@@ -1136,22 +1220,62 @@ describe("stripTsSource", () => {
 describe("stripRustSource", () => {
   test("removes line comments", () => {
     const src = `let x = 1; // removed\nlet y = 2;\n`;
-    const out = stripRustSource(src);
-    expect(out).not.toContain("removed");
-    expect(out).toContain("let x = 1");
-    expect(out).toContain("let y = 2");
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).not.toContain("removed");
+    expect(stripped).toContain("let x = 1");
+    expect(stripped).toContain("let y = 2");
   });
 
   test("removes block comments", () => {
     const src = `/* block */\nlet x = 1;\n`;
-    const out = stripRustSource(src);
-    expect(out).not.toContain("/* block */");
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).not.toContain("/* block */");
   });
 
   test("does not touch string literals", () => {
     const src = `let s = "// not a comment";\n`;
-    const out = stripRustSource(src);
-    expect(out).toContain("// not a comment");
+    const { stripped } = stripRustSource(src);
+    expect(stripped).toContain("// not a comment");
+  });
+
+  test("does not touch raw strings r\"...\"", () => {
+    const src = `let s = r"// raw, not a comment";\nlet y = 1; // gone\n`;
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).toContain('r"// raw, not a comment"');
+    expect(stripped).not.toContain("gone");
+  });
+
+  test("does not touch raw strings with hashes r#\"...\"#", () => {
+    const src = `let s = r#"// also raw, with quote " inside"#;\nlet y = 1;\n`;
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).toContain('r#"// also raw, with quote " inside"#');
+  });
+
+  test("preserves /* */ inside raw strings", () => {
+    const src = `let s = r##"/* fake block */ /* still */"##;\nlet y = 1;\n`;
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).toContain('r##"/* fake block */ /* still */"##');
+  });
+
+  test("abstains on unterminated raw string", () => {
+    const src = `let s = r#"never closed\nlet y = 1;\n`;
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(true);
+    expect(stripped).toBe(src);
+  });
+
+  test("preserves char literal 'x' and lifetime 'a", () => {
+    const src = `let c = '/'; struct F<'a> { x: &'a str }\nlet y = 1; // gone\n`;
+    const { stripped, abstained } = stripRustSource(src);
+    expect(abstained).toBe(false);
+    expect(stripped).toContain("let c = '/';");
+    expect(stripped).toContain("'a");
+    expect(stripped).not.toContain("gone");
   });
 });
 ```
@@ -1961,10 +2085,12 @@ EOF
 // packages/gateway/src/connectors/_lib/sync-runner.test.ts
 import { describe, expect, test } from "bun:test";
 import { runConnectorSync } from "./sync-runner.ts";
-import { OffsetPagination } from "./pagination.ts";
+import { OffsetPagination, LinkHeaderPagination } from "./pagination.ts";
 import { Anonymous } from "./auth.ts";
 import { NoopObserver } from "./rate-limit-observer.ts";
 import { ConnectorHttpClient } from "./http.ts";
+
+interface PageBody { items: { id: string }[]; hasMore: boolean }
 
 describe("runConnectorSync", () => {
   test("iterates pages until pagination exhausts", async () => {
@@ -1981,13 +2107,11 @@ describe("runConnectorSync", () => {
       }),
     });
     const seen: string[] = [];
-    const result = await runConnectorSync({
+    const result = await runConnectorSync<number, PageBody, { id: string }>({
       pagination: new OffsetPagination(2),
-      fetchPage: async (offset) => {
-        return (await client.get(`https://api/items?offset=${offset ?? 0}`)).body as any;
-      },
-      mapPage: (page) => (page as { items: { id: string }[] }).items,
-      onItem: async (item) => { seen.push((item as any).id); },
+      fetchPage: (offset) => client.get<PageBody>(`https://api/items?offset=${offset ?? 0}`),
+      mapBody: (body) => body.items,
+      onItem: async (item) => { seen.push(item.id); },
     });
     expect(seen).toEqual(["1", "2", "3"]);
     expect(result.pageCount).toBe(2);
@@ -1998,18 +2122,64 @@ describe("runConnectorSync", () => {
     const client = new ConnectorHttpClient({
       auth: new Anonymous(),
       observer: new NoopObserver(),
-      fetch: async () => new Response(JSON.stringify({ items: [{}], hasMore: true }), {
+      fetch: async () => new Response(JSON.stringify({ items: [{ id: "x" }], hasMore: true }), {
         status: 200, headers: { "content-type": "application/json" },
       }),
     });
-    const result = await runConnectorSync({
+    const result = await runConnectorSync<number, PageBody, { id: string }>({
       pagination: new OffsetPagination(1),
-      fetchPage: async () => (await client.get("https://api/x")).body as any,
-      mapPage: (page) => (page as { items: unknown[] }).items,
+      fetchPage: () => client.get<PageBody>("https://api/x"),
+      mapBody: (body) => body.items,
       onItem: async () => { /* noop */ },
       pageLimit: 3,
     });
     expect(result.pageCount).toBe(3);
+  });
+
+  test("supports Link-header pagination from real response headers", async () => {
+    let n = 0;
+    const client = new ConnectorHttpClient({
+      auth: new Anonymous(),
+      observer: new NoopObserver(),
+      fetch: async () => {
+        n++;
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (n === 1) headers["Link"] = '<https://api/p2>; rel="next"';
+        return new Response(JSON.stringify({ items: [{ id: String(n) }] }), { status: 200, headers });
+      },
+    });
+    const seen: string[] = [];
+    await runConnectorSync<string, { items: { id: string }[] }, { id: string }>({
+      pagination: new LinkHeaderPagination(),
+      fetchPage: (url) => client.get(url ?? "https://api/p1"),
+      mapBody: (body) => body.items,
+      onItem: async (item) => { seen.push(item.id); },
+    });
+    expect(seen).toEqual(["1", "2"]);
+  });
+
+  test("array-bodied API works when paired with a single-page pagination", async () => {
+    // Some APIs return a bare array. The template doesn't synthesise envelopes;
+    // pagination strategies that ignore `body` (e.g. an off-the-shelf single-page
+    // strategy) just work. CursorPagination expecting an object body would not —
+    // by design.
+    const client = new ConnectorHttpClient({
+      auth: new Anonymous(),
+      observer: new NoopObserver(),
+      fetch: async () => new Response(JSON.stringify([{ id: "a" }, { id: "b" }]), {
+        status: 200, headers: { "content-type": "application/json" },
+      }),
+    });
+    const { OffsetPagination: Op } = await import("./pagination.ts");
+    const seen: string[] = [];
+    const result = await runConnectorSync<number, { id: string }[], { id: string }>({
+      pagination: new Op(100), // hasMore is undefined on a raw array → strategy returns undefined → loop ends
+      fetchPage: () => client.get<{ id: string }[]>("https://api/x"),
+      mapBody: (body) => body,
+      onItem: async (i) => { seen.push(i.id); },
+    });
+    expect(seen).toEqual(["a", "b"]);
+    expect(result.pageCount).toBe(1);
   });
 });
 ```
@@ -2025,12 +2195,19 @@ Expected: FAIL.
 
 ```typescript
 // packages/gateway/src/connectors/_lib/sync-runner.ts
+// Composes a fetch-page-and-extract-cursor loop. Contract:
+//   - fetchPage returns an HttpResponse<B> (the shape ConnectorHttpClient.get
+//     produces). The template passes this directly to the Pagination strategy,
+//     never synthesises a fake envelope.
+//   - mapBody receives the parsed body B and returns the items to upsert.
+//   - onItem is the per-item side-effect (typically an index upsert).
+import type { HttpResponse } from "./http.ts";
 import type { Pagination } from "./pagination.ts";
 
-export interface RunConnectorSyncOptions<S, Page, Item> {
+export interface RunConnectorSyncOptions<S, B, Item> {
   readonly pagination: Pagination<S>;
-  readonly fetchPage: (state: S | undefined) => Promise<Page>;
-  readonly mapPage: (page: Page) => Item[];
+  readonly fetchPage: (state: S | undefined) => Promise<HttpResponse<B>>;
+  readonly mapBody: (body: B) => Item[];
   readonly onItem: (item: Item) => Promise<void>;
   readonly pageLimit?: number;
 }
@@ -2040,8 +2217,8 @@ export interface SyncResult {
   readonly itemCount: number;
 }
 
-export async function runConnectorSync<S, Page, Item>(
-  opts: RunConnectorSyncOptions<S, Page, Item>,
+export async function runConnectorSync<S, B, Item>(
+  opts: RunConnectorSyncOptions<S, B, Item>,
 ): Promise<SyncResult> {
   let state: S | undefined = opts.pagination.initialState();
   let pageCount = 0;
@@ -2049,18 +2226,15 @@ export async function runConnectorSync<S, Page, Item>(
   const limit = opts.pageLimit ?? Number.POSITIVE_INFINITY;
 
   while (pageCount < limit) {
-    const page = await opts.fetchPage(state);
+    const response = await opts.fetchPage(state);
     pageCount += 1;
-    for (const item of opts.mapPage(page)) {
+    for (const item of opts.mapBody(response.body)) {
       await opts.onItem(item);
       itemCount += 1;
     }
-    const responseLike = page as unknown as { headers?: Headers; body?: unknown };
-    const fakeResp = {
-      headers: responseLike.headers ?? new Headers(),
-      body: responseLike.body ?? page,
-    };
-    const next = opts.pagination.nextState(state, fakeResp);
+    // HttpResponse<B> is structurally compatible with PageResponse —
+    // both expose { headers, body }. No envelope synthesis.
+    const next = opts.pagination.nextState(state, response);
     if (next === undefined) break;
     state = next;
   }
@@ -2093,6 +2267,8 @@ EOF
 ### Task 4.7: Per-connector migration (one task per connector)
 
 This step iterates the 30+ connectors. Each task: replace the bespoke sync loop with `runConnectorSync(...)` + chosen strategies, keep the connector-specific mapping, keep the vault-key resolution and HITL tool declarations untouched.
+
+**Time budget.** Task 4.7 is the longest single block of work in the plan — ~30 connectors × ~10 minutes each = 4–5 hours sequential. If executing subagent-driven, fan out 4–6 connector migrations in parallel; they share no state and each has its own test suite. The helper modules (Tasks 4.1–4.6) are the prerequisite — once they're in, the per-connector work parallelises freely.
 
 **Template per connector:**
 
@@ -2138,11 +2314,11 @@ Apply this checklist (one task per connector, one commit per connector):
     const upserted: IndexedItem[] = [];
     const result = await runConnectorSync({
       pagination: new CursorPagination<{ next?: string }>(b => b.next),
-      fetchPage: async (cursor) => {
+      fetchPage: (cursor) => {
         const u = cursor ? `https://api.acme.com/issues?cursor=${cursor}` : "https://api.acme.com/issues";
-        return (await client.get<{ items: AcmeIssue[]; next?: string }>(u)).body;
+        return client.get<{ items: AcmeIssue[]; next?: string }>(u);
       },
-      mapPage: (p) => p.items,
+      mapBody: (body) => body.items,
       onItem: async (raw) => {
         const item = mapAcmeIssue(raw);
         await upsertIndexedItem(db, item);
@@ -3208,6 +3384,16 @@ Deleted: every other comment in `.ts`, `.tsx`, `.js`, `.rs` under `packages/` an
 The plan explicitly does not include `git push`. The user opens the PR manually with `gh pr create` after reviewing the local stack.
 
 ---
+
+## Review-driven amendments (2026-05-28)
+
+After plan review (`2026-05-28-monorepo-cleanup-pass-review.md`):
+
+- **Task 1.6 (survey-oc.ts) switched from regex to TypeScript AST walker.** The regex parser could be fooled by literals in strings, commented-out code, and multi-line statements. The AST walk via `ts.createSourceFile` + `ts.forEachChild` is structurally accurate. `.rs` files remain out of scope for this survey (Rust OC surface is small enough to audit by hand).
+- **Task 3.1 (stripRustSource) now handles raw strings.** The parser detects `r"..."`, `r#"..."#`, `r##"..."##`, etc. Char literals and lifetime markers (`'a`) are handled separately. Unterminated raw strings or block comments cause the function to *abstain* (return the source unchanged) rather than risk corruption; the strip script prints a warning and lists abstained files at the end for manual audit. Tests added for each preserved pattern.
+- **Task 4.6 (runConnectorSync) contract clarified.** `fetchPage` now returns `HttpResponse<B>` directly (no `.body` extraction in the caller). The template passes `response` to `Pagination.nextState` without synthesising a `fakeResp` envelope. `mapPage` renamed to `mapBody` to match the new contract — the function receives the parsed body, not an envelope. A test covers the array-bodied API case explicitly so the behaviour is documented.
+- **Task 4.7 duration acknowledged.** Per-connector migrations parallelise freely once the helper modules land — subagent-driven execution should fan out 4–6 at a time. Sequential time estimate added.
+- **Internal JSDoc and mega-PR delivery: unchanged.** Both already-decided in the design review; reviewer's reiteration noted but no plan change.
 
 ## Self-review checklist (run after writing the plan)
 
