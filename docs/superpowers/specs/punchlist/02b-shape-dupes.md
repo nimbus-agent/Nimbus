@@ -6,6 +6,18 @@ The `runConnectorSync` template proposed below was redesigned as the narrower `c
 
 Out of scope for Task 4.7: older connectors that use Octokit-style clients / non-Syncable shapes (github, gitlab, slack, jira, jenkins, sentry, datadog, etc.) — they don't match the (Syncable, FetchOutcome, syncPassCursor*) envelope the helper targets.
 
+## Task 4.8 / 4.9 status (2026-05-28)
+
+The plan's `registerReadOnlyConnectorTools(server, { name, list, get, search })` helper would have stripped the per-tool descriptions and zod schemas that vary per connector — the actual duplication across all 56 MCP server.ts files is the **4-line bootstrap shell** (`new McpServer`, `createZodToolRegistrar(createRegisterSimpleTool(...))`, `new StdioServerTransport`, `await mcp.connect`) plus the four imports. Helper redesigned as `runReadOnlyMcpConnector(serverName, register)` in `packages/mcp-connectors/shared/run-read-only-mcp-connector.ts` (sibling to `mcp-tool-kit.ts`, not in SDK — the SDK is dep-free by design and adding `@modelcontextprotocol/sdk` would bump its published surface).
+
+`shared/` had no external-dep capability until now: `@modelcontextprotocol/sdk` + `zod` are now hoisted at the workspace root so `shared/` can resolve them (every connector already pins the identical version `1.29.0` / `^4.4.2`).
+
+26 simple-REST tier MCP servers adopted the helper (argocd PoC + bitrise, databricks, dbt, flagsmith, flux, greenhouse, intercom, launchdarkly, lever, mercury, metabase, mlflow, netlify, pipedrive, raindrop, readwise, semgrep, snyk, sonarqube, stackoverflow, stripe, superset, vercel, wiz, zendesk, zoom) — `[EXTRACTED]`. Pipedrive is included here even though it was opt-out for Task 4.7 — the new helper logs nothing, so the URL-query-string-auth concern does not apply.
+
+Per-connector net savings: 38–104 lines removed, 4 imports collapsed to 1, 4-line bootstrap shell collapsed to 1 `await runReadOnlyMcpConnector(...)` call.
+
+Out of scope for Task 4.9: Octokit-style and non-simple-REST connectors (github, gitlab, slack, jira, jenkins, sentry, datadog, etc.) and connectors with a different shape (obsidian has a HITL write tool registered alongside reads; openapi-indexer is filesystem). Same scope filter as 4.7.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
