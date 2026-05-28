@@ -563,6 +563,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // --- Video conferencing (Zoom) ---
+  zoom: baseManifest("com.nimbus.zoom", {
+    // Zoom REST + OAuth — fixed SaaS hosts. api.zoom.us serves the REST API
+    // and recording download URLs; zoom.us serves the OAuth authorize +
+    // token endpoints. No self-hosted variant.
+    network: ["api.zoom.us", "zoom.us"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // --- Local-only ---
   obsidian: baseManifest("com.nimbus.obsidian", {
     // No network. Vault paths are filesystem-only and supplied at spawn

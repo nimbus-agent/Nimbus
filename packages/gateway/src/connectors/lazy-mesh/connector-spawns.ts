@@ -11,6 +11,7 @@ import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
+import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -784,6 +785,51 @@ export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
           },
           obsidianManifest,
           ctx.sandboxCwd,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Zoom MCP when `zoom.oauth` is present and a valid access token can be resolved.
+ */
+export async function ensureZoomMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.zoom;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "zoom", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidZoomAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-zoom-${randomUUID()}`,
+      servers: {
+        zoom: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("zoom")],
+            env: extensionProcessEnv({ ZOOM_TOKEN: accessToken }),
+          },
+          "zoom",
+          ctx,
         ),
       },
     }),

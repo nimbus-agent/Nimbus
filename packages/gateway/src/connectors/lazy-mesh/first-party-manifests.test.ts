@@ -104,6 +104,7 @@ describe("manifestForFirstParty", () => {
       "greenhouse",
       "pipedrive",
       "stackoverflow",
+      "zoom",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();
