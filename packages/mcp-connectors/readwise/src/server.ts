@@ -1,11 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  mcpJsonResult as jsonResult,
-} from "../../shared/mcp-tool-kit.ts";
+import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterReadwiseHighlights } from "./search-filter.ts";
 
 const BASE = "https://readwise.io";
@@ -31,45 +26,41 @@ async function readwiseGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-const mcp = new McpServer({ name: "nimbus-readwise", version: "0.1.0" });
-const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+await runReadOnlyMcpConnector("nimbus-readwise", (reg) => {
+  reg(
+    "readwise_list",
+    "List the user's Readwise highlights (`GET /api/v2/highlights/?page_size=1000`). Returns the DRF `{ count, next, previous, results: [...] }` envelope — `results` holds the highlight objects and `next` is the next-page URL (null on the last page).",
+    z.object({}),
+    async () => {
+      return jsonResult(await readwiseGet(`/api/v2/highlights/?page_size=1000`));
+    },
+  );
 
-reg(
-  "readwise_list",
-  "List the user's Readwise highlights (`GET /api/v2/highlights/?page_size=1000`). Returns the DRF `{ count, next, previous, results: [...] }` envelope — `results` holds the highlight objects and `next` is the next-page URL (null on the last page).",
-  z.object({}),
-  async () => {
-    return jsonResult(await readwiseGet(`/api/v2/highlights/?page_size=1000`));
-  },
-);
+  reg(
+    "readwise_get",
+    "Fetch one Readwise highlight by its id (`GET /api/v2/highlights/{id}/`). Returns the highlight object directly. Throws when no match is found.",
+    z.object({
+      id: z.string().min(1),
+    }),
+    async (p) => {
+      return jsonResult(await readwiseGet(`/api/v2/highlights/${encodeURIComponent(p.id)}/`));
+    },
+  );
 
-reg(
-  "readwise_get",
-  "Fetch one Readwise highlight by its id (`GET /api/v2/highlights/{id}/`). Returns the highlight object directly. Throws when no match is found.",
-  z.object({
-    id: z.string().min(1),
-  }),
-  async (p) => {
-    return jsonResult(await readwiseGet(`/api/v2/highlights/${encodeURIComponent(p.id)}/`));
-  },
-);
-
-reg(
-  "readwise_search",
-  "Substring search across the user's Readwise highlights (first page only). Matches the query against the highlight text, the user's note, color, location_type, and tag names (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-  z.object({
-    query: z.string().min(1),
-    limit: z.number().int().min(1).max(100).optional(),
-  }),
-  async (p) => {
-    const root = await readwiseGet(`/api/v2/highlights/?page_size=1000`);
-    const results = (root as { results?: unknown[] } | null)?.results;
-    const matches = Array.isArray(results)
-      ? filterReadwiseHighlights(results, { query: p.query, limit: p.limit })
-      : [];
-    return jsonResult({ matches });
-  },
-);
-
-const transport = new StdioServerTransport();
-await mcp.connect(transport);
+  reg(
+    "readwise_search",
+    "Substring search across the user's Readwise highlights (first page only). Matches the query against the highlight text, the user's note, color, location_type, and tag names (case-insensitive). Returns a `{ matches: [...] }` envelope.",
+    z.object({
+      query: z.string().min(1),
+      limit: z.number().int().min(1).max(100).optional(),
+    }),
+    async (p) => {
+      const root = await readwiseGet(`/api/v2/highlights/?page_size=1000`);
+      const results = (root as { results?: unknown[] } | null)?.results;
+      const matches = Array.isArray(results)
+        ? filterReadwiseHighlights(results, { query: p.query, limit: p.limit })
+        : [];
+      return jsonResult({ matches });
+    },
+  );
+});
