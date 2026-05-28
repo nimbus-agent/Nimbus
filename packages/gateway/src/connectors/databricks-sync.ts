@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapDatabricksJobToItem, type RunSummary } from "./databricks-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -42,32 +43,6 @@ async function loadCreds(ctx: SyncContext): Promise<DatabricksCreds | null> {
     return null;
   }
   return { host: trimTrailingSlash(host), token };
-}
-
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function dbGet(
-  ctx: SyncContext,
-  creds: DatabricksCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.host}${path}`, {
-    headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "databricks GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractArray(parsed: unknown, key: string): unknown[] {
@@ -150,10 +125,11 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
         return syncNoopResult(cursor, t0);
       }
 
-      const runsOutcome = await dbGet(
+      const runsOutcome = await connectorFetch(
         ctx,
-        creds,
-        `/api/2.1/jobs/runs/list?limit=${String(RUNS_PAGE_SIZE)}&expand_tasks=false`,
+        SERVICE_ID,
+        `${creds.host}/api/2.1/jobs/runs/list?limit=${String(RUNS_PAGE_SIZE)}&expand_tasks=false`,
+        { headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" } },
       );
       let totalBytes = runsOutcome.bytes;
       const runsByJobId =
@@ -166,7 +142,14 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
       let pageToken: string | null = null;
 
       for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await dbGet(ctx, creds, jobsListPath(pageToken));
+        const outcome = await connectorFetch(
+          ctx,
+          SERVICE_ID,
+          `${creds.host}${jobsListPath(pageToken)}`,
+          {
+            headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
+          },
+        );
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
           if (page === 0) {
