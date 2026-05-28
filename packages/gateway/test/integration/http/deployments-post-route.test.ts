@@ -20,6 +20,21 @@ import {
   startReadOnlyHttpServer,
 } from "../../../src/ipc/http-server.ts";
 
+/**
+ * Migrate once at module load. Each `beforeEach` writes these cached bytes
+ * to a fresh temp file — orders of magnitude faster than re-running V1-V28
+ * per test against on-disk SQLite. The previous shape occasionally exceeded
+ * bun's ~5 s hook timeout under loaded CI workers, surfacing as spurious
+ * "200 on first valid POST" failures with no production-code change.
+ */
+const SEED_DB_BYTES: Uint8Array = (() => {
+  const seed = new Database(":memory:");
+  runIndexedSchemaMigrations(seed, 28);
+  const bytes = seed.serialize();
+  seed.close();
+  return bytes;
+})();
+
 const TOKEN = "hunter2";
 const NOW = 1747142641204;
 
@@ -62,9 +77,8 @@ describe("POST /v1/deployments (integration)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "deploy-post-"));
     dbPath = join(dir, "nimbus.db");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 28);
-    db.close();
+    // Write the cached, fully-migrated DB bytes — no per-test migration run.
+    writeFileSync(dbPath, SEED_DB_BYTES);
     writeFileSync(
       join(dir, "nimbus.toml"),
       [
