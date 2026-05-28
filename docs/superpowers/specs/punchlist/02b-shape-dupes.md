@@ -18,6 +18,22 @@ Per-connector net savings: 38–104 lines removed, 4 imports collapsed to 1, 4-l
 
 Out of scope for Task 4.9: Octokit-style and non-simple-REST connectors (github, gitlab, slack, jira, jenkins, sentry, datadog, etc.) and connectors with a different shape (obsidian has a HITL write tool registered alongside reads; openapi-indexer is filesystem). Same scope filter as 4.7.
 
+## Task 4.10 / 4.11 status (2026-05-28)
+
+The plan's `createRpcDispatcher(methods)` would have thrown `RpcMethodNotFound` on miss and returned raw `Promise<unknown>` — but the codebase requires `{ kind: "hit"; value } | { kind: "miss" }` envelopes so the outer dispatcher in `packages/gateway/src/ipc/server/dispatchers.ts` can fall through to the next namespace. Helper redesigned as `dispatchByMethod<Ctx, V>(method, params, ctx, handlerMap)` in `packages/gateway/src/ipc/_lib/dispatch-by-method.ts` — preserves the hit/miss contract, threads `ctx` through, includes a prototype-pollution `Object.hasOwn` guard.
+
+8 *-rpc.ts files adopted the helper (llm PoC + audit, index-reembed, agents, data, profile, session, voice) — `[EXTRACTED]`. Per-file savings ~5–18 lines net.
+
+**Skipped (documented):**
+
+- `connector-rpc.ts` — handlers in `connector-rpc-handlers/*` already return `{ kind: "hit"; value }` envelopes; clean migration would require refactoring every handler file. Out of scope for this pass.
+- `diagnostics-rpc.ts` (20 cases) — same nested-envelope shape as connector-rpc; ~17 helpers each currently return envelopes. High rework-to-savings ratio.
+- `automation-rpc.ts` — different `dispatchAutomationRpc(options: { method, params, db, mesh, ... })` signature; not a (method, params, ctx) dispatcher.
+- `people-rpc.ts` — synchronous end-to-end; `tryDispatchPeopleRpc` is called from sync code in `server.ts`. Async `dispatchByMethod` would propagate up; adding a sync variant for one user is premature abstraction.
+- `updater-rpc.ts` — different contract: returns raw `Promise<unknown>` and throws `UpdaterRpcError` on unknown method. Migration would change public API + test assertions + the caller in `dispatchers.ts`.
+- `lan-rpc.ts` — not a dispatcher; it's the LAN security invariant (`I5`) module exporting `checkLanMethodAllowed`.
+- Single-method files (`metrics-rpc`, `preflight-rpc`, `deployment-rpc`, `security-rpc`, `reindex-rpc`) — `dispatchByMethod` doesn't save lines for 1-case files; the existing `if (method !== "X") return miss; …` is shorter than the helper invocation.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
