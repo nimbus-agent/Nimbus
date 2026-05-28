@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSnykAggregatedIssueToItem } from "./snyk-issue-mapping.ts";
@@ -36,36 +37,14 @@ export type SnykSyncableOptions = {
   ensureSnykMcpRunning: () => Promise<void>;
 };
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function snykGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${SNYK_API}${path}`, {
+function snykGet(ctx: SyncContext, token: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${SNYK_API}${path}`, {
     headers: { Authorization: `token ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "snyk GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
-async function snykPost(
-  ctx: SyncContext,
-  token: string,
-  path: string,
-  body: unknown,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${SNYK_API}${path}`, {
+function snykPost(ctx: SyncContext, token: string, path: string, body: unknown) {
+  return connectorFetch(ctx, SERVICE_ID, `${SNYK_API}${path}`, {
     method: "POST",
     headers: {
       Authorization: `token ${token}`,
@@ -74,16 +53,6 @@ async function snykPost(
     },
     body: JSON.stringify(body),
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "snyk POST failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractOrgIds(parsed: unknown): string[] {
