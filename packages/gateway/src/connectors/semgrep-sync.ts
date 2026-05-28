@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSemgrepFindingToItem } from "./semgrep-finding-mapping.ts";
@@ -29,26 +30,10 @@ export type SemgrepSyncableOptions = {
   ensureSemgrepMcpRunning: () => Promise<void>;
 };
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function semgrepGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${SEMGREP_API}${path}`, {
+function semgrepGet(ctx: SyncContext, token: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${SEMGREP_API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "semgrep GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function firstDeploymentSlug(parsed: unknown): string | null {
