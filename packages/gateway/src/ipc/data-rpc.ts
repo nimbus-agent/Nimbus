@@ -9,6 +9,7 @@ import type { ToolExecutor } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export type DataRpcContext = {
   index: LocalIndex | undefined;
@@ -20,8 +21,6 @@ export type DataRpcContext = {
   notify?: (method: string, params: Record<string, unknown>) => void;
   toolExecutor?: ToolExecutor;
 };
-
-type RpcResult = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 export class DataRpcError extends Error {
   readonly rpcCode: number;
@@ -216,14 +215,12 @@ export async function dispatchDataRpc(
   method: string,
   params: unknown,
   ctx: DataRpcContext,
-): Promise<RpcResult> {
-  const rec = asRecord(params);
-  if (method === "data.export") return { kind: "hit", value: await handleDataExport(rec, ctx) };
-  if (method === "data.import") return { kind: "hit", value: await handleDataImport(rec, ctx) };
-  if (method === "data.delete") return { kind: "hit", value: await handleDataDelete(rec, ctx) };
-  if (method === "data.getExportPreflight")
-    return { kind: "hit", value: handleGetExportPreflight(ctx) };
-  if (method === "data.getDeletePreflight")
-    return { kind: "hit", value: handleGetDeletePreflight(params, ctx) };
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<DataRpcContext>(method, params, ctx, {
+    "data.export": (p, c) => handleDataExport(asRecord(p), c),
+    "data.import": (p, c) => handleDataImport(asRecord(p), c),
+    "data.delete": (p, c) => handleDataDelete(asRecord(p), c),
+    "data.getExportPreflight": (_p, c) => handleGetExportPreflight(c),
+    "data.getDeletePreflight": (p, c) => handleGetDeletePreflight(p, c),
+  });
 }
