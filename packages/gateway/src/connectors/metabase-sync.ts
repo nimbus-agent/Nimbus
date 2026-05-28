@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapMetabaseDashboardToItem } from "./metabase-dashboard-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -41,26 +42,10 @@ async function loadCreds(ctx: SyncContext): Promise<MetabaseCreds | null> {
   return { url: trimTrailingSlash(url), apiKey };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function mbGet(ctx: SyncContext, creds: MetabaseCreds, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.url}${path}`, {
+function mbGet(ctx: SyncContext, creds: MetabaseCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.url}${path}`, {
     headers: { "x-api-key": creds.apiKey, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "metabase GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractArray(parsed: unknown): unknown[] {
