@@ -30,6 +30,21 @@ jobs:
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
+      # gateway-touched / cli-touched gate the per-package cross-platform
+      # matrix entries (see pr-quality-cross-platform). True when any path
+      # *could* affect that package's tests — including shared deps (sdk,
+      # client, mcp-connectors), root config (bun.lock, package.json,
+      # tsconfig, biome), and scripts/. CLI imports from sdk/client/
+      # mcp-connectors, so any change there triggers both. The result is
+      # that a pure cli-src PR skips the Windows-gateway cross-platform
+      # leg (the slowest in the matrix) and vice versa.
+      gateway-touched: ${{ steps.changes.outputs.gateway-touched }}
+      cli-touched: ${{ steps.changes.outputs.cli-touched }}
+      # JSON-encoded matrix `include:` list for pr-quality-cross-platform.
+      # Built from gateway-touched / cli-touched so each matrix entry is
+      # only emitted when its package was touched. Empty list ("[]") on a
+      # PR that affects neither package — the job is skipped wholesale.
+      cross-platform-matrix: ${{ steps.changes.outputs.cross-platform-matrix }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -55,6 +70,43 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
           echo "ui=$(echo "$CHANGED" | grep -qE '^packages/(ui|sdk)/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          # gateway-touched / cli-touched use "exclude" logic — true unless
+          # every changed file is exclusively under a path that can't affect
+          # that package's tests. This is more robust than enumerating the
+          # positive set: workflow changes, root config, scripts, and shared
+          # deps (sdk, client, mcp-connectors) all correctly trigger both.
+          GATEWAY_EXCLUDE='^(packages/(cli|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          CLI_EXCLUDE='^(packages/(gateway|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          if [[ -z "$CHANGED" ]]; then
+            GW=true
+            CLI=true
+          else
+            echo "$CHANGED" | grep -qvE "$GATEWAY_EXCLUDE" && GW=true || GW=false
+            echo "$CHANGED" | grep -qvE "$CLI_EXCLUDE" && CLI=true || CLI=false
+          fi
+          echo "gateway-touched=$GW" >> "$GITHUB_OUTPUT"
+          echo "cli-touched=$CLI" >> "$GITHUB_OUTPUT"
+
+          # Build the cross-platform matrix include[] from those booleans.
+          # Each entry produces one matrix expansion; empty array skips the
+          # whole job.
+          ENTRIES=()
+          if [[ "$GW" == "true" ]]; then
+            ENTRIES+=('{"os":"macos-15","pkg":"gateway"}')
+            ENTRIES+=('{"os":"windows-2025","pkg":"gateway"}')
+          fi
+          if [[ "$CLI" == "true" ]]; then
+            ENTRIES+=('{"os":"macos-15","pkg":"cli"}')
+            ENTRIES+=('{"os":"windows-2025","pkg":"cli"}')
+          fi
+          if [[ ${#ENTRIES[@]} -eq 0 ]]; then
+            MATRIX='[]'
+          else
+            MATRIX="[$(IFS=,; echo "${ENTRIES[*]}")]"
+          fi
+          echo "cross-platform-matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
           # "code might have changed" so we never skip the test suite on an
           # unknown change set.
@@ -137,13 +189,16 @@ jobs:
   # restore that isolation by construction.
   pr-quality-cross-platform:
     name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
-    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
+    # cross-platform-matrix is "[]" (empty array) when the PR touched
+    # neither gateway nor cli; skip the whole job in that case. The
+    # matrix.include below would expand to zero entries anyway, but the
+    # explicit if: makes the skip status visible in the checks UI.
+    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true' && needs.filter.outputs.cross-platform-matrix != '[]'
     needs: filter
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2025]
-        pkg: [gateway, cli]
+        include: ${{ fromJson(needs.filter.outputs.cross-platform-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
