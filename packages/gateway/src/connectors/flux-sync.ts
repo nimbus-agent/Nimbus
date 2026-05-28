@@ -1,6 +1,7 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapFluxResourceToItem } from "./flux-resource-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -91,24 +92,10 @@ async function loadCreds(ctx: SyncContext): Promise<FluxCreds | null> {
   return { apiUrl: trimTrailingSlash(apiUrl), token };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "error"; bytes: number };
-
-async function agGet(ctx: SyncContext, creds: FluxCreds, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${creds.apiUrl}${path}`, {
+function agGet(ctx: SyncContext, creds: FluxCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.apiUrl}${path}`, {
     headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    return { kind: "error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "error", bytes: text.length };
-  }
 }
 
 function extractItems(parsed: unknown): unknown[] {
