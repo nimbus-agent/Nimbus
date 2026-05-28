@@ -25,6 +25,9 @@ export const VAULT_KEY_ALLOW_LIST = [
   // OAuth provider registry — single source of truth for descriptor.vaultKey
   // values across google/microsoft/slack/notion (PR-1).
   "packages/gateway/src/auth/oauth-registry.ts",
+  // Zoom OAuth resolver — constructs the "zoom.oauth" vault key in its
+  // parseErrors defaults (PR-2).
+  "packages/gateway/src/auth/zoom-access-token.ts",
   // OpenAI embedding provider — not a Nimbus connector; no ConnectorServiceId.
   "packages/gateway/src/embedding/create-embedding-runtime.ts",
   // Canonical declaration of per-connector vault keys; structurally equivalent

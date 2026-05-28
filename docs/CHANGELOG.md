@@ -10,6 +10,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial).
 
+### 2026-05-28
+
+- **Tier-1 connector — Zoom** ✅ — scheduled meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled` (next-page-token walk, `MAX_PAGES=20`, `PAGE_SIZE=100`); 3-legged OAuth (PKCE + Basic-header secret) on the provider-registry shipped in PR-1; rotating refresh tokens handled by the single-flight `getValidVaultAccessToken` lock (Zoom invalidates the whole chain on refresh-token reuse); fixed SaaS hosts `api.zoom.us` + `zoom.us` in the I15 sandbox manifest; `external_id = String(<meeting_id>)` (numeric, Raindrop pattern); `zoom:meeting` is sparse-structured (topic + start_time + ids), deliberately NOT prose-heavy; `hitlRequired: []` (read-only v1); recordings index + AI-generated transcripts deferred to PR-3 on the same OAuth grant (no re-consent required).
+
 ### 2026-05-25
 
 - **Tier-1 connector — ArgoCD** ✅ — GitOps application sync/health (`argocd:application`); self-hosted Bearer auth, single GET /api/v1/applications walk; sandbox host extended from `argocd.url` (Grafana pattern). Applications-only (AppProjects + sync history deferred).

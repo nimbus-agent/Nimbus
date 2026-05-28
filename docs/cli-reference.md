@@ -492,7 +492,24 @@ nimbus connector auth snyk           # API token
 nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
 nimbus connector auth semgrep        # PAT
 nimbus connector auth bitrise        # PAT
+nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
+
+#### Zoom OAuth setup
+
+Zoom uses 3-legged OAuth (PKCE + Basic-header client-secret). Before running `nimbus connector auth zoom`, create a Zoom app and export the client credentials:
+
+1. Go to [marketplace.zoom.us](https://marketplace.zoom.us) → **Develop** → **Build App** → **General app** (User-managed, PKCE).
+2. Add scopes: `user:read:user`, `meeting:read:list_meetings`, `cloud_recording:read:list_user_recordings`.
+3. Copy the **Client ID** and **Client Secret** and export them:
+
+```bash
+export NIMBUS_OAUTH_ZOOM_CLIENT_ID=<client_id>
+export NIMBUS_OAUTH_ZOOM_CLIENT_SECRET=<client_secret>
+nimbus connector auth zoom
+```
+
+The access token and rotating refresh token are stored in the OS keystore under `zoom.oauth`. Token rotation is handled automatically by the Gateway's single-flight refresh lock (Zoom invalidates the entire token chain on refresh-token reuse, so only one refresh runs at a time).
 
 ---
 
