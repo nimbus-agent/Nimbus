@@ -1,11 +1,11 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { computeDeployPreflight } from "../../../src/preflight/preflight.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 function seedIncident(
   db: Database,
@@ -138,8 +138,7 @@ describe("computeDeployPreflight: verdict + envelope", () => {
   let db: Database;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -182,8 +181,7 @@ describe("computeDeployPreflight: active_p1_incidents check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-inc-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -378,8 +376,7 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-ci-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -483,8 +480,7 @@ describe("computeDeployPreflight: merge_conflicts check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-pr-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -567,8 +563,7 @@ describe("computeDeployPreflight: max_findings", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-max-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();

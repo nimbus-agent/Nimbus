@@ -12,15 +12,15 @@
  * this PR; they're out of scope.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
 import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { seedPaymentServiceFixture } from "../../fixtures/deployments/payment-service/seed.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 function cfg(): DoraServiceConfig {
   return {
@@ -41,8 +41,7 @@ describe("dora.deploymentFrequency — source preference", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "dora-source-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 28);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
   });
 
   afterEach(() => {

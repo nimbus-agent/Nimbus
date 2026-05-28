@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { startReadOnlyHttpServer } from "../../../src/ipc/http-server.ts";
 import {
   PREFLIGHT_FIXTURE_NOW_MS,
   seedPaymentServicePreflightFixture,
 } from "../../fixtures/preflight/payment-service/seed.ts";
+import { seedDbFile } from "../../helpers/migrated-db-seed.ts";
 
 describe("GET /v1/preflight/deploy", () => {
   let dir: string;
@@ -18,8 +18,8 @@ describe("GET /v1/preflight/deploy", () => {
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-http-"));
     const dbPath = join(dir, "nimbus.db");
+    seedDbFile(dbPath, 27);
     const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 27);
     await seedPaymentServicePreflightFixture(db);
     db.close();
     writeFileSync(

@@ -62,3 +62,13 @@ export function openSeededDbFile(dbPath: string, version: number): Database {
   seedDbFile(dbPath, version);
   return new Database(dbPath);
 }
+
+/**
+ * Returns a fresh in-memory Database deserialized from the cached migrated
+ * bytes. Use as a drop-in for the `new Database(":memory:"); runIndexed…`
+ * pattern. Each call returns an independent handle.
+ */
+export function openSeededInMemoryDb(version: number): Database {
+  // Bun's `Database.deserialize` copies the bytes into a new connection.
+  return Database.deserialize(migratedSeedBytes(version));
+}

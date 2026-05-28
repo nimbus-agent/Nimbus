@@ -1,19 +1,17 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnnotateError, annotateDeployment } from "../../../src/deployment/annotate.ts";
 import type { DeploymentAnnotateInput } from "../../../src/deployment/types.ts";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const NOW = 1747142641204;
 
 function freshDb(): Database {
   const dir = mkdtempSync(join(tmpdir(), "annotate-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  runIndexedSchemaMigrations(db, 28);
-  return db;
+  return openSeededDbFile(join(dir, "nimbus.db"), 28);
 }
 
 const valid: DeploymentAnnotateInput = {

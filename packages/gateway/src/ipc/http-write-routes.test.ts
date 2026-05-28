@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
@@ -12,9 +12,8 @@ function freshContext(): {
   nowMs: () => number;
   knownServices: () => readonly string[];
 } {
-  const db = new Database(":memory:");
   // Audit chain + I14 ledger require schema up to v28.
-  runIndexedSchemaMigrations(db, 28);
+  const db = openSeededInMemoryDb(28);
   return {
     writeDb: db,
     expectedToken: "hunter2",
