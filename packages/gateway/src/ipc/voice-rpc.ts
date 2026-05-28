@@ -1,4 +1,5 @@
 import type { VoiceService } from "../voice/service.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class VoiceRpcError extends Error {
   readonly rpcCode: number;
@@ -13,8 +14,6 @@ export type VoiceRpcContext = {
   voiceService: VoiceService;
 };
 
-type RpcResult = { kind: "hit"; value: unknown } | { kind: "miss" };
-
 function expectString(params: unknown, key: string): string {
   if (
     params === null ||
@@ -27,45 +26,41 @@ function expectString(params: unknown, key: string): string {
   return (params as Record<string, string>)[key] as string;
 }
 
+async function handleVoiceTranscribe(params: unknown, ctx: VoiceRpcContext): Promise<unknown> {
+  const audioPath = expectString(params, "audioPath");
+  try {
+    return await ctx.voiceService.transcribe(audioPath);
+  } catch (e) {
+    throw new VoiceRpcError(-32603, e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function handleVoiceSpeak(params: unknown, ctx: VoiceRpcContext): Promise<unknown> {
+  const text = expectString(params, "text");
+  try {
+    await ctx.voiceService.speak(text);
+    return {};
+  } catch (e) {
+    throw new VoiceRpcError(-32603, e instanceof Error ? e.message : String(e));
+  }
+}
+
 export async function dispatchVoiceRpc(
   method: string,
   params: unknown,
   ctx: VoiceRpcContext,
-): Promise<RpcResult> {
-  if (!method.startsWith("voice.")) return { kind: "miss" };
-
-  switch (method) {
-    case "voice.getStatus": {
-      const status = await ctx.voiceService.getStatus();
-      return { kind: "hit", value: status };
-    }
-    case "voice.transcribe": {
-      const audioPath = expectString(params, "audioPath");
-      try {
-        const result = await ctx.voiceService.transcribe(audioPath);
-        return { kind: "hit", value: result };
-      } catch (e) {
-        throw new VoiceRpcError(-32603, e instanceof Error ? e.message : String(e));
-      }
-    }
-    case "voice.speak": {
-      const text = expectString(params, "text");
-      try {
-        await ctx.voiceService.speak(text);
-        return { kind: "hit", value: {} };
-      } catch (e) {
-        throw new VoiceRpcError(-32603, e instanceof Error ? e.message : String(e));
-      }
-    }
-    case "voice.startWakeWord": {
-      ctx.voiceService.startWakeWord();
-      return { kind: "hit", value: {} };
-    }
-    case "voice.stopWakeWord": {
-      ctx.voiceService.stopWakeWord();
-      return { kind: "hit", value: {} };
-    }
-    default:
-      return { kind: "miss" };
-  }
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<VoiceRpcContext>(method, params, ctx, {
+    "voice.getStatus": async (_p, c) => await c.voiceService.getStatus(),
+    "voice.transcribe": handleVoiceTranscribe,
+    "voice.speak": handleVoiceSpeak,
+    "voice.startWakeWord": (_p, c) => {
+      c.voiceService.startWakeWord();
+      return {};
+    },
+    "voice.stopWakeWord": (_p, c) => {
+      c.voiceService.stopWakeWord();
+      return {};
+    },
+  });
 }
