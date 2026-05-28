@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapMercuryAccountToItem } from "./mercury-account-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -34,32 +35,6 @@ async function loadCreds(ctx: SyncContext): Promise<MercuryCreds | null> {
     return null;
   }
   return { token };
-}
-
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function mercuryGet(
-  ctx: SyncContext,
-  creds: MercuryCreds,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "mercury GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractAccounts(parsed: unknown): unknown[] {
@@ -99,7 +74,9 @@ export function createMercurySyncable(options: MercurySyncableOptions): Syncable
 
       const now = Date.now();
 
-      const outcome = await mercuryGet(ctx, creds, "/api/v1/accounts");
+      const outcome = await connectorFetch(ctx, SERVICE_ID, `${BASE}/api/v1/accounts`, {
+        headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
+      });
       if (outcome.kind !== "ok") {
         return outcome.kind === "http_error"
           ? syncPassCursorHttpEmpty(t0, outcome.bytes, cursor, pass1Cursor())
