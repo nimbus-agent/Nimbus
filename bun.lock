@@ -805,6 +805,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/zoom": {
+      "name": "nimbus-mcp-zoom",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/sdk": {
       "name": "@nimbus-dev/sdk",
       "version": "1.1.1",
@@ -2911,6 +2923,8 @@
     "nimbus-mcp-wiz": ["nimbus-mcp-wiz@workspace:packages/mcp-connectors/wiz"],
 
     "nimbus-mcp-zendesk": ["nimbus-mcp-zendesk@workspace:packages/mcp-connectors/zendesk"],
+
+    "nimbus-mcp-zoom": ["nimbus-mcp-zoom@workspace:packages/mcp-connectors/zoom"],
 
     "nimbus-vscode": ["nimbus-vscode@workspace:packages/vscode-extension"],
 

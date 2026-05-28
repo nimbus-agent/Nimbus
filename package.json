@@ -71,6 +71,7 @@
     "packages/mcp-connectors/greenhouse",
     "packages/mcp-connectors/pipedrive",
     "packages/mcp-connectors/stackoverflow",
+    "packages/mcp-connectors/zoom",
     "packages/vscode-extension"
   ],
   "scripts": {
