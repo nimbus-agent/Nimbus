@@ -961,7 +961,10 @@ describe("mapZoomMeetingToItem", () => {
     });
     expect(row?.metadata["start_time"]).toBe(Date.parse("2026-06-01T10:00:00Z"));
     expect(row?.metadata["created_at"]).toBe(Date.parse("2026-05-25T12:00:00Z"));
-    expect(row?.modifiedAt).toBe(Date.parse("2026-06-01T10:00:00Z"));
+    // modifiedAt MUST use created_at, not start_time — start_time is when the
+    // meeting will happen, not when its row was last edited (a future-scheduled
+    // meeting would otherwise get a future modifiedAt). Review point 1.
+    expect(row?.modifiedAt).toBe(Date.parse("2026-05-25T12:00:00Z"));
     expect(row?.syncedAt).toBe(SYNCED_AT);
   });
 
@@ -987,7 +990,20 @@ describe("mapZoomMeetingToItem", () => {
     expect(row?.canonicalUrl).toBeNull();
   });
 
-  it("modifiedAt falls back to syncedAt when both timestamps are missing", () => {
+  it("modifiedAt prefers created_at over start_time (start_time may be future-dated)", () => {
+    const row = mapZoomMeetingToItem(
+      {
+        id: 9,
+        topic: "future",
+        start_time: "2099-01-01T00:00:00Z",
+        created_at: "2026-05-25T12:00:00Z",
+      },
+      { syncedAt: SYNCED_AT },
+    );
+    expect(row?.modifiedAt).toBe(Date.parse("2026-05-25T12:00:00Z"));
+  });
+
+  it("modifiedAt falls back to syncedAt when created_at is missing (no start_time fallback)", () => {
     const row = mapZoomMeetingToItem({ id: 7, topic: "no times" }, { syncedAt: SYNCED_AT });
     expect(row?.modifiedAt).toBe(SYNCED_AT);
   });
@@ -1101,7 +1117,13 @@ export function mapZoomMeetingToItem(
     bodyPreview,
     url,
     canonicalUrl: url,
-    modifiedAt: startMs ?? createdMs ?? ctx.syncedAt,
+    // modifiedAt uses created_at, NOT start_time. start_time is when the
+    // meeting will happen — for scheduled future meetings it would produce a
+    // future modifiedAt, which would corrupt "modified since X" queries.
+    // Zoom's /v2/users/me/meetings list endpoint does not return an
+    // updated_at field (only the GET /v2/meetings/{id} endpoint does); when
+    // we eventually add per-meeting GET enrichment we can prefer updated_at.
+    modifiedAt: createdMs ?? ctx.syncedAt,
     metadata,
     syncedAt: ctx.syncedAt,
   };
@@ -1138,8 +1160,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 - Create: `packages/gateway/src/connectors/zoom-sync.ts`
 - Create: `packages/gateway/src/connectors/zoom-sync.test.ts`
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts`
+- Modify: `packages/gateway/src/sync/rate-limiter.ts` — add `"zoom"` to the `Provider` union and a `DEFAULT_QUOTAS.zoom` entry. This is non-negotiable: `ctx.rateLimiter.acquire("zoom")` is a typed call and won't compile without the union entry, and an unregistered provider would throw at runtime when the syncable first fires.
 
 Walk A walks `GET /v2/users/me/meetings?type=scheduled&page_size=100`, following `next_page_token`, capped at `MAX_PAGES=20`. Uses `getValidZoomAccessToken(ctx.vault)` once per cycle. Each HTTP call gates on `ctx.rateLimiter.acquire("zoom")`. Cursor encoded via `nimbus-zoom1:`. First-page http/parse error maps to pass-cursor-empty (keep prior cursor); later-page errors break.
+
+> **MAX_PAGES discussion (review point 3).** With `PAGE_SIZE=100` and `MAX_PAGES=20`, one cycle indexes at most 2 000 scheduled meetings. This matches every other Tier-1 connector's cap and is plenty for the median Zoom user. Heavy users (years of recurring meetings) would see truncation; raising the cap is a deliberate follow-up (likely paired with `initialSyncDepthDays` tuning and `next_page_token` cursor persistence across cycles), not a v1 change. A code comment in `zoom-sync.ts` flags the convention so future contributors don't bump it casually.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1232,6 +1257,11 @@ const SERVICE_ID = "zoom";
 const CURSOR_PREFIX = "nimbus-zoom1:";
 const BASE = "https://api.zoom.us";
 const PAGE_SIZE = 100;
+// MAX_PAGES * PAGE_SIZE = 2 000 meetings/cycle. Matches every other Tier-1
+// connector's cap; the median Zoom user has well under that. Heavy users
+// (years of recurring meetings) would see truncation here — raising the cap
+// is a deliberate follow-up paired with cursor-persistence across cycles,
+// not a v1 change.
 const MAX_PAGES = 20;
 
 type ZoomCursorV1 = { pass: number };
@@ -1373,7 +1403,22 @@ export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
 }
 ```
 
-- [ ] **Step 4: Register the syncable**
+- [ ] **Step 4: Register `"zoom"` with the rate limiter**
+
+In `packages/gateway/src/sync/rate-limiter.ts`:
+
+- Append `| "zoom"` to the `Provider` union (it sits as the last `|` arm; place after `"stackoverflow"`).
+- Append a `zoom` entry to `DEFAULT_QUOTAS` matching the Tier-1 default:
+
+```ts
+  stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
+  zoom: { requestsPerMinute: 60, burstSize: 10 },
+};
+```
+
+Zoom's published rate limit varies by plan tier (Light category: ~10 req/sec for `meetings/list`); 60 req/min with burst 10 is a conservative floor that matches every other Tier-1 connector and stays well under the lowest plan's documented ceiling. The TS `satisfies`-style exhaustiveness is enforced by `DEFAULT_QUOTAS: Record<Provider, ProviderQuota>` — without this entry the file won't compile.
+
+- [ ] **Step 5: Register the syncable**
 
 In `packages/gateway/src/platform/assemble-sync-registrations.ts`:
 
@@ -1395,25 +1440,30 @@ Add the registration (at the bottom of the function, after the last existing `sy
 }
 ```
 
-- [ ] **Step 5: Run the sync tests**
+- [ ] **Step 6: Run the sync tests**
 
 Run: `bun test packages/gateway/src/connectors/zoom-sync.test.ts`
 Expected: PASS (6 tests).
 
-- [ ] **Step 6: Run a broader sync test to confirm registration didn't break anything**
+- [ ] **Step 7: Run a broader sync test to confirm registration didn't break anything**
 
 Run: `bun test packages/gateway/src/platform/assemble-sync-registrations.test.ts`
 Expected: PASS (if the test asserts exhaustive coverage, the new `zoom` registration satisfies it; if it asserts a specific count, update that count in the same commit and note it in the message).
 
-- [ ] **Step 7: Gateway typecheck**
+- [ ] **Step 8: Run the rate-limiter test**
+
+Run: `bun test packages/gateway/src/sync/rate-limiter.test.ts`
+Expected: PASS — the test likely iterates over `Provider` and confirms every entry has a `DEFAULT_QUOTAS` mapping (the TS-level exhaustiveness already enforces that, but a runtime check is common).
+
+- [ ] **Step 9: Gateway typecheck**
 
 Run: `bun run typecheck`
 Expected: gateway exits 0.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```powershell
-git add packages/gateway/src/connectors/zoom-sync.ts packages/gateway/src/connectors/zoom-sync.test.ts packages/gateway/src/platform/assemble-sync-registrations.ts
+git add packages/gateway/src/connectors/zoom-sync.ts packages/gateway/src/connectors/zoom-sync.test.ts packages/gateway/src/sync/rate-limiter.ts packages/gateway/src/platform/assemble-sync-registrations.ts
 git commit -m @'
 feat(connectors): zoom Walk A — /v2/users/me/meetings sync handler
 
@@ -1421,8 +1471,10 @@ Token-paginated walk (next_page_token), MAX_PAGES=20, every HTTP call
 gates on ctx.rateLimiter.acquire("zoom"). First-page http/parse error
 maps to pass-cursor-empty so the next cycle re-walks. cursor encoded as
 nimbus-zoom1:{pass:1}; the syncable is registered via
-ensureZoomMcpRunning so the lazy mesh spawns Zoom on demand. Walk B
-(recordings + transcripts) is the PR-3 scope.
+ensureZoomMcpRunning so the lazy mesh spawns Zoom on demand. Adds
+"zoom" to rate-limiter Provider union + DEFAULT_QUOTAS (60 req/min,
+burst 10 — matches every Tier-1 connector and stays under Zoom's
+lightest-plan ceiling). Walk B (recordings + transcripts) is PR-3.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 '@
@@ -1587,6 +1639,20 @@ function authHeader(): Record<string, string> {
   return { Authorization: `Bearer ${apiToken()}`, Accept: "application/json" };
 }
 
+/**
+ * Zoom path-encode a meeting id-or-UUID. Per Zoom's REST API docs: numeric
+ * meeting IDs and UUIDs both go in the `{meetingId}` slot, but if a UUID
+ * begins with `/` or contains `//`, it MUST be double-encoded. The simplest
+ * safe rule is: detect the literal prefix / substring and double-encode in
+ * those cases, single-encode otherwise. Numeric IDs never trigger the
+ * double-encode branch.
+ */
+export function encodeZoomMeetingPathSegment(idOrUuid: string): string {
+  const needsDoubleEncode = idOrUuid.startsWith("/") || idOrUuid.includes("//");
+  const once = encodeURIComponent(idOrUuid);
+  return needsDoubleEncode ? encodeURIComponent(once) : once;
+}
+
 async function zoomGet(path: string): Promise<unknown> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeader() });
   const text = await res.text();
@@ -1610,18 +1676,18 @@ reg(
 
 reg(
   "zoom_get",
-  "Fetch one Zoom meeting by its id (`GET /v2/meetings/{meetingId}`). Returns the meeting object directly (NOT wrapped in `{ meetings }`). Throws when no match is found.",
+  "Fetch one Zoom meeting by its numeric meeting id OR its UUID (`GET /v2/meetings/{meetingId}`). Returns the meeting object directly (NOT wrapped in `{ meetings }`). Throws when no match is found. UUIDs are auto-double-encoded when they start with `/` or contain `//` (Zoom's documented requirement).",
   z.object({
     id: z.string().min(1),
   }),
   async (p) => {
-    return jsonResult(await zoomGet(`/v2/meetings/${encodeURIComponent(p.id)}`));
+    return jsonResult(await zoomGet(`/v2/meetings/${encodeZoomMeetingPathSegment(p.id)}`));
   },
 );
 
 reg(
   "zoom_search",
-  "Substring search across the authenticated user's scheduled Zoom meetings (first page only). Matches the query against the meeting topic, agenda, and host id (case-insensitive). Returns a `{ matches: [...] }` envelope.",
+  "**Substring search over the FIRST PAGE only** (up to 100 most recently-listed scheduled meetings) of the authenticated user's Zoom meetings. The Zoom REST API has no native text-search endpoint for meetings; this tool fetches `GET /v2/users/me/meetings?type=scheduled&page_size=100` once and matches the query locally against the meeting topic, agenda, and host id (case-insensitive). **Meetings older than the first page are not searchable here — query the local Nimbus index instead for full coverage.** Returns a `{ matches: [...] }` envelope.",
   z.object({
     query: z.string().min(1),
     limit: z.number().int().min(1).max(100).optional(),
@@ -1640,22 +1706,59 @@ const transport = new StdioServerTransport();
 await mcp.connect(transport);
 ```
 
-- [ ] **Step 6: Sandbox contract test**
+- [ ] **Step 6: Test the UUID double-encode helper**
+
+The double-encode behaviour for UUIDs starting with `/` or containing `//` is Zoom's documented requirement; it deserves an explicit unit test. Create `packages/mcp-connectors/zoom/test/encode-meeting-path.test.ts`:
+
+```ts
+import { describe, expect, it } from "bun:test";
+
+import { encodeZoomMeetingPathSegment } from "../src/server.ts";
+
+describe("encodeZoomMeetingPathSegment", () => {
+  it("single-encodes a plain numeric meeting id", () => {
+    expect(encodeZoomMeetingPathSegment("83476203401")).toBe("83476203401");
+  });
+
+  it("single-encodes a normal base64-ish UUID", () => {
+    expect(encodeZoomMeetingPathSegment("abcd1234==")).toBe("abcd1234%3D%3D");
+  });
+
+  it("double-encodes a UUID that starts with /", () => {
+    expect(encodeZoomMeetingPathSegment("/abc==")).toBe(
+      encodeURIComponent(encodeURIComponent("/abc==")),
+    );
+  });
+
+  it("double-encodes a UUID that contains //", () => {
+    expect(encodeZoomMeetingPathSegment("ab//cd")).toBe(
+      encodeURIComponent(encodeURIComponent("ab//cd")),
+    );
+  });
+});
+```
+
+(Note: this requires `encodeZoomMeetingPathSegment` to be `export`-ed from `src/server.ts` — already shown above in the implementation block.)
+
+Run: `bun test packages/mcp-connectors/zoom/test/encode-meeting-path.test.ts`
+Expected: PASS (4 tests).
+
+- [ ] **Step 8: Sandbox contract test**
 
 Create `packages/mcp-connectors/zoom/test/sandbox.test.ts` mirroring `packages/mcp-connectors/stackoverflow/test/sandbox.test.ts`. The test imports the package's manifest from `first-party-manifests.ts` (Task 7) and runs the SDK sandbox contract test — copy the existing connector's exact shape.
 
-- [ ] **Step 7: Run the MCP package's tests**
+- [ ] **Step 9: Run the MCP package's tests**
 
 Run: `bun test packages/mcp-connectors/zoom/`
 Expected: PASS.
 
-- [ ] **Step 8: Install + typecheck the new package**
+- [ ] **Step 10: Install + typecheck the new package**
 
 Run: `bun install`
 Then: `bun run typecheck`
 Expected: `@nimbus/gateway typecheck: Exited with code 0`; `nimbus-mcp-zoom typecheck: Exited with code 0`.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```powershell
 git add packages/mcp-connectors/zoom/ bun.lock
@@ -1822,6 +1925,17 @@ PR-3 (Zoom recordings + transcripts on the same OAuth grant) is the follow-up pl
 - **PR-3 is explicitly deferred:** Walk B (`/v2/users/me/recordings`), VTT parsing, `zoom-transcript-mapping.ts`, `"zoom:transcript"` in `PROSE_HEAVY_TYPES`, the skip-if-exists check, and recordings MCP tools are out of scope. The OAuth grant in Task 3 already includes `cloud_recording:read:list_user_recordings` so PR-3 needs no re-consent.
 - **Type consistency:** `OAuthProvider` ("zoom" added in Task 1) propagates through `oauthClientConfigForProvider` (Task 5) and `oauthProfileForService` (Task 3) via the existing exhaustiveness check. `ConnectorServiceId` is the same — the `satisfies` in `CONNECTOR_VAULT_SECRET_KEYS` (Task 4) enforces it. `ZoomMeetingMappedRow` is a fresh type local to Task 8; the sync handler in Task 9 consumes it through `upsertIndexedItemForSync` (the same path Stack Overflow uses).
 - **No placeholder steps:** every code step shows the exact code; every command step shows the exact command + expected output; the test-harness reference in Task 9 Step 1 explicitly points to `stackoverflow-sync.test.ts` as the canonical helper to clone (the harness is non-trivial enough to clone rather than re-state, and that's an established codebase convention — see the existing 15+ `*-sync.test.ts` files all cloning the same shape).
+
+## Review dispositions (2026-05-28)
+
+Plan review (`…-pr2-review.md`) raised six points; dispositions:
+
+1. **`modifiedAt` future-dating from `start_time`** — ✅ **fixed**. The mapper now uses `createdMs ?? ctx.syncedAt` (drops `startMs` from the fallback chain). `start_time` stays in metadata for "meetings starting next week"-style queries. Zoom's `/v2/users/me/meetings` list endpoint does not return `updated_at`; when per-meeting GET enrichment is added later we can prefer it. Two new mapper tests cover the new behaviour (Task 8).
+2. **Topic fallback / `externalId` strictness** — ◐ **confirmed correct, no change**. `externalId = String(numberField(row, "id"))` parses through the typed helper and rejects non-numeric ids by returning `null` from the mapper (Task 8 already had the test).
+3. **`MAX_PAGES = 20` truncates at 2000 meetings** — ◐ **deferred + documented**. Matches every Tier-1 connector's cap; raising it pairs with cross-cycle cursor persistence and is intentionally out of v1 scope. A `MAX_PAGES` code comment in `zoom-sync.ts` (Task 9 Step 3) flags the convention so future contributors don't bump it casually.
+4. **Rate-limiter `Provider` union + `DEFAULT_QUOTAS` entry missing from plan** — ✅ **fixed**. Task 9 gained a new Step 4 (and renumbered subsequent steps): extend the union with `"zoom"` and add `zoom: { requestsPerMinute: 60, burstSize: 10 }` to `DEFAULT_QUOTAS`. The TS exhaustiveness of `Record<Provider, ProviderQuota>` enforces both — without the entry the file won't compile. The commit message in Task 9 Step 10 notes the addition.
+5. **`zoom_search` first-page limitation in tool description** — ✅ **fixed**. The tool description now leads with a bolded callout and explicitly tells the LLM to "query the local Nimbus index instead for full coverage" when meetings older than the first page are needed (Task 10).
+6. **Meeting-UUID double-encoding in `zoom_get`** — ✅ **fixed**. Added a documented `encodeZoomMeetingPathSegment` helper exported from `src/server.ts` that detects the Zoom-specific double-encode trigger (UUID starts with `/` or contains `//`) and applies double-encoding only when needed. Numeric ids and "normal" UUIDs are still single-encoded. A new unit-test file `test/encode-meeting-path.test.ts` covers all four cases (numeric, normal UUID, leading-`/`, embedded `//`).
 
 ## Hand-off to PR-3
 
