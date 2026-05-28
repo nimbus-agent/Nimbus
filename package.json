@@ -157,6 +157,10 @@
     "package:installers:linux": "bun scripts/package-linux-installers.ts",
     "clean": "bun run --filter '*' clean && rm -rf node_modules"
   },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "^4.4.2"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
     "@resvg/resvg-js": "^2.6.2",
