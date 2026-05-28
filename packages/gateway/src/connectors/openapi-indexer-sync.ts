@@ -11,6 +11,7 @@ import { discoverSpecFiles } from "./openapi-indexer-discovery.ts";
 import { type ParsedEndpoint, parseSpec } from "./openapi-indexer-parsing.ts";
 import { inferServiceName } from "./openapi-indexer-service-name.ts";
 
+// connectorFetch opt-out: indexes filesystem OpenAPI/AsyncAPI specs, not paginated HTTP.
 const SERVICE_ID = "openapi";
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const INITIAL_SYNC_DEPTH_DAYS = 365;
