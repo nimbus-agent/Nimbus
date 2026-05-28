@@ -2,23 +2,9 @@
 
 ## Task 4.7 status (2026-05-28)
 
-The `runConnectorSync` template proposed below was redesigned as the
-narrower `connectorFetch` helper in `packages/gateway/src/connectors/_lib/fetch-outcome.ts`
-after a survey showed the actual duplication was the rate-limit + fetch
-+ text + ok/parse → FetchOutcome block, not flat pagination. 28
-connectors in the Tier-1/Tier-2 simple-REST list adopted the helper
-(argocd, bitrise, databricks, dbt, flagsmith, flux, greenhouse,
-intercom, launchdarkly, lever, mercury, metabase, mlflow, netlify,
-raindrop, readwise, semgrep, snyk, sonarqube, stackoverflow, stripe,
-superset, vercel, wiz, zendesk, zoom) — `[EXTRACTED]`. Opt-outs:
-`obsidian`, `openapi-indexer` (filesystem, no HTTP), `pipedrive`
-(api_token in query string — helper's url-log would leak it) —
-`[N/A — opted out]`.
+The `runConnectorSync` template proposed below was redesigned as the narrower `connectorFetch` helper in `packages/gateway/src/connectors/_lib/fetch-outcome.ts` after a survey showed the actual duplication was the (rate-limit, fetch, text, ok/parse, FetchOutcome) block, not flat pagination. 28 connectors in the Tier-1/Tier-2 simple-REST list adopted the helper (argocd, bitrise, databricks, dbt, flagsmith, flux, greenhouse, intercom, launchdarkly, lever, mercury, metabase, mlflow, netlify, raindrop, readwise, semgrep, snyk, sonarqube, stackoverflow, stripe, superset, vercel, wiz, zendesk, zoom) — `[EXTRACTED]`. Opt-outs: `obsidian`, `openapi-indexer` (filesystem, no HTTP), `pipedrive` (api_token in query string — helper's url-log would leak it) — `[N/A — opted out]`.
 
-Out of scope for Task 4.7: older connectors that use Octokit-style
-clients / non-Syncable shapes (github, gitlab, slack, jira, jenkins,
-sentry, datadog, etc.) — they don't match the `Syncable` + `FetchOutcome`
-+ `syncPassCursor*` envelope the helper targets.
+Out of scope for Task 4.7: older connectors that use Octokit-style clients / non-Syncable shapes (github, gitlab, slack, jira, jenkins, sentry, datadog, etc.) — they don't match the (Syncable, FetchOutcome, syncPassCursor*) envelope the helper targets.
 
 ## connector sync handlers (59)
 

@@ -2349,6 +2349,7 @@ Apply this checklist (one task per connector, one commit per connector):
 - [ ] **Step 3: Replace each `<x>Get` / `<x>Post` callsite.** The pattern:
 
   Before:
+
   ```typescript
   async function agGet(ctx, creds, path): Promise<FetchOutcome> {
     await ctx.rateLimiter.acquire(SERVICE_ID);
@@ -2364,6 +2365,7 @@ Apply this checklist (one task per connector, one commit per connector):
   ```
 
   After:
+
   ```typescript
   import { connectorFetch } from "./_lib/fetch-outcome.ts";
   // ... agGet deleted entirely
