@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.5.0](https://github.com/nimbus-agent/Nimbus/compare/v0.4.0...v0.5.0) (2026-05-28)
+
+
+### Features
+
+* **auth+connectors:** OAuth provider registry (PR-1) + Tier-1 connector batch + Zoom planning ([#447](https://github.com/nimbus-agent/Nimbus/issues/447)) ([9d71a62](https://github.com/nimbus-agent/Nimbus/commit/9d71a62fa5058475b8482469e82b76b8eb05615c))
+
+
+### Bug Fixes
+
+* **vscode-extension:** scope tsconfig to types:[node] (fixes CI typecheck) ([#446](https://github.com/nimbus-agent/Nimbus/issues/446)) ([78484a6](https://github.com/nimbus-agent/Nimbus/commit/78484a6e67bef930040afd4cc5b69d5f153aae0c))
+
 ## [0.4.0](https://github.com/nimbus-agent/Nimbus/compare/v0.3.0...v0.4.0) (2026-05-22)
 
 
