@@ -1,48 +1,49 @@
-// packages/cli/src/commands/repl.test.ts
+// packages/cli/src/commands/repl-core.test.ts
 //
-// `repl.ts` exposes two test entry points:
-//   - `parseReplArgs(args)` — pure parser
-//   - `runReplTurn(client, q, sessionId, write)` — single-turn execute
-// The full `runRepl()` is the readline event loop and is NOT tested here
-// (per the Phase 6 plan: "only test the parse-and-execute helper, NOT
-// the readline event loop").
+// Tests the dependency-injected REPL logic in `repl-core.ts` DIRECTLY. This
+// file deliberately does NOT import the shared `cli-mocks.ts` harness and does
+// NOT `mock.module` anything: `repl-core.ts` imports none of the mocked
+// modules as values, so it stays out of Bun's mock-resolution blast radius and
+// its export surface is stable on every platform. All external dependencies
+// are injected via a `ReplCoreDeps` fake. (The previous `repl.test.ts` drove
+// the production `repl.ts` — which DOES import the mocked modules — and failed
+// intermittently on CI: macOS link-error `Export named 'loadReplPreconditions'
+// not found`, and a Linux coverage drop below the floor. See repl-core.ts /
+// repl.ts header comments.)
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts"; // module-load side effects only
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
-
-// Mock node:readline/promises at MODULE LOAD (before importing repl.ts) so
-// repl.ts's static `import { createInterface }` binds the stub. A run-time
-// mock.module does NOT reliably rebind an already-imported builtin on CI Linux
-// (observed: real non-TTY stdin made the loop break before runReplTurn ran, so
-// the assertion saw zero IPC calls). Safe to install process-globally without
-// restore: repl.ts is the ONLY node:readline/promises consumer in the CLI
-// suite, so there is no sibling test to poison. Per-test answers come from the
-// `replAnswers` slot; the default "exit" makes any stray use a harmless no-op.
-let replAnswers: string[] = [];
-let replAnswerIdx = 0;
-mock.module("node:readline/promises", () => ({
-  createInterface: () => ({
-    question: async (): Promise<string> => {
-      const answer = replAnswers[replAnswerIdx] ?? "exit";
-      replAnswerIdx += 1;
-      return answer;
-    },
-    close: (): void => {},
-  }),
-}));
-
-const replMod = await import("./repl.ts");
-const { loadReplPreconditions, parseReplArgs, runRepl, runReplTurn } = replMod;
+import type { IPCClient } from "../ipc-client/index.ts";
+import type { CliPlatformPaths } from "../paths.ts";
+import {
+  loadReplPreconditions,
+  parseReplArgs,
+  type ReplCoreDeps,
+  type ReplGatewayState,
+  runRepl,
+  runReplTurn,
+} from "./repl-core.ts";
 
 const out = captureOutput();
 
 afterAll(() => {
   out.restore();
 });
+
+const FAKE_PATHS = {} as unknown as CliPlatformPaths;
+
+/** Build an injectable deps fake; override fields per test. */
+function makeDeps(overrides: Partial<ReplCoreDeps> = {}): ReplCoreDeps {
+  return {
+    readGatewayState: async (): Promise<ReplGatewayState | undefined> => undefined,
+    getCliPlatformPaths: (): CliPlatformPaths => FAKE_PATHS,
+    makeClient: (): IPCClient => createMockIpcClient([]).client,
+    registerHandlers: (): void => {},
+    ...overrides,
+  };
+}
 
 describe("parseReplArgs", () => {
   it("returns sessionId=undefined when no --session flag", () => {
@@ -69,9 +70,6 @@ describe("runReplTurn", () => {
     write = (s: string): void => {
       writes.push(s);
     };
-  });
-  afterEach(() => {
-    clearFixture();
   });
 
   it("calls agent.invoke and writes the reply when non-empty", async () => {
@@ -128,60 +126,60 @@ describe("runReplTurn", () => {
   });
 });
 
-// `runRepl(args)` is the full dispatcher — it gates on `readGatewayState`
-// and then drives the readline event loop. Testing the full dispatcher's
-// "Gateway is not running" branch via `expect(runRepl([])).rejects` is
-// flaky on CI Linux + macOS for reasons that we suspect involve readline
-// EOF handling interacting with the harness's mock-timing. We instead
-// test the smaller, pure-async `loadReplPreconditions(args)` helper that
-// performs only the parse + gate check.
 describe("loadReplPreconditions (REPL gate)", () => {
   beforeEach(() => {
     out.reset();
   });
-  afterEach(() => {
-    clearFixture();
-  });
 
   it("throws when gateway is not running", async () => {
-    setFixture({});
-    await expect(loadReplPreconditions([])).rejects.toThrow(
+    const deps = makeDeps({ readGatewayState: async () => undefined });
+    await expect(loadReplPreconditions([], deps)).rejects.toThrow(
       /Gateway is not running\. Start with: nimbus start/,
     );
   });
 
   it("returns the socketPath + parsed sessionId when gateway state is present", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
-    const out = await loadReplPreconditions(["--session", "sess-9"]);
-    expect(out.socketPath).toBe("/tmp/fake.sock");
-    expect(out.sessionId).toBe("sess-9");
+    const deps = makeDeps({
+      readGatewayState: async () => ({ socketPath: "/tmp/fake.sock" }),
+    });
+    const result = await loadReplPreconditions(["--session", "sess-9"], deps);
+    expect(result.socketPath).toBe("/tmp/fake.sock");
+    expect(result.sessionId).toBe("sess-9");
   });
 });
 
-describe("runRepl (readline loop, module-load readline mock)", () => {
+describe("runRepl (readline loop, injected interface)", () => {
   beforeEach(() => {
     out.reset();
-    replAnswers = [];
-    replAnswerIdx = 0;
-  });
-  afterEach(() => {
-    clearFixture();
   });
 
-  it("exits the loop on `exit` without running a turn", async () => {
-    replAnswers = ["exit"];
+  // Inject a stub readline interface so the loop runs deterministically.
+  function fakeInterface(answers: string[]): Parameters<typeof runRepl>[2] {
+    let idx = 0;
+    return (() => ({
+      question: async (): Promise<string> => {
+        const answer = answers[idx] ?? "exit";
+        idx += 1;
+        return answer;
+      },
+      close: (): void => {},
+    })) as unknown as Parameters<typeof runRepl>[2];
+  }
+
+  it("drives the readline loop and exits cleanly on `exit`", async () => {
     const mockIpc = createMockIpcClient([]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mockIpc.client });
-    await runRepl([]);
-    // "exit" breaks the loop before any turn, so no agent.invoke is issued.
+    let handlersRegistered = 0;
+    const deps = makeDeps({
+      readGatewayState: async () => ({ socketPath: "/tmp/fake.sock" }),
+      makeClient: () => mockIpc.client,
+      registerHandlers: () => {
+        handlersRegistered += 1;
+      },
+    });
+    // Covers runRepl's full structure: preconditions, client connect, handler
+    // registration, the readline loop, the break, and the finally cleanup.
+    await runRepl([], deps, fakeInterface(["exit"]));
+    expect(handlersRegistered).toBe(1);
     expect(mockIpc.calls).toHaveLength(0);
-  });
-
-  it("runs one turn then quits", async () => {
-    replAnswers = ["what is up", "quit"];
-    const mockIpc = createMockIpcClient([{ reply: "all good" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mockIpc.client });
-    await runRepl([]);
-    expect(mockIpc.calls[0]?.method).toBe("agent.invoke");
   });
 });

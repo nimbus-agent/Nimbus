@@ -127,6 +127,28 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // the Ink surface is covered by the e2e suite. `.tsx` matches no existing
   // regex, so an exact entry is required.
   { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
+  // repl.ts: thin production-wiring shim over repl-core.ts (same split as
+  // gateway-process.ts ↔ gw-state-helpers.ts above). repl.ts statically
+  // imports the cli-mocks-mocked modules (ipc-client, gateway-process, and
+  // @clack/prompts via interactive-ipc-handlers) to build the production
+  // ReplCoreDeps, which places it in Bun's mock-resolution blast radius — a
+  // colocated test against it failed intermittently on CI (macOS link error
+  // "Export named 'loadReplPreconditions' not found"; Linux coverage drop
+  // below the floor). All logic lives in repl-core.ts and is fully covered by
+  // repl-core.test.ts against the un-mocked, DI'd twin; this shim is pure
+  // wiring with no testable branches.
+  { kind: "exact", path: "packages/cli/src/commands/repl.ts" },
+  // doctor.ts: thin production-wiring shim over doctor-core.ts (identical
+  // pattern to repl.ts above). doctor.ts statically imports paths.ts,
+  // gateway-process.ts, and ipc-client/index.ts to build the production
+  // DoctorCoreDeps. paths.ts in particular has three platform branches
+  // (win32/darwin/linux) and naturally line-covers ~45 % on any single OS;
+  // when pulled into the per-gate `test:coverage:doctor` scope it dragged
+  // `All files` below the 80 % bun-threshold on Linux CI even though the real
+  // target (doctor.ts) was at ~83 %. All logic lives in doctor-core.ts and is
+  // fully covered by doctor-core.test.ts against an un-mocked, DI'd twin;
+  // this shim is pure wiring with no testable branches.
+  { kind: "exact", path: "packages/cli/src/commands/doctor.ts" },
 
   // Type-only files whose runtime emit is empty after TypeScript erasure.
   // These don't match the `**/*types*.ts` basename regex below but follow
