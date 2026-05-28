@@ -127,6 +127,17 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // the Ink surface is covered by the e2e suite. `.tsx` matches no existing
   // regex, so an exact entry is required.
   { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
+  // repl.ts: thin production-wiring shim over repl-core.ts (same split as
+  // gateway-process.ts ↔ gw-state-helpers.ts above). repl.ts statically
+  // imports the cli-mocks-mocked modules (ipc-client, gateway-process, and
+  // @clack/prompts via interactive-ipc-handlers) to build the production
+  // ReplCoreDeps, which places it in Bun's mock-resolution blast radius — a
+  // colocated test against it failed intermittently on CI (macOS link error
+  // "Export named 'loadReplPreconditions' not found"; Linux coverage drop
+  // below the floor). All logic lives in repl-core.ts and is fully covered by
+  // repl-core.test.ts against the un-mocked, DI'd twin; this shim is pure
+  // wiring with no testable branches.
+  { kind: "exact", path: "packages/cli/src/commands/repl.ts" },
 
   // Type-only files whose runtime emit is empty after TypeScript erasure.
   // These don't match the `**/*types*.ts` basename regex below but follow

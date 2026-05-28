@@ -111,6 +111,17 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 
 **Cross-platform:** build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators — `bun run audit:cross-platform` flags hardcoded Windows-separator path assertions (backslash / drive-letter / UNC) in tests, the Windows-dev → Ubuntu-CI footgun (escape hatch: `// cross-platform-ok`).
 
+**Reproducing CI-Linux-only failures (don't guess — reproduce):** CI runs on Ubuntu with `bun-version: latest`. Some failures never reproduce on local Windows/macOS and are *not* version-related — e.g. `mock.module` contamination in the combined per-package `bun test packages/cli/src` run (a sibling's `mock.restore()` clears another file's process-global mock; prefer **dependency injection over `mock.module`** for anything driven through a dispatcher), and `@types/*` hoisting differences (e.g. a package with no `compilerOptions.types` auto-includes the root `@types/bun`, which conflicts with `@types/node`). When a gate is red on CI but green on Windows, reproduce on Linux **before** pushing a speculative fix:
+
+```bash
+# Match CI's bun first:  bun upgrade   (CI uses latest)
+docker run --rm -v "$PWD":/src:ro oven/bun:latest bash -lc \
+  'mkdir -p /app && (cd /src && tar --exclude=node_modules --exclude=.git -cf - .) | (cd /app && tar -xf -) \
+   && cd /app && bun install && cd packages/cli && bun test src/'
+```
+
+WSL Ubuntu works too (`curl -fsSL https://bun.sh/install | bash`, then run from a Linux-native copy — not `/mnt/c`, whose `node_modules` are Windows binaries). The coverage floor (`audit:coverage-floor`) is **CI-Linux-authoritative**: a file can read ≥80% on Windows yet `<80%` on Linux if its tests flake in the combined run.
+
 Full command catalogue + coverage thresholds + env-var overrides live in the [`nimbus-commands`](./.claude/commands/nimbus-commands.md) skill. File-location pointers live in [`nimbus-file-map`](./.claude/commands/nimbus-file-map.md).
 
 ---
