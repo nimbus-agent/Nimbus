@@ -10,6 +10,7 @@ import { discoverNotesInVault, discoverVaults } from "./obsidian-discovery.ts";
 import { parseNote, resolveWikilinks } from "./obsidian-parsing.ts";
 import { formatVaultName, vaultIdFromAbsolutePath } from "./obsidian-vault-id.ts";
 
+// connectorFetch opt-out: indexes filesystem vault notes, not paginated HTTP.
 const SERVICE_ID = "obsidian";
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const INITIAL_SYNC_DEPTH_DAYS = 365;
