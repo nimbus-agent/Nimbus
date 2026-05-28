@@ -63,7 +63,7 @@ function scopesFromTokenResponse(scopeField: string | undefined, requested: stri
 }
 
 /** Standard OAuth2 form-token response → PKCEResult (google/microsoft/zoom). */
-export function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
+function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
   if (json === null || typeof json !== "object") {
     throw new Error("Token response was not valid JSON");
   }
@@ -86,7 +86,7 @@ export function parseStandardTokenResponse(json: unknown, requested: string[]): 
   };
 }
 
-export function parseSlackTokenResponse(json: unknown, requested: string[]): PKCEResult {
+function parseSlackTokenResponse(json: unknown, requested: string[]): PKCEResult {
   if (json === null || typeof json !== "object" || Array.isArray(json)) {
     throw new Error("Invalid Slack OAuth response");
   }
@@ -127,7 +127,7 @@ export function parseSlackTokenResponse(json: unknown, requested: string[]): PKC
   };
 }
 
-export function parseNotionTokenResponse(json: unknown, requested: string[]): PKCEResult {
+function parseNotionTokenResponse(json: unknown, requested: string[]): PKCEResult {
   if (json === null || typeof json !== "object" || Array.isArray(json)) {
     throw new Error("Notion token response invalid");
   }
@@ -239,9 +239,6 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
   },
 };
 
-export type { NimbusVault };
-export { validateVaultKeyOrThrow };
-
 export function buildAuthorizeUrl(d: OAuthProviderDescriptor, a: AuthorizeArgs): URL {
   const url = new URL(d.authorizeUrl);
   for (const [k, v] of Object.entries(d.buildAuthorizeParams(a))) {
@@ -273,7 +270,7 @@ interface TokenRequest {
   requestedScopes: string[];
 }
 
-export async function postToken(req: TokenRequest): Promise<PKCEResult> {
+async function postToken(req: TokenRequest): Promise<PKCEResult> {
   const d = req.descriptor;
   const headers: Record<string, string> = { ...(d.tokenHeaders ?? {}) };
   const fields: Record<string, string> = { client_id: req.clientId, ...req.grant };
