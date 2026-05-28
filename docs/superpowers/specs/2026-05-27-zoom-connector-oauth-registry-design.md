@@ -25,6 +25,7 @@ calendar-event linking are explicitly deferred.
 ## Goals / Non-goals
 
 **Goals**
+
 - One `OAUTH_PROVIDERS` registry that expresses every existing provider's quirks as
   data + two narrow hooks, with no change to any provider's wire behavior or to any
   public function signature.
@@ -34,6 +35,7 @@ calendar-event linking are explicitly deferred.
 - Granular GA scopes from the start.
 
 **Non-goals (deferred)**
+
 - AI Companion meeting summaries (plan-gated, newer, separate API).
 - Meeting create/update/delete writes (Phase 6, HITL).
 - Calendar-event linking.
@@ -66,7 +68,7 @@ calendar-event linking are explicitly deferred.
   MCP-process-token-expiry concern is therefore a non-issue (lazy-mesh respawns;
   every cycle re-resolves).
 - **Safety net:** `auth/*.test.ts` — `pkce.test.ts` (exercises public `runPKCEFlow`
-  + `refreshAccessToken`, incl. "no token in thrown error" assertions),
+  - `refreshAccessToken`, incl. "no token in thrown error" assertions),
   `google-access-token.test.ts`, `notion-access-token.test.ts`,
   `slack-access-token.test.ts`, `oauth-vault-tokens.test.ts`,
   `oauth-vault-scopes.test.ts`.
@@ -147,6 +149,7 @@ functions:
     — so it is **deferred** until a genuinely non-refreshable provider is added.
 
 **Behavior-preservation specifics**
+
 - Slack `ok:true` success → `isTokenSuccess` hook (default = HTTP ok).
 - Slack `authed_user` nesting + Notion synthetic-24 h expiry → each provider's
   `parseTokenResponse`.
@@ -200,6 +203,7 @@ interval, and `"zoom"` to the `ConnectorServiceId` union.
 **added to `PROSE_HEAVY_TYPES` as `"zoom:transcript"`**).
 
 **`connectors/zoom-sync.ts`** — per cycle:
+
 1. `getValidZoomAccessToken(ctx.vault)` once (refresh + persist rotated token). No
    token → `syncNoopResult`.
 2. **Walk A — meetings:** `GET /v2/users/me/meetings?type=scheduled&page_size=100`,
@@ -238,6 +242,7 @@ interval, and `"zoom"` to the `ConnectorServiceId` union.
    the skip-if-exists check makes it cheap.
 
 **Mappers (pure, unit-tested without HTTP):**
+
 - `zoom-meeting-mapping.ts` `mapZoomMeetingToItem`: `external_id = String(id)` (skip
   if missing/non-numeric); title `topic` else `Meeting <id>`; `start_time`
   ISO→epoch-ms via local `parseIsoMs`; metadata `{ meeting_id, uuid, host_id, topic,

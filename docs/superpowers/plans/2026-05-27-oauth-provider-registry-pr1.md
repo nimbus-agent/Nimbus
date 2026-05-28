@@ -53,6 +53,7 @@ Expected: only the pre-existing `nimbus-vscode` `@nimbus-dev/client` error; no `
 ## Task 1: Descriptor type + empty registry module
 
 **Files:**
+
 - Create: `packages/gateway/src/auth/oauth-registry.ts`
 - Create: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -221,6 +222,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 2: Pure parse helpers + google/microsoft hooks
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts`
 - Modify: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -385,6 +387,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 3: slack + notion hooks (the outliers)
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts`
 - Modify: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -572,6 +575,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 4: Generic authorize-URL + token exchange
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts`
 - Modify: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -770,6 +774,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 5: Generic refresh + `getValidVaultAccessToken` with single-flight lock
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts`
 - Modify: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -962,9 +967,9 @@ export async function getValidVaultAccessToken(a: GetValidArgs): Promise<string>
 ```
 
 > The `inFlightRefresh` map keys by `vaultKey`, so Google's per-service keys (`google_drive.oauth`, …) each get their own single-flight slot — correct, since they hold distinct tokens.
-
+>
 > **Single-process invariant (why an in-memory lock is sufficient).** `getValidVaultAccessToken` runs **only in the primary Gateway process** — the gateway-side `*-sync.ts` handlers and the spawn-time token injection in `connectors/lazy-mesh/connector-spawns.ts` both execute in-process, and **no connector sub-process ever imports it**: connectors read the token the Gateway injects as an env var at spawn and have no Vault access by design (see `nimbus-connector-authoring`). Therefore only the Gateway refreshes, there is no cross-process refresh race, and the in-memory `Map` fully coalesces it. **Do not** add a Vault refresh call inside a connector — that would break this invariant and reintroduce the token-chain-invalidation race the lock prevents. A multi-process IPC/file lock is deliberately **not** implemented (unnecessary under this invariant).
-
+>
 > **Ordering is intentional — do not "optimize" it.** The lock is consulted **only on the refresh path**, *after* the cheap vault read + parse + expiry check. A cache-hit caller (token not near expiry) returns its still-valid token immediately and never touches the lock. Checking the lock *before* the read would force cache hits to block on an unrelated in-flight refresh — strictly worse for the common case. The only "wasted" work in the rare double-refresh window is one cheap vault read + `JSON.parse` by the second caller before it awaits the same in-flight promise — negligible, and race-free (the second caller correctly awaits the first refresh's result). Add this as a one-line code comment above the `inFlightRefresh.get(vaultKey)` lookup.
 
 - [ ] **Step 4: Run to verify pass**
@@ -988,6 +993,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 6: Make `pkce.ts` a thin facade over the registry
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/pkce.ts`
 
 Goal: `runPKCEFlow` keeps its signature and behavior but delegates to the registry; delete `buildPkceAuthorizeUrl`, `buildSlackAuthorizeUrl`, `buildNotionAuthorizeUrl`, `exchangePkceAuthorizationCode`, `exchangeNotionAuthorizationCode`, `exchangeSlackAuthorizationCode`, `runSlackOAuthOnLocalPort`, `runNotionOAuthOnLocalPort`, and the now-duplicated parse helpers. Keep the port-binding/callback-server logic (`buildPortSequence`, `handlePkceCallbackRequest`, `runOnLocalPort` shell, `runPKCEFlow`). Re-export `OAuthProvider`, `PKCEResult` from the registry so existing importers are unaffected.
@@ -1110,6 +1116,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 7: Migrate refresh functions to the registry
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/pkce.ts`
 
 Goal: `refreshAccessToken` keeps its export name, **widens** `provider` to `OAuthProvider`, and delegates to `refreshViaRegistry`. `refreshSlackUserToken` and `refreshNotionToken` keep their export names (consumed by `slack-access-token.ts` / `notion-access-token.ts` until Task 8 migrates those) and delegate to `refreshViaRegistry`.
@@ -1202,6 +1209,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 8: Migrate the four resolvers to `getValidVaultAccessToken`
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-vault-tokens.ts`
 - Modify: `packages/gateway/src/auth/notion-access-token.ts`
 - Modify: `packages/gateway/src/auth/slack-access-token.ts`
@@ -1334,6 +1342,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 9: D11 vault-key allow-list
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts:19-26` (`VAULT_KEY_ALLOW_LIST`)
 
 - [ ] **Step 1: Run the invariants audit to see the failure**

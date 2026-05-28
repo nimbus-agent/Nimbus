@@ -14,15 +14,12 @@ Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T
 
 - **Coverage floor Phase 8 — closeout** ✅ (PR #445) — CLI deep cuts; per-file coverage baseline 10 → **0** entries. The coverage-floor multi-phase initiative is complete: every bun-tested workspace file now meets or exceeds the 80% line-coverage floor.
 - **VS Code extension typecheck CI fix** ✅ (PR #446) — `packages/vscode-extension/tsconfig.json` pinned to `types: ["node"]` so the root `@types/bun` no longer conflicts with `@types/node` during workspace typecheck.
+- **Tier-1 connector — Zoom** ✅ — scheduled meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled` (next-page-token walk, `MAX_PAGES=20`, `PAGE_SIZE=100`); 3-legged OAuth (PKCE + Basic-header secret) on the provider-registry shipped in PR-1; rotating refresh tokens handled by the single-flight `getValidVaultAccessToken` lock (Zoom invalidates the whole chain on refresh-token reuse); fixed SaaS hosts `api.zoom.us` + `zoom.us` in the I15 sandbox manifest; `external_id = String(<meeting_id>)` (numeric, Raindrop pattern); `zoom:meeting` is sparse-structured (topic + start_time + ids), deliberately NOT prose-heavy; `hitlRequired: []` (read-only v1); recordings index + AI-generated transcripts deferred to PR-3 on the same OAuth grant (no re-consent required).
 
 ### 2026-05-26
 
 - **Coverage floor Phase 7** ✅ (PR #427) — baseline 51 → 10 entries.
 - **Preflight workflow overhaul** ✅ (PR #428) — local CI-parity gate manifest in `scripts/lib/preflight-gates.ts`; drift test at `scripts/preflight.test.ts` fails if a CI gate is missing from the manifest. `bun run preflight` covers the full gate set; `bun run preflight:fast` covers the cheap static gates (~2-3 min).
-
-### 2026-05-28
-
-- **Tier-1 connector — Zoom** ✅ — scheduled meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled` (next-page-token walk, `MAX_PAGES=20`, `PAGE_SIZE=100`); 3-legged OAuth (PKCE + Basic-header secret) on the provider-registry shipped in PR-1; rotating refresh tokens handled by the single-flight `getValidVaultAccessToken` lock (Zoom invalidates the whole chain on refresh-token reuse); fixed SaaS hosts `api.zoom.us` + `zoom.us` in the I15 sandbox manifest; `external_id = String(<meeting_id>)` (numeric, Raindrop pattern); `zoom:meeting` is sparse-structured (topic + start_time + ids), deliberately NOT prose-heavy; `hitlRequired: []` (read-only v1); recordings index + AI-generated transcripts deferred to PR-3 on the same OAuth grant (no re-consent required).
 
 ### 2026-05-25
 

@@ -28,6 +28,7 @@
 ## File structure
 
 **Create:**
+
 - `packages/gateway/src/auth/zoom-access-token.ts` — `getValidZoomAccessToken(vault)`; mirrors `slack-access-token.ts` shape, delegates to the registry.
 - `packages/gateway/src/auth/zoom-access-token.test.ts` — vault-miss / cache-hit / missing-client-id / refresh-success / **rotating-refresh-token persistence** / token-not-in-error.
 - `packages/gateway/src/connectors/zoom-meeting-mapping.ts` — `mapZoomMeetingToItem` (pure, no I/O).
@@ -37,6 +38,7 @@
 - `packages/mcp-connectors/zoom/` — new MCP package (`package.json`, `src/server.ts`, `src/search-filter.ts`, `test/search-filter.test.ts`, `test/sandbox.test.ts`).
 
 **Modify:**
+
 - `packages/gateway/src/auth/oauth-registry.ts` — widen `OAuthProvider` union to add `"zoom"`; append `zoom` descriptor to `OAUTH_PROVIDERS`.
 - `packages/gateway/src/auth/oauth-registry.test.ts` — table assertion + new zoom-specific descriptor tests.
 - `packages/gateway/src/config.ts` — add `oauthZoomClientId` + `oauthZoomClientSecret`.
@@ -79,6 +81,7 @@ Expected: both PASS.
 ## Task 1: Widen OAuthProvider + Zoom descriptor in `OAUTH_PROVIDERS`
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts`
 - Modify: `packages/gateway/src/auth/oauth-registry.test.ts`
 
@@ -204,6 +207,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 2: Config knobs + env-help messages
 
 **Files:**
+
 - Modify: `packages/gateway/src/config.ts`
 - Modify: `packages/gateway/src/auth/oauth-env-help-messages.ts`
 
@@ -270,6 +274,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 3: Catalog wiring — `ConnectorServiceId` + sync interval + OAuth profile
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts`
 
 - [ ] **Step 1: Add `"zoom"` to the service-id tuple**
@@ -346,6 +351,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 4: Vault-secrets manifest entry
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts`
 
 - [ ] **Step 1: Add `zoom: ["zoom.oauth"]`**
@@ -387,6 +393,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 5: `connector.auth` routing — zoom branch in `oauthClientConfigForProvider`
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts`
 
 The Notion path is the template: `connectorAuthOAuthPkce` reads its client secret separately from the client id (because both must be checked + threaded into `runPKCEFlow` as `oauthClientSecret`). Zoom needs the same.
@@ -522,6 +529,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 6: `auth/zoom-access-token.ts` resolver + tests
 
 **Files:**
+
 - Create: `packages/gateway/src/auth/zoom-access-token.ts`
 - Create: `packages/gateway/src/auth/zoom-access-token.test.ts`
 
@@ -737,6 +745,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 7: Lazy-mesh spawn — `ensureZoomMcp` + sandbox manifest
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/lazy-mesh/keys.ts`
 - Modify: `packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts`
 - Modify: `packages/gateway/src/connectors/lazy-mesh/credential-orchestration.ts`
@@ -907,6 +916,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 8: Mapper — `zoom-meeting-mapping.ts` + unit tests
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/zoom-meeting-mapping.ts`
 - Create: `packages/gateway/src/connectors/zoom-meeting-mapping.test.ts`
 
@@ -1157,6 +1167,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 9: Sync handler — `zoom-sync.ts` (Walk A only) + integration test
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/zoom-sync.ts`
 - Create: `packages/gateway/src/connectors/zoom-sync.test.ts`
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts`
@@ -1485,6 +1496,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 10: MCP server package `packages/mcp-connectors/zoom`
 
 **Files:**
+
 - Create: `packages/mcp-connectors/zoom/package.json`
 - Create: `packages/mcp-connectors/zoom/tsconfig.json`
 - Create: `packages/mcp-connectors/zoom/biome.json` (or whatever the existing connectors use — match `stackoverflow/`)
@@ -1779,6 +1791,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ## Task 11: D11 allow-list + docs
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts`
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md` (line 505 — Zoom row)
@@ -1821,6 +1834,7 @@ In `docs/roadmap.md`, change line 505 from `[ ] **Zoom** — meeting metadata, r
 - [ ] **Step 5: nimbus-file-map entries**
 
 In `.claude/commands/nimbus-file-map.md`, add rows for:
+
 - `packages/gateway/src/connectors/zoom-sync.ts` — under the "Connectors + MCP Mesh" section
 - `packages/gateway/src/connectors/zoom-meeting-mapping.ts` — same section
 - `packages/mcp-connectors/zoom/src/server.ts` — same section
@@ -1835,6 +1849,7 @@ In `docs/cli-reference.md`, find the existing OAuth `nimbus connector auth` sect
 - [ ] **Step 7: architecture.md**
 
 In `docs/architecture.md`, find the connector + item-type tables (search for the Slack / Notion rows) and add Zoom rows to both. Specifically:
+
 - Connector inventory row — `zoom` / `OAuth (PKCE + Basic-header secret)` / `meetings (PR-2); transcripts (PR-3 deferred)` / `hitlRequired: []`.
 - Item-type row — `zoom:meeting` / sparse-structured / local MiniLM embeddings.
 
@@ -1864,6 +1879,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 Run: `bun run preflight:fast --no-bail`
 Expected: every gate except the pre-existing `typecheck` (vscode-extension) is green. Specifically:
+
 - ✓ lint (biome)
 - ✓ lint:markdown
 - ✓ audit:doc-refs
@@ -1940,6 +1956,7 @@ Plan review (`…-pr2-review.md`) raised six points; dispositions:
 ## Hand-off to PR-3
 
 PR-3 builds on the API this PR locks: `OAUTH_PROVIDERS.zoom` (descriptor reuse), `getValidZoomAccessToken` (token resolution), `mapZoomMeetingToItem` (PR-3 dedupe target — the parent-meeting upsert under the same `external_id`), `ensureZoomMcp` (the lazy-mesh slot — PR-3 will expand its MCP server's tool surface). PR-3 will:
+
 - Add `connectors/zoom-transcript-mapping.ts` with `mapZoomTranscriptToItem` (VTT→plaintext pure function, `external_id = <meeting_uuid>:<recording_file_id>`).
 - Add `"zoom:transcript"` to `PROSE_HEAVY_TYPES`.
 - Extend `zoom-sync.ts` with Walk B (`/v2/users/me/recordings`, ≤30-day windowed cursor, skip-if-exists check on `external_id`).
