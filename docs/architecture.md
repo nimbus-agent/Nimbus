@@ -929,6 +929,20 @@ The Tauri desktop application ships an Extension Marketplace panel. It is not a 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Tauri Desktop — UI behaviour notes
+
+**`restartApp()` on profile switch** (`packages/ui/src/lib/restart.ts:7` — added 2026-05-28)
+
+`window.location.reload()` is insufficient when the user switches profiles because a profile change alters the Vault key prefix, invalidating MCP client singletons, IPC subscription channels, and any module-scope cache that captured the previous profile's data. Secondary windows (HITL popup, Quick Query, onboarding) would continue serving stale data. The fix is a full Tauri process restart via `invoke("plugin:app|restart")`. In the Vitest jsdom environment (no Tauri runtime) the invoke call throws and is caught; the fallback calls `window.location.reload()`. Most tests stub this module entirely.
+
+**`profile.switched` global rebroadcast** (`packages/ui/src-tauri/src/gateway_bridge.rs:591` — added 2026-05-28)
+
+`profile.switched` is in `GLOBAL_BROADCAST_METHODS` — it fans out to every Tauri window rather than being delivered only to the subscribing window. Each window's JS listener calls `restartApp()` (see above); the first call to fire wins and the process exits; subsequent calls in other windows are no-ops because the process has already started shutting down.
+
+**Zustand persist whitelist** (`packages/ui/src/store/partialize.ts:5` — added 2026-05-28)
+
+The `persistPartialize` function enforces Spec §2.1: exactly three slice surfaces (`connectors`, `model`, `profile`) are persisted to `localStorage`; all transient state (HITL queue, tray, dashboard, audit, telemetry counters, pull progress, export/import progress, router status, connection state) is memory-only and rebuilt on reconnect. A forbidden-key blocklist mirrors the whitelist as defence-in-depth: even if a future slice happens to share a name with a whitelisted key, the blocklist prevents a secret value from being persisted under that name.
+
 ---
 
 ## Phase 4 Subsystems
@@ -1153,6 +1167,12 @@ const streamReq: JSONRPCRequest = {
 // Gateway → Client: { method: "consent.request", params: { actionId, prompt, details } }
 // Client → Gateway: { method: "consent.respond", params: { actionId, approved: true } }
 ```
+
+### AbortController scope in `engine.cancelStream`
+
+**Source:** `packages/gateway/src/ipc/server/inline-handlers.ts:301` — added 2026-05-28
+
+The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed into `AgentInvokeContext` yet. The existing `AgentInvokeContext` type does not carry an `abort` field; adding it is a future task. For the current implementation the `AbortController` only short-circuits two observable paths: (a) the `sendChunk` callback (token streaming stops immediately on cancellation) and (b) the post-completion `streamDone` / `streamError` notification. This is sufficient for `cancelStream` to terminate all client-visible behaviour without requiring a full `AgentInvokeContext` type change.
 
 ---
 
