@@ -123,7 +123,6 @@ const FOOTER = `
 ## What this sheet is not
 
 - **Not a regression-tracking document.** The ongoing per-run history lives in workflow artifacts (GHA) and \`docs/perf/history.jsonl\` (reference machine).
-- **Not the missed-threshold list.** That lives in \`docs/perf/missed.md\` once PR-C-2 ranks violations.
 
 ---
 

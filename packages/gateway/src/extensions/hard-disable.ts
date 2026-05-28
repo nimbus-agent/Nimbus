@@ -30,8 +30,7 @@ export const PRE_T2_DISABLE_REASON = "needs_reinstall_pre_t2" as const;
 
 /**
  * Build the operator-facing reinstall message for an extension that was
- * installed before T2 PR 1's sandbox hardening. Locked verbatim by
- * `docs/superpowers/specs/2026-05-16-phase-5-t2-pr1-sandbox-design.md` §1.
+ * installed before T2 PR 1's sandbox hardening. See `docs/sandbox.md`.
  */
 export function preT2DisableMessage(id: string, version: string): string {
   return (

@@ -5,8 +5,7 @@
 **Phase 1 of:** B3 structure audit (2026-04-30)
 
 This file is the measured starting state of the structure-audit dimensions on
-the `dev/asafgolombek/structure-audit-design` branch. Phase 2's `missed.md`
-ranks deviations from these baselines.
+the `dev/asafgolombek/structure-audit-design` branch.
 
 ## Per-dimension baselines
 
@@ -31,7 +30,7 @@ D11 violations reduced from the Phase 1 baseline of 56 to **21** (Bucket C only)
 
 - Bucket A (20 false positives) — suppressed by `audit-ignore-next-line` markers (PR #135).
 - Bucket B (15 sites) — routed through `readConnectorSecret` helper or added to the now-frozen 5-entry allow-list (this PR).
-- Bucket C (21 sites in `lazy-mesh.ts` + `connector-rpc-handlers.ts`) — deferred; tracked in [`deferred-backlog.md`](./deferred-backlog.md).
+- Bucket C (21 sites in `lazy-mesh.ts` + `connector-rpc-handlers.ts`) — deferred at the time; closed below in the post-Bucket-C update.
 
 ## Phase 2 follow-up — post Bucket C (2026-05-02)
 

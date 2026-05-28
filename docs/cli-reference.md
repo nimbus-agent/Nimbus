@@ -1162,6 +1162,39 @@ nimbus workflow delete weekly-cleanup
 
 ---
 
+## Sessions
+
+### `nimbus session list` / `clear` / `recall`
+
+Inspect, clear, and recall content from RAG sessions. Each `nimbus ask` opens a session that accumulates context across turns; these subcommands operate on those sessions over the IPC `session.*` surface.
+
+```bash
+nimbus session list                                # All active sessions (JSON)
+nimbus session clear                               # Clear every session
+nimbus session clear <sessionId>                   # Clear one session
+nimbus session recall <sessionId> <query>          # Top-K=8 recall from the session's chunks
+```
+
+Output is JSON in all forms.
+
+---
+
+## Watchers
+
+### `nimbus watch list` / `pause <id>` / `resume <id>`
+
+Inspect and toggle scheduling on watchers over the IPC `watcher.*` surface. Watcher creation and editing flow through the `nimbus workflow` family (watchers are workflow pipelines with a trigger).
+
+```bash
+nimbus watch list                # All watchers + enabled state + last-fired time
+nimbus watch pause <watcher-id>  # Stop firing without deleting
+nimbus watch resume <watcher-id> # Re-enable a paused watcher
+```
+
+Output is JSON in all forms.
+
+---
+
 ## People
 
 ### `nimbus people`

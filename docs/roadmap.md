@@ -55,7 +55,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3 | Intelligence | ✅ Complete |
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
-| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial) |
+| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial) |
 | Phase 6 | Team | Planned |
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
@@ -627,7 +627,7 @@ These items resolve deferred decisions from Phase 3.
 
 #### T6 — B1 hardening + semantic layer prep
 
-Phase 5 Core item 5. Four sequential PRs in the order below, locked by the [T6 sequencing spec](./superpowers/specs/2026-05-14-phase-5-t6-design.md). Each PR follows the T4-wrap-up cadence (brainstorm → spec → plan → execute → PR). Bridge work between T4 (just merged) and T2 (sandbox + Marketplace v2).
+Phase 5 Core item 5. Four sequential PRs in the order below. Each PR followed the T4-wrap-up cadence (brainstorm → spec → plan → execute → PR). Bridge work between T4 and T2 (sandbox + Marketplace v2).
 
 - [x] **T6 PR 1 — I10 timing-safe helper consolidation** (2026-05-14, PR #292) — migrated `ipc/lan-pairing.ts`'s local `timingSafeEqual` and `ipc/http-auth.ts`'s local `constantTimeStringEqual` into the canonical helper at `packages/gateway/src/util/timing-safe-compare.ts`; finishes the I10 consolidation that `extensions/verify-extensions.ts` and `updater/updater.ts` already follow. Updated `SECURITY-INVARIANTS.md` I10 row and `security-invariants.test.ts`. No migration.
 - [x] **T6 PR 2 — `tool_call_log` audit table (V29)** (2026-05-15) — closes "Structured tool-call result auditing (S8-F10)" below; complements the `<tool_output>` envelope (I11) by recording the envelope's contents at audit time via `writeToolCallLog` (best-effort — internal try/catch never breaks the LLM-facing path; envelopes >64 KiB are truncated with a `...[truncated, N bytes total]` marker). New `audit.toolCalls` IPC method (read-only) is IPC-only — NOT LAN-callable per `I5`, NOT in Tauri `ALLOWED_METHODS` per `I7`, NOT exposed via the read-only HTTP API. Composite (`calledAt`, `id`) cursor pagination handles same-millisecond rows deterministically; `sessionId=''` is the explicit NULL-session sentinel. Wired at both `wrapToolOutput` sites in `engine/agent.ts` (`wrapToolForLlm`) and `connectors/lazy-mesh/mesh.ts` (`listTools`); I11 enforcement test extended to assert both `wrapToolOutput` AND `writeToolCallLog` are present at each site. No new invariant — strengthens I11.
@@ -640,6 +640,8 @@ Items deferred from the Phase 4 internal security audit (B1, 2026-04-25) that fi
 
 - [x] **Typed `dbRun` / `dbExec` migration (S5-F4)** (2026-05-16, Phase 5 T6 PR 4) — 163 sites migrated; `D12` static-audit rule + invariant `I14` enforce the wrapper at CI time
 - [x] **Structured tool-call result auditing (S8-F10)** (2026-05-15, Phase 5 T6 PR 2) — V29 `tool_call_log` table; `writeToolCallLog` wired at both `wrapToolOutput` sites; `audit.toolCalls` IPC read surface
+- [ ] **`tool_call_log` retention policy** — add `[audit].tool_call_log_retention_days` (default 90); daily prune job deletes rows older than the threshold and writes a single `tool_call_log.pruned` audit row with the row count. `tool_call_log` is currently unbounded; the prune job closes that footprint without touching the BLAKE3-chained `audit_log` proper.
+- [ ] **`nimbus security scan` v2** — six enhancements deferred from the v1 design: (1) `[security.allowlist]` mute-list for known false positives; (2) `--fail-on-finding` CI exit-code flag; (3) opt-in extended Gitleaks pattern set (low-confidence tier) gated behind a config flag; (4) `--service <name>` scope filter; (5) long-running progress notifications + cancellation for large indexes; (6) git-blame integration to surface "who introduced the secret and when" from already-indexed git metadata.
 
 #### Extension Marketplace v2
 
@@ -881,7 +883,7 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 
 ### Phase 8 — Security Engineering
 
-**Goal:** Bring the security practitioner's tool surface into the local index and ship the four built-in security agents that turn that surface into actionable briefs. Read-first; every write tool gates on HITL with rich diff preview because security writes (acknowledging vulnerabilities, rotating secrets, suppressing findings) are decisions with downstream consequences. Full design in [`docs/superpowers/specs/2026-05-10-phase-8-security-engineering-design.md`](./superpowers/specs/2026-05-10-phase-8-security-engineering-design.md).
+**Goal:** Bring the security practitioner's tool surface into the local index and ship the four built-in security agents that turn that surface into actionable briefs. Read-first; every write tool gates on HITL with rich diff preview because security writes (acknowledging vulnerabilities, rotating secrets, suppressing findings) are decisions with downstream consequences.
 
 > **Composes with Phase 7 (Engineering Excellence):** Phase 7 scorecards consume security-posture metrics produced here (open-vuln count, secret-rotation overdue count); Phase 8 service-attribution joins back to the Phase 7 service catalog so a finding routes to its owner team without a live API call.
 >
@@ -957,7 +959,7 @@ Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifi
 
 ### Phase 9 — AI Engineering Loop
 
-**Goal:** Bring the tool surface that ML engineers and AI-product teams already use into the local index, and ship `nimbus model-health` + `nimbus rag-health` to surface actionable status without a live API call. Read-first for ingestion; HITL on the few write tools (`prompt.deploy`, `model.promote-stage`, `feature.publish`) because pushing a prompt or promoting a model is a production change. Full design in [`docs/superpowers/specs/2026-05-10-phase-9-ai-engineering-loop-design.md`](./superpowers/specs/2026-05-10-phase-9-ai-engineering-loop-design.md).
+**Goal:** Bring the tool surface that ML engineers and AI-product teams already use into the local index, and ship `nimbus model-health` + `nimbus rag-health` to surface actionable status without a live API call. Read-first for ingestion; HITL on the few write tools (`prompt.deploy`, `model.promote-stage`, `feature.publish`) because pushing a prompt or promoting a model is a production change.
 
 > **Composes with Phase 8 (Security Engineering):** supply-chain attestations from Phase 8 Wave 4 extend to model artifacts — a deployed model can be queried "does it have a signed SLSA provenance? what's its base-model dependency CVE state?"
 >
@@ -1296,7 +1298,7 @@ Native package-manager distribution; gated independently of the desktop tag, may
 
 ### Phase 14 — Agent Evolution / AI v2
 
-**Goal:** Expand Nimbus's intrinsic agent capabilities along four dimensions — multimodal I/O, isolated code execution, computer use, and runtime tool generation. Highest risk-blast-radius phase; structured Core / Stretch so the phase remains shippable even if the most research-adjacent capabilities slip. Full design in [`docs/superpowers/specs/2026-05-10-phase-14-agent-evolution-design.md`](./superpowers/specs/2026-05-10-phase-14-agent-evolution-design.md).
+**Goal:** Expand Nimbus's intrinsic agent capabilities along four dimensions — multimodal I/O, isolated code execution, computer use, and runtime tool generation. Highest risk-blast-radius phase; structured Core / Stretch so the phase remains shippable even if the most research-adjacent capabilities slip.
 
 > **Composes with Phase 10 (Autonomous Agent):** Phase 10's standing approvals are explicitly **not** extended to Phase 14 capabilities by default. The autonomous agent's incident correlation engine can however invoke Phase 14 capabilities under HITL when the user explicitly approves a multi-step remediation. Phase 14 capabilities can be disabled at the org level via Phase 12's policy-as-code.
 

@@ -298,8 +298,7 @@ static int run_cmd(const char *fmt, ...) {
  * drop all capabilities, install post-unshare seccomp, then execv() the
  * remainder of argv (typically `bwrap --share-net ... connector-entry`).
  *
- * Namespace isolation guarantee (PR 1 simplification documented in
- * docs/superpowers/specs/2026-05-16-phase-5-t2-pr1-sandbox-design.md §4):
+ * Namespace isolation guarantee:
  *   - The helper creates a fresh network namespace via unshare(CLONE_NEWNET)
  *     and immediately installs OUTPUT-default-DROP. The host-side veth
  *     peer (nb-out-<pid>) is, by Linux design, owned by the host's netns

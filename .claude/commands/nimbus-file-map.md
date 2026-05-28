@@ -296,7 +296,7 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I15 rationale + anti-patterns + audit cross-references (I15 = sandbox runner intrinsic to extension spawn, T2 PR 1) |
+| `docs/SECURITY-INVARIANTS.md` | I1–I16 rationale + anti-patterns + audit cross-references (I16 = Ed25519 publisher-signature verification at install + startup, T2 PR 2) |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist for headless releases; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | Worked CI integration examples (GitHub Actions self-hosted, GitLab CI, Jenkins) using `nimbus query --json` (Phase 5 T4 PR 1) |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1). Install + extend recipes live in [`docs/cli/pre-commit.md`](../../docs/cli/pre-commit.md). |

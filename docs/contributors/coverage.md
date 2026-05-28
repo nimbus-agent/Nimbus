@@ -2,8 +2,6 @@
 
 This project enforces a **per-file 80% line-coverage floor** for every bun-tested workspace package (gateway, cli, sdk, client, mcp-connectors). A CI gate fails any PR that introduces a non-exempt source file below 80% or regresses a baselined file below its recorded watermark.
 
-Design: [`docs/superpowers/specs/2026-05-17-coverage-floor-design.md`](../superpowers/specs/2026-05-17-coverage-floor-design.md).
-
 ## Phase 0 scope
 
 Phase 0 covers the bun-tested packages only:

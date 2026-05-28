@@ -8,8 +8,7 @@
  * no HTTP route.
  *
  * The full secret value never appears in the response, audit row, or any
- * field of the envelope. See the design spec at
- * docs/superpowers/specs/2026-05-21-nimbus-security-scan-design.md §4.
+ * field of the envelope.
  */
 
 import type { Database } from "bun:sqlite";

@@ -174,7 +174,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 3 (shipped):** Jenkins, GitHub Actions, CircleCI, GitLab CI, AWS, Azure, GCP, Kubernetes, Terraform/Pulumi/CloudFormation, Datadog, Grafana, Sentry, PagerDuty, New Relic
 
-**Phase 5 (in flight):** Obsidian vault, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, and Semgrep connectors (Wave A & B, shipped). Planned: Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
+**Phase 5 (in flight):** Obsidian vault, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, and ArgoCD connectors (Wave A, Wave B, Tier-1 + Tier-2 partial — shipped). Planned: Databricks, Apache Airflow, Prefect, Dagster, Metabase, Superset, Kibana / Elasticsearch, CloudWatch Logs, GCP Cloud Logging, BigQuery, Athena, dbt Cloud, MLflow, SageMaker, Vertex AI, Great Expectations, and local data-file profiling (Parquet / CSV / JSONL schema — header / footer / line counts only, never cell values)
 
 **Phase 6 (planned, Team tier):** Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye (SSO-gated warehouse, BI, and data-quality connectors; depends on Team Vault)
 
@@ -262,6 +262,18 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 - **Published OpenAPI spec** — interactive OpenAPI document exposing the gateway's read-only HTTP surface.
 - **Pre-commit hook documentation** — integration guidelines for deploying Nimbus queries as Git hooks.
 - **CI/CD integration recipes** — worked, copy-paste-ready examples in [use-in-ci.md](./cli/use-in-ci.md) for running `nimbus query` within GitHub Actions, GitLab CI, and Jenkins to gate deployments or generate release notes.
+
+*Tier-1 and Tier-2 connectors (2026-05-24 → 2026-05-25):*
+
+- **Wiz** (Tier-2, 2026-05-24) — cloud-security CSPM findings via OAuth `client_credentials` + GraphQL `issues(...)`; emits `wiz:issue` items.
+- **LaunchDarkly** (Tier-1, 2026-05-24) — feature-flag definitions via REST; emits `launchdarkly:feature_flag` items.
+- **Flagsmith** (Tier-1, 2026-05-24) — feature-flag definitions via admin-API-token + DRF-paged REST; emits `flagsmith:feature_flag` items (definitions-only).
+- **ArgoCD** (Tier-1, 2026-05-25) — GitOps application sync/health via self-hosted Bearer auth; emits `argocd:application` items (applications-only).
+
+*Coverage floor + preflight workflow (2026-05-26 → 2026-05-28):*
+
+- **Coverage floor — closeout** (PR #427 + PR #445, 2026-05-26 → 2026-05-28) — per-file 80% line-coverage floor met or exceeded across every bun-tested workspace file. Baseline went from 51 → 10 → **0** entries across Phase 7 + Phase 8.
+- **Preflight workflow** (PR #428, 2026-05-26) — gate manifest at `scripts/lib/preflight-gates.ts` keeps local `bun run preflight` aligned with every CI gate; a drift test (`scripts/preflight.test.ts`) fails if a CI gate is missing from the manifest.
 
 See [`docs/roadmap.md`](./roadmap.md) for the full delivery list and [`docs/cli-reference.md`](./cli-reference.md) for the complete CLI command reference.
 

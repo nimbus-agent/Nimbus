@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 // B3 audit orchestrator. Runs every signal source and writes a single
-// run-<timestamp>.json blob at docs/structure-audit/. The Phase 2 missed.md
-// is generated from this blob.
+// run-<timestamp>.json blob at docs/structure-audit/.
 //
 // Usage: bun run audit:structure
 

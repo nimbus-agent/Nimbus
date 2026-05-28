@@ -5,7 +5,7 @@ Nimbus is a **local-first AI agent framework** — a headless Bun Gateway proces
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict  
 **Linter:** Biome  
 **License:** AGPL-3.0 (gateway/cli/mcp-connectors) + MIT (sdk)  
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B + Tier-2 (partial). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Workstream-level status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Workstream-level status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 Companion context for other agents: [`CLAUDE.md`](./CLAUDE.md) (same project facts; keep both files aligned when changing commands, roadmap rows, or non-negotiables).
 
@@ -132,4 +132,4 @@ Full command catalogue + coverage thresholds + env-var overrides live in the [`n
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
 - [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I16 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
-- `.claude/commands/nimbus-*.md` — domain skills (architecture, IPC, file-map, commands, testing, agents, connectors, migrations, security invariants, Tauri allowlist, tool-output envelope, HTTP write surface (I13), embedding routing (T6 PR 3), CI/CD data layer (T4), preflight workflow, Phase 4 reference). Read these on demand via `view_file` when working on the relevant subsystem.
+- `.claude/commands/nimbus-*.md` — domain skills (architecture, IPC, file-map, commands, testing, agent patterns, connector authoring, DB migrations, security invariants, Tauri allowlist, tool-output envelope, HTTP write surface (I13), embedding routing (T6 PR 3), CI/CD data layer (T4), preflight workflow). Read these on demand via `view_file` when working on the relevant subsystem.

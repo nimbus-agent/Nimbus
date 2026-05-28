@@ -1,7 +1,7 @@
-// Nimbus markdownlint ruleset — see docs/superpowers/specs/2026-05-11-readme-hero-redesign-design.md §8
+// Nimbus markdownlint ruleset.
 //
 // Notes on rule choices:
-// - MD013 (line-length): disabled for now. The 120-col target from the design spec is sound
+// - MD013 (line-length): disabled for now. The 120-col target is sound
 //   but mass-applying it across the existing docs tree (~900 violations across 30 files,
 //   many of them intentional single-line paragraphs in roadmap.md / architecture.md) is its
 //   own multi-PR effort. The gate still catches the real quality issues below; line-length
@@ -33,7 +33,6 @@
     "docs/**/*.md",
     "*.md",
     "!docs/README.md",
-    "!docs/superpowers/**",
     "!docs/perf/slo.md",
     "!.claude/worktrees/**",
     "!node_modules/**",

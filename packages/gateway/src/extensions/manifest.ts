@@ -180,8 +180,7 @@ export function parseExtensionManifestJson(text: string): ExtensionManifest {
  * has been normalized by `validateAndNormalizePermissions`, the array form
  * is indistinguishable from an explicit default-deny object form, so the
  * detection has to happen at this parse boundary. See
- * `extensions/hard-disable.ts` for the wiring site and the §1 deviation in
- * `docs/superpowers/specs/2026-05-16-phase-5-t2-pr1-sandbox-design.md`.
+ * `extensions/hard-disable.ts` for the wiring site.
  */
 export type RegistryParseResult = {
   manifest: ExtensionManifest;

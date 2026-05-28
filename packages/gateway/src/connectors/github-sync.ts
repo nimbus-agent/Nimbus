@@ -68,8 +68,7 @@ export type MergeableStateRefreshInput = {
  * open PRs that haven't had activity in the events feed do not refresh.
  * Driving this policy from a periodic refresh pass is deferred; the
  * preflight calculator handles missing state via its `unknown_mergeable_state`
- * gap branch. See Task 2 disposition in
- * docs/superpowers/plans/2026-05-12-phase-5-t4-pr3a-preflight.md §Step 11.
+ * gap branch.
  */
 export function shouldRefreshMergeableState(input: MergeableStateRefreshInput): boolean {
   const updatedAge = input.nowMs - input.updatedAtMs;

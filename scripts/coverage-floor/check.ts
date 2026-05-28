@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// Per-file coverage-floor gate. See
-// docs/superpowers/specs/2026-05-17-coverage-floor-design.md.
+// Per-file coverage-floor gate.
+// Operator reference: docs/contributors/coverage.md.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";

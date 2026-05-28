@@ -6,8 +6,7 @@
  *
  * Pure-entropy / sibling-gated patterns (AWS secret key, Twilio auth
  * token, Azure storage key, Heroku UUID) are deferred to v2 — flagging
- * them solo produces a false-positive flood. See the design spec at
- * docs/superpowers/specs/2026-05-21-nimbus-security-scan-design.md §5.
+ * them solo produces a false-positive flood.
  */
 
 export type SecretCategory = "api_key" | "private_key" | "token";

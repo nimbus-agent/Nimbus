@@ -8,7 +8,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Phase 5 — The Extended Surface (🔵 Active)
 
-Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-2 (partial).
+Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial).
+
+### 2026-05-28
+
+- **Coverage floor Phase 8 — closeout** ✅ (PR #445) — CLI deep cuts; per-file coverage baseline 10 → **0** entries. The coverage-floor multi-phase initiative is complete: every bun-tested workspace file now meets or exceeds the 80% line-coverage floor.
+- **VS Code extension typecheck CI fix** ✅ (PR #446) — `packages/vscode-extension/tsconfig.json` pinned to `types: ["node"]` so the root `@types/bun` no longer conflicts with `@types/node` during workspace typecheck.
+
+### 2026-05-26
+
+- **Coverage floor Phase 7** ✅ (PR #427) — baseline 51 → 10 entries.
+- **Preflight workflow overhaul** ✅ (PR #428) — local CI-parity gate manifest in `scripts/lib/preflight-gates.ts`; drift test at `scripts/preflight.test.ts` fails if a CI gate is missing from the manifest. `bun run preflight` covers the full gate set; `bun run preflight:fast` covers the cheap static gates (~2-3 min).
 
 ### 2026-05-25
 
