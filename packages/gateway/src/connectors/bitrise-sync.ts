@@ -5,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import {
   type BitriseMappedRow,
   mapBitriseAppToItem,
@@ -32,28 +33,6 @@ function pass1Cursor(): string {
 export type BitriseSyncableOptions = {
   ensureBitriseMcpRunning: () => Promise<void>;
 };
-
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function bitriseGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BITRISE_API}${path}`, {
-    headers: { Authorization: token, Accept: "application/json" },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "bitrise GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
-}
 
 function extractAppRows(parsed: unknown): Record<string, unknown>[] {
   const root = asRecord(parsed) ?? {};
@@ -89,7 +68,14 @@ export function createBitriseSyncable(options: BitriseSyncableOptions): Syncable
         return syncNoopResult(cursor, t0);
       }
 
-      const appsOutcome = await bitriseGet(ctx, token, "/v0.1/me/apps?limit=50");
+      const appsOutcome = await connectorFetch(
+        ctx,
+        SERVICE_ID,
+        `${BITRISE_API}/v0.1/me/apps?limit=50`,
+        {
+          headers: { Authorization: token, Accept: "application/json" },
+        },
+      );
       if (appsOutcome.kind === "http_error") {
         return syncPassCursorHttpEmpty(t0, appsOutcome.bytes, cursor, pass1Cursor());
       }
@@ -112,10 +98,11 @@ export function createBitriseSyncable(options: BitriseSyncableOptions): Syncable
         if (slug === undefined) {
           continue;
         }
-        const buildsOutcome = await bitriseGet(
+        const buildsOutcome = await connectorFetch(
           ctx,
-          token,
-          `/v0.1/apps/${encodeURIComponent(slug)}/builds?limit=${String(DEFAULT_BUILDS_PAGE_SIZE)}`,
+          SERVICE_ID,
+          `${BITRISE_API}/v0.1/apps/${encodeURIComponent(slug)}/builds?limit=${String(DEFAULT_BUILDS_PAGE_SIZE)}`,
+          { headers: { Authorization: token, Accept: "application/json" } },
         );
         totalBytes += buildsOutcome.bytes;
         if (buildsOutcome.kind !== "ok") {
