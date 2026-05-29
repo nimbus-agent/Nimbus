@@ -27,6 +27,87 @@
 
 ---
 
+## Phase 0.0 — CI typecheck speed-up + de-flake (land first)
+
+**Why first:** every push during this pass re-runs the per-OS cross-platform matrix. Its gateway entry runs the **whole-workspace** `bun run typecheck`, which includes `@nimbus/docs` (Astro). On the slow macOS runner, Astro's `astro sync` content-type generation trips an internal 60 s Vite-transport timeout and **flakes the whole check** (observed on PR #458 — a re-run passed; not a code bug). The Astro docs site has **no host-specific TypeScript surface**, so typechecking it once per OS is both wasted runner-minutes and the flake source. Landing this first makes the rest of the pass's CI fast and reliable. Because `pull_request` runs the workflow file from the PR's own head, this speed-up takes effect on **this** PR's CI too.
+
+### Task 0.0: Scope `@nimbus/docs` out of the per-OS typecheck + add a retry
+
+**Files:**
+- Modify: `package.json` (root — add a filtered typecheck script)
+- Modify: `.github/workflows/ci.yml` (the cross-platform matrix `Typecheck (catches host-specific TS quirks)` step, ~line 238)
+- Modify: `scripts/lib/preflight-gates.ts` (register the new gate so the drift test passes — see Step 4)
+
+- [ ] **Step 1: Confirm docs typecheck still runs once on Ubuntu**
+
+Read `.github/workflows/_test-suite.yml` — the static-checks job runs `bun run typecheck` (full workspace, incl. `@nimbus/docs`) on Ubuntu (`PR quality — TS/Bun (ubuntu-24.04)`). Confirm that job is unconditional on PRs. This is the single authoritative docs typecheck; the per-OS matrix entry is the redundant one. **If docs typecheck is *only* in the per-OS matrix and nowhere else, STOP** — excluding it would drop coverage; instead just add the retry (Step 3) and skip the filter.
+
+- [ ] **Step 2: Add a filtered root script**
+
+In root `package.json`, next to `"typecheck": "bun run --filter '*' typecheck"`, add:
+
+```json
+"typecheck:no-docs": "bun run --filter '*' --filter '!@nimbus/docs' typecheck",
+```
+
+- [ ] **Step 3: Rewire the matrix typecheck step (filtered + retry-once)**
+
+In `.github/workflows/ci.yml`, the step at ~238:
+
+```yaml
+      - name: Typecheck (catches host-specific TS quirks)
+        if: matrix.pkg == 'gateway'
+        run: bun run typecheck
+```
+
+becomes (keep the `name:` and `if:` **exactly** — the job/check names are ruleset-required, see below):
+
+```yaml
+      - name: Typecheck (catches host-specific TS quirks)
+        if: matrix.pkg == 'gateway'
+        shell: bash
+        # @nimbus/docs is excluded here: it has no host-specific TS surface and
+        # its astro-sync content-type generation flakes a 60s Vite timeout on slow
+        # macOS runners. Full workspace typecheck (incl. docs) still runs once on
+        # Ubuntu in _test-suite.yml. Retry-once mirrors the unit-tests step below.
+        run: |
+          set +e
+          for attempt in 1 2; do
+            bun run typecheck:no-docs
+            code=$?
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            if [ "$attempt" -eq 2 ]; then echo "Both attempts failed (exit $code)"; exit "$code"; fi
+            echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
+            sleep 5
+          done
+```
+
+> **⚠️ Do NOT touch the job name, the `matrix`, or the check names.** `main`'s ruleset requires the 4 expanded cross-platform check names by exact string (memory `ci-cross-platform-matrix-rulesets-trap`). Changing only the `run:` body of an existing step is safe; renaming the job or matrix entry would deadlock the merge gate.
+
+- [ ] **Step 4: Register the new gate command (preflight drift test)**
+
+`scripts/preflight.test.ts` parses every workflow `run:` block and **fails** if a `bun run`/`bunx` invocation is in neither `PREFLIGHT_GATES` nor `CI_ONLY_GATES` (`scripts/lib/preflight-gates.ts`). Adding `bun run typecheck:no-docs` to `ci.yml` triggers this. Add it to `PREFLIGHT_GATES` next to the existing `typecheck` gate (same tier), or — if `typecheck:no-docs` is considered a pure CI-runtime optimization with no separate local value — to `CI_ONLY_GATES` with a comment. Then run `bun test scripts/preflight.test.ts` and confirm it passes.
+
+- [ ] **Step 5: Verify locally**
+
+Run: `bun run typecheck:no-docs` (expect: passes, skips `@nimbus/docs`) and `bun run typecheck` (expect: still passes incl. docs). Then `bun test scripts/preflight.test.ts`.
+
+- [ ] **Step 6: Commit**
+
+```
+ci: scope @nimbus/docs out of per-OS typecheck + retry (de-flake macOS)
+
+The cross-platform matrix gateway entry ran whole-workspace typecheck incl.
+@nimbus/docs, whose astro-sync flakes a 60s Vite timeout on slow macOS
+runners (PR #458). Docs has no host-specific TS surface and still gets a
+full typecheck once on Ubuntu (_test-suite.yml). New typecheck:no-docs
+script + retry-once. Job/check names unchanged (ruleset-required).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+```
+
+---
+
 ## Phase 0 — Baseline
 
 ### Task 0.1: Worktree builds green
