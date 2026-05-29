@@ -50,6 +50,12 @@ Adopted: `index.reembed` — `[EXTRACTED]`. Net -34 lines from `index-reembed-rp
 
 **Kept as bespoke functions (7):** V4 + V5 (conditional ALTER + UPDATE), V6 + V10 + V30 (vec-table branching), V16 (conditional ALTER on sync_state), V18 (AUDIT_CHAIN schema + `backfillAuditChain` data-migration loop). All 48 tests across 13 per-version `runner-v*.test.ts` files pass.
 
+## Task 4.15 status (2026-05-29)
+
+The plan's `runReadOnlyAgent({ decompose, synthesize }) → string` shape doesn't fit — the agent modules (`expert.ts`, `impact.ts`, `catchup.ts`) don't share a uniform decompose+synthesize structure (each builds typed evidence via different sub-agent sets). The real shared shape is the **`emit<Agent>Brief` IPC entry-point wrapper**: fire-and-forget build → synthesize → notify `<agent>.briefReady` with markdown + typed brief, catch any throw → notify `<agent>.briefError`, return `{ sessionId }` synchronously.
+
+Helper extracted as `emitBriefWithSynthesis` in `packages/gateway/src/agents/_lib/emit-brief.ts`. All three agents adopted (expert + impact + catchup) — `[EXTRACTED]`. The plan only listed expert + impact; catchup's wrapper was identical and gets folded in. Per-agent net: ~14 lines → ~7 lines (-7 each, -21 total). 86 agent tests + e2e scenarios pass.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
