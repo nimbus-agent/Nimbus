@@ -44,13 +44,15 @@
 
 - [ ] **Step 1: Fetch the measures and save them**
 
-Run:
+Run (PowerShell-native `Invoke-RestMethod` — no Python/curl dependency):
 
 ```powershell
-curl.exe -sS "https://sonarcloud.io/api/measures/component?component=asafgolombek_Nimbus&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots,duplicated_lines_density,duplicated_blocks,duplicated_files,ncloc,sqale_index,sqale_rating,reliability_rating,security_rating,coverage"
+$m = "bugs,vulnerabilities,code_smells,security_hotspots,duplicated_lines_density,duplicated_blocks,duplicated_files,ncloc,sqale_index,sqale_rating,reliability_rating,security_rating,coverage"
+(Invoke-RestMethod -Uri "https://sonarcloud.io/api/measures/component?component=asafgolombek_Nimbus&metricKeys=$m").component.measures |
+  Sort-Object metric | Format-Table metric, value -AutoSize
 ```
 
-Paste the JSON into `docs/superpowers/specs/sonar-baseline-2026-05-29.md` under a `## Baseline (before cleanup pass 2)` heading. This is the before-snapshot the final PR cites.
+Paste the table (and the raw JSON, via appending `| ConvertTo-Json -Depth 6` to the same call) into `docs/superpowers/specs/sonar-baseline-2026-05-29.md` under a `## Baseline (before cleanup pass 2)` heading. This is the before-snapshot the final PR cites.
 
 - [ ] **Step 2: Commit**
 
@@ -59,6 +61,21 @@ chore(cleanup2): capture SonarCloud baseline snapshot
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ```
+
+### Task 0.3: C toolchain availability (decides whether C.7 is reachable)
+
+**Files:** none (capability probe).
+
+Task C.7 refactors `packages/gateway/src-native/sandbox-helper/main.c`, which can only be *verified* if a C compiler is present. Probe upfront so C.7's reachability is known on day one rather than discovered at the end.
+
+- [ ] **Step 1: Probe for a C compiler**
+
+```powershell
+$cc = (Get-Command gcc -ErrorAction SilentlyContinue) ?? (Get-Command clang -ErrorAction SilentlyContinue) ?? (Get-Command cl -ErrorAction SilentlyContinue)
+if ($cc) { "C toolchain: $($cc.Source)" } else { "NO C toolchain — Task C.7 will be BLOCKED on this machine" }
+```
+
+- [ ] **Step 2: Record the result.** If no compiler is found, note in the scratchpad that **C.7 is BLOCKED** (the `c:S3776` / `c:S134` findings in `main.c` will not be resolvable here — defer C.7 to a machine/CI job with a C toolchain, or hand it to the Linux CI image which has `gcc`). Do not attempt uncompilable C edits. All other workstreams (A, B-TS, C.1–C.6, D, E) are unaffected.
 
 ---
 
@@ -128,10 +145,12 @@ Hotspots are *review* items, not auto-bugs. Each is either (a) fixed with a code
 
 - [ ] **Step 1: Enumerate every ReDoS hotspot**
 
-Run:
+Run (PowerShell-native; the hotspots search tops out well under one 500-item page):
 
 ```powershell
-curl.exe -sS "https://sonarcloud.io/api/hotspots/search?projectKey=asafgolombek_Nimbus&status=TO_REVIEW&ps=50" | python -c "import sys,json;d=json.load(sys.stdin);[print(h['component'].split(':')[-1]+':'+str(h.get('line')),'::',h.get('message','')[:90]) for h in d['hotspots'] if h.get('securityCategory')=='dos']"
+(Invoke-RestMethod -Uri "https://sonarcloud.io/api/hotspots/search?projectKey=asafgolombek_Nimbus&status=TO_REVIEW&ps=500").hotspots |
+  Where-Object { $_.securityCategory -eq 'dos' } |
+  ForEach-Object { "{0}:{1} :: {2}" -f $_.component.Split(':')[-1], $_.line, $_.message.Substring(0, [math]::Min($_.message.Length, 90)) }
 ```
 
 - [ ] **Step 2: For each regex, classify and act**
@@ -270,11 +289,16 @@ This is the substance of the deferred Pass-5 SRP pass. Each function exceeds the
 
 ## WS-D — Mechanical smell sweep (~320 MINOR/MAJOR)
 
-Rule-cluster tasks. Most are Biome-autofixable or a mechanical find-replace. **One commit per rule cluster**, citing the rule id. After each: `bun run lint && bun run typecheck` and the affected package's tests. Get the per-rule file list with:
+Rule-cluster tasks. Most are Biome-autofixable or a mechanical find-replace. **One commit per rule cluster**, citing the rule id. After each: `bun run lint && bun run typecheck` and the affected package's tests. Get the per-rule issue list with (PowerShell-native; `ps=500` is the SonarCloud max page size):
 
 ```powershell
-curl.exe -sS "https://sonarcloud.io/api/issues/search?componentKeys=asafgolombek_Nimbus&rules=typescript:<RULE>&resolved=false&ps=200&facets=files"
+$rule = "typescript:S7735"   # set per cluster
+$r = Invoke-RestMethod -Uri "https://sonarcloud.io/api/issues/search?componentKeys=asafgolombek_Nimbus&rules=$rule&resolved=false&ps=500&p=1"
+"total: $($r.total)"   # if total > 500, also fetch &p=2, &p=3 ... (Sonar caps p*ps at 10000)
+$r.issues | ForEach-Object { "{0}:{1}" -f $_.component.Split(':')[-1], $_.line }
 ```
+
+**Pagination note:** the largest single rule cluster in the baseline is `S7735` at 82 issues, so one `ps=500` page covers every individual rule. If you ever query *all* code smells in one call (386 > a single 200-page), you **must** page through `p=1..N` or you silently miss the tail — that was the trap the `ps=200` form fell into. Always check `$r.total` against the count you actually received.
 
 ### Task D.1: Modern-syntax autofix cluster (`S6582` optional chaining, `S6606` nullish-coalescing, `S6571` redundant union, `S4624` nested template literals)
 
@@ -333,9 +357,18 @@ Extends the Pass-4 `_lib`/`shared` helper pattern. The clusters worth extracting
 
 ### Task F.1: Full local gate
 
-- [ ] **Step 1:** Run `bun run preflight --no-bail`. Expected: every gate green (the two known Windows-local coverage-floor flags on `ipc-transport.ts` / `socket-listeners.ts` are pre-existing and CI-Linux-authoritative — confirm they are unchanged, not newly introduced).
-- [ ] **Step 2:** `bun run audit:invariants`, `bun run audit:openapi-drift`, `bun run audit:cross-platform`. Expected: PASS.
-- [ ] **Step 3:** `cd packages/ui/src-tauri; cargo test` if any allowlist-adjacent file changed. Expected: PASS.
+- [ ] **Step 1: Sync with `main` first.** `main` may have moved since the branch was cut (e.g. PR #458 / other work landing). Integrate before the final gate so conflicts surface locally, not on CI:
+
+```powershell
+git fetch origin
+git rebase origin/main    # branch not yet pushed → rebase is clean; if already pushed, use: git merge --no-ff origin/main
+```
+
+Re-run `bun install` if `bun.lock` changed in the merge. Resolve any conflicts before continuing.
+
+- [ ] **Step 2:** Run `bun run preflight --no-bail`. Expected: every gate green (the two known Windows-local coverage-floor flags on `ipc-transport.ts` / `socket-listeners.ts` are pre-existing and CI-Linux-authoritative — confirm they are unchanged, not newly introduced).
+- [ ] **Step 3:** `bun run audit:invariants`, `bun run audit:openapi-drift`, `bun run audit:cross-platform`. Expected: PASS.
+- [ ] **Step 4:** `cd packages/ui/src-tauri; cargo test` if any allowlist-adjacent file changed. Expected: PASS.
 
 ### Task F.2: Capture the after-snapshot + diff
 
@@ -348,6 +381,31 @@ Extends the Pass-4 `_lib`/`shared` helper pattern. The clusters worth extracting
 - [ ] **Step 1:** Print `git log --oneline origin/main..HEAD` and **confirm with the user before pushing** (per repo convention — nothing pushed until the user says so).
 - [ ] **Step 2:** On go-ahead: `git push -u origin dev/asafgolombek/cleanup-pass-2` then `gh pr create --base main` with a body that links the before/after SonarCloud snapshot and lists the workstreams.
 
+### Task F.4: Formally track the deferred Pass-5 lanes
+
+**Files:**
+- Create: `docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md`
+
+The Pass-5 SOLID lanes with **no** Sonar finding (so not pulled into WS-C) must not be silently dropped. Record them as a tracked stub so a future session can pick them up.
+
+- [ ] **Step 1: Write the stub** — a short markdown file listing each deferred lane with its original Pass-5 task reference, why it was out of scope here (no `S3776`/duplication hit), and the trigger that would make it worth doing:
+
+```markdown
+# Deferred Pass-5 SOLID lanes (not Sonar-driven)
+
+These lanes from `2026-05-28-monorepo-cleanup-pass.md` Pass 5 were NOT executed
+in cleanup pass 2 because they had no SonarCloud finding driving them. Tracked
+here so they are not forgotten.
+
+- **5.5 vault Liskov** — confirm win32/darwin/linux conform to `NimbusVault` with no signature widening. Trigger: any new vault backend or `NimbusVault` method.
+- **5.6 llm/voice provider DI** — `LlmRouter` constructor injection instead of direct `OllamaProvider`/`LlamaCppProvider` imports. Trigger: adding a 3rd LLM provider, or a `mock.module` test flake on the llm suite.
+- **5.8 UI component splits** — React files >250 LOC. Trigger: a UI file crossing the threshold with a real maintainability cost.
+- **5.9 sdk/client conservative SOLID** — API-preserving only; needs a version bump if exports change. Trigger: a published-surface refactor.
+- **5.10 vscode-extension** — minimal pass; small package. Trigger: opportunistic.
+```
+
+- [ ] **Step 2: Commit** — `docs(plan): track deferred non-Sonar Pass-5 lanes`. (Open GitHub issues instead only if the team prefers issue-tracking over plan-doc-tracking — a maintainer decision, not required by this plan.)
+
 ---
 
 ## Self-review (completed during authoring)
@@ -357,3 +415,13 @@ Extends the Pass-4 `_lib`/`shared` helper pattern. The clusters worth extracting
 - **No placeholders:** every task names exact files (with line numbers from the live Sonar snapshot), the verify command, and the commit message. The per-rule WS-D file lists are fetched at execution via the documented query (the rule ids + counts are fixed).
 - **Behavior-preservation discipline:** every refactor task leads with a characterization-test step; security-adjacent tasks (C.1 I16, C.2 I13, C.6 I14, B.2/C.7 I15) re-run `audit:invariants` + `security-invariants.test.ts`.
 - **House-style + non-negotiables:** comment-light helpers, no `any`, invariants/HITL/vault-keys/license/audit-chain/Tauri-allowlist/OpenAPI untouched, cross-platform paths.
+
+## Review dispositions (2026-05-29)
+
+Plan review (`2026-05-29-cleanup-pass-2-review.md`) raised five points; all five fixed:
+
+1. **Python dependency in API queries (point 1).** ✅ **Fixed.** Task 0.2, B.1, and the WS-D enumeration now use PowerShell-native `Invoke-RestMethod` (+ `Where-Object`/`ForEach-Object`) instead of `curl.exe | python -c`. No Python in the PATH is assumed, matching the plan's PowerShell-only convention.
+2. **API pagination limit (point 2).** ✅ **Fixed.** WS-D queries bumped `ps=200 → ps=500` (the Sonar max) with an explicit pagination note: the largest single rule cluster is `S7735` at 82, so per-rule queries fit one page; any all-smells query (386 > one page) must page `p=1..N` and check `$r.total`. The hotspots query is likewise `ps=500`.
+3. **C toolchain pre-flight (point 3).** ✅ **Fixed.** New Task 0.3 probes for `gcc`/`clang`/`cl` at the start and records whether Task C.7 (`main.c`) is BLOCKED on this machine, so it is known on day one rather than discovered at the end. All other workstreams are explicitly noted as unaffected.
+4. **Branch up-to-dateness before push (point 4).** ✅ **Fixed.** Task F.1 Step 1 now does `git fetch origin` + `git rebase origin/main` (with a `merge --no-ff` fallback if already pushed) and a conditional `bun install`, before the final preflight — so integration conflicts surface locally.
+5. **Tracking deferred Pass-5 lanes (point 5, open question).** ✅ **Fixed (lightweight).** New Task F.4 writes a tracked stub `docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md` listing lanes 5.5/5.6/5.8/5.9/5.10 with their trigger conditions. Chosen over authoring a second full plan now (scope creep) or opening GitHub issues (a maintainer's tracking-preference call, noted as the alternative in F.4 Step 2).
