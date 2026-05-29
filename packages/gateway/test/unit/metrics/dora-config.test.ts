@@ -108,6 +108,55 @@ mystery = "yes"
     expect(parsed.size).toBe(0);
   });
 
+  it("rejects a service block missing the required 'repos' key", () => {
+    const raw = `
+[metrics.dora.no-repos]
+pagerduty_services = ["PXYZ"]
+`;
+    expect(() => parseNimbusDoraToml(raw)).toThrow(/missing required 'repos'/);
+  });
+
+  it("defaults deploy_environments to the standard list when omitted", () => {
+    const raw = `
+[metrics.dora.svc]
+repos = ["github:org/svc"]
+`;
+    const cfg = parseNimbusDoraToml(raw).get("svc");
+    if (cfg === undefined) throw new Error("svc missing");
+    expect(cfg.deployEnvironments.length).toBeGreaterThan(0);
+  });
+
+  it("accepts a custom valid deploy_environments array", () => {
+    const raw = `
+[metrics.dora.svc]
+repos = ["github:org/svc"]
+deploy_environments = ["staging", "production"]
+`;
+    const cfg = parseNimbusDoraToml(raw).get("svc");
+    if (cfg === undefined) throw new Error("svc missing");
+    expect(cfg.deployEnvironments).toEqual(["staging", "production"]);
+  });
+
+  it("rejects an empty deploy_environments array", () => {
+    const raw = `
+[metrics.dora.svc]
+repos = ["github:org/svc"]
+deploy_environments = []
+`;
+    expect(() => parseNimbusDoraToml(raw)).toThrow(/deploy_environments must be a non-empty array/);
+  });
+
+  it("rejects a deploy_environments entry with an invalid name", () => {
+    const raw = `
+[metrics.dora.svc]
+repos = ["github:org/svc"]
+deploy_environments = ["Production!"]
+`;
+    expect(() => parseNimbusDoraToml(raw)).toThrow(
+      /deploy_environments entry 'Production!' is invalid/,
+    );
+  });
+
   it("parses multiple service entries independently", () => {
     const raw = `
 [metrics.dora.svc-a]

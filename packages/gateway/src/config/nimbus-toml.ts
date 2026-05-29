@@ -64,6 +64,43 @@ function parseIntDec(raw: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function isTableHeader(trimmed: string): boolean {
+  return trimmed.startsWith("[") && trimmed.endsWith("]");
+}
+
+function splitKeyValue(trimmed: string): { key: string; valRaw: string } | undefined {
+  const eq = trimmed.indexOf("=");
+  if (eq <= 0) {
+    return undefined;
+  }
+  return { key: trimmed.slice(0, eq).trim(), valRaw: trimmed.slice(eq + 1).trim() };
+}
+
+function forEachSectionEntry(
+  source: string,
+  sectionHeader: string,
+  onEntry: (key: string, valRaw: string) => void,
+): void {
+  let inSection = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") {
+      continue;
+    }
+    if (isTableHeader(trimmed)) {
+      inSection = trimmed === sectionHeader;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const kv = splitKeyValue(trimmed);
+    if (kv !== undefined) {
+      onEntry(kv.key, kv.valRaw);
+    }
+  }
+}
+
 function setEmbeddingEnabled(out: Partial<NimbusEmbeddingToml>, valRaw: string): void {
   const b = parseBool(valRaw);
   if (b !== undefined) {
@@ -136,30 +173,10 @@ function applyNimbusEmbeddingKey(
 }
 
 export function parseNimbusTomlEmbeddingSection(source: string): Partial<NimbusEmbeddingToml> {
-  const lines = source.split(/\r?\n/);
-  let inEmbedding = false;
   const out: Partial<NimbusEmbeddingToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") {
-      continue;
-    }
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inEmbedding = trimmed === "[embedding]";
-      continue;
-    }
-    if (!inEmbedding) {
-      continue;
-    }
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) {
-      continue;
-    }
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[embedding]", (key, valRaw) => {
     applyNimbusEmbeddingKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -260,24 +277,10 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
 }
 
 export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml> {
-  const lines = source.split(/\r?\n/);
-  let inLlm = false;
   const out: Partial<NimbusLlmToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inLlm = trimmed === "[llm]";
-      continue;
-    }
-    if (!inLlm) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[llm]", (key, valRaw) => {
     applyNimbusLlmKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -363,24 +366,10 @@ function applyNimbusVoiceKey(out: Partial<NimbusVoiceToml>, key: string, valRaw:
 }
 
 export function parseNimbusTomlVoiceSection(source: string): Partial<NimbusVoiceToml> {
-  const lines = source.split(/\r?\n/);
-  let inVoice = false;
   const out: Partial<NimbusVoiceToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inVoice = trimmed === "[voice]";
-      continue;
-    }
-    if (!inVoice) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[voice]", (key, valRaw) => {
     applyNimbusVoiceKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -443,24 +432,10 @@ function applyNimbusUpdaterKey(out: Partial<NimbusUpdaterToml>, key: string, val
 }
 
 export function parseNimbusTomlUpdaterSection(source: string): Partial<NimbusUpdaterToml> {
-  const lines = source.split(/\r?\n/);
-  let inUpdater = false;
   const out: Partial<NimbusUpdaterToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inUpdater = trimmed === "[updater]";
-      continue;
-    }
-    if (!inUpdater) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[updater]", (key, valRaw) => {
     applyNimbusUpdaterKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -551,24 +526,10 @@ function applyNimbusLanKey(out: Partial<NimbusLanToml>, key: string, valRaw: str
 }
 
 function parseNimbusTomlLanSection(source: string): Partial<NimbusLanToml> {
-  const lines = source.split(/\r?\n/);
-  let inLan = false;
   const out: Partial<NimbusLanToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inLan = trimmed === "[lan]";
-      continue;
-    }
-    if (!inLan) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[lan]", (key, valRaw) => {
     applyNimbusLanKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -612,26 +573,13 @@ export const DEFAULT_NIMBUS_AUTOMATION_TOML: NimbusAutomationToml = {
 };
 
 function parseNimbusTomlAutomationSection(source: string): Partial<NimbusAutomationToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
   const out: Partial<NimbusAutomationToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[automation]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[automation]", (key, valRaw) => {
     if (key === "graph_conditions") {
       const b = parseBool(valRaw);
       if (b !== undefined) out.graphConditions = b;
     }
-  }
+  });
   return out;
 }
 
@@ -666,35 +614,24 @@ export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
   updateCheckIntervalHours: 24,
 };
 
-function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
-  const out: Partial<NimbusExtensionsToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[extensions]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
-    if (key === "update_check_interval_hours") {
-      const n = Number(valRaw);
-      if (!Number.isFinite(n) || !Number.isInteger(n)) {
-        throw new Error(
-          `[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`,
-        );
-      }
-      if (n < 1 || n > 168) {
-        throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);
-      }
-      out.updateCheckIntervalHours = n;
-    }
+function parseUpdateCheckIntervalHours(valRaw: string): number {
+  const n = Number(valRaw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new Error(`[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`);
   }
+  if (n < 1 || n > 168) {
+    throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);
+  }
+  return n;
+}
+
+function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
+  const out: Partial<NimbusExtensionsToml> = {};
+  forEachSectionEntry(source, "[extensions]", (key, valRaw) => {
+    if (key === "update_check_interval_hours") {
+      out.updateCheckIntervalHours = parseUpdateCheckIntervalHours(valRaw);
+    }
+  });
   return out;
 }
 
@@ -728,26 +665,13 @@ export type NimbusUserToml = {
 export const DEFAULT_NIMBUS_USER_TOML: NimbusUserToml = {};
 
 function parseNimbusTomlUserSection(source: string): Partial<NimbusUserToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
   const out: Partial<NimbusUserToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[user]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[user]", (key, valRaw) => {
     if (key === "me_person_id") {
       const v = parseString(valRaw);
       if (v.length > 0) out.mePersonId = v;
     }
-  }
+  });
   return out;
 }
 
@@ -784,44 +708,35 @@ export const DEFAULT_NIMBUS_PAGERDUTY_TOML: NimbusPagerdutyToml = {
   severityP1Aliases: [],
 };
 
-function parseNimbusPagerdutySection(source: string): Partial<NimbusPagerdutyToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
-  const out: { maxPagesPerSync?: number; severityP1Aliases?: readonly string[] } = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[pagerduty]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
-    if (key === "max_pages_per_sync") {
-      const n = parseIntDec(valRaw);
-      if (n === undefined || n < 1 || n > 100) {
-        throw new Error(
-          `[pagerduty].max_pages_per_sync must be an integer in 1..100, got '${valRaw}'`,
-        );
-      }
-      out.maxPagesPerSync = n;
-    } else if (key === "severity_p1_aliases") {
-      const raw = parseStringArray(valRaw);
-      const seen = new Set<string>();
-      const collected: string[] = [];
-      for (const v of raw) {
-        const lower = v.trim().toLowerCase();
-        if (lower === "") continue;
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        collected.push(lower);
-      }
-      out.severityP1Aliases = collected;
-    }
+function parseMaxPagesPerSync(valRaw: string): number {
+  const n = parseIntDec(valRaw);
+  if (n === undefined || n < 1 || n > 100) {
+    throw new Error(`[pagerduty].max_pages_per_sync must be an integer in 1..100, got '${valRaw}'`);
   }
+  return n;
+}
+
+function parseSeverityP1Aliases(valRaw: string): string[] {
+  const seen = new Set<string>();
+  const collected: string[] = [];
+  for (const v of parseStringArray(valRaw)) {
+    const lower = v.trim().toLowerCase();
+    if (lower === "" || seen.has(lower)) continue;
+    seen.add(lower);
+    collected.push(lower);
+  }
+  return collected;
+}
+
+function parseNimbusPagerdutySection(source: string): Partial<NimbusPagerdutyToml> {
+  const out: { maxPagesPerSync?: number; severityP1Aliases?: readonly string[] } = {};
+  forEachSectionEntry(source, "[pagerduty]", (key, valRaw) => {
+    if (key === "max_pages_per_sync") {
+      out.maxPagesPerSync = parseMaxPagesPerSync(valRaw);
+    } else if (key === "severity_p1_aliases") {
+      out.severityP1Aliases = parseSeverityP1Aliases(valRaw);
+    }
+  });
   return out;
 }
 
@@ -886,88 +801,116 @@ function parseStringArray(raw: string): string[] {
   return out;
 }
 
+function materializeDeployWorkflowPattern(
+  kv: Record<string, string>,
+  blockLabel: string,
+  serviceId: string,
+): RegExp {
+  const patternSrc =
+    kv["deploy_workflow_pattern"] === undefined
+      ? DEFAULT_DEPLOY_WORKFLOW_PATTERN
+      : parseString(kv["deploy_workflow_pattern"]);
+  try {
+    return new RegExp(patternSrc);
+  } catch (e) {
+    throw new Error(
+      `[${blockLabel}.${serviceId}].deploy_workflow_pattern is not a valid regex: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+}
+
+function materializeIncidentWindowMinutes(
+  kv: Record<string, string>,
+  blockLabel: string,
+  serviceId: string,
+): number {
+  const windowRaw = kv["incident_window_minutes"];
+  const windowMins =
+    windowRaw === undefined ? DEFAULT_INCIDENT_WINDOW_MINUTES : parseIntDec(windowRaw);
+  if (windowMins === undefined || windowMins < 1 || windowMins > 1440) {
+    throw new Error(
+      `[${blockLabel}.${serviceId}].incident_window_minutes must be 1..1440, got '${windowRaw}'`,
+    );
+  }
+  return windowMins;
+}
+
+function materializeDeployEnvironments(
+  kv: Record<string, string>,
+  blockLabel: string,
+  serviceId: string,
+): string[] {
+  const raw = kv["deploy_environments"];
+  const deployEnvironments =
+    raw === undefined ? Array.from(DEFAULT_DEPLOY_ENVIRONMENTS) : parseStringArray(raw);
+  if (deployEnvironments.length === 0) {
+    throw new Error(
+      `[${blockLabel}.${serviceId}].deploy_environments must be a non-empty array of names`,
+    );
+  }
+  for (const env of deployEnvironments) {
+    if (!isValidDeployEnvironmentName(env)) {
+      throw new Error(
+        `[${blockLabel}.${serviceId}].deploy_environments entry '${env}' is invalid: ` +
+          `must match /^[a-z0-9][a-z0-9._-]*$/`,
+      );
+    }
+  }
+  return deployEnvironments;
+}
+
+function materializeOneServiceConfig(
+  serviceId: string,
+  kv: Record<string, string>,
+  blockLabel: string,
+): ServiceConfig {
+  const reposRaw = kv["repos"];
+  if (reposRaw === undefined) {
+    throw new Error(`[${blockLabel}.${serviceId}] missing required 'repos'`);
+  }
+  return {
+    serviceId,
+    repos: parseStringArray(reposRaw).map(parseDoraRepoUrn),
+    pagerdutyServices:
+      kv["pagerduty_services"] === undefined ? [] : parseStringArray(kv["pagerduty_services"]),
+    deployWorkflowPattern: materializeDeployWorkflowPattern(kv, blockLabel, serviceId),
+    incidentWindowMinutes: materializeIncidentWindowMinutes(kv, blockLabel, serviceId),
+    excludePrLabels:
+      kv["exclude_pr_labels"] === undefined
+        ? Array.from(DEFAULT_EXCLUDE_PR_LABELS)
+        : parseStringArray(kv["exclude_pr_labels"]),
+    deployEnvironments: materializeDeployEnvironments(kv, blockLabel, serviceId),
+    severityP1Aliases: [], // attached by loadNimbusServiceConfigsFromConfigDir
+  };
+}
+
 function materializeServiceConfigs(
   accum: Map<string, Record<string, string>>,
   blockLabel: string,
 ): Map<string, ServiceConfig> {
   const out: Map<string, ServiceConfig> = new Map();
   for (const [serviceId, kv] of accum.entries()) {
-    const reposRaw = kv["repos"];
-    if (reposRaw === undefined) {
-      throw new Error(`[${blockLabel}.${serviceId}] missing required 'repos'`);
-    }
-    const repos = parseStringArray(reposRaw).map(parseDoraRepoUrn);
-    const pagerdutyServices =
-      kv["pagerduty_services"] === undefined ? [] : parseStringArray(kv["pagerduty_services"]);
-    const patternSrc =
-      kv["deploy_workflow_pattern"] === undefined
-        ? DEFAULT_DEPLOY_WORKFLOW_PATTERN
-        : parseString(kv["deploy_workflow_pattern"]);
-    let deployWorkflowPattern: RegExp;
-    try {
-      deployWorkflowPattern = new RegExp(patternSrc);
-    } catch (e) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].deploy_workflow_pattern is not a valid regex: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    }
-    const windowRaw = kv["incident_window_minutes"];
-    const windowMins =
-      windowRaw === undefined ? DEFAULT_INCIDENT_WINDOW_MINUTES : parseIntDec(windowRaw);
-    if (windowMins === undefined || windowMins < 1 || windowMins > 1440) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].incident_window_minutes must be 1..1440, got '${windowRaw}'`,
-      );
-    }
-    const excludePrLabels =
-      kv["exclude_pr_labels"] === undefined
-        ? Array.from(DEFAULT_EXCLUDE_PR_LABELS)
-        : parseStringArray(kv["exclude_pr_labels"]);
-    const deployEnvironmentsRaw = kv["deploy_environments"];
-    const deployEnvironments =
-      deployEnvironmentsRaw === undefined
-        ? Array.from(DEFAULT_DEPLOY_ENVIRONMENTS)
-        : parseStringArray(deployEnvironmentsRaw);
-    if (deployEnvironments.length === 0) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].deploy_environments must be a non-empty array of names`,
-      );
-    }
-    for (const env of deployEnvironments) {
-      if (!isValidDeployEnvironmentName(env)) {
-        throw new Error(
-          `[${blockLabel}.${serviceId}].deploy_environments entry '${env}' is invalid: ` +
-            `must match /^[a-z0-9][a-z0-9._-]*$/`,
-        );
-      }
-    }
-    out.set(serviceId, {
-      serviceId,
-      repos,
-      pagerdutyServices,
-      deployWorkflowPattern,
-      incidentWindowMinutes: windowMins,
-      excludePrLabels,
-      deployEnvironments,
-      severityP1Aliases: [], // attached by loadNimbusServiceConfigsFromConfigDir
-    });
+    out.set(serviceId, materializeOneServiceConfig(serviceId, kv, blockLabel));
   }
   return out;
 }
 
-export function parseNimbusDoraToml(raw: string): Map<string, ServiceConfig> {
-  const lines = raw.split(/\r?\n/);
+function accumulateServiceTables(
+  raw: string,
+  tablePrefix: string,
+  blockLabel: string,
+): Map<string, Record<string, string>> {
   const accum: Map<string, Record<string, string>> = new Map();
   let currentId: string | undefined;
-  for (const line of lines) {
+  for (const line of raw.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      if (trimmed.startsWith(DORA_TABLE_PREFIX) && trimmed.endsWith("]")) {
-        const id = trimmed.slice(DORA_TABLE_PREFIX.length, -1);
-        if (id.length === 0) throw new Error("empty service id in [metrics.dora.<id>]");
+    if (isTableHeader(trimmed)) {
+      if (trimmed.startsWith(tablePrefix)) {
+        const id = trimmed.slice(tablePrefix.length, -1);
+        if (id.length === 0) throw new Error(`empty service id in [${blockLabel}.<id>]`);
         currentId = id;
         if (!accum.has(id)) accum.set(id, {});
       } else {
@@ -976,18 +919,24 @@ export function parseNimbusDoraToml(raw: string): Map<string, ServiceConfig> {
       continue;
     }
     if (currentId === undefined) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!SERVICE_CONFIG_KNOWN_KEYS.has(key)) {
-      throw new Error(`unknown key '${key}' in [metrics.dora.${currentId}]`);
+    const kv = splitKeyValue(trimmed);
+    if (kv === undefined) continue;
+    if (!SERVICE_CONFIG_KNOWN_KEYS.has(kv.key)) {
+      throw new Error(`unknown key '${kv.key}' in [${blockLabel}.${currentId}]`);
     }
     const bucket = accum.get(currentId);
     if (bucket !== undefined) {
-      bucket[key] = trimmed.slice(eq + 1).trim();
+      bucket[kv.key] = kv.valRaw;
     }
   }
-  return materializeServiceConfigs(accum, "metrics.dora");
+  return accum;
+}
+
+export function parseNimbusDoraToml(raw: string): Map<string, ServiceConfig> {
+  return materializeServiceConfigs(
+    accumulateServiceTables(raw, DORA_TABLE_PREFIX, "metrics.dora"),
+    "metrics.dora",
+  );
 }
 
 export function loadNimbusDoraFromPath(tomlPath: string): Map<string, ServiceConfig> {
@@ -1003,35 +952,10 @@ export function loadNimbusDoraFromConfigDir(configDir: string): Map<string, Serv
 const CI_SERVICE_TABLE_PREFIX = "[ci.service.";
 
 export function parseNimbusCiServiceToml(raw: string): Map<string, ServiceConfig> {
-  const lines = raw.split(/\r?\n/);
-  const accum: Map<string, Record<string, string>> = new Map();
-  let currentId: string | undefined;
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      if (trimmed.startsWith(CI_SERVICE_TABLE_PREFIX) && trimmed.endsWith("]")) {
-        const id = trimmed.slice(CI_SERVICE_TABLE_PREFIX.length, -1);
-        if (id.length === 0) throw new Error("empty service id in [ci.service.<id>]");
-        currentId = id;
-        if (!accum.has(id)) accum.set(id, {});
-      } else {
-        currentId = undefined;
-      }
-      continue;
-    }
-    if (currentId === undefined) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!SERVICE_CONFIG_KNOWN_KEYS.has(key)) {
-      throw new Error(`unknown key '${key}' in [ci.service.${currentId}]`);
-    }
-    const bucket = accum.get(currentId);
-    if (bucket === undefined) continue;
-    bucket[key] = trimmed.slice(eq + 1).trim();
-  }
-  return materializeServiceConfigs(accum, "ci.service");
+  return materializeServiceConfigs(
+    accumulateServiceTables(raw, CI_SERVICE_TABLE_PREFIX, "ci.service"),
+    "ci.service",
+  );
 }
 
 export function loadNimbusServiceConfigsFromConfigDir(
