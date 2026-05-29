@@ -169,7 +169,7 @@ function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] 
   }
   const queue: string[] = [];
   for (const [id, deg] of inDegree) if (deg === 0) queue.push(id);
-  queue.sort();
+  queue.sort((a, b) => a.localeCompare(b));
   const out: ResolvedNode[] = [];
   while (queue.length > 0) {
     const id = queue.shift();
@@ -183,7 +183,7 @@ function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] 
       inDegree.set(dep, next);
       if (next === 0) queue.push(dep);
     }
-    queue.sort();
+    queue.sort((a, b) => a.localeCompare(b));
   }
   return out;
 }

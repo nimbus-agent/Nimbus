@@ -40,6 +40,15 @@ describe("renderTree", () => {
     expect(out.split("\n")).toEqual(["com.a@1.0.0", "com.b@1.0.0"]);
   });
 
+  it("roots render in deterministic locale order regardless of input order (S2871)", () => {
+    const out = renderTree([
+      { id: "com.zebra", version: "1.0.0", forwardDeps: [] },
+      { id: "com.alpha", version: "1.0.0", forwardDeps: [] },
+      { id: "com.mango", version: "1.0.0", forwardDeps: [] },
+    ]);
+    expect(out.split("\n")).toEqual(["com.alpha@1.0.0", "com.mango@1.0.0", "com.zebra@1.0.0"]);
+  });
+
   it("single extension with no deps renders as a single root line", () => {
     const out = renderTree([{ id: "com.solo", version: "0.1.0", forwardDeps: [] }]);
     expect(out).toBe("com.solo@0.1.0");

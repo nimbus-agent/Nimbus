@@ -24,7 +24,7 @@ export function renderTree(installed: readonly InstalledExtensionForTree[]): str
   const roots = installed
     .filter((e) => !dependents.has(e.id))
     .map((e) => e.id)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
 
   const out: string[] = [];
   const seen = new Set<string>();

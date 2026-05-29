@@ -70,6 +70,33 @@ describe("resolveClosure", () => {
     ]);
   });
 
+  it("topo tiebreak is deterministic locale order among simultaneously-ready leaves (S2871)", async () => {
+    const fetcher = makeFetcher({
+      "com.shared.zebra": { "1.0.0": { id: "com.shared.zebra", version: "1.0.0" } },
+      "com.shared.alpha": { "1.0.0": { id: "com.shared.alpha", version: "1.0.0" } },
+      "com.shared.mango": { "1.0.0": { id: "com.shared.mango", version: "1.0.0" } },
+    });
+    const root: ExtensionManifestForSolver = {
+      id: "com.example.app",
+      version: "1.0.0",
+      dependsOn: {
+        "com.shared.zebra": "^1.0.0",
+        "com.shared.alpha": "^1.0.0",
+        "com.shared.mango": "^1.0.0",
+      },
+    };
+    const plan = await resolveClosure(root, fetcher, {
+      installed: new Map(),
+      activeConstraints: new Map(),
+    });
+    expect(plan.nodes.map((n) => n.id)).toEqual([
+      "com.shared.alpha",
+      "com.shared.mango",
+      "com.shared.zebra",
+      "com.example.app",
+    ]);
+  });
+
   it("true cycle returns DependencyConflictError(kind=cycle) with chain", async () => {
     const fetcher = makeFetcher({
       "com.x.a": {
