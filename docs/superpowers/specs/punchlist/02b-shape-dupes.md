@@ -58,7 +58,7 @@ Helper extracted as `emitBriefWithSynthesis` in `packages/gateway/src/agents/_li
 
 ## Task 4.16 status (2026-05-29)
 
-The OAuth provider chains the plan called out turned out to be a smaller scope than the plan template suggested. The exhaustive switch in `oauthClientConfigForProvider` is the **deliberate** compile-time gate that forces co-edits when widening `OAuthProvider` (per the [`oauth-provider-union-widening-coupling`](../../../../../../../Users/asafg/.claude/projects/C--gitrep-Nimbus/memory/oauth-provider-union-widening-coupling.md) memory). The switch stays.
+The OAuth provider chains the plan called out turned out to be a smaller scope than the plan template suggested. The exhaustive switch in `oauthClientConfigForProvider` is the **deliberate** compile-time gate that forces co-edits when widening `OAuthProvider`: adding a sixth provider triggers TS2322 (`never` assignment) in the switch's `default` branch, which surfaces the matching co-edits required in `connector-rpc-handlers/auth.ts`, `config.ts`, and `oauth-env-help-messages.ts`. The switch stays.
 
 What was duplicated were three inline `profile.provider === "..."` equality chains in `connectorAuthOAuthPkce` that re-derived per-provider knowledge already implied by the descriptor. Centralised by extending `oauthClientConfigForProvider` to also return optional `clientSecret` + `clientSecretMissingHelp` — `[EXTRACTED]`. Required-secret precheck collapses to one `descriptor.clientSecret === "required"` check; the three-way notion/zoom/google secret merge collapses to a single conditional spread. Plus `bun-test-support.ts:78` now uses `OAUTH_PROVIDERS[provider].vaultKey`.
 
