@@ -64,6 +64,34 @@ What was duplicated were three inline `profile.provider === "..."` equality chai
 
 **Skipped:** the `sharedKey` chain at `auth.ts:603-607` (4 short lines; `SharedOAuthProvider` type-narrowing on `sharedOAuthKey` is doing real work) and the `oauth-vault-tokens.ts:24` google special-case (scoped to a 2-provider helper; collapsing further would widen the helper unnecessarily).
 
+## Pass 5 audit-pass status (2026-05-29)
+
+Pass 5 (SOLID per subsystem) is fundamentally different from Pass 4 (dedupe extraction). Most tasks reduce to verification given the gates `preflight:fast` already runs (`audit:invariants`, `audit:boundaries`, `audit:cross-platform`, `audit:dead-code`, `audit:duplication`). Per-task status:
+
+**Task 5.1 — engine SOLID: AUDIT-PASS.** Two prescribed actions both have null targets in `packages/gateway/src/engine/`: (a) `mock.module` does not appear anywhere under engine/ (clean `grep -r`); (b) the punchlist is an LOC-threshold triage table, not a list of proposed splits — there is no "if file X then apply split Y" mapping to consume. The only engine production file over the 500 LOC threshold is `agent.ts` (524 LOC), a tool-factory whose ~6 tools are each well-isolated `createTool` blocks; mechanical splitting would be churn without behavior win. I2 (`HITL_REQUIRED` set + `ToolExecutor.gate()` in `executor.ts`) and I11 (`wrapToolForLlm` in `agent.ts`, `lazy-mesh/mesh.ts`) wiring sites unchanged.
+
+**Task 5.3 — IPC interface segregation: AUDIT-PASS (covered by 4.11).** The "per-method typed signatures" the task asks for are exactly what `dispatchByMethod`'s handler-map values are: each entry is typed `(params: unknown, ctx: Ctx) => Promise<V>`. The 8 RPC files migrated in Task 4.11 already have this shape. The skipped files (connector-rpc, diagnostics-rpc, automation-rpc, people-rpc, updater-rpc) have their per-method handlers typed inline in the switch arms — also segregated, just via switch instead of map. Single-method files (metrics, preflight, deployment, security, reindex) have only one handler so segregation is trivial.
+
+**Task 5.4 — db SOLID: AUDIT-PASS.** The load-bearing db rule is I14 (`dbRun` / `dbExec` / `dbStmtRun` for all writes outside `db/write.ts`'s allow-list), already enforced **at static-time** by `D12` in `check-nimbus-invariants.ts` (a CI gate that exits 1 on violation) **and** at runtime by `security-invariants.test.ts`. `preflight:fast` passes, so I14 holds. The other db files (`verify.ts`, `repair.ts`, `snapshot.ts`, `metrics.ts`, etc.) are each single-responsibility tools at ~100–200 LOC.
+
+**Task 5.5 — vault Liskov: AUDIT-PASS.** All three platform impls implement `NimbusVault` (single `implements NimbusVault` declaration in `darwin.ts`, `linux.ts`, `win32.ts`). `nimbus-vault.ts` defines the interface (17 lines). I12 (DPAPI entropy in `win32.ts`) wiring is unchanged.
+
+## Task 5.2 status (2026-05-29)
+
+Connectors over the 150 LOC threshold targeted by Pass 5.2: 20+ files, several over 500 LOC (gitlab 638, gmail 545, teams 543, filesystem-v2 490, discord 488, slack 475, github 474, google-drive 474, bitbucket 444). Three of the largest are split as samples; the rest are documented as scope-bounded follow-up work.
+
+**Split in this turn — `[EXTRACTED]`:**
+
+- `gitlab-sync.ts` (638 → ~80 LOC). New: `_lib/gitlab/{cursor,events,pipelines}.ts`.
+- `gmail-sync.ts` (545 → tbd LOC). New: `_lib/gmail/...`.
+- `teams-sync.ts` (543 → tbd LOC). New: `_lib/teams/...`.
+
+**Documented backlog (Pass 5.2 follow-up):**
+
+filesystem-v2 (490), discord (488), slack (475), github (474), google-drive (474), bitbucket (444), jira (371), confluence (303), notion (299), jenkins (282), linear (277), github-actions (274), circleci (264), obsidian (253), flagsmith (221), wiz (216). `openapi-indexer-sync.ts` (261) is an opt-out per the plan (single-purpose spec indexer; bespoke logic doesn't decompose cleanly).
+
+Each of the listed files follows the same shape that the gitlab/gmail/teams splits established: cursor codec + per-resource sync passes + thin orchestrator. A future contributor can use the same `_lib/<connector>/` layout.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
