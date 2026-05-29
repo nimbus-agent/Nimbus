@@ -14,6 +14,23 @@ export type DeployPreflightArgs = {
 
 const MODES: ReadonlySet<DeployPreflightMode> = new Set(["warn", "block", "off"]);
 
+const PREFLIGHT_USAGE =
+  "Usage: nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]";
+
+function requireNonEmpty(flag: string, raw: string | undefined): string {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new Error(`${flag} requires a non-empty value`);
+  }
+  return raw.trim();
+}
+
+function parseModeValue(raw: string | undefined): DeployPreflightMode {
+  if (typeof raw !== "string" || !MODES.has(raw as DeployPreflightMode)) {
+    throw new Error("--mode must be one of: warn, block, off");
+  }
+  return raw as DeployPreflightMode;
+}
+
 export function parseDeployPreflightArgs(args: readonly string[]): DeployPreflightArgs {
   let service: string | undefined;
   let targetRef: string | undefined;
@@ -22,45 +39,20 @@ export function parseDeployPreflightArgs(args: readonly string[]): DeployPreflig
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--service") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
-        throw new Error("--service requires a non-empty value");
-      }
-      service = v.trim();
+      service = requireNonEmpty("--service", args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a === "--target-ref") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
-        throw new Error("--target-ref requires a non-empty value");
-      }
-      targetRef = v.trim();
+    } else if (a === "--target-ref") {
+      targetRef = requireNonEmpty("--target-ref", args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a === "--mode") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || !MODES.has(v as DeployPreflightMode)) {
-        throw new Error("--mode must be one of: warn, block, off");
-      }
-      mode = v as DeployPreflightMode;
+    } else if (a === "--mode") {
+      mode = parseModeValue(args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a === "--json") {
+    } else if (a === "--json") {
       json = true;
     }
   }
-  if (service === undefined) {
-    throw new Error(
-      "Usage: nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]",
-    );
-  }
-  if (targetRef === undefined) {
-    throw new Error(
-      "Usage: nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]",
-    );
+  if (service === undefined || targetRef === undefined) {
+    throw new Error(PREFLIGHT_USAGE);
   }
   return { service, targetRef, mode, json };
 }
@@ -96,53 +88,53 @@ function shouldUseColor(): boolean {
   return process.stdout.isTTY === true;
 }
 
+function formatVerdictTag(verdict: Envelope["verdict"], useColor: boolean): string {
+  if (verdict === "ok") return useColor ? "\x1b[32m[ok]\x1b[0m" : "[ok]";
+  return useColor ? "\x1b[33m[warn]\x1b[0m" : "[warn]";
+}
+
+function formatGapTag(gap: string | null, useColor: boolean): string {
+  if (gap === null) return "";
+  return useColor ? `\x1b[2m[${gap}]\x1b[0m` : `[${gap}]`;
+}
+
+const PREFLIGHT_CHECK_LABELS: Record<string, string> = {
+  active_p1_incidents: "Active P1 incidents",
+  failing_ci_runs: "Failing CI runs",
+  merge_conflicts: "Open PR merge conflicts",
+};
+
+const PREFLIGHT_CHECK_KEYS = ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"] as const;
+
+function formatCheckLines(key: string, m: CheckShape, useColor: boolean): string[] {
+  const label = PREFLIGHT_CHECK_LABELS[key];
+  if (label === undefined) return [];
+  const lines = [
+    `  ${label.padEnd(28)} ${String(m.count).padStart(4)}  ${formatGapTag(m.gap, useColor)}`,
+  ];
+  for (const f of m.findings.slice(0, 3)) {
+    lines.push(`      • ${f.title}${f.url ? `  ${f.url}` : ""}`);
+  }
+  return lines;
+}
+
 function formatPretty(env: Envelope, useColor: boolean): string {
-  const lines: string[] = [];
-  const verdictTag =
-    env.verdict === "ok"
-      ? useColor
-        ? "\x1b[32m[ok]\x1b[0m"
-        : "[ok]"
-      : useColor
-        ? "\x1b[33m[warn]\x1b[0m"
-        : "[warn]";
-  lines.push(`Deploy preflight — ${env.service} @ ${env.target_ref}  ${verdictTag}`);
-  lines.push("");
-  const labels: Record<string, string> = {
-    active_p1_incidents: "Active P1 incidents",
-    failing_ci_runs: "Failing CI runs",
-    merge_conflicts: "Open PR merge conflicts",
-  };
-  const keys = ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"] as const;
-  for (const key of keys) {
+  const lines: string[] = [
+    `Deploy preflight — ${env.service} @ ${env.target_ref}  ${formatVerdictTag(env.verdict, useColor)}`,
+    "",
+  ];
+  for (const key of PREFLIGHT_CHECK_KEYS) {
     const m = env.checks[key];
     if (m === undefined) continue;
-    const label = labels[key];
-    if (label === undefined) continue;
-    const gap = m.gap === null ? "" : useColor ? `\x1b[2m[${m.gap}]\x1b[0m` : `[${m.gap}]`;
-    lines.push(`  ${label.padEnd(28)} ${String(m.count).padStart(4)}  ${gap}`);
-    for (const f of m.findings.slice(0, 3)) {
-      lines.push(`      • ${f.title}${f.url ? `  ${f.url}` : ""}`);
-    }
+    lines.push(...formatCheckLines(key, m, useColor));
   }
   return lines.join("\n");
 }
 
-export async function runDeployCli(args: readonly string[]): Promise<void> {
-  if (args[0] === "annotate") {
-    const exitCode = await runDeployAnnotate(args.slice(1));
-    process.exit(exitCode);
-  }
-  if (args[0] !== "preflight") {
-    process.stderr.write(
-      "Usage: nimbus deploy preflight --service <id> --target-ref <ref>\n" +
-        "       nimbus deploy annotate  --service <id> --sha <sha> --target-ref <ref> --env <env> --status <s> --started-at <ms>\n",
-    );
-    process.exit(1);
-  }
+async function runDeployPreflight(args: readonly string[]): Promise<void> {
   let parsed: DeployPreflightArgs;
   try {
-    parsed = parseDeployPreflightArgs(args.slice(1));
+    parsed = parseDeployPreflightArgs(args);
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);
@@ -179,4 +171,19 @@ export async function runDeployCli(args: readonly string[]): Promise<void> {
   } finally {
     await client.disconnect().catch(() => {});
   }
+}
+
+export async function runDeployCli(args: readonly string[]): Promise<void> {
+  if (args[0] === "annotate") {
+    const exitCode = await runDeployAnnotate(args.slice(1));
+    process.exit(exitCode);
+  }
+  if (args[0] !== "preflight") {
+    process.stderr.write(
+      "Usage: nimbus deploy preflight --service <id> --target-ref <ref>\n" +
+        "       nimbus deploy annotate  --service <id> --sha <sha> --target-ref <ref> --env <env> --status <s> --started-at <ms>\n",
+    );
+    process.exit(1);
+  }
+  await runDeployPreflight(args.slice(1));
 }

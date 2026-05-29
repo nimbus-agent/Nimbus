@@ -150,31 +150,63 @@ async function maybePrintFirstRunHints(
   }
 }
 
+async function handleExistingGatewayState(
+  paths: ReturnType<typeof getCliPlatformPaths>,
+  existing: { pid: number; socketPath: string },
+): Promise<"reuse" | "start-fresh"> {
+  const pidAlive = isProcessAlive(existing.pid);
+  const reachable =
+    pidAlive && (await probeSocketReachable(existing.socketPath, SOCKET_PROBE_TIMEOUT_MS));
+  if (reachable) {
+    console.log(`Gateway already running (pid ${String(existing.pid)}).`);
+    return "reuse";
+  }
+  if (pidAlive) {
+    const killHint =
+      process.platform === "win32"
+        ? ` (e.g. taskkill /PID ${String(existing.pid)} /F).`
+        : ` (e.g. kill ${String(existing.pid)}).`;
+    console.warn(
+      `Gateway state points to pid ${String(existing.pid)}, but its IPC socket is not reachable.`,
+    );
+    console.warn(
+      `Treating state as stale and starting fresh — if pid ${String(existing.pid)} is still hung, stop it manually${killHint}`,
+    );
+  }
+  await unlink(gatewayStatePath(paths)).catch(() => {});
+  return "start-fresh";
+}
+
+async function reportGatewayNotReady(
+  paths: ReturnType<typeof getCliPlatformPaths>,
+  pid: number,
+  logPath: string | undefined,
+  readyTimeoutMs: number,
+): Promise<void> {
+  const stillAlive = isProcessAlive(pid);
+  console.error(
+    stillAlive
+      ? `Gateway pid ${String(pid)} is still running but never bound ${paths.socketPath} within ${String(readyTimeoutMs / 1000)}s.`
+      : `Gateway pid ${String(pid)} exited before binding ${paths.socketPath}.`,
+  );
+  console.error(`Log: ${logPath}`);
+  if (stillAlive) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* best-effort */
+    }
+  }
+  await unlink(gatewayStatePath(paths)).catch(() => {});
+}
+
 export async function runStart(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   await ensureGatewayDirs(paths);
 
   const existing = await readGatewayState(paths);
-  if (existing !== undefined) {
-    const pidAlive = isProcessAlive(existing.pid);
-    const reachable =
-      pidAlive && (await probeSocketReachable(existing.socketPath, SOCKET_PROBE_TIMEOUT_MS));
-    if (reachable) {
-      console.log(`Gateway already running (pid ${String(existing.pid)}).`);
-      return;
-    }
-    if (pidAlive) {
-      console.warn(
-        `Gateway state points to pid ${String(existing.pid)}, but its IPC socket is not reachable.`,
-      );
-      console.warn(
-        `Treating state as stale and starting fresh — if pid ${String(existing.pid)} is still hung, stop it manually` +
-          (process.platform === "win32"
-            ? ` (e.g. taskkill /PID ${String(existing.pid)} /F).`
-            : ` (e.g. kill ${String(existing.pid)}).`),
-      );
-    }
-    await unlink(gatewayStatePath(paths)).catch(() => {});
+  if (existing !== undefined && (await handleExistingGatewayState(paths, existing)) === "reuse") {
+    return;
   }
 
   const s = spinner();
@@ -212,21 +244,7 @@ export async function runStart(args: string[]): Promise<void> {
   });
   if (!ready) {
     s.stop("Gateway did not become ready");
-    const stillAlive = isProcessAlive(pid);
-    console.error(
-      stillAlive
-        ? `Gateway pid ${String(pid)} is still running but never bound ${paths.socketPath} within ${String(readyTimeoutMs / 1000)}s.`
-        : `Gateway pid ${String(pid)} exited before binding ${paths.socketPath}.`,
-    );
-    console.error(`Log: ${logPath}`);
-    if (stillAlive) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        /* best-effort */
-      }
-    }
-    await unlink(gatewayStatePath(paths)).catch(() => {});
+    await reportGatewayNotReady(paths, pid, logPath, readyTimeoutMs);
     process.exitCode = 1;
     return;
   }

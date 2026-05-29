@@ -173,6 +173,38 @@ export function formatExtensionInfoHuman(info: {
   return `${lines.join("\n")}\n`;
 }
 
+function printExtensionInfoPublisher(e: ExtensionListEntry): void {
+  if (e.publisher !== undefined && typeof e.publisher.key === "string") {
+    const shortKey = `${e.publisher.key.slice(0, 16)}…`;
+    console.log(`Publisher: ${e.publisher.id}`);
+    console.log(`  key:     ${shortKey}`);
+  } else {
+    console.log("Publisher: (unverified)");
+  }
+}
+
+function printExtensionInfoDeps(e: ExtensionListEntry): void {
+  const fwd = e.forwardDeps ?? [];
+  const rev = e.reverseDeps ?? [];
+  if (fwd.length === 0 && rev.length === 0) {
+    console.log("\nDependencies: (none)");
+    return;
+  }
+  console.log("\nDependencies:");
+  if (fwd.length > 0) {
+    console.log("  Forward (this extension requires):");
+    for (const f of [...fwd].sort((a, b) => a.id.localeCompare(b.id))) {
+      console.log(`    ${f.id}  ${f.range}`);
+    }
+  }
+  if (rev.length > 0) {
+    console.log("  Reverse (required by):");
+    for (const r of [...rev].sort((a, b) => a.extensionId.localeCompare(b.extensionId))) {
+      console.log(`    ${r.extensionId}  ${r.range}`);
+    }
+  }
+}
+
 export async function runExtensionInfo(
   client: IPCClient,
   rest: string[],
@@ -201,13 +233,7 @@ export async function runExtensionInfo(
   console.log(`Extension: ${e.id}`);
   console.log(`Version:   ${e.version}`);
   console.log(`Enabled:   ${e.enabled === 1 ? "yes" : "no"}`);
-  if (e.publisher !== undefined && typeof e.publisher.key === "string") {
-    const shortKey = `${e.publisher.key.slice(0, 16)}…`;
-    console.log(`Publisher: ${e.publisher.id}`);
-    console.log(`  key:     ${shortKey}`);
-  } else {
-    console.log("Publisher: (unverified)");
-  }
+  printExtensionInfoPublisher(e);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   if (e.needs_reinstall === true && out.message !== undefined) {
@@ -215,25 +241,7 @@ export async function runExtensionInfo(
     console.log(out.message);
   }
   if (hasFlag(args, "--deps")) {
-    const fwd = e.forwardDeps ?? [];
-    const rev = e.reverseDeps ?? [];
-    if (fwd.length > 0 || rev.length > 0) {
-      console.log("\nDependencies:");
-      if (fwd.length > 0) {
-        console.log("  Forward (this extension requires):");
-        for (const f of [...fwd].sort((a, b) => a.id.localeCompare(b.id))) {
-          console.log(`    ${f.id}  ${f.range}`);
-        }
-      }
-      if (rev.length > 0) {
-        console.log("  Reverse (required by):");
-        for (const r of [...rev].sort((a, b) => a.extensionId.localeCompare(b.extensionId))) {
-          console.log(`    ${r.extensionId}  ${r.range}`);
-        }
-      }
-    } else {
-      console.log("\nDependencies: (none)");
-    }
+    printExtensionInfoDeps(e);
   }
 }
 
@@ -427,6 +435,32 @@ export interface RunExtensionSyncOpts {
   writeStderr: (s: string) => void;
 }
 
+function printSyncResultHuman(result: SyncResult, opts: RunExtensionSyncOpts): void {
+  opts.writeStdout(`publishers checked: ${String(result.publishersChecked)}\n`);
+  opts.writeStdout(`unchanged:          ${String(result.publishersUnchanged)}\n`);
+  opts.writeStdout(`updated:            ${String(result.publishersUpdated.length)}\n`);
+  opts.writeStdout(`evicted:            ${String(result.publishersEvicted.length)}\n`);
+  opts.writeStdout(`failed:             ${String(result.failures.length)}\n`);
+  for (const u of result.publishersUpdated) {
+    if (u.reverifyResult === "failed") {
+      opts.writeStderr(
+        `publisher ${u.id} rotated keys; ${String(u.failedExtensions.length)} extension(s) failed re-verify: ${u.failedExtensions.join(", ")}\n`,
+      );
+    }
+  }
+  for (const f of result.failures) {
+    opts.writeStderr(
+      `publisher ${f.id} unreachable (${f.reason}); cached key (if present) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
+    );
+  }
+}
+
+function syncResultExitCode(result: SyncResult): number {
+  if (result.publishersUpdated.some((u) => u.reverifyResult === "failed")) return 2;
+  if (result.publishersChecked > 0 && result.failures.length === result.publishersChecked) return 4;
+  return 0;
+}
+
 export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Promise<number> {
   const dryRun = opts.args.includes("--dry-run");
   const json = opts.args.includes("--json");
@@ -435,37 +469,15 @@ export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Pr
     result = await opts.caller({ dryRun });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/air-gap/i.test(msg)) {
-      opts.writeStderr(`${msg}\n`);
-      return 3;
-    }
     opts.writeStderr(`${msg}\n`);
-    return 1;
+    return /air-gap/i.test(msg) ? 3 : 1;
   }
   if (json) {
     opts.writeStdout(`${JSON.stringify(result)}\n`);
   } else {
-    opts.writeStdout(`publishers checked: ${String(result.publishersChecked)}\n`);
-    opts.writeStdout(`unchanged:          ${String(result.publishersUnchanged)}\n`);
-    opts.writeStdout(`updated:            ${String(result.publishersUpdated.length)}\n`);
-    opts.writeStdout(`evicted:            ${String(result.publishersEvicted.length)}\n`);
-    opts.writeStdout(`failed:             ${String(result.failures.length)}\n`);
-    for (const u of result.publishersUpdated) {
-      if (u.reverifyResult === "failed") {
-        opts.writeStderr(
-          `publisher ${u.id} rotated keys; ${String(u.failedExtensions.length)} extension(s) failed re-verify: ${u.failedExtensions.join(", ")}\n`,
-        );
-      }
-    }
-    for (const f of result.failures) {
-      opts.writeStderr(
-        `publisher ${f.id} unreachable (${f.reason}); cached key (if present) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
-      );
-    }
+    printSyncResultHuman(result, opts);
   }
-  if (result.publishersUpdated.some((u) => u.reverifyResult === "failed")) return 2;
-  if (result.publishersChecked > 0 && result.failures.length === result.publishersChecked) return 4;
-  return 0;
+  return syncResultExitCode(result);
 }
 
 export async function runExtensionSync(client: IPCClient, args: string[]): Promise<number> {
@@ -477,19 +489,76 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
   });
 }
 
+const EXTENSION_USAGE =
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+
+async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
+  if (sub === "keygen") {
+    const code = await runExtensionKeygen(rest);
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  if (sub === "sign") {
+    const code = await runExtensionSign(rest);
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  return false;
+}
+
+async function dispatchExtensionWithCode(
+  sub: string,
+  client: IPCClient,
+  args: string[],
+): Promise<boolean> {
+  const handlers: Record<string, () => Promise<number>> = {
+    sync: () => runExtensionSync(client, args),
+    update: () => runExtensionUpdate(client, args),
+    downgrade: () => runExtensionDowngrade(client, args),
+  };
+  const handler = handlers[sub];
+  if (handler === undefined) return false;
+  const code = await handler();
+  if (code !== 0) process.exit(code);
+  return true;
+}
+
+async function dispatchExtensionVoid(
+  sub: string,
+  client: IPCClient,
+  args: string[],
+  rest: string[],
+): Promise<boolean> {
+  switch (sub) {
+    case "list":
+    case "":
+      await runExtensionList(client, args);
+      return true;
+    case "info":
+      await runExtensionInfo(client, rest, args);
+      return true;
+    case "install":
+      await runExtensionInstall(client, args, rest);
+      return true;
+    case "enable":
+      await runExtensionEnable(client, rest);
+      return true;
+    case "disable":
+      await runExtensionDisable(client, rest);
+      return true;
+    case "remove":
+      await runExtensionRemove(client, args, rest);
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
 
-  if (sub === "keygen") {
-    const code = await runExtensionKeygen(rest);
-    if (code !== 0) process.exit(code);
-    return;
-  }
-
-  if (sub === "sign") {
-    const code = await runExtensionSign(rest);
-    if (code !== 0) process.exit(code);
+  if (await runExtensionOffline(sub, rest)) {
     return;
   }
 
@@ -502,57 +571,13 @@ export async function runExtension(args: string[]): Promise<void> {
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
-    if (sub === "list" || sub === "") {
-      await runExtensionList(client, args);
+    if (await dispatchExtensionVoid(sub, client, args, rest)) {
       return;
     }
-
-    if (sub === "info") {
-      await runExtensionInfo(client, rest, args);
+    if (await dispatchExtensionWithCode(sub, client, args)) {
       return;
     }
-
-    if (sub === "install") {
-      await runExtensionInstall(client, args, rest);
-      return;
-    }
-
-    if (sub === "enable") {
-      await runExtensionEnable(client, rest);
-      return;
-    }
-
-    if (sub === "disable") {
-      await runExtensionDisable(client, rest);
-      return;
-    }
-
-    if (sub === "remove") {
-      await runExtensionRemove(client, args, rest);
-      return;
-    }
-
-    if (sub === "sync") {
-      const code = await runExtensionSync(client, args);
-      if (code !== 0) process.exit(code);
-      return;
-    }
-
-    if (sub === "update") {
-      const code = await runExtensionUpdate(client, args);
-      if (code !== 0) process.exit(code);
-      return;
-    }
-
-    if (sub === "downgrade") {
-      const code = await runExtensionDowngrade(client, args);
-      if (code !== 0) process.exit(code);
-      return;
-    }
-
-    throw new Error(
-      "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]",
-    );
+    throw new Error(EXTENSION_USAGE);
   } finally {
     await client.disconnect();
   }
@@ -591,30 +616,32 @@ function formatUpdateRow(u: AvailableUpdateCli): string {
   return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\t${u.publisherStatus}\t${u.verificationStatus}`;
 }
 
-export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
-  const args = opts.args;
-  const isJson = hasFlag(args, "--json");
-  const isCheck = hasFlag(args, "--check");
-  const toVersion = takeFlagValue(args, "--to");
-  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
-  const id = positional[0];
-
-  if (id === undefined) {
-    const list = (await opts.caller("extension.checkForUpdates", {
-      ...(isCheck ? { force: true } : {}),
-    })) as AvailableUpdateCli[];
-    if (isJson) {
-      opts.writeStdout(`${JSON.stringify(list, undefined, 2)}\n`);
-      return 0;
-    }
-    if (list.length === 0) {
-      opts.writeStdout("No updates available.\n");
-      return 0;
-    }
-    for (const u of list) opts.writeStdout(`${formatUpdateRow(u)}\n`);
+async function listExtensionUpdates(
+  opts: RunExtensionUpdateOpts,
+  isJson: boolean,
+  isCheck: boolean,
+): Promise<number> {
+  const list = (await opts.caller("extension.checkForUpdates", {
+    ...(isCheck ? { force: true } : {}),
+  })) as AvailableUpdateCli[];
+  if (isJson) {
+    opts.writeStdout(`${JSON.stringify(list, undefined, 2)}\n`);
     return 0;
   }
+  if (list.length === 0) {
+    opts.writeStdout("No updates available.\n");
+    return 0;
+  }
+  for (const u of list) opts.writeStdout(`${formatUpdateRow(u)}\n`);
+  return 0;
+}
 
+async function applyExtensionUpdate(
+  opts: RunExtensionUpdateOpts,
+  id: string,
+  toVersion: string | undefined,
+  isJson: boolean,
+): Promise<number> {
   const list = (await opts.caller("extension.checkForUpdates", {})) as AvailableUpdateCli[];
   const entry = list.find((e) => e.id === id);
   if (entry === undefined) {
@@ -643,6 +670,20 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
     `update failed: ${res.reason ?? "unknown"}${res.hint !== undefined ? `\n  hint: ${res.hint}` : ""}\n`,
   );
   return 1;
+}
+
+export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
+  const args = opts.args;
+  const isJson = hasFlag(args, "--json");
+  const isCheck = hasFlag(args, "--check");
+  const toVersion = takeFlagValue(args, "--to");
+  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
+  const id = positional[0];
+
+  if (id === undefined) {
+    return listExtensionUpdates(opts, isJson, isCheck);
+  }
+  return applyExtensionUpdate(opts, id, toVersion, isJson);
 }
 
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {

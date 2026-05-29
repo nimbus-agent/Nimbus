@@ -1,3 +1,4 @@
+import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type ReembedSummary = {
@@ -8,6 +9,14 @@ type ReembedSummary = {
   planned?: number;
   dryRun?: boolean;
 };
+
+interface ReembedOptions {
+  model: string;
+  itemType?: string;
+  service?: string;
+  limit?: number;
+  batchSize?: number;
+}
 
 function takeFlag(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -25,13 +34,7 @@ function parseInteger(raw: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function printPlannedAction(p: {
-  model: string;
-  itemType?: string;
-  service?: string;
-  limit?: number;
-  batchSize?: number;
-}): void {
+function printPlannedAction(p: ReembedOptions): void {
   console.log(`Planned reembed:`);
   console.log(`  model      = ${p.model}`);
   if (p.itemType !== undefined) console.log(`  item-type  = ${p.itemType}`);
@@ -41,73 +44,60 @@ function printPlannedAction(p: {
   console.log("Re-run with --yes to execute, or --dry-run to compute the candidate count.");
 }
 
-async function runReembed(args: string[]): Promise<void> {
+function parseReembedOptions(args: string[]): ReembedOptions {
   const model = takeFlag(args, "--model");
   if (model === undefined || model === "") {
     throw new Error(
       "Usage: nimbus index reembed --model <id> [--item-type <key>] [--service <name>] [--limit N] [--batch-size N] [--dry-run] [--yes] [--json]",
     );
   }
+  const opts: ReembedOptions = { model };
   const itemType = takeFlag(args, "--item-type");
   const service = takeFlag(args, "--service");
   const limit = parseInteger(takeFlag(args, "--limit"));
   const batchSize = parseInteger(takeFlag(args, "--batch-size"));
-  const dryRun = takeBool(args, "--dry-run");
-  const yes = takeBool(args, "--yes");
-  const isJson = takeBool(args, "--json");
+  if (itemType !== undefined) opts.itemType = itemType;
+  if (service !== undefined) opts.service = service;
+  if (limit !== undefined) opts.limit = limit;
+  if (batchSize !== undefined) opts.batchSize = batchSize;
+  return opts;
+}
 
-  if (!dryRun && !yes) {
-    const planned: {
-      model: string;
-      itemType?: string;
-      service?: string;
-      limit?: number;
-      batchSize?: number;
-    } = { model };
-    if (itemType !== undefined) planned.itemType = itemType;
-    if (service !== undefined) planned.service = service;
-    if (limit !== undefined) planned.limit = limit;
-    if (batchSize !== undefined) planned.batchSize = batchSize;
-    printPlannedAction(planned);
-    return;
-  }
-
-  const params: Record<string, unknown> = { model, dryRun };
-  if (itemType !== undefined) params["itemType"] = itemType;
-  if (service !== undefined) params["service"] = service;
-  if (limit !== undefined) params["limit"] = limit;
-  if (batchSize !== undefined) params["batchSize"] = batchSize;
-
-  const summary = await withGatewayIpc(async (c) => {
-    return await new Promise<ReembedSummary>((resolve, reject) => {
-      let jobId: string | undefined;
-      c.onNotification("index.reembedProgress", (n: unknown) => {
-        const p = n as { jobId: string; done: number; total: number; skipped: number };
-        if (jobId === undefined || p.jobId !== jobId) return;
-        if (!isJson) {
-          console.log(
-            `progress: ${String(p.done)}/${String(p.total)} (skipped ${String(p.skipped)})`,
-          );
-        }
-      });
-      c.onNotification("index.reembedDone", (n: unknown) => {
-        const p = n as ReembedSummary;
-        if (jobId === undefined || p.jobId !== jobId) return;
-        resolve(p);
-      });
-      c.onNotification("index.reembedError", (n: unknown) => {
-        const p = n as { jobId: string; code: number; message: string };
-        if (jobId === undefined || p.jobId !== jobId) return;
-        reject(new Error(`ERROR: ${p.message}`));
-      });
-      c.call<{ jobId: string }>("index.reembed", params)
-        .then((r) => {
-          jobId = r.jobId;
-        })
-        .catch(reject);
+function streamReembed(
+  c: IPCClient,
+  params: Record<string, unknown>,
+  isJson: boolean,
+): Promise<ReembedSummary> {
+  return new Promise<ReembedSummary>((resolve, reject) => {
+    let jobId: string | undefined;
+    c.onNotification("index.reembedProgress", (n: unknown) => {
+      const p = n as { jobId: string; done: number; total: number; skipped: number };
+      if (jobId === undefined || p.jobId !== jobId) return;
+      if (!isJson) {
+        console.log(
+          `progress: ${String(p.done)}/${String(p.total)} (skipped ${String(p.skipped)})`,
+        );
+      }
     });
+    c.onNotification("index.reembedDone", (n: unknown) => {
+      const p = n as ReembedSummary;
+      if (jobId === undefined || p.jobId !== jobId) return;
+      resolve(p);
+    });
+    c.onNotification("index.reembedError", (n: unknown) => {
+      const p = n as { jobId: string; code: number; message: string };
+      if (jobId === undefined || p.jobId !== jobId) return;
+      reject(new Error(`ERROR: ${p.message}`));
+    });
+    c.call<{ jobId: string }>("index.reembed", params)
+      .then((r) => {
+        jobId = r.jobId;
+      })
+      .catch(reject);
   });
+}
 
+function printReembedSummary(summary: ReembedSummary, isJson: boolean): void {
   if (isJson) {
     console.log(JSON.stringify(summary));
   } else if (summary.dryRun === true) {
@@ -118,6 +108,27 @@ async function runReembed(args: string[]): Promise<void> {
         `(${String(summary.durationMs)} ms).`,
     );
   }
+}
+
+async function runReembed(args: string[]): Promise<void> {
+  const opts = parseReembedOptions(args);
+  const dryRun = takeBool(args, "--dry-run");
+  const yes = takeBool(args, "--yes");
+  const isJson = takeBool(args, "--json");
+
+  if (!dryRun && !yes) {
+    printPlannedAction(opts);
+    return;
+  }
+
+  const params: Record<string, unknown> = { model: opts.model, dryRun };
+  if (opts.itemType !== undefined) params["itemType"] = opts.itemType;
+  if (opts.service !== undefined) params["service"] = opts.service;
+  if (opts.limit !== undefined) params["limit"] = opts.limit;
+  if (opts.batchSize !== undefined) params["batchSize"] = opts.batchSize;
+
+  const summary = await withGatewayIpc((c) => streamReembed(c, params, isJson));
+  printReembedSummary(summary, isJson);
 }
 
 function printIndexHelp(): void {

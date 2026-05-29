@@ -74,123 +74,93 @@ function parseIntegerMs(name: string, raw: string): number {
   return n;
 }
 
-export function parseDeployAnnotateArgs(argv: readonly string[]): DeployAnnotateArgs {
-  let service: string | undefined;
-  let sha: string | undefined;
-  let targetRef: string | undefined;
-  let env: string | undefined;
-  let status: DeployAnnotateStatus | undefined;
-  let startedAtMs: number | undefined;
-  let finishedAtMs: number | undefined;
-  let workflowUrl: string | undefined;
-  let provider: DeployAnnotateProvider = "other";
-  let runId: string | undefined;
-  let jobId: string | undefined;
-  let json = false;
+interface MutableDeployAnnotateArgs {
+  service?: string;
+  sha?: string;
+  targetRef?: string;
+  env?: string;
+  status?: DeployAnnotateStatus;
+  startedAtMs?: number;
+  finishedAtMs?: number;
+  workflowUrl?: string;
+  provider: DeployAnnotateProvider;
+  runId?: string;
+  jobId?: string;
+  json: boolean;
+}
 
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    switch (a) {
-      case "--service": {
-        service = requireValue("--service", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--sha": {
-        sha = requireValue("--sha", argv[i + 1])
-          .trim()
-          .toLowerCase();
-        i += 1;
-        break;
-      }
-      case "--target-ref": {
-        targetRef = requireValue("--target-ref", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--env": {
-        env = requireValue("--env", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--status": {
-        const v = requireValue("--status", argv[i + 1]).trim();
-        if (!STATUS_VALUES.has(v as DeployAnnotateStatus)) {
-          throw new ArgParseError(
-            "--status must be one of: success, failure, cancelled, in_progress",
-          );
-        }
-        status = v as DeployAnnotateStatus;
-        i += 1;
-        break;
-      }
-      case "--started-at": {
-        startedAtMs = parseIntegerMs("--started-at", requireValue("--started-at", argv[i + 1]));
-        i += 1;
-        break;
-      }
-      case "--finished-at": {
-        finishedAtMs = parseIntegerMs("--finished-at", requireValue("--finished-at", argv[i + 1]));
-        i += 1;
-        break;
-      }
-      case "--workflow-url": {
-        workflowUrl = requireValue("--workflow-url", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--provider": {
-        const v = requireValue("--provider", argv[i + 1]).trim();
-        if (!PROVIDER_VALUES.has(v as DeployAnnotateProvider)) {
-          throw new ArgParseError(
-            "--provider must be one of: github-actions, gitlab, jenkins, circleci, bitbucket, other",
-          );
-        }
-        provider = v as DeployAnnotateProvider;
-        i += 1;
-        break;
-      }
-      case "--run-id": {
-        runId = requireValue("--run-id", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--job-id": {
-        jobId = requireValue("--job-id", argv[i + 1]).trim();
-        i += 1;
-        break;
-      }
-      case "--json": {
-        json = true;
-        break;
-      }
-      default: {
-        if (typeof a === "string" && a.startsWith("--")) {
-          throw new ArgParseError(`unknown flag: ${a}`);
-        }
-        break;
-      }
-    }
+function parseStatusValue(raw: string): DeployAnnotateStatus {
+  const v = raw.trim();
+  if (!STATUS_VALUES.has(v as DeployAnnotateStatus)) {
+    throw new ArgParseError("--status must be one of: success, failure, cancelled, in_progress");
   }
+  return v as DeployAnnotateStatus;
+}
 
-  if (service === undefined) {
-    throw new ArgParseError("--service is required");
+function parseProviderValue(raw: string): DeployAnnotateProvider {
+  const v = raw.trim();
+  if (!PROVIDER_VALUES.has(v as DeployAnnotateProvider)) {
+    throw new ArgParseError(
+      "--provider must be one of: github-actions, gitlab, jenkins, circleci, bitbucket, other",
+    );
   }
-  if (sha === undefined) {
-    throw new ArgParseError("--sha is required");
+  return v as DeployAnnotateProvider;
+}
+
+const VALUE_FLAG_SETTERS: Record<
+  string,
+  (out: MutableDeployAnnotateArgs, flag: string, raw: string | undefined) => void
+> = {
+  "--service": (out, flag, raw) => {
+    out.service = requireValue(flag, raw).trim();
+  },
+  "--sha": (out, flag, raw) => {
+    out.sha = requireValue(flag, raw).trim().toLowerCase();
+  },
+  "--target-ref": (out, flag, raw) => {
+    out.targetRef = requireValue(flag, raw).trim();
+  },
+  "--env": (out, flag, raw) => {
+    out.env = requireValue(flag, raw).trim();
+  },
+  "--status": (out, flag, raw) => {
+    out.status = parseStatusValue(requireValue(flag, raw));
+  },
+  "--started-at": (out, flag, raw) => {
+    out.startedAtMs = parseIntegerMs(flag, requireValue(flag, raw));
+  },
+  "--finished-at": (out, flag, raw) => {
+    out.finishedAtMs = parseIntegerMs(flag, requireValue(flag, raw));
+  },
+  "--workflow-url": (out, flag, raw) => {
+    out.workflowUrl = requireValue(flag, raw).trim();
+  },
+  "--provider": (out, flag, raw) => {
+    out.provider = parseProviderValue(requireValue(flag, raw));
+  },
+  "--run-id": (out, flag, raw) => {
+    out.runId = requireValue(flag, raw).trim();
+  },
+  "--job-id": (out, flag, raw) => {
+    out.jobId = requireValue(flag, raw).trim();
+  },
+};
+
+function validateDeployAnnotateArgs(out: MutableDeployAnnotateArgs): DeployAnnotateArgs {
+  const required: ReadonlyArray<[keyof MutableDeployAnnotateArgs, string]> = [
+    ["service", "--service is required"],
+    ["sha", "--sha is required"],
+    ["targetRef", "--target-ref is required"],
+    ["env", "--env is required"],
+    ["status", "--status is required"],
+    ["startedAtMs", "--started-at is required"],
+  ];
+  for (const [key, message] of required) {
+    if (out[key] === undefined) throw new ArgParseError(message);
   }
-  if (targetRef === undefined) {
-    throw new ArgParseError("--target-ref is required");
-  }
-  if (env === undefined) {
-    throw new ArgParseError("--env is required");
-  }
-  if (status === undefined) {
-    throw new ArgParseError("--status is required");
-  }
-  if (startedAtMs === undefined) {
-    throw new ArgParseError("--started-at is required");
-  }
+  const { service, sha, env } = out as Required<
+    Pick<MutableDeployAnnotateArgs, "service" | "sha" | "env">
+  >;
 
   if (service.length > SERVICE_MAX || !SERVICE_RE.test(service)) {
     throw new ArgParseError(
@@ -204,20 +174,30 @@ export function parseDeployAnnotateArgs(argv: readonly string[]): DeployAnnotate
     throw new ArgParseError("--sha must be 7..64 lowercase hex chars");
   }
 
-  return {
-    service,
-    sha,
-    targetRef,
-    env,
-    status,
-    startedAtMs,
-    finishedAtMs,
-    workflowUrl,
-    provider,
-    runId,
-    jobId,
-    json,
-  };
+  return out as DeployAnnotateArgs;
+}
+
+export function parseDeployAnnotateArgs(argv: readonly string[]): DeployAnnotateArgs {
+  const out: MutableDeployAnnotateArgs = { provider: "other", json: false };
+
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--json") {
+      out.json = true;
+      continue;
+    }
+    const setter = a === undefined ? undefined : VALUE_FLAG_SETTERS[a];
+    if (setter !== undefined && a !== undefined) {
+      setter(out, a, argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (typeof a === "string" && a.startsWith("--")) {
+      throw new ArgParseError(`unknown flag: ${a}`);
+    }
+  }
+
+  return validateDeployAnnotateArgs(out);
 }
 
 interface AnnotateResultEnvelope {
