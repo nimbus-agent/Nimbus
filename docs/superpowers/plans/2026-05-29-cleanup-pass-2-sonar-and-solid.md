@@ -34,6 +34,7 @@
 ### Task 0.0: Scope `@nimbus/docs` out of the per-OS typecheck + add a retry
 
 **Files:**
+
 - Modify: `package.json` (root — add a filtered typecheck script)
 - Modify: `.github/workflows/ci.yml` (the cross-platform matrix `Typecheck (catches host-specific TS quirks)` step, ~line 238)
 - Modify: `scripts/lib/preflight-gates.ts` (register the new gate so the drift test passes — see Step 4)
@@ -94,7 +95,7 @@ Run: `bun run typecheck:no-docs` (expect: passes, skips `@nimbus/docs`) and `bun
 
 - [ ] **Step 6: Commit**
 
-```
+```text
 ci: scope @nimbus/docs out of per-OS typecheck + retry (de-flake macOS)
 
 The cross-platform matrix gateway entry ran whole-workspace typecheck incl.
@@ -121,6 +122,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ### Task 0.2: Capture the SonarCloud baseline snapshot
 
 **Files:**
+
 - Create: `docs/superpowers/specs/sonar-baseline-2026-05-29.md`
 
 - [ ] **Step 1: Fetch the measures and save them**
@@ -137,7 +139,7 @@ Paste the table (and the raw JSON, via appending `| ConvertTo-Json -Depth 6` to 
 
 - [ ] **Step 2: Commit**
 
-```
+```text
 chore(cleanup2): capture SonarCloud baseline snapshot
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
@@ -167,6 +169,7 @@ if ($cc) { "C toolchain: $($cc.Source)" } else { "NO C toolchain — Task C.7 wi
 ### Task A.1: Add stable comparators to the three unguarded sorts
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/extension-tree.ts:27`
 - Modify: `packages/gateway/src/extensions/dependency-graph.ts:172`
 - Modify: `packages/gateway/src/extensions/dependency-graph.ts:186`
@@ -194,7 +197,7 @@ Run: `bun run typecheck` and `bun run lint`. Expected: both pass.
 
 - [ ] **Step 6: Commit**
 
-```
+```text
 fix(extensions,cli): stable locale-aware sort comparators (Sonar S2871)
 
 Three Array.sort() calls lacked a compare function — locale-unsafe and
@@ -214,6 +217,7 @@ Hotspots are *review* items, not auto-bugs. Each is either (a) fixed with a code
 ### Task B.1: Triage + bound the 14 ReDoS regexes
 
 **Files (regex sites flagged):**
+
 - `packages/gateway/src/connectors/_lib/pagination.ts:52`
 - `packages/gateway/src/connectors/intercom-conversation-mapping.ts:26`
 - `packages/gateway/src/connectors/obsidian-daily-note.ts:70`
@@ -237,6 +241,7 @@ Run (PowerShell-native; the hotspots search tops out well under one 500-item pag
 - [ ] **Step 2: For each regex, classify and act**
 
 For each: identify the super-linear construct (nested quantifiers `(a+)+`, `(.*)*`, overlapping alternations, unbounded `.*` before a backtracking group). Then:
+
 - **If the input is attacker-influenced** (connector API payloads, indexed content, extension-registry responses): rewrite to a linear form — anchor it, replace `.*` with a negated char class `[^x]*`, make quantifiers possessive-equivalent by restructuring, or cap input length before matching. Add a unit test feeding a pathological input and asserting the function returns within a tight bound (e.g. completes; or use a length guard).
 - **If the input is bounded/trusted** (a fixed config key, a short internal id): mark the hotspot **Safe** in SonarCloud with the justification, and add a `docs/internals/platform-quirks.md` (or a connector doc) note only if the reasoning is non-obvious.
 
@@ -250,7 +255,7 @@ Run: `bun run test:coverage:sync` and `bun run test:coverage:extensions`. Expect
 
 - [ ] **Step 5: Commit** (one commit; cite the rule)
 
-```
+```text
 fix(connectors,extensions): linear-time regexes for ReDoS hotspots (Sonar)
 
 Rewrites attacker-influenced patterns to non-backtracking forms with
@@ -263,6 +268,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ### Task B.2: The C buffer-overflow + crypto/encrypt hotspots
 
 **Files:**
+
 - `packages/gateway/src-native/sandbox-helper/main.c:92` (HIGH — `strlen` use)
 - the weak-cryptography site, the encrypt-data site, the "other" site (enumerate via the hotspots API, `securityCategory != dos`)
 
@@ -282,7 +288,7 @@ For each: confirm the algorithm/usage against `nimbus-security-invariants` (I10 
 
 - [ ] **Step 5: Commit**
 
-```
+```text
 fix(sandbox): bound strlen read in sandbox-helper; review crypto hotspots
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
@@ -299,6 +305,7 @@ This is the substance of the deferred Pass-5 SRP pass. Each function exceeds the
 ### Task C.1: `extensions/` cluster (highest concentration)
 
 **Files (sorted by complexity):**
+
 - `install-from-local.ts:479` (49), `:368` (19), `:87` (17)
 - `auto-update-rpc.ts:29` (45)
 - `verify-extensions.ts:346` (41), `:247` (21), `:47` (21)
@@ -465,6 +472,7 @@ Re-run `bun install` if `bun.lock` changed in the merge. Resolve any conflicts b
 ### Task F.4: Formally track the deferred Pass-5 lanes
 
 **Files:**
+
 - Create: `docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md`
 
 The Pass-5 SOLID lanes with **no** Sonar finding (so not pulled into WS-C) must not be silently dropped. Record them as a tracked stub so a future session can pick them up.
