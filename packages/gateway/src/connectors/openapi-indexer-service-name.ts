@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { stripAffixChars } from "../util/strip-affixes.ts";
 
 export type ServiceNameInput = {
   specPath: string;
@@ -11,13 +12,13 @@ export type ServiceNameInput = {
 const SLUG_DROP = /[^a-z0-9]+/g;
 
 function slugify(s: string): string {
-  return s
+  const collapsed = s
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim()
-    .replace(SLUG_DROP, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(SLUG_DROP, "-");
+  return stripAffixChars(collapsed, "-");
 }
 
 function readOverride(specPath: string): string | undefined {

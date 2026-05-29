@@ -1,3 +1,4 @@
+import { stripTrailingChars } from "../util/strip-affixes.ts";
 import { type ExtensionManifest, parseExtensionManifestJson } from "./manifest.ts";
 import { decodeBase64 } from "./verify-signature.ts";
 
@@ -20,7 +21,7 @@ export function createPublisherKeyFetcher(opts: {
   retries?: number;
   fetchFn?: typeof fetch;
 }): PublisherKeyFetcher {
-  const baseUrl = opts.baseUrl.replace(/\/+$/, "");
+  const baseUrl = stripTrailingChars(opts.baseUrl, "/");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = opts.retries ?? DEFAULT_RETRIES;
   const fetchFn = opts.fetchFn ?? fetch;
@@ -125,7 +126,7 @@ export interface RegistryClient {
 const HEX64 = /^[0-9a-f]{64}$/i;
 
 export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
-  const baseUrl = opts.baseUrl.replace(/\/+$/, "");
+  const baseUrl = stripTrailingChars(opts.baseUrl, "/");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchFn = opts.fetchFn ?? fetch;
   const publisher = createPublisherKeyFetcher({

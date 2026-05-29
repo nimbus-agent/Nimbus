@@ -62,7 +62,9 @@ export function createDarwinSandboxRunner(): SandboxRunner {
         manifest: opts.manifest,
       });
       writeFileSync(profilePath, profile);
-      const child = spawn("sandbox-exec", ["-f", profilePath, cmd, ...args], {
+      // Absolute path to the SIP-protected system binary — never resolve via
+      // PATH, which could be attacker-influenced (Sonar S4036 hardening).
+      const child = spawn("/usr/bin/sandbox-exec", ["-f", profilePath, cmd, ...args], {
         env: opts.env,
         cwd: opts.cwd,
         stdio: opts.stdio,

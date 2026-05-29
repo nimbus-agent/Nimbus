@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripTrailingChars } from "../util/strip-affixes.ts";
 
 const SUPPORTED_TOKENS = ["YYYY", "YY", "MM", "DD", "HH", "mm"] as const;
 
@@ -67,7 +68,7 @@ export function resolveDailyNotePath(vaultRoot: string, date: Date): DailyNotePa
   const { config, warning } = readDailyNotesConfig(vaultRoot);
   const filename = `${formatDailyNoteFilename(config.format, date)}.md`;
   const rel =
-    config.folder === "" ? filename : `${config.folder.replace(/[/\\]+$/, "")}/${filename}`;
+    config.folder === "" ? filename : `${stripTrailingChars(config.folder, "/\\")}/${filename}`;
   return {
     relativePath: rel,
     absolutePath: join(vaultRoot, rel),

@@ -46,6 +46,40 @@ Raw JSON:
 ]
 ```
 
+## WS-B hotspot dispositions (18 reviewed)
+
+Each of the 18 `TO_REVIEW` hotspots was read individually. None had exponential
+(catastrophic) backtracking. Handling per the "code-harden where a real
+improvement exists, mark Safe otherwise" decision:
+
+**Code-hardened (8) — auto-resolve on next analysis (regex removed / absolute path):**
+
+| Site | Was | Now |
+|---|---|---|
+| `connectors/obsidian-vault-id.ts:9` | `/[/\\]+$/` (anchored quantifier, O(n²)) | `stripTrailingChars` (O(n)) |
+| `connectors/obsidian-daily-note.ts:70` | `/[/\\]+$/` | `stripTrailingChars` |
+| `connectors/openapi-indexer-service-name.ts:20` | `/^-+\|-+$/g` | `stripAffixChars` |
+| `extensions/registry-client.ts:23` | `/\/+$/` | `stripTrailingChars` |
+| `extensions/registry-client.ts:128` | `/\/+$/` | `stripTrailingChars` |
+| `mcp-connectors/obsidian/src/server.ts:87` | `/[/\\]+$/` | local `stripTrailingSlashes` |
+| `mcp-connectors/obsidian/src/server.ts:354` | `/[/\\]+$/` | local `stripTrailingSlashes` |
+| `platform/sandbox/darwin.ts:65` | `spawn("sandbox-exec", …)` (PATH) | `spawn("/usr/bin/sandbox-exec", …)` |
+
+**Marked Reviewed → Safe in SonarCloud (10), with per-site justification:**
+
+| Site | Justification |
+|---|---|
+| `src-native/sandbox-helper/main.c:92` | `strlen` on a NUL-terminated argv/env hostname; length re-checked ≤253 next line |
+| `extensions/auto-update-init.ts:169` | `Math.random()` is poll-jitter only — no secret/token/nonce/key use |
+| `connectors/intercom-conversation-mapping.ts:26` | `/<[^>]+>/g` negated class — linear, no backtracking |
+| `connectors/stackoverflow-question-mapping.ts:29` | `/<[^>]+>/g` negated class — linear |
+| `connectors/obsidian-parsing.ts:5` | `H1_RE` on the user's own local note body (trusted), bounded by line length |
+| `connectors/obsidian-parsing.ts:6` | `WIKILINK_RE` lazy negated class — linear |
+| `mcp-connectors/obsidian/src/server.ts:141` | `H1_RE` — trusted local note body |
+| `connectors/_lib/pagination.ts:52` | Link-header regex — negated class + `\s*` bounded by required `rel` literal |
+| `connectors/openapi-indexer-service-name.ts:31` | `/#.*$/` single greedy `.*` anchored at EOL — linear; trusted local TOML |
+| `sdk/src/testing/sandbox-probe.ts:38` | http to non-routable TEST-NET-1 to assert egress is *blocked*; no data sent |
+
 ## Toolchain notes (Task 0.3)
 
 - **No C compiler** (`gcc`/`clang`/`cl`) on the execution machine. Task C.7

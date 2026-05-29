@@ -39,6 +39,12 @@ function vaultIdFromAbsolutePath(absolutePath: string): string {
   return createHash("sha256").update(absolutePath).digest("hex").slice(0, 12);
 }
 
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && (s.charAt(end - 1) === "/" || s.charAt(end - 1) === "\\")) end--;
+  return s.slice(0, end);
+}
+
 function assertWithinVault(vaultRoot: string, relPath: string): string {
   const resolvedRoot = resolve(vaultRoot);
   const candidate = resolve(resolvedRoot, relPath);
@@ -84,7 +90,7 @@ function walkForVaults(dir: string, out: VaultEntry[]): void {
     out.push({
       id: vaultIdFromAbsolutePath(dir),
       root: dir,
-      name: basename(dir.replace(/[/\\]+$/, "")),
+      name: basename(stripTrailingSlashes(dir)),
     });
   }
   for (const e of entries) {
@@ -351,7 +357,7 @@ function resolveDailyNoteRelativePath(vaultRoot: string, date: Date): string {
     // fall through to defaults
   }
   const filename = `${formatDailyNoteFilename(format, date)}.md`;
-  return folder === "" ? filename : `${folder.replace(/[/\\]+$/, "")}/${filename}`;
+  return folder === "" ? filename : `${stripTrailingSlashes(folder)}/${filename}`;
 }
 
 reg(
