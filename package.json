@@ -80,6 +80,7 @@
     "build:debug": "bun scripts/build-debug.ts",
     "build:release": "bun scripts/build-release.ts",
     "typecheck": "bun run --filter '*' typecheck",
+    "typecheck:no-docs": "bun run --filter '!@nimbus/docs' typecheck",
     "audit:high": "bun audit --audit-level high",
     "check-package": "bun scripts/check-package.ts",
     "dev-doctor": "bun scripts/dev-doctor.ts",

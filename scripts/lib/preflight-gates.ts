@@ -58,6 +58,7 @@ const FULL: readonly Gate[] = [
 export const PREFLIGHT_GATES: readonly Gate[] = [...FAST, ...FULL];
 
 export const CI_ONLY_GATES: readonly string[] = [
+  "typecheck:no-docs", // per-OS matrix de-flake: docs excluded there; full typecheck (incl. docs) is the local gate + ubuntu _test-suite.yml
   "test:scripts", // run by `bun test scripts` separately
   "audit:coverage-floor:build-lcov", // composed into the full-tier gate above
   "package:headless", // headless gateway+CLI bundle — packaging step, not a local correctness gate

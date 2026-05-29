@@ -237,7 +237,21 @@ jobs:
 
       - name: Typecheck (catches host-specific TS quirks)
         if: matrix.pkg == 'gateway'
-        run: bun run typecheck
+        shell: bash
+        # @nimbus/docs is excluded here: it has no host-specific TS surface and
+        # its astro-sync content-type generation flakes a 60s Vite timeout on slow
+        # macOS runners. Full workspace typecheck (incl. docs) still runs once on
+        # Ubuntu in _test-suite.yml. Retry-once mirrors the unit-tests step below.
+        run: |
+          set +e
+          for attempt in 1 2; do
+            bun run typecheck:no-docs
+            code=$?
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            if [ "$attempt" -eq 2 ]; then echo "Both attempts failed (exit $code)"; exit "$code"; fi
+            echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
+            sleep 5
+          done
 
       - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
         shell: bash
