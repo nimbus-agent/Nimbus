@@ -21,6 +21,12 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "gitlab:issue",
   "bitbucket:issue",
   "snyk:vulnerability",
+  // Zoom cloud-recording AI transcripts are transcribed speech with speaker
+  // turns — genuinely paragraph-shaped natural language. Same hybrid-mode
+  // posture as snyk:vulnerability: MiniLM-only fallback when openai.api_key
+  // is absent. Added in PR-3 of the Zoom connector workstream alongside
+  // mapZoomTranscriptToItem.
+  "zoom:transcript",
 ]);
 
 export function routingKey(service: string, type: string): string {
