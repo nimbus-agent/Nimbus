@@ -420,23 +420,12 @@ mod tests {
         assert!(!is_method_allowed("db.delete"));
         assert!(!is_method_allowed("config.set"));
         assert!(!is_method_allowed("index.rebuild"));
-        
-        
-        
+
         assert!(!is_method_allowed("index.querySql"));
     }
 
     #[test]
     fn allowlist_exact_size() {
-        
-        
-        
-        
-        
-        
-        
-        
-        
         assert_eq!(ALLOWED_METHODS.len(), 62);
     }
 
@@ -574,10 +563,6 @@ fn classify_notification(app: &AppHandle, method: &str, params: Option<&Value>) 
             }
         }
         "profile.switched" => {
-            
-            
-            
-            
             if let Some(p) = params.cloned() {
                 let _ = app.emit("profile://switched", p);
             }

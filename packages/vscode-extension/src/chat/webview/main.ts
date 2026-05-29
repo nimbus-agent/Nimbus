@@ -228,7 +228,10 @@ function bootstrap(): void {
   });
 
   window.addEventListener("message", (ev) => {
-    if (ev.origin.length > 0 && !ev.origin.startsWith("vscode-webview")) return;
+    // VS Code webview messages from the extension host carry a non-empty
+    // `vscode-webview://...` origin. Reject anything else — including empty /
+    // null origins from sandboxed iframes — to satisfy CodeQL js/missing-origin-check.
+    if (!ev.origin.startsWith("vscode-webview")) return;
     const data = ev.data as ExtensionToWebview;
     if (data === null || typeof data !== "object" || typeof data.type !== "string") return;
     applyMessage(r, data);

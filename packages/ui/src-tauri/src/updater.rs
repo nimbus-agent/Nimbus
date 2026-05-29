@@ -34,7 +34,7 @@ pub fn install_listener(app: &AppHandle) {
     let app_for_handler = app.clone();
     app.listen("gateway://connection-state", move |evt| {
         let payload = evt.payload();
-        
+
         let stripped = payload.trim_matches('"');
         if stripped != "connected" {
             return;
@@ -43,7 +43,7 @@ pub fn install_listener(app: &AppHandle) {
             Some(t) => t,
             None => return,
         };
-        
+
         if tracker.apply_in_flight.swap(false, Ordering::SeqCst) {
             let _ = app_for_handler.emit("updater://restart-complete", ());
         }
