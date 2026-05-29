@@ -42,6 +42,14 @@ Adopted: `index.reembed` — `[EXTRACTED]`. Net -34 lines from `index-reembed-rp
 
 **Skipped:** `llm.pullModel` — the Tauri UI consumes the `pullId` field name across `packages/ui/src/ipc/types.ts` (3 type entries), the Zustand `model` store slice, `client.ts` typed wrapper, `ModelPanel.tsx`, and `PullDialog.tsx`. Renaming to `jobId` for naming consistency would propagate across all five files plus their tests. Dedupe value of one additional consumer is not worth a 6-file UI cascade. The bespoke `activePulls: Map<pullId, AbortController>` pattern in `llm-rpc.ts` stays — straightforward, well-tested, ~25 lines.
 
+## Task 4.14 status (2026-05-29)
+
+`applySchemaStep` + `simpleStep` extracted inline in `packages/gateway/src/index/migrations/runner.ts`. `applySchemaStep(db, version, description, sql, now)` wraps the "exec SQL + PRAGMA user_version + recordMigration" transaction; `sql` accepts `string | readonly string[]` so two-statement migrations (schema + seed; schema + legacy-migrate) collapse cleanly. `simpleStep(fromVersion, toVersion, description, sql)` is the declarative array builder.
+
+24 of 31 migrations move to inline `simpleStep(...)` entries — `[EXTRACTED]`. -101 lines net on a 683-line file.
+
+**Kept as bespoke functions (7):** V4 + V5 (conditional ALTER + UPDATE), V6 + V10 + V30 (vec-table branching), V16 (conditional ALTER on sync_state), V18 (AUDIT_CHAIN schema + `backfillAuditChain` data-migration loop). All 48 tests across 13 per-version `runner-v*.test.ts` files pass.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
