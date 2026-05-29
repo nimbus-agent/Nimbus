@@ -101,29 +101,56 @@ type IndexedSchemaStep = {
   readonly apply: (db: Database, now: number) => void;
 };
 
-function migrateIndexedV0ToV1(db: Database, now: number): void {
+/**
+ * Runs one SQL constant (or a sequence), bumps `PRAGMA user_version` to the
+ * target version, and records the step in `_schema_migrations`. All three
+ * operations execute in a single `db.transaction` so the migration is atomic.
+ *
+ * Use this from a `migrateIndexedV*` function when the step's logic doesn't
+ * fit the declarative `simpleStep` shape (e.g., needs a conditional probe,
+ * a runtime branch on `tryLoadSqliteVec`, or a custom data backfill alongside
+ * the schema change). Otherwise, prefer `simpleStep` in `INDEXED_SCHEMA_STEPS`.
+ */
+function applySchemaStep(
+  db: Database,
+  version: number,
+  description: string,
+  sql: string | readonly string[],
+  now: number,
+): void {
   db.transaction(() => {
-    dbExec(db, INITIAL_SCHEMA_SQL);
-    dbExec(db, "PRAGMA user_version = 1");
-    recordMigration(db, 1, "initial filesystem schema", now);
+    if (typeof sql === "string") {
+      dbExec(db, sql);
+    } else {
+      for (const s of sql) {
+        dbExec(db, s);
+      }
+    }
+    dbExec(db, `PRAGMA user_version = ${String(version)}`);
+    recordMigration(db, version, description, now);
   })();
 }
 
-function migrateIndexedV1ToV2(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, SCHEDULER_V2_MIGRATION_SQL);
-    dbExec(db, "PRAGMA user_version = 2");
-    recordMigration(db, 2, "scheduler_state + sync_telemetry", now);
-  })();
-}
-
-function migrateIndexedV2ToV3(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, UNIFIED_ITEM_V3_SCHEMA_SQL);
-    dbExec(db, UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL);
-    dbExec(db, "PRAGMA user_version = 3");
-    recordMigration(db, 3, "unified item + item_fts + person", now);
-  })();
+/**
+ * Build a declarative `IndexedSchemaStep` for the common "exec one (or a
+ * sequence of) SQL constants" shape. Pass `sql` as `string` for single-statement
+ * migrations or `readonly string[]` for two-statement ones (e.g., schema + seed).
+ *
+ * For migrations that need conditional probes, vec-table branching, or custom
+ * data backfills, write a bespoke `migrateIndexedV*ToV*` function and reference
+ * it directly in `INDEXED_SCHEMA_STEPS`.
+ */
+function simpleStep(
+  fromVersion: number,
+  toVersion: number,
+  description: string,
+  sql: string | readonly string[],
+): IndexedSchemaStep {
+  return {
+    fromVersion,
+    toVersion,
+    apply: (db, now) => applySchemaStep(db, toVersion, description, sql, now),
+  };
 }
 
 function migrateIndexedV3ToV4(db: Database, now: number): void {
@@ -164,30 +191,6 @@ function migrateIndexedV5ToV6(db: Database, now: number): void {
   })();
 }
 
-function migrateIndexedV6ToV7(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, GRAPH_V7_MIGRATION_SQL);
-    dbExec(db, "PRAGMA user_version = 7");
-    recordMigration(db, 7, "graph_entity + graph_relation", now);
-  })();
-}
-
-function migrateIndexedV7ToV8(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, WATCHER_V8_MIGRATION_SQL);
-    dbExec(db, "PRAGMA user_version = 8");
-    recordMigration(db, 8, "watcher + watcher_event", now);
-  })();
-}
-
-function migrateIndexedV8ToV9(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, WORKFLOW_V9_MIGRATION_SQL);
-    dbExec(db, "PRAGMA user_version = 9");
-    recordMigration(db, 9, "workflow tables", now);
-  })();
-}
-
 function vecTableExists(db: Database): boolean {
   const row = db
     .query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vec_items_384'`)
@@ -207,46 +210,6 @@ function migrateIndexedV9ToV10(db: Database, now: number): void {
   })();
 }
 
-function migrateIndexedV10ToV11(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, USER_MCP_V11_MIGRATION_SQL);
-    dbExec(db, "PRAGMA user_version = 11");
-    recordMigration(db, 11, "user_mcp_connector", now);
-  })();
-}
-
-function migrateIndexedV11ToV12(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, GRAPH_RELATION_TYPES_V12_SQL);
-    dbExec(db, "PRAGMA user_version = 12");
-    recordMigration(db, 12, "graph_relation_type filesystem edges", now);
-  })();
-}
-
-function migrateIndexedV12ToV13(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, CONNECTOR_HEALTH_V13_SQL);
-    dbExec(db, "PRAGMA user_version = 13");
-    recordMigration(db, 13, "connector health state + history", now);
-  })();
-}
-
-function migrateIndexedV13ToV14(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, QUERY_LATENCY_V14_SQL);
-    dbExec(db, "PRAGMA user_version = 14");
-    recordMigration(db, 14, "query_latency_log + slow_query_log", now);
-  })();
-}
-
-function migrateIndexedV14ToV15(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, CONNECTOR_REMOVE_INTENT_V15_SQL);
-    dbExec(db, "PRAGMA user_version = 15");
-    recordMigration(db, 15, "connector_remove_intent (crash-safe removal WAL)", now);
-  })();
-}
-
 function llmModelsSyncStateHasContextWindowColumn(db: Database): boolean {
   const cols = db.query("PRAGMA table_info(sync_state)").all() as Array<{ name: string }>;
   return cols.some((c) => c.name === "context_window_tokens");
@@ -260,14 +223,6 @@ function migrateIndexedV15ToV16(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 16");
     recordMigration(db, 16, "llm_models table + sync_state.context_window_tokens", now);
-  })();
-}
-
-function migrateIndexedV16ToV17(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, SUB_TASK_RESULTS_V17_SQL);
-    dbExec(db, "PRAGMA user_version = 17");
-    recordMigration(db, 17, "sub_task_results (multi-agent sub-task persistence)", now);
   })();
 }
 
@@ -307,100 +262,6 @@ function migrateIndexedV17ToV18(db: Database, now: number): void {
   })();
 }
 
-function migrateIndexedV18ToV19(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, LAN_PEERS_V19_SQL);
-    dbExec(db, "PRAGMA user_version = 19");
-    recordMigration(db, 19, "lan_peers (LAN remote-access peer registry)", now);
-  })();
-}
-
-function migrateIndexedV19ToV20(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, LLM_TASK_DEFAULTS_V20_SQL);
-    dbExec(db, "PRAGMA user_version = 20");
-    recordMigration(db, 20, "llm_task_defaults (per-task-type LLM model defaults)", now);
-  })();
-}
-
-function migrateIndexedV20ToV21(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, CONNECTOR_DEPTH_V21_SQL);
-    dbExec(db, "PRAGMA user_version = 21");
-    recordMigration(db, 21, "sync_state.depth (per-connector reindex depth)", now);
-  })();
-}
-
-function migrateIndexedV21ToV22(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, WATCHER_GRAPH_V22_SQL);
-    dbExec(db, "PRAGMA user_version = 22");
-    recordMigration(db, 22, "watcher.graph_predicate_json (graph-aware conditions)", now);
-  })();
-}
-
-function migrateIndexedV22ToV23(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, WORKFLOW_RUN_COLUMNS_V23_SQL);
-    dbExec(db, "PRAGMA user_version = 23");
-    recordMigration(
-      db,
-      23,
-      "workflow_run.dry_run + workflow_run.params_override_json (WS5-D Polish)",
-      now,
-    );
-  })();
-}
-
-function migrateIndexedV23ToV24(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, AUDIT_SESSION_V24_SCHEMA_SQL);
-    dbExec(db, "PRAGMA user_version = 24");
-    recordMigration(db, 24, "audit_log.session_id (transcript rehydration support)", now);
-  })();
-}
-
-function migrateIndexedV24ToV25(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, API_ENDPOINT_V25_SCHEMA_SQL);
-    dbExec(db, "PRAGMA user_version = 25");
-    recordMigration(db, 25, "api_endpoint shadow table (Wave A PR 1)", now);
-  })();
-}
-
-function migrateIndexedV25ToV26(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, OBSIDIAN_NOTES_V26_SCHEMA_SQL);
-    dbExec(db, OBSIDIAN_NOTES_V26_SEED_SQL);
-    dbExec(db, "PRAGMA user_version = 26");
-    recordMigration(db, 26, "obsidian_notes shadow table (Wave A PR 2)", now);
-  })();
-}
-
-function migrateIndexedV26ToV27(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, PR_COMMIT_RELATION_V27_SEED_SQL);
-    dbExec(db, "PRAGMA user_version = 27");
-    recordMigration(db, 27, "merged_as graph_relation_type (DORA Lead Time, T4 PR 2)", now);
-  })();
-}
-
-function migrateIndexedV27ToV28(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, DEPLOYMENT_V28_SCHEMA_SQL);
-    dbExec(db, "PRAGMA user_version = 28");
-    recordMigration(db, 28, "deployment_items shadow table (T4 PR 3b)", now);
-  })();
-}
-
-function migrateIndexedV28ToV29(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, TOOL_CALL_LOG_V29_SCHEMA_SQL);
-    dbExec(db, "PRAGMA user_version = 29");
-    recordMigration(db, 29, "tool_call_log audit table (T6 PR 2)", now);
-  })();
-}
-
 function migrateIndexedV29ToV30(db: Database, now: number): void {
   const hasVec = vecTableExists(db);
   const sql = hasVec ? VEC_ITEMS_1536_V30_SCHEMA_SQL : VEC_ITEMS_1536_V30_NO_VEC_SQL;
@@ -420,46 +281,84 @@ function migrateIndexedV29ToV30(db: Database, now: number): void {
   })();
 }
 
-function migrateIndexedV30ToV31(db: Database, now: number): void {
-  db.transaction(() => {
-    dbExec(db, V31_EXTENSION_DEPENDENCY_SQL);
-    dbExec(db, "PRAGMA user_version = 31");
-    recordMigration(db, 31, "extension_dependency table + reverse-dep index (T2 PR 4)", now);
-  })();
-}
-
 const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
-  { fromVersion: 0, toVersion: 1, apply: migrateIndexedV0ToV1 },
-  { fromVersion: 1, toVersion: 2, apply: migrateIndexedV1ToV2 },
-  { fromVersion: 2, toVersion: 3, apply: migrateIndexedV2ToV3 },
+  simpleStep(0, 1, "initial filesystem schema", INITIAL_SCHEMA_SQL),
+  simpleStep(1, 2, "scheduler_state + sync_telemetry", SCHEDULER_V2_MIGRATION_SQL),
+  simpleStep(2, 3, "unified item + item_fts + person", [
+    UNIFIED_ITEM_V3_SCHEMA_SQL,
+    UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
+  ]),
   { fromVersion: 3, toVersion: 4, apply: migrateIndexedV3ToV4 },
   { fromVersion: 4, toVersion: 5, apply: migrateIndexedV4ToV5 },
   { fromVersion: 5, toVersion: 6, apply: migrateIndexedV5ToV6 },
-  { fromVersion: 6, toVersion: 7, apply: migrateIndexedV6ToV7 },
-  { fromVersion: 7, toVersion: 8, apply: migrateIndexedV7ToV8 },
-  { fromVersion: 8, toVersion: 9, apply: migrateIndexedV8ToV9 },
+  simpleStep(6, 7, "graph_entity + graph_relation", GRAPH_V7_MIGRATION_SQL),
+  simpleStep(7, 8, "watcher + watcher_event", WATCHER_V8_MIGRATION_SQL),
+  simpleStep(8, 9, "workflow tables", WORKFLOW_V9_MIGRATION_SQL),
   { fromVersion: 9, toVersion: 10, apply: migrateIndexedV9ToV10 },
-  { fromVersion: 10, toVersion: 11, apply: migrateIndexedV10ToV11 },
-  { fromVersion: 11, toVersion: 12, apply: migrateIndexedV11ToV12 },
-  { fromVersion: 12, toVersion: 13, apply: migrateIndexedV12ToV13 },
-  { fromVersion: 13, toVersion: 14, apply: migrateIndexedV13ToV14 },
-  { fromVersion: 14, toVersion: 15, apply: migrateIndexedV14ToV15 },
+  simpleStep(10, 11, "user_mcp_connector", USER_MCP_V11_MIGRATION_SQL),
+  simpleStep(11, 12, "graph_relation_type filesystem edges", GRAPH_RELATION_TYPES_V12_SQL),
+  simpleStep(12, 13, "connector health state + history", CONNECTOR_HEALTH_V13_SQL),
+  simpleStep(13, 14, "query_latency_log + slow_query_log", QUERY_LATENCY_V14_SQL),
+  simpleStep(
+    14,
+    15,
+    "connector_remove_intent (crash-safe removal WAL)",
+    CONNECTOR_REMOVE_INTENT_V15_SQL,
+  ),
   { fromVersion: 15, toVersion: 16, apply: migrateIndexedV15ToV16 },
-  { fromVersion: 16, toVersion: 17, apply: migrateIndexedV16ToV17 },
+  simpleStep(
+    16,
+    17,
+    "sub_task_results (multi-agent sub-task persistence)",
+    SUB_TASK_RESULTS_V17_SQL,
+  ),
   { fromVersion: 17, toVersion: 18, apply: migrateIndexedV17ToV18 },
-  { fromVersion: 18, toVersion: 19, apply: migrateIndexedV18ToV19 },
-  { fromVersion: 19, toVersion: 20, apply: migrateIndexedV19ToV20 },
-  { fromVersion: 20, toVersion: 21, apply: migrateIndexedV20ToV21 },
-  { fromVersion: 21, toVersion: 22, apply: migrateIndexedV21ToV22 },
-  { fromVersion: 22, toVersion: 23, apply: migrateIndexedV22ToV23 },
-  { fromVersion: 23, toVersion: 24, apply: migrateIndexedV23ToV24 },
-  { fromVersion: 24, toVersion: 25, apply: migrateIndexedV24ToV25 },
-  { fromVersion: 25, toVersion: 26, apply: migrateIndexedV25ToV26 },
-  { fromVersion: 26, toVersion: 27, apply: migrateIndexedV26ToV27 },
-  { fromVersion: 27, toVersion: 28, apply: migrateIndexedV27ToV28 },
-  { fromVersion: 28, toVersion: 29, apply: migrateIndexedV28ToV29 },
+  simpleStep(18, 19, "lan_peers (LAN remote-access peer registry)", LAN_PEERS_V19_SQL),
+  simpleStep(
+    19,
+    20,
+    "llm_task_defaults (per-task-type LLM model defaults)",
+    LLM_TASK_DEFAULTS_V20_SQL,
+  ),
+  simpleStep(20, 21, "sync_state.depth (per-connector reindex depth)", CONNECTOR_DEPTH_V21_SQL),
+  simpleStep(
+    21,
+    22,
+    "watcher.graph_predicate_json (graph-aware conditions)",
+    WATCHER_GRAPH_V22_SQL,
+  ),
+  simpleStep(
+    22,
+    23,
+    "workflow_run.dry_run + workflow_run.params_override_json (WS5-D Polish)",
+    WORKFLOW_RUN_COLUMNS_V23_SQL,
+  ),
+  simpleStep(
+    23,
+    24,
+    "audit_log.session_id (transcript rehydration support)",
+    AUDIT_SESSION_V24_SCHEMA_SQL,
+  ),
+  simpleStep(24, 25, "api_endpoint shadow table (Wave A PR 1)", API_ENDPOINT_V25_SCHEMA_SQL),
+  simpleStep(25, 26, "obsidian_notes shadow table (Wave A PR 2)", [
+    OBSIDIAN_NOTES_V26_SCHEMA_SQL,
+    OBSIDIAN_NOTES_V26_SEED_SQL,
+  ]),
+  simpleStep(
+    26,
+    27,
+    "merged_as graph_relation_type (DORA Lead Time, T4 PR 2)",
+    PR_COMMIT_RELATION_V27_SEED_SQL,
+  ),
+  simpleStep(27, 28, "deployment_items shadow table (T4 PR 3b)", DEPLOYMENT_V28_SCHEMA_SQL),
+  simpleStep(28, 29, "tool_call_log audit table (T6 PR 2)", TOOL_CALL_LOG_V29_SCHEMA_SQL),
   { fromVersion: 29, toVersion: 30, apply: migrateIndexedV29ToV30 },
-  { fromVersion: 30, toVersion: 31, apply: migrateIndexedV30ToV31 },
+  simpleStep(
+    30,
+    31,
+    "extension_dependency table + reverse-dep index (T2 PR 4)",
+    V31_EXTENSION_DEPENDENCY_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
