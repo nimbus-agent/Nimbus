@@ -88,23 +88,15 @@ jobs:
           echo "gateway-touched=$GW" >> "$GITHUB_OUTPUT"
           echo "cli-touched=$CLI" >> "$GITHUB_OUTPUT"
 
-          # Build the cross-platform matrix include[] from those booleans.
-          # Each entry produces one matrix expansion; empty array skips the
-          # whole job.
-          ENTRIES=()
-          if [[ "$GW" == "true" ]]; then
-            ENTRIES+=('{"os":"macos-15","pkg":"gateway"}')
-            ENTRIES+=('{"os":"windows-2025","pkg":"gateway"}')
-          fi
-          if [[ "$CLI" == "true" ]]; then
-            ENTRIES+=('{"os":"macos-15","pkg":"cli"}')
-            ENTRIES+=('{"os":"windows-2025","pkg":"cli"}')
-          fi
-          if [[ ${#ENTRIES[@]} -eq 0 ]]; then
-            MATRIX='[]'
-          else
-            MATRIX="[$(IFS=,; echo "${ENTRIES[*]}")]"
-          fi
+          # Cross-platform matrix: always emit all 4 entries. Branch
+          # protection rulesets require the expanded check names
+          # (`PR quality — Cross-platform (cli, macos-15)` etc.); a
+          # per-package skip would post the un-expanded template name and
+          # leave the 4 required checks "Expected — Waiting for status to
+          # be reported" forever. The `code-changed` gate already
+          # short-circuits docs-only PRs, so per-package gating saves
+          # nothing here.
+          MATRIX='[{"os":"macos-15","pkg":"gateway"},{"os":"windows-2025","pkg":"gateway"},{"os":"macos-15","pkg":"cli"},{"os":"windows-2025","pkg":"cli"}]'
           echo "cross-platform-matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
@@ -189,11 +181,12 @@ jobs:
   # restore that isolation by construction.
   pr-quality-cross-platform:
     name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
-    # cross-platform-matrix is "[]" (empty array) when the PR touched
-    # neither gateway nor cli; skip the whole job in that case. The
-    # matrix.include below would expand to zero entries anyway, but the
-    # explicit if: makes the skip status visible in the checks UI.
-    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true' && needs.filter.outputs.cross-platform-matrix != '[]'
+    # The filter always emits the full 4-entry matrix on `pull_request`
+    # events (see ci.yml#Detect-changed-paths). The `code-changed` gate
+    # above already short-circuits docs-only PRs at the filter, so this
+    # job just needs to confirm the PR event + non-doc trigger before
+    # expanding the matrix.
+    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
     needs: filter
     strategy:
       fail-fast: false
