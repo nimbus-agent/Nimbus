@@ -326,6 +326,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       contents: read
+      checks: write
       id-token: write
 
   # Rust/Tauri checks — all 3 OSes, runs in parallel with ci-ts
