@@ -54,6 +54,95 @@ export type SyncResult = {
 
 let syncMutex: Promise<unknown> = Promise.resolve();
 
+function gatherPublisherManifests(db: Database): {
+  publisherIdToExtensions: Map<string, string[]>;
+  manifestByExtId: Map<string, Record<string, unknown>>;
+} {
+  const publisherIdToExtensions = new Map<string, string[]>();
+  const manifestByExtId = new Map<string, Record<string, unknown>>();
+  for (const row of listExtensions(db)) {
+    const mp = resolveExtensionManifestPath(row.install_path);
+    if (mp === undefined) continue;
+    let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
+    try {
+      parsed = parseExtensionManifestForRegistry(readFileSync(mp, "utf8"));
+    } catch {
+      continue;
+    }
+    const m = parsed.manifest;
+    if (m.publisher === undefined) continue;
+    manifestByExtId.set(row.id, m as unknown as Record<string, unknown>);
+    const arr = publisherIdToExtensions.get(m.publisher.id) ?? [];
+    arr.push(row.id);
+    publisherIdToExtensions.set(m.publisher.id, arr);
+  }
+  return { publisherIdToExtensions, manifestByExtId };
+}
+
+async function reverifyPublisherExtensions(
+  extIds: readonly string[],
+  manifestByExtId: ReadonlyMap<string, Record<string, unknown>>,
+  pubkey: Uint8Array,
+): Promise<{ allOk: boolean; failed: string[] }> {
+  const failed: string[] = [];
+  let allOk = true;
+  for (const extId of extIds) {
+    const m = manifestByExtId.get(extId);
+    if (m === undefined) continue;
+    try {
+      await verifyManifestSignature(
+        m as { publisher?: { id: string; key: string }; signature?: string },
+        pubkey,
+      );
+    } catch {
+      failed.push(extId);
+      allOk = false;
+    }
+  }
+  return { allOk, failed };
+}
+
+async function processPublisherKey(
+  opts: { vault: NimbusVault; db: Database; fetcher: PublisherKeyFetcher; dryRun: boolean },
+  result: SyncResult,
+  publisherId: string,
+  extIds: readonly string[],
+  manifestByExtId: ReadonlyMap<string, Record<string, unknown>>,
+): Promise<void> {
+  result.publishersChecked++;
+  const fetched = await opts.fetcher.fetch(publisherId);
+  if (fetched.kind === "transient" || fetched.kind === "registry_error") {
+    result.failures.push({ id: publisherId, reason: fetched.message });
+    auditPublisherKeySynced(opts.db, opts.dryRun, publisherId, "failed", fetched.message);
+    return;
+  }
+  if (fetched.kind === "not_found") {
+    if (!opts.dryRun) await evictPublisherKey(opts.vault, publisherId);
+    result.publishersEvicted.push(publisherId);
+    auditPublisherKeySynced(opts.db, opts.dryRun, publisherId, "evicted");
+    return;
+  }
+  const cached = await readPublisherKey(opts.vault, publisherId);
+  const equal = cached !== undefined && encodeBase64(cached) === encodeBase64(fetched.pubkey);
+  if (equal) {
+    result.publishersUnchanged++;
+    auditPublisherKeySynced(opts.db, opts.dryRun, publisherId, "unchanged");
+    return;
+  }
+  if (!opts.dryRun) await writePublisherKey(opts.vault, publisherId, fetched.pubkey);
+  const { allOk, failed } = await reverifyPublisherExtensions(
+    extIds,
+    manifestByExtId,
+    fetched.pubkey,
+  );
+  result.publishersUpdated.push({
+    id: publisherId,
+    reverifyResult: allOk ? "ok" : "failed",
+    failedExtensions: failed,
+  });
+  auditPublisherKeySynced(opts.db, opts.dryRun, publisherId, "updated");
+}
+
 export async function syncPublisherKeys(opts: {
   vault: NimbusVault;
   db: Database;
@@ -63,25 +152,7 @@ export async function syncPublisherKeys(opts: {
 }): Promise<SyncResult> {
   const run = async (): Promise<SyncResult> => {
     if (opts.enforceAirGap) throw new AirGapEnforcementError();
-    const rows = listExtensions(opts.db);
-    const publisherIdToExtensions = new Map<string, string[]>();
-    const manifestByExtId = new Map<string, Record<string, unknown>>();
-    for (const row of rows) {
-      const mp = resolveExtensionManifestPath(row.install_path);
-      if (mp === undefined) continue;
-      let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
-      try {
-        parsed = parseExtensionManifestForRegistry(readFileSync(mp, "utf8"));
-      } catch {
-        continue;
-      }
-      const m = parsed.manifest;
-      if (m.publisher === undefined) continue;
-      manifestByExtId.set(row.id, m as unknown as Record<string, unknown>);
-      const arr = publisherIdToExtensions.get(m.publisher.id) ?? [];
-      arr.push(row.id);
-      publisherIdToExtensions.set(m.publisher.id, arr);
-    }
+    const { publisherIdToExtensions, manifestByExtId } = gatherPublisherManifests(opts.db);
 
     const result: SyncResult = {
       publishersChecked: 0,
@@ -92,49 +163,14 @@ export async function syncPublisherKeys(opts: {
     };
 
     const dryRun = opts.dryRun === true;
+    const processOpts = {
+      vault: opts.vault,
+      db: opts.db,
+      fetcher: opts.fetcher,
+      dryRun,
+    };
     for (const [publisherId, extIds] of publisherIdToExtensions) {
-      result.publishersChecked++;
-      const fetched = await opts.fetcher.fetch(publisherId);
-      if (fetched.kind === "transient" || fetched.kind === "registry_error") {
-        result.failures.push({ id: publisherId, reason: fetched.message });
-        auditPublisherKeySynced(opts.db, dryRun, publisherId, "failed", fetched.message);
-        continue;
-      }
-      if (fetched.kind === "not_found") {
-        if (!dryRun) await evictPublisherKey(opts.vault, publisherId);
-        result.publishersEvicted.push(publisherId);
-        auditPublisherKeySynced(opts.db, dryRun, publisherId, "evicted");
-        continue;
-      }
-      const cached = await readPublisherKey(opts.vault, publisherId);
-      const equal = cached !== undefined && encodeBase64(cached) === encodeBase64(fetched.pubkey);
-      if (equal) {
-        result.publishersUnchanged++;
-        auditPublisherKeySynced(opts.db, dryRun, publisherId, "unchanged");
-        continue;
-      }
-      if (!dryRun) await writePublisherKey(opts.vault, publisherId, fetched.pubkey);
-      const failed: string[] = [];
-      let allOk = true;
-      for (const extId of extIds) {
-        const m = manifestByExtId.get(extId);
-        if (m === undefined) continue;
-        try {
-          await verifyManifestSignature(
-            m as { publisher?: { id: string; key: string }; signature?: string },
-            fetched.pubkey,
-          );
-        } catch {
-          failed.push(extId);
-          allOk = false;
-        }
-      }
-      result.publishersUpdated.push({
-        id: publisherId,
-        reverifyResult: allOk ? "ok" : "failed",
-        failedExtensions: failed,
-      });
-      auditPublisherKeySynced(opts.db, dryRun, publisherId, "updated");
+      await processPublisherKey(processOpts, result, publisherId, extIds, manifestByExtId);
     }
 
     return result;

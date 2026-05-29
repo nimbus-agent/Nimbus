@@ -44,6 +44,57 @@ export interface ExtensionMeshHandle {
   stopExtensionClient(extensionId: string): Promise<void>;
 }
 
+function tryPromotePrevVersion(
+  db: Database,
+  logger: Logger,
+  row: ExtensionRow,
+  now: number,
+  activePath: string,
+): boolean {
+  const prevDir = join(dirname(activePath), "_prev");
+  if (!existsSync(prevDir)) return false;
+  let candidates: string[] = [];
+  try {
+    candidates = readdirSync(prevDir).sort();
+  } catch {
+    candidates = [];
+  }
+  const target = candidates[candidates.length - 1];
+  if (target === undefined) return false;
+  try {
+    renameSync(join(prevDir, target), activePath);
+    updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);
+    try {
+      appendAuditEntry(db, {
+        actionType: "extension.autoUpdate.crash_recovered",
+        hitlStatus: "not_required",
+        actionJson: JSON.stringify({
+          id: row.id,
+          promoted_from: target,
+          recovered_active: activePath,
+        }),
+        timestamp: now,
+      });
+    } catch (e) {
+      logger.warn(
+        { extensionId: row.id, err: e instanceof Error ? e.message : String(e) },
+        "extensions: crash-recovery audit append failed",
+      );
+    }
+    logger.warn(
+      { extensionId: row.id, promotedFrom: target },
+      "extensions: auto-update crash-recovered — promoted _prev to active",
+    );
+    return true;
+  } catch (e) {
+    logger.error(
+      { extensionId: row.id, target, err: e instanceof Error ? e.message : String(e) },
+      "extensions: crash-recovery promote rename failed",
+    );
+    return false;
+  }
+}
+
 async function maybeRecoverMissingActive(
   db: Database,
   logger: Logger,
@@ -53,49 +104,8 @@ async function maybeRecoverMissingActive(
   const activePath = row.install_path;
   if (existsSync(activePath)) return true;
 
-  const extRoot = dirname(activePath);
-  const prevDir = join(extRoot, "_prev");
-  if (existsSync(prevDir)) {
-    let candidates: string[] = [];
-    try {
-      candidates = readdirSync(prevDir).sort();
-    } catch {
-      candidates = [];
-    }
-    const target = candidates[candidates.length - 1];
-    if (target !== undefined) {
-      try {
-        renameSync(join(prevDir, target), activePath);
-        updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);
-        try {
-          appendAuditEntry(db, {
-            actionType: "extension.autoUpdate.crash_recovered",
-            hitlStatus: "not_required",
-            actionJson: JSON.stringify({
-              id: row.id,
-              promoted_from: target,
-              recovered_active: activePath,
-            }),
-            timestamp: now,
-          });
-        } catch (e) {
-          logger.warn(
-            { extensionId: row.id, err: e instanceof Error ? e.message : String(e) },
-            "extensions: crash-recovery audit append failed",
-          );
-        }
-        logger.warn(
-          { extensionId: row.id, promotedFrom: target },
-          "extensions: auto-update crash-recovered — promoted _prev to active",
-        );
-        return true;
-      } catch (e) {
-        logger.error(
-          { extensionId: row.id, target, err: e instanceof Error ? e.message : String(e) },
-          "extensions: crash-recovery promote rename failed",
-        );
-      }
-    }
+  if (tryPromotePrevVersion(db, logger, row, now, activePath)) {
+    return true;
   }
 
   setExtensionEnabled(db, row.id, false);
@@ -117,6 +127,73 @@ async function maybeRecoverMissingActive(
   return false;
 }
 
+async function disableAndStopExtension(
+  db: Database,
+  row: ExtensionRow,
+  now: number,
+  mesh: ExtensionMeshHandle | undefined,
+): Promise<void> {
+  setExtensionEnabled(db, row.id, false);
+  if (mesh !== undefined) {
+    await mesh.stopExtensionClient(row.id);
+  }
+  touchExtensionVerifiedAt(db, row.id, now);
+}
+
+async function runHashVerification(
+  db: Database,
+  logger: Logger,
+  row: ExtensionRow,
+  now: number,
+  mesh: ExtensionMeshHandle | undefined,
+  manifestPath: string | undefined,
+): Promise<boolean> {
+  if (manifestPath === undefined) {
+    logger.warn(
+      { extensionId: row.id, installPath: row.install_path },
+      "extensions: manifest file missing",
+    );
+    touchExtensionVerifiedAt(db, row.id, now);
+    return false;
+  }
+  const manifestBytes = readFileSync(manifestPath);
+  const manifestHex = sha256HexOfBytes(manifestBytes);
+  if (!sha256HexEqualConstantTime(manifestHex, row.manifest_hash)) {
+    logger.error(
+      { extensionId: row.id, expected: row.manifest_hash, actual: manifestHex },
+      "extensions: manifest hash mismatch — extension disabled",
+    );
+    await disableAndStopExtension(db, row, now, mesh);
+    return false;
+  }
+  const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
+  if (manifest.id !== row.id || manifest.version !== row.version) {
+    logger.warn(
+      { extensionId: row.id, manifestId: manifest.id, manifestVersion: manifest.version },
+      "extensions: manifest id/version differs from registry",
+    );
+  }
+  const entryRel =
+    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const entryPath = join(row.install_path, entryRel);
+  if (!existsSync(entryPath)) {
+    logger.warn({ extensionId: row.id, entryPath }, "extensions: entry file missing");
+    touchExtensionVerifiedAt(db, row.id, now);
+    return false;
+  }
+  const entryBytes = readFileSync(entryPath);
+  const entryHex = sha256HexOfBytes(entryBytes);
+  if (!sha256HexEqualConstantTime(entryHex, row.entry_hash)) {
+    logger.error(
+      { extensionId: row.id, expected: row.entry_hash, actual: entryHex },
+      "extensions: entry hash mismatch — extension disabled",
+    );
+    await disableAndStopExtension(db, row, now, mesh);
+    return false;
+  }
+  return true;
+}
+
 async function verifyOneExtension(
   db: Database,
   logger: Logger,
@@ -129,57 +206,8 @@ async function verifyOneExtension(
 
   const manifestPath = resolveExtensionManifestPath(row.install_path);
   try {
-    if (manifestPath === undefined) {
-      logger.warn(
-        { extensionId: row.id, installPath: row.install_path },
-        "extensions: manifest file missing",
-      );
-      touchExtensionVerifiedAt(db, row.id, now);
-      return;
-    }
-    const manifestBytes = readFileSync(manifestPath);
-    const manifestHex = sha256HexOfBytes(manifestBytes);
-    if (!sha256HexEqualConstantTime(manifestHex, row.manifest_hash)) {
-      logger.error(
-        { extensionId: row.id, expected: row.manifest_hash, actual: manifestHex },
-        "extensions: manifest hash mismatch — extension disabled",
-      );
-      setExtensionEnabled(db, row.id, false);
-      if (mesh !== undefined) {
-        await mesh.stopExtensionClient(row.id);
-      }
-      touchExtensionVerifiedAt(db, row.id, now);
-      return;
-    }
-    const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-    if (manifest.id !== row.id || manifest.version !== row.version) {
-      logger.warn(
-        { extensionId: row.id, manifestId: manifest.id, manifestVersion: manifest.version },
-        "extensions: manifest id/version differs from registry",
-      );
-    }
-    const entryRel =
-      manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
-    const entryPath = join(row.install_path, entryRel);
-    if (!existsSync(entryPath)) {
-      logger.warn({ extensionId: row.id, entryPath }, "extensions: entry file missing");
-      touchExtensionVerifiedAt(db, row.id, now);
-      return;
-    }
-    const entryBytes = readFileSync(entryPath);
-    const entryHex = sha256HexOfBytes(entryBytes);
-    if (!sha256HexEqualConstantTime(entryHex, row.entry_hash)) {
-      logger.error(
-        { extensionId: row.id, expected: row.entry_hash, actual: entryHex },
-        "extensions: entry hash mismatch — extension disabled",
-      );
-      setExtensionEnabled(db, row.id, false);
-      if (mesh !== undefined) {
-        await mesh.stopExtensionClient(row.id);
-      }
-      touchExtensionVerifiedAt(db, row.id, now);
-      return;
-    }
+    const reachedEnd = await runHashVerification(db, logger, row, now, mesh, manifestPath);
+    if (!reachedEnd) return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.warn({ extensionId: row.id, err: msg }, "extensions: verify failed");
@@ -343,6 +371,88 @@ export interface VerifyExtensionsSignatureOpts {
   vault: NimbusVault;
 }
 
+async function computeRowSignatureReason(
+  row: ExtensionRow,
+  vault: NimbusVault,
+): Promise<SignatureDisableReason | undefined | "skip"> {
+  const manifestPath = resolveExtensionManifestPath(row.install_path);
+  if (manifestPath === undefined) return "skip";
+  let manifestText: string;
+  try {
+    manifestText = readFileSync(manifestPath, "utf8");
+  } catch {
+    return "skip";
+  }
+  let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
+  try {
+    parsed = parseExtensionManifestForRegistry(manifestText);
+  } catch {
+    return "skip";
+  }
+  const m = parsed.manifest;
+  if (m.publisher === undefined) return "skip";
+  let rawManifestObj: Record<string, unknown>;
+  try {
+    rawManifestObj = JSON.parse(manifestText) as Record<string, unknown>;
+  } catch {
+    return "skip";
+  }
+  const pubkey = await readPublisherKey(vault, m.publisher.id);
+  if (pubkey === undefined) {
+    return "publisher_key_missing";
+  }
+  try {
+    await verifyManifestSignature(
+      rawManifestObj as {
+        publisher?: { id: string; key: string };
+        signature?: string;
+        [k: string]: unknown;
+      },
+      pubkey,
+    );
+  } catch (err) {
+    return errorToHardDisableReason(err);
+  }
+  return undefined;
+}
+
+async function runSignatureVerificationPass(
+  db: Database,
+  logger: Logger,
+  signatureOpts: VerifyExtensionsSignatureOpts,
+  mesh?: ExtensionMeshHandle,
+): Promise<void> {
+  signatureDisabledRegistry.reset();
+  let signaturesChecked = 0;
+  let signatureHardDisabled = 0;
+  const failures: { id: string; reason: SignatureDisableReason }[] = [];
+  for (const row of listExtensions(db).filter((r) => r.enabled === 1)) {
+    const result = await computeRowSignatureReason(row, signatureOpts.vault);
+    if (result === "skip") continue;
+    signaturesChecked++;
+    if (result === undefined) continue;
+    setExtensionEnabled(db, row.id, false);
+    signatureDisabledRegistry.mark(row.id, result);
+    signatureHardDisabled++;
+    failures.push({ id: row.id, reason: result });
+    logger.error(
+      { extensionId: row.id, reason: result },
+      "extensions: signature verification failed — extension disabled",
+    );
+    if (mesh !== undefined) await mesh.stopExtensionClient(row.id);
+  }
+  appendAuditEntry(db, {
+    actionType: "extension.startup_verification",
+    hitlStatus: "not_required",
+    actionJson: JSON.stringify({
+      signatures_checked: signaturesChecked,
+      hard_disabled: signatureHardDisabled,
+      failures,
+    }),
+    timestamp: Date.now(),
+  });
+}
+
 export async function verifyExtensionsBestEffort(
   db: Database,
   logger: Logger,
@@ -369,74 +479,7 @@ export async function verifyExtensionsBestEffort(
   }
 
   if (signatureOpts !== undefined) {
-    signatureDisabledRegistry.reset();
-    let signaturesChecked = 0;
-    let signatureHardDisabled = 0;
-    const failures: { id: string; reason: SignatureDisableReason }[] = [];
-    for (const row of listExtensions(db).filter((r) => r.enabled === 1)) {
-      const manifestPath = resolveExtensionManifestPath(row.install_path);
-      if (manifestPath === undefined) continue;
-      let manifestText: string;
-      try {
-        manifestText = readFileSync(manifestPath, "utf8");
-      } catch {
-        continue;
-      }
-      let parsed: ReturnType<typeof parseExtensionManifestForRegistry>;
-      try {
-        parsed = parseExtensionManifestForRegistry(manifestText);
-      } catch {
-        continue;
-      }
-      const m = parsed.manifest;
-      if (m.publisher === undefined) continue;
-      let rawManifestObj: Record<string, unknown>;
-      try {
-        rawManifestObj = JSON.parse(manifestText) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      signaturesChecked++;
-      const pubkey = await readPublisherKey(signatureOpts.vault, m.publisher.id);
-      let reason: SignatureDisableReason | undefined;
-      if (pubkey === undefined) {
-        reason = "publisher_key_missing";
-      } else {
-        try {
-          await verifyManifestSignature(
-            rawManifestObj as {
-              publisher?: { id: string; key: string };
-              signature?: string;
-              [k: string]: unknown;
-            },
-            pubkey,
-          );
-        } catch (err) {
-          reason = errorToHardDisableReason(err);
-        }
-      }
-      if (reason !== undefined) {
-        setExtensionEnabled(db, row.id, false);
-        signatureDisabledRegistry.mark(row.id, reason);
-        signatureHardDisabled++;
-        failures.push({ id: row.id, reason });
-        logger.error(
-          { extensionId: row.id, reason },
-          "extensions: signature verification failed — extension disabled",
-        );
-        if (mesh !== undefined) await mesh.stopExtensionClient(row.id);
-      }
-    }
-    appendAuditEntry(db, {
-      actionType: "extension.startup_verification",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({
-        signatures_checked: signaturesChecked,
-        hard_disabled: signatureHardDisabled,
-        failures,
-      }),
-      timestamp: Date.now(),
-    });
+    await runSignatureVerificationPass(db, logger, signatureOpts, mesh);
   }
 
   const allRows = listExtensions(db);

@@ -84,6 +84,70 @@ export function extensionInstallDirectory(extensionsDir: string, extensionId: st
   return join(extensionsDir, ...parts);
 }
 
+async function verifyAndRecordSignature(
+  options: {
+    db: Database;
+    manifest: ExtensionManifest;
+    vault?: NimbusVault;
+    fetcher?: PublisherKeyFetcher;
+    enforceAirGap?: boolean;
+    publisherKeyPath?: string;
+  },
+  destManifest: ExtensionManifest,
+  destManifestText: string,
+): Promise<void> {
+  if (destManifest.publisher === undefined) return;
+  if (options.vault === undefined || options.fetcher === undefined) {
+    throw new Error(
+      "signed-extension install requires vault and publisher key fetcher to be wired",
+    );
+  }
+  const publisherId = destManifest.publisher.id;
+  const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
+  const vault = options.vault;
+  try {
+    const resolvedPubkey = await resolvePublisherKey({
+      publisherId,
+      explicitKeyPath: options.publisherKeyPath,
+      vault,
+      fetcher: options.fetcher,
+      enforceAirGap: options.enforceAirGap ?? false,
+    });
+    await verifyManifestSignature(
+      rawManifestObj as {
+        publisher?: { id: string; key: string };
+        signature?: string;
+        [k: string]: unknown;
+      },
+      resolvedPubkey,
+    );
+    await writePublisherKey(vault, publisherId, resolvedPubkey);
+    appendAuditEntry(options.db, {
+      actionType: "extension.signature_verified",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({
+        id: options.manifest.id,
+        publisher_id: publisherId,
+        verified_at_ms: Date.now(),
+      }),
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    appendAuditEntry(options.db, {
+      actionType: "extension.signature_failed",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({
+        id: options.manifest.id,
+        publisher_id: publisherId,
+        error: err instanceof Error ? err.name : "Unknown",
+        message: err instanceof Error ? err.message : String(err),
+      }),
+      timestamp: Date.now(),
+    });
+    throw err;
+  }
+}
+
 async function completeExtensionInstallAfterCopy(options: {
   db: Database;
   dest: string;
@@ -109,55 +173,7 @@ async function completeExtensionInstallAfterCopy(options: {
   }
 
   if (destManifest.publisher !== undefined) {
-    if (options.vault === undefined || options.fetcher === undefined) {
-      throw new Error(
-        "signed-extension install requires vault and publisher key fetcher to be wired",
-      );
-    }
-    const publisherId = destManifest.publisher.id;
-    const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
-    const vault = options.vault;
-    try {
-      const resolvedPubkey = await resolvePublisherKey({
-        publisherId,
-        explicitKeyPath: options.publisherKeyPath,
-        vault,
-        fetcher: options.fetcher,
-        enforceAirGap: options.enforceAirGap ?? false,
-      });
-      await verifyManifestSignature(
-        rawManifestObj as {
-          publisher?: { id: string; key: string };
-          signature?: string;
-          [k: string]: unknown;
-        },
-        resolvedPubkey,
-      );
-      await writePublisherKey(vault, publisherId, resolvedPubkey);
-      appendAuditEntry(options.db, {
-        actionType: "extension.signature_verified",
-        hitlStatus: "not_required",
-        actionJson: JSON.stringify({
-          id: options.manifest.id,
-          publisher_id: publisherId,
-          verified_at_ms: Date.now(),
-        }),
-        timestamp: Date.now(),
-      });
-    } catch (err) {
-      appendAuditEntry(options.db, {
-        actionType: "extension.signature_failed",
-        hitlStatus: "not_required",
-        actionJson: JSON.stringify({
-          id: options.manifest.id,
-          publisher_id: publisherId,
-          error: err instanceof Error ? err.name : "Unknown",
-          message: err instanceof Error ? err.message : String(err),
-        }),
-        timestamp: Date.now(),
-      });
-      throw err;
-    }
+    await verifyAndRecordSignature(options, destManifest, destManifestText);
   }
 
   const entryRelRaw =
@@ -365,6 +381,73 @@ function buildSolverInputs(db: Database): {
   return { installed, activeConstraints };
 }
 
+async function fetchDepManifestResponse(opts: {
+  registryClient: RegistryClient;
+  depId: string;
+  depVersion: string;
+  abortSignal: AbortSignal;
+}): Promise<FetchManifestResponse> {
+  try {
+    return await opts.registryClient.fetchManifest(opts.depId, opts.depVersion, opts.abortSignal);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `dependency install failed: could not fetch manifest for ${opts.depId}@${opts.depVersion}: ${msg}`,
+    );
+  }
+}
+
+async function downloadDepTarball(
+  opts: { depId: string; depVersion: string; abortSignal: AbortSignal },
+  tarballUrl: string,
+): Promise<Uint8Array> {
+  try {
+    return await downloadTarball(tarballUrl, {
+      fetcher: fetch,
+      maxBytes: MAX_TARBALL_BYTES,
+      signal: opts.abortSignal,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `dependency install failed: could not download tarball for ${opts.depId}@${opts.depVersion}: ${msg}`,
+    );
+  }
+}
+
+function extractAndValidateDepSource(
+  tmp: string,
+  tarballBytes: Uint8Array,
+  depId: string,
+  depVersion: string,
+): { sourceRoot: string; extractedManifest: ExtensionManifest } {
+  const tarPath = join(tmp, "dep.tar.gz");
+  writeFileSync(tarPath, tarballBytes);
+
+  const extractDir = join(tmp, "extracted");
+  mkdirSync(extractDir, { recursive: true });
+  extractTarGzToDirectory(tarPath, extractDir);
+
+  const sourceRoot = findExtensionSourceRootInTree(extractDir);
+
+  const srcManifestPath = resolveExtensionManifestPath(sourceRoot);
+  if (srcManifestPath === undefined) {
+    throw new Error(`dependency ${depId}: manifest missing after extract`);
+  }
+  const extractedManifest = parseExtensionManifestJson(readFileSync(srcManifestPath, "utf8"));
+  if (extractedManifest.id !== depId) {
+    throw new Error(
+      `dependency id mismatch: registry advertised ${depId} but manifest has ${extractedManifest.id}`,
+    );
+  }
+  if (extractedManifest.version !== depVersion) {
+    throw new Error(
+      `dependency version mismatch: expected ${depVersion} but manifest has ${extractedManifest.version}`,
+    );
+  }
+  return { sourceRoot, extractedManifest };
+}
+
 async function installDepFromRegistry(opts: {
   db: Database;
   extensionsDir: string;
@@ -376,61 +459,18 @@ async function installDepFromRegistry(opts: {
   pubkeyFetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
 }): Promise<{ dest: string; result: SingleInstallResult }> {
-  let fetchResponse: FetchManifestResponse;
-  try {
-    fetchResponse = await opts.registryClient.fetchManifest(
-      opts.depId,
-      opts.depVersion,
-      opts.abortSignal,
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `dependency install failed: could not fetch manifest for ${opts.depId}@${opts.depVersion}: ${msg}`,
-    );
-  }
-
+  const fetchResponse = await fetchDepManifestResponse(opts);
   const { tarballUrl, entryHash: expectedEntryHash } = fetchResponse;
-  let tarballBytes: Uint8Array;
-  try {
-    tarballBytes = await downloadTarball(tarballUrl, {
-      fetcher: fetch,
-      maxBytes: MAX_TARBALL_BYTES,
-      signal: opts.abortSignal,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `dependency install failed: could not download tarball for ${opts.depId}@${opts.depVersion}: ${msg}`,
-    );
-  }
+  const tarballBytes = await downloadDepTarball(opts, tarballUrl);
 
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-dep-"));
   try {
-    const tarPath = join(tmp, "dep.tar.gz");
-    writeFileSync(tarPath, tarballBytes);
-
-    const extractDir = join(tmp, "extracted");
-    mkdirSync(extractDir, { recursive: true });
-    extractTarGzToDirectory(tarPath, extractDir);
-
-    const sourceRoot = findExtensionSourceRootInTree(extractDir);
-
-    const srcManifestPath = resolveExtensionManifestPath(sourceRoot);
-    if (srcManifestPath === undefined) {
-      throw new Error(`dependency ${opts.depId}: manifest missing after extract`);
-    }
-    const extractedManifest = parseExtensionManifestJson(readFileSync(srcManifestPath, "utf8"));
-    if (extractedManifest.id !== opts.depId) {
-      throw new Error(
-        `dependency id mismatch: registry advertised ${opts.depId} but manifest has ${extractedManifest.id}`,
-      );
-    }
-    if (extractedManifest.version !== opts.depVersion) {
-      throw new Error(
-        `dependency version mismatch: expected ${opts.depVersion} but manifest has ${extractedManifest.version}`,
-      );
-    }
+    const { sourceRoot, extractedManifest } = extractAndValidateDepSource(
+      tmp,
+      tarballBytes,
+      opts.depId,
+      opts.depVersion,
+    );
 
     const dest = extensionInstallDirectory(opts.extensionsDir, opts.depId);
 
@@ -474,6 +514,221 @@ async function installDepFromRegistry(opts: {
       /* best-effort temp-dir cleanup */
     }
   }
+}
+
+type SolverFetcher = {
+  listVersions(id: string): Promise<readonly string[]>;
+  fetchManifest(
+    id: string,
+    version: string,
+  ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }>;
+};
+
+function buildLocalSolverFetcher(
+  db: Database,
+  installedMap: ReadonlyMap<string, string>,
+  registryClient: RegistryClient | undefined,
+  signal: AbortSignal,
+): SolverFetcher {
+  return {
+    async listVersions(id: string): Promise<readonly string[]> {
+      const pinned = installedMap.get(id);
+      if (pinned !== undefined) return [pinned];
+      if (registryClient === undefined) {
+        return [];
+      }
+      const latest = await registryClient.fetchLatestVersion(id, "stable", signal);
+      if (latest === null) {
+        return [];
+      }
+      return [latest.version];
+    },
+    async fetchManifest(
+      id: string,
+      version: string,
+    ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }> {
+      const pinned = installedMap.get(id);
+      if (pinned === version) {
+        const extRow = listExtensions(db).find((r) => r.id === id);
+        if (extRow !== undefined) {
+          const mfPath = resolveExtensionManifestPath(extRow.install_path);
+          if (mfPath !== undefined) {
+            const raw = readFileSync(mfPath, "utf8");
+            const mf = parseExtensionManifestJson(raw);
+            return {
+              id: mf.id,
+              version: mf.version,
+              ...(mf.dependsOn !== undefined ? { dependsOn: mf.dependsOn } : {}),
+            };
+          }
+        }
+      }
+      if (registryClient === undefined) {
+        throw new Error(`registry unavailable: cannot fetch manifest for ${id}@${version}`);
+      }
+      const resp = await registryClient.fetchManifest(id, version, signal);
+      return {
+        id: resp.manifest.id,
+        version: resp.manifest.version,
+        ...(resp.manifest.dependsOn !== undefined ? { dependsOn: resp.manifest.dependsOn } : {}),
+      };
+    },
+  };
+}
+
+async function installRootNode(
+  options: {
+    db: Database;
+    extensionsDir: string;
+    vault?: NimbusVault;
+    fetcher?: PublisherKeyFetcher;
+    enforceAirGap?: boolean;
+    publisherKeyPath?: string;
+  },
+  sourceResolved: string,
+  manifest: ExtensionManifest,
+  registerDir: (dir: string) => void,
+): Promise<void> {
+  const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
+  if (existsSync(dest)) {
+    throw new Error(`extension already installed at ${dest}`);
+  }
+
+  scanForSymlinks(sourceResolved);
+  mkdirSync(options.extensionsDir, { recursive: true });
+
+  try {
+    cpSync(sourceResolved, dest, { recursive: true, dereference: true });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`extension copy failed: ${msg}`);
+  }
+  registerDir(dest);
+
+  await completeExtensionInstallAfterCopy({
+    db: options.db,
+    dest,
+    manifest,
+    ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
+    ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+    ...(options.publisherKeyPath !== undefined && {
+      publisherKeyPath: options.publisherKeyPath,
+    }),
+  });
+}
+
+async function installPlanNodes(
+  options: {
+    db: Database;
+    extensionsDir: string;
+    vault?: NimbusVault;
+    fetcher?: PublisherKeyFetcher;
+    enforceAirGap?: boolean;
+    publisherKeyPath?: string;
+    registryClient?: RegistryClient;
+  },
+  plan: { nodes: readonly ResolvedNode[] },
+  sourceResolved: string,
+  manifest: ExtensionManifest,
+  signal: AbortSignal,
+): Promise<void> {
+  const createdDirs: string[] = [];
+  try {
+    for (const node of plan.nodes) {
+      if (!node.newlyInstalled) {
+        continue;
+      }
+      if (node.id === manifest.id) {
+        await installRootNode(options, sourceResolved, manifest, (dir) => createdDirs.push(dir));
+      } else {
+        if (options.registryClient === undefined) {
+          throw new Error(
+            `cannot install dependency ${node.id}@${node.version}: no registryClient provided`,
+          );
+        }
+        const { dest } = await installDepFromRegistry({
+          db: options.db,
+          extensionsDir: options.extensionsDir,
+          registryClient: options.registryClient,
+          depId: node.id,
+          depVersion: node.version,
+          abortSignal: signal,
+          ...(options.vault !== undefined && { vault: options.vault }),
+          ...(options.fetcher !== undefined && { pubkeyFetcher: options.fetcher }),
+          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+        });
+        createdDirs.push(dest);
+      }
+    }
+  } catch (e) {
+    for (let i = createdDirs.length - 1; i >= 0; i--) {
+      try {
+        rmSync(createdDirs[i] as string, { recursive: true, force: true });
+      } catch {
+        /* best-effort rollback */
+      }
+    }
+    throw e;
+  }
+}
+
+function recordPlanInstallAndAudit(
+  db: Database,
+  plan: { nodes: readonly ResolvedNode[] },
+  manifest: ExtensionManifest,
+): void {
+  const now = Date.now();
+  db.transaction(() => {
+    for (const node of plan.nodes) {
+      recordInstall(db, node.id, node.version, node.deps, now);
+    }
+  })();
+
+  appendAuditEntry(db, {
+    actionType: "extension.install_complete",
+    hitlStatus: "approved",
+    actionJson: JSON.stringify({
+      root: manifest.id,
+      rootVersion: manifest.version,
+      installed: plan.nodes.map((n) => ({
+        id: n.id,
+        version: n.version,
+        newlyInstalled: n.newlyInstalled,
+        deps: Object.fromEntries(n.deps.map((d) => [d.id, d.range])),
+      })),
+    }),
+    timestamp: now,
+  });
+}
+
+function buildRootInstallResult(
+  extensionsDir: string,
+  manifest: ExtensionManifest,
+  plan: { nodes: readonly ResolvedNode[] },
+): InstallExtensionFromLocalResult {
+  const rootDest = extensionInstallDirectory(extensionsDir, manifest.id);
+  const rootManifestPath = resolveExtensionManifestPath(rootDest);
+  if (rootManifestPath === undefined) {
+    throw new Error("root extension manifest missing after install — install may be corrupt");
+  }
+  const rootManifestHex = sha256HexOfBytes(readFileSync(rootManifestPath));
+
+  const rootEntryRel =
+    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const rootEntryPath = join(rootDest, rootEntryRel);
+  const rootEntryHex = existsSync(rootEntryPath)
+    ? sha256HexOfBytes(readFileSync(rootEntryPath))
+    : "";
+
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    installPath: rootDest,
+    manifestHash: rootManifestHex,
+    entryHash: rootEntryHex,
+    installed: plan.nodes,
+  };
 }
 
 export async function installExtensionFromLocalDirectory(options: {
@@ -529,168 +784,21 @@ export async function installExtensionFromLocalDirectory(options: {
 
   const signal = options.abortSignal ?? new AbortController().signal;
 
-  const registryClient = options.registryClient;
-  const solverFetcher = {
-    async listVersions(id: string): Promise<readonly string[]> {
-      const pinned = installedMap.get(id);
-      if (pinned !== undefined) return [pinned];
-      if (registryClient === undefined) {
-        return [];
-      }
-      const latest = await registryClient.fetchLatestVersion(id, "stable", signal);
-      if (latest === null) {
-        return [];
-      }
-      return [latest.version];
-    },
-    async fetchManifest(
-      id: string,
-      version: string,
-    ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }> {
-      const pinned = installedMap.get(id);
-      if (pinned === version) {
-        const extRow = listExtensions(options.db).find((r) => r.id === id);
-        if (extRow !== undefined) {
-          const mfPath = resolveExtensionManifestPath(extRow.install_path);
-          if (mfPath !== undefined) {
-            const raw = readFileSync(mfPath, "utf8");
-            const mf = parseExtensionManifestJson(raw);
-            return {
-              id: mf.id,
-              version: mf.version,
-              ...(mf.dependsOn !== undefined ? { dependsOn: mf.dependsOn } : {}),
-            };
-          }
-        }
-      }
-      if (registryClient === undefined) {
-        throw new Error(`registry unavailable: cannot fetch manifest for ${id}@${version}`);
-      }
-      const resp = await registryClient.fetchManifest(id, version, signal);
-      return {
-        id: resp.manifest.id,
-        version: resp.manifest.version,
-        ...(resp.manifest.dependsOn !== undefined ? { dependsOn: resp.manifest.dependsOn } : {}),
-      };
-    },
-  };
+  const solverFetcher = buildLocalSolverFetcher(
+    options.db,
+    installedMap,
+    options.registryClient,
+    signal,
+  );
 
   const plan = await resolveClosure(manifest, solverFetcher, {
     installed: installedMap,
     activeConstraints,
   });
 
-  const createdDirs: string[] = [];
+  await installPlanNodes(options, plan, sourceResolved, manifest, signal);
 
-  try {
-    for (const node of plan.nodes) {
-      if (!node.newlyInstalled) {
-        continue;
-      }
+  recordPlanInstallAndAudit(options.db, plan, manifest);
 
-      if (node.id === manifest.id) {
-        const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
-        if (existsSync(dest)) {
-          throw new Error(`extension already installed at ${dest}`);
-        }
-
-        scanForSymlinks(sourceResolved);
-        mkdirSync(options.extensionsDir, { recursive: true });
-
-        try {
-          cpSync(sourceResolved, dest, { recursive: true, dereference: true });
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          throw new Error(`extension copy failed: ${msg}`);
-        }
-        createdDirs.push(dest);
-
-        await completeExtensionInstallAfterCopy({
-          db: options.db,
-          dest,
-          manifest,
-          ...(options.vault !== undefined && { vault: options.vault }),
-          ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
-          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
-          ...(options.publisherKeyPath !== undefined && {
-            publisherKeyPath: options.publisherKeyPath,
-          }),
-        });
-      } else {
-        if (registryClient === undefined) {
-          throw new Error(
-            `cannot install dependency ${node.id}@${node.version}: no registryClient provided`,
-          );
-        }
-        const { dest } = await installDepFromRegistry({
-          db: options.db,
-          extensionsDir: options.extensionsDir,
-          registryClient,
-          depId: node.id,
-          depVersion: node.version,
-          abortSignal: signal,
-          ...(options.vault !== undefined && { vault: options.vault }),
-          ...(options.fetcher !== undefined && { pubkeyFetcher: options.fetcher }),
-          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
-        });
-        createdDirs.push(dest);
-      }
-    }
-  } catch (e) {
-    for (let i = createdDirs.length - 1; i >= 0; i--) {
-      try {
-        rmSync(createdDirs[i] as string, { recursive: true, force: true });
-      } catch {
-        /* best-effort rollback */
-      }
-    }
-    throw e;
-  }
-
-  const now = Date.now();
-  options.db.transaction(() => {
-    for (const node of plan.nodes) {
-      recordInstall(options.db, node.id, node.version, node.deps, now);
-    }
-  })();
-
-  appendAuditEntry(options.db, {
-    actionType: "extension.install_complete",
-    hitlStatus: "approved",
-    actionJson: JSON.stringify({
-      root: manifest.id,
-      rootVersion: manifest.version,
-      installed: plan.nodes.map((n) => ({
-        id: n.id,
-        version: n.version,
-        newlyInstalled: n.newlyInstalled,
-        deps: Object.fromEntries(n.deps.map((d) => [d.id, d.range])),
-      })),
-    }),
-    timestamp: now,
-  });
-
-  const rootDest = extensionInstallDirectory(options.extensionsDir, manifest.id);
-  const rootManifestPath = resolveExtensionManifestPath(rootDest);
-  if (rootManifestPath === undefined) {
-    throw new Error("root extension manifest missing after install — install may be corrupt");
-  }
-  const rootManifestBytes = readFileSync(rootManifestPath);
-  const rootManifestHex = sha256HexOfBytes(rootManifestBytes);
-
-  const rootEntryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
-  const rootEntryPath = join(rootDest, rootEntryRel);
-  const rootEntryHex = existsSync(rootEntryPath)
-    ? sha256HexOfBytes(readFileSync(rootEntryPath))
-    : "";
-
-  return {
-    id: manifest.id,
-    version: manifest.version,
-    installPath: rootDest,
-    manifestHash: rootManifestHex,
-    entryHash: rootEntryHex,
-    installed: plan.nodes,
-  };
+  return buildRootInstallResult(options.extensionsDir, manifest, plan);
 }

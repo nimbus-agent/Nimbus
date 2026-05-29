@@ -144,7 +144,7 @@ export type RegistryParseResult = {
   isPreT2Legacy: boolean;
 };
 
-export function parseExtensionManifestForRegistry(text: string): RegistryParseResult {
+function parseManifestObject(text: string): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -154,7 +154,11 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("extension manifest must be a JSON object");
   }
-  const o = parsed as Record<string, unknown>;
+  return parsed as Record<string, unknown>;
+}
+
+export function parseExtensionManifestForRegistry(text: string): RegistryParseResult {
+  const o = parseManifestObject(text);
   const id = typeof o["id"] === "string" ? o["id"].trim() : "";
   const version = typeof o["version"] === "string" ? o["version"].trim() : "";
   if (id === "" || version === "") {

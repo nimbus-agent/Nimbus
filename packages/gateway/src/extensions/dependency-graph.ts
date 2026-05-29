@@ -52,6 +52,62 @@ export async function resolveClosure(
   return { nodes: topoSort(resolved) };
 }
 
+async function resolveDepCandidate(
+  depId: string,
+  parentId: string,
+  pinned: Pinned,
+  constraintList: DependencyConstraint[],
+  fetcher: RegistryFetcher,
+): Promise<string> {
+  const installed = pinned.get(depId);
+  if (installed && constraintList.every((c) => semver.satisfies(installed, c.range))) {
+    return installed;
+  }
+  let versions: readonly string[];
+  try {
+    versions = await fetcher.listVersions(depId);
+  } catch (e) {
+    if (isRegistryUnreachable(e)) {
+      throw new OfflineDependencyResolutionError({ missingId: depId, parent: parentId });
+    }
+    throw e;
+  }
+  const candidate =
+    semver.maxSatisfying([...versions], constraintList.map((c) => c.range).join(" ")) ?? undefined;
+  if (!candidate) {
+    throw new DependencyConflictError({
+      kind: "unsatisfiable",
+      id: depId,
+      constraints: [...constraintList],
+      availableVersions: [...versions],
+    });
+  }
+  return candidate;
+}
+
+async function loadDepManifest(
+  depId: string,
+  parentId: string,
+  candidate: string,
+  fetcher: RegistryFetcher,
+  manifestCache: ManifestCache,
+): Promise<ExtensionManifestForSolver> {
+  const cacheKey = `${depId}@${candidate}`;
+  const cached = manifestCache.get(cacheKey);
+  if (cached) return cached;
+  let depManifest: ExtensionManifestForSolver;
+  try {
+    depManifest = await fetcher.fetchManifest(depId, candidate);
+  } catch (e) {
+    if (isRegistryUnreachable(e)) {
+      throw new OfflineDependencyResolutionError({ missingId: depId, parent: parentId });
+    }
+    throw e;
+  }
+  manifestCache.set(cacheKey, depManifest);
+  return depManifest;
+}
+
 async function visit(
   current: ExtensionManifestForSolver,
   pinned: Pinned,
@@ -87,46 +143,21 @@ async function visit(
       constraintList.push({ from: current.id, range });
       ranges.set(depId, constraintList);
 
-      const installed = pinned.get(depId);
-      let candidate: string | undefined;
-      if (installed && constraintList.every((c) => semver.satisfies(installed, c.range))) {
-        candidate = installed;
-      } else {
-        let versions: readonly string[];
-        try {
-          versions = await fetcher.listVersions(depId);
-        } catch (e) {
-          if (isRegistryUnreachable(e)) {
-            throw new OfflineDependencyResolutionError({ missingId: depId, parent: current.id });
-          }
-          throw e;
-        }
-        candidate =
-          semver.maxSatisfying([...versions], constraintList.map((c) => c.range).join(" ")) ??
-          undefined;
-        if (!candidate) {
-          throw new DependencyConflictError({
-            kind: "unsatisfiable",
-            id: depId,
-            constraints: [...constraintList],
-            availableVersions: [...versions],
-          });
-        }
-      }
+      const candidate = await resolveDepCandidate(
+        depId,
+        current.id,
+        pinned,
+        constraintList,
+        fetcher,
+      );
 
-      const cacheKey = `${depId}@${candidate}`;
-      let depManifest = manifestCache.get(cacheKey);
-      if (!depManifest) {
-        try {
-          depManifest = await fetcher.fetchManifest(depId, candidate);
-        } catch (e) {
-          if (isRegistryUnreachable(e)) {
-            throw new OfflineDependencyResolutionError({ missingId: depId, parent: current.id });
-          }
-          throw e;
-        }
-        manifestCache.set(cacheKey, depManifest);
-      }
+      const depManifest = await loadDepManifest(
+        depId,
+        current.id,
+        candidate,
+        fetcher,
+        manifestCache,
+      );
 
       deps.push({ id: depId, range, resolvedVersion: candidate });
 
@@ -156,7 +187,10 @@ async function visit(
   }
 }
 
-function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] {
+function buildTopoGraph(resolved: Map<string, ResolvedNode>): {
+  inDegree: Map<string, number>;
+  reverseEdges: Map<string, string[]>;
+} {
   const inDegree: Map<string, number> = new Map();
   const reverseEdges: Map<string, string[]> = new Map();
   for (const node of resolved.values()) {
@@ -167,6 +201,11 @@ function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] 
       reverseEdges.set(dep.id, list);
     }
   }
+  return { inDegree, reverseEdges };
+}
+
+function topoSort(resolved: Map<string, ResolvedNode>): readonly ResolvedNode[] {
+  const { inDegree, reverseEdges } = buildTopoGraph(resolved);
   const queue: string[] = [];
   for (const [id, deg] of inDegree) if (deg === 0) queue.push(id);
   queue.sort((a, b) => a.localeCompare(b));

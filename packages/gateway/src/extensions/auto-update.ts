@@ -73,6 +73,32 @@ export interface ExtensionAutoUpdaterOpts {
   ) => Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }>;
 }
 
+function assertRootConstraintsSatisfied(
+  rootId: string,
+  toVersion: string,
+  activeConstraints: ReadonlyMap<string, Map<string, string>>,
+): void {
+  const constraintsOnRoot: Array<{ from: string; range: string }> = [];
+  for (const [dependent, depMap] of activeConstraints) {
+    if (dependent === rootId) continue;
+    const range = depMap.get(rootId);
+    if (range !== undefined) {
+      constraintsOnRoot.push({ from: dependent, range });
+    }
+  }
+  const unsatisfiedConstraints = constraintsOnRoot.filter(
+    (c) => !semver.satisfies(toVersion, c.range),
+  );
+  if (unsatisfiedConstraints.length > 0) {
+    throw new DependencyConflictError({
+      kind: "unsatisfiable",
+      id: rootId,
+      constraints: unsatisfiedConstraints,
+      availableVersions: [toVersion],
+    });
+  }
+}
+
 export class ExtensionAutoUpdater {
   private readonly abort = new AbortController();
   private running = false;
@@ -122,6 +148,112 @@ export class ExtensionAutoUpdater {
     }
   }
 
+  private computeVerificationStatus(
+    pubkey: Uint8Array | null,
+    manifestRaw: Record<string, unknown>,
+  ): Promise<{
+    verificationStatus: VerificationStatus;
+    publisherStatus: "verified" | "unverified";
+  }> {
+    if (pubkey === null) {
+      return Promise.resolve({ verificationStatus: "needs_sync", publisherStatus: "unverified" });
+    }
+    return this.opts
+      .verifyManifestSignature(manifestRaw, pubkey)
+      .then(() => ({ verificationStatus: "verified", publisherStatus: "verified" }) as const)
+      .catch(
+        () => ({ verificationStatus: "signature_failed", publisherStatus: "unverified" }) as const,
+      );
+  }
+
+  private async computeUpdateConflicts(
+    row: InstalledExtensionRow,
+    installed: readonly InstalledExtensionRow[],
+    newManifest: InstalledExtensionManifestSlice,
+    toVersion: string,
+  ): Promise<readonly DependencyConflict[] | undefined> {
+    const solverRemoteFetchManifest = this.opts.solverRemoteFetchManifest;
+    if (solverRemoteFetchManifest === undefined) return undefined;
+    try {
+      const installedMap = new Map<string, string>();
+      const activeConstraints = new Map<string, Map<string, string>>();
+      const dirById = new Map<string, string>();
+      for (const r of installed) {
+        installedMap.set(r.id, r.version);
+        dirById.set(r.id, r.install_path);
+        if (r.manifest.dependsOn !== undefined && Object.keys(r.manifest.dependsOn).length > 0) {
+          activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
+        }
+      }
+      installedMap.set(row.id, toVersion);
+      if (newManifest.dependsOn !== undefined && Object.keys(newManifest.dependsOn).length > 0) {
+        activeConstraints.set(row.id, new Map(Object.entries(newManifest.dependsOn)));
+      } else {
+        activeConstraints.delete(row.id);
+      }
+
+      const fetchLatestVersion = this.opts.fetchLatestVersion;
+      const abortSignal = this.abort.signal;
+
+      const fetcher: RegistryFetcher = {
+        listVersions: async (id: string): Promise<readonly string[]> => {
+          const installedVersion = installedMap.get(id);
+          if (installedVersion !== undefined) return [installedVersion];
+          const latest = await fetchLatestVersion(id, "stable", abortSignal);
+          return latest === null ? [] : [latest.version];
+        },
+        fetchManifest: async (id: string, version: string): Promise<ExtensionManifestForSolver> => {
+          if (id === row.id && version === toVersion) {
+            return {
+              id: row.id,
+              version: toVersion,
+              ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
+            };
+          }
+          const installedVersion = installedMap.get(id);
+          if (installedVersion === version) {
+            const dir = dirById.get(id);
+            if (dir !== undefined) {
+              try {
+                const raw = await readFile(join(dir, "nimbus.extension.json"), "utf8");
+                const parsed = parseExtensionManifestJson(raw);
+                return {
+                  id: parsed.id,
+                  version: parsed.version,
+                  ...(parsed.dependsOn !== undefined ? { dependsOn: parsed.dependsOn } : {}),
+                };
+              } catch {
+                // Fall through to remote fetch.
+              }
+            }
+          }
+          return await solverRemoteFetchManifest(id, version);
+        },
+      };
+
+      assertRootConstraintsSatisfied(row.id, toVersion, activeConstraints);
+
+      const proposedManifest: ExtensionManifestForSolver = {
+        id: row.id,
+        version: toVersion,
+        ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
+      };
+
+      await resolveClosure(proposedManifest, fetcher, {
+        installed: installedMap,
+        activeConstraints,
+      });
+      return undefined;
+    } catch (e) {
+      if (isDependencyConflictError(e)) {
+        return [e.conflict];
+      }
+      // OfflineDependencyResolutionError or other network/IO errors:
+      // leave conflicts undefined so the bump is still surfaced without conflict info.
+      return undefined;
+    }
+  }
+
   private async pollOne(
     row: InstalledExtensionRow,
     installed: readonly InstalledExtensionRow[],
@@ -140,127 +272,14 @@ export class ExtensionAutoUpdater {
     if (publisherId === undefined) return;
     const pubkey = await this.opts.lookupPublisherKey(publisherId);
 
-    let verificationStatus: VerificationStatus;
-    let publisherStatus: "verified" | "unverified" = "unverified";
-
-    if (pubkey === null) {
-      verificationStatus = "needs_sync";
-    } else {
-      try {
-        await this.opts.verifyManifestSignature(manifestResult.manifestRaw, pubkey);
-        verificationStatus = "verified";
-        publisherStatus = "verified";
-      } catch {
-        verificationStatus = "signature_failed";
-      }
-    }
+    const { verificationStatus, publisherStatus } = await this.computeVerificationStatus(
+      pubkey,
+      manifestResult.manifestRaw,
+    );
 
     const permissionDiff = diffPermissions(row.manifest.permissions, newManifest.permissions);
 
-    let conflicts: readonly DependencyConflict[] | undefined;
-    if (this.opts.solverRemoteFetchManifest !== undefined) {
-      try {
-        const installedMap = new Map<string, string>();
-        const activeConstraints = new Map<string, Map<string, string>>();
-        const dirById = new Map<string, string>();
-        for (const r of installed) {
-          installedMap.set(r.id, r.version);
-          dirById.set(r.id, r.install_path);
-          if (r.manifest.dependsOn !== undefined && Object.keys(r.manifest.dependsOn).length > 0) {
-            activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
-          }
-        }
-        installedMap.set(row.id, toVersion);
-        if (newManifest.dependsOn !== undefined && Object.keys(newManifest.dependsOn).length > 0) {
-          activeConstraints.set(row.id, new Map(Object.entries(newManifest.dependsOn)));
-        } else {
-          activeConstraints.delete(row.id);
-        }
-
-        const solverRemoteFetchManifest = this.opts.solverRemoteFetchManifest;
-        const fetchLatestVersion = this.opts.fetchLatestVersion;
-        const abortSignal = this.abort.signal;
-
-        const fetcher: RegistryFetcher = {
-          listVersions: async (id: string): Promise<readonly string[]> => {
-            const installedVersion = installedMap.get(id);
-            if (installedVersion !== undefined) return [installedVersion];
-            const latest = await fetchLatestVersion(id, "stable", abortSignal);
-            return latest === null ? [] : [latest.version];
-          },
-          fetchManifest: async (
-            id: string,
-            version: string,
-          ): Promise<ExtensionManifestForSolver> => {
-            if (id === row.id && version === toVersion) {
-              return {
-                id: row.id,
-                version: toVersion,
-                ...(newManifest.dependsOn !== undefined
-                  ? { dependsOn: newManifest.dependsOn }
-                  : {}),
-              };
-            }
-            const installedVersion = installedMap.get(id);
-            if (installedVersion === version) {
-              const dir = dirById.get(id);
-              if (dir !== undefined) {
-                try {
-                  const raw = await readFile(join(dir, "nimbus.extension.json"), "utf8");
-                  const parsed = parseExtensionManifestJson(raw);
-                  return {
-                    id: parsed.id,
-                    version: parsed.version,
-                    ...(parsed.dependsOn !== undefined ? { dependsOn: parsed.dependsOn } : {}),
-                  };
-                } catch {
-                  // Fall through to remote fetch.
-                }
-              }
-            }
-            return await solverRemoteFetchManifest(id, version);
-          },
-        };
-
-        const constraintsOnRoot: Array<{ from: string; range: string }> = [];
-        for (const [dependent, depMap] of activeConstraints) {
-          if (dependent === row.id) continue;
-          const range = depMap.get(row.id);
-          if (range !== undefined) {
-            constraintsOnRoot.push({ from: dependent, range });
-          }
-        }
-        const unsatisfiedConstraints = constraintsOnRoot.filter(
-          (c) => !semver.satisfies(toVersion, c.range),
-        );
-        if (unsatisfiedConstraints.length > 0) {
-          throw new DependencyConflictError({
-            kind: "unsatisfiable",
-            id: row.id,
-            constraints: unsatisfiedConstraints,
-            availableVersions: [toVersion],
-          });
-        }
-
-        const proposedManifest: ExtensionManifestForSolver = {
-          id: row.id,
-          version: toVersion,
-          ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
-        };
-
-        await resolveClosure(proposedManifest, fetcher, {
-          installed: installedMap,
-          activeConstraints,
-        });
-        // No conflict thrown → conflicts stays undefined.
-      } catch (e) {
-        if (isDependencyConflictError(e)) {
-          conflicts = [e.conflict];
-        }
-        // OfflineDependencyResolutionError or other network/IO errors:
-        // leave conflicts undefined so the bump is still surfaced without conflict info.
-      }
-    }
+    const conflicts = await this.computeUpdateConflicts(row, installed, newManifest, toVersion);
 
     const update: AvailableUpdate = {
       id: row.id,
