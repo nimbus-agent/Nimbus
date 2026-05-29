@@ -34,6 +34,14 @@ The plan's `createRpcDispatcher(methods)` would have thrown `RpcMethodNotFound` 
 - `lan-rpc.ts` — not a dispatcher; it's the LAN security invariant (`I5`) module exporting `checkLanMethodAllowed`.
 - Single-method files (`metrics-rpc`, `preflight-rpc`, `deployment-rpc`, `security-rpc`, `reindex-rpc`) — `dispatchByMethod` doesn't save lines for 1-case files; the existing `if (method !== "X") return miss; …` is shorter than the helper invocation.
 
+## Task 4.12 / 4.13 status (2026-05-29)
+
+The plan's `LongRunningJobRegistry` would have used uniform `${prefix}.progress/.done/.error` notification names — but the codebase has two long-running consumers with intentionally different names (`index.reembedProgress/.reembedDone/.reembedError` and `llm.pullProgress/.pullCompleted/.pullFailed`). Helper redesigned to take notification method names as parameters in the per-`start` spec, plus the emit callback (gateway `ctx.notify` is per-RPC-call, registry must outlive the call). Lives at `packages/gateway/src/ipc/_lib/long-running.ts`.
+
+Adopted: `index.reembed` — `[EXTRACTED]`. Net -34 lines from `index-reembed-rpc.ts`.
+
+**Skipped:** `llm.pullModel` — the Tauri UI consumes the `pullId` field name across `packages/ui/src/ipc/types.ts` (3 type entries), the Zustand `model` store slice, `client.ts` typed wrapper, `ModelPanel.tsx`, and `PullDialog.tsx`. Renaming to `jobId` for naming consistency would propagate across all five files plus their tests. Dedupe value of one additional consumer is not worth a 6-file UI cascade. The bespoke `activePulls: Map<pullId, AbortController>` pattern in `llm-rpc.ts` stays — straightforward, well-tested, ~25 lines.
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
