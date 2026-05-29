@@ -74,6 +74,26 @@ export function discoverNotesInVault(vaultRoot: string): readonly string[] {
   return out;
 }
 
+type EntryKind = "dir" | "file" | "skip";
+
+function classifyEntry(full: string): EntryKind {
+  try {
+    const st = statSync(full);
+    if (st.isSymbolicLink()) {
+      return "skip";
+    }
+    if (st.isDirectory()) {
+      return "dir";
+    }
+    if (st.isFile()) {
+      return "file";
+    }
+  } catch {
+    return "skip";
+  }
+  return "skip";
+}
+
 function walkForNotes(currentDir: string, vaultRoot: string, out: string[]): void {
   if (!isDirectorySafe(currentDir)) {
     return;
@@ -87,29 +107,14 @@ function walkForNotes(currentDir: string, vaultRoot: string, out: string[]): voi
     return;
   }
   for (const e of entries) {
-    if (e === VAULT_MARKER) {
-      continue;
-    }
-    if (DEFAULT_IGNORED_DIR_NAMES.has(e)) {
+    if (e === VAULT_MARKER || DEFAULT_IGNORED_DIR_NAMES.has(e)) {
       continue;
     }
     const full = join(currentDir, e);
-    let isDir = false;
-    let isFile = false;
-    try {
-      const st = statSync(full);
-      if (st.isSymbolicLink()) {
-        continue;
-      }
-      isDir = st.isDirectory();
-      isFile = st.isFile();
-    } catch {
-      continue;
-    }
-    if (isFile && full.toLowerCase().endsWith(".md")) {
-      const rel = relative(vaultRoot, full).replaceAll("\\", "/");
-      out.push(rel);
-    } else if (isDir) {
+    const kind = classifyEntry(full);
+    if (kind === "file" && full.toLowerCase().endsWith(".md")) {
+      out.push(relative(vaultRoot, full).replaceAll("\\", "/"));
+    } else if (kind === "dir") {
       walkForNotes(full, vaultRoot, out);
     }
   }

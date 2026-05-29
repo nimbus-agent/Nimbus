@@ -165,6 +165,101 @@ type TranscriptOutcome = {
   rateLimited: boolean;
 };
 
+/**
+ * Result of processing one TRANSCRIPT-typed recording file:
+ * - `skip`: not a downloadable/new transcript (continue to next file).
+ * - `rate_limited`: 429 on download — caller must graceful-break.
+ * - `done`: HTTP completed; `bytes` always counted, `upserted` 0 or 1.
+ */
+type TranscriptFileResult =
+  | { kind: "skip" }
+  | { kind: "rate_limited" }
+  | { kind: "done"; bytes: number; upserted: number };
+
+function selectTranscriptFile(
+  ctx: SyncContext,
+  file: Record<string, unknown>,
+  meetingUuid: string,
+): { fileId: string; downloadUrl: string } | null {
+  if (stringField(file, "file_type") !== "TRANSCRIPT") {
+    return null;
+  }
+  const fileId = stringField(file, "id");
+  if (fileId === undefined || fileId === "") {
+    return null;
+  }
+  if (transcriptAlreadyIndexed(ctx, meetingUuid, fileId)) {
+    // Already-indexed transcripts are immutable; do not re-download.
+    return null;
+  }
+  const downloadUrl = stringField(file, "download_url");
+  if (downloadUrl === undefined || downloadUrl === "") {
+    return null;
+  }
+  return { fileId, downloadUrl };
+}
+
+async function processTranscriptFile(
+  ctx: SyncContext,
+  token: string,
+  meeting: Record<string, unknown>,
+  file: Record<string, unknown>,
+  meetingUuid: string,
+  now: number,
+): Promise<TranscriptFileResult> {
+  const selected = selectTranscriptFile(ctx, file, meetingUuid);
+  if (selected === null) {
+    return { kind: "skip" };
+  }
+  const { fileId, downloadUrl } = selected;
+  // Bearer-header auth ONLY. Never include `?access_token=` in the URL.
+  // Never log the URL — it may carry a Zoom-issued auth token in older
+  // recording flows. Log only the meeting_uuid + file_id + HTTP status.
+  // We use a raw fetch (not connectorFetch) precisely because connectorFetch
+  // logs the URL on failure; the rate limiter is acquired manually first to
+  // preserve the same gating connectorFetch applies.
+  await ctx.rateLimiter.acquire(SERVICE_ID);
+  let res: Response;
+  try {
+    res = await fetch(downloadUrl, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "text/vtt, text/plain, */*" },
+    });
+  } catch {
+    // Network error on download — skip this file (don't fail the whole cycle).
+    ctx.logger.warn(
+      { serviceId: SERVICE_ID, meetingUuid, fileId },
+      "zoom transcript download failed (network)",
+    );
+    return { kind: "skip" };
+  }
+  if (res.status === 429) {
+    ctx.logger.warn(
+      { serviceId: SERVICE_ID, meetingUuid, fileId, status: 429 },
+      "zoom transcript download 429 — graceful break",
+    );
+    return { kind: "rate_limited" };
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    ctx.logger.warn(
+      { serviceId: SERVICE_ID, meetingUuid, fileId, status: res.status },
+      "zoom transcript download failed",
+    );
+    return { kind: "done", bytes: text.length, upserted: 0 };
+  }
+  const row = mapZoomTranscriptToItem({
+    meeting,
+    recordingFile: file,
+    plainText: vttToPlainText(text),
+    syncedAt: now,
+  });
+  if (row === null) {
+    return { kind: "done", bytes: text.length, upserted: 0 };
+  }
+  upsertIndexedItemForSync(ctx, row);
+  return { kind: "done", bytes: text.length, upserted: 1 };
+}
+
 async function processTranscriptsForMeeting(
   ctx: SyncContext,
   token: string,
@@ -185,70 +280,16 @@ async function processTranscriptsForMeeting(
     if (file === undefined) {
       continue;
     }
-    if (stringField(file, "file_type") !== "TRANSCRIPT") {
+    const result = await processTranscriptFile(ctx, token, meeting, file, meetingUuid, now);
+    if (result.kind === "skip") {
       continue;
     }
-    const fileId = stringField(file, "id");
-    if (fileId === undefined || fileId === "") {
-      continue;
-    }
-    if (transcriptAlreadyIndexed(ctx, meetingUuid, fileId)) {
-      // Already-indexed transcripts are immutable; do not re-download.
-      continue;
-    }
-    const downloadUrl = stringField(file, "download_url");
-    if (downloadUrl === undefined || downloadUrl === "") {
-      continue;
-    }
-    // Bearer-header auth ONLY. Never include `?access_token=` in the URL.
-    // Never log the URL — it may carry a Zoom-issued auth token in older
-    // recording flows. Log only the meeting_uuid + file_id + HTTP status.
-    // We use a raw fetch (not connectorFetch) precisely because connectorFetch
-    // logs the URL on failure; the rate limiter is acquired manually first to
-    // preserve the same gating connectorFetch applies.
-    await ctx.rateLimiter.acquire(SERVICE_ID);
-    let res: Response;
-    try {
-      res = await fetch(downloadUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "text/vtt, text/plain, */*" },
-      });
-    } catch {
-      // Network error on download — skip this file (don't fail the whole cycle).
-      ctx.logger.warn(
-        { serviceId: SERVICE_ID, meetingUuid, fileId },
-        "zoom transcript download failed (network)",
-      );
-      continue;
-    }
-    if (res.status === 429) {
-      ctx.logger.warn(
-        { serviceId: SERVICE_ID, meetingUuid, fileId, status: 429 },
-        "zoom transcript download 429 — graceful break",
-      );
+    if (result.kind === "rate_limited") {
       out.rateLimited = true;
       return out;
     }
-    const text = await res.text();
-    out.bytes += text.length;
-    if (!res.ok) {
-      ctx.logger.warn(
-        { serviceId: SERVICE_ID, meetingUuid, fileId, status: res.status },
-        "zoom transcript download failed",
-      );
-      continue;
-    }
-    const plain = vttToPlainText(text);
-    const row = mapZoomTranscriptToItem({
-      meeting,
-      recordingFile: file,
-      plainText: plain,
-      syncedAt: now,
-    });
-    if (row === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, row);
-    out.upserted += 1;
+    out.bytes += result.bytes;
+    out.upserted += result.upserted;
   }
   return out;
 }
@@ -259,6 +300,76 @@ type RecordingsWalkResult = {
   /** ISO-8601 to commit to `lastRecordingsTo` on success; null if walk was rate-limited mid-flight. */
   advancedTo: string | null;
 };
+
+/**
+ * Process one recordings meeting: parent-meeting dedupe upsert + its
+ * transcripts. `rateLimited` propagates the graceful-break signal upward.
+ */
+async function processRecordingsMeeting(
+  ctx: SyncContext,
+  token: string,
+  meeting: Record<string, unknown>,
+  nowMs: number,
+): Promise<{ upserted: number; bytes: number; rateLimited: boolean }> {
+  let upserted = 0;
+  let bytes = 0;
+  // Parent-meeting dedupe upsert. Walk A only sees type=scheduled; past
+  // recorded meetings (one-time, completed) are surfaced here under the
+  // same external_id = String(<meeting_id>), so a single row covers both.
+  const meetingRow = mapZoomMeetingToItem(meeting, { syncedAt: nowMs });
+  if (meetingRow !== null) {
+    upsertIndexedItemForSync(ctx, meetingRow);
+    upserted += 1;
+  }
+  const transcripts = await processTranscriptsForMeeting(ctx, token, meeting, nowMs);
+  upserted += transcripts.upserted;
+  bytes += transcripts.bytes;
+  return { upserted, bytes, rateLimited: transcripts.rateLimited };
+}
+
+/** Page-level result: `rateLimited` and `errored` both stop the walk without advancing. */
+type RecordingsPageResult = {
+  upserted: number;
+  bytes: number;
+  nextPageToken: string;
+  stop: boolean;
+  rateLimited: boolean;
+};
+
+async function processRecordingsPage(
+  ctx: SyncContext,
+  token: string,
+  root: Record<string, unknown>,
+  nowMs: number,
+): Promise<RecordingsPageResult> {
+  const result: RecordingsPageResult = {
+    upserted: 0,
+    bytes: 0,
+    nextPageToken: "",
+    stop: false,
+    rateLimited: false,
+  };
+  const meetingsRaw = root["meetings"];
+  const meetings = Array.isArray(meetingsRaw) ? meetingsRaw : [];
+  for (const meetingRaw of meetings) {
+    const meeting = asRecord(meetingRaw);
+    if (meeting === undefined) {
+      continue;
+    }
+    const m = await processRecordingsMeeting(ctx, token, meeting, nowMs);
+    result.upserted += m.upserted;
+    result.bytes += m.bytes;
+    if (m.rateLimited) {
+      result.rateLimited = true;
+      return result;
+    }
+  }
+  const nextTokenRaw = root["next_page_token"];
+  const nextPageToken = typeof nextTokenRaw === "string" ? nextTokenRaw : "";
+  result.nextPageToken = nextPageToken;
+  result.stop = meetings.length === 0 || nextPageToken === "";
+  return result;
+}
 
 async function runRecordingsWalk(
   ctx: SyncContext,
@@ -280,39 +391,62 @@ async function runRecordingsWalk(
     if (root === undefined) {
       break;
     }
-    const meetingsRaw = root["meetings"];
-    const meetings = Array.isArray(meetingsRaw) ? meetingsRaw : [];
-    for (const meetingRaw of meetings) {
-      const meeting = asRecord(meetingRaw);
-      if (meeting === undefined) {
-        continue;
-      }
-      // Parent-meeting dedupe upsert. Walk A only sees type=scheduled; past
-      // recorded meetings (one-time, completed) are surfaced here under the
-      // same external_id = String(<meeting_id>), so a single row covers both.
-      const meetingRow = mapZoomMeetingToItem(meeting, { syncedAt: nowMs });
-      if (meetingRow !== null) {
-        upsertIndexedItemForSync(ctx, meetingRow);
-        out.upserted += 1;
-      }
-      const transcripts = await processTranscriptsForMeeting(ctx, token, meeting, nowMs);
-      out.upserted += transcripts.upserted;
-      out.bytes += transcripts.bytes;
-      if (transcripts.rateLimited) {
-        // Graceful break — return without advancing the cursor.
-        return out;
-      }
+    const pageResult = await processRecordingsPage(ctx, token, root, nowMs);
+    out.upserted += pageResult.upserted;
+    out.bytes += pageResult.bytes;
+    if (pageResult.rateLimited) {
+      // Graceful break — return without advancing the cursor.
+      return out;
     }
-    const nextTokenRaw = root["next_page_token"];
-    const nextPageToken = typeof nextTokenRaw === "string" ? nextTokenRaw : "";
+    if (pageResult.stop) {
+      break;
+    }
+    pageToken = pageResult.nextPageToken;
+  }
+  // Walk completed cleanly (either by exhausting pages or hitting MAX_PAGES).
+  out.advancedTo = window.to;
+  return out;
+}
+
+/**
+ * Walk A result. `firstPageError` is non-null ONLY when page 1 failed — the
+ * caller returns an empty pass-cursor result and does NOT run Walk B (matches
+ * the original early-return). A mid-walk error (page ≥ 2) leaves
+ * `firstPageError === null` so Walk B still runs.
+ */
+type MeetingsWalkResult = {
+  upserted: number;
+  bytes: number;
+  firstPageError: "http_error" | "parse_error" | null;
+};
+
+async function runMeetingsWalk(
+  ctx: SyncContext,
+  token: string,
+  nowMs: number,
+): Promise<MeetingsWalkResult> {
+  let upserted = 0;
+  let bytes = 0;
+  let pageToken = "";
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const outcome = await zoomGet(ctx, token, meetingsPath(pageToken));
+    bytes += outcome.bytes;
+    if (outcome.kind !== "ok") {
+      if (page === 1) {
+        return { upserted, bytes, firstPageError: outcome.kind };
+      }
+      // Mid-walk meetings-list error: stop Walk A but still run Walk B for
+      // this cycle (a transient meetings failure should not block it).
+      break;
+    }
+    const { meetings, nextPageToken } = extractPage(outcome.parsed);
+    upserted += upsertMeetings(ctx, meetings, nowMs);
     if (meetings.length === 0 || nextPageToken === "") {
       break;
     }
     pageToken = nextPageToken;
   }
-  // Walk completed cleanly (either by exhausting pages or hitting MAX_PAGES).
-  out.advancedTo = window.to;
-  return out;
+  return { upserted, bytes, firstPageError: null };
 }
 
 export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
@@ -344,29 +478,14 @@ export function createZoomSyncable(options: ZoomSyncableOptions): Syncable {
       let totalUpserted = 0;
 
       // --- Walk A: scheduled meetings -------------------------------------
-      let pageToken = "";
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await zoomGet(ctx, token, meetingsPath(pageToken));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            const fallbackCursor = encodeCursor(prev);
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, fallbackCursor)
-              : syncPassCursorParseEmpty(t0, totalBytes, fallbackCursor);
-          }
-          // Mid-walk meetings-list error: stop Walk A but still run Walk B for
-          // this cycle (a transient meetings failure should not block it).
-          break;
-        }
-
-        const { meetings, nextPageToken } = extractPage(outcome.parsed);
-        totalUpserted += upsertMeetings(ctx, meetings, nowMs);
-
-        if (meetings.length === 0 || nextPageToken === "") {
-          break;
-        }
-        pageToken = nextPageToken;
+      const walkA = await runMeetingsWalk(ctx, token, nowMs);
+      totalBytes += walkA.bytes;
+      totalUpserted += walkA.upserted;
+      if (walkA.firstPageError !== null) {
+        const fallbackCursor = encodeCursor(prev);
+        return walkA.firstPageError === "http_error"
+          ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, fallbackCursor)
+          : syncPassCursorParseEmpty(t0, totalBytes, fallbackCursor);
       }
 
       // --- Walk B: recordings + transcripts --------------------------------

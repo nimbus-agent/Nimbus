@@ -60,6 +60,32 @@ function denormName(row: Record<string, unknown>, nameKey: string, idKey: string
   return null;
 }
 
+function derivePipedriveBodyPreview(args: {
+  value: number | null;
+  currency: string | null;
+  status: string | null;
+  orgName: string | null;
+  personName: string | null;
+  titleText: string;
+}): string {
+  const { value, currency, status, orgName, personName, titleText } = args;
+  if (value !== null) {
+    const currencyPart = currency !== null && currency !== "" ? ` ${currency}` : "";
+    const statusPart = status !== null && status !== "" ? ` — ${status}` : "";
+    return `${value}${currencyPart}${statusPart}`;
+  }
+  if (status !== null && status !== "") {
+    return status;
+  }
+  if (orgName !== null) {
+    return orgName;
+  }
+  if (personName !== null) {
+    return personName;
+  }
+  return titleText;
+}
+
 export function mapPipedriveDealToItem(
   raw: unknown,
   ctx: PipedriveMappingContext,
@@ -100,18 +126,14 @@ export function mapPipedriveDealToItem(
 
   const titleText = title !== null && title !== "" ? title : `Deal ${id}`;
 
-  const bodyPreview =
-    value !== null
-      ? `${value}${currency !== null && currency !== "" ? ` ${currency}` : ""}${
-          status !== null && status !== "" ? ` — ${status}` : ""
-        }`
-      : status !== null && status !== ""
-        ? status
-        : orgName !== null
-          ? orgName
-          : personName !== null
-            ? personName
-            : titleText;
+  const bodyPreview = derivePipedriveBodyPreview({
+    value,
+    currency,
+    status,
+    orgName,
+    personName,
+    titleText,
+  });
 
   const modifiedAt = updateTime ?? addTime ?? ctx.syncedAt;
 

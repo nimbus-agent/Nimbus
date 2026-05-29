@@ -60,6 +60,37 @@ export function discoverSpecFiles(root: string, opts: DiscoveryOptions): readonl
   return out;
 }
 
+type DirEntry = {
+  name: string;
+  isDirectory: () => boolean;
+  isFile: () => boolean;
+  isSymbolicLink: () => boolean;
+};
+
+function readDirEntries(dir: string): readonly DirEntry[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function maybePushSpecFile(abs: string, rel: string, opts: DiscoveryOptions, out: string[]): void {
+  if (!SPEC_FILENAME_RE.test(basename(abs))) {
+    return;
+  }
+  if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
+    return;
+  }
+  try {
+    if (statSync(abs).isFile()) {
+      out.push(abs);
+    }
+  } catch {
+    // ignore — file disappeared between readdir and stat
+  }
+}
+
 function walk(
   root: string,
   dir: string,
@@ -70,48 +101,20 @@ function walk(
   if (depth > opts.maxWalkDepth) {
     return;
   }
-  let entries: readonly {
-    name: string;
-    isDirectory: () => boolean;
-    isFile: () => boolean;
-    isSymbolicLink: () => boolean;
-  }[] = [];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
+  for (const e of readDirEntries(dir)) {
     if (e.isSymbolicLink()) {
       continue;
     }
     const abs = join(dir, e.name);
     const rel = abs.slice(root.length + 1);
     if (e.isDirectory()) {
-      if (DEFAULT_IGNORE_DIRS.has(e.name)) {
-        continue;
+      if (!DEFAULT_IGNORE_DIRS.has(e.name) && !pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
+        walk(root, abs, depth + 1, opts, out);
       }
-      if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
-        continue;
-      }
-      walk(root, abs, depth + 1, opts, out);
       continue;
     }
-    if (!e.isFile()) {
-      continue;
-    }
-    if (!SPEC_FILENAME_RE.test(basename(abs))) {
-      continue;
-    }
-    if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
-      continue;
-    }
-    try {
-      if (statSync(abs).isFile()) {
-        out.push(abs);
-      }
-    } catch {
-      // ignore — file disappeared between readdir and stat
+    if (e.isFile()) {
+      maybePushSpecFile(abs, rel, opts, out);
     }
   }
 }

@@ -56,6 +56,50 @@ function pdPriorityName(row: Record<string, unknown>): string | undefined {
   return pri !== undefined ? stringField(pri, "name") : undefined;
 }
 
+function buildPagerdutyMetadata(row: Record<string, unknown>, id: string): Record<string, unknown> {
+  const status = stringField(row, "status");
+  const createdAt = stringField(row, "created_at");
+  const openedAtMs = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
+  const serviceId = pdServiceId(row);
+  const severity = pdPriorityName(row);
+  const urgency = stringField(row, "urgency");
+
+  const metadata: Record<string, unknown> = { status: status ?? null, incidentId: id };
+  if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
+  if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
+  if (severity !== undefined && severity !== "") metadata["severity"] = severity;
+  if (urgency !== undefined && urgency !== "") metadata["urgency"] = urgency;
+  return metadata;
+}
+
+function upsertPagerdutyIncident(
+  ctx: SyncContext,
+  row: Record<string, unknown>,
+  id: string,
+  now: number,
+): void {
+  const title = stringField(row, "title") ?? `Incident ${id}`;
+  const status = stringField(row, "status");
+  const htmlUrl = stringField(row, "html_url");
+  const updated = stringField(row, "updated_at") ?? stringField(row, "created_at");
+  const modifiedAt = updated === undefined ? now : Date.parse(updated);
+
+  upsertIndexedItemForSync(ctx, {
+    service: SERVICE_ID,
+    type: "incident",
+    externalId: id,
+    title: title.length > 512 ? title.slice(0, 512) : title,
+    bodyPreview: status ?? "",
+    url: htmlUrl ?? null,
+    canonicalUrl: htmlUrl ?? null,
+    modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : now,
+    authorId: null,
+    metadata: buildPagerdutyMetadata(row, id),
+    pinned: false,
+    syncedAt: now,
+  });
+}
+
 export function syncPagerdutyIncidentItems(
   ctx: SyncContext,
   incidents: unknown[],
@@ -73,41 +117,11 @@ export function syncPagerdutyIncidentItems(
     if (id === undefined || id === "") {
       continue;
     }
-    const title = stringField(row, "title") ?? `Incident ${id}`;
-    const status = stringField(row, "status");
-    const htmlUrl = stringField(row, "html_url");
     const updated = stringField(row, "updated_at") ?? stringField(row, "created_at");
     if (updated !== undefined && updated > maxUpdated) {
       maxUpdated = updated;
     }
-    const modifiedAt = updated === undefined ? now : Date.parse(updated);
-
-    const createdAt = stringField(row, "created_at");
-    const openedAtMs = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
-    const serviceId = pdServiceId(row);
-    const severity = pdPriorityName(row);
-
-    const metadata: Record<string, unknown> = { status: status ?? null, incidentId: id };
-    if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
-    if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
-    if (severity !== undefined && severity !== "") metadata["severity"] = severity;
-    const urgency = stringField(row, "urgency");
-    if (urgency !== undefined && urgency !== "") metadata["urgency"] = urgency;
-
-    upsertIndexedItemForSync(ctx, {
-      service: SERVICE_ID,
-      type: "incident",
-      externalId: id,
-      title: title.length > 512 ? title.slice(0, 512) : title,
-      bodyPreview: status ?? "",
-      url: htmlUrl ?? null,
-      canonicalUrl: htmlUrl ?? null,
-      modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : now,
-      authorId: null,
-      metadata,
-      pinned: false,
-      syncedAt: now,
-    });
+    upsertPagerdutyIncident(ctx, row, id, now);
     upserted += 1;
   }
   return { upserted, maxUpdated };

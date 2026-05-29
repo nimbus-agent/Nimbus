@@ -51,6 +51,37 @@ function reqCode(row: Record<string, unknown>): string | null {
   return null;
 }
 
+function deriveLeverCanonicalUrl(
+  hostedUrl: string | null,
+  urlsShow: string | null,
+  applyUrl: string | null,
+): string | null {
+  if (hostedUrl !== null && hostedUrl !== "") {
+    return hostedUrl;
+  }
+  if (urlsShow !== null && urlsShow !== "") {
+    return urlsShow;
+  }
+  if (applyUrl !== null && applyUrl !== "") {
+    return applyUrl;
+  }
+  return null;
+}
+
+function deriveLeverBodyPreview(
+  categorySummary: string,
+  state: string | null,
+  titleText: string,
+): string {
+  if (categorySummary !== "") {
+    return categorySummary;
+  }
+  if (state !== null && state !== "") {
+    return state;
+  }
+  return titleText;
+}
+
 export function mapLeverPostingToItem(
   raw: unknown,
   ctx: LeverMappingContext,
@@ -86,14 +117,7 @@ export function mapLeverPostingToItem(
   const createdAt = epochMs(row, "createdAt");
   const updatedAt = epochMs(row, "updatedAt");
 
-  const canonicalUrl =
-    hostedUrl !== null && hostedUrl !== ""
-      ? hostedUrl
-      : urlsShow !== null && urlsShow !== ""
-        ? urlsShow
-        : applyUrl !== null && applyUrl !== ""
-          ? applyUrl
-          : null;
+  const canonicalUrl = deriveLeverCanonicalUrl(hostedUrl, urlsShow, applyUrl);
 
   const trimmedText = text !== null ? text.trim() : "";
   const titleText = trimmedText !== "" ? trimmedText : `Posting ${id}`;
@@ -101,8 +125,7 @@ export function mapLeverPostingToItem(
   const categorySummary = [team, department, location, commitment, level]
     .filter((c): c is string => c !== null && c !== "")
     .join(" — ");
-  const bodyPreview =
-    categorySummary !== "" ? categorySummary : state !== null && state !== "" ? state : titleText;
+  const bodyPreview = deriveLeverBodyPreview(categorySummary, state, titleText);
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

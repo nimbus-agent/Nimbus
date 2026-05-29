@@ -147,6 +147,113 @@ function deleteNotesAbsentFromVault(
   return deleted;
 }
 
+function readNoteSource(abs: string): { source: string; mtimeMs: number } | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(abs, "r");
+    const mtimeMs = fstatSync(fd).mtimeMs;
+    const source = readFileSync(fd, "utf8");
+    return { source, mtimeMs };
+  } catch {
+    // file disappeared / unreadable — skip to next entry
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+}
+
+function parseNotesForVault(
+  vaultRoot: string,
+  vaultId: string,
+  vaultName: string,
+  noteRelPaths: readonly string[],
+): IndexedNote[] {
+  const parsedNotes: IndexedNote[] = [];
+  for (const rel of noteRelPaths) {
+    const read = readNoteSource(join(vaultRoot, rel));
+    if (read === null) {
+      continue;
+    }
+    const parsed = parseNote(rel, read.source);
+    parsedNotes.push({
+      itemId: itemIdFor(vaultId, parsed.relPath),
+      vaultId,
+      vaultName,
+      vaultRoot,
+      relPath: parsed.relPath,
+      title: parsed.title,
+      body: parsed.body,
+      frontmatter: parsed.frontmatter,
+      tags: parsed.tags,
+      aliases: parsed.aliases,
+      rawWikilinks: parsed.wikilinks,
+      dailyNoteDate: parsed.dailyNoteDate,
+      mtimeMs: read.mtimeMs,
+    });
+  }
+  return parsedNotes;
+}
+
+function buildWikilinkIndexes(parsedNotes: readonly IndexedNote[]): {
+  byFilenameLower: Map<string, { id: string; title: string }>;
+  byTitleLower: Map<string, string>;
+} {
+  const byFilenameLower = new Map<string, { id: string; title: string }>();
+  const byTitleLower = new Map<string, string>();
+  for (const n of parsedNotes) {
+    byFilenameLower.set(basename(n.relPath).toLowerCase(), { id: n.itemId, title: n.title });
+    byTitleLower.set(n.title.toLowerCase(), n.itemId);
+  }
+  return { byFilenameLower, byTitleLower };
+}
+
+type VaultIngestResult = { upserted: number; deleted: number; nextTip: number };
+
+function ingestVault(
+  ctx: SyncContext,
+  vaultRoot: string,
+  tip: number,
+  startTip: number,
+  now: number,
+): VaultIngestResult {
+  const vaultId = vaultIdFromAbsolutePath(vaultRoot);
+  const vaultName = formatVaultName(vaultRoot);
+  const parsedNotes = parseNotesForVault(
+    vaultRoot,
+    vaultId,
+    vaultName,
+    discoverNotesInVault(vaultRoot),
+  );
+  const { byFilenameLower, byTitleLower } = buildWikilinkIndexes(parsedNotes);
+
+  let upserted = 0;
+  let nextTip = tip;
+  const keepIds = new Set<string>();
+  let deleted = 0;
+  ctx.db.transaction(() => {
+    for (const n of parsedNotes) {
+      keepIds.add(n.itemId);
+      if (n.mtimeMs <= startTip) {
+        continue;
+      }
+      const { resolved } = resolveWikilinks(n.rawWikilinks, byFilenameLower, byTitleLower);
+      upsertNote(ctx.db, n, resolved, now);
+      upserted++;
+      if (n.mtimeMs > nextTip) {
+        nextTip = n.mtimeMs;
+      }
+    }
+    deleted = deleteNotesAbsentFromVault(ctx.db, vaultId, keepIds);
+  })();
+  return { upserted, deleted, nextTip };
+}
+
 export function createObsidianSyncable(options: ObsidianSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -168,77 +275,10 @@ export function createObsidianSyncable(options: ObsidianSyncableOptions): Syncab
       const vaults = discoverVaults(rootPaths);
 
       for (const vaultRoot of vaults) {
-        const vaultId = vaultIdFromAbsolutePath(vaultRoot);
-        const vaultName = formatVaultName(vaultRoot);
-        const noteRelPaths = discoverNotesInVault(vaultRoot);
-
-        const parsedNotes: IndexedNote[] = [];
-        for (const rel of noteRelPaths) {
-          const abs = join(vaultRoot, rel);
-          let mtimeMs = 0;
-          let source: string | undefined;
-          let fd: number | undefined;
-          try {
-            fd = openSync(abs, "r");
-            mtimeMs = fstatSync(fd).mtimeMs;
-            source = readFileSync(fd, "utf8");
-          } catch {
-            // file disappeared / unreadable — skip to next entry
-          } finally {
-            if (fd !== undefined) {
-              try {
-                closeSync(fd);
-              } catch {
-                // ignore close errors
-              }
-            }
-          }
-          if (source === undefined) {
-            continue;
-          }
-          const parsed = parseNote(rel, source);
-          parsedNotes.push({
-            itemId: itemIdFor(vaultId, parsed.relPath),
-            vaultId,
-            vaultName,
-            vaultRoot,
-            relPath: parsed.relPath,
-            title: parsed.title,
-            body: parsed.body,
-            frontmatter: parsed.frontmatter,
-            tags: parsed.tags,
-            aliases: parsed.aliases,
-            rawWikilinks: parsed.wikilinks,
-            dailyNoteDate: parsed.dailyNoteDate,
-            mtimeMs,
-          });
-        }
-
-        const byFilenameLower = new Map<string, { id: string; title: string }>();
-        const byTitleLower = new Map<string, string>();
-        for (const n of parsedNotes) {
-          byFilenameLower.set(basename(n.relPath).toLowerCase(), { id: n.itemId, title: n.title });
-          byTitleLower.set(n.title.toLowerCase(), n.itemId);
-        }
-
-        const keepIds = new Set<string>();
-        let perVaultDeleted = 0;
-        ctx.db.transaction(() => {
-          for (const n of parsedNotes) {
-            keepIds.add(n.itemId);
-            if (n.mtimeMs <= state.tip) {
-              continue;
-            }
-            const { resolved } = resolveWikilinks(n.rawWikilinks, byFilenameLower, byTitleLower);
-            upsertNote(ctx.db, n, resolved, now);
-            upserted++;
-            if (n.mtimeMs > nextTip) {
-              nextTip = n.mtimeMs;
-            }
-          }
-          perVaultDeleted = deleteNotesAbsentFromVault(ctx.db, vaultId, keepIds);
-        })();
-        deleted += perVaultDeleted;
+        const result = ingestVault(ctx, vaultRoot, nextTip, state.tip, now);
+        upserted += result.upserted;
+        deleted += result.deleted;
+        nextTip = result.nextTip;
       }
 
       return {

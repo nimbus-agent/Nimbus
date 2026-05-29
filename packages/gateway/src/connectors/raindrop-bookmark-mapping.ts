@@ -34,6 +34,39 @@ export function tagStrings(raw: unknown): string[] {
   return names;
 }
 
+function deriveRaindropTitle(
+  title: string | null,
+  canonicalUrl: string | null,
+  id: string,
+): string {
+  if (title !== null && title !== "") {
+    return title;
+  }
+  if (canonicalUrl !== null) {
+    return canonicalUrl;
+  }
+  return `Bookmark ${id}`;
+}
+
+function deriveRaindropBodyPreview(args: {
+  excerpt: string | null;
+  note: string | null;
+  domain: string | null;
+  titleText: string;
+}): string {
+  const { excerpt, note, domain, titleText } = args;
+  if (excerpt !== null && excerpt !== "") {
+    return excerpt;
+  }
+  if (note !== null && note !== "") {
+    return note;
+  }
+  if (domain !== null && domain !== "") {
+    return domain;
+  }
+  return titleText;
+}
+
 export function mapRaindropBookmarkToItem(
   raw: unknown,
   ctx: RaindropMappingContext,
@@ -63,21 +96,9 @@ export function mapRaindropBookmarkToItem(
 
   const canonicalUrl = link !== null && link !== "" ? link : null;
 
-  const titleText =
-    title !== null && title !== ""
-      ? title
-      : canonicalUrl !== null
-        ? canonicalUrl
-        : `Bookmark ${id}`;
+  const titleText = deriveRaindropTitle(title, canonicalUrl, id);
 
-  const bodyPreview =
-    excerpt !== null && excerpt !== ""
-      ? excerpt
-      : note !== null && note !== ""
-        ? note
-        : domain !== null && domain !== ""
-          ? domain
-          : titleText;
+  const bodyPreview = deriveRaindropBodyPreview({ excerpt, note, domain, titleText });
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

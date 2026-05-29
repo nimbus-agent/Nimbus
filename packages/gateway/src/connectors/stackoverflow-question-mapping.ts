@@ -55,6 +55,25 @@ export function tagNames(raw: unknown): string[] {
   return names;
 }
 
+function deriveStackOverflowBodyPreview(args: {
+  strippedBody: string;
+  bodyMarkdown: string | null;
+  tagSummary: string;
+  title: string;
+}): string {
+  const { strippedBody, bodyMarkdown, tagSummary, title } = args;
+  if (strippedBody !== "") {
+    return strippedBody;
+  }
+  if (bodyMarkdown !== null && bodyMarkdown !== "") {
+    return bodyMarkdown;
+  }
+  if (tagSummary !== "") {
+    return tagSummary;
+  }
+  return title;
+}
+
 export function mapStackOverflowQuestionToItem(
   raw: unknown,
   ctx: StackOverflowMappingContext,
@@ -95,14 +114,12 @@ export function mapStackOverflowQuestionToItem(
 
   const strippedBody = stripHtml(bodyHtml);
   const tagSummary = tags.join(", ");
-  const bodyPreview =
-    strippedBody !== ""
-      ? strippedBody
-      : bodyMarkdown !== null && bodyMarkdown !== ""
-        ? bodyMarkdown
-        : tagSummary !== ""
-          ? tagSummary
-          : title;
+  const bodyPreview = deriveStackOverflowBodyPreview({
+    strippedBody,
+    bodyMarkdown,
+    tagSummary,
+    title,
+  });
 
   const modifiedAt = lastActivityDate ?? lastEditDate ?? creationDate ?? ctx.syncedAt;
 

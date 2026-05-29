@@ -76,6 +76,22 @@ const VTT_TAG_REGEX = /<\/?(?:v|c|b|i|u|lang|ruby|rt)(?:[. ][^>]*)?>|<\d{2}:\d{2
  * Multi-line cue text is merged into a single line per cue, then cues are
  * joined with a space. Whitespace runs collapse to single spaces.
  */
+/** True for VTT structural lines (header/metadata/timestamp/cue-index) that carry no cue text. */
+function isVttNonContentLine(line: string): boolean {
+  if (line === "WEBVTT" || line.startsWith("WEBVTT ")) {
+    return true;
+  }
+  if (line.startsWith("Kind:") || line.startsWith("Language:") || line.startsWith("STYLE")) {
+    return true;
+  }
+  if (line.includes("-->")) {
+    // Timestamp line. May carry trailing positioning attributes.
+    return true;
+  }
+  // Pure-numeric cue-index line.
+  return /^\d+$/.test(line);
+}
+
 export function vttToPlainText(vtt: string): string {
   if (vtt === "") {
     return "";
@@ -100,22 +116,11 @@ export function vttToPlainText(vtt: string): string {
     if (inNoteBlock) {
       continue;
     }
-    if (line === "WEBVTT" || line.startsWith("WEBVTT ")) {
-      continue;
-    }
-    if (line.startsWith("Kind:") || line.startsWith("Language:") || line.startsWith("STYLE")) {
-      continue;
-    }
     if (line.startsWith("NOTE")) {
       inNoteBlock = true;
       continue;
     }
-    if (line.includes("-->")) {
-      // Timestamp line. May carry trailing positioning attributes.
-      continue;
-    }
-    if (/^\d+$/.test(line)) {
-      // Pure-numeric cue-index line.
+    if (isVttNonContentLine(line)) {
       continue;
     }
     // A cue-text line. Strip VTT-only inline tags (literal `<like this>` in
