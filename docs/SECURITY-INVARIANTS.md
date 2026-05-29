@@ -388,8 +388,8 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/registry.ts:110` | I2 | PagerDuty write tool mappings (pagerduty.incident.acknowledge/resolve/escalate) |
 | `packages/gateway/src/connectors/registry.ts:114` | I2 | Kubernetes write tool mappings (kubernetes.rollout.restart, kubernetes.pod.delete, kubernetes.deployment.scale) |
 | `packages/gateway/src/connectors/registry.ts:117` | I2 | AWS write tool mappings (aws.ecs.service.update, aws.lambda.invoke, aws.ec2.instance.stop/start) |
-| `packages/gateway/src/connectors/registry.ts:120` | I2 | Azure write tool mappings (azure.app_service.restart, azure.aks.node_pool.scale) |
-| `packages/gateway/src/connectors/registry.ts:123` | I2 | GCP write tool mappings (gcp.cloud_run.deploy, gcp.gke.workload.restart) |
+| `packages/gateway/src/automation/workflow-hitl-preview.ts:60` | I2 | Azure write tool mappings (azure.app_service.restart, azure.aks.node_pool.scale) |
+| `packages/gateway/src/automation/workflow-hitl-preview.ts:68` | I2 | GCP write tool mappings (gcp.cloud_run.deploy, gcp.gke.workload.restart) |
 | `packages/gateway/src/engine/agent.ts:440` | I11 | wrapToolForLlm wiring site — first I11 production caller in agent.ts |
 | `packages/gateway/src/engine/audit-payload-safety.test.ts:14` | I4 | Test verifies no audit row written with hitlStatus approved outside consent round-trip |
 | `packages/gateway/src/engine/executor.ts:16` | I2 | HITL_REQUIRED_BACKING is module-private immutable set |
@@ -432,7 +432,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/mcp-connectors/obsidian/src/server.ts:11` | I2 | Obsidian HITL gate is in executor.ts; assertHitlRequired() not used in this codebase |
 | `packages/mcp-connectors/obsidian/src/server.ts:13` | I2 | Obsidian append_to_daily_note is HITL-gated via obsidian.note.append action type |
 | `packages/mcp-connectors/obsidian/src/server.ts:67` | I2 | Path-traversal guard in obsidian_get covers read path (HITL covers write path) |
-| `packages/mcp-connectors/obsidian/src/server.ts:410` | I2 | Obsidian daily-note append enforces vault boundary via assertWithinVault before writing |
+| `packages/mcp-connectors/obsidian/src/server.ts:369` | I2 | Obsidian daily-note append enforces vault boundary via assertWithinVault before writing |
 | `packages/mcp-connectors/onedrive/src/server.ts:4` | I2 | OneDrive MCP write tools rely on executor.ts gate; no per-connector HITL guard |
 | `packages/mcp-connectors/outlook/src/server.ts:7` | I2 | Outlook MCP write tools rely on executor.ts gate; no per-connector HITL guard |
 | `packages/mcp-connectors/pagerduty/src/server.ts:3` | I2 | PagerDuty MCP write tools rely on executor.ts gate; no per-connector HITL guard |
@@ -458,7 +458,6 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts:759` | I15 | Additional spawn site in connector-spawns.ts routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts:10` | I15 | FIRST_PARTY_MANIFESTS is the static per-service sandbox permission registry |
 | `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts:12` | I15 | manifestForFirstParty(serviceId) resolves sandbox manifest at spawn time |
-| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts:590` | I15 | Additional first-party manifest entry |
 | `packages/gateway/src/connectors/lazy-mesh/mesh.test.ts:191` | I15 | mesh.test.ts verifies I15 wiring for mesh.ts spawn sites |
 | `packages/gateway/src/connectors/lazy-mesh/mesh.test.ts:248` | I15 | mesh.test.ts verifies wrapServerSpec import in mesh.ts |
 | `packages/gateway/src/connectors/lazy-mesh/mesh.test.ts:396` | I15 | mesh.test.ts verifies sandbox wrapper env vars are correctly set |
@@ -473,12 +472,12 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:566` | I15 | phase3-config observability (New Relic/Datadog) spawn site routes through wrap() |
 | `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:595` | I15 | phase3-config additional spawn site routes through wrap() |
 | `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:804` | I15 | phase3-config additional spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/slot.ts:43` | I15 | MeshSpawnContext.sandboxCwd is the working-directory anchor for every I15-wrapped spawn |
+| `packages/gateway/src/connectors/lazy-mesh/slot.ts:27` | I15 | MeshSpawnContext.sandboxCwd is the working-directory anchor for every I15-wrapped spawn |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:15` | I15 | user-mcp.ts spawn site routes through wrapServerSpec |
-| `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:106` | I15 | user-mcp ensureUserMcpClient uses wrapServerSpec for user-installed MCP servers |
+| `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:74` | I15 | user-mcp ensureUserMcpClient uses wrapServerSpec for user-installed MCP servers |
 | `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:3` | I15 | Module docblock: why MCPClient internals require the wrapper-shim approach |
 | `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:29` | I15 | Env contract: NIMBUS_SANDBOX_MANIFEST_JSON and NIMBUS_SANDBOX_CWD are consumed and stripped by wrapper |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:89` | I15 | SANDBOX_WRAPPER_PATH exported for I15 enforcement test |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:33` | I15 | SANDBOX_WRAPPER_PATH exported for I15 enforcement test |
 | `packages/gateway/src/deployment/types.ts:5` | I13 | DeploymentAnnotateInput types used by the HTTP write surface |
 | `packages/gateway/src/engine/agent.ts:446` | I11 | Second I11 wiring site in agent.ts (mesh.ts MCP tool wrapper) |
 | `packages/gateway/src/extensions/auto-update-orchestrate.ts:50` | I16 | Auto-update orchestrator re-runs signature verification on new version before activating |
@@ -490,16 +489,15 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/extensions/verify-extensions.ts:162` | I16 | startup verification is no-op when signatureOpts is undefined (unsigned extensions skip) |
 | `packages/gateway/src/extensions/verify-extensions.ts:402` | I16 | VerifyExtensionsSignatureOpts interface; signatureOpts gate description |
 | `packages/gateway/src/extensions/verify-extensions.ts:421` | I16 | verifyExtensionsBestEffort docblock: hash verify + Ed25519 second pass; mesh stop on failure |
-| `packages/gateway/src/extensions/verify-extensions.ts:468` | I16 | Startup verification failure flips enabled=0 and records reason in SignatureDisabledRegistry |
+| `packages/gateway/src/extensions/verify-extensions.ts:420` | I16 | Startup verification failure records reason in SignatureDisabledRegistry and increments signatureHardDisabled |
 | `packages/gateway/src/extensions/verify-signature.ts:6` | I16 | Gateway re-export shim for @nimbus-dev/sdk crypto/verify-signature.ts (MIT, license-clean) |
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts:3` | I11 | V29 tool_call_log is write-only from I11 wiring sites; read-only from audit.toolCalls |
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts:9` | I11 | audit.toolCalls is CLI-only (FORBIDDEN_OVER_LAN per I5, absent from Tauri allowlist per I7) |
 | `packages/gateway/src/ipc/automation-rpc.ts:97` | I2 | workflow.run routes destructive workflow steps through ToolExecutor gate |
 | `packages/gateway/src/ipc/automation-rpc.ts:99` | I2 | workflow HITL batch consolidation handled by coordinator, not automation-rpc |
 | `packages/gateway/src/ipc/automation-rpc.ts:101` | I2 | workflow.rerun routes through same HITL gate as initial run |
-| `packages/gateway/src/ipc/automation-rpc.ts:431` | I2 | watcher.create does not trigger HITL; watchers are read-only observers |
-| `packages/gateway/src/ipc/automation-rpc.ts:433` | I2 | watcher.update does not trigger HITL |
-| `packages/gateway/src/ipc/automation-rpc.ts:435` | I2 | watcher.delete does not trigger HITL (watcher is gateway-local, not a cloud mutation) |
+| `packages/gateway/src/ipc/automation-rpc.ts:114` | I2 | watcher.create does not trigger HITL; watchers are read-only observers |
+| `packages/gateway/src/ipc/automation-rpc.ts:132` | I2 | watcher.delete does not trigger HITL (watcher is gateway-local, not a cloud mutation) |
 | `packages/gateway/src/ipc/deployment-rpc.ts:5` | I13 | deployment-rpc handler is NOT in Tauri ALLOWED_METHODS (only reachable via HTTP write surface) |
 | `packages/gateway/src/ipc/http-routes.ts:5` | I13 | READ_ONLY_HTTP_ROUTES is source of truth for OpenAPI drift detection |
 | `packages/gateway/src/ipc/http-routes.ts:13` | I13 | OpenAPI drift gate compares READ_ONLY_HTTP_ROUTES against v1.yaml at CI time |
@@ -510,8 +508,8 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/ipc/preflight-rpc.ts:5` | I13 | deploy.preflight is read-only; does not use the HTTP write surface |
 | `packages/gateway/src/ipc/security-rpc.ts:7` | I7 | security.scan is CLI-only (NOT in Tauri ALLOWED_METHODS, FORBIDDEN_OVER_LAN) |
 | `packages/gateway/src/ipc/server/dispatchers.ts:609` | I2 | Extension dispatcher routes extension.update through HITL gate |
-| `packages/gateway/src/ipc/server/options.ts:78` | I14 | First DB handle: SQLITE_OPEN_READONLY for query-only IPC paths |
-| `packages/gateway/src/ipc/server/options.ts:84` | I14 | Second (writable) DB handle for HTTP write surface only; never used by read-only IPC |
+| `packages/gateway/src/ipc/http-server.ts:276` | I14 | First DB handle: `readonly: true` for query-only HTTP API paths |
+| `packages/gateway/src/ipc/http-server.ts:282` | I14 | Second (writable) DB handle for HTTP write surface only; null when deployment token unset |
 | `packages/gateway/src/platform/sandbox/sandbox-runner.ts:8` | I15 | SandboxSpawnOptions.env must be output of extensionProcessEnv() (couples I1 and I15) |
 | `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts:5` | I15 | sandbox-wrapper.ts is the single sandbox-execution boundary for all extension children |
 | `packages/gateway/src/platform/sandbox/seccomp-filter.ts:2` | I15 | Seccomp BPF filter is AUDIT_ARCH_X86_64-guarded; not loaded on non-x86-64 Linux |
@@ -519,8 +517,8 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/util/timing-safe-compare.ts:4` | I10 | S6-F10/S7-F8 citation; sha256HexEqualConstantTime replaces direct !== on hash strings |
 | `packages/gateway/src/util/timing-safe-compare.ts:7` | I10 | Returns false (not throws) on length mismatch, non-64-char inputs, or malformed hex |
 | `packages/gateway/src/util/timing-safe-compare.ts:11` | I10 | Constant-time guarantee only covers valid-input fast path; invalid hex rejected before timingSafeEqual |
-| `packages/gateway/src/util/timing-safe-compare.ts:30` | I10 | constantTimeStringEqual: canonical helper for pairing codes, bearer tokens, opaque strings |
-| `packages/gateway/src/util/timing-safe-compare.ts:33` | I10 | Length-mismatch burn cycle: runs timingSafeEqual(aBuf, aBuf) to prevent length-difference timing leak |
+| `packages/gateway/src/util/timing-safe-compare.ts:17` | I10 | constantTimeStringEqual: canonical helper for pairing codes, bearer tokens, opaque strings |
+| `packages/gateway/src/util/timing-safe-compare.ts:21` | I10 | Length-mismatch burn cycle: runs timingSafeEqual(aBuf, aBuf) to prevent length-difference timing leak |
 | `packages/gateway/test/e2e/scenarios/dependency-lifecycle.e2e.test.ts:43` | I16 | E2E test exercises I16 through full install → startup → verify lifecycle |
 | `packages/gateway/test/integration/db/disk-full-propagation.test.ts:296` | I14 | Integration test covers SQLITE_FULL → DiskFullError propagation through dbRun |
 | `packages/gateway/test/integration/deployment/i11-envelope.test.ts:2` | I11 | Integration test verifies envelope applied on LLM path without double-wrapping on planner path |
@@ -530,18 +528,17 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts:209` | I15 | Unit test verifies sandboxCwd is threaded through correctly |
 | `packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts:251` | I15 | Unit test verifies I1 + I15 coupling: extensionProcessEnv used in spawned env |
 | `packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts:365` | I15 | Unit test verifies additional connector-spawns.ts spawn site |
-| `packages/github-actions/annotate-action/src/main.ts:289` | I13 | GitHub Action wraps POST /v1/deployments; bearer token must come from secrets not env |
+| `packages/github-actions/annotate-action/src/main.ts:173` | I13 | GitHub Action reads bearer token via `getInput("token")` (wired to `secrets.NIMBUS_GATEWAY_TOKEN` in workflow YAML, never `env`) |
 | `packages/sdk/src/crypto/canonical-json.ts:4` | I16 | Canonical JSON strips signature field before serialization for Ed25519 signing |
 | `packages/sdk/src/crypto/canonical-json.ts:56` | I16 | Field order is deterministic (sorted by key); encoding is UTF-8 without BOM |
 | `packages/sdk/src/crypto/verify-signature.ts:4` | I16 | SDK primitive for verifyManifestSignature; MIT-licensed for connector author use |
-| `packages/scripts/package-linux-installers.ts:339` | I16 | Installer build signs first-party manifests with the release keypair |
 | `scripts/structure-audit/check-nimbus-invariants.ts:6` | I1/I14/I15 | Static audit entry point: D1 (I1 spawn rule), D10 (I15 wrapServerSpec rule), D12 (I14 dbRun rule) |
 | `scripts/structure-audit/check-nimbus-invariants.ts:66` | I14 | D12 rule: direct db.run/db.exec outside DB_RUN_EXEC_ALLOW_LIST causes exit 1 |
 | `scripts/structure-audit/check-nimbus-invariants.ts:72` | I1 | D1 rule: spawn under connectors/ without extensionProcessEnv causes exit 1 |
 | `scripts/structure-audit/check-nimbus-invariants.ts:73` | I15 | D10 rule: ServerSpec under connectors/lazy-mesh/ without wrapServerSpec causes exit 1 |
 | `packages/cli/src/commands/extension-sync.test.ts:85` | I10 | Test verifies extension sync token comparison uses constantTimeStringEqual |
 | `packages/gateway/src/agents/impact.test.ts:71` | I10 | impact.test.ts verifies no timing-sensitive comparison uses === |
-| `packages/gateway/src/automation/graph-predicate.ts:184` | I2 | countItemsMatchingGraphPredicate does not leak item content or secrets; returns count only |
+| `packages/gateway/src/automation/graph-predicate.ts:149` | I2 | countItemsMatchingGraphPredicate does not leak item content or secrets; returns count only |
 | `packages/gateway/src/extensions/auto-update-apply.ts:4` | I10 | Explicit carve-out: hexEqualIgnoreCase uses === because hashes are public bytes (not secret) |
 | `packages/gateway/src/extensions/spawn-env.ts:3` | I1 | extensionProcessEnv is the module that owns the env allowlist; not individual spawn sites |
 | `packages/gateway/src/extensions/verify-extensions.ts:162` | I16 | signatureOpts gate: verification is no-op when undefined (unsigned extensions skip) |
