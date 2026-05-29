@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote, ImpactBrief, ImpactCategory, ImpactFinding } from "./_lib/findings.ts";
 import {
   aggregateMissingEntityTypes,
@@ -7,7 +8,7 @@ import {
   detectMissingConnector,
   detectMissingEntityType,
 } from "./_lib/gap-notes.ts";
-import { type SynthesizerLlm, synthesize } from "./_lib/synthesize.ts";
+import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type ImpactInput = {
   fileOrPrUrl: string;
@@ -116,25 +117,18 @@ export async function runImpact(input: ImpactInput, ctx: ImpactContext): Promise
   };
 }
 
-export async function emitImpactBrief(
+export function emitImpactBrief(
   input: ImpactInput,
   ctx: ImpactContext,
 ): Promise<{ sessionId: string }> {
-  void (async () => {
-    const brief = await runImpact(input, ctx);
-    const markdown = await synthesize(brief, ctx.llm === undefined ? {} : { llm: ctx.llm });
-    ctx.notify("impact.briefReady", {
-      sessionId: ctx.sessionId,
-      brief: markdown,
-      findings: brief,
-    });
-  })().catch((err: unknown) => {
-    ctx.notify("impact.briefError", {
-      sessionId: ctx.sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  return emitBriefWithSynthesis({
+    sessionId: ctx.sessionId,
+    briefReadyMethod: "impact.briefReady",
+    briefErrorMethod: "impact.briefError",
+    notify: ctx.notify,
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    buildBrief: () => runImpact(input, ctx),
   });
-  return { sessionId: ctx.sessionId };
 }
 
 const HOST_TO_SERVICE: Readonly<Record<string, string>> = Object.freeze({

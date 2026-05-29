@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { CatchupBrief, CatchupItem, CatchupSection, GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
 import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
-import { type SynthesizerLlm, synthesize } from "./_lib/synthesize.ts";
+import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -153,25 +154,18 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
   };
 }
 
-export async function emitCatchupBrief(
+export function emitCatchupBrief(
   input: CatchupInput,
   ctx: CatchupContext,
 ): Promise<{ sessionId: string }> {
-  void (async () => {
-    const brief = await runCatchup(input, ctx);
-    const markdown = await synthesize(brief, ctx.llm === undefined ? {} : { llm: ctx.llm });
-    ctx.notify("catchup.briefReady", {
-      sessionId: ctx.sessionId,
-      brief: markdown,
-      findings: brief,
-    });
-  })().catch((err: unknown) => {
-    ctx.notify("catchup.briefError", {
-      sessionId: ctx.sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  return emitBriefWithSynthesis({
+    sessionId: ctx.sessionId,
+    briefReadyMethod: "catchup.briefReady",
+    briefErrorMethod: "catchup.briefError",
+    notify: ctx.notify,
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    buildBrief: () => runCatchup(input, ctx),
   });
-  return { sessionId: ctx.sessionId };
 }
 
 function safeOsUsername(): string {
