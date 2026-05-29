@@ -56,6 +56,14 @@ The plan's `runReadOnlyAgent({ decompose, synthesize }) → string` shape doesn'
 
 Helper extracted as `emitBriefWithSynthesis` in `packages/gateway/src/agents/_lib/emit-brief.ts`. All three agents adopted (expert + impact + catchup) — `[EXTRACTED]`. The plan only listed expert + impact; catchup's wrapper was identical and gets folded in. Per-agent net: ~14 lines → ~7 lines (-7 each, -21 total). 86 agent tests + e2e scenarios pass.
 
+## Task 4.16 status (2026-05-29)
+
+The OAuth provider chains the plan called out turned out to be a smaller scope than the plan template suggested. The exhaustive switch in `oauthClientConfigForProvider` is the **deliberate** compile-time gate that forces co-edits when widening `OAuthProvider` (per the [`oauth-provider-union-widening-coupling`](../../../../../../../Users/asafg/.claude/projects/C--gitrep-Nimbus/memory/oauth-provider-union-widening-coupling.md) memory). The switch stays.
+
+What was duplicated were three inline `profile.provider === "..."` equality chains in `connectorAuthOAuthPkce` that re-derived per-provider knowledge already implied by the descriptor. Centralised by extending `oauthClientConfigForProvider` to also return optional `clientSecret` + `clientSecretMissingHelp` — `[EXTRACTED]`. Required-secret precheck collapses to one `descriptor.clientSecret === "required"` check; the three-way notion/zoom/google secret merge collapses to a single conditional spread. Plus `bun-test-support.ts:78` now uses `OAUTH_PROVIDERS[provider].vaultKey`.
+
+**Skipped:** the `sharedKey` chain at `auth.ts:603-607` (4 short lines; `SharedOAuthProvider` type-narrowing on `sharedOAuthKey` is doing real work) and the `oauth-vault-tokens.ts:24` google special-case (scoped to a 2-provider helper; collapsing further would widen the helper unnecessarily).
+
 ## connector sync handlers (59)
 
 Glob: `packages/gateway/src/connectors/*-sync.ts`
