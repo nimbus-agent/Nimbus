@@ -36,6 +36,15 @@ function stubMeetingsFetch(
   let i = 0;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
     const url = urlFromFetchInput(input);
+    if (url.includes("/v2/users/me/recordings")) {
+      // Walk B fires every cycle; these Walk-A-focused tests want it to be a
+      // no-op (empty recordings list → no transcript downloads). Not counted
+      // in fetchCount.n, which tracks meetings-list pages only.
+      return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (!url.includes("/v2/users/me/meetings")) {
       throw new Error(`stubMeetingsFetch: unexpected URL: ${url}`);
     }
@@ -112,7 +121,8 @@ describeWithFetchRestore("zoom-sync", () => {
     const r = await sync.sync(ctx, null);
 
     expect(fetchCount.n).toBe(2);
-    expect(acquireProviders.filter((p) => p === "zoom").length).toBe(2);
+    // 2 meetings-list pages + 1 recordings-list page (Walk B, empty result).
+    expect(acquireProviders.filter((p) => p === "zoom").length).toBe(3);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "zoom", 2);
   });
@@ -156,6 +166,13 @@ describeWithFetchRestore("zoom-sync", () => {
     let fetchCount = 0;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
       const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/recordings")) {
+        // Walk B no-op for this Walk-A pagination cap test.
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       if (!url.includes("/v2/users/me/meetings")) {
         throw new Error(`unexpected fetch: ${url}`);
       }
