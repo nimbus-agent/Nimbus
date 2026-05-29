@@ -511,6 +511,8 @@ nimbus connector auth zoom
 
 The access token and rotating refresh token are stored in the OS keystore under `zoom.oauth`. Token rotation is handled automatically by the Gateway's single-flight refresh lock (Zoom invalidates the entire token chain on refresh-token reuse, so only one refresh runs at a time).
 
+The connector indexes both scheduled meetings (`zoom:meeting`) and cloud-recording AI transcripts (`zoom:transcript`, prose-heavy). The `cloud_recording:read:list_user_recordings` scope above covers transcripts — no re-consent is needed beyond the initial `nimbus connector auth zoom`. New transcripts are picked up on the next sync cycle; `nimbus connector reindex zoom` forces an immediate pass.
+
 ---
 
 ### `nimbus connector list`

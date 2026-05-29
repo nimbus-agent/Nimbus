@@ -704,15 +704,18 @@ They introduce these item types (write tools — `warehouse.job.trigger`, `dbt.j
 
 Cross-stack lineage (Tableau → Looker view → dbt model → Snowflake table → Airflow DAG → PR) resolves via the Memory Layer's hybrid search plus `traverseGraph` over `upstream_refs` / `downstream_refs` relations. Per-tool surfaces and phase sequencing live in [`roadmap.md` § Planned](./roadmap.md#planned).
 
-#### Meetings (Zoom — Phase 5 Tier 1 PR-2)
+#### Meetings (Zoom — Phase 5 Tier 1 PR-2 + PR-3)
 
 | Tool | HITL Required | Indexed Item Type |
 |---|---|---|
 | `zoom_list` / `zoom_get` / `zoom_search` | No | `zoom:meeting` |
+| `zoom_recordings_list` / `zoom_transcript_get` | No | `zoom:transcript` |
 
 Zoom meetings are indexed via `GET /v2/users/me/meetings?type=scheduled` (next-page-token walk, `MAX_PAGES=20`). Auth: 3-legged OAuth (PKCE + Basic-header client-secret) via the provider registry (`zoom.oauth` vault key); rotating refresh tokens handled by the single-flight lock. Fixed sandbox hosts: `api.zoom.us` + `zoom.us` (I15). Env vars: `NIMBUS_OAUTH_ZOOM_CLIENT_ID` + `NIMBUS_OAUTH_ZOOM_CLIENT_SECRET`.
 
-`zoom:meeting` items are indexed with: `meeting_id`, `uuid`, `host_id`, `topic`, `type`, `start_time`, `duration_min`, `timezone`, `agenda`, `join_url`, `created_at`. `external_id = String(<meeting_id>)` (numeric); `canonical_url` = `join_url`; `modifiedAt` = `created_at` (NOT `start_time` — future meeting dates corrupt recency queries). Sparse-structured: NOT added to `PROSE_HEAVY_TYPES` (local MiniLM, 384-dim). `hitlRequired: []`. Recordings index + AI-generated transcripts (`zoom:transcript`, prose-heavy) deferred to PR-3 on the same OAuth grant.
+`zoom:meeting` items are indexed with: `meeting_id`, `uuid`, `host_id`, `topic`, `type`, `start_time`, `duration_min`, `timezone`, `agenda`, `join_url`, `created_at`. `external_id = String(<meeting_id>)` (numeric); `canonical_url` = `join_url`; `modifiedAt` = `created_at` (NOT `start_time` — future meeting dates corrupt recency queries). Sparse-structured: NOT added to `PROSE_HEAVY_TYPES` (local MiniLM, 384-dim). `hitlRequired: []`.
+
+`zoom:transcript` items (PR-3) are indexed from cloud-recording AI transcripts via `GET /v2/users/me/recordings` (token-paginated, ≤1-month-windowed walk; the `nimbus-zoom1:` cursor gains a `lastRecordingsTo` ISO-8601 field — first sync backfills 30 days, incremental cycles cover one ≤30-day window). For each meeting's `recording_files[]` entry with `file_type === "TRANSCRIPT"`, a skip-if-exists check on `external_id = <meeting_uuid>:<recording_file_id>` (transcript immutability) avoids re-downloading; on miss the VTT is fetched via an `Authorization: Bearer` header (never a URL token, never logged) and reduced to plaintext, stored as `transcript_text` in metadata. The recordings walk also upserts each meeting's `zoom:meeting` row (dedupe under the same `external_id`) so past recorded meetings missed by the `type=scheduled` filter still get indexed. A 429 mid-walk is a graceful break (cursor not advanced; cheap replay). `zoom:transcript` IS added to `PROSE_HEAVY_TYPES` (prose-heavy / OpenAI 1536-dim in hybrid mode; MiniLM-only fallback when `openai.api_key` is absent). Same OAuth grant as PR-2 — no re-consent. `hitlRequired: []`.
 
 ### Delta Sync
 

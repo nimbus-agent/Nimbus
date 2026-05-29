@@ -507,7 +507,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 ##### Meetings & Async Video
 
-- [x] **Zoom** (2026-05-28, Phase 5 Tier 1 PR-2) — meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled`; 3-legged OAuth (PKCE + Basic-header secret) on the provider registry (PR-1); single-flight refresh token rotation; fixed sandbox hosts `api.zoom.us` + `zoom.us` (I15); `hitlRequired: []`; recordings index + AI-generated transcripts (`zoom:transcript`, prose-heavy) deferred to PR-3 on the same OAuth grant
+- [x] **Zoom** (2026-05-29, Phase 5 Tier 1 PR-2 + PR-3) — scheduled meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled` AND cloud-recording AI transcripts (`zoom:transcript`, prose-heavy) via `GET /v2/users/me/recordings` (≤1-month-windowed walk + skip-if-exists on `<meeting_uuid>:<recording_file_id>` + Bearer-header download, never URL-token, never logged); 3-legged OAuth (PKCE + Basic-header secret) on the provider registry (PR-1); single-flight refresh token rotation; fixed sandbox hosts `api.zoom.us` + `zoom.us` (I15); `hitlRequired: []`
 - [ ] **Google Meet** — meeting metadata and auto-generated transcripts via Google Workspace; OAuth (extends existing Google connector auth); read-only; indexed alongside Google Calendar events
 - [ ] **Loom** — async video index: title, description, transcript, viewer stats; OAuth; read-only; `loom_video` item type
 
