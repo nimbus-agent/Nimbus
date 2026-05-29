@@ -133,15 +133,7 @@ function buildCandidateSql(p: ReembedParams): {
   return { sql, params };
 }
 
-async function runReembed(
-  p: ReembedParams,
-  ctx: IndexReembedRpcContext,
-  progress: (payload: Record<string, unknown>) => void,
-  signal: AbortSignal,
-): Promise<Record<string, unknown>> {
-  const batchSize = clampBatchSize(p.batchSize);
-  let succeeded = 0;
-  let skipped = 0;
+async function assertModelUsable(p: ReembedParams, ctx: IndexReembedRpcContext): Promise<void> {
   if (p.model.startsWith("openai:")) {
     const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
     if (envKey === "") {
@@ -157,6 +149,73 @@ async function runReembed(
   } else if (p.model !== "Xenova/all-MiniLM-L6-v2" && p.model !== "local") {
     throw new IndexReembedRpcError(-32602, `Unsupported model: ${p.model}`);
   }
+}
+
+function isRetryableStatus(status: number | undefined): boolean {
+  return status === 429 || (typeof status === "number" && status >= 500 && status < 600);
+}
+
+type BatchCounters = { succeeded: number; skipped: number };
+
+async function embedSlice(
+  pipeline: SqliteEmbeddingPipeline,
+  slice: readonly IndexedItem[],
+  counters: BatchCounters,
+): Promise<void> {
+  for (const row of slice) {
+    await pipeline.embedItem(row);
+    counters.succeeded += 1;
+  }
+}
+
+async function embedBatchWithRetry(
+  pipeline: SqliteEmbeddingPipeline,
+  ctx: IndexReembedRpcContext,
+  slice: readonly IndexedItem[],
+  batchStart: number,
+  counters: BatchCounters,
+): Promise<void> {
+  try {
+    await embedSlice(pipeline, slice, counters);
+  } catch (err) {
+    const status = (err as { status?: number } | undefined)?.status;
+    if (isRetryableStatus(status)) {
+      const retryAfterMs =
+        (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
+      await new Promise((r) => setTimeout(r, retryAfterMs));
+      try {
+        await embedSlice(pipeline, slice, counters);
+      } catch (retryErr) {
+        ctx.logger.warn(
+          {
+            errName: retryErr instanceof Error ? retryErr.name : "Error",
+            errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
+            batchStart,
+            batchSize: slice.length,
+          },
+          "reembed batch failed after retry; skipping",
+        );
+        counters.skipped += slice.length;
+      }
+    } else if (status === 401 || status === 403) {
+      throw new IndexReembedRpcError(
+        -32603,
+        `Fatal: OpenAI returned ${String(status)}. Check openai.api_key validity.`,
+      );
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function runReembed(
+  p: ReembedParams,
+  ctx: IndexReembedRpcContext,
+  progress: (payload: Record<string, unknown>) => void,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const batchSize = clampBatchSize(p.batchSize);
+  await assertModelUsable(p, ctx);
 
   const { sql, params } = buildCandidateSql(p);
   const candidates = ctx.db.query(sql).all(...params) as IndexedItem[];
@@ -171,52 +230,17 @@ async function runReembed(
     logger: ctx.logger,
   });
 
+  const counters: BatchCounters = { succeeded: 0, skipped: 0 };
   for (let i = 0; i < candidates.length; i += batchSize) {
     if (signal.aborted) {
       break;
     }
     const slice = candidates.slice(i, i + batchSize);
-    try {
-      for (const row of slice) {
-        await pipeline.embedItem(row);
-        succeeded += 1;
-      }
-    } catch (err) {
-      const status = (err as { status?: number } | undefined)?.status;
-      if (status === 429 || (typeof status === "number" && status >= 500 && status < 600)) {
-        const retryAfterMs =
-          (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
-        await new Promise((r) => setTimeout(r, retryAfterMs));
-        try {
-          for (const row of slice) {
-            await pipeline.embedItem(row);
-            succeeded += 1;
-          }
-        } catch (retryErr) {
-          ctx.logger.warn(
-            {
-              errName: retryErr instanceof Error ? retryErr.name : "Error",
-              errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
-              batchStart: i,
-              batchSize: slice.length,
-            },
-            "reembed batch failed after retry; skipping",
-          );
-          skipped += slice.length;
-        }
-      } else if (status === 401 || status === 403) {
-        throw new IndexReembedRpcError(
-          -32603,
-          `Fatal: OpenAI returned ${String(status)}. Check openai.api_key validity.`,
-        );
-      } else {
-        throw err;
-      }
-    }
-    progress({ done: succeeded + skipped, total, skipped });
+    await embedBatchWithRetry(pipeline, ctx, slice, i, counters);
+    progress({ done: counters.succeeded + counters.skipped, total, skipped: counters.skipped });
   }
 
-  return { succeeded, skipped };
+  return { succeeded: counters.succeeded, skipped: counters.skipped };
 }
 
 function handleReembed(params: unknown, ctx: IndexReembedRpcContext): { jobId: string } {

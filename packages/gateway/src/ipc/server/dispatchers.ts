@@ -524,6 +524,78 @@ export async function tryDispatchSessionRpc(
   throw new RpcMethodError(-32601, `Method not found: ${method}`);
 }
 
+function buildAutoUpdateDeps(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+): Parameters<typeof dispatchAutomationRpc>[0]["autoUpdate"] {
+  if (
+    ctx.options.extensionsAutoUpdate === undefined ||
+    (method !== "extension.checkForUpdates" && method !== "extension.update") ||
+    ctx.options.localIndex === undefined
+  ) {
+    return undefined;
+  }
+  const stubDispatcher: ConnectorDispatcher = {
+    dispatch(): Promise<unknown> {
+      return Promise.reject(new Error("auto-update gate does not dispatch to MCP"));
+    },
+  };
+  const toolExecutor = new ToolExecutor(
+    bindConsentChannel(ctx.consentImpl, clientId),
+    ctx.options.localIndex,
+    stubDispatcher,
+  );
+  return {
+    ...ctx.options.extensionsAutoUpdate,
+    gate: async (action) => {
+      const r = await toolExecutor.gate(action);
+      if (r === "proceed") return "proceed";
+      return { status: "rejected" };
+    },
+  };
+}
+
+async function dispatchExtensionAutomationRpc(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  try {
+    const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
+    const out = await dispatchAutomationRpc({
+      method,
+      params,
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.extensionsDir === undefined
+        ? {}
+        : { extensionsDir: ctx.options.extensionsDir }),
+      ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
+      vault: ctx.options.vault,
+      ...(ctx.options.extensionsPublisherKeyFetcher === undefined
+        ? {}
+        : { fetcher: ctx.options.extensionsPublisherKeyFetcher }),
+      ...(ctx.options.extensionsEnforceAirGap === undefined
+        ? {}
+        : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
+      ...(autoUpdateDeps !== undefined ? { autoUpdate: autoUpdateDeps } : {}),
+    });
+    if (out.kind === "hit") {
+      return out.value;
+    }
+  } catch (e) {
+    if (e instanceof AutomationRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -540,61 +612,7 @@ export async function tryDispatchAutomationRpc(
     method.startsWith("workflow.") ||
     method.startsWith("extension.")
   ) {
-    if (ctx.options.localIndex === undefined) {
-      throw new RpcMethodError(-32603, "Local index is not available");
-    }
-    try {
-      let autoUpdateDeps: Parameters<typeof dispatchAutomationRpc>[0]["autoUpdate"];
-      if (
-        ctx.options.extensionsAutoUpdate !== undefined &&
-        (method === "extension.checkForUpdates" || method === "extension.update")
-      ) {
-        const stubDispatcher: ConnectorDispatcher = {
-          dispatch(): Promise<unknown> {
-            return Promise.reject(new Error("auto-update gate does not dispatch to MCP"));
-          },
-        };
-        const toolExecutor = new ToolExecutor(
-          bindConsentChannel(ctx.consentImpl, clientId),
-          ctx.options.localIndex,
-          stubDispatcher,
-        );
-        autoUpdateDeps = {
-          ...ctx.options.extensionsAutoUpdate,
-          gate: async (action) => {
-            const r = await toolExecutor.gate(action);
-            if (r === "proceed") return "proceed";
-            return { status: "rejected" };
-          },
-        };
-      }
-      const out = await dispatchAutomationRpc({
-        method,
-        params,
-        db: ctx.options.localIndex.getDatabase(),
-        ...(ctx.options.extensionsDir === undefined
-          ? {}
-          : { extensionsDir: ctx.options.extensionsDir }),
-        ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
-        vault: ctx.options.vault,
-        ...(ctx.options.extensionsPublisherKeyFetcher === undefined
-          ? {}
-          : { fetcher: ctx.options.extensionsPublisherKeyFetcher }),
-        ...(ctx.options.extensionsEnforceAirGap === undefined
-          ? {}
-          : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
-        ...(autoUpdateDeps !== undefined ? { autoUpdate: autoUpdateDeps } : {}),
-      });
-      if (out.kind === "hit") {
-        return out.value;
-      }
-    } catch (e) {
-      if (e instanceof AutomationRpcError) {
-        throw new RpcMethodError(e.rpcCode, e.message);
-      }
-      throw e;
-    }
-    throw new RpcMethodError(-32601, `Method not found: ${method}`);
+    return dispatchExtensionAutomationRpc(ctx, clientId, method, params);
   }
 
   return automationRpcSkipped;
