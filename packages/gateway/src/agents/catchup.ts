@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
-import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/coordinator.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { CatchupBrief, CatchupItem, CatchupSection, GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
@@ -67,6 +67,41 @@ function makeSubAgent(
   };
 }
 
+function unresolvedIdentityGap(): GapNote {
+  return {
+    category: "missing_user_identity",
+    detail:
+      "Could not resolve the current user — no override / git email / OS username matched a known person.",
+    remediation:
+      "Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id.",
+  };
+}
+
+function failedSubAgentGap(r: SubTaskResult): GapNote {
+  return {
+    category: "missing_connector",
+    detail: `catchup sub-agent #${r.taskIndex} failed${
+      r.errorText === undefined ? "" : `: ${r.errorText}`
+    }`,
+  };
+}
+
+function mergeSubAgentResult(
+  decoded: SubAgentResult,
+  involvement: Involvement,
+  windowItems: WindowItem[],
+  subAgentGaps: GapNote[],
+): void {
+  if (decoded.ownedServices !== undefined) involvement.ownedServices.push(...decoded.ownedServices);
+  if (decoded.activeRepos !== undefined) involvement.activeRepos.push(...decoded.activeRepos);
+  if (decoded.incidentServices !== undefined)
+    involvement.incidentServices.push(...decoded.incidentServices);
+  if (decoded.collaboratorPersonIds !== undefined)
+    involvement.collaboratorPersonIds.push(...decoded.collaboratorPersonIds);
+  if (decoded.windowItems !== undefined) windowItems.push(...decoded.windowItems);
+  if (decoded.gap !== undefined) subAgentGaps.push(decoded.gap);
+}
+
 export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Promise<CatchupBrief> {
   const start = performance.now();
   const sinceMs = Math.min(input.sinceMs ?? DEFAULT_SINCE_MS, MAX_SINCE_MS);
@@ -82,13 +117,7 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     osUsername,
   });
   if (resolution.source === "unresolved") {
-    preflightGaps.push({
-      category: "missing_user_identity",
-      detail:
-        "Could not resolve the current user — no override / git email / OS username matched a known person.",
-      remediation:
-        "Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id.",
-    });
+    preflightGaps.push(unresolvedIdentityGap());
   }
 
   const coordinator = new AgentCoordinator({
@@ -116,24 +145,11 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
   const subAgentGaps: GapNote[] = [];
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) {
-      subAgentGaps.push({
-        category: "missing_connector",
-        detail: `catchup sub-agent #${r.taskIndex} failed${
-          r.errorText === undefined ? "" : `: ${r.errorText}`
-        }`,
-      });
+      subAgentGaps.push(failedSubAgentGap(r));
       continue;
     }
     const decoded: SubAgentResult = JSON.parse(r.text);
-    if (decoded.ownedServices !== undefined)
-      involvement.ownedServices.push(...decoded.ownedServices);
-    if (decoded.activeRepos !== undefined) involvement.activeRepos.push(...decoded.activeRepos);
-    if (decoded.incidentServices !== undefined)
-      involvement.incidentServices.push(...decoded.incidentServices);
-    if (decoded.collaboratorPersonIds !== undefined)
-      involvement.collaboratorPersonIds.push(...decoded.collaboratorPersonIds);
-    if (decoded.windowItems !== undefined) windowItems.push(...decoded.windowItems);
-    if (decoded.gap !== undefined) subAgentGaps.push(decoded.gap);
+    mergeSubAgentResult(decoded, involvement, windowItems, subAgentGaps);
   }
 
   let sections = scoreAndGroup(windowItems, involvement);

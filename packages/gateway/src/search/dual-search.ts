@@ -12,32 +12,28 @@ export type DualSearchOptions = {
   since?: number;
 };
 
+function searchOneTable(
+  db: Database,
+  opts: DualSearchOptions,
+  queryEmbedding: Float32Array | undefined,
+  model: string | undefined,
+): VectorChunkHit[] {
+  if (queryEmbedding === undefined || model === undefined) return [];
+  return vectorSearchChunks(db, {
+    queryEmbedding,
+    model,
+    limit: opts.limit,
+    ...(opts.service !== undefined ? { service: opts.service } : {}),
+    ...(opts.itemType !== undefined ? { itemType: opts.itemType } : {}),
+    ...(opts.since !== undefined ? { since: opts.since } : {}),
+  });
+}
+
 export function vectorSearchChunksDual(db: Database, opts: DualSearchOptions): VectorChunkHit[] {
-  const hits: VectorChunkHit[] = [];
-  if (opts.queryEmbedding384 !== undefined && opts.model384 !== undefined) {
-    hits.push(
-      ...vectorSearchChunks(db, {
-        queryEmbedding: opts.queryEmbedding384,
-        model: opts.model384,
-        limit: opts.limit,
-        ...(opts.service !== undefined ? { service: opts.service } : {}),
-        ...(opts.itemType !== undefined ? { itemType: opts.itemType } : {}),
-        ...(opts.since !== undefined ? { since: opts.since } : {}),
-      }),
-    );
-  }
-  if (opts.queryEmbedding1536 !== undefined && opts.model1536 !== undefined) {
-    hits.push(
-      ...vectorSearchChunks(db, {
-        queryEmbedding: opts.queryEmbedding1536,
-        model: opts.model1536,
-        limit: opts.limit,
-        ...(opts.service !== undefined ? { service: opts.service } : {}),
-        ...(opts.itemType !== undefined ? { itemType: opts.itemType } : {}),
-        ...(opts.since !== undefined ? { since: opts.since } : {}),
-      }),
-    );
-  }
+  const hits: VectorChunkHit[] = [
+    ...searchOneTable(db, opts, opts.queryEmbedding384, opts.model384),
+    ...searchOneTable(db, opts, opts.queryEmbedding1536, opts.model1536),
+  ];
   hits.sort((a, b) => a.distance - b.distance);
   return hits.slice(0, opts.limit);
 }

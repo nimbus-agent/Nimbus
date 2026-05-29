@@ -193,6 +193,45 @@ type PrRow = {
   metadata: string | null;
 };
 
+type DeployIdx = {
+  headSha: string | null;
+  modifiedAt: number;
+};
+
+function buildDeployIndex(deploys: readonly CiRunRow[]): DeployIdx[] {
+  return deploys.map((d) => {
+    const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
+    const rawHead = meta === null ? undefined : meta["headSha"];
+    const headSha = typeof rawHead === "string" ? rawHead : null;
+    return { headSha, modifiedAt: d.modified_at };
+  });
+}
+
+type PrLeadTime = { leadTime: number | null; approximate: boolean };
+
+function prLeadTime(
+  pr: PrRow,
+  deployIdx: readonly DeployIdx[],
+  excludePrLabels: readonly string[],
+): PrLeadTime {
+  const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
+  if (meta === null || meta["merged"] !== true) return { leadTime: null, approximate: false };
+  const mergedAtRaw = meta["merged_at"];
+  const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
+  if (mergedAt === null) return { leadTime: null, approximate: false };
+  const labelsRaw = meta["labels"];
+  const labels: readonly unknown[] = Array.isArray(labelsRaw) ? labelsRaw : [];
+  if (labels.some((l) => typeof l === "string" && excludePrLabels.includes(l))) {
+    return { leadTime: null, approximate: false };
+  }
+  const mergeShaRaw = meta["merge_commit_sha"];
+  const mergeSha = typeof mergeShaRaw === "string" ? mergeShaRaw : null;
+  if (mergeSha === null) return { leadTime: null, approximate: true };
+  const match = deployIdx.find((d) => d.headSha === mergeSha && d.modifiedAt >= mergedAt);
+  if (match === undefined) return { leadTime: null, approximate: true };
+  return { leadTime: Math.floor((match.modifiedAt - mergedAt) / 1000), approximate: false };
+}
+
 export function leadTimeForChanges(
   db: Database,
   cfg: DoraServiceConfig,
@@ -221,40 +260,13 @@ export function leadTimeForChanges(
     )
     .all(...prServices, nowMs - sinceMs, nowMs) as PrRow[];
 
-  type DeployIdx = {
-    headSha: string | null;
-    modifiedAt: number;
-  };
-  const deployIdx: DeployIdx[] = deploys.map((d) => {
-    const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
-    const rawHead = meta === null ? undefined : meta["headSha"];
-    const headSha = typeof rawHead === "string" ? rawHead : null;
-    return { headSha, modifiedAt: d.modified_at };
-  });
-
+  const deployIdx = buildDeployIndex(deploys);
   const leadTimes: number[] = [];
   let anyApproximate = false;
   for (const pr of prRows) {
-    const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["merged"] !== true) continue;
-    const mergedAtRaw = meta["merged_at"];
-    const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
-    if (mergedAt === null) continue;
-    const labelsRaw = meta["labels"];
-    const labels: readonly unknown[] = Array.isArray(labelsRaw) ? labelsRaw : [];
-    if (labels.some((l) => typeof l === "string" && cfg.excludePrLabels.includes(l))) continue;
-    const mergeShaRaw = meta["merge_commit_sha"];
-    const mergeSha = typeof mergeShaRaw === "string" ? mergeShaRaw : null;
-    if (mergeSha === null) {
-      anyApproximate = true;
-      continue;
-    }
-    const match = deployIdx.find((d) => d.headSha === mergeSha && d.modifiedAt >= mergedAt);
-    if (match === undefined) {
-      anyApproximate = true;
-      continue;
-    }
-    leadTimes.push(Math.floor((match.modifiedAt - mergedAt) / 1000));
+    const { leadTime, approximate } = prLeadTime(pr, deployIdx, cfg.excludePrLabels);
+    if (approximate) anyApproximate = true;
+    if (leadTime !== null) leadTimes.push(leadTime);
   }
   if (leadTimes.length === 0) {
     return {

@@ -23,47 +23,57 @@
 const probe = process.argv.find((a) => a.startsWith("--probe="))?.slice(8);
 const arg = process.argv.find((a) => a.startsWith("--arg="))?.slice(6);
 
+function errorCode(e: unknown): string | undefined {
+  return (
+    (e as { code?: string; cause?: { code?: string } }).code ??
+    (e as { cause?: { code?: string } }).cause?.code
+  );
+}
+
+async function probeNetworkListed(): Promise<number> {
+  const url = `https://${arg ?? ""}/`;
+  try {
+    const res = await fetch(url, { method: "HEAD" });
+    return res.status >= 200 && res.status < 500 ? 0 : 2;
+  } catch {
+    return 2;
+  }
+}
+
+async function probeNetworkUnlisted(): Promise<number> {
+  try {
+    await fetch("http://192.0.2.1");
+    return 2;
+  } catch (e: unknown) {
+    const code = errorCode(e);
+    if (
+      code === "ECONNREFUSED" ||
+      code === "EPERM" ||
+      code === "EHOSTUNREACH" ||
+      code === "ENETUNREACH"
+    ) {
+      return 11;
+    }
+    return 2;
+  }
+}
+
+async function probeFsDenied(): Promise<number> {
+  const path = process.platform === "win32" ? "C:\\Windows\\System32\\config\\SAM" : "/etc/passwd";
+  try {
+    await Bun.file(path).text();
+    return 2;
+  } catch (e: unknown) {
+    const code = (e as { code?: string }).code;
+    if (code === "EACCES" || code === "EPERM" || code === "EBUSY") return 10;
+    return 2;
+  }
+}
+
 async function main(): Promise<void> {
-  if (probe === "network-listed") {
-    const url = `https://${arg ?? ""}/`;
-    try {
-      const res = await fetch(url, { method: "HEAD" });
-      process.exit(res.status >= 200 && res.status < 500 ? 0 : 2);
-    } catch {
-      process.exit(2);
-    }
-  }
-  if (probe === "network-unlisted") {
-    try {
-      await fetch("http://192.0.2.1");
-      process.exit(2);
-    } catch (e: unknown) {
-      const code =
-        (e as { code?: string; cause?: { code?: string } }).code ??
-        (e as { cause?: { code?: string } }).cause?.code;
-      if (
-        code === "ECONNREFUSED" ||
-        code === "EPERM" ||
-        code === "EHOSTUNREACH" ||
-        code === "ENETUNREACH"
-      ) {
-        process.exit(11);
-      }
-      process.exit(2);
-    }
-  }
-  if (probe === "fs-denied") {
-    const path =
-      process.platform === "win32" ? "C:\\Windows\\System32\\config\\SAM" : "/etc/passwd";
-    try {
-      await Bun.file(path).text();
-      process.exit(2);
-    } catch (e: unknown) {
-      const code = (e as { code?: string }).code;
-      if (code === "EACCES" || code === "EPERM" || code === "EBUSY") process.exit(10);
-      process.exit(2);
-    }
-  }
+  if (probe === "network-listed") process.exit(await probeNetworkListed());
+  if (probe === "network-unlisted") process.exit(await probeNetworkUnlisted());
+  if (probe === "fs-denied") process.exit(await probeFsDenied());
   process.exit(2);
 }
 

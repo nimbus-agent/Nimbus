@@ -49,7 +49,7 @@ const PROVIDER_VALUES: ReadonlySet<DeploymentProvider> = new Set([
 
 const DEFAULT_DEPLOY_ENVIRONMENTS: readonly string[] = ["prod"];
 
-function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
+function validateServiceAndProvider(input: DeploymentAnnotateInput): void {
   if (
     typeof input.service !== "string" ||
     input.service.length === 0 ||
@@ -63,6 +63,9 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
   if (!PROVIDER_VALUES.has(input.provider)) {
     throw new AnnotateError("provider", "provider must be one of the supported values");
   }
+}
+
+function validateEnvironment(input: DeploymentAnnotateInput): void {
   if (
     typeof input.environment !== "string" ||
     input.environment.length === 0 ||
@@ -73,33 +76,37 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
   if (!ENV_RE.test(input.environment)) {
     throw new AnnotateError("environment", `environment must match ${ENV_RE.source}`);
   }
-  const lcSha = typeof input.sha === "string" ? input.sha.toLowerCase() : "";
-  if (!SHA_RE.test(lcSha)) {
-    throw new AnnotateError("sha", "sha must be 7..64 lowercase hex chars");
-  }
+}
+
+function validateRefAndStatus(input: DeploymentAnnotateInput): void {
   if (typeof input.ref !== "string" || input.ref.length === 0 || input.ref.length > REF_MAX) {
     throw new AnnotateError("ref", `ref must be 1..${REF_MAX} chars`);
   }
   if (!STATUS_VALUES.has(input.status)) {
     throw new AnnotateError("status", "status must be one of the four supported values");
   }
+}
+
+function validateTimestamps(input: DeploymentAnnotateInput, nowMs: number): void {
   if (!Number.isFinite(input.started_at_ms) || !Number.isInteger(input.started_at_ms)) {
     throw new AnnotateError("started_at_ms", "started_at_ms must be an integer (ms since epoch)");
   }
   if (input.started_at_ms < nowMs - ONE_YEAR_MS || input.started_at_ms > nowMs + ONE_HOUR_MS) {
     throw new AnnotateError("started_at_ms", "started_at_ms must be within [now-365d, now+1h]");
   }
-  if (input.finished_at_ms !== undefined) {
-    if (!Number.isFinite(input.finished_at_ms) || !Number.isInteger(input.finished_at_ms)) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must be an integer");
-    }
-    if (input.finished_at_ms < input.started_at_ms) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must be >= started_at_ms");
-    }
-    if (input.finished_at_ms > nowMs + ONE_HOUR_MS) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must not exceed now+1h");
-    }
+  if (input.finished_at_ms === undefined) return;
+  if (!Number.isFinite(input.finished_at_ms) || !Number.isInteger(input.finished_at_ms)) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must be an integer");
   }
+  if (input.finished_at_ms < input.started_at_ms) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must be >= started_at_ms");
+  }
+  if (input.finished_at_ms > nowMs + ONE_HOUR_MS) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must not exceed now+1h");
+  }
+}
+
+function validateOptionalStrings(input: DeploymentAnnotateInput): void {
   if (input.workflow_url !== undefined) {
     if (typeof input.workflow_url !== "string" || input.workflow_url.length > URL_MAX) {
       throw new AnnotateError(
@@ -121,6 +128,18 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
       throw new AnnotateError("job_id", `job_id must be 1..${JOB_ID_MAX} chars`);
     }
   }
+}
+
+function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
+  validateServiceAndProvider(input);
+  validateEnvironment(input);
+  const lcSha = typeof input.sha === "string" ? input.sha.toLowerCase() : "";
+  if (!SHA_RE.test(lcSha)) {
+    throw new AnnotateError("sha", "sha must be 7..64 lowercase hex chars");
+  }
+  validateRefAndStatus(input);
+  validateTimestamps(input, nowMs);
+  validateOptionalStrings(input);
   return { ...input, sha: lcSha };
 }
 

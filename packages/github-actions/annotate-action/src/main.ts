@@ -154,72 +154,83 @@ async function postAnnotation(
   }
 }
 
-export async function main(): Promise<void> {
-  const service = getInput("service");
-  if (service === "") {
-    emitAnnotation("error", "missing required input: service");
+function requireInput(name: string): string {
+  const value = getInput(name);
+  if (value === "") {
+    emitAnnotation("error", `missing required input: ${name}`);
     process.exit(1);
   }
-  const environment = getInput("environment");
-  if (environment === "") {
-    emitAnnotation("error", "missing required input: environment");
-    process.exit(1);
-  }
-  const status = getInput("status");
-  if (status === "") {
-    emitAnnotation("error", "missing required input: status");
-    process.exit(1);
-  }
-  const token = getInput("token");
-  if (token === "") {
-    emitAnnotation("error", "missing required input: token");
-    process.exit(1);
-  }
+  return value;
+}
 
-  const sha = getInput("sha");
-  const targetRef = getInput("target-ref");
+function parseTimestampOrExit(name: string, raw: string): number {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) {
+    emitAnnotation("error", `invalid input: ${name} must be a unix-ms integer, got '${raw}'`);
+    process.exit(1);
+  }
+  return n;
+}
+
+function buildPayload(): AnnotatePayload {
+  const startedAtRaw = getInput("started-at");
+  const startedAtMs =
+    startedAtRaw === "" ? Date.now() : parseTimestampOrExit("started-at", startedAtRaw);
+  const payload: AnnotatePayload = {
+    service: getInput("service"),
+    provider: "github-actions",
+    environment: getInput("environment"),
+    sha: getInput("sha"),
+    ref: getInput("target-ref"),
+    status: getInput("status"),
+    started_at_ms: startedAtMs,
+  };
+  const finishedAtRaw = getInput("finished-at");
+  if (finishedAtRaw !== "") {
+    payload.finished_at_ms = parseTimestampOrExit("finished-at", finishedAtRaw);
+  }
   const workflowUrl = getInput("workflow-url");
   const runId = getInput("run-id");
   const jobId = getInput("job-id");
-  const startedAtRaw = getInput("started-at");
-  const finishedAtRaw = getInput("finished-at");
+  if (workflowUrl !== "") payload.workflow_url = workflowUrl;
+  if (runId !== "") payload.run_id = runId;
+  if (jobId !== "") payload.job_id = jobId;
+  return payload;
+}
+
+function warningFor(result: Exclude<PostResult, PostOk>, gatewayUrl: string): string {
+  if (result.status === "auth_failed") {
+    return (
+      "Nimbus Gateway rejected the bearer token (401). Confirm the GitHub secret matches the vault key " +
+      "http_api.deployment_token configured via 'nimbus vault set http_api.deployment_token <value>'."
+    );
+  }
+  if (result.status === "rate_limited") {
+    const retry = result.retryAfter === undefined ? "" : ` Retry-After: ${result.retryAfter}s.`;
+    return `Nimbus Gateway rate-limited the annotation (429).${retry}`;
+  }
+  if (result.status === "surface_disabled") {
+    const hint =
+      result.hint === undefined
+        ? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'"
+        : result.hint;
+    return `Nimbus deployment write surface is disabled (503): ${hint}`;
+  }
+  const detail = result.body === undefined ? "" : `: ${result.body.slice(0, 200)}`;
+  return `Nimbus Gateway unreachable at ${gatewayUrl}${detail}`;
+}
+
+export async function main(): Promise<void> {
+  requireInput("service");
+  requireInput("environment");
+  requireInput("status");
+  const token = requireInput("token");
+
   const gatewayUrl = getInput("gateway-url") || "http://localhost:7474";
   const timeoutMs = getIntInput("timeout-ms", 10_000);
   const allowGatewayFailure = getBooleanInput("allow-gateway-failure");
 
-  const startedAtMs = startedAtRaw === "" ? Date.now() : Number.parseInt(startedAtRaw, 10);
-  if (!Number.isFinite(startedAtMs)) {
-    emitAnnotation(
-      "error",
-      `invalid input: started-at must be a unix-ms integer, got '${startedAtRaw}'`,
-    );
-    process.exit(1);
-  }
-
-  const payload: AnnotatePayload = {
-    service,
-    provider: "github-actions",
-    environment,
-    sha,
-    ref: targetRef,
-    status,
-    started_at_ms: startedAtMs,
-  };
-  if (finishedAtRaw !== "") {
-    const finishedAtMs = Number.parseInt(finishedAtRaw, 10);
-    if (!Number.isFinite(finishedAtMs)) {
-      emitAnnotation(
-        "error",
-        `invalid input: finished-at must be a unix-ms integer, got '${finishedAtRaw}'`,
-      );
-      process.exit(1);
-    }
-    payload.finished_at_ms = finishedAtMs;
-  }
-  if (workflowUrl !== "") payload.workflow_url = workflowUrl;
-  if (runId !== "") payload.run_id = runId;
-  if (jobId !== "") payload.job_id = jobId;
-
+  const payload = buildPayload();
   const result = await postAnnotation(gatewayUrl, token, payload, timeoutMs);
 
   if (result.status === "ok") {
@@ -230,8 +241,8 @@ export async function main(): Promise<void> {
     writeJobSummary(
       renderSummary({
         service: env.service,
-        environment: safeString(environment, 64),
-        status: safeString(status, 32),
+        environment: safeString(getInput("environment"), 64),
+        status: safeString(getInput("status"), 32),
         externalId: env.external_id,
         isNew: env.is_new,
         doraEligible: env.dora_eligible,
@@ -240,25 +251,7 @@ export async function main(): Promise<void> {
     process.exit(0);
   }
 
-  let warning: string;
-  if (result.status === "auth_failed") {
-    warning =
-      "Nimbus Gateway rejected the bearer token (401). Confirm the GitHub secret matches the vault key " +
-      "http_api.deployment_token configured via 'nimbus vault set http_api.deployment_token <value>'.";
-  } else if (result.status === "rate_limited") {
-    const retry = result.retryAfter === undefined ? "" : ` Retry-After: ${result.retryAfter}s.`;
-    warning = `Nimbus Gateway rate-limited the annotation (429).${retry}`;
-  } else if (result.status === "surface_disabled") {
-    const hint =
-      result.hint === undefined
-        ? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'"
-        : result.hint;
-    warning = `Nimbus deployment write surface is disabled (503): ${hint}`;
-  } else {
-    const detail = result.body === undefined ? "" : `: ${result.body.slice(0, 200)}`;
-    warning = `Nimbus Gateway unreachable at ${gatewayUrl}${detail}`;
-  }
-  emitAnnotation("warning", warning);
+  emitAnnotation("warning", warningFor(result, gatewayUrl));
 
   if (allowGatewayFailure) {
     process.exit(0);
