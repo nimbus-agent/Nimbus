@@ -278,7 +278,8 @@ function tokenErrorSummary(json: unknown): string | undefined {
 }
 
 function basicAuthHeader(clientId: string, clientSecret: string): string {
-  return `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`;
+  const credentials = `${clientId}:${clientSecret}`;
+  return `Basic ${Buffer.from(credentials, "utf8").toString("base64")}`;
 }
 
 interface TokenRequest {

@@ -76,9 +76,10 @@ export function aggregateMissingEntityTypes(notes: GapNote[]): GapNote[] {
     return m?.[1] ?? "?";
   });
   const remediations = Array.from(new Set(missing.map((n) => n.remediation).filter(Boolean)));
+  const kindList = kinds.map((k) => `\`${k}\``).join(" / ");
   const combined: GapNote = {
     category: "missing_entity_type",
-    detail: `${missing.length} categories blocked: ${kinds.map((k) => `\`${k}\``).join(" / ")}`,
+    detail: `${missing.length} categories blocked: ${kindList}`,
   };
   if (remediations.length > 0) combined.remediation = remediations.join(" ");
   return [...others, combined];

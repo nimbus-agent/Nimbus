@@ -126,7 +126,7 @@ function extractAsyncapiEndpoints(doc: {
   return out;
 }
 
-function parseStringToJson(absPath: string, source: string): unknown | undefined {
+function parseStringToJson(absPath: string, source: string): unknown {
   const trimmed = source.trimStart();
   if (
     absPath.toLowerCase().endsWith(".json") ||

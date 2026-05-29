@@ -17,7 +17,7 @@ export class AutoUpdateCache {
 
   isNewDetection(update: AvailableUpdate): boolean {
     const cur = this.entries.get(update.id);
-    return cur === undefined || cur.toVersion !== update.toVersion;
+    return cur?.toVersion !== update.toVersion;
   }
 
   remove(id: string): void {

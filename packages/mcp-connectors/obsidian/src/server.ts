@@ -207,7 +207,7 @@ reg(
         const { title, raw } = readNote(v.root, rel);
         if (parsed.tag !== undefined) {
           const fm = FRONTMATTER_RE.exec(raw);
-          if (fm === null || !fm[1]?.includes(parsed.tag)) continue;
+          if (!fm?.[1]?.includes(parsed.tag)) continue;
         }
         out.push({
           id: noteIdFor(v.id, rel),

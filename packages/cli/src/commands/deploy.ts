@@ -113,7 +113,8 @@ function formatCheckLines(key: string, m: CheckShape, useColor: boolean): string
     `  ${label.padEnd(28)} ${String(m.count).padStart(4)}  ${formatGapTag(m.gap, useColor)}`,
   ];
   for (const f of m.findings.slice(0, 3)) {
-    lines.push(`      • ${f.title}${f.url ? `  ${f.url}` : ""}`);
+    const urlPart = f.url ? `  ${f.url}` : "";
+    lines.push(`      • ${f.title}${urlPart}`);
   }
   return lines;
 }

@@ -52,9 +52,7 @@ async function fetchAccessToken(): Promise<string> {
 
 let cachedToken: string | undefined;
 async function getToken(): Promise<string> {
-  if (cachedToken === undefined) {
-    cachedToken = await fetchAccessToken();
-  }
+  cachedToken ??= await fetchAccessToken();
   return cachedToken;
 }
 
@@ -166,7 +164,7 @@ await runReadOnlyMcpConnector("nimbus-wiz", (reg) => {
       issueId: z.string().min(1),
     }),
     async (p) => {
-      const data = await wizGraphql<{ issue: unknown | null }>(SINGLE_ISSUE_QUERY, {
+      const data = await wizGraphql<{ issue: unknown }>(SINGLE_ISSUE_QUERY, {
         id: p.issueId,
       });
       if (data.issue === null) {

@@ -54,7 +54,8 @@ await runReadOnlyMcpConnector("nimbus-argocd", (reg) => {
         search.set("projects", p.project);
       }
       const qs = search.toString();
-      const root = await agGet(`/applications${qs === "" ? "" : `?${qs}`}`);
+      const queryPart = qs === "" ? "" : `?${qs}`;
+      const root = await agGet(`/applications${queryPart}`);
       const apps = applicationsFrom(root);
       const cap = p.limit ?? 200;
       return jsonResult({ items: apps.slice(0, cap) });

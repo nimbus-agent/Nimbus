@@ -68,7 +68,7 @@ async function resolveUpdateTarget(
   }
 
   const cached = deps.cache.get(id);
-  if (cached === undefined || cached.toVersion !== toVersion) {
+  if (cached?.toVersion !== toVersion) {
     return { applied: false, reason: "cache_miss" };
   }
 

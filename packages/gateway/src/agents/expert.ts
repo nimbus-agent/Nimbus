@@ -124,9 +124,10 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
   const subAgentGaps: GapNote[] = [];
   for (const r of results) {
     if (r.status !== "done" || r.text === undefined) {
+      const errorPart = r.errorText === undefined ? "" : `: ${r.errorText}`;
       subAgentGaps.push({
         category: "missing_connector",
-        detail: `expert sub-agent #${r.taskIndex} failed${r.errorText === undefined ? "" : `: ${r.errorText}`}`,
+        detail: `expert sub-agent #${r.taskIndex} failed${errorPart}`,
       });
       continue;
     }

@@ -193,7 +193,7 @@ export async function tryDispatchMetricsRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
-): Promise<typeof metricsRpcSkipped | unknown> {
+): Promise<unknown> {
   if (!method.startsWith("metrics.") || ctx.options.localIndex === undefined) {
     return metricsRpcSkipped;
   }
@@ -218,7 +218,7 @@ export async function tryDispatchPreflightRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
-): Promise<typeof preflightRpcSkipped | unknown> {
+): Promise<unknown> {
   if (!method.startsWith("deploy.") || ctx.options.localIndex === undefined) {
     return preflightRpcSkipped;
   }
@@ -245,7 +245,7 @@ export async function tryDispatchDeploymentRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
-): Promise<typeof deploymentRpcSkipped | unknown> {
+): Promise<unknown> {
   if (method !== "deployment.annotate" || ctx.options.localIndex === undefined) {
     return deploymentRpcSkipped;
   }

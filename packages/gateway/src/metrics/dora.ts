@@ -119,7 +119,7 @@ function selectDeploys(
   for (const row of rows) {
     if (!cfg.deployWorkflowPattern.test(row.title)) continue;
     const meta = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["conclusion"] !== "success") continue;
+    if (meta?.["conclusion"] !== "success") continue;
     if (!cfg.repos.some((u) => repoLikeMatchesUrn(meta, row.external_id, u))) continue;
     out.push(row);
   }
@@ -215,7 +215,7 @@ function prLeadTime(
   excludePrLabels: readonly string[],
 ): PrLeadTime {
   const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
-  if (meta === null || meta["merged"] !== true) return { leadTime: null, approximate: false };
+  if (meta?.["merged"] !== true) return { leadTime: null, approximate: false };
   const mergedAtRaw = meta["merged_at"];
   const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
   if (mergedAt === null) return { leadTime: null, approximate: false };
@@ -321,7 +321,7 @@ function selectResolvedIncidents(
   const out: ResolvedIncident[] = [];
   for (const r of rows) {
     const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["status"] !== "resolved") continue;
+    if (meta?.["status"] !== "resolved") continue;
     const openedRaw = meta["opened_at_ms"];
     const opened = typeof openedRaw === "number" ? openedRaw : r.synced_at;
     const pdRaw = meta["pagerduty_service_id"];

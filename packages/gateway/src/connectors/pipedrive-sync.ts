@@ -89,7 +89,7 @@ function extractDeals(parsed: unknown): {
   const deals = Array.isArray(data) ? data : [];
   const additional = asRecord(root["additional_data"]);
   const pagination = additional === undefined ? undefined : asRecord(additional["pagination"]);
-  const moreItems = pagination !== undefined && pagination["more_items_in_collection"] === true;
+  const moreItems = pagination?.["more_items_in_collection"] === true;
   const nextRaw = pagination?.["next_start"];
   const nextStart = typeof nextRaw === "number" && Number.isFinite(nextRaw) ? nextRaw : null;
   return { deals, moreItems, nextStart };

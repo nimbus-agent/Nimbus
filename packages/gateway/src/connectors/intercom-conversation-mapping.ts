@@ -114,8 +114,7 @@ export function mapIntercomConversationToItem(
   const assigneeNested =
     numberField(assigneeObj, "id") ??
     (stringField(assigneeObj, "id") !== undefined ? stringField(assigneeObj, "id") : undefined);
-  const assigneeId: string | number | null =
-    adminAssignee !== undefined ? adminAssignee : (assigneeNested ?? null);
+  const assigneeId: string | number | null = adminAssignee ?? assigneeNested ?? null;
   const teamAssigneeId = numberField(row, "team_assignee_id") ?? null;
 
   const tags = tagNames(row);

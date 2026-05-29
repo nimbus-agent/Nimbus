@@ -41,7 +41,7 @@ export function buildContextWindow(
     const mod = it.modifiedAt ?? 0;
     const ty = typeKey(it);
     const last = sourceSummary.at(-1);
-    if (last !== undefined && last.service === it.service && last.type === ty) {
+    if (last?.service === it.service && last?.type === ty) {
       last.count += 1;
       last.oldestModifiedAt = Math.min(last.oldestModifiedAt, mod);
       last.newestModifiedAt = Math.max(last.newestModifiedAt, mod);

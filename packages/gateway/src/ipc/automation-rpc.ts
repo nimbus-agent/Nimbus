@@ -188,7 +188,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "extension.remove": (rec, ctx) => {
     const id = requireString(rec, "id");
-    const force = rec !== undefined && rec["force"] === true;
+    const force = rec?.["force"] === true;
 
     if (!force) {
       const rdeps = reverseDeps(ctx.db, id);

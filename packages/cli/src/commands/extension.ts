@@ -127,7 +127,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   const noColor = noColorEnv !== undefined && noColorEnv !== "";
   const isTty = process.stdout.isTTY === true;
   const tableRows: ExtensionListTableRow[] = rows.map((r) => {
-    const enabled = r.enabled === undefined ? 1 : r.enabled;
+    const enabled = r.enabled ?? 1;
     const base: ExtensionListTableRow = { id: r.id, version: r.version, enabled };
     if (r.publisher !== undefined) base.publisher = r.publisher;
     return base;
@@ -661,14 +661,12 @@ async function applyExtensionUpdate(
     return res.applied ? 0 : 1;
   }
   if (res.applied) {
-    opts.writeStdout(
-      `updated ${id} to ${targetVersion}${res.jobId !== undefined ? ` (jobId=${res.jobId})` : ""}\n`,
-    );
+    const jobIdPart = res.jobId !== undefined ? ` (jobId=${res.jobId})` : "";
+    opts.writeStdout(`updated ${id} to ${targetVersion}${jobIdPart}\n`);
     return 0;
   }
-  opts.writeStderr(
-    `update failed: ${res.reason ?? "unknown"}${res.hint !== undefined ? `\n  hint: ${res.hint}` : ""}\n`,
-  );
+  const hintPart = res.hint !== undefined ? `\n  hint: ${res.hint}` : "";
+  opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
 }
 
@@ -741,9 +739,8 @@ export async function runExtensionDowngradeWithCaller(
     opts.writeStdout(`downgraded ${id} to ${toVersion}\n`);
     return 0;
   }
-  opts.writeStderr(
-    `downgrade failed: ${res.reason ?? "unknown"}${res.hint !== undefined ? `\n  hint: ${res.hint}` : ""}\n`,
-  );
+  const hintPart = res.hint !== undefined ? `\n  hint: ${res.hint}` : "";
+  opts.writeStderr(`downgrade failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
 }
 

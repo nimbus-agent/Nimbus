@@ -70,7 +70,8 @@ export function mapSupersetDashboardToItem(
   const changedBy = changedByDisplay(row["changed_by"]);
 
   const canonicalUrl = dashboardUrl(ctx.baseUrl, id);
-  const bodyPreview = `${title}${slug !== null && slug !== "" ? ` (${slug})` : ""}`;
+  const slugPart = slug !== null && slug !== "" ? ` (${slug})` : "";
+  const bodyPreview = `${title}${slugPart}`;
   const modifiedAt = changedAt ?? ctx.syncedAt;
 
   const metadata: Record<string, unknown> = {
