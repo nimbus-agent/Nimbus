@@ -228,10 +228,14 @@ function bootstrap(): void {
   });
 
   window.addEventListener("message", (ev) => {
-    // VS Code webview messages from the extension host carry a non-empty
-    // `vscode-webview://...` origin. Reject anything else — including empty /
-    // null origins from sandboxed iframes — to satisfy CodeQL js/missing-origin-check.
-    if (!ev.origin.startsWith("vscode-webview")) return;
+    // Origin verification (CodeQL js/missing-origin-check, Sonar S2819):
+    // VS Code webviews receive messages from the extension host frame that
+    // embeds this iframe. The host sets `ev.source === window.parent` and
+    // uses a `vscode-webview://` origin scheme. Both guards must stay inline
+    // — extracting them into a helper hides the check from static analysis,
+    // which is why commit 985ab9cc reverted that indirection in May 2026.
+    if (ev.source !== window.parent) return;
+    if (ev.origin === "" || !ev.origin.startsWith("vscode-webview")) return;
     const data = ev.data as ExtensionToWebview;
     if (data === null || typeof data !== "object" || typeof data.type !== "string") return;
     applyMessage(r, data);
