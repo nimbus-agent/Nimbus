@@ -5,6 +5,7 @@ export interface LongRunningJobSpec<R> {
   readonly progressMethod: string;
   readonly doneMethod: string;
   readonly errorMethod: string;
+  readonly emit: LongRunningEmit;
   run(progress: (payload: Record<string, unknown>) => void, signal: AbortSignal): Promise<R>;
 }
 
@@ -47,8 +48,6 @@ function donePayloadOf(
 export class LongRunningJobRegistry {
   private readonly jobs = new Map<string, { controller: AbortController; done: Promise<void> }>();
 
-  constructor(private readonly emit: LongRunningEmit) {}
-
   start<R>(spec: LongRunningJobSpec<R>): LongRunningHandle {
     const jobId = buildJobId(spec.jobIdPrefix);
     const controller = new AbortController();
@@ -56,12 +55,12 @@ export class LongRunningJobRegistry {
     const done = (async () => {
       try {
         const result = await spec.run(
-          (payload) => this.emit(spec.progressMethod, { jobId, ...payload }),
+          (payload) => spec.emit(spec.progressMethod, { jobId, ...payload }),
           controller.signal,
         );
-        this.emit(spec.doneMethod, donePayloadOf(jobId, result, Date.now() - startedAt));
+        spec.emit(spec.doneMethod, donePayloadOf(jobId, result, Date.now() - startedAt));
       } catch (err) {
-        this.emit(spec.errorMethod, {
+        spec.emit(spec.errorMethod, {
           jobId,
           code: rpcCodeOf(err),
           message: messageOf(err),

@@ -3,34 +3,40 @@ import { LongRunningJobRegistry } from "./long-running.ts";
 
 type Emitted = { method: string; payload: Record<string, unknown> };
 
-function makeRegistry(): { registry: LongRunningJobRegistry; emitted: Emitted[] } {
+function makeRegistry(): {
+  registry: LongRunningJobRegistry;
+  emitted: Emitted[];
+  emit: (method: string, payload: Record<string, unknown>) => void;
+} {
   const emitted: Emitted[] = [];
-  const registry = new LongRunningJobRegistry((method, payload) => {
-    emitted.push({ method, payload: payload as Record<string, unknown> });
-  });
-  return { registry, emitted };
+  const emit = (method: string, payload: Record<string, unknown>): void => {
+    emitted.push({ method, payload });
+  };
+  return { registry: new LongRunningJobRegistry(), emitted, emit };
 }
 
 describe("LongRunningJobRegistry", () => {
   test("start returns a jobId with the configured prefix", () => {
-    const { registry } = makeRegistry();
+    const { registry, emit } = makeRegistry();
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async () => undefined,
     });
     expect(jobId).toMatch(/^demo_/);
   });
 
   test("emits progress events tagged with jobId for each progress callback call", async () => {
-    const { registry, emitted } = makeRegistry();
+    const { registry, emitted, emit } = makeRegistry();
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async (progress) => {
         progress({ done: 1, total: 3 });
         progress({ done: 2, total: 3 });
@@ -47,12 +53,13 @@ describe("LongRunningJobRegistry", () => {
   });
 
   test("emits doneMethod with jobId + durationMs + spread of run's resolved value", async () => {
-    const { registry, emitted } = makeRegistry();
+    const { registry, emitted, emit } = makeRegistry();
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async () => ({ succeeded: 5, skipped: 1 }),
     });
     await registry.awaitJob(jobId);
@@ -64,7 +71,7 @@ describe("LongRunningJobRegistry", () => {
   });
 
   test("emits errorMethod with jobId + code + message when run throws", async () => {
-    const { registry, emitted } = makeRegistry();
+    const { registry, emitted, emit } = makeRegistry();
     class CustomError extends Error {
       readonly rpcCode = -32099;
     }
@@ -73,6 +80,7 @@ describe("LongRunningJobRegistry", () => {
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async () => {
         throw new CustomError("the thing exploded");
       },
@@ -86,12 +94,13 @@ describe("LongRunningJobRegistry", () => {
   });
 
   test("falls back to -32603 when thrown error has no rpcCode", async () => {
-    const { registry, emitted } = makeRegistry();
+    const { registry, emitted, emit } = makeRegistry();
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async () => {
         throw new Error("oops");
       },
@@ -102,13 +111,14 @@ describe("LongRunningJobRegistry", () => {
   });
 
   test("cancel aborts the run's signal and returns true", async () => {
-    const { registry } = makeRegistry();
+    const { registry, emit } = makeRegistry();
     let observedAbort = false;
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async (_progress, signal) => {
         await new Promise<void>((resolve) => {
           signal.addEventListener("abort", () => {
@@ -129,12 +139,13 @@ describe("LongRunningJobRegistry", () => {
   });
 
   test("awaitJob for an unknown or already-completed jobId resolves immediately", async () => {
-    const { registry } = makeRegistry();
+    const { registry, emit } = makeRegistry();
     const { jobId } = registry.start({
       jobIdPrefix: "demo",
       progressMethod: "demo.progress",
       doneMethod: "demo.done",
       errorMethod: "demo.error",
+      emit,
       run: async () => undefined,
     });
     await registry.awaitJob(jobId);
