@@ -1,5 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-05-27T00:00:00.000Z",
-  "files": {}
+  "generated_at": "2026-05-29T00:00:00.000Z",
+  "files": {
+    "packages/gateway/src/connectors/_lib/gmail/history.ts": 78.64,
+    "packages/gateway/src/connectors/gmail-sync.ts": 78.91,
+    "packages/gateway/src/connectors/teams-sync.ts": 74.48
+  }
 }
