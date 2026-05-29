@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import pino from "pino";
 
+import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -75,7 +76,7 @@ export async function createOAuthConnectorTestSetup(
   provider: "google" | "microsoft",
 ): Promise<{ db: Database; vault: NimbusVault; ctx: SyncContext }> {
   const vault = createMemoryVault();
-  await vault.set(provider === "google" ? "google.oauth" : "microsoft.oauth", testOAuthVaultJson());
+  await vault.set(OAUTH_PROVIDERS[provider].vaultKey, testOAuthVaultJson());
   const db = openMemoryIndexDatabase();
   return { db, vault, ctx: createSyncTestContext(db, vault) };
 }
