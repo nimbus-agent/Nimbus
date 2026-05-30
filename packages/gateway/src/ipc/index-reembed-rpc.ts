@@ -151,14 +151,16 @@ async function assertModelUsable(p: ReembedParams, ctx: IndexReembedRpcContext):
   }
 }
 
-function isRetryableStatus(status: number | undefined): boolean {
+export function isRetryableStatus(status: number | undefined): boolean {
   return status === 429 || (typeof status === "number" && status >= 500 && status < 600);
 }
 
 type BatchCounters = { succeeded: number; skipped: number };
 
+export type ReembedSink = Pick<SqliteEmbeddingPipeline, "embedItem">;
+
 async function embedSlice(
-  pipeline: SqliteEmbeddingPipeline,
+  pipeline: ReembedSink,
   slice: readonly IndexedItem[],
   counters: BatchCounters,
 ): Promise<void> {
@@ -168,8 +170,8 @@ async function embedSlice(
   }
 }
 
-async function embedBatchWithRetry(
-  pipeline: SqliteEmbeddingPipeline,
+export async function embedBatchWithRetry(
+  pipeline: ReembedSink,
   ctx: IndexReembedRpcContext,
   slice: readonly IndexedItem[],
   batchStart: number,
