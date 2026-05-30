@@ -74,7 +74,7 @@ function parseProviderErrorBody(body: string): ProviderErrorBody {
   try {
     const parsed = JSON.parse(body) as unknown;
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as ProviderErrorBody;
+      return parsed;
     }
   } catch {
     /* not JSON */

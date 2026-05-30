@@ -1,11 +1,5 @@
 import type { ExtensionToWebview, WebviewToExtension } from "../chat-protocol.js";
-import {
-  type EmptyStateInput,
-  renderEmptyState,
-  renderHitlCard,
-  renderSubTaskRow,
-  renderTurn,
-} from "./render.js";
+import { renderEmptyState, renderHitlCard, renderSubTaskRow, renderTurn } from "./render.js";
 
 interface VsCodeApi {
   postMessage(msg: WebviewToExtension): void;
@@ -149,7 +143,7 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
         renderEmptyState({
           sub: msg.sub,
           ...(msg.socketPath === undefined ? {} : { socketPath: msg.socketPath }),
-        } as EmptyStateInput),
+        }),
       );
       return;
     case "themeChange":

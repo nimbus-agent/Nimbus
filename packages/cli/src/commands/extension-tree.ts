@@ -48,14 +48,20 @@ function walk(
   const node = byId.get(id);
   if (node === undefined) return;
 
-  const marker = prefix === "" ? "" : isLast ? "└─ " : "├─ ";
+  let marker: string;
+  if (prefix === "") {
+    marker = "";
+  } else {
+    marker = isLast ? "└─ " : "├─ ";
+  }
   const suffix = seen.has(id) ? "  (already shown)" : "";
   out.push(`${prefix}${marker}${id}@${node.version}${suffix}`);
 
   if (seen.has(id)) return;
   seen.add(id);
 
-  const childPrefix = prefix === "" ? (isLast ? "   " : "│  ") : prefix + (isLast ? "   " : "│  ");
+  const indent = isLast ? "   " : "│  ";
+  const childPrefix = prefix === "" ? indent : prefix + indent;
 
   const deps = [...node.forwardDeps].sort((a, b) => a.id.localeCompare(b.id));
   deps.forEach((d, i) => {

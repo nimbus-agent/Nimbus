@@ -87,12 +87,8 @@ export function mapZendeskTicketToItem(
 
   const titleText = subject !== null && subject.trim() !== "" ? subject : `Ticket ${id}`;
 
-  const bodyPreview =
-    description !== null && description !== ""
-      ? description
-      : status !== null && status !== ""
-        ? status
-        : titleText;
+  const statusOrTitle = status !== null && status !== "" ? status : titleText;
+  const bodyPreview = description !== null && description !== "" ? description : statusOrTitle;
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

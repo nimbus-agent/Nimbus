@@ -27,7 +27,7 @@ function extractSubject(actionJson: string): string | undefined {
   try {
     const parsed = JSON.parse(actionJson) as unknown;
     if (parsed !== null && typeof parsed === "object" && "subject" in parsed) {
-      const subject = (parsed as { subject: unknown }).subject;
+      const subject = parsed.subject;
       if (typeof subject === "string" && subject !== "") return subject;
     }
   } catch {

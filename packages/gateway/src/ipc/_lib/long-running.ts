@@ -18,9 +18,9 @@ function rpcCodeOf(err: unknown): number {
     err !== null &&
     typeof err === "object" &&
     "rpcCode" in err &&
-    typeof (err as { rpcCode: unknown }).rpcCode === "number"
+    typeof err.rpcCode === "number"
   ) {
-    return (err as { rpcCode: number }).rpcCode;
+    return err.rpcCode;
   }
   return -32603;
 }

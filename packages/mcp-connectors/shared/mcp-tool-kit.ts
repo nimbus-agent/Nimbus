@@ -127,7 +127,7 @@ export function createRegisterSimpleTool(server: unknown): RegisterSimpleToolFn 
     typeof server !== "object" ||
     server === null ||
     !("tool" in server) ||
-    typeof (server as { tool: unknown }).tool !== "function"
+    typeof server.tool !== "function"
   ) {
     throw new Error("createRegisterSimpleTool: expected MCP server with .tool");
   }

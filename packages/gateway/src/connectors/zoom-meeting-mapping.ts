@@ -39,12 +39,8 @@ export function mapZoomMeetingToItem(
   const joinUrl = stringField(row, "join_url");
   const url = joinUrl !== undefined && joinUrl !== "" ? joinUrl : null;
   const agenda = stringField(row, "agenda");
-  const bodyPreview =
-    agenda !== undefined && agenda !== ""
-      ? agenda
-      : topic !== undefined && topic !== ""
-        ? topic
-        : title;
+  const topicOrTitle = topic !== undefined && topic !== "" ? topic : title;
+  const bodyPreview = agenda !== undefined && agenda !== "" ? agenda : topicOrTitle;
   const startMs = parseIsoMs(row["start_time"]);
   const createdMs = parseIsoMs(row["created_at"]);
   const metadata: Record<string, unknown> = {

@@ -61,12 +61,15 @@ export function formatExtensionListTable(
   opts: { isTty: boolean; noColor: boolean },
 ): string {
   const headers = ["ID", "Version", "Publisher", "Status"];
-  const data = rows.map((r) => [
-    r.id,
-    r.version,
-    r.publisher !== undefined ? r.publisher.id : "(unverified)",
-    (typeof r.enabled === "number" ? r.enabled === 1 : r.enabled) ? "enabled" : "disabled",
-  ]);
+  const data = rows.map((r) => {
+    const isEnabled = typeof r.enabled === "number" ? r.enabled === 1 : r.enabled;
+    return [
+      r.id,
+      r.version,
+      r.publisher !== undefined ? r.publisher.id : "(unverified)",
+      isEnabled ? "enabled" : "disabled",
+    ];
+  });
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...data.map((row) => (row[i] ?? "").length)),
   );

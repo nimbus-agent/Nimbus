@@ -70,7 +70,7 @@ function parseReembedParams(params: unknown): ReembedParams {
     out.limit = Math.floor(rawLimit);
   }
   if (typeof rec["batchSize"] === "number") {
-    out.batchSize = rec["batchSize"] as number;
+    out.batchSize = rec["batchSize"];
   }
   if (rec["dryRun"] === true) {
     out.dryRun = true;

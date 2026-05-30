@@ -35,15 +35,15 @@ export class ReverseDepBlockedError extends Error {
 }
 
 export function isDependencyConflictError(e: unknown): e is DependencyConflictError {
-  return e instanceof Error && (e as Error).name === "DependencyConflictError";
+  return e instanceof Error && e.name === "DependencyConflictError";
 }
 
 export function isOfflineDependencyResolutionError(
   e: unknown,
 ): e is OfflineDependencyResolutionError {
-  return e instanceof Error && (e as Error).name === "OfflineDependencyResolutionError";
+  return e instanceof Error && e.name === "OfflineDependencyResolutionError";
 }
 
 export function isReverseDepBlockedError(e: unknown): e is ReverseDepBlockedError {
-  return e instanceof Error && (e as Error).name === "ReverseDepBlockedError";
+  return e instanceof Error && e.name === "ReverseDepBlockedError";
 }

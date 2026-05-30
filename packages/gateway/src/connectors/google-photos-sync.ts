@@ -52,7 +52,7 @@ export function decodeGooglePhotosSyncCursor(raw: string): GooglePhotosSyncCurso
 }
 
 function parseSearch(json: unknown): SearchResponse {
-  return asUnknownObjectRecord(json) as SearchResponse;
+  return asUnknownObjectRecord(json);
 }
 
 function creationMs(meta: MediaMetadata | undefined, fallback: number): number {

@@ -77,7 +77,7 @@ export async function fetchMessageMetadata(
   u.searchParams.append("metadataHeaders", "From");
   u.searchParams.append("metadataHeaders", "To");
   const { json } = await gmailFetchJson(ctx, token, u.toString());
-  return asUnknownObjectRecord(json) as GmailMessageResource;
+  return asUnknownObjectRecord(json);
 }
 
 export function extractErrorMessage(e: unknown): string {
@@ -111,15 +111,15 @@ export async function fetchProfile(ctx: SyncContext, token: string): Promise<Pro
     token,
     "https://gmail.googleapis.com/gmail/v1/users/me/profile",
   );
-  return asUnknownObjectRecord(json) as ProfileResponse;
+  return asUnknownObjectRecord(json);
 }
 
 export function parseMessagesList(json: unknown): MessagesListResponse {
-  return asUnknownObjectRecord(json) as MessagesListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 export function parseHistoryList(json: unknown): HistoryListResponse {
-  return asUnknownObjectRecord(json) as HistoryListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 export function headerFrom(payload: MessagePayload | undefined, name: string): string | null {

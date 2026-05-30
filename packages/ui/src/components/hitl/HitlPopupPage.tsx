@@ -65,7 +65,7 @@ export function HitlPopupPage(): ReactNode {
 
   const action =
     head.details && typeof head.details["action"] === "string"
-      ? (head.details["action"] as string)
+      ? head.details["action"]
       : ((head as unknown as { action?: string }).action ?? undefined);
 
   return (

@@ -327,8 +327,7 @@ async function handleExtensionSync(
   if (ctx.fetcher === undefined) {
     throw new AutomationRpcError(-32603, "Gateway is not configured with a publisher key fetcher");
   }
-  const dryRun =
-    rec !== undefined && typeof rec["dryRun"] === "boolean" ? (rec["dryRun"] as boolean) : false;
+  const dryRun = rec !== undefined && typeof rec["dryRun"] === "boolean" ? rec["dryRun"] : false;
   try {
     const result = await syncPublisherKeys({
       vault: ctx.vault,

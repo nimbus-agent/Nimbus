@@ -93,12 +93,7 @@ export function getTomlValueFromFile(tomlPath: string, dotted: string): string |
   try {
     raw = readFileSync(tomlPath, "utf8");
   } catch (e: unknown) {
-    if (
-      e !== null &&
-      typeof e === "object" &&
-      "code" in e &&
-      (e as { code: unknown }).code === "ENOENT"
-    ) {
+    if (e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT") {
       return undefined;
     }
     throw e;
@@ -182,14 +177,7 @@ export function setTomlValueInFile(tomlPath: string, dotted: string, value: stri
   try {
     full = readFileSync(tomlPath, "utf8");
   } catch (e: unknown) {
-    if (
-      !(
-        e !== null &&
-        typeof e === "object" &&
-        "code" in e &&
-        (e as { code: unknown }).code === "ENOENT"
-      )
-    ) {
+    if (!(e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT")) {
       throw e;
     }
   }

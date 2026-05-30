@@ -78,7 +78,7 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
         }
         return {
           approved: o["approved"],
-          ...(typeof o["note"] === "string" ? { note: o["note"] as string } : {}),
+          ...(typeof o["note"] === "string" ? { note: o["note"] } : {}),
         };
       });
   } catch (err) {

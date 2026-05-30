@@ -7,7 +7,7 @@ export function renderMarkdown(src: string): string {
     async: false,
     breaks: true,
     gfm: true,
-  }) as string;
+  });
   return DOMPurify.sanitize(raw);
 }
 

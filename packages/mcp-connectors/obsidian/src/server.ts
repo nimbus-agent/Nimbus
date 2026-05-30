@@ -348,9 +348,9 @@ function resolveDailyNoteRelativePath(vaultRoot: string, date: Date): string {
     const parsed = JSON.parse(readFileSync(cfgPath, "utf8")) as unknown;
     if (parsed !== null && typeof parsed === "object") {
       const obj = parsed as Record<string, unknown>;
-      if (typeof obj["folder"] === "string") folder = obj["folder"] as string;
-      if (typeof obj["format"] === "string" && (obj["format"] as string) !== "") {
-        format = obj["format"] as string;
+      if (typeof obj["folder"] === "string") folder = obj["folder"];
+      if (typeof obj["format"] === "string" && obj["format"] !== "") {
+        format = obj["format"];
       }
     }
   } catch {

@@ -20,12 +20,12 @@ export function filterSnykAggregatedIssues(
       dataField !== null && typeof dataField === "object"
         ? (dataField as Record<string, unknown>)
         : {};
-    const title = typeof data["title"] === "string" ? (data["title"] as string) : "";
+    const title = typeof data["title"] === "string" ? data["title"] : "";
     const cveField = data["cve"];
     const cves = Array.isArray(cveField)
       ? cveField.filter((c): c is string => typeof c === "string")
       : [];
-    const pkg = typeof row["pkgName"] === "string" ? (row["pkgName"] as string) : "";
+    const pkg = typeof row["pkgName"] === "string" ? row["pkgName"] : "";
     const hay = `${title} ${cves.join(" ")} ${pkg}`.toLowerCase();
     if (hay.includes(needle)) {
       out.push(it);

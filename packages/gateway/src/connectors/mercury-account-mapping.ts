@@ -59,14 +59,12 @@ export function mapMercuryAccountToItem(
   const title = name !== null && name !== "" ? name : `Account ${id}`;
 
   const label = kind ?? type ?? "";
-  const bodyPreview =
-    currentBalance !== null
-      ? label === ""
-        ? `${currentBalance} USD`
-        : `${label} — ${currentBalance} USD`
-      : label !== ""
-        ? label
-        : title;
+  let bodyPreview: string;
+  if (currentBalance !== null) {
+    bodyPreview = label === "" ? `${currentBalance} USD` : `${label} — ${currentBalance} USD`;
+  } else {
+    bodyPreview = label !== "" ? label : title;
+  }
 
   const modifiedAt = createdAt ?? ctx.syncedAt;
 

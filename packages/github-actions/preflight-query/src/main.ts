@@ -174,7 +174,8 @@ export async function main(): Promise<void> {
       unreachable: true,
       allowGatewayFailure,
     });
-    setOutput("verdict", code === 1 ? "block" : mode === "off" ? "ok" : "warn");
+    const nonBlockVerdict = mode === "off" ? "ok" : "warn";
+    setOutput("verdict", code === 1 ? "block" : nonBlockVerdict);
     setOutput("result-json", "{}");
     process.exit(code);
   }

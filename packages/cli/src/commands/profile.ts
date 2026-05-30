@@ -57,7 +57,7 @@ Usage:
 
 function fsErrorCode(e: unknown): string | undefined {
   if (e !== null && typeof e === "object" && "code" in e) {
-    const c = (e as { code: unknown }).code;
+    const c = e.code;
     return typeof c === "string" ? c : undefined;
   }
   return undefined;

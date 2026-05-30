@@ -83,12 +83,8 @@ export function mapStripeInvoiceToItem(
 
   const who = customerName ?? customerEmail ?? "";
   const amountStr = formatAmount(amountDue, currency);
-  const bodyPreview =
-    description !== null && description !== ""
-      ? description
-      : who === ""
-        ? amountStr
-        : `${who} — ${amountStr}`;
+  const amountSummary = who === "" ? amountStr : `${who} — ${amountStr}`;
+  const bodyPreview = description !== null && description !== "" ? description : amountSummary;
 
   const modifiedAt = createdAt ?? ctx.syncedAt;
 

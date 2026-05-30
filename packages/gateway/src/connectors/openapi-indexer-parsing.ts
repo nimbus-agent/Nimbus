@@ -140,7 +140,7 @@ function parseStringToJson(absPath: string, source: string): unknown {
     }
   }
   try {
-    return yamlLoad(source) as unknown;
+    return yamlLoad(source);
   } catch {
     return undefined;
   }
@@ -166,7 +166,7 @@ export function parseSpec(input: ParseInput): ParseResult {
   try {
     endpoints = isAsync
       ? extractAsyncapiEndpoints(raw as { channels?: Record<string, unknown> })
-      : extractOpenapiEndpoints(raw as { paths?: Record<string, unknown> });
+      : extractOpenapiEndpoints(raw);
   } catch {
     return { kind: "skipped", reason: "parse_failed" };
   }

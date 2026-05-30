@@ -104,10 +104,7 @@ export async function runSandboxContractTests(
   const manifest = JSON.parse(raw) as Manifest;
 
   const perms = manifest.permissions;
-  const objectForm =
-    perms && typeof perms === "object" && !Array.isArray(perms)
-      ? (perms as ManifestPermissions)
-      : null;
+  const objectForm = perms && typeof perms === "object" && !Array.isArray(perms) ? perms : null;
   const hosts = objectForm?.network ?? [];
 
   const firstHost = hosts[0];

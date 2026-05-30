@@ -252,7 +252,7 @@ function buildHistoryLine(
     os_version: `${platform()} ${release()} (${hostname()})`,
     nimbus_git_sha: resolveGitSha(),
     bun_version: typeof Bun === "undefined" ? "unknown" : Bun.version,
-    surfaces: surfaceResults as Partial<Record<BenchSurfaceId, HistoryLineSurface>>,
+    surfaces: surfaceResults,
     ...(runner === "reference-m1air" && { reference_protocol_compliant: true }),
   };
 }

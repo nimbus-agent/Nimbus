@@ -652,7 +652,7 @@ export class LocalIndex {
         const priorities = options?.searchServicePriority ?? new Map();
 
         return hybridResults.map((h, i) => {
-          const row = h.item as ItemRow;
+          const row = h.item;
           const rec = recencyScore(row.modified_at, now);
           const sp = servicePriorityScore(row.service, priorities);
           const nr = normRrf[i] ?? 0.5;

@@ -24,7 +24,7 @@ function parseStoredTelemetrySessionId(raw: string): string | undefined {
 
 function readErrorCode(err: unknown): string | undefined {
   if (err !== null && typeof err === "object" && "code" in err) {
-    const c = (err as { code: unknown }).code;
+    const c = err.code;
     return typeof c === "string" ? c : undefined;
   }
   return undefined;

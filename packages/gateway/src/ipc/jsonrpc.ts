@@ -88,7 +88,7 @@ export function parseJsonRpcLine(line: string): JsonRpcRequest | JsonRpcNotifica
       jsonrpc: "2.0",
       method: o["method"],
       ...(Object.hasOwn(o, "params") ? { params: o["params"] } : {}),
-      id: id as JsonRpcId,
+      id,
     };
   }
   return {

@@ -169,12 +169,7 @@ function assertTelemetryDisablePathSafe(path: string): void {
     if (e instanceof DiagnosticsRpcError) {
       throw e;
     }
-    if (
-      e !== null &&
-      typeof e === "object" &&
-      "code" in e &&
-      (e as { code: unknown }).code === "ENOENT"
-    ) {
+    if (e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT") {
       return;
     }
     throw e;

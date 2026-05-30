@@ -98,8 +98,8 @@ export function mapIntercomConversationToItem(
 
   const state = stringField(row, "state") ?? null;
   const priority = stringField(row, "priority") ?? null;
-  const open = typeof row["open"] === "boolean" ? (row["open"] as boolean) : null;
-  const read = typeof row["read"] === "boolean" ? (row["read"] as boolean) : null;
+  const open = typeof row["open"] === "boolean" ? row["open"] : null;
+  const read = typeof row["read"] === "boolean" ? row["read"] : null;
 
   const source = asRecord(row["source"]) ?? {};
   const sourceType = stringField(source, "type") ?? null;
@@ -129,8 +129,8 @@ export function mapIntercomConversationToItem(
   const title = trimmedSubject !== "" ? trimmedSubject : `Conversation ${id}`;
 
   const strippedBody = stripHtml(sourceBodyHtml);
-  const bodyPreview =
-    strippedBody !== "" ? strippedBody : state !== null && state !== "" ? state : title;
+  const stateOrTitle = state !== null && state !== "" ? state : title;
+  const bodyPreview = strippedBody !== "" ? strippedBody : stateOrTitle;
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

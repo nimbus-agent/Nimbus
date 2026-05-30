@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
-import type { GapNote, ImpactBrief, ImpactCategory, ImpactFinding } from "./_lib/findings.ts";
+import type { GapNote, ImpactBrief, ImpactFinding } from "./_lib/findings.ts";
 import {
   aggregateMissingEntityTypes,
   detectEmptyIndex,
@@ -230,7 +230,7 @@ async function subDownstreamCode(
   }
   return {
     findings: rows.map((r) => ({
-      category: "downstream_repo" as ImpactCategory,
+      category: "downstream_repo",
       affectedItemId: r.entity_id,
       affectedTitle: r.title,
       serviceId: r.service_id,
@@ -276,7 +276,7 @@ async function subPipelines(
     const hops = start.repoIds.length > 0 ? 2 : 1;
     return {
       findings: rows.map((r) => ({
-        category: "pipeline" as ImpactCategory,
+        category: "pipeline",
         affectedItemId: r.entity_id,
         affectedTitle: r.title,
         serviceId: r.service_id,
@@ -320,7 +320,7 @@ async function subOncall(
   if (rows.length === 0) return {};
   return {
     findings: rows.map((r) => ({
-      category: "oncall_rotation" as ImpactCategory,
+      category: "oncall_rotation",
       affectedItemId: r.entity_id,
       affectedTitle: r.title,
       serviceId: "pagerduty",
@@ -355,7 +355,7 @@ async function subDashboards(
   const pathSummary = `${start.entityType} → upstream_refs → dashboard`;
   return {
     findings: rows.map((r) => ({
-      category: "dashboard" as ImpactCategory,
+      category: "dashboard",
       affectedItemId: r.entity_id,
       affectedTitle: r.title,
       serviceId: r.service_id,
@@ -390,7 +390,7 @@ async function subDownstreamRepos(
   if (rows.length === 0) return {};
   return {
     findings: rows.map((r) => ({
-      category: "service" as ImpactCategory,
+      category: "service",
       affectedItemId: r.id,
       affectedTitle: r.label,
       serviceId: r.service_id,

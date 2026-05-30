@@ -52,7 +52,11 @@ export function canonicalize(value: unknown, depth = 0): string {
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const keys = Object.keys(obj).sort((a, b) => {
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
+    });
     return (
       "{" +
       keys.map((k) => `${JSON.stringify(k)}:${canonicalize(obj[k], depth + 1)}`).join(",") +

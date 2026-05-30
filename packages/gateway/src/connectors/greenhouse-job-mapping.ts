@@ -97,8 +97,8 @@ export function mapGreenhouseJobToItem(
 
   const summaryParts = [...departmentNames, ...officeNames, ...officeLocations];
   const summary = summaryParts.join(" — ");
-  const bodyPreview =
-    summary !== "" ? summary : status !== null && status !== "" ? status : titleText;
+  const statusOrTitle = status !== null && status !== "" ? status : titleText;
+  const bodyPreview = summary !== "" ? summary : statusOrTitle;
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

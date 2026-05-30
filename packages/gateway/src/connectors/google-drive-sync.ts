@@ -55,15 +55,15 @@ const CHANGES_PAGE_SIZE = 100;
 const SERVICE_ID = "google_drive";
 
 function parseDriveList(json: unknown): DriveListResponse {
-  return asUnknownObjectRecord(json) as DriveListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 function parseDriveChanges(json: unknown): DriveChangesListResponse {
-  return asUnknownObjectRecord(json) as DriveChangesListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 function parseStartToken(json: unknown): DriveStartTokenResponse {
-  return asUnknownObjectRecord(json) as DriveStartTokenResponse;
+  return asUnknownObjectRecord(json);
 }
 
 export function encodeDriveSyncCursor(c: DriveSyncCursorV1): string {

@@ -21,7 +21,7 @@ export function extractActor(actionJson: string): string {
   try {
     const parsed = JSON.parse(actionJson) as unknown;
     if (parsed !== null && typeof parsed === "object" && "actor" in parsed) {
-      const actor = (parsed as { actor: unknown }).actor;
+      const actor = parsed.actor;
       if (typeof actor === "string") return actor;
     }
   } catch {
