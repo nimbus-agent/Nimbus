@@ -135,7 +135,7 @@ function isItemLikeRow(row: Record<string, unknown>): boolean {
 
 function printItemCard(row: Record<string, unknown>, idx: number): void {
   const num = `${String(idx + 1)}.`;
-  const title = String(row["title"] ?? "(untitled)");
+  const title = typeof row["title"] === "string" ? row["title"] : "(untitled)";
   const meta: string[] = [];
   if (typeof row["service"] === "string") meta.push(row["service"]);
   if (typeof row["type"] === "string") meta.push(row["type"]);

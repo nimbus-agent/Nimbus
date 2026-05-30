@@ -78,4 +78,6 @@ async function main(): Promise<void> {
   process.exit(2);
 }
 
-main();
+export {};
+
+await main();

@@ -38,16 +38,15 @@ export async function resolveClosure(
   const resolved: Map<string, ResolvedNode> = new Map();
   const initialInstalled = new Map(opts.installed);
 
-  await visit(
-    root,
-    initialPinned,
-    initialRanges,
+  await visit(root, {
+    pinned: initialPinned,
+    ranges: initialRanges,
     ancestors,
     fetcher,
     manifestCache,
     resolved,
     initialInstalled,
-  );
+  });
 
   return { nodes: topoSort(resolved) };
 }
@@ -108,18 +107,19 @@ async function loadDepManifest(
   return depManifest;
 }
 
-async function visit(
-  current: ExtensionManifestForSolver,
-  pinned: Pinned,
-  ranges: Ranges,
-  ancestors: Set<string>,
-  fetcher: RegistryFetcher,
-  manifestCache: ManifestCache,
-  resolved: Map<string, ResolvedNode>,
-  initialInstalled: ReadonlyMap<string, string>,
-): Promise<void> {
-  ancestors.add(current.id);
-  pinned.set(current.id, current.version);
+type SolveContext = {
+  pinned: Pinned;
+  ranges: Ranges;
+  ancestors: Set<string>;
+  fetcher: RegistryFetcher;
+  manifestCache: ManifestCache;
+  resolved: Map<string, ResolvedNode>;
+  initialInstalled: ReadonlyMap<string, string>;
+};
+
+async function visit(current: ExtensionManifestForSolver, ctx: SolveContext): Promise<void> {
+  ctx.ancestors.add(current.id);
+  ctx.pinned.set(current.id, current.version);
 
   try {
     const deps: ResolvedDep[] = [];
@@ -134,56 +134,47 @@ async function visit(
         });
       }
 
-      if (ancestors.has(depId)) {
-        const chain = [...ancestors, depId];
+      if (ctx.ancestors.has(depId)) {
+        const chain = [...ctx.ancestors, depId];
         throw new DependencyConflictError({ kind: "cycle", id: depId, chain });
       }
 
-      const constraintList = ranges.get(depId) ?? [];
+      const constraintList = ctx.ranges.get(depId) ?? [];
       constraintList.push({ from: current.id, range });
-      ranges.set(depId, constraintList);
+      ctx.ranges.set(depId, constraintList);
 
       const candidate = await resolveDepCandidate(
         depId,
         current.id,
-        pinned,
+        ctx.pinned,
         constraintList,
-        fetcher,
+        ctx.fetcher,
       );
 
       const depManifest = await loadDepManifest(
         depId,
         current.id,
         candidate,
-        fetcher,
-        manifestCache,
+        ctx.fetcher,
+        ctx.manifestCache,
       );
 
       deps.push({ id: depId, range, resolvedVersion: candidate });
 
-      if (!resolved.has(depId)) {
-        await visit(
-          depManifest,
-          pinned,
-          ranges,
-          ancestors,
-          fetcher,
-          manifestCache,
-          resolved,
-          initialInstalled,
-        );
+      if (!ctx.resolved.has(depId)) {
+        await visit(depManifest, ctx);
       }
     }
 
-    const installedVersion = initialInstalled.get(current.id);
-    resolved.set(current.id, {
+    const installedVersion = ctx.initialInstalled.get(current.id);
+    ctx.resolved.set(current.id, {
       id: current.id,
       version: current.version,
       newlyInstalled: installedVersion !== current.version,
       deps,
     });
   } finally {
-    ancestors.delete(current.id);
+    ctx.ancestors.delete(current.id);
   }
 }
 
