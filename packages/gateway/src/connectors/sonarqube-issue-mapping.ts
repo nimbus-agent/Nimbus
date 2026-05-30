@@ -36,7 +36,7 @@ export interface SonarMappedRow {
 
 export function stripTrailingSlashes(s: string): string {
   let end = s.length;
-  while (end > 0 && s.charCodeAt(end - 1) === 47) end -= 1;
+  while (end > 0 && s.codePointAt(end - 1) === 47) end -= 1;
   return s.slice(0, end);
 }
 

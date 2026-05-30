@@ -15,7 +15,7 @@ function tagsString(row: Record<string, unknown>): string {
   }
   return tags
     .filter((t): t is string | number => typeof t === "string" || typeof t === "number")
-    .map((t) => String(t))
+    .map(String)
     .join(" ");
 }
 

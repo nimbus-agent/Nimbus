@@ -18,7 +18,7 @@ function nestedString(root: Record<string, unknown>, path: readonly string[]): s
       return "";
     }
   }
-  const leaf = cur?.[path[path.length - 1] ?? ""];
+  const leaf = cur?.[path.at(-1) ?? ""];
   return typeof leaf === "string" ? leaf : "";
 }
 

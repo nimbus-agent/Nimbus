@@ -12,19 +12,19 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze([
   {
     name: "github_pat_fine_grained",
     category: "token",
-    regex: /\bgithub_pat_[A-Za-z0-9_]{82,}\b/g,
+    regex: /\bgithub_pat_\w{82,}\b/g,
   },
   { name: "github_oauth", category: "token", regex: /\bgho_[A-Za-z0-9]{36,}\b/g },
   { name: "gitlab_pat", category: "token", regex: /\bglpat-[A-Za-z0-9\-_]{20,}\b/g },
   {
     name: "slack_bot_token",
     category: "token",
-    regex: /\bxoxb-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24}\b/g,
+    regex: /\bxoxb-\d{10,}-\d{10,}-[A-Za-z0-9]{24}\b/g,
   },
   {
     name: "slack_user_token",
     category: "token",
-    regex: /\bxoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{32}\b/g,
+    regex: /\bxoxp-\d{10,}-\d{10,}-\d{10,}-[A-Za-z0-9]{32}\b/g,
   },
   { name: "anthropic_api_key", category: "api_key", regex: /\bsk-ant-[a-z0-9-]{32,}\b/g },
   { name: "openai_api_key", category: "api_key", regex: /\bsk-[A-Za-z0-9]{20,}\b/g },

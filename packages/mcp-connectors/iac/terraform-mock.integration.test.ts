@@ -22,11 +22,11 @@ describe("terraform CLI mock (argv)", () => {
     const tfBin = join(binDir, process.platform === "win32" ? "terraform.cmd" : "terraform");
     const env: Record<string, string | undefined> = { ...process.env };
 
-    await runCliOkThrowing([tfBin, "-chdir", workDir, "plan", "-input=false"], env);
-    await runCliOkThrowing(
-      [tfBin, "-chdir", workDir, "apply", "-auto-approve", "-input=false"],
-      env,
-    );
-    expect(true).toBe(true);
+    await expect(
+      runCliOkThrowing([tfBin, "-chdir", workDir, "plan", "-input=false"], env),
+    ).resolves.toBeUndefined();
+    await expect(
+      runCliOkThrowing([tfBin, "-chdir", workDir, "apply", "-auto-approve", "-input=false"], env),
+    ).resolves.toBeUndefined();
   });
 });

@@ -134,8 +134,7 @@ export function createLinuxSandboxRunner(): SandboxRunner {
     spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
       const mode = decideNetworkMode(opts.manifest, { helperAvailable: helper.available });
       const bwrapArgv = buildBwrapArgv(opts.manifest, { mode, cwd: opts.cwd });
-      bwrapArgv.push("--seccomp", "3");
-      bwrapArgv.push(cmd, ...args);
+      bwrapArgv.push("--seccomp", "3", cmd, ...args);
 
       let spawnCmd: string;
       let spawnArgs: string[];

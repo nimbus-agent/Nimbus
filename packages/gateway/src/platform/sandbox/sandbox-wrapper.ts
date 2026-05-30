@@ -63,4 +63,4 @@ async function main(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
-void main();
+await main();

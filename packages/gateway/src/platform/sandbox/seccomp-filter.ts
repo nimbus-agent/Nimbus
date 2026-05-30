@@ -386,26 +386,32 @@ function emit(filters: SockFilter[]): Buffer {
 
 export function buildDefaultSeccompFilter(): Buffer {
   const program: SockFilter[] = [];
-  program.push(instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARCH_OFFSET));
-  program.push(instr(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, AUDIT_ARCH_X86_64));
-  program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
-  program.push(instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_NR_OFFSET));
+  program.push(
+    instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARCH_OFFSET),
+    instr(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, AUDIT_ARCH_X86_64),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_NR_OFFSET),
+  );
 
   for (const name of SYS_ALLOW) {
     const nr = SYSCALL_NR[name];
     if (nr === undefined) {
       throw new Error(`unknown syscall in allow list: ${name}`);
     }
-    program.push(instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr));
-    program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW));
+    program.push(
+      instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr),
+      instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),
+    );
   }
   for (const name of SYS_BLOCK_EPERM) {
     const nr = SYSCALL_NR[name];
     if (nr === undefined) {
       throw new Error(`unknown syscall in block list: ${name}`);
     }
-    program.push(instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr));
-    program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_EPERM));
+    program.push(
+      instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr),
+      instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_EPERM),
+    );
   }
   program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
   return emit(program);

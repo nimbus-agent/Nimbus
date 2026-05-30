@@ -318,7 +318,7 @@ describe("Workflows page — run-history drawer", () => {
     renderPage();
     await screen.findByText("alpha");
     fireEvent.click(screen.getByRole("button", { name: /show history for alpha/i }));
-    await screen.findByText(/no runs yet/i);
+    expect(await screen.findByText(/no runs yet/i)).toBeInTheDocument();
   });
 });
 

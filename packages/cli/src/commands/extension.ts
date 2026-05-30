@@ -81,8 +81,10 @@ export function formatExtensionListTable(
     return padded;
   };
   const lines: string[] = [];
-  lines.push(headers.map((h, i) => pad(h, widths[i] ?? 0)).join("  "));
-  lines.push(widths.map((w) => "-".repeat(w)).join("  "));
+  lines.push(
+    headers.map((h, i) => pad(h, widths[i] ?? 0)).join("  "),
+    widths.map((w) => "-".repeat(w)).join("  "),
+  );
   for (const row of data) {
     lines.push(row.map((c, i) => renderCell(c, widths[i] ?? 0, i)).join("  "));
   }
@@ -678,8 +680,7 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
   const isJson = hasFlag(args, "--json");
   const isCheck = hasFlag(args, "--check");
   const toVersion = takeFlagValue(args, "--to");
-  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
-  const id = positional[0];
+  const id = stripFlags(args).find((a) => !a.startsWith("--"));
 
   if (id === undefined) {
     return listExtensionUpdates(opts, isJson, isCheck);
@@ -717,8 +718,7 @@ export async function runExtensionDowngradeWithCaller(
   const args = opts.args;
   const isJson = hasFlag(args, "--json");
   const toVersion = takeFlagValue(args, "--to");
-  const positional = stripFlags(args).filter((a) => !a.startsWith("--"));
-  const id = positional[0];
+  const id = stripFlags(args).find((a) => !a.startsWith("--"));
   if (id === undefined) {
     opts.writeStderr("usage: nimbus extension downgrade <id> --to <version> [--json]\n");
     return 1;

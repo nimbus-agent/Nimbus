@@ -293,7 +293,7 @@ interface TokenRequest {
 
 async function postToken(req: TokenRequest): Promise<PKCEResult> {
   const d = req.descriptor;
-  const headers: Record<string, string> = { ...(d.tokenHeaders ?? {}) };
+  const headers: Record<string, string> = { ...d.tokenHeaders };
   const fields: Record<string, string> = { client_id: req.clientId, ...req.grant };
 
   if (

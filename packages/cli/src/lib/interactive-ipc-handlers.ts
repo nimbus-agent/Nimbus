@@ -72,7 +72,7 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
         }
         const o = parsed as Record<string, unknown>;
         if (typeof o["approved"] !== "boolean") {
-          throw new Error(
+          throw new TypeError(
             `--script-consent-source: malformed JSONL on line ${lineIdx + 1}: missing or non-boolean "approved"`,
           );
         }

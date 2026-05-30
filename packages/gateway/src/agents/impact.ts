@@ -140,9 +140,15 @@ const HOST_TO_SERVICE: Readonly<Record<string, string>> = Object.freeze({
 const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 
 function resolveStartEntity(db: Database, fileOrPrUrl: string): ResolvedStart | null {
-  const m = fileOrPrUrl.match(PR_URL_RE);
+  const m = PR_URL_RE.exec(fileOrPrUrl);
   if (m !== null) {
-    const [, rawHost, owner, repo, prNum] = m as [string, string, string, string, string];
+    const [, rawHost, owner, repo, prNum] = m as unknown as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
     const host = rawHost.toLowerCase();
     const hostFirstSegment = host.split(".").at(0) ?? host;
     const service = HOST_TO_SERVICE[host] ?? hostFirstSegment;

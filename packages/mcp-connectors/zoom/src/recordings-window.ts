@@ -16,10 +16,10 @@ export function validateZoomRecordingsWindow(from: string, to: string): void {
   const fromMs = Date.parse(from);
   const toMs = Date.parse(to);
   if (!Number.isFinite(fromMs)) {
-    throw new Error(`Invalid 'from': ${from} is not an ISO-8601 date.`);
+    throw new TypeError(`Invalid 'from': ${from} is not an ISO-8601 date.`);
   }
   if (!Number.isFinite(toMs)) {
-    throw new Error(`Invalid 'to': ${to} is not an ISO-8601 date.`);
+    throw new TypeError(`Invalid 'to': ${to} is not an ISO-8601 date.`);
   }
   if (toMs < fromMs) {
     throw new Error(`'to' (${to}) must be >= 'from' (${from}).`);

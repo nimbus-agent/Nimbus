@@ -192,7 +192,7 @@ function safeOsUsername(): string {
   }
 }
 
-const SCORE_OWNED_SERVICE = 1.0;
+const SCORE_OWNED_SERVICE = 1;
 const SCORE_ACTIVE_REPO = 0.7;
 const SCORE_INCIDENT_SERVICE = 0.7;
 const SCORE_COLLABORATOR = 0.5;
@@ -258,7 +258,7 @@ export function scoreAndGroup(items: WindowItem[], involvement: Involvement): Ca
     section: {
       serviceId,
       totalItemsInWindow: slot.total,
-      items: slot.items.sort((a, b) => {
+      items: slot.items.toSorted((a, b) => {
         if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
         return b.modifiedAt - a.modifiedAt;
       }),

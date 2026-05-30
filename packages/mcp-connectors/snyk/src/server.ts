@@ -101,7 +101,7 @@ await runReadOnlyMcpConnector("nimbus-snyk", (reg) => {
       const root = await snykPost(path, body);
       const issues = (root as { issues?: unknown[] } | null)?.issues;
       if (!Array.isArray(issues)) {
-        throw new Error(`Snyk: project ${p.projectId} returned no issues envelope`);
+        throw new TypeError(`Snyk: project ${p.projectId} returned no issues envelope`);
       }
       const match = issues.find((it) => {
         if (it === null || typeof it !== "object") {

@@ -72,7 +72,7 @@ export function aggregateMissingEntityTypes(notes: GapNote[]): GapNote[] {
   if (missing.length < 2) return notes;
   const others = notes.filter((n) => n.category !== "missing_entity_type");
   const kinds = missing.map((n) => {
-    const m = n.detail.match(/`([^`]+)`/);
+    const m = /`([^`]+)`/.exec(n.detail);
     return m?.[1] ?? "?";
   });
   const remediations = Array.from(new Set(missing.map((n) => n.remediation).filter(Boolean)));

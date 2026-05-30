@@ -14,7 +14,6 @@ import {
   decodeGmailSyncCursor,
   encodeGmailSyncCursor,
   GMAIL_CURSOR_PREFIX,
-  type GmailSyncCursorV1,
 } from "./_lib/gmail/cursor.ts";
 import {
   applyGmailHistoryRecords,
@@ -24,7 +23,8 @@ import {
 
 const LIST_PAGE_SIZE = 50;
 
-export { decodeGmailSyncCursor, encodeGmailSyncCursor, type GmailSyncCursorV1 };
+export type { GmailSyncCursorV1 } from "./_lib/gmail/cursor.ts";
+export { decodeGmailSyncCursor, encodeGmailSyncCursor };
 
 export type GmailSyncableOptions = {
   ensureGoogleMcpRunning: () => Promise<void>;

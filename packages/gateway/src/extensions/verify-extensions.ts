@@ -59,7 +59,7 @@ function tryPromotePrevVersion(
   } catch {
     candidates = [];
   }
-  const target = candidates[candidates.length - 1];
+  const target = candidates.at(-1);
   if (target === undefined) return false;
   try {
     renameSync(join(prevDir, target), activePath);

@@ -58,7 +58,7 @@ export function rankExpertFindings(
       finding: {
         personId,
         displayName: m.displayName,
-        evidence: m.evidence.sort((a, b) => b.modifiedAt - a.modifiedAt),
+        evidence: m.evidence.toSorted((a, b) => b.modifiedAt - a.modifiedAt),
         score: 0, // filled below after normalisation
         confidence: "low",
       },
@@ -210,7 +210,7 @@ async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
       serviceId: c.service_id,
       title: c.title.slice(0, 512),
       modifiedAt: c.modified_at,
-      weight: 1.0,
+      weight: 1,
     };
     const existing = merged.get(c.person_id);
     if (existing === undefined) {

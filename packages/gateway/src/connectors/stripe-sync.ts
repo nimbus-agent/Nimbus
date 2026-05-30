@@ -77,7 +77,7 @@ function upsertInvoices(ctx: SyncContext, invoices: readonly unknown[], now: num
 }
 
 function lastInvoiceId(invoices: readonly unknown[]): string | null {
-  const last = invoices[invoices.length - 1];
+  const last = invoices.at(-1);
   const row = asRecord(last);
   if (row === undefined) {
     return null;

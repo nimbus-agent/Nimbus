@@ -26,7 +26,9 @@ function renderExpertFinding(f: ExpertFinding): string {
     f.evidence.length === 1 ? "" : "s"
   })`;
   if (f.evidence.length === 0) return `- ${head}`;
-  const lines = f.evidence.slice(0, 5).map((e) => `   - ${e.type.replace(/_/g, " ")}: ${e.title}`);
+  const lines = f.evidence
+    .slice(0, 5)
+    .map((e) => `   - ${e.type.replaceAll("_", " ")}: ${e.title}`);
   return [`- ${head}`, ...lines].join("\n");
 }
 

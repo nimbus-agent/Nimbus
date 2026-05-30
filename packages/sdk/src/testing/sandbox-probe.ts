@@ -59,7 +59,8 @@ async function probeNetworkUnlisted(): Promise<number> {
 }
 
 async function probeFsDenied(): Promise<number> {
-  const path = process.platform === "win32" ? "C:\\Windows\\System32\\config\\SAM" : "/etc/passwd";
+  const path =
+    process.platform === "win32" ? String.raw`C:\Windows\System32\config\SAM` : "/etc/passwd";
   try {
     await Bun.file(path).text();
     return 2;

@@ -344,7 +344,7 @@ export function startReadOnlyHttpServer(
 
   const actualPort = server.port;
   if (typeof actualPort !== "number") {
-    throw new Error(
+    throw new TypeError(
       `startReadOnlyHttpServer: Bun.serve did not bind a TCP port (server.port=${String(actualPort)})`,
     );
   }

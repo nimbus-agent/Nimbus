@@ -16,12 +16,14 @@ export type AgentUnavailableInit = {
   detail?: string;
 };
 
+const DEFAULT_AGENT_UNAVAILABLE_INIT: AgentUnavailableInit = { reason: "unknown" };
+
 export class GatewayAgentUnavailableError extends Error {
   override readonly name = "GatewayAgentUnavailableError";
   readonly reason: AgentUnavailableReason;
   readonly provider: AgentProviderName | undefined;
 
-  constructor(init: AgentUnavailableInit = { reason: "unknown" }) {
+  constructor(init: AgentUnavailableInit = DEFAULT_AGENT_UNAVAILABLE_INIT) {
     super(buildAgentErrorMessage(init));
     this.reason = init.reason;
     this.provider = init.provider;

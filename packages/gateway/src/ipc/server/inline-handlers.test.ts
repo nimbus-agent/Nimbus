@@ -142,13 +142,7 @@ describe("rpcAuditList", () => {
 describe("rpcConsentRespond", () => {
   test("invalid params surface as RpcMethodError", () => {
     const ctx = makeCtx();
-    try {
-      rpcConsentRespond(ctx, "client-1", { bogus: true });
-    } catch (e) {
-      expect(e).toBeInstanceOf(RpcMethodError);
-      return;
-    }
-    expect(true).toBe(true);
+    expect(() => rpcConsentRespond(ctx, "client-1", { bogus: true })).toThrow(RpcMethodError);
   });
 });
 

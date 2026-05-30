@@ -121,7 +121,7 @@ export class ExtensionAutoUpdater {
       this.pollOnce().catch(() => {});
     }, jitterMs);
 
-    const periodMs = this.opts.intervalHours * 3600_000;
+    const periodMs = this.opts.intervalHours * 3_600_000;
     this.periodicTimer = setInterval(() => {
       this.pollOnce().catch(() => {});
     }, periodMs);

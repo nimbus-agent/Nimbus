@@ -99,7 +99,7 @@ function parseUpdateChannel(value: unknown): "stable" | "beta" {
 function parseChangelog(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
-    throw new Error("extension manifest changelog must be a string");
+    throw new TypeError("extension manifest changelog must be a string");
   }
   const normalized = value.normalize("NFC");
   const bytes = Buffer.byteLength(normalized, "utf8");

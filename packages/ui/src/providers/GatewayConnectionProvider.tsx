@@ -68,7 +68,7 @@ async function runFirstConnect(args: RunFirstConnectArgs): Promise<void> {
   }
 }
 
-export function GatewayConnectionProvider({ children }: PropsWithChildren) {
+export function GatewayConnectionProvider({ children }: Readonly<PropsWithChildren>) {
   const navigate = useNavigate();
   const setConnectionState = useNimbusStore((s) => s.setConnectionState);
   const firstConnectHandled = useRef(false);

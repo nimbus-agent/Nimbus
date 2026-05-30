@@ -18,5 +18,3 @@ export const HTTP_ROUTES: readonly HttpRoute[] = Object.freeze([
 ] as const);
 
 export const READ_ONLY_HTTP_ROUTES = HTTP_ROUTES;
-
-export type ReadOnlyHttpRoute = HttpRoute;

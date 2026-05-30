@@ -24,7 +24,7 @@ const DEFAULT_SINCE = "30d";
 function parseSinceToMs(raw: string): number {
   const m = /^(\d+)([dh])$/.exec(raw);
   if (m === null) {
-    throw new MetricsRpcError(-32602, `since must match \\d+(d|h), got '${raw}'`);
+    throw new MetricsRpcError(-32602, String.raw`since must match \d+(d|h), got '${raw}'`);
   }
   const n = Number(m[1]);
   if (!Number.isInteger(n) || n < 1 || n > 365) {

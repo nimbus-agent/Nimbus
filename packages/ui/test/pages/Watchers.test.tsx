@@ -305,7 +305,7 @@ describe("Watchers page — history drawer", () => {
     renderPage();
     await screen.findByText("PR opened");
     await userEvent.click(await screen.findByRole("button", { name: /history for PR opened/i }));
-    await screen.findByText(/no fires yet/i);
+    expect(await screen.findByText(/no fires yet/i)).toBeInTheDocument();
   });
 
   it("clicking History again collapses the drawer", async () => {

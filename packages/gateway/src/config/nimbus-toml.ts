@@ -789,7 +789,7 @@ const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
 function parseStringArray(raw: string): string[] {
   const t = raw.trim();
   if (!t.startsWith("[") || !t.endsWith("]")) {
-    throw new Error(`expected array, got: ${raw}`);
+    throw new TypeError(`expected array, got: ${raw}`);
   }
   const inner = t.slice(1, -1).trim();
   if (inner.length === 0) return [];

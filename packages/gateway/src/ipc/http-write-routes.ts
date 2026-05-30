@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
-import { requireBearer, tokenFingerprint } from "./http-auth.ts";
+import { requireBearer } from "./http-auth.ts";
 import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts";
 
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze(["POST /v1/deployments"]);
@@ -287,4 +287,4 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
 }
 
-export { tokenFingerprint };
+export { tokenFingerprint } from "./http-auth.ts";

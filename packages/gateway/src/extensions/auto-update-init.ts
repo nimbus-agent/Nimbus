@@ -9,7 +9,6 @@ import { listExtensions, updateExtensionRowVersion } from "../automation/extensi
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
-import { verifyTarballSha256 } from "./auto-update-apply.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   createPerformDowngrade,
@@ -214,4 +213,4 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   return { daemon, deps, abortController };
 }
 
-export { verifyTarballSha256 };
+export { verifyTarballSha256 } from "./auto-update-apply.ts";
