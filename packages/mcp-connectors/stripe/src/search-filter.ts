@@ -1,11 +1,11 @@
-import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import {
+  asObjectish,
+  filterByQuery,
+  type SearchMatchOptions,
+  stringField,
+} from "../../shared/search-filter.ts";
 
 export type StripeSearchMatchOptions = SearchMatchOptions;
-
-function stringField(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  return typeof v === "string" ? v : "";
-}
 
 function fieldsOf(item: unknown): readonly string[] | null {
   const row = asObjectish(item);

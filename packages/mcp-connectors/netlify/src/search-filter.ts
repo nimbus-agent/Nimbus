@@ -1,11 +1,11 @@
-import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import {
+  asObjectish,
+  filterByQuery,
+  type SearchMatchOptions,
+  stringField,
+} from "../../shared/search-filter.ts";
 
 export type NetlifySearchMatchOptions = SearchMatchOptions;
-
-function stringField(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  return typeof v === "string" ? v : "";
-}
 
 function subStringField(row: Record<string, unknown>, key: string, sub: string): string {
   const obj = row[key];

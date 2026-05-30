@@ -170,6 +170,46 @@ async function embedSlice(
   }
 }
 
+type EmbedErrorDecision =
+  | { kind: "retry"; retryAfterMs: number }
+  | { kind: "fatal-auth"; status: number }
+  | { kind: "rethrow" };
+
+function classifyEmbedError(err: unknown): EmbedErrorDecision {
+  const status = (err as { status?: number } | undefined)?.status;
+  if (isRetryableStatus(status)) {
+    const retryAfterMs = (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
+    return { kind: "retry", retryAfterMs };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: "fatal-auth", status };
+  }
+  return { kind: "rethrow" };
+}
+
+async function retryEmbedSliceOrSkip(
+  pipeline: ReembedSink,
+  ctx: IndexReembedRpcContext,
+  slice: readonly IndexedItem[],
+  batchStart: number,
+  counters: BatchCounters,
+): Promise<void> {
+  try {
+    await embedSlice(pipeline, slice, counters);
+  } catch (retryErr) {
+    ctx.logger.warn(
+      {
+        errName: retryErr instanceof Error ? retryErr.name : "Error",
+        errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        batchStart,
+        batchSize: slice.length,
+      },
+      "reembed batch failed after retry; skipping",
+    );
+    counters.skipped += slice.length;
+  }
+}
+
 export async function embedBatchWithRetry(
   pipeline: ReembedSink,
   ctx: IndexReembedRpcContext,
@@ -179,34 +219,20 @@ export async function embedBatchWithRetry(
 ): Promise<void> {
   try {
     await embedSlice(pipeline, slice, counters);
+    return;
   } catch (err) {
-    const status = (err as { status?: number } | undefined)?.status;
-    if (isRetryableStatus(status)) {
-      const retryAfterMs =
-        (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
-      await new Promise((r) => setTimeout(r, retryAfterMs));
-      try {
-        await embedSlice(pipeline, slice, counters);
-      } catch (retryErr) {
-        ctx.logger.warn(
-          {
-            errName: retryErr instanceof Error ? retryErr.name : "Error",
-            errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
-            batchStart,
-            batchSize: slice.length,
-          },
-          "reembed batch failed after retry; skipping",
-        );
-        counters.skipped += slice.length;
-      }
-    } else if (status === 401 || status === 403) {
+    const decision = classifyEmbedError(err);
+    if (decision.kind === "fatal-auth") {
       throw new IndexReembedRpcError(
         -32603,
-        `Fatal: OpenAI returned ${String(status)}. Check openai.api_key validity.`,
+        `Fatal: OpenAI returned ${String(decision.status)}. Check openai.api_key validity.`,
       );
-    } else {
+    }
+    if (decision.kind === "rethrow") {
       throw err;
     }
+    await new Promise((r) => setTimeout(r, decision.retryAfterMs));
+    await retryEmbedSliceOrSkip(pipeline, ctx, slice, batchStart, counters);
   }
 }
 

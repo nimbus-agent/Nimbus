@@ -1,11 +1,11 @@
-import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import {
+  asObjectish,
+  filterByQuery,
+  type SearchMatchOptions,
+  stringField,
+} from "../../shared/search-filter.ts";
 
 export type SonarSearchMatchOptions = SearchMatchOptions;
-
-function stringField(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  return typeof v === "string" ? v : "";
-}
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((t): t is string => typeof t === "string") : [];

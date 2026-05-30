@@ -272,6 +272,46 @@ function backfillDependencyRowsBestEffort(
   }
 }
 
+type DependencyRow = { extension_id: string; depends_on_id: string; range: string };
+
+/*
+ * Classify one extension_dependency row: returns the registry mark to record —
+ * dependency_missing when the dependency is unusable, dependency_unsatisfied
+ * when the installed version is out of range — or null when satisfied. The
+ * caller owns the registry mutation and the fixpoint loop.
+ */
+function evaluateDependencyRow(
+  r: DependencyRow,
+  installed: ReadonlyMap<string, string>,
+  isUsable: (id: string) => boolean,
+): Parameters<typeof missingDependencyRegistry.mark>[0] | null {
+  if (!isUsable(r.depends_on_id)) {
+    return {
+      extensionId: r.extension_id,
+      reason: "dependency_missing",
+      missingDepId: r.depends_on_id,
+      requiredRange: r.range,
+    };
+  }
+  const depVersion = installed.get(r.depends_on_id);
+  let satisfies = false;
+  try {
+    satisfies = depVersion !== undefined && semver.satisfies(depVersion, r.range);
+  } catch {
+    satisfies = false;
+  }
+  if (!satisfies) {
+    return {
+      extensionId: r.extension_id,
+      reason: "dependency_unsatisfied",
+      missingDepId: r.depends_on_id,
+      requiredRange: r.range,
+      ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
+    };
+  }
+  return null;
+}
+
 function completenessGuard(
   db: Database,
   installed: ReadonlyMap<string, string>,
@@ -296,31 +336,9 @@ function completenessGuard(
     changed = false;
     for (const r of rows) {
       if (missingDependencyRegistry.has(r.extension_id)) continue;
-      if (!isUsable(r.depends_on_id)) {
-        missingDependencyRegistry.mark({
-          extensionId: r.extension_id,
-          reason: "dependency_missing",
-          missingDepId: r.depends_on_id,
-          requiredRange: r.range,
-        });
-        changed = true;
-        continue;
-      }
-      const depVersion = installed.get(r.depends_on_id);
-      let satisfies = false;
-      try {
-        satisfies = depVersion !== undefined && semver.satisfies(depVersion, r.range);
-      } catch {
-        satisfies = false;
-      }
-      if (!satisfies) {
-        missingDependencyRegistry.mark({
-          extensionId: r.extension_id,
-          reason: "dependency_unsatisfied",
-          missingDepId: r.depends_on_id,
-          requiredRange: r.range,
-          ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
-        });
+      const mark = evaluateDependencyRow(r, installed, isUsable);
+      if (mark !== null) {
+        missingDependencyRegistry.mark(mark);
         changed = true;
       }
     }

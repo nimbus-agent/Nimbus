@@ -3,14 +3,10 @@ import {
   asRecord,
   filterByQuery,
   type SearchMatchOptions,
+  stringField,
 } from "../../shared/search-filter.ts";
 
 export type IntercomSearchMatchOptions = SearchMatchOptions;
-
-function stringField(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  return typeof v === "string" ? v : "";
-}
 
 function tagText(row: Record<string, unknown>): string {
   const tags = asRecord(row["tags"]);

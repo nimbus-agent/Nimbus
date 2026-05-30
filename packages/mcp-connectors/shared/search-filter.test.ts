@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { asObjectish, asRecord, filterByQuery } from "./search-filter.ts";
+import { asObjectish, asRecord, filterByQuery, stringField, tagText } from "./search-filter.ts";
 
 describe("filterByQuery", () => {
   const rows = [
@@ -74,5 +74,47 @@ describe("asObjectish", () => {
     expect(asObjectish(null)).toBeUndefined();
     expect(asObjectish(42)).toBeUndefined();
     expect(asObjectish("x")).toBeUndefined();
+  });
+});
+
+describe("stringField", () => {
+  test("returns the string value for a string field", () => {
+    expect(stringField({ name: "Revenue" }, "name")).toBe("Revenue");
+  });
+
+  test("returns empty string for a missing key", () => {
+    expect(stringField({ name: "Revenue" }, "absent")).toBe("");
+  });
+
+  test("returns empty string for a non-string value", () => {
+    expect(stringField({ count: 42 }, "count")).toBe("");
+    expect(stringField({ flag: true }, "flag")).toBe("");
+    expect(stringField({ nested: { a: 1 } }, "nested")).toBe("");
+    expect(stringField({ list: ["a"] }, "list")).toBe("");
+    expect(stringField({ nil: null }, "nil")).toBe("");
+  });
+});
+
+describe("tagText", () => {
+  test("joins a string array at key 'tags' with spaces", () => {
+    expect(tagText({ tags: ["finance", "ops"] })).toBe("finance ops");
+  });
+
+  test("returns empty string when 'tags' is missing", () => {
+    expect(tagText({ name: "x" })).toBe("");
+  });
+
+  test("returns empty string when 'tags' is not an array", () => {
+    expect(tagText({ tags: "finance" })).toBe("");
+    expect(tagText({ tags: { a: 1 } })).toBe("");
+    expect(tagText({ tags: null })).toBe("");
+  });
+
+  test("skips non-string entries", () => {
+    expect(tagText({ tags: ["finance", 42, null, { name: "x" }, "ops"] })).toBe("finance ops");
+  });
+
+  test("returns empty string for an array of only non-string entries", () => {
+    expect(tagText({ tags: [1, 2, { a: 1 }] })).toBe("");
   });
 });
