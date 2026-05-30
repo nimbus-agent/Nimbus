@@ -335,7 +335,7 @@ export function startReadOnlyHttpServer(
         return handlePost(req, writeDb, rateLimiter, opts);
       }
       if (req.method !== "GET") {
-        const allow = writeDb !== null ? "GET, POST" : "GET";
+        const allow = writeDb === null ? "GET" : "GET, POST";
         return new Response("Method Not Allowed", { status: 405, headers: { Allow: allow } });
       }
       return handleGet(url, db, opts);

@@ -48,18 +48,18 @@ function parsePagerdutyListResponse(text: string): { incidents: unknown[]; more:
 
 function pdServiceId(row: Record<string, unknown>): string | undefined {
   const svc = asRecord(row["service"]);
-  return svc !== undefined ? stringField(svc, "id") : undefined;
+  return svc === undefined ? undefined : stringField(svc, "id");
 }
 
 function pdPriorityName(row: Record<string, unknown>): string | undefined {
   const pri = asRecord(row["priority"]);
-  return pri !== undefined ? stringField(pri, "name") : undefined;
+  return pri === undefined ? undefined : stringField(pri, "name");
 }
 
 function buildPagerdutyMetadata(row: Record<string, unknown>, id: string): Record<string, unknown> {
   const status = stringField(row, "status");
   const createdAt = stringField(row, "created_at");
-  const openedAtMs = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
+  const openedAtMs = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
   const serviceId = pdServiceId(row);
   const severity = pdPriorityName(row);
   const urgency = stringField(row, "urgency");

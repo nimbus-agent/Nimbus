@@ -100,8 +100,8 @@ export function mapStackOverflowQuestionToItem(
   const tags = tagNames(row["tags"]);
 
   const owner = asRecord(row["owner"]);
-  const ownerId = owner !== undefined ? (numberField(owner, "id") ?? null) : null;
-  const ownerName = owner !== undefined ? (stringField(owner, "name") ?? null) : null;
+  const ownerId = owner === undefined ? null : (numberField(owner, "id") ?? null);
+  const ownerName = owner === undefined ? null : (stringField(owner, "name") ?? null);
 
   const creationDate = parseIsoMs(row["creationDate"]);
   const lastActivityDate = parseIsoMs(row["lastActivityDate"]);
@@ -109,8 +109,8 @@ export function mapStackOverflowQuestionToItem(
 
   const canonicalUrl = webUrl !== null && webUrl !== "" ? webUrl : null;
 
-  const trimmedTitle = rawTitle !== null ? rawTitle.trim() : "";
-  const title = trimmedTitle !== "" ? trimmedTitle : `Question ${id}`;
+  const trimmedTitle = rawTitle === null ? "" : rawTitle.trim();
+  const title = trimmedTitle === "" ? `Question ${id}` : trimmedTitle;
 
   const strippedBody = stripHtml(bodyHtml);
   const tagSummary = tags.join(", ");

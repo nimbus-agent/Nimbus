@@ -113,7 +113,7 @@ export function mapIntercomConversationToItem(
   const assigneeObj = asRecord(row["assignee"]) ?? {};
   const assigneeNested =
     numberField(assigneeObj, "id") ??
-    (stringField(assigneeObj, "id") !== undefined ? stringField(assigneeObj, "id") : undefined);
+    (stringField(assigneeObj, "id") === undefined ? undefined : stringField(assigneeObj, "id"));
   const assigneeId: string | number | null = adminAssignee ?? assigneeNested ?? null;
   const teamAssigneeId = numberField(row, "team_assignee_id") ?? null;
 
@@ -125,12 +125,12 @@ export function mapIntercomConversationToItem(
 
   const canonicalUrl: string | null = null;
 
-  const trimmedSubject = sourceSubject !== null ? sourceSubject.trim() : "";
-  const title = trimmedSubject !== "" ? trimmedSubject : `Conversation ${id}`;
+  const trimmedSubject = sourceSubject === null ? "" : sourceSubject.trim();
+  const title = trimmedSubject === "" ? `Conversation ${id}` : trimmedSubject;
 
   const strippedBody = stripHtml(sourceBodyHtml);
   const stateOrTitle = state !== null && state !== "" ? state : title;
-  const bodyPreview = strippedBody !== "" ? strippedBody : stateOrTitle;
+  const bodyPreview = strippedBody === "" ? stateOrTitle : strippedBody;
 
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;
 

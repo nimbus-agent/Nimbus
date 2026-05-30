@@ -69,7 +69,7 @@ export function mapDatabricksJobToItem(
 
   const run = ctx.runsByJobId.get(jobId);
   const latestRunId = run?.run_id ?? null;
-  const latestRunStatus = run !== undefined ? formatRunStatus(run) : null;
+  const latestRunStatus = run === undefined ? null : formatRunStatus(run);
   const latestRunStartedAt = run?.start_time ?? null;
   const latestRunDurationMs = run?.run_duration ?? null;
   const latestRunClusterId = run?.cluster_id ?? null;

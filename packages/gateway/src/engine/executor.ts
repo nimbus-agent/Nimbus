@@ -208,7 +208,7 @@ export class ToolExecutor {
       hitlStatus,
       actionJson: auditPayload(action, auditExtras),
       timestamp: Date.now(),
-      ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(sessionId === undefined ? {} : { sessionId }),
     });
 
     if (hitlStatus === "rejected") {

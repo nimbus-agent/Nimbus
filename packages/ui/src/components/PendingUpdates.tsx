@@ -86,7 +86,7 @@ export function PendingUpdates({
           {applyResult.result.applied
             ? `Updated ${applyResult.id}`
             : `Update failed: ${applyResult.result.reason}${
-                applyResult.result.hint !== undefined ? ` — ${applyResult.result.hint}` : ""
+                applyResult.result.hint === undefined ? "" : ` — ${applyResult.result.hint}`
               }`}
         </p>
       )}

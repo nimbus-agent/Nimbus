@@ -66,7 +66,7 @@ export function formatExtensionListTable(
     return [
       r.id,
       r.version,
-      r.publisher !== undefined ? r.publisher.id : "(unverified)",
+      r.publisher === undefined ? "(unverified)" : r.publisher.id,
       isEnabled ? "enabled" : "disabled",
     ];
   });
@@ -167,11 +167,11 @@ export function formatExtensionInfoHuman(info: {
   publisher?: { id: string; key: string };
 }): string {
   const lines: string[] = [`ID:        ${info.id}`, `Version:   ${info.version}`];
-  if (info.publisher !== undefined) {
+  if (info.publisher === undefined) {
+    lines.push(`Publisher: (unverified)`);
+  } else {
     const shortKey = `${info.publisher.key.slice(0, 16)}…`;
     lines.push(`Publisher: ${info.publisher.id}`, `  key:     ${shortKey}`);
-  } else {
-    lines.push(`Publisher: (unverified)`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -664,11 +664,11 @@ async function applyExtensionUpdate(
     return res.applied ? 0 : 1;
   }
   if (res.applied) {
-    const jobIdPart = res.jobId !== undefined ? ` (jobId=${res.jobId})` : "";
+    const jobIdPart = res.jobId === undefined ? "" : ` (jobId=${res.jobId})`;
     opts.writeStdout(`updated ${id} to ${targetVersion}${jobIdPart}\n`);
     return 0;
   }
-  const hintPart = res.hint !== undefined ? `\n  hint: ${res.hint}` : "";
+  const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
   opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
 }
@@ -742,7 +742,7 @@ export async function runExtensionDowngradeWithCaller(
     opts.writeStdout(`downgraded ${id} to ${toVersion}\n`);
     return 0;
   }
-  const hintPart = res.hint !== undefined ? `\n  hint: ${res.hint}` : "";
+  const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
   opts.writeStderr(`downgrade failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
 }

@@ -162,9 +162,9 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       response_type: "code",
       scope: a.scopes.join(" "),
       state: a.state,
-      ...(a.codeChallenge !== undefined
-        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
-        : {}),
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
       access_type: "offline",
       prompt: "consent",
     }),
@@ -186,9 +186,9 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       response_type: "code",
       scope: a.scopes.join(" "),
       state: a.state,
-      ...(a.codeChallenge !== undefined
-        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
-        : {}),
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
     }),
     parseTokenResponse: parseStandardTokenResponse,
   },
@@ -208,9 +208,9 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       redirect_uri: a.redirectUri,
       state: a.state,
       scope: "",
-      ...(a.codeChallenge !== undefined
-        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
-        : {}),
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
     }),
     parseTokenResponse: parseSlackTokenResponse,
     isTokenSuccess: (json) =>
@@ -252,9 +252,9 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       response_type: "code",
       scope: a.scopes.join(" "),
       state: a.state,
-      ...(a.codeChallenge !== undefined
-        ? { code_challenge: a.codeChallenge, code_challenge_method: "S256" }
-        : {}),
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
     }),
     parseTokenResponse: parseStandardTokenResponse,
   },

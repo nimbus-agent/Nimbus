@@ -119,8 +119,8 @@ export function mapLeverPostingToItem(
 
   const canonicalUrl = deriveLeverCanonicalUrl(hostedUrl, urlsShow, applyUrl);
 
-  const trimmedText = text !== null ? text.trim() : "";
-  const titleText = trimmedText !== "" ? trimmedText : `Posting ${id}`;
+  const trimmedText = text === null ? "" : text.trim();
+  const titleText = trimmedText === "" ? `Posting ${id}` : trimmedText;
 
   const categorySummary = [team, department, location, commitment, level]
     .filter((c): c is string => c !== null && c !== "")

@@ -115,7 +115,7 @@ export function agentErrorFromHttpResponse(
   return new GatewayAgentUnavailableError({
     reason: "provider_error",
     provider,
-    detail: msg !== "" ? `HTTP ${String(status)}: ${clipDetail(msg)}` : `HTTP ${String(status)}`,
+    detail: msg === "" ? `HTTP ${String(status)}` : `HTTP ${String(status)}: ${clipDetail(msg)}`,
   });
 }
 
@@ -127,7 +127,7 @@ export function agentErrorFromCaughtError(
   const msg = raw.toLowerCase();
 
   const init = (reason: AgentUnavailableReason): AgentUnavailableInit =>
-    provider !== undefined ? { reason, provider } : { reason };
+    provider === undefined ? { reason } : { reason, provider };
 
   if (
     msg.includes("insufficient_quota") ||

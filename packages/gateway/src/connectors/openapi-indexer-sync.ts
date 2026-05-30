@@ -72,9 +72,9 @@ function upsertEndpoint(
     externalId,
     title: `${args.ep.method} ${args.ep.path}`,
     bodyPreview:
-      args.ep.operationId !== undefined
-        ? `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim()
-        : args.ep.tags.join(" ").trim(),
+      args.ep.operationId === undefined
+        ? args.ep.tags.join(" ").trim()
+        : `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim(),
     modifiedAt: args.mtimeMs,
     metadata: {
       service_name: args.serviceName,

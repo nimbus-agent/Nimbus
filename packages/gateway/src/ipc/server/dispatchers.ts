@@ -582,7 +582,7 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.extensionsEnforceAirGap === undefined
         ? {}
         : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
-      ...(autoUpdateDeps !== undefined ? { autoUpdate: autoUpdateDeps } : {}),
+      ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
     });
     if (out.kind === "hit") {
       return out.value;

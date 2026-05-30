@@ -56,7 +56,7 @@ async function runDataExportCli(args: string[]): Promise<void> {
   const output = args[outIdx + 1];
   const passphrase = args[passIdx + 1];
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const result = await client.call<{
         outputPath: string;
@@ -90,7 +90,7 @@ async function runDataImportCli(args: string[]): Promise<void> {
     throw new Error("Provide either --passphrase or --recovery-seed");
   }
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const result = await client.call<{
         credentialsRestored: number;
@@ -114,7 +114,7 @@ async function runDataDeleteCli(args: string[]): Promise<void> {
   const yes = args.includes("--yes");
   const scriptConsentSource = parseScriptConsentSource(args);
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const pre = await client.call<{
         preflight: { itemsToDelete: number; vaultEntriesToDelete: number };

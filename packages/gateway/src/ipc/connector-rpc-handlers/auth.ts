@@ -538,9 +538,9 @@ function oauthClientConfigForProvider(
       return {
         clientId: Config.oauthGoogleClientId,
         emptyClientIdMessage: GOOGLE_OAUTH_CLIENT_ID_HELP,
-        ...(Config.oauthGoogleClientSecret !== ""
-          ? { clientSecret: Config.oauthGoogleClientSecret }
-          : {}),
+        ...(Config.oauthGoogleClientSecret === ""
+          ? {}
+          : { clientSecret: Config.oauthGoogleClientSecret }),
       };
     case "microsoft":
       return {

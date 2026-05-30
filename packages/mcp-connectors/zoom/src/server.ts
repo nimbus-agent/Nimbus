@@ -62,7 +62,7 @@ await runReadOnlyMcpConnector("nimbus-zoom", (reg) => {
       const matches = Array.isArray(meetings)
         ? filterZoomMeetings(
             meetings,
-            p.limit !== undefined ? { query: p.query, limit: p.limit } : { query: p.query },
+            p.limit === undefined ? { query: p.query } : { query: p.query, limit: p.limit },
           )
         : [];
       return jsonResult({ matches });

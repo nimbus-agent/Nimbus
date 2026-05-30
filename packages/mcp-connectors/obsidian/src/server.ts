@@ -192,7 +192,7 @@ reg(
   async (parsed) => {
     const limit = parsed.limit ?? 200;
     const filterVault =
-      parsed.vault !== undefined ? findVaultByIdOrPathPrefix(VAULTS, parsed.vault) : undefined;
+      parsed.vault === undefined ? undefined : findVaultByIdOrPathPrefix(VAULTS, parsed.vault);
     const targetVaults = filterVault === undefined ? VAULTS : [filterVault];
     const out: Array<{
       id: string;
@@ -277,11 +277,11 @@ reg(
     const limit = parsed.limit ?? 50;
     const needle = parsed.query.toLowerCase();
     const targets =
-      parsed.vault !== undefined
-        ? [findVaultByIdOrPathPrefix(VAULTS, parsed.vault)].filter(
+      parsed.vault === undefined
+        ? VAULTS
+        : [findVaultByIdOrPathPrefix(VAULTS, parsed.vault)].filter(
             (v): v is VaultEntry => v !== undefined,
-          )
-        : VAULTS;
+          );
     const out: Array<{
       id: string;
       vault_id: string;
@@ -370,7 +370,7 @@ reg(
       throw new Error("Unknown vault_id");
     }
     const date =
-      parsed.date_iso !== undefined ? new Date(`${parsed.date_iso}T00:00:00Z`) : new Date();
+      parsed.date_iso === undefined ? new Date() : new Date(`${parsed.date_iso}T00:00:00Z`);
     const rel = resolveDailyNoteRelativePath(v.root, date);
     const abs = assertWithinVault(v.root, rel);
     mkdirSync(dirname(abs), { recursive: true });

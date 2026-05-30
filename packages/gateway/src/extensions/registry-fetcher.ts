@@ -26,7 +26,7 @@ export function createRegistryFetcher(deps: RegistryFetcherDeps): RegistryFetche
         return {
           id: parsed.id,
           version: parsed.version,
-          ...(parsed.dependsOn !== undefined ? { dependsOn: parsed.dependsOn } : {}),
+          ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
         };
       }
       return deps.remoteFetchManifest(id, version);

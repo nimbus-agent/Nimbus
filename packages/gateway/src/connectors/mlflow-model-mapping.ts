@@ -118,7 +118,7 @@ export function mapMlflowModelToItem(
   const tags = flattenTags(row["tags"]);
 
   const canonicalUrl = modelUrl(ctx.host, name);
-  const title = name !== "" ? name : `Model ${name}`;
+  const title = name === "" ? `Model ${name}` : name;
   const stageLabel = latest?.stage ?? "no versions";
   const bodyPreview = description ?? "";
   const modifiedAt = updatedAt ?? createdAt ?? ctx.syncedAt;

@@ -68,13 +68,13 @@ export function mapReadwiseHighlightToItem(
   const highlightedAt = parseIsoMs(row["highlighted_at"]);
   const updatedAt = parseIsoMs(row["updated"]);
 
-  const trimmedText = text !== null ? text.trim() : "";
+  const trimmedText = text === null ? "" : text.trim();
   const title =
-    trimmedText !== ""
-      ? trimmedText.length > TITLE_MAX
+    trimmedText === ""
+      ? `Highlight ${id}`
+      : trimmedText.length > TITLE_MAX
         ? `${trimmedText.slice(0, TITLE_MAX)}…`
-        : trimmedText
-      : `Highlight ${id}`;
+        : trimmedText;
 
   const bodyPreview = note !== null && note !== "" ? note : (text ?? "");
 

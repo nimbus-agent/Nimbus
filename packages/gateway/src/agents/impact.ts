@@ -163,14 +163,14 @@ function resolveStartEntity(db: Database, fileOrPrUrl: string): ResolvedStart | 
     .query("SELECT id FROM graph_entity WHERE type = 'symbol' AND label = ? LIMIT 1")
     .get(fileOrPrUrl) as { id?: string } | null;
   const sym =
-    exactSym?.id !== undefined
-      ? exactSym
-      : (db
+    exactSym?.id === undefined
+      ? (db
           .query(
             "SELECT id FROM graph_entity WHERE type = 'symbol' AND label LIKE '%' || ? || '%' " +
               "ORDER BY length(label) ASC, id ASC LIMIT 1",
           )
-          .get(fileOrPrUrl) as { id?: string } | null);
+          .get(fileOrPrUrl) as { id?: string } | null)
+      : exactSym;
   if (sym?.id !== undefined) {
     return { entityId: sym.id, entityType: "symbol", repoIds: [] };
   }

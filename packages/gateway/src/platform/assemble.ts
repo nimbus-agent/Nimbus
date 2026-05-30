@@ -382,17 +382,17 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncScheduler,
     connectorMesh,
     sandboxRunner,
-    ...(autoUpdateRuntime !== undefined ? { extensionsAutoUpdate: autoUpdateRuntime.deps } : {}),
-    ...(autoUpdateRuntime !== undefined
-      ? {
+    ...(autoUpdateRuntime === undefined ? {} : { extensionsAutoUpdate: autoUpdateRuntime.deps }),
+    ...(autoUpdateRuntime === undefined
+      ? {}
+      : {
           extensionsAutoUpdateDiag: {
             cachedUpdatesCount: (): number => autoUpdateRuntime?.deps.cache.list().length ?? 0,
             intervalHours: loadNimbusExtensionsFromConfigDir(paths.configDir)
               .updateCheckIntervalHours,
             airGapBlocked: autoUpdateDisabled,
           },
-        }
-      : {}),
+        }),
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;

@@ -65,7 +65,7 @@ function extractCollectionNames(parsed: unknown): Record<string, string> {
     }
     const idNum = numberField(row, "id");
     const idStr = stringField(row, "id");
-    const key = idNum !== undefined ? String(idNum) : (idStr ?? "");
+    const key = idNum === undefined ? (idStr ?? "") : String(idNum);
     const name = stringField(row, "name");
     if (key !== "" && name !== undefined && name !== "") {
       map[key] = name;

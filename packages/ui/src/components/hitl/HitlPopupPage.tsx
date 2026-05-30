@@ -73,7 +73,7 @@ export function HitlPopupPage(): ReactNode {
       <header>
         <h2 className="text-base font-medium text-[var(--color-fg)]">{head.prompt}</h2>
       </header>
-      <StructuredPreview details={head.details} {...(action !== undefined ? { action } : {})} />
+      <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
       {error && (
         <div className="text-[var(--color-error)] text-xs" role="alert">
           {error}

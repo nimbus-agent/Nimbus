@@ -137,7 +137,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         entryHash: r.entryHash,
         tarballUrl: r.tarballUrl,
         manifestRaw: r.manifestRaw,
-        ...(r.tarballSizeBytes !== undefined ? { tarballSizeBytes: r.tarballSizeBytes } : {}),
+        ...(r.tarballSizeBytes === undefined ? {} : { tarballSizeBytes: r.tarballSizeBytes }),
         manifest: {
           id: m.id,
           version: m.version,

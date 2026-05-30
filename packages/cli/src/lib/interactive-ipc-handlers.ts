@@ -107,7 +107,7 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
     cursor += 1;
     const promptText = typeof p.prompt === "string" ? p.prompt : "(no prompt)";
     const decisionWord = decision.approved ? "approve" : "reject";
-    const noteSuffix = decision.note !== undefined ? ` — ${decision.note}` : "";
+    const noteSuffix = decision.note === undefined ? "" : ` — ${decision.note}`;
     process.stdout.write(
       `[consent.request] ${promptText}\n[scripted: ${decisionWord}]${noteSuffix}\n`,
     );

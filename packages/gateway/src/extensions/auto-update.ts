@@ -207,7 +207,7 @@ export class ExtensionAutoUpdater {
             return {
               id: row.id,
               version: toVersion,
-              ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
+              ...(newManifest.dependsOn === undefined ? {} : { dependsOn: newManifest.dependsOn }),
             };
           }
           const installedVersion = installedMap.get(id);
@@ -220,7 +220,7 @@ export class ExtensionAutoUpdater {
                 return {
                   id: parsed.id,
                   version: parsed.version,
-                  ...(parsed.dependsOn !== undefined ? { dependsOn: parsed.dependsOn } : {}),
+                  ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
                 };
               } catch {
                 // Fall through to remote fetch.
@@ -236,7 +236,7 @@ export class ExtensionAutoUpdater {
       const proposedManifest: ExtensionManifestForSolver = {
         id: row.id,
         version: toVersion,
-        ...(newManifest.dependsOn !== undefined ? { dependsOn: newManifest.dependsOn } : {}),
+        ...(newManifest.dependsOn === undefined ? {} : { dependsOn: newManifest.dependsOn }),
       };
 
       await resolveClosure(proposedManifest, fetcher, {

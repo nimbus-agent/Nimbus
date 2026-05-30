@@ -440,15 +440,15 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       extensions: {
         disabled_pre_t2: preT2DisabledCount(),
         signature_disabled_count: signatureDisabledRegistry.count(),
-        ...(ctx.autoUpdateDiag !== undefined
-          ? {
+        ...(ctx.autoUpdateDiag === undefined
+          ? {}
+          : {
               auto_update: {
                 cached_updates_count: ctx.autoUpdateDiag.cachedUpdatesCount(),
                 interval_hours: ctx.autoUpdateDiag.intervalHours,
                 air_gap_blocked: ctx.autoUpdateDiag.airGapBlocked,
               },
-            }
-          : {}),
+            }),
       },
       sandbox: buildSandboxDiagPayload(ctx.sandboxRunner),
     },

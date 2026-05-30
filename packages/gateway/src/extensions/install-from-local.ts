@@ -558,7 +558,7 @@ function buildLocalSolverFetcher(
             return {
               id: mf.id,
               version: mf.version,
-              ...(mf.dependsOn !== undefined ? { dependsOn: mf.dependsOn } : {}),
+              ...(mf.dependsOn === undefined ? {} : { dependsOn: mf.dependsOn }),
             };
           }
         }
@@ -570,7 +570,7 @@ function buildLocalSolverFetcher(
       return {
         id: resp.manifest.id,
         version: resp.manifest.version,
-        ...(resp.manifest.dependsOn !== undefined ? { dependsOn: resp.manifest.dependsOn } : {}),
+        ...(resp.manifest.dependsOn === undefined ? {} : { dependsOn: resp.manifest.dependsOn }),
       };
     },
   };

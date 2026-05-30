@@ -23,9 +23,9 @@ function searchOneTable(
     queryEmbedding,
     model,
     limit: opts.limit,
-    ...(opts.service !== undefined ? { service: opts.service } : {}),
-    ...(opts.itemType !== undefined ? { itemType: opts.itemType } : {}),
-    ...(opts.since !== undefined ? { since: opts.since } : {}),
+    ...(opts.service === undefined ? {} : { service: opts.service }),
+    ...(opts.itemType === undefined ? {} : { itemType: opts.itemType }),
+    ...(opts.since === undefined ? {} : { since: opts.since }),
   });
 }
 

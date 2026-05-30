@@ -150,7 +150,7 @@ async function runOnLocalPort(
   const usePkce = descriptor.usesPkce;
   const codeVerifier = usePkce ? randomUrlSafeString(32) : undefined;
   const codeChallenge =
-    codeVerifier !== undefined ? await pkceCodeChallengeS256(codeVerifier) : undefined;
+    codeVerifier === undefined ? undefined : await pkceCodeChallengeS256(codeVerifier);
   const state = randomUrlSafeString(16);
   const completion: { value?: OAuthCompletion } = {};
 

@@ -200,7 +200,7 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
         manifestHash,
         entryHash,
         tarballUrl,
-        ...(tarballSizeBytes !== undefined ? { tarballSizeBytes } : {}),
+        ...(tarballSizeBytes === undefined ? {} : { tarballSizeBytes }),
       };
     },
   };
