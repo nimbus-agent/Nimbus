@@ -46,6 +46,32 @@ Raw JSON:
 ]
 ```
 
+## After (cleanup pass 2) — expected deltas
+
+SonarCloud only recomputes on a fresh CI analysis (the `sonar-scanner` step on
+push/PR), so the authoritative after-numbers land on the dashboard once this
+PR's analysis runs. The local proxy gates are all green. Expected deltas from
+the work in this pass:
+
+| metric | baseline | expected after | driver |
+|---|---|---|---|
+| bugs | 3 | 0 | WS-A — 3 `Array.sort` comparators (reliability D→A) |
+| reliability_rating | 4.0 (D) | 1.0 (A) | WS-A |
+| security_hotspots (TO_REVIEW) | 18 | 0 | WS-B — 8 code-hardened (auto-resolve) + 10 marked Reviewed→Safe |
+| S3776 (cognitive complexity) | 55 TS + 2 C | 2 C only | WS-C C.1–C.6 (C.7 `main.c` BLOCKED — no toolchain) |
+| code_smells | 393 | <100 | WS-C (−55) + WS-D mechanical sweep + WS-E |
+| duplicated_lines_density | 1.4% | ≤1.4% | WS-E search-filter (26 connectors) + C.3 nimbus-toml validators |
+
+Local enforced duplication gate (`jscpd --min-lines 10 --threshold 5`):
+**3.08%** after vs **3.58%** at session start — improved (the search-filter +
+nimbus-toml dedups outweigh the new extracted helpers). The stricter unenforced
+`audit:duplication` (3% / min-lines 5) reads 4.7%, but it is not a CI gate.
+
+Residual (not addressed, by design): the 2 C `c:S3776` + `c:S134`/`c:S125`/etc.
+(toolchain-blocked), and a small set of deliberately-skipped TS smells
+(`S3735`/`S107`/`S5843`/`S6551` + a few placeholder-test `S5914`) — see
+`docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md`.
+
 ## WS-B hotspot dispositions (18 reviewed)
 
 Each of the 18 `TO_REVIEW` hotspots was read individually. None had exponential
