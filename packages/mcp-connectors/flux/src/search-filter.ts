@@ -1,19 +1,11 @@
-export interface FluxSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
-function asObject(v: unknown): Record<string, unknown> | undefined {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) {
-    return undefined;
-  }
-  return v as Record<string, unknown>;
-}
+export type FluxSearchMatchOptions = SearchMatchOptions;
 
 function nestedString(root: Record<string, unknown>, path: readonly string[]): string {
   let cur: Record<string, unknown> | undefined = root;
   for (let i = 0; i < path.length - 1; i += 1) {
-    cur = asObject(cur?.[path[i] ?? ""]);
+    cur = asRecord(cur?.[path[i] ?? ""]);
     if (cur === undefined) {
       return "";
     }
@@ -23,13 +15,13 @@ function nestedString(root: Record<string, unknown>, path: readonly string[]): s
 }
 
 function readyConditionText(row: Record<string, unknown>): string {
-  const status = asObject(row["status"]);
+  const status = asRecord(row["status"]);
   const conditions = status?.["conditions"];
   if (!Array.isArray(conditions)) {
     return "";
   }
   for (const entry of conditions) {
-    const c = asObject(entry);
+    const c = asRecord(entry);
     if (c === undefined) {
       continue;
     }
@@ -42,34 +34,21 @@ function readyConditionText(row: Record<string, unknown>): string {
   return "";
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const parts = [
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asRecord(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
     nestedString(row, ["metadata", "name"]),
     nestedString(row, ["metadata", "namespace"]),
     readyConditionText(row),
   ];
-  return parts.join(" ").toLowerCase();
 }
 
 export function filterFluxResources(
   items: readonly unknown[],
   options: FluxSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of items) {
-    const row = asObject(it);
-    if (row === undefined) {
-      continue;
-    }
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(items, { ...options, fields: fieldsOf });
 }

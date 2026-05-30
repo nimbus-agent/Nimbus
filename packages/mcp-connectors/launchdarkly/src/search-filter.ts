@@ -1,7 +1,6 @@
-export interface LaunchDarklySearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type LaunchDarklySearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -16,32 +15,22 @@ function tagsString(row: Record<string, unknown>): string {
   return tags.filter((t): t is string => typeof t === "string").join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const key = stringField(row, "key");
-  const name = stringField(row, "name");
-  const description = stringField(row, "description");
-  return `${key} ${name} ${description} ${tagsString(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "key"),
+    stringField(row, "name"),
+    stringField(row, "description"),
+    tagsString(row),
+  ];
 }
 
 export function filterLaunchDarklyFlags(
   flags: readonly unknown[],
   options: LaunchDarklySearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of flags) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(flags, { ...options, fields: fieldsOf });
 }

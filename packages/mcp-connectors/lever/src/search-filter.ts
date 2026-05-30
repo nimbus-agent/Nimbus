@@ -1,7 +1,6 @@
-export interface LeverSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type LeverSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -31,34 +30,24 @@ function tagText(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const text = stringField(row, "text");
-  const state = stringField(row, "state");
-  const team = categoryField(row, "team");
-  const department = categoryField(row, "department");
-  const location = categoryField(row, "location");
-  return `${text} ${state} ${team} ${department} ${location} ${tagText(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "text"),
+    stringField(row, "state"),
+    categoryField(row, "team"),
+    categoryField(row, "department"),
+    categoryField(row, "location"),
+    tagText(row),
+  ];
 }
 
 export function filterLeverPostings(
   postings: readonly unknown[],
   options: LeverSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of postings) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(postings, { ...options, fields: fieldsOf });
 }

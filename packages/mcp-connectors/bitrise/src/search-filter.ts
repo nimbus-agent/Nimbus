@@ -1,36 +1,28 @@
-export interface BitriseSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type BitriseSearchMatchOptions = SearchMatchOptions;
 
 function pickString(r: Record<string, unknown>, key: string): string {
   const v = r[key];
   return typeof v === "string" ? v : "";
 }
 
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    pickString(row, "branch"),
+    pickString(row, "commit_message"),
+    pickString(row, "triggered_workflow"),
+    pickString(row, "status_text"),
+  ];
+}
+
 export function filterBitriseBuilds(
   builds: readonly unknown[],
   options: BitriseSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of builds) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    const branch = pickString(row, "branch");
-    const commitMessage = pickString(row, "commit_message");
-    const workflow = pickString(row, "triggered_workflow");
-    const statusText = pickString(row, "status_text");
-    const hay = `${branch} ${commitMessage} ${workflow} ${statusText}`.toLowerCase();
-    if (hay.includes(needle)) {
-      out.push(it);
-      if (out.length >= cap) {
-        break;
-      }
-    }
-  }
-  return out;
+  return filterByQuery(builds, { ...options, fields: fieldsOf });
 }

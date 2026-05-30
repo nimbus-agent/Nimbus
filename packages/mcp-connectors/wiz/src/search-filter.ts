@@ -1,7 +1,6 @@
-export interface WizSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type WizSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -34,34 +33,23 @@ function projectNames(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const ruleName = nestedString(row, "sourceRule", "name");
-  const description = stringField(row, "description");
-  const entityName = nestedString(row, "entity", "name");
-  const entityType = nestedString(row, "entity", "type");
-  const projects = projectNames(row);
-  return `${ruleName} ${description} ${entityName} ${entityType} ${projects}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    nestedString(row, "sourceRule", "name"),
+    stringField(row, "description"),
+    nestedString(row, "entity", "name"),
+    nestedString(row, "entity", "type"),
+    projectNames(row),
+  ];
 }
 
 export function filterWizIssues(
   issues: readonly unknown[],
   options: WizSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of issues) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(issues, { ...options, fields: fieldsOf });
 }

@@ -1,42 +1,30 @@
-export interface PipedriveSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type PipedriveSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
   return typeof v === "string" ? v : "";
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const title = stringField(row, "title");
-  const status = stringField(row, "status");
-  const orgName = stringField(row, "org_name");
-  const personName = stringField(row, "person_name");
-  const ownerName = stringField(row, "owner_name");
-  const label = stringField(row, "label");
-  return `${title} ${status} ${orgName} ${personName} ${ownerName} ${label}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "title"),
+    stringField(row, "status"),
+    stringField(row, "org_name"),
+    stringField(row, "person_name"),
+    stringField(row, "owner_name"),
+    stringField(row, "label"),
+  ];
 }
 
 export function filterPipedriveDeals(
   deals: readonly unknown[],
   options: PipedriveSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of deals) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(deals, { ...options, fields: fieldsOf });
 }

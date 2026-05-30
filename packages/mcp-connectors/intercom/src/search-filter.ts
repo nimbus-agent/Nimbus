@@ -1,14 +1,11 @@
-export interface IntercomSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import {
+  asObjectish,
+  asRecord,
+  filterByQuery,
+  type SearchMatchOptions,
+} from "../../shared/search-filter.ts";
 
-function asRecord(v: unknown): Record<string, unknown> | undefined {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) {
-    return undefined;
-  }
-  return v as Record<string, unknown>;
-}
+export type IntercomSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -35,7 +32,11 @@ function tagText(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
   const state = stringField(row, "state");
   const source = asRecord(row["source"]) ?? {};
   const subject = stringField(source, "subject");
@@ -43,28 +44,12 @@ function buildHaystack(row: Record<string, unknown>): string {
   const author = asRecord(source["author"]) ?? {};
   const authorName = stringField(author, "name");
   const authorEmail = stringField(author, "email");
-  return `${subject} ${body} ${state} ${authorName} ${authorEmail} ${tagText(row)}`.toLowerCase();
+  return [subject, body, state, authorName, authorEmail, tagText(row)];
 }
 
 export function filterIntercomConversations(
   conversations: readonly unknown[],
   options: IntercomSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of conversations) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(conversations, { ...options, fields: fieldsOf });
 }

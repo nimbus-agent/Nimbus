@@ -1,7 +1,6 @@
-export interface RaindropSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type RaindropSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -22,35 +21,25 @@ function tagText(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const title = stringField(row, "title");
-  const excerpt = stringField(row, "excerpt");
-  const note = stringField(row, "note");
-  const domain = stringField(row, "domain");
-  const link = stringField(row, "link");
-  const type = stringField(row, "type");
-  return `${title} ${excerpt} ${note} ${domain} ${link} ${type} ${tagText(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "title"),
+    stringField(row, "excerpt"),
+    stringField(row, "note"),
+    stringField(row, "domain"),
+    stringField(row, "link"),
+    stringField(row, "type"),
+    tagText(row),
+  ];
 }
 
 export function filterRaindropBookmarks(
   bookmarks: readonly unknown[],
   options: RaindropSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of bookmarks) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(bookmarks, { ...options, fields: fieldsOf });
 }

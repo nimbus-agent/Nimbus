@@ -1,14 +1,6 @@
-export interface MlflowSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
-function asObject(v: unknown): Record<string, unknown> | undefined {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) {
-    return undefined;
-  }
-  return v as Record<string, unknown>;
-}
+export type MlflowSearchMatchOptions = SearchMatchOptions;
 
 function stringAt(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -22,7 +14,7 @@ function tagsHaystack(row: Record<string, unknown>): string {
   }
   const parts: string[] = [];
   for (const t of tags) {
-    const tag = asObject(t);
+    const tag = asRecord(t);
     if (tag === undefined) {
       continue;
     }
@@ -31,31 +23,17 @@ function tagsHaystack(row: Record<string, unknown>): string {
   return parts.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  return [stringAt(row, "name"), stringAt(row, "description"), tagsHaystack(row)]
-    .join(" ")
-    .toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asRecord(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [stringAt(row, "name"), stringAt(row, "description"), tagsHaystack(row)];
 }
 
 export function filterMlflowModels(
   models: readonly unknown[],
   options: MlflowSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of models) {
-    const row = asObject(it);
-    if (row === undefined) {
-      continue;
-    }
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(models, { ...options, fields: fieldsOf });
 }

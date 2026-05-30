@@ -1,7 +1,6 @@
-export interface FlagsmithSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type FlagsmithSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -19,31 +18,17 @@ function tagsString(row: Record<string, unknown>): string {
     .join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const name = stringField(row, "name");
-  const description = stringField(row, "description");
-  return `${name} ${description} ${tagsString(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [stringField(row, "name"), stringField(row, "description"), tagsString(row)];
 }
 
 export function filterFlagsmithFeatures(
   features: readonly unknown[],
   options: FlagsmithSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of features) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(features, { ...options, fields: fieldsOf });
 }

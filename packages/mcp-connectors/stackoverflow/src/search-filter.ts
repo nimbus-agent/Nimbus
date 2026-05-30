@@ -1,7 +1,6 @@
-export interface StackOverflowSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type StackOverflowSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -36,32 +35,23 @@ function ownerName(row: Record<string, unknown>): string {
   return typeof name === "string" ? name : "";
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const title = stringField(row, "title");
-  const body = stringField(row, "body");
-  const bodyMarkdown = stringField(row, "bodyMarkdown");
-  return `${title} ${body} ${bodyMarkdown} ${tagText(row)} ${ownerName(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "title"),
+    stringField(row, "body"),
+    stringField(row, "bodyMarkdown"),
+    tagText(row),
+    ownerName(row),
+  ];
 }
 
 export function filterStackOverflowQuestions(
   questions: readonly unknown[],
   options: StackOverflowSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of questions) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(questions, { ...options, fields: fieldsOf });
 }

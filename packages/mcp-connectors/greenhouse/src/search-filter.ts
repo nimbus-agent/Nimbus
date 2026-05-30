@@ -1,7 +1,6 @@
-export interface GreenhouseSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type GreenhouseSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -48,35 +47,24 @@ function officeLocationText(row: Record<string, unknown>): string {
   return locs.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const name = stringField(row, "name");
-  const status = stringField(row, "status");
-  const requisitionId = stringField(row, "requisition_id");
-  const departments = namedArrayText(row, "departments");
-  const offices = namedArrayText(row, "offices");
-  const officeLocations = officeLocationText(row);
-  return `${name} ${status} ${requisitionId} ${departments} ${offices} ${officeLocations}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "name"),
+    stringField(row, "status"),
+    stringField(row, "requisition_id"),
+    namedArrayText(row, "departments"),
+    namedArrayText(row, "offices"),
+    officeLocationText(row),
+  ];
 }
 
 export function filterGreenhouseJobs(
   jobs: readonly unknown[],
   options: GreenhouseSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of jobs) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(jobs, { ...options, fields: fieldsOf });
 }

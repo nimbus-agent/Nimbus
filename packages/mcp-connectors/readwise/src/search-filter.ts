@@ -1,7 +1,6 @@
-export interface ReadwiseSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type ReadwiseSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -25,33 +24,23 @@ function tagNames(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const text = stringField(row, "text");
-  const note = stringField(row, "note");
-  const color = stringField(row, "color");
-  const locationType = stringField(row, "location_type");
-  return `${text} ${note} ${color} ${locationType} ${tagNames(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "text"),
+    stringField(row, "note"),
+    stringField(row, "color"),
+    stringField(row, "location_type"),
+    tagNames(row),
+  ];
 }
 
 export function filterReadwiseHighlights(
   highlights: readonly unknown[],
   options: ReadwiseSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of highlights) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(highlights, { ...options, fields: fieldsOf });
 }

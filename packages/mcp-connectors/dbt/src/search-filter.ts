@@ -1,7 +1,6 @@
-export interface DbtSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type DbtSearchMatchOptions = SearchMatchOptions;
 
 function field(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -14,29 +13,14 @@ function field(row: Record<string, unknown>, key: string): string {
   return "";
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const name = field(row, "name");
-  const version = field(row, "dbt_version");
-  const id = field(row, "id");
-  return `${name} ${version} ${id}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [field(row, "name"), field(row, "dbt_version"), field(row, "id")];
 }
 
 export function filterDbtJobs(jobs: readonly unknown[], options: DbtSearchMatchOptions): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of jobs) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(jobs, { ...options, fields: fieldsOf });
 }

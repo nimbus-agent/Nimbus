@@ -1,7 +1,6 @@
-export interface ZendeskSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
+import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+
+export type ZendeskSearchMatchOptions = SearchMatchOptions;
 
 function stringField(row: Record<string, unknown>, key: string): string {
   const v = row[key];
@@ -22,34 +21,24 @@ function tagText(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const subject = stringField(row, "subject");
-  const description = stringField(row, "description");
-  const status = stringField(row, "status");
-  const priority = stringField(row, "priority");
-  const type = stringField(row, "type");
-  return `${subject} ${description} ${status} ${priority} ${type} ${tagText(row)}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "subject"),
+    stringField(row, "description"),
+    stringField(row, "status"),
+    stringField(row, "priority"),
+    stringField(row, "type"),
+    tagText(row),
+  ];
 }
 
 export function filterZendeskTickets(
   tickets: readonly unknown[],
   options: ZendeskSearchMatchOptions,
 ): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of tickets) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
+  return filterByQuery(tickets, { ...options, fields: fieldsOf });
 }
