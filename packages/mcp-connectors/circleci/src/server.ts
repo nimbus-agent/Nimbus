@@ -80,7 +80,7 @@ reg(
 reg(
   "circleci_pipeline_get",
   "Get a pipeline by UUID.",
-  z.object({ pipelineId: z.string().uuid() }),
+  z.object({ pipelineId: z.uuid() }),
   async (parsed) => {
     const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}`;
     return circleciAuthorizedJsonResult(path);
@@ -90,7 +90,7 @@ reg(
 reg(
   "circleci_workflow_list",
   "List workflows for a pipeline.",
-  z.object({ pipelineId: z.string().uuid() }),
+  z.object({ pipelineId: z.uuid() }),
   async (parsed) => {
     const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}/workflow`;
     return circleciAuthorizedJsonResult(path);
@@ -100,7 +100,7 @@ reg(
 reg(
   "circleci_job_list",
   "List jobs for a workflow.",
-  z.object({ workflowId: z.string().uuid() }),
+  z.object({ workflowId: z.uuid() }),
   async (parsed) => {
     const path = `/workflow/${encodeURIComponent(parsed.workflowId)}/job`;
     return circleciAuthorizedJsonResult(path);

@@ -46,7 +46,7 @@ const registerSimpleTool = createRegisterSimpleTool(server);
 const onedriveItemListArgs = z.object({
   parentId: z.string().min(1).optional(),
   pageSize: z.number().int().min(1).max(200).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 registerSimpleTool(
@@ -169,7 +169,7 @@ registerSimpleTool(
 const onedriveItemSearchArgs = z.object({
   query: z.string().min(1).max(500),
   pageSize: z.number().int().min(1).max(100).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 registerSimpleTool(

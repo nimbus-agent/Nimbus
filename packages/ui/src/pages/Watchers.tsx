@@ -182,7 +182,7 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
       });
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);

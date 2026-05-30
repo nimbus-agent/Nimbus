@@ -14,12 +14,12 @@ interface Props {
 }
 
 interface ProcessContext {
-  readonly bufRef: React.MutableRefObject<string>;
-  readonly histCursorRef: React.MutableRefObject<number | null>;
-  readonly historyRef: React.MutableRefObject<string[]>;
-  readonly historyPathRef: React.MutableRefObject<string>;
-  readonly inHitlRef: React.MutableRefObject<boolean>;
-  readonly disabledRef: React.MutableRefObject<boolean>;
+  readonly bufRef: React.RefObject<string>;
+  readonly histCursorRef: React.RefObject<number | null>;
+  readonly historyRef: React.RefObject<string[]>;
+  readonly historyPathRef: React.RefObject<string>;
+  readonly inHitlRef: React.RefObject<boolean>;
+  readonly disabledRef: React.RefObject<boolean>;
   readonly onSubmit: (q: string) => void;
   readonly onCancel: () => void;
   readonly onHitlKey: (k: string) => void;
