@@ -120,8 +120,8 @@ export interface MetricRowInput {
 export function renderMetricRow(metric: MetricRowInput, options: RenderOptions): string {
   const useColor = options.tty && !options.noColor;
   const valueStr = metric.value === null ? "—" : metric.value.toFixed(3);
-  const gapStr =
-    metric.gap === null ? "" : useColor ? `\x1b[33m[${metric.gap}]\x1b[0m` : `[${metric.gap}]`;
+  const gapText = metric.gap === null ? "" : `[${metric.gap}]`;
+  const gapStr = gapText !== "" && useColor ? `\x1b[33m${gapText}\x1b[0m` : gapText;
   const prefix = metric.gap === "mixed_source" && useColor ? "\x1b[33m⚠\x1b[0m " : "";
   return `  ${prefix}${metric.label.padEnd(20)} ${valueStr.padStart(10)} ${metric.unit.padEnd(20)} n=${String(metric.sample)}  ${gapStr}`;
 }

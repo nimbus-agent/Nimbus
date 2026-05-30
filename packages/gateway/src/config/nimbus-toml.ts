@@ -617,7 +617,9 @@ export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
 function parseUpdateCheckIntervalHours(valRaw: string): number {
   const n = Number(valRaw);
   if (!Number.isFinite(n) || !Number.isInteger(n)) {
-    throw new Error(`[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`);
+    throw new TypeError(
+      `[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`,
+    );
   }
   if (n < 1 || n > 168) {
     throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);

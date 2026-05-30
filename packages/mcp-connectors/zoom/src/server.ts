@@ -59,12 +59,9 @@ await runReadOnlyMcpConnector("nimbus-zoom", (reg) => {
     async (p) => {
       const root = await zoomGet("/v2/users/me/meetings?type=scheduled&page_size=100");
       const meetings = (root as { meetings?: unknown[] } | null)?.meetings;
-      const matches = Array.isArray(meetings)
-        ? filterZoomMeetings(
-            meetings,
-            p.limit === undefined ? { query: p.query } : { query: p.query, limit: p.limit },
-          )
-        : [];
+      const filterOptions =
+        p.limit === undefined ? { query: p.query } : { query: p.query, limit: p.limit };
+      const matches = Array.isArray(meetings) ? filterZoomMeetings(meetings, filterOptions) : [];
       return jsonResult({ matches });
     },
   );

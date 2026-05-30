@@ -69,12 +69,14 @@ export function mapReadwiseHighlightToItem(
   const updatedAt = parseIsoMs(row["updated"]);
 
   const trimmedText = text === null ? "" : text.trim();
-  const title =
-    trimmedText === ""
-      ? `Highlight ${id}`
-      : trimmedText.length > TITLE_MAX
-        ? `${trimmedText.slice(0, TITLE_MAX)}…`
-        : trimmedText;
+  let title: string;
+  if (trimmedText === "") {
+    title = `Highlight ${id}`;
+  } else if (trimmedText.length > TITLE_MAX) {
+    title = `${trimmedText.slice(0, TITLE_MAX)}…`;
+  } else {
+    title = trimmedText;
+  }
 
   const bodyPreview = note !== null && note !== "" ? note : (text ?? "");
 
