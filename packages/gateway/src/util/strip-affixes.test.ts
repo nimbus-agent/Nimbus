@@ -4,7 +4,7 @@ import { stripAffixChars, stripTrailingChars } from "./strip-affixes.ts";
 describe("stripTrailingChars", () => {
   it("removes a maximal trailing run of the given chars", () => {
     expect(stripTrailingChars("/a/b///", "/\\")).toBe("/a/b");
-    expect(stripTrailingChars("C:\\a\\b\\\\", "/\\")).toBe("C:\\a\\b");
+    expect(stripTrailingChars("C:\\a\\b\\\\", "/\\")).toBe("C:\\a\\b"); // cross-platform-ok
     expect(stripTrailingChars("https://x/", "/")).toBe("https://x");
   });
 
