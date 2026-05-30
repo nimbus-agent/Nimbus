@@ -611,16 +611,52 @@ async function installRootNode(
   });
 }
 
+type InstallPlanNodesOptions = {
+  db: Database;
+  extensionsDir: string;
+  vault?: NimbusVault;
+  fetcher?: PublisherKeyFetcher;
+  enforceAirGap?: boolean;
+  publisherKeyPath?: string;
+  registryClient?: RegistryClient;
+};
+
+async function installDependencyNode(
+  node: ResolvedNode,
+  options: InstallPlanNodesOptions,
+  signal: AbortSignal,
+): Promise<string> {
+  if (options.registryClient === undefined) {
+    throw new Error(
+      `cannot install dependency ${node.id}@${node.version}: no registryClient provided`,
+    );
+  }
+  const { dest } = await installDepFromRegistry({
+    db: options.db,
+    extensionsDir: options.extensionsDir,
+    registryClient: options.registryClient,
+    depId: node.id,
+    depVersion: node.version,
+    abortSignal: signal,
+    ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.fetcher !== undefined && { pubkeyFetcher: options.fetcher }),
+    ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
+  });
+  return dest;
+}
+
+function rollbackCreatedDirs(createdDirs: readonly string[]): void {
+  for (let i = createdDirs.length - 1; i >= 0; i--) {
+    try {
+      rmSync(createdDirs[i] as string, { recursive: true, force: true });
+    } catch {
+      /* best-effort rollback */
+    }
+  }
+}
+
 async function installPlanNodes(
-  options: {
-    db: Database;
-    extensionsDir: string;
-    vault?: NimbusVault;
-    fetcher?: PublisherKeyFetcher;
-    enforceAirGap?: boolean;
-    publisherKeyPath?: string;
-    registryClient?: RegistryClient;
-  },
+  options: InstallPlanNodesOptions,
   plan: { nodes: readonly ResolvedNode[] },
   sourceResolved: string,
   manifest: ExtensionManifest,
@@ -635,33 +671,11 @@ async function installPlanNodes(
       if (node.id === manifest.id) {
         await installRootNode(options, sourceResolved, manifest, (dir) => createdDirs.push(dir));
       } else {
-        if (options.registryClient === undefined) {
-          throw new Error(
-            `cannot install dependency ${node.id}@${node.version}: no registryClient provided`,
-          );
-        }
-        const { dest } = await installDepFromRegistry({
-          db: options.db,
-          extensionsDir: options.extensionsDir,
-          registryClient: options.registryClient,
-          depId: node.id,
-          depVersion: node.version,
-          abortSignal: signal,
-          ...(options.vault !== undefined && { vault: options.vault }),
-          ...(options.fetcher !== undefined && { pubkeyFetcher: options.fetcher }),
-          ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
-        });
-        createdDirs.push(dest);
+        createdDirs.push(await installDependencyNode(node, options, signal));
       }
     }
   } catch (e) {
-    for (let i = createdDirs.length - 1; i >= 0; i--) {
-      try {
-        rmSync(createdDirs[i] as string, { recursive: true, force: true });
-      } catch {
-        /* best-effort rollback */
-      }
-    }
+    rollbackCreatedDirs(createdDirs);
     throw e;
   }
 }

@@ -899,6 +899,36 @@ function materializeServiceConfigs(
   return out;
 }
 
+function resolveServiceTableId(
+  trimmed: string,
+  tablePrefix: string,
+  blockLabel: string,
+  accum: Map<string, Record<string, string>>,
+): string | undefined {
+  if (!trimmed.startsWith(tablePrefix)) return undefined;
+  const id = trimmed.slice(tablePrefix.length, -1);
+  if (id.length === 0) throw new Error(`empty service id in [${blockLabel}.<id>]`);
+  if (!accum.has(id)) accum.set(id, {});
+  return id;
+}
+
+function applyServiceConfigLine(
+  trimmed: string,
+  currentId: string,
+  blockLabel: string,
+  accum: Map<string, Record<string, string>>,
+): void {
+  const kv = splitKeyValue(trimmed);
+  if (kv === undefined) return;
+  if (!SERVICE_CONFIG_KNOWN_KEYS.has(kv.key)) {
+    throw new Error(`unknown key '${kv.key}' in [${blockLabel}.${currentId}]`);
+  }
+  const bucket = accum.get(currentId);
+  if (bucket !== undefined) {
+    bucket[kv.key] = kv.valRaw;
+  }
+}
+
 function accumulateServiceTables(
   raw: string,
   tablePrefix: string,
@@ -910,25 +940,11 @@ function accumulateServiceTables(
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
-      if (trimmed.startsWith(tablePrefix)) {
-        const id = trimmed.slice(tablePrefix.length, -1);
-        if (id.length === 0) throw new Error(`empty service id in [${blockLabel}.<id>]`);
-        currentId = id;
-        if (!accum.has(id)) accum.set(id, {});
-      } else {
-        currentId = undefined;
-      }
+      currentId = resolveServiceTableId(trimmed, tablePrefix, blockLabel, accum);
       continue;
     }
-    if (currentId === undefined) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    if (!SERVICE_CONFIG_KNOWN_KEYS.has(kv.key)) {
-      throw new Error(`unknown key '${kv.key}' in [${blockLabel}.${currentId}]`);
-    }
-    const bucket = accum.get(currentId);
-    if (bucket !== undefined) {
-      bucket[kv.key] = kv.valRaw;
+    if (currentId !== undefined) {
+      applyServiceConfigLine(trimmed, currentId, blockLabel, accum);
     }
   }
   return accum;
