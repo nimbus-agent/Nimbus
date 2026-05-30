@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -28,9 +28,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterSemgrepFindings(
-  findings: readonly unknown[],
-  options: SemgrepSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(findings, { ...options, fields: fieldsOf });
-}
+export const filterSemgrepFindings = makeQueryFilter(fieldsOf);

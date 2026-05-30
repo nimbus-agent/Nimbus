@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -25,9 +25,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterSonarIssues(
-  issues: readonly unknown[],
-  options: SonarSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(issues, { ...options, fields: fieldsOf });
-}
+export const filterSonarIssues = makeQueryFilter(fieldsOf);

@@ -1,4 +1,8 @@
-import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import {
+  asObjectish,
+  makeQueryFilter,
+  type SearchMatchOptions,
+} from "../../shared/search-filter.ts";
 
 export type DbtSearchMatchOptions = SearchMatchOptions;
 
@@ -21,6 +25,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [field(row, "name"), field(row, "dbt_version"), field(row, "id")];
 }
 
-export function filterDbtJobs(jobs: readonly unknown[], options: DbtSearchMatchOptions): unknown[] {
-  return filterByQuery(jobs, { ...options, fields: fieldsOf });
-}
+export const filterDbtJobs = makeQueryFilter(fieldsOf);

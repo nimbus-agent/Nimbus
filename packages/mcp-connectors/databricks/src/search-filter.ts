@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type DatabricksSearchMatchOptions = SearchMatchOptions;
 
@@ -21,9 +21,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [stringAt(settings, "name"), stringAt(row, "creator_user_name"), numberAt(row, "job_id")];
 }
 
-export function filterDatabricksJobs(
-  jobs: readonly unknown[],
-  options: DatabricksSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(jobs, { ...options, fields: fieldsOf });
-}
+export const filterDatabricksJobs = makeQueryFilter(fieldsOf);

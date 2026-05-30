@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type MlflowSearchMatchOptions = SearchMatchOptions;
 
@@ -31,9 +31,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [stringAt(row, "name"), stringAt(row, "description"), tagsHaystack(row)];
 }
 
-export function filterMlflowModels(
-  models: readonly unknown[],
-  options: MlflowSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(models, { ...options, fields: fieldsOf });
-}
+export const filterMlflowModels = makeQueryFilter(fieldsOf);

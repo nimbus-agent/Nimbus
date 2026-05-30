@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -49,9 +49,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterStackOverflowQuestions(
-  questions: readonly unknown[],
-  options: StackOverflowSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(questions, { ...options, fields: fieldsOf });
-}
+export const filterStackOverflowQuestions = makeQueryFilter(fieldsOf);

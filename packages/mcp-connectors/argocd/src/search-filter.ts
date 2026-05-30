@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type ArgocdSearchMatchOptions = SearchMatchOptions;
 
@@ -28,9 +28,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterArgocdApplications(
-  apps: readonly unknown[],
-  options: ArgocdSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(apps, { ...options, fields: fieldsOf });
-}
+export const filterArgocdApplications = makeQueryFilter(fieldsOf);

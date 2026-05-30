@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -62,9 +62,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterGreenhouseJobs(
-  jobs: readonly unknown[],
-  options: GreenhouseSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(jobs, { ...options, fields: fieldsOf });
-}
+export const filterGreenhouseJobs = makeQueryFilter(fieldsOf);

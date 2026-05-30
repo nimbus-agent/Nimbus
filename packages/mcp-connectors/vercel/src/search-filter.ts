@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -31,9 +31,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterVercelDeployments(
-  deployments: readonly unknown[],
-  options: VercelSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(deployments, { ...options, fields: fieldsOf });
-}
+export const filterVercelDeployments = makeQueryFilter(fieldsOf);

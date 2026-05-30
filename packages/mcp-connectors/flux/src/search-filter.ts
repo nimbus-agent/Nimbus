@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type FluxSearchMatchOptions = SearchMatchOptions;
 
@@ -46,9 +46,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterFluxResources(
-  items: readonly unknown[],
-  options: FluxSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(items, { ...options, fields: fieldsOf });
-}
+export const filterFluxResources = makeQueryFilter(fieldsOf);

@@ -62,3 +62,38 @@ export function filterByQuery<T>(items: readonly T[], options: FilterByQueryOpti
   }
   return out;
 }
+
+export type FieldExtractor = (item: unknown) => readonly (string | null | undefined)[] | null;
+
+/**
+ * Build a {@link FieldExtractor} that reads a fixed list of string keys off each
+ * objectish row, optionally appending the standard `tags` text. Collapses the
+ * boilerplate `fieldsOf` body shared by the simpler connectors.
+ */
+export function fieldsFromKeys(
+  keys: readonly string[],
+  opts?: { readonly tags?: boolean },
+): FieldExtractor {
+  return (item: unknown) => {
+    const row = asObjectish(item);
+    if (row === undefined) {
+      return null;
+    }
+    const parts = keys.map((key) => stringField(row, key));
+    if (opts?.tags === true) {
+      parts.push(tagText(row));
+    }
+    return parts;
+  };
+}
+
+/**
+ * Build a `filter<Thing>(items, options)` search function from a field
+ * extractor. Connectors with bespoke extraction pass their own `fieldsOf`;
+ * simple ones pair this with {@link fieldsFromKeys}.
+ */
+export function makeQueryFilter(
+  fields: FieldExtractor,
+): (items: readonly unknown[], options: SearchMatchOptions) => unknown[] {
+  return (items, options) => filterByQuery(items, { ...options, fields });
+}

@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type MetabaseSearchMatchOptions = SearchMatchOptions;
 
@@ -15,9 +15,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [stringAt(row, "name"), stringAt(row, "description")];
 }
 
-export function filterMetabaseDashboards(
-  dashboards: readonly unknown[],
-  options: MetabaseSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(dashboards, { ...options, fields: fieldsOf });
-}
+export const filterMetabaseDashboards = makeQueryFilter(fieldsOf);

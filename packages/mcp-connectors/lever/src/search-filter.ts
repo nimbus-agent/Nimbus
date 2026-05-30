@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
   tagText,
@@ -32,9 +32,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterLeverPostings(
-  postings: readonly unknown[],
-  options: LeverSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(postings, { ...options, fields: fieldsOf });
-}
+export const filterLeverPostings = makeQueryFilter(fieldsOf);

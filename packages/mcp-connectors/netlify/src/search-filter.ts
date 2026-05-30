@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -34,9 +34,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterNetlifySites(
-  sites: readonly unknown[],
-  options: NetlifySearchMatchOptions,
-): unknown[] {
-  return filterByQuery(sites, { ...options, fields: fieldsOf });
-}
+export const filterNetlifySites = makeQueryFilter(fieldsOf);

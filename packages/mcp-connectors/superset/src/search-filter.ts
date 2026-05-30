@@ -1,4 +1,4 @@
-import { asRecord, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import { asRecord, makeQueryFilter, type SearchMatchOptions } from "../../shared/search-filter.ts";
 
 export type SupersetSearchMatchOptions = SearchMatchOptions;
 
@@ -15,9 +15,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [stringAt(row, "dashboard_title"), stringAt(row, "slug")];
 }
 
-export function filterSupersetDashboards(
-  dashboards: readonly unknown[],
-  options: SupersetSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(dashboards, { ...options, fields: fieldsOf });
-}
+export const filterSupersetDashboards = makeQueryFilter(fieldsOf);

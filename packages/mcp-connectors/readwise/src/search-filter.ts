@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -38,9 +38,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterReadwiseHighlights(
-  highlights: readonly unknown[],
-  options: ReadwiseSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(highlights, { ...options, fields: fieldsOf });
-}
+export const filterReadwiseHighlights = makeQueryFilter(fieldsOf);

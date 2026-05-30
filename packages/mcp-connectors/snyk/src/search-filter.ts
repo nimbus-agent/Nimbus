@@ -1,4 +1,8 @@
-import { asObjectish, filterByQuery, type SearchMatchOptions } from "../../shared/search-filter.ts";
+import {
+  asObjectish,
+  makeQueryFilter,
+  type SearchMatchOptions,
+} from "../../shared/search-filter.ts";
 
 export type SnykSearchMatchOptions = SearchMatchOptions;
 
@@ -21,9 +25,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [title, cves.join(" "), pkg];
 }
 
-export function filterSnykAggregatedIssues(
-  issues: readonly unknown[],
-  options: SnykSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(issues, { ...options, fields: fieldsOf });
-}
+export const filterSnykAggregatedIssues = makeQueryFilter(fieldsOf);

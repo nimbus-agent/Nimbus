@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -26,9 +26,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [stringField(row, "name"), stringField(row, "description"), tagsString(row)];
 }
 
-export function filterFlagsmithFeatures(
-  features: readonly unknown[],
-  options: FlagsmithSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(features, { ...options, fields: fieldsOf });
-}
+export const filterFlagsmithFeatures = makeQueryFilter(fieldsOf);

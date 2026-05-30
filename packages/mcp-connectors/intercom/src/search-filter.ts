@@ -1,7 +1,7 @@
 import {
   asObjectish,
   asRecord,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -43,9 +43,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   return [subject, body, state, authorName, authorEmail, tagText(row)];
 }
 
-export function filterIntercomConversations(
-  conversations: readonly unknown[],
-  options: IntercomSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(conversations, { ...options, fields: fieldsOf });
-}
+export const filterIntercomConversations = makeQueryFilter(fieldsOf);

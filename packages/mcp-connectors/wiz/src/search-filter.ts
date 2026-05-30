@@ -1,6 +1,6 @@
 import {
   asObjectish,
-  filterByQuery,
+  makeQueryFilter,
   type SearchMatchOptions,
   stringField,
 } from "../../shared/search-filter.ts";
@@ -47,9 +47,4 @@ function fieldsOf(item: unknown): readonly string[] | null {
   ];
 }
 
-export function filterWizIssues(
-  issues: readonly unknown[],
-  options: WizSearchMatchOptions,
-): unknown[] {
-  return filterByQuery(issues, { ...options, fields: fieldsOf });
-}
+export const filterWizIssues = makeQueryFilter(fieldsOf);
