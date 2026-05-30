@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface PipedriveMappingContext {
   readonly syncedAt: number;
 }
 
-export interface PipedriveMappedRow {
-  readonly service: "pipedrive";
-  readonly type: "deal";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type PipedriveMappedRow = MappedRow<"pipedrive", "deal">;
 
 export function pipedriveTimeMs(v: unknown): number | null {
   if (typeof v !== "string" || v.trim() === "") {

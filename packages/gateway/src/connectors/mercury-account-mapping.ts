@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface MercuryMappingContext {
   readonly syncedAt: number;
 }
 
-export interface MercuryMappedRow {
-  readonly service: "mercury";
-  readonly type: "account";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type MercuryMappedRow = MappedRow<"mercury", "account">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;

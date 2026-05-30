@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface LeverMappingContext {
   readonly syncedAt: number;
 }
 
-export interface LeverMappedRow {
-  readonly service: "lever";
-  readonly type: "posting";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type LeverMappedRow = MappedRow<"lever", "posting">;
 
 function epochMs(row: Record<string, unknown>, key: string): number | null {
   const v = numberField(row, key);

@@ -1,3 +1,4 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { secondsToMs } from "./stripe-invoice-mapping.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -5,18 +6,7 @@ export interface IntercomMappingContext {
   readonly syncedAt: number;
 }
 
-export interface IntercomMappedRow {
-  readonly service: "intercom";
-  readonly type: "conversation";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type IntercomMappedRow = MappedRow<"intercom", "conversation">;
 
 export function stripHtml(raw: unknown): string {
   if (typeof raw !== "string") {

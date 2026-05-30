@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface NetlifyMappingContext {
   readonly syncedAt: number;
 }
 
-export interface NetlifyMappedRow {
-  readonly service: "netlify";
-  readonly type: "site";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type NetlifyMappedRow = MappedRow<"netlify", "site">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;

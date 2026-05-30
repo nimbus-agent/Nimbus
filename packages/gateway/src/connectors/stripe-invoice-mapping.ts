@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface StripeMappingContext {
   readonly syncedAt: number;
 }
 
-export interface StripeMappedRow {
-  readonly service: "stripe";
-  readonly type: "invoice";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type StripeMappedRow = MappedRow<"stripe", "invoice">;
 
 export function secondsToMs(n: number | undefined): number | null {
   if (n === undefined || !Number.isFinite(n) || n === 0) {

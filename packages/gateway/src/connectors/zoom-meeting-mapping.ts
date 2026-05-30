@@ -1,21 +1,11 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface ZoomMeetingMappingContext {
   readonly syncedAt: number;
 }
 
-export interface ZoomMeetingMappedRow {
-  readonly service: "zoom";
-  readonly type: "meeting";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type ZoomMeetingMappedRow = MappedRow<"zoom", "meeting">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;

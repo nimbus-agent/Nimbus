@@ -1,3 +1,4 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface ZendeskMappingContext {
@@ -5,18 +6,7 @@ export interface ZendeskMappingContext {
   readonly syncedAt: number;
 }
 
-export interface ZendeskMappedRow {
-  readonly service: "zendesk";
-  readonly type: "ticket";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type ZendeskMappedRow = MappedRow<"zendesk", "ticket">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;

@@ -18,6 +18,7 @@
  * Receiving already-fetched `plainText` keeps the mapper pure.
  */
 
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const TRANSCRIPT_PREVIEW_MAX_CHARS = 280;
@@ -32,18 +33,7 @@ export interface ZoomTranscriptMappingInput {
   readonly syncedAt: number;
 }
 
-export interface ZoomTranscriptMappedRow {
-  readonly service: "zoom";
-  readonly type: "transcript";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type ZoomTranscriptMappedRow = MappedRow<"zoom", "transcript">;
 
 /** ISO-8601 string → epoch ms, or null for non-strings / unparseable input. */
 function parseIsoMs(v: unknown): number | null {
