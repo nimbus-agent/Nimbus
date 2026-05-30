@@ -10,7 +10,7 @@ import {
   gatewayStatePath,
   isProcessAlive,
   readGatewayState,
-} from "./gateway-process.ts";
+} from "./gw-state-helpers.ts";
 
 const liveProcs = new Set<Bun.Subprocess>();
 
