@@ -32,7 +32,7 @@ function spawnChild<W, S>(opts: SpawnGatewayForBenchOptions<W, S>): ProcSubset {
     stdout: "pipe",
     stderr: "pipe",
     ...(opts.env !== undefined && { env: { ...process.env, ...opts.env } }),
-  }) as unknown as ProcSubset;
+  });
 }
 
 const STDERR_BUFFER_LINES = 20;

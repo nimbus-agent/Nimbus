@@ -113,14 +113,7 @@ async function verifyAndRecordSignature(
       fetcher: options.fetcher,
       enforceAirGap: options.enforceAirGap ?? false,
     });
-    await verifyManifestSignature(
-      rawManifestObj as {
-        publisher?: { id: string; key: string };
-        signature?: string;
-        [k: string]: unknown;
-      },
-      resolvedPubkey,
-    );
+    await verifyManifestSignature(rawManifestObj, resolvedPubkey);
     await writePublisherKey(vault, publisherId, resolvedPubkey);
     appendAuditEntry(options.db, {
       actionType: "extension.signature_verified",

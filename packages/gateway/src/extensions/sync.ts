@@ -71,7 +71,7 @@ function gatherPublisherManifests(db: Database): {
     }
     const m = parsed.manifest;
     if (m.publisher === undefined) continue;
-    manifestByExtId.set(row.id, m as unknown as Record<string, unknown>);
+    manifestByExtId.set(row.id, m);
     const arr = publisherIdToExtensions.get(m.publisher.id) ?? [];
     arr.push(row.id);
     publisherIdToExtensions.set(m.publisher.id, arr);
@@ -90,10 +90,7 @@ async function reverifyPublisherExtensions(
     const m = manifestByExtId.get(extId);
     if (m === undefined) continue;
     try {
-      await verifyManifestSignature(
-        m as { publisher?: { id: string; key: string }; signature?: string },
-        pubkey,
-      );
+      await verifyManifestSignature(m, pubkey);
     } catch {
       failed.push(extId);
       allOk = false;

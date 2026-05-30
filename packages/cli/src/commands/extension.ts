@@ -488,7 +488,7 @@ export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Pr
 export async function runExtensionSync(client: IPCClient, args: string[]): Promise<number> {
   return runExtensionSyncWithCaller({
     args,
-    caller: async (params) => (await client.call("extension.sync", params)) as SyncResult,
+    caller: async (params) => await client.call("extension.sync", params),
     writeStdout: (s) => process.stdout.write(s),
     writeStderr: (s) => process.stderr.write(s),
   });

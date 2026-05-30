@@ -113,7 +113,7 @@ function listPackageJsonFiles(
     }
     let entries: Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -315,7 +315,7 @@ const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 
 function readDirectoryDirentsOrUndefined(dir: string): Dirent[] | undefined {
   try {
-    return readdirSync(dir, { withFileTypes: true }) as Dirent[];
+    return readdirSync(dir, { withFileTypes: true });
   } catch {
     return undefined;
   }

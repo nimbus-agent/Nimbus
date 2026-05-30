@@ -19,7 +19,7 @@ let cachedPidusage: ((pid: number) => Promise<{ memory: number }>) | undefined;
 async function realPidusage(pid: number): Promise<{ memory: number }> {
   if (cachedPidusage === undefined) {
     const mod = await import("pidusage");
-    cachedPidusage = mod.default as (pid: number) => Promise<{ memory: number }>;
+    cachedPidusage = mod.default;
   }
   return cachedPidusage(pid);
 }

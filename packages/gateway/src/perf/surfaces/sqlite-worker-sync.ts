@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
-import { runWorkerEntry, type WorkerSelf } from "./sqlite-worker-shared.ts";
+import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
 
@@ -31,7 +31,7 @@ ON CONFLICT(id) DO UPDATE SET
   synced_at = excluded.synced_at,
   pinned = excluded.pinned`;
 
-runWorkerEntry<SyncConfig>(self as unknown as WorkerSelf, {
+runWorkerEntry<SyncConfig>(self, {
   init: (config, dbPath) => {
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);

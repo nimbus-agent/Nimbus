@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
-import { runWorkerEntry, type WorkerSelf } from "./sqlite-worker-shared.ts";
+import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
 
@@ -18,7 +18,7 @@ const WATCHER_EVENT_INSERT_SQL = `INSERT INTO watcher_event (
   watcher_id, fired_at, condition_snapshot, action_result
 ) VALUES (?, ?, ?, ?)`;
 
-runWorkerEntry<Record<string, unknown>>(self as unknown as WorkerSelf, {
+runWorkerEntry<Record<string, unknown>>(self, {
   init: (_config, dbPath) => {
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);

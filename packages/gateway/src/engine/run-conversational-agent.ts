@@ -70,11 +70,11 @@ export async function runConversationalAgent(
 
   try {
     if (!p.stream) {
-      const out = await p.agent.generate(promptArg as never, { maxSteps });
+      const out = await p.agent.generate(promptArg, { maxSteps });
       return { reply: out.text };
     }
 
-    const streamOut = await p.agent.stream(promptArg as never, { maxSteps });
+    const streamOut = await p.agent.stream(promptArg, { maxSteps });
     for await (const chunk of streamOut.fullStream) {
       if (isTextDeltaChunk(chunk) && chunk.payload.text.length > 0) {
         p.sendChunk(chunk.payload.text);

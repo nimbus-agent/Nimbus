@@ -5,7 +5,7 @@ import { Database } from "bun:sqlite";
 import { computeAuditRowHash, GENESIS_HASH } from "../../db/audit-chain.ts";
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
-import { runWorkerEntry, type WorkerSelf } from "./sqlite-worker-shared.ts";
+import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
 
@@ -13,7 +13,7 @@ const AUDIT_INSERT_SQL = `INSERT INTO audit_log (
   action_type, hitl_status, action_json, timestamp, row_hash, prev_hash
 ) VALUES (?, ?, ?, ?, ?, ?)`;
 
-runWorkerEntry<Record<string, unknown>>(self as unknown as WorkerSelf, {
+runWorkerEntry<Record<string, unknown>>(self, {
   init: (_config, dbPath) => {
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);

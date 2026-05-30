@@ -390,7 +390,7 @@ async function handleAutoUpdateRpc(
   if (ctx.autoUpdate === undefined) {
     throw new AutomationRpcError(-32603, "Gateway is not configured with auto-update support");
   }
-  const value = (await dispatchAutoUpdateRpc(method, rec ?? {}, ctx.autoUpdate)) as unknown;
+  const value = await dispatchAutoUpdateRpc(method, rec ?? {}, ctx.autoUpdate);
   return { kind: "hit", value };
 }
 

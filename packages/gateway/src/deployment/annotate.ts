@@ -245,7 +245,7 @@ export function annotateDeployment(
       timestamp: nowMs,
     });
     return isNewInner;
-  })() as boolean;
+  })();
 
   return {
     external_id: externalId,

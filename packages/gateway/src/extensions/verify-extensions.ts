@@ -420,14 +420,7 @@ async function computeRowSignatureReason(
     return "publisher_key_missing";
   }
   try {
-    await verifyManifestSignature(
-      rawManifestObj as {
-        publisher?: { id: string; key: string };
-        signature?: string;
-        [k: string]: unknown;
-      },
-      pubkey,
-    );
+    await verifyManifestSignature(rawManifestObj, pubkey);
   } catch (err) {
     return errorToHardDisableReason(err);
   }

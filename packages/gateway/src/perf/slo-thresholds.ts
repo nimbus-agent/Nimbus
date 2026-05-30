@@ -192,7 +192,7 @@ function buildS8Cells(): readonly SloThreshold[] {
   for (const length of S8_LENGTHS) {
     for (const batch of S8_BATCHES) {
       out.push({
-        surfaceId: `S8-l${length}-b${batch}` as BenchSurfaceId,
+        surfaceId: `S8-l${length}-b${batch}`,
         metric: "throughput_per_sec",
         ghaMax: "tbd-c2",
         gated: false,
