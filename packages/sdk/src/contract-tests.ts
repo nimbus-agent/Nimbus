@@ -107,6 +107,95 @@ function assertV1HitlRequestGuard(): void {
 }
 
 /**
+ * Tool-name segments that indicate a tool fetches actual ROW / CELL / query-result
+ * data — as opposed to schema/metadata. Used by {@link assertNoRowDataTools}.
+ *
+ * The service prefix of a tool name must be a single token (e.g. `bigquery_list`,
+ * not `big_query_list`) so that, for example, `bigquery` never splits into a
+ * spurious `query` segment.
+ */
+export const ROW_DATA_TOOL_SEGMENTS: ReadonlySet<string> = new Set<string>([
+  "query",
+  "queries",
+  "row",
+  "rows",
+  "cell",
+  "cells",
+  "record",
+  "records",
+  "result",
+  "results",
+  "tabledata",
+  "scan",
+  "sample",
+  "samples",
+  "select",
+  "values",
+  "preview",
+  "head",
+  "dump",
+  "export",
+  "download",
+]);
+
+/** A registered MCP tool, reduced to the fields the no-row-data check inspects. */
+export interface RowDataToolCandidate {
+  readonly name: string;
+  readonly description?: string;
+}
+
+function toolNameSegments(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Tier-3 "no-row-data" contract assertion. A warehouse / logging / query connector
+ * must expose ONLY schema/metadata tools (list / get / search over datasets, tables,
+ * schemas, jobs, log groups, models, expectation suites …) and MUST NOT register any
+ * tool that pulls actual row / cell / query-result data into the local index.
+ *
+ * Enforcement is structural at the connector surface (NOT a runtime Gateway
+ * invariant): if the connector never registers a row/cell tool there is nothing to
+ * block at runtime. This assertion is the executable backstop — call it from the
+ * connector's contract test with its registered tool surface so that a future edit
+ * adding a `<svc>_run_query` / `<svc>_get_rows` / `<svc>_sample` / `<svc>_scan` tool
+ * fails CI. A connector that genuinely needs a live-gated row tool is a discrete
+ * `I17` design discussion, out of scope for the no-row-data tier.
+ *
+ * The check is name-based (tool descriptions are not scanned, to avoid false
+ * positives like "does not fetch rows"). Each tool name is split on non-alphanumeric
+ * boundaries and rejected if any segment is in {@link ROW_DATA_TOOL_SEGMENTS}.
+ *
+ * @throws {ExtensionContractError} if any tool name looks like a row/cell fetcher.
+ */
+export function assertNoRowDataTools(
+  tools: ReadonlyArray<RowDataToolCandidate>,
+  context = "connector",
+): void {
+  const offenders: string[] = [];
+  for (const tool of tools) {
+    if (typeof tool?.name !== "string" || tool.name.trim() === "") {
+      continue;
+    }
+    const hit = toolNameSegments(tool.name).find((s) => ROW_DATA_TOOL_SEGMENTS.has(s));
+    if (hit !== undefined) {
+      offenders.push(`${tool.name} (row-data segment "${hit}")`);
+    }
+  }
+  if (offenders.length > 0) {
+    throw new ExtensionContractError(
+      `no-row-data contract violated: ${context} must expose only schema/metadata tools, ` +
+        `but these look like row/cell/result fetchers: ${offenders.join(", ")}. Remove the ` +
+        `tool, or — if a live-gated row tool is genuinely required — raise it as a discrete ` +
+        `I17 design discussion (out of scope for the no-row-data tier).`,
+    );
+  }
+}
+
+/**
  * Validates a {@link ExtensionManifest} for CI / `nimbus test` (no network, no Gateway).
  */
 export async function runContractTests(manifest: ExtensionManifest): Promise<void> {

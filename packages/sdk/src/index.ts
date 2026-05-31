@@ -8,7 +8,13 @@
 
 export type { AuditEmit, AuditLogger } from "./audit-logger";
 export { createScopedAuditLogger } from "./audit-logger";
-export { ExtensionContractError, runContractTests } from "./contract-tests";
+export {
+  assertNoRowDataTools,
+  ExtensionContractError,
+  ROW_DATA_TOOL_SEGMENTS,
+  type RowDataToolCandidate,
+  runContractTests,
+} from "./contract-tests";
 export {
   canonicalize,
   canonicalizeManifest,
