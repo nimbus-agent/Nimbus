@@ -70,10 +70,11 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/vault/index.ts` | `NimbusVault` interface |
 | `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
 | `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
-| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot/miro) + `getValidVaultAccessToken` single-flight |
+| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot/miro/canva) + `getValidVaultAccessToken` single-flight |
 | `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
 | `packages/gateway/src/auth/hubspot-access-token.ts` | `getValidHubspotAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.hubspot` |
 | `packages/gateway/src/auth/miro-access-token.ts` | `getValidMiroAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.miro` |
+| `packages/gateway/src/auth/canva-access-token.ts` | `getValidCanvaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.canva` (PKCE + Basic-header, like Zoom) |
 
 ## Connectors + MCP Mesh
 
@@ -195,6 +196,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/miro-sync.ts` | Miro boards (3-legged OAuth via registry — 7th provider) — emits `miro:board`; top-level `cursor` query-param walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/miro-board-mapping.ts` | Pure Miro board → `IndexedItem`; ISO `parseIsoMs`; url/canonical_url = viewLink (null when absent) |
 | `packages/mcp-connectors/miro/src/server.ts` | Miro MCP — read-only `miro_list/get/search` |
+| `packages/gateway/src/connectors/canva-sync.ts` | Canva designs (3-legged OAuth via registry — 8th provider, PKCE + Basic-header like Zoom) — emits `canva:design`; top-level `continuation` query-param walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/canva-design-mapping.ts` | Pure Canva design → `IndexedItem`; epoch-seconds `parseCanvaTimestampMs` (ISO-tolerant); url/canonical_url = view_url (else edit_url, else null) |
+| `packages/mcp-connectors/canva/src/server.ts` | Canva MCP — read-only `canva_list/get/search` |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
