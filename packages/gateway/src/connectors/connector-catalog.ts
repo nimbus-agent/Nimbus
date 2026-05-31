@@ -55,6 +55,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "greenhouse",
   "pipedrive",
   "stackoverflow",
+  "zotero",
   "zoom",
 ] as const;
 
@@ -135,6 +136,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   greenhouse: MIN10,
   pipedrive: MIN10,
   stackoverflow: MIN10,
+  zotero: MIN10,
   zoom: MIN10,
 };
 
@@ -206,6 +208,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
   pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
   stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
+  zotero: "uses a Zotero API key + library spec (connector.auth zotero)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

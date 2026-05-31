@@ -830,6 +830,30 @@ export async function phase3AddStackoverflowMcp(
   );
 }
 
+export async function phase3AddZoteroMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiKey = (await readConnectorSecret(vault, "zotero", "api_key"))?.trim() ?? "";
+  const library = (await readConnectorSecret(vault, "zotero", "library"))?.trim() ?? "";
+  if (apiKey === "" || library === "") {
+    return;
+  }
+  servers["zotero"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("zotero")],
+      env: extensionProcessEnv({
+        ZOTERO_API_KEY: apiKey,
+        ZOTERO_LIBRARY: library,
+      }),
+    },
+    "zotero",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -869,5 +893,6 @@ export async function buildPhase3Servers(
   await phase3AddGreenhouseMcp(vault, servers, sandboxCwd);
   await phase3AddPipedriveMcp(vault, servers, sandboxCwd);
   await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
+  await phase3AddZoteroMcp(vault, servers, sandboxCwd);
   return servers;
 }

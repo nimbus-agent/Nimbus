@@ -49,6 +49,7 @@ export type Provider =
   | "greenhouse"
   | "pipedrive"
   | "stackoverflow"
+  | "zotero"
   | "zoom";
 
 export interface ProviderQuota {
@@ -107,6 +108,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   greenhouse: { requestsPerMinute: 60, burstSize: 10 },
   pipedrive: { requestsPerMinute: 60, burstSize: 10 },
   stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
+  zotero: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
 

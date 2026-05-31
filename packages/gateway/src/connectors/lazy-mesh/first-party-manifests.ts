@@ -269,6 +269,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  zotero: baseManifest("com.nimbus.zotero", {
+    network: ["api.zotero.org"],
+    filesystem: { read: [], write: [] },
+  }),
+
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     network: [],
     filesystem: { read: [], write: [] },

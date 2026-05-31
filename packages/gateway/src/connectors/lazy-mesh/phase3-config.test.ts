@@ -37,6 +37,7 @@ import {
   phase3AddVercelMcp,
   phase3AddWizMcp,
   phase3AddZendeskMcp,
+  phase3AddZoteroMcp,
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -1423,6 +1424,54 @@ describe("phase3AddStackoverflowMcp", () => {
     expectSandboxed(spec, "api.stackoverflowteams.com");
     expect(spec.env?.["STACKOVERFLOW_TOKEN"]).toBe("so_test_token");
     expect(spec.env?.["STACKOVERFLOW_TEAM"]).toBe("acme");
+  });
+});
+
+describe("phase3AddZoteroMcp", () => {
+  test("no-op without either zotero key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZoteroMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zotero"]).toBeUndefined();
+  });
+
+  test("no-op when only zotero.api_key is set (library required)", async () => {
+    const vault = createMockVault();
+    await vault.set("zotero.api_key", "zk_test_key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZoteroMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zotero"]).toBeUndefined();
+  });
+
+  test("no-op when only zotero.library is set (api_key required)", async () => {
+    const vault = createMockVault();
+    await vault.set("zotero.library", "users/12345");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZoteroMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zotero"]).toBeUndefined();
+  });
+
+  test("no-op when either key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("zotero.api_key", "zk_test_key");
+    await vault.set("zotero.library", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZoteroMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["zotero"]).toBeUndefined();
+  });
+
+  test("spawns with both env vars set + api.zotero.org in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("zotero.api_key", "zk_test_key");
+    await vault.set("zotero.library", "users/12345");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddZoteroMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["zotero"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.zotero.org");
+    expect(spec.env?.["ZOTERO_API_KEY"]).toBe("zk_test_key");
+    expect(spec.env?.["ZOTERO_LIBRARY"]).toBe("users/12345");
   });
 });
 
