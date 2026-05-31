@@ -171,6 +171,8 @@ describe("assertNoRowDataTools — Tier-3 no-row-data contract", () => {
     "warehouse_sample",
     "table_select",
     "cloudwatch_get_log_records",
+    "cloudwatch_get_log_events",
+    "cloudwatch_filter_log_events",
     "bigquery_export_table",
     "snowflake_download",
     "sheet_get_cell",

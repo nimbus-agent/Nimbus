@@ -108,7 +108,8 @@ function assertV1HitlRequestGuard(): void {
 
 /**
  * Tool-name segments that indicate a tool fetches actual ROW / CELL / query-result
- * data — as opposed to schema/metadata. Used by {@link assertNoRowDataTools}.
+ * data (including log EVENTS) — as opposed to schema/metadata. Used by
+ * {@link assertNoRowDataTools}.
  *
  * The service prefix of a tool name must be a single token (e.g. `bigquery_list`,
  * not `big_query_list`) so that, for example, `bigquery` never splits into a
@@ -123,6 +124,8 @@ export const ROW_DATA_TOOL_SEGMENTS: ReadonlySet<string> = new Set<string>([
   "cells",
   "record",
   "records",
+  "event",
+  "events",
   "result",
   "results",
   "tabledata",
