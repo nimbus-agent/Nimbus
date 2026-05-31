@@ -287,6 +287,72 @@ describe("miro descriptor", () => {
   });
 });
 
+describe("canva descriptor", () => {
+  test("table includes canva with vaultKey, urls, and PKCE + basic-header quirks", () => {
+    expect(OAUTH_PROVIDERS.canva.id).toBe("canva");
+    expect(OAUTH_PROVIDERS.canva.vaultKey).toBe("canva.oauth");
+    expect(OAUTH_PROVIDERS.canva.authorizeUrl).toBe("https://www.canva.com/api/oauth/authorize");
+    expect(OAUTH_PROVIDERS.canva.tokenUrl).toBe("https://api.canva.com/rest/v1/oauth/token");
+    expect(OAUTH_PROVIDERS.canva.usesPkce).toBe(true);
+    expect(OAUTH_PROVIDERS.canva.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.canva.secretPlacement).toBe("basic_header");
+    expect(OAUTH_PROVIDERS.canva.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.canva.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.canva.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params include S256 PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.canva.buildAuthorizeParams({
+      clientId: "canva-cid",
+      scopes: ["design:meta:read"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("canva-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("design:meta:read");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBe("cc");
+    expect(p["code_challenge_method"]).toBe("S256");
+  });
+
+  test("exchange sends Basic header + PKCE verifier; client_secret NOT in body", async () => {
+    let seenBody = "";
+    let seenAuth = "";
+    let seenCT = "";
+    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+      seenBody = typeof init?.body === "string" ? init.body : "";
+      const h = new Headers(init?.headers);
+      seenAuth = h.get("authorization") ?? "";
+      seenCT = h.get("content-type") ?? "";
+      return new Response(
+        JSON.stringify({ access_token: "canva-a", refresh_token: "canva-r", expires_in: 14_400 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const r = await exchangeAuthorizationCode({
+      descriptor: OAUTH_PROVIDERS.canva,
+      fetchFn: fetchImpl,
+      clientId: "cid",
+      clientSecret: "CANVA_SECRET",
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      codeVerifier: "verifier-123",
+      authCode: "code",
+      requestedScopes: ["design:meta:read"],
+    });
+    expect(r.accessToken).toBe("canva-a");
+    expect(r.refreshToken).toBe("canva-r");
+    expect(seenCT).toContain("application/x-www-form-urlencoded");
+    // Secret travels in the Basic header, not the body.
+    const expectedBasic = `Basic ${Buffer.from("cid:CANVA_SECRET", "utf8").toString("base64")}`;
+    expect(seenAuth).toBe(expectedBasic);
+    expect(seenBody).not.toContain("CANVA_SECRET");
+    expect(seenBody).toContain("code_verifier=verifier-123");
+    expect(seenBody).toContain("grant_type=authorization_code");
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {

@@ -125,3 +125,26 @@ miro.com → your app → settings → copy the Client Secret.
 
 PowerShell example:
   $env:NIMBUS_OAUTH_MIRO_CLIENT_SECRET = "..."`;
+
+export const CANVA_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_CANVA_CLIENT_ID to your Canva app's Client ID (OAuth 2.0 authorization-code flow WITH PKCE).
+
+How to obtain:
+1. canva.com/developers → create or open an integration.
+2. Add the read scopes you need (e.g. design:meta:read).
+3. Configure a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+4. Copy the Client ID from the integration's configuration page.
+
+You must also set NIMBUS_OAUTH_CANVA_CLIENT_SECRET (Canva's token endpoint authenticates the client via an HTTP Basic header).
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_CANVA_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_CANVA_CLIENT_SECRET = "..."`;
+
+export const CANVA_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_CANVA_CLIENT_SECRET to your Canva app's Client Secret.
+
+Canva's token exchange authenticates the client via an HTTP Basic header (base64(client_id:client_secret)) alongside the PKCE code_verifier (it is not stored in the Nimbus vault).
+
+canva.com/developers → your integration → copy the Client Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_CANVA_CLIENT_SECRET = "..."`;

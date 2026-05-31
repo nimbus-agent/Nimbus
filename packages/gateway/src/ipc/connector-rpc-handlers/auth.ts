@@ -1,4 +1,6 @@
 import {
+  CANVA_OAUTH_CLIENT_ID_HELP,
+  CANVA_OAUTH_CLIENT_SECRET_HELP,
   GOOGLE_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
@@ -583,6 +585,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: MIRO_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthMiroClientSecret,
         clientSecretMissingHelp: MIRO_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "canva":
+      return {
+        clientId: Config.oauthCanvaClientId,
+        emptyClientIdMessage: CANVA_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthCanvaClientSecret,
+        clientSecretMissingHelp: CANVA_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;

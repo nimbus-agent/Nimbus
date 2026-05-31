@@ -9,7 +9,8 @@ export type OAuthProvider =
   | "notion"
   | "zoom"
   | "hubspot"
-  | "miro";
+  | "miro"
+  | "canva";
 
 export interface PKCEResult {
   accessToken: string;
@@ -304,6 +305,31 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       response_type: "code",
       scope: a.scopes.join(" "),
       state: a.state,
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  canva: {
+    id: "canva",
+    vaultKey: "canva.oauth",
+    authorizeUrl: "https://www.canva.com/api/oauth/authorize",
+    tokenUrl: "https://api.canva.com/rest/v1/oauth/token",
+    // Canva uses the authorization-code flow WITH PKCE; the token endpoint
+    // authenticates the client via HTTP Basic auth (base64(client_id:client_secret))
+    // alongside the PKCE code_verifier. Same descriptor shape as Zoom.
+    usesPkce: true,
+    clientSecret: "required",
+    secretPlacement: "basic_header",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
     }),
     parseTokenResponse: parseStandardTokenResponse,
   },
