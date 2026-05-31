@@ -10,7 +10,8 @@ export type OAuthProvider =
   | "zoom"
   | "hubspot"
   | "miro"
-  | "canva";
+  | "canva"
+  | "figma";
 
 export interface PKCEResult {
   accessToken: string;
@@ -330,6 +331,28 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       ...(a.codeChallenge === undefined
         ? {}
         : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  figma: {
+    id: "figma",
+    vaultKey: "figma.oauth",
+    authorizeUrl: "https://www.figma.com/oauth",
+    tokenUrl: "https://api.figma.com/v1/oauth/token",
+    // Figma uses the standard authorization-code flow (NOT PKCE) with the
+    // client_id + client_secret form-encoded into the token-exchange BODY.
+    // Same descriptor shape as Miro/HubSpot.
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
     }),
     parseTokenResponse: parseStandardTokenResponse,
   },

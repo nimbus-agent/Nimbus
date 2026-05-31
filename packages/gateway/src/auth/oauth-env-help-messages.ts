@@ -148,3 +148,28 @@ canva.com/developers → your integration → copy the Client Secret.
 
 PowerShell example:
   $env:NIMBUS_OAUTH_CANVA_CLIENT_SECRET = "..."`;
+
+export const FIGMA_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_FIGMA_CLIENT_ID to your Figma app's Client ID (OAuth 2.0 authorization-code flow).
+
+How to obtain:
+1. figma.com/developers/apps → create or open an app.
+2. Add the read scopes you need (e.g. files:read).
+3. Configure a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+4. Copy the Client ID from the app's configuration page.
+
+You must also set NIMBUS_OAUTH_FIGMA_CLIENT_SECRET (Figma's token endpoint requires the client secret in the request body).
+
+This connector also needs your Figma team id — set it once via the vault key figma.team_id (see the connector README); v1 indexes a single configured team's files.
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_FIGMA_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_FIGMA_CLIENT_SECRET = "..."`;
+
+export const FIGMA_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_FIGMA_CLIENT_SECRET to your Figma app's Client Secret.
+
+Figma's token exchange requires the client secret form-encoded in the request body (it is not stored in the Nimbus vault).
+
+figma.com/developers/apps → your app → copy the Client Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_FIGMA_CLIENT_SECRET = "..."`;

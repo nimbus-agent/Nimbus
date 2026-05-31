@@ -123,6 +123,8 @@ export const Config = {
   oauthMiroClientSecret: processEnvGet("NIMBUS_OAUTH_MIRO_CLIENT_SECRET") ?? "",
   oauthCanvaClientId: processEnvGet("NIMBUS_OAUTH_CANVA_CLIENT_ID") ?? "",
   oauthCanvaClientSecret: processEnvGet("NIMBUS_OAUTH_CANVA_CLIENT_SECRET") ?? "",
+  oauthFigmaClientId: processEnvGet("NIMBUS_OAUTH_FIGMA_CLIENT_ID") ?? "",
+  oauthFigmaClientSecret: processEnvGet("NIMBUS_OAUTH_FIGMA_CLIENT_SECRET") ?? "",
   engineContextWindowItems: parseEngineContextWindowItems(),
   searchServicePriorityMap,
   conversationalAgentMaxSteps: parseConversationalAgentMaxSteps(),

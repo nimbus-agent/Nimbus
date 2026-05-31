@@ -1,6 +1,8 @@
 import {
   CANVA_OAUTH_CLIENT_ID_HELP,
   CANVA_OAUTH_CLIENT_SECRET_HELP,
+  FIGMA_OAUTH_CLIENT_ID_HELP,
+  FIGMA_OAUTH_CLIENT_SECRET_HELP,
   GOOGLE_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
@@ -592,6 +594,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: CANVA_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthCanvaClientSecret,
         clientSecretMissingHelp: CANVA_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "figma":
+      return {
+        clientId: Config.oauthFigmaClientId,
+        emptyClientIdMessage: FIGMA_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthFigmaClientSecret,
+        clientSecretMissingHelp: FIGMA_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;

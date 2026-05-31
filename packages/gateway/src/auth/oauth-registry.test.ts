@@ -353,6 +353,64 @@ describe("canva descriptor", () => {
   });
 });
 
+describe("figma descriptor", () => {
+  test("table includes figma with vaultKey, urls, and body-secret quirks", () => {
+    expect(OAUTH_PROVIDERS.figma.id).toBe("figma");
+    expect(OAUTH_PROVIDERS.figma.vaultKey).toBe("figma.oauth");
+    expect(OAUTH_PROVIDERS.figma.authorizeUrl).toBe("https://www.figma.com/oauth");
+    expect(OAUTH_PROVIDERS.figma.tokenUrl).toBe("https://api.figma.com/v1/oauth/token");
+    expect(OAUTH_PROVIDERS.figma.usesPkce).toBe(false);
+    expect(OAUTH_PROVIDERS.figma.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.figma.secretPlacement).toBe("body");
+    expect(OAUTH_PROVIDERS.figma.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.figma.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.figma.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params omit PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.figma.buildAuthorizeParams({
+      clientId: "figma-cid",
+      scopes: ["files:read"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("figma-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("files:read");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBeUndefined();
+    expect(p["code_challenge_method"]).toBeUndefined();
+  });
+
+  test("exchange posts form with client_secret in body; error message omits secrets", async () => {
+    let seenBody = "";
+    let seenCT = "";
+    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+      seenBody = typeof init?.body === "string" ? init.body : "";
+      seenCT = new Headers(init?.headers).get("content-type") ?? "";
+      return new Response(
+        JSON.stringify({ access_token: "figma-a", refresh_token: "figma-r", expires_in: 1800 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const r = await exchangeAuthorizationCode({
+      descriptor: OAUTH_PROVIDERS.figma,
+      fetchFn: fetchImpl,
+      clientId: "cid",
+      clientSecret: "FIGMA_SECRET",
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      authCode: "code",
+      requestedScopes: ["files:read"],
+    });
+    expect(r.accessToken).toBe("figma-a");
+    expect(r.refreshToken).toBe("figma-r");
+    expect(seenCT).toContain("application/x-www-form-urlencoded");
+    expect(seenBody).toContain("client_secret=FIGMA_SECRET");
+    expect(seenBody).toContain("grant_type=authorization_code");
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {
