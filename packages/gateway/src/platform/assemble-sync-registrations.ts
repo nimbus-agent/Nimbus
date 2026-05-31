@@ -41,6 +41,7 @@ import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
+import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
@@ -351,6 +352,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createRampSyncable({
+      ensureRampMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

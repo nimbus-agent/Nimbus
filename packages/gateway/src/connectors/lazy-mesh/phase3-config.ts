@@ -854,6 +854,30 @@ export async function phase3AddZoteroMcp(
   );
 }
 
+export async function phase3AddRampMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const clientId = (await readConnectorSecret(vault, "ramp", "client_id"))?.trim() ?? "";
+  const clientSecret = (await readConnectorSecret(vault, "ramp", "client_secret"))?.trim() ?? "";
+  if (clientId === "" || clientSecret === "") {
+    return;
+  }
+  servers["ramp"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("ramp")],
+      env: extensionProcessEnv({
+        RAMP_CLIENT_ID: clientId,
+        RAMP_CLIENT_SECRET: clientSecret,
+      }),
+    },
+    "ramp",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddDependencytrackMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -918,5 +942,6 @@ export async function buildPhase3Servers(
   await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   await phase3AddZoteroMcp(vault, servers, sandboxCwd);
   await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
+  await phase3AddRampMcp(vault, servers, sandboxCwd);
   return servers;
 }

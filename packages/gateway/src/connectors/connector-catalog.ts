@@ -57,6 +57,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "stackoverflow",
   "zotero",
   "dependencytrack",
+  "ramp",
   "zoom",
 ] as const;
 
@@ -139,6 +140,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   stackoverflow: MIN10,
   zotero: MIN10,
   dependencytrack: MIN10,
+  ramp: MIN10,
   zoom: MIN10,
 };
 
@@ -212,6 +214,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
   zotero: "uses a Zotero API key + library spec (connector.auth zotero)",
   dependencytrack: "uses a Dependency-Track API key + base URL (connector.auth dependencytrack)",
+  ramp: "uses OAuth2 client-credentials — client id + client secret (connector.auth ramp)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

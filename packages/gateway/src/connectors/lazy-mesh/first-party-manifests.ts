@@ -279,6 +279,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  ramp: baseManifest("com.nimbus.ramp", {
+    network: ["api.ramp.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     network: [],
     filesystem: { read: [], write: [] },

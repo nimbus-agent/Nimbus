@@ -27,6 +27,7 @@ import {
   phase3AddNewrelicMcp,
   phase3AddPipedriveMcp,
   phase3AddRaindropMcp,
+  phase3AddRampMcp,
   phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -1534,6 +1535,54 @@ describe("phase3AddDependencytrackMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["DEPENDENCYTRACK_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddRampMcp", () => {
+  test("no-op without either ramp key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRampMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["ramp"]).toBeUndefined();
+  });
+
+  test("no-op when only ramp.client_id is set (secret required)", async () => {
+    const vault = createMockVault();
+    await vault.set("ramp.client_id", "cid_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRampMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["ramp"]).toBeUndefined();
+  });
+
+  test("no-op when only ramp.client_secret is set (client id required)", async () => {
+    const vault = createMockVault();
+    await vault.set("ramp.client_secret", "csecret_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRampMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["ramp"]).toBeUndefined();
+  });
+
+  test("no-op when either key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("ramp.client_id", "cid_test");
+    await vault.set("ramp.client_secret", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRampMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["ramp"]).toBeUndefined();
+  });
+
+  test("spawns with both env vars set + api.ramp.com in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("ramp.client_id", "cid_test");
+    await vault.set("ramp.client_secret", "csecret_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddRampMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["ramp"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.ramp.com");
+    expect(spec.env?.["RAMP_CLIENT_ID"]).toBe("cid_test");
+    expect(spec.env?.["RAMP_CLIENT_SECRET"]).toBe("csecret_test");
   });
 });
 

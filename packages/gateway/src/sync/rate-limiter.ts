@@ -51,6 +51,7 @@ export type Provider =
   | "stackoverflow"
   | "zotero"
   | "dependencytrack"
+  | "ramp"
   | "zoom";
 
 export interface ProviderQuota {
@@ -111,6 +112,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
   zotero: { requestsPerMinute: 60, burstSize: 10 },
   dependencytrack: { requestsPerMinute: 60, burstSize: 10 },
+  ramp: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
 
