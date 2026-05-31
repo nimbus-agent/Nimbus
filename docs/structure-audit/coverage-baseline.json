@@ -7,9 +7,6 @@
     },
     "packages/gateway/src/connectors/gmail-sync.ts": {
       "min_coverage_pct": 78.91
-    },
-    "packages/gateway/src/connectors/teams-sync.ts": {
-      "min_coverage_pct": 74.48
     }
   }
 }
