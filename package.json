@@ -81,6 +81,7 @@
     "packages/mcp-connectors/hubspot",
     "packages/mcp-connectors/miro",
     "packages/mcp-connectors/canva",
+    "packages/mcp-connectors/figma",
     "packages/vscode-extension"
   ],
   "scripts": {
