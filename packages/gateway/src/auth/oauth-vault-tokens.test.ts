@@ -50,6 +50,48 @@ describe("parseStoredOAuthTokens", () => {
       parseStoredOAuthTokens(JSON.stringify({ ...base, expiresAt: Number.NaN }), ERRS),
     ).toThrow("missing_expiry");
   });
+
+  it("captures a non-empty instanceUrl when present (Salesforce per-tenant host)", () => {
+    const raw = JSON.stringify({
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: 1_700_000_000_000,
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+    expect(parseStoredOAuthTokens(raw, ERRS)).toEqual({
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: 1_700_000_000_000,
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+  });
+
+  it("omits instanceUrl for the 9 existing providers' blobs (additive, back-compat)", () => {
+    // A blob WITHOUT instanceUrl parses byte-identically to before the field.
+    const raw = JSON.stringify({
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: 1_700_000_000_000,
+    });
+    const parsed = parseStoredOAuthTokens(raw, ERRS);
+    expect(parsed).toEqual({
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: 1_700_000_000_000,
+    });
+    expect(Object.hasOwn(parsed, "instanceUrl")).toBe(false);
+  });
+
+  it("omits an empty-string instanceUrl rather than including it", () => {
+    const raw = JSON.stringify({
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: 1_700_000_000_000,
+      instanceUrl: "",
+    });
+    const parsed = parseStoredOAuthTokens(raw, ERRS);
+    expect(Object.hasOwn(parsed, "instanceUrl")).toBe(false);
+  });
 });
 
 describe("microsoftOAuthAccessFromConfig", () => {

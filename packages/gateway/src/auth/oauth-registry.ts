@@ -18,6 +18,11 @@ export interface PKCEResult {
   refreshToken: string;
   expiresAt: number;
   scopes: string[];
+  /**
+   * Per-tenant API host discovered at OAuth time (Salesforce's `instance_url`).
+   * Optional and undefined for every provider with a fixed SaaS API host.
+   */
+  instanceUrl?: string;
 }
 
 export type RegistryFetch = (
@@ -477,6 +482,12 @@ async function persistTokens(vault: NimbusVault, vaultKey: string, r: PKCEResult
       refreshToken: r.refreshToken,
       expiresAt: r.expiresAt,
       scopes: r.scopes,
+      // Conditional spread: only providers that discovered a per-tenant host
+      // (Salesforce) carry `instanceUrl`. Every other provider's persisted
+      // payload stays byte-identical to before this field existed.
+      ...(r.instanceUrl !== undefined && r.instanceUrl !== ""
+        ? { instanceUrl: r.instanceUrl }
+        : {}),
     }),
   );
 }

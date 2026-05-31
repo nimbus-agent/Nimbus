@@ -2,6 +2,13 @@ export type StoredOAuthTokens = {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  /**
+   * Per-tenant API host discovered at OAuth time (e.g. Salesforce's
+   * `instance_url`). Optional and absent for every provider whose API host is a
+   * fixed SaaS endpoint — included only when the stored blob carries a
+   * non-empty `instanceUrl` string.
+   */
+  instanceUrl?: string;
 };
 
 export type ParseStoredOAuthErrors = {
@@ -37,6 +44,13 @@ export function parseStoredOAuthTokens(
   }
   if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
     throw new TypeError(errs.missingExpiry);
+  }
+  // Optional, additive: only include `instanceUrl` when the stored blob carries
+  // a non-empty string. Every pre-existing provider's blob lacks it, so its
+  // parse result is byte-identical to before.
+  const instanceUrl = rec["instanceUrl"];
+  if (typeof instanceUrl === "string" && instanceUrl !== "") {
+    return { accessToken, refreshToken, expiresAt, instanceUrl };
   }
   return { accessToken, refreshToken, expiresAt };
 }

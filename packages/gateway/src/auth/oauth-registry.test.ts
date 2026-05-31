@@ -498,6 +498,26 @@ describe("refreshViaRegistry", () => {
     expect(r.refreshToken).toBe("old-refresh");
     expect(await vault.get("microsoft.oauth")).toContain("new-access");
   });
+
+  test("persisted payload omits instanceUrl for a provider that does not discover one", async () => {
+    const vault = createMemoryVault();
+    await refreshViaRegistry({
+      descriptor: OAUTH_PROVIDERS.microsoft,
+      refreshToken: "old-refresh",
+      clientId: "cid",
+      vault,
+      fetchFn: async () =>
+        new Response(JSON.stringify({ access_token: "new-access", expires_in: 120 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    const stored = await vault.get("microsoft.oauth");
+    expect(stored).not.toBeNull();
+    // Conditional spread leaves the field out entirely (byte-identical to before).
+    expect(stored).not.toContain("instanceUrl");
+    expect(JSON.parse(stored ?? "{}") as Record<string, unknown>).not.toHaveProperty("instanceUrl");
+  });
 });
 
 describe("getValidVaultAccessToken single-flight", () => {
