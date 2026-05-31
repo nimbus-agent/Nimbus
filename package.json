@@ -73,6 +73,7 @@
     "packages/mcp-connectors/stackoverflow",
     "packages/mcp-connectors/zotero",
     "packages/mcp-connectors/dependencytrack",
+    "packages/mcp-connectors/airflow",
     "packages/mcp-connectors/ramp",
     "packages/mcp-connectors/zoom",
     "packages/vscode-extension"
