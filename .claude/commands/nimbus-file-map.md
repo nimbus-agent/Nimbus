@@ -171,6 +171,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/dependencytrack-sync.ts` | OWASP Dependency-Track SBOM/supply-chain (per-tenant host + API key) — emits `dependencytrack:project`; page-number walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/dependencytrack-project-mapping.ts` | Pure Dependency-Track project → `IndexedItem`; surfaces embedded vuln metrics |
 | `packages/mcp-connectors/dependencytrack/src/server.ts` | Dependency-Track MCP — read-only `dependencytrack_list/get/search` |
+| `packages/gateway/src/connectors/airflow-sync.ts` | Apache Airflow DAGs (per-tenant host + HTTP Basic auth, header built inline) — emits `airflow:dag`; body-based `total_entries` + offset walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/airflow-dag-mapping.ts` | Pure Airflow DAG → `IndexedItem`; surfaces paused/active/owners/schedule/tags; local `parseIsoMs` |
+| `packages/mcp-connectors/airflow/src/server.ts` | Airflow MCP — read-only `airflow_list/get/search` |
 | `packages/gateway/src/connectors/ramp-sync.ts` | Ramp card spend (OAuth2 client-credentials token exchange) — emits `ramp:transaction`; `page.next` cursor walk; cursor `{ pass }`; 401 re-exchange once |
 | `packages/gateway/src/connectors/ramp-transaction-mapping.ts` | Pure Ramp transaction → `IndexedItem`; safe fields only (no PAN); local `parseIsoMs` |
 | `packages/mcp-connectors/ramp/src/server.ts` | Ramp MCP — read-only `ramp_list/get/search`; bearer token cached per process |
