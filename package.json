@@ -80,6 +80,7 @@
     "packages/mcp-connectors/zoom",
     "packages/mcp-connectors/hubspot",
     "packages/mcp-connectors/miro",
+    "packages/mcp-connectors/canva",
     "packages/vscode-extension"
   ],
   "scripts": {
