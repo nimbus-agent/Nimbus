@@ -2,6 +2,7 @@ import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
 import { createAzureSyncable } from "../connectors/azure-sync.ts";
+import { createBigquerySyncable } from "../connectors/bigquery-sync.ts";
 import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
 import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
 import { createCanvaSyncable } from "../connectors/canva-sync.ts";
@@ -196,6 +197,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGcpSyncable({
       ensureGcpMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createBigquerySyncable({
+      ensureBigqueryMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(
