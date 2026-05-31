@@ -10,7 +10,11 @@ import {
   type ParseStoredOAuthErrors,
 } from "./oauth-vault-tokens.ts";
 
-export type GoogleConnectorOAuthServiceId = "google_drive" | "gmail" | "google_photos";
+export type GoogleConnectorOAuthServiceId =
+  | "google_drive"
+  | "gmail"
+  | "google_photos"
+  | "google_meet";
 
 const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
   invalidJson: "Invalid Google OAuth vault payload",
@@ -21,7 +25,7 @@ const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
 };
 
 const NOT_CONFIGURED =
-  "Google OAuth not configured; run: nimbus connector auth google_drive (or gmail / google_photos)";
+  "Google OAuth not configured; run: nimbus connector auth google_drive (or gmail / google_photos / google_meet)";
 
 export async function anyGoogleOAuthVaultPresent(vault: NimbusVault): Promise<boolean> {
   for (const k of ALL_GOOGLE_OAUTH_VAULT_KEYS) {

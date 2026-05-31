@@ -4,6 +4,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "google_drive",
   "gmail",
   "google_photos",
+  "google_meet",
   "onedrive",
   "outlook",
   "teams",
@@ -75,6 +76,7 @@ export const GOOGLE_CONNECTOR_SERVICES: ReadonlySet<string> = new Set([
   "google_drive",
   "gmail",
   "google_photos",
+  "google_meet",
 ]);
 
 export const MICROSOFT_CONNECTOR_SERVICES: ReadonlySet<string> = new Set([
@@ -101,6 +103,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   notion: MIN5,
   confluence: MIN10,
   google_photos: HOUR6,
+  google_meet: HOUR6,
   github: MIN1,
   github_actions: MIN1,
   gitlab: MIN1,
@@ -262,6 +265,11 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
           "https://www.googleapis.com/auth/photoslibrary.readonly",
           "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
         ],
+      };
+    case "google_meet":
+      return {
+        provider: "google",
+        defaultScopes: ["https://www.googleapis.com/auth/meetings.space.readonly"],
       };
     case "onedrive":
       return {

@@ -83,6 +83,7 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"google_drive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"gmail">, never>(true);
     assertEq<ConnectorSecretKeyOf<"google_photos">, never>(true);
+    assertEq<ConnectorSecretKeyOf<"google_meet">, never>(true);
     assertEq<ConnectorSecretKeyOf<"onedrive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"outlook">, never>(true);
     assertEq<ConnectorSecretKeyOf<"teams">, never>(true);

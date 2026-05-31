@@ -51,7 +51,7 @@ Before starting the gateway (PowerShell example):
 export function printConnectorAuthHelpPointer(): void {
   console.log(`OAuth PKCE services — detailed setup for each:
 
-  nimbus connector auth google_drive --help   (also gmail, google_photos)
+  nimbus connector auth google_drive --help   (also gmail, google_photos, google_meet)
   nimbus connector auth onedrive --help       (also outlook, teams)
   nimbus connector auth slack --help
   nimbus connector auth notion --help

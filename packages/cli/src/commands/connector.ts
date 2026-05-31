@@ -259,6 +259,7 @@ function printConnectorAuthServiceHelp(normalized: string): void {
     case "google_drive":
     case "gmail":
     case "google_photos":
+    case "google_meet":
       console.log(GOOGLE_OAUTH_CLIENT_ID_HELP);
       return;
     case "onedrive":

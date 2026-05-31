@@ -5,6 +5,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   google_drive: [],
   gmail: [],
   google_photos: [],
+  google_meet: [],
   onedrive: [],
   outlook: [],
   teams: [],
