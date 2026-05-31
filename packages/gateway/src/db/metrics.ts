@@ -1,7 +1,3 @@
-/**
- * Aggregate index metrics for status / diag / Prometheus.
- */
-
 import type { Database } from "bun:sqlite";
 
 import {

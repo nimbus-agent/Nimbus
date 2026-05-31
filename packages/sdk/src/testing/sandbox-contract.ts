@@ -104,13 +104,9 @@ export async function runSandboxContractTests(
   const manifest = JSON.parse(raw) as Manifest;
 
   const perms = manifest.permissions;
-  const objectForm =
-    perms && typeof perms === "object" && !Array.isArray(perms)
-      ? (perms as ManifestPermissions)
-      : null;
+  const objectForm = perms && typeof perms === "object" && !Array.isArray(perms) ? perms : null;
   const hosts = objectForm?.network ?? [];
 
-  // Probe 1 — listed host succeeds (skip if no hosts declared).
   const firstHost = hosts[0];
   if (firstHost !== undefined) {
     const r = runProbe("network-listed", firstHost);
@@ -121,7 +117,6 @@ export async function runSandboxContractTests(
     }
   }
 
-  // Probe 2 — unlisted host must be blocked. Skipped on Windows (asymmetry).
   if (platform !== "win32" && hosts.length > 0) {
     const r = runProbe("network-unlisted", "");
     if (r.status !== 11) {
@@ -133,7 +128,6 @@ export async function runSandboxContractTests(
     }
   }
 
-  // Probe 3 — FS-denied always runs.
   const r3 = runProbe("fs-denied", "");
   if (r3.status !== 10) {
     throw new Error(

@@ -1,7 +1,3 @@
-/**
- * Shared `item` list SQL for `index.queryItems` (IPC) and read-only HTTP `/v1/items`.
- */
-
 export type ItemListQueryParams = {
   readonly services: readonly string[];
   readonly types: readonly string[];
@@ -43,9 +39,6 @@ export function buildItemListSql(params: ItemListQueryParams): {
   return { sql, vals };
 }
 
-/**
- * Parses compact relative windows: `7d`, `24h`, `30m`, `10s` (UTC ms cutoff = now - window).
- */
 export function parseRelativeSinceToWindowMs(raw: string, nowMs: number): number | undefined {
   const s = raw.trim();
   const m = /^(\d+)\s*([dhms])$/i.exec(s);

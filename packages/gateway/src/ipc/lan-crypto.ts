@@ -11,7 +11,6 @@ export function generateBoxKeypair(): BoxKeypair {
   return { publicKey: kp.publicKey, secretKey: kp.secretKey };
 }
 
-/** Frame layout: [24-byte nonce][NaCl box ciphertext] */
 export function sealBoxFrame(
   plaintext: Uint8Array,
   peerPublicKey: Uint8Array,

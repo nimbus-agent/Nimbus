@@ -1,4 +1,3 @@
-/** Base64url JSON blob after a service-specific ASCII prefix (sync cursors). */
 export function encodeNimbusJsonCursor(prefix: string, payload: unknown): string {
   return prefix + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }

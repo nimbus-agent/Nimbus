@@ -346,7 +346,6 @@ describe("FakeGateway", () => {
       client.on("error", reject);
     });
 
-    // Notifications must appear before the response
     expect(received[0]).toMatchObject({ kind: "notif", method: "agent.chunk" });
     expect(received[1]).toMatchObject({ kind: "notif", method: "agent.chunk" });
     expect(received[2]).toMatchObject({ kind: "response" });
@@ -371,7 +370,6 @@ describe("FakeGateway", () => {
     gateway = new FakeGateway({ socketPath, events });
     await gateway.start();
 
-    // engine.askStream should fall through to METHOD_NOT_FOUND when trigger is agents.expert
     const resp = (await rpc("engine.askStream", { prompt: "hi" })) as {
       error?: { code: number };
     };

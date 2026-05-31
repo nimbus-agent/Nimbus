@@ -54,12 +54,10 @@ describe("findings type guards", () => {
       gaps: [],
       query: { fileOrPrUrl: "x" },
     };
-    // Missing both generatedAt and latencyMs:
     expect(isImpactBrief({ ...baseShape, kind: "impact", affected: [] })).toBe(false);
     expect(
       isCatchupBrief({ ...baseShape, kind: "catchup", sections: [], query: { sinceMs: 0 } }),
     ).toBe(false);
-    // Has them — should pass:
     const valid = { ...baseShape, generatedAt: 0, latencyMs: 0 };
     expect(isImpactBrief({ ...valid, kind: "impact", affected: [] })).toBe(true);
     expect(isCatchupBrief({ ...valid, kind: "catchup", sections: [], query: { sinceMs: 0 } })).toBe(

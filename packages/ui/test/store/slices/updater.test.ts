@@ -105,7 +105,6 @@ describe("UpdaterSlice — persist whitelist unchanged", () => {
     } as never);
     const raw = localStorage.getItem("nimbus-ui-store");
     if (raw === null) {
-      // Persist middleware flushes asynchronously in the first render; OK if nothing has been written.
       return;
     }
     const parsed = JSON.parse(raw);

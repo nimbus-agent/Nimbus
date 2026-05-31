@@ -4,8 +4,6 @@ import { fakeSpawnEmitsMarker } from "./spawn-test-helpers.ts";
 
 describe("runSyncThroughputDriveOnce", () => {
   test("returns positive items/sec for each of 5 runs", async () => {
-    // Per sample the driver makes two index.querySql calls (before, then
-    // after sync). Alternate: odd call → 0 (before), even → 50 (after).
     let queryCount = 0;
     const samples = await runSyncThroughputDriveOnce(
       { runs: 1, runner: "local-dev", corpus: "small" },

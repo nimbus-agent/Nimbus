@@ -20,7 +20,6 @@ export type BackupManifest = {
   hashes: Record<string, string>;
 };
 
-/** Legacy shape for archives produced before the V21 schema-version bump. */
 export type LegacyBackupManifestV1 = Omit<BackupManifest, "version" | "schema_version"> & {
   version: 1;
 };

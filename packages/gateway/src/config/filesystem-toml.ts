@@ -110,9 +110,6 @@ function applyFilesystemRootKey(cur: NimbusFilesystemRootToml, key: string, valR
   }
 }
 
-/**
- * Best-effort `[[filesystem.roots]]` tables from `nimbus.toml` (no full TOML parser).
- */
 export function parseNimbusTomlFilesystemRoots(source: string): NimbusFilesystemRootToml[] {
   const lines = source.split(/\r?\n/);
   const roots: NimbusFilesystemRootToml[] = [];

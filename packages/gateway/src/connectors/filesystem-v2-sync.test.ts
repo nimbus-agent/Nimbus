@@ -70,10 +70,6 @@ test("indexes exported symbol from a TypeScript file", async () => {
 });
 
 test("skips a non-existent root path silently (no rows upserted, no error)", async () => {
-  // Plan: directory-not-readable error branch. Pointing at a nonexistent
-  // root exercises the existsSync() / statSync().isDirectory() guard
-  // (line ~458) which is the same defence as a permission-error from the
-  // fs layer.
   const sync = createFilesystemV2Syncable({
     roots: [
       {
@@ -92,13 +88,8 @@ test("skips a non-existent root path silently (no rows upserted, no error)", asy
 });
 
 test("excludes directories listed in `exclude` from the dependency walk (defends against node_modules recursion / symlink-cycle analog)", async () => {
-  // Plan: symlink-cycle detector. The actual defence is the exclude list
-  // (and the maxFiles+depth cap), not a realpath-based cycle check. Test
-  // that an excluded directory's package.json is invisible to the walker.
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-excl-"));
-  // Top-level package.json: visible.
   writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { top: "1.0.0" } }));
-  // Excluded subdir's package.json: invisible.
   mkdirSync(join(dir, "node_modules", "ignored-pkg"), { recursive: true });
   writeFileSync(
     join(dir, "node_modules", "ignored-pkg", "package.json"),
@@ -125,9 +116,6 @@ test("excludes directories listed in `exclude` from the dependency walk (defends
 });
 
 test("decodes a previously-issued cursor and round-trips tips through a re-sync", async () => {
-  // Covers `decodeCursor` lines 24-44 — non-null cursor → decode → restore tips.
-  // The exact tip value is opaque to this assertion; we just confirm the
-  // cursor is accepted (no throw) and a new cursor is emitted in the result.
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-cursor-"));
   writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { x: "1.0.0" } }));
   const sync = createFilesystemV2Syncable({
@@ -141,8 +129,6 @@ test("decodes a previously-issued cursor and round-trips tips through a re-sync"
       },
     ],
   });
-  // Build a synthetic prior cursor with one tip — exercises the JSON-decode
-  // branch + the per-key copy inside `decodeCursor`.
   const priorCursor = encodeNimbusJsonCursor("nimbus-fsv2:", {
     tips: { "git:/some/other/root": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" },
   });
@@ -153,8 +139,6 @@ test("decodes a previously-issued cursor and round-trips tips through a re-sync"
 });
 
 test("gracefully ignores a malformed cursor payload", async () => {
-  // Covers the early-return inside `decodeCursor` when the decoded JSON is
-  // not an object (lines 26-31 fallback to empty tips).
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-bad-"));
   writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { x: "1.0.0" } }));
   const sync = createFilesystemV2Syncable({
@@ -168,18 +152,13 @@ test("gracefully ignores a malformed cursor payload", async () => {
       },
     ],
   });
-  // Pre-decoded array (not an object) is rejected → tips reset to {}.
   const badCursor = encodeNimbusJsonCursor("nimbus-fsv2:", ["not", "an", "object"]);
   const db = createMemoryIndexDb();
   const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), badCursor);
-  // Sync still works — sync proceeds with empty tips.
   expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
 });
 
 test("gitAware=true on a real git repo records git_commit items (covers gitLogRecords path)", async () => {
-  // Covers lines 66-100 (gitLogRecords spawn + parse), 179-212
-  // (syncFilesystemGitCommits), 464-466 (gitAware branch).
-  // Initialize a real on-disk git repo with one commit using the platform git.
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-git-"));
   const git = async (...args: string[]): Promise<number> => {
     const proc = Bun.spawn(["git", "-C", dir, ...args], {
@@ -189,7 +168,6 @@ test("gitAware=true on a real git repo records git_commit items (covers gitLogRe
     });
     return await proc.exited;
   };
-  // `git init` may print to stderr — fine; check exit code only.
   await git("init", "-q", "-b", "main");
   await git("config", "user.email", "test@example.com");
   await git("config", "user.name", "Test");
@@ -218,9 +196,7 @@ test("gitAware=true on a real git repo records git_commit items (covers gitLogRe
 });
 
 test("gitAware=true on a non-git directory returns zero commits (covers isGitRepo false branch)", async () => {
-  // Covers line 58 (`isGitRepo` no-`.git`) and the early-return at lines 186-188.
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-nogit-"));
-  // No `.git` dir → isGitRepo returns false.
   const sync = createFilesystemV2Syncable({
     roots: [
       {
@@ -238,9 +214,6 @@ test("gitAware=true on a non-git directory returns zero commits (covers isGitRep
 });
 
 test("skips package.json whose JSON is malformed (parsePackageJsonDeps catch path)", async () => {
-  // Covers lines 154 (JSON.parse throws → []) and 148 (readFileSync error
-  // path via a non-utf8 file is harder; the catch is still reached when the
-  // file content can't be parsed as valid JSON).
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-bad-json-"));
   writeFileSync(join(dir, "package.json"), "{ not: valid json");
   const sync = createFilesystemV2Syncable({
@@ -256,12 +229,10 @@ test("skips package.json whose JSON is malformed (parsePackageJsonDeps catch pat
   });
   const db = createMemoryIndexDb();
   const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
-  // Bad JSON yields zero deps → zero upserts.
   expect(r.itemsUpserted).toBe(0);
 });
 
 test("skips a package.json whose top-level value is an array (parsePackageJsonDeps non-object guard)", async () => {
-  // Covers line 158 — `if (j === null || typeof j !== "object" || Array.isArray(j))`.
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-arr-json-"));
   writeFileSync(join(dir, "package.json"), JSON.stringify(["not", "an", "object"]));
   const sync = createFilesystemV2Syncable({
@@ -281,7 +252,6 @@ test("skips a package.json whose top-level value is an array (parsePackageJsonDe
 });
 
 test("code index over a file with no exports returns nothing (extractExportedSymbols returns [])", async () => {
-  // Covers line 429 — out.length === 0 and filePath !== "" → return [].
   const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-no-export-"));
   mkdirSync(join(dir, "src"), { recursive: true });
   writeFileSync(
@@ -301,7 +271,6 @@ test("code index over a file with no exports returns nothing (extractExportedSym
   });
   const db = createMemoryIndexDb();
   const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
-  // No exports → no code_symbol rows.
   expect(r.itemsUpserted).toBe(0);
 });
 

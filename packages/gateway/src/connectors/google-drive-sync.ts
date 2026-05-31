@@ -55,15 +55,15 @@ const CHANGES_PAGE_SIZE = 100;
 const SERVICE_ID = "google_drive";
 
 function parseDriveList(json: unknown): DriveListResponse {
-  return asUnknownObjectRecord(json) as DriveListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 function parseDriveChanges(json: unknown): DriveChangesListResponse {
-  return asUnknownObjectRecord(json) as DriveChangesListResponse;
+  return asUnknownObjectRecord(json);
 }
 
 function parseStartToken(json: unknown): DriveStartTokenResponse {
-  return asUnknownObjectRecord(json) as DriveStartTokenResponse;
+  return asUnknownObjectRecord(json);
 }
 
 export function encodeDriveSyncCursor(c: DriveSyncCursorV1): string {
@@ -100,7 +100,6 @@ function decodeDriveDeltaPayload(r: Record<string, unknown>): DriveSyncCursorV1 
   return { v: 1, phase: "delta", pageToken, ...(deltaPage === undefined ? {} : { deltaPage }) };
 }
 
-/** Exported for unit tests (cursor round-trip and migration). */
 export function decodeDriveSyncCursor(raw: string): DriveSyncCursorV1 | undefined {
   const o = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
   if (o == null || typeof o !== "object" || Array.isArray(o)) {
@@ -385,17 +384,9 @@ function runDrivePhaseDelta(
 }
 
 export type GoogleDriveSyncableOptions = {
-  /** Called before sync / MCP spawn so the Drive process can start lazily. */
   ensureGoogleDriveRunning: () => Promise<void>;
 };
 
-/**
- * Google Drive {@link Syncable}: initial windowed `files.list`, then `changes.list` drain from
- * a captured start token, then incremental delta sync via `changes.list` + `newStartPageToken`.
- *
- * Cursor prefix `nimbus-gdrv1:` encodes JSON phases. Legacy opaque `files.list` page tokens from
- * older gateways are accepted for one migration path (capture start token on first resume).
- */
 export function createGoogleDriveSyncable(options: GoogleDriveSyncableOptions): Syncable {
   const ensure = options.ensureGoogleDriveRunning;
   const initialSyncDepthDays = 30;

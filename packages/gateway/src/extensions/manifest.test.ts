@@ -5,8 +5,6 @@ import { parseExtensionManifestForRegistry, parseExtensionManifestJson } from ".
 describe("parseExtensionManifestJson", () => {
   test("parses minimal manifest", () => {
     const m = parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0" }));
-    // Missing `permissions` is normalized to default-deny by the validator.
-    // `updateChannel` is defaulted to "stable" on the parsed shape (T2 PR 3).
     expect(m).toEqual({
       id: "x",
       version: "1.0.0",
@@ -71,8 +69,8 @@ describe("parseExtensionManifestForRegistry — publisher + signature fields", (
   });
 
   test("accepts well-formed publisher + signature pair", () => {
-    const pubkey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; // 44 chars
-    const sig = `${"A".repeat(86)}==`; // 88 chars, base64-padded
+    const pubkey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const sig = `${"A".repeat(86)}==`;
     const out = parseExtensionManifestForRegistry(
       makeJson({ publisher: { id: "test-pub", key: pubkey }, signature: sig }),
     );
@@ -167,9 +165,7 @@ describe("parseExtensionManifestJson — updateChannel + changelog (T2 PR 3)", (
   });
 
   test("normalizes changelog to NFC", () => {
-    // 'café' with the 'é' as combining sequence (e + U+0301)
     const decomposed = "café";
-    // 'café' with the precomposed 'é' (U+00E9)
     const composed = "café";
     expect(decomposed).not.toBe(composed);
     const m = parseExtensionManifestJson(minimalWithExtras({ changelog: decomposed }));

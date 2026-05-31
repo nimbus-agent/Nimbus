@@ -1,13 +1,3 @@
-/**
- * V25 migration — `api_endpoint` shadow table for OpenAPI / AsyncAPI spec
- * indexer (Phase 5 Wave A PR 1). One row per indexed endpoint, keyed by the
- * unified `item.id`. Service-that-owns-the-endpoint is `service_name`;
- * `item.service` is always `"openapi"` for these rows.
- *
- * Append-only and additive — no backfill needed; existing rows in `item`
- * are unaffected.
- */
-
 export const API_ENDPOINT_V25_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS api_endpoint (
   id            TEXT PRIMARY KEY,

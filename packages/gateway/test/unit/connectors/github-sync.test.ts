@@ -10,9 +10,6 @@ import {
 const ENSURE_MCP = { ensureGithubMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-ghub1:";
 
-// GitHub endpoints — `/user` is a literal string and `/users/{login}/events` is
-// a regex because the login segment varies. Both are anchored so a stray path
-// mismatch in production fails fast.
 const USER_URL = "https://api.github.com/user";
 const EVENTS_RE = /^https:\/\/api\.github\.com\/users\/[^/]+\/events\?per_page=100$/;
 
@@ -25,12 +22,6 @@ function decodeCursor<T>(cursor: string): T {
   return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
 }
 
-/**
- * Run a callback against a fresh fixture that does NOT inherit the
- * default vault-seeded credentials from `beforeEach`. Mirrors the
- * bitbucket / discord test patterns — used by credential-short-circuit
- * tests so each can stage its own vault state without leakage.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -48,8 +39,6 @@ let fixture: ConnectorSyncFixture;
 beforeEach(async () => {
   fixture = createConnectorSyncFixture();
   fixture.fetchMock.install();
-  // Seed the github PAT so default cases reach the fetch path. Use a
-  // stub-style value that avoids the gitleaks all-caps trigger patterns.
   await fixture.vault.set("github.pat", "github-stub-pat");
 });
 
@@ -90,12 +79,6 @@ describe("github-sync — credential short-circuits", () => {
 });
 
 describe("github-sync — cursor decode failures", () => {
-  /**
-   * For each malformed cursor case, the production code falls back to
-   * `login = null`, which forces a `/user` lookup before the events fetch.
-   * Stage the canonical happy-path pair so each test reaches the events
-   * call and confirms the fallback path actually ran.
-   */
   function stageHappyPath(): void {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
@@ -158,17 +141,12 @@ describe("github-sync — cursor decode failures", () => {
   });
 
   test("cursor missing login (legacy shape) re-resolves via /user", async () => {
-    // A legacy cursor with only an etag and no login → decodeCursor returns
-    // `{ etag: "<legacy>", login: null }`. Production then drops the cached
-    // etag (it belonged to /user, not /users/{login}/events) and refetches.
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
       encodeCursor({ etag: '"legacy"' }),
     );
     expect(res.hasMore).toBe(false);
-    // /user must be called; the legacy etag must NOT have been sent as
-    // If-None-Match on either request.
     expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
     expect(fixture.fetchMock.calls[1].url).toMatch(EVENTS_RE);
     expect(fixture.fetchMock.calls[1].headers["if-none-match"]).toBeUndefined();
@@ -203,8 +181,6 @@ describe("github-sync — HTTP request paths", () => {
     expect(first.cursor).not.toBeNull();
     if (first.cursor === null) throw new Error("expected cursor after first sync");
 
-    // Second sync — login is cached, so only the events call should fire,
-    // and it must carry If-None-Match: "first".
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"second"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), first.cursor);
 
@@ -219,9 +195,6 @@ describe("github-sync — HTTP request paths", () => {
     const first = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     if (first.cursor === null) throw new Error("expected cursor after first sync");
 
-    // 304 — body intentionally empty; production code re-encodes the same
-    // etag from the cursor (NOT the 304 response's etag header) so the
-    // round-trip is idempotent.
     fixture.fetchMock.respondWithText("GET", EVENTS_RE, "", { status: 304 });
     const second = await createGithubSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
@@ -361,7 +334,6 @@ describe("github-sync — login resolution", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e2"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), first.cursor);
 
-    // Only one /user call total (from the first sync).
     const userCalls = fixture.fetchMock.calls.filter((c) => c.url === USER_URL);
     expect(userCalls).toHaveLength(1);
     const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE.test(c.url));
@@ -464,7 +436,6 @@ describe("github-sync — event filtering", () => {
       { headers: { etag: '"e3"' } },
     );
     const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Only the well-formed PR survives.
     expect(res.itemsUpserted).toBe(1);
     const rows = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -525,7 +496,6 @@ describe("github-sync — event filtering", () => {
       { headers: { etag: '"e6"' } },
     );
     const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Only e7 (the genuine issue) survives.
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
       .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'github'")
@@ -539,27 +509,21 @@ describe("github-sync — event filtering", () => {
       "GET",
       EVENTS_RE,
       [
-        // No repo at all
         { id: "x1", type: "PullRequestEvent", payload: { pull_request: { number: 1 } } },
-        // Repo exists but no full_name / name
         {
           id: "x2",
           type: "IssuesEvent",
           repo: {},
           payload: { issue: { number: 2 } },
         },
-        // Empty full_name
         {
           id: "x3",
           type: "PullRequestEvent",
           repo: { full_name: "" },
           payload: { pull_request: { number: 3 } },
         },
-        // Payload missing entirely
         { id: "x4", type: "PullRequestEvent", repo: { full_name: "acme/app" } },
-        // Non-record entry
         "garbage",
-        // Real event that survives
         {
           id: "x5",
           type: "PullRequestEvent",
@@ -612,13 +576,13 @@ describe("github-sync — item indexing", () => {
           id: "e10",
           type: "PullRequestEvent",
           repo: { full_name: "acme/app" },
-          payload: { pull_request: { number: 7 /* no title */ } },
+          payload: { pull_request: { number: 7 } },
         },
         {
           id: "e11",
           type: "IssuesEvent",
           repo: { full_name: "acme/app" },
-          payload: { issue: { number: 8 /* no title */ } },
+          payload: { issue: { number: 8 } },
         },
       ],
       { headers: { etag: '"t1"' } },

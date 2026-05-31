@@ -14,8 +14,6 @@ import { insertPerson } from "../people/person-store.ts";
 import { createNimbusEngineAgent } from "./agent.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 
-// --- Fixtures ------------------------------------------------------------
-
 type ToolExecute = (input: unknown, ctx?: unknown) => Promise<string>;
 type ToolMap = Record<string, { execute: ToolExecute }>;
 type AgentWithListTools = { listTools: () => Promise<ToolMap> };
@@ -75,9 +73,6 @@ function freshIndex(): { db: Database; localIndex: LocalIndex } {
   return ctx;
 }
 
-// Track which inner tools were called and what input they received, when we
-// want to verify clipping/clamping decisions delegated to `searchRankedAsync`
-// etc. The simplest pattern: monkey-patch the LocalIndex instance method.
 interface SearchCall {
   query: { service?: string; itemType?: string; name?: string; limit?: number };
   options: { semantic?: boolean; contextChunks?: number } | undefined;
@@ -128,8 +123,6 @@ function seedItem(
   });
 }
 
-// --- Constructor / instructions (carried forward) ------------------------
-
 describe("createNimbusEngineAgent — construction", () => {
   test("constructs Mastra + Agent with read-only tools", () => {
     const { localIndex } = freshIndex();
@@ -172,8 +165,6 @@ describe("createNimbusEngineAgent — construction", () => {
   });
 });
 
-// --- toMastraModelId branches --------------------------------------------
-
 describe("toMastraModelId (via agentModel)", () => {
   test("already-prefixed id passes through", () => {
     const { localIndex } = freshIndex();
@@ -208,8 +199,6 @@ describe("toMastraModelId (via agentModel)", () => {
   });
 });
 
-// --- searchLocalIndex ----------------------------------------------------
-
 describe("searchLocalIndex", () => {
   test("empty input returns a context window when index is empty", async () => {
     const { localIndex } = freshIndex();
@@ -241,13 +230,10 @@ describe("searchLocalIndex", () => {
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "searchLocalIndex");
-    // null
     const e1 = parseEnvelope(await tool.execute(null));
     expect((e1.payload as { itemsInWindow: number }).itemsInWindow).toBe(0);
-    // number
     const e2 = parseEnvelope(await tool.execute(42));
     expect((e2.payload as { itemsInWindow: number }).itemsInWindow).toBe(0);
-    // array
     const e3 = parseEnvelope(await tool.execute([1, 2, 3]));
     expect((e3.payload as { itemsInWindow: number }).itemsInWindow).toBe(0);
   });
@@ -361,7 +347,6 @@ describe("searchLocalIndex", () => {
 
   test("single-service scoped query surfaces connectorHealthCaveat for unhealthy connector", async () => {
     const { db, localIndex } = freshIndex();
-    // Mark "github" as rate_limited
     transitionHealth(db, "github", {
       type: "rate_limited",
       retryAfter: new Date(Date.now() + 60_000),
@@ -380,10 +365,8 @@ describe("searchLocalIndex", () => {
 
   test("multi-service window yields connectorHealthCaveats array", async () => {
     const { db, localIndex } = freshIndex();
-    // Seed two items so the window has services to inspect
     seedItem(db, { service: "github", externalId: "g1", title: "alpha repo" });
     seedItem(db, { service: "slack", externalId: "s1", title: "alpha thread" });
-    // Mark both unhealthy
     transitionHealth(db, "github", { type: "unauthenticated" });
     transitionHealth(db, "slack", {
       type: "rate_limited",
@@ -400,8 +383,6 @@ describe("searchLocalIndex", () => {
     expect((p.connectorHealthCaveats ?? []).length).toBe(2);
   });
 });
-
-// --- fetchMoreIndexResults ----------------------------------------------
 
 describe("fetchMoreIndexResults", () => {
   test("missing service returns error envelope", async () => {
@@ -470,7 +451,6 @@ describe("fetchMoreIndexResults", () => {
     expect(p.indexedType).toBe("pr");
     expect(p.items.length).toBe(2);
 
-    // limit = 0 → 1
     const env2 = parseEnvelope(
       await tool.execute({
         service: "github",
@@ -495,8 +475,6 @@ describe("fetchMoreIndexResults", () => {
     expect(p.connectorHealthCaveat).toContain("github");
   });
 });
-
-// --- traverseGraph -------------------------------------------------------
 
 describe("traverseGraph", () => {
   test("missing entityId returns error envelope", async () => {
@@ -524,7 +502,6 @@ describe("traverseGraph", () => {
 
   test("valid call delegates to localIndex.traverseGraph; clamps depth and accepts relationTypes", async () => {
     const { localIndex } = freshIndex();
-    // Spy on traverseGraph to verify clamps/passthrough.
     const calls: Array<{ ref: string; opts: { depth?: number; relationTypes?: string[] } }> = [];
     const orig = localIndex.traverseGraph.bind(localIndex);
     (
@@ -542,13 +519,11 @@ describe("traverseGraph", () => {
         agentModel: "openai/gpt-4o-mini",
       });
       const tool = await getTool(agent, "traverseGraph");
-      // High depth → 8; relationTypes array passes through clipped.
       await tool.execute({
         entityId: "github:foo/bar#1",
         depth: 99,
         relationTypes: ["authored", "linked"],
       });
-      // Negative depth → 0; non-array relationTypes ignored.
       await tool.execute({
         entityId: "github:foo/bar#1",
         depth: -1,
@@ -563,8 +538,6 @@ describe("traverseGraph", () => {
     }
   });
 });
-
-// --- resolvePerson -------------------------------------------------------
 
 describe("resolvePerson", () => {
   test("empty query returns error envelope", async () => {
@@ -625,8 +598,6 @@ describe("resolvePerson", () => {
   });
 });
 
-// --- listConnectors ------------------------------------------------------
-
 describe("listConnectors", () => {
   test("empty sync_state returns the static fallback (filesystem + catalog)", async () => {
     const { localIndex } = freshIndex();
@@ -639,16 +610,13 @@ describe("listConnectors", () => {
     const p = env.payload as { connectors: string[] };
     expect(Array.isArray(p.connectors)).toBe(true);
     expect(p.connectors).toContain("filesystem");
-    // Catalog includes well-known connectors
     expect(p.connectors).toContain("github");
   });
 
   test("rows in sync_state are merged with filesystem; empty connector_id filtered out", async () => {
     const { db, localIndex } = freshIndex();
-    // Insert known + empty rows directly via existing test pattern.
     localIndex.recordSync("custom-extension", "tok");
     localIndex.recordSync("github", "tok2");
-    // Force-insert an empty connector_id row to confirm the filter
     db.run(
       "INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token) VALUES ('', NULL, NULL)",
     );
@@ -671,19 +639,15 @@ describe("listConnectors", () => {
       localIndex,
       agentModel: "openai/gpt-4o-mini",
     });
-    // Close the DB so the inner db.query throws.
     db.close();
     const tool = await getTool(agent, "listConnectors");
     const env = parseEnvelope(await tool.execute({}));
     const p = env.payload as { connectors: string[] };
     expect(p.connectors).toContain("filesystem");
     expect(p.connectors).toContain("github");
-    // Prevent afterEach from closing the already-closed handle.
     localIndexHandle = undefined;
   });
 });
-
-// --- getAuditLog ---------------------------------------------------------
 
 describe("getAuditLog", () => {
   test("non-object input uses default limit and returns entries", async () => {
@@ -722,10 +686,8 @@ describe("getAuditLog", () => {
       agentModel: "openai/gpt-4o-mini",
     });
     const tool = await getTool(agent, "getAuditLog");
-    // High limit doesn't break.
     const envHigh = parseEnvelope(await tool.execute({ limit: 9999 }));
     expect((envHigh.payload as { entries: unknown[] }).entries.length).toBe(3);
-    // Low limit clamps to 1.
     const envLow = parseEnvelope(await tool.execute({ limit: 0 }));
     expect((envLow.payload as { entries: unknown[] }).entries.length).toBe(1);
   });
@@ -759,7 +721,6 @@ describe("getAuditLog", () => {
     appendAuditEntry(db, {
       actionType: "test.bad",
       hitlStatus: "not_required",
-      // Bare string, not valid JSON object.
       actionJson: "not-json-at-all",
       timestamp: Date.now(),
     });
@@ -773,8 +734,6 @@ describe("getAuditLog", () => {
     expect(p.entries[0]?.actionJson).toContain("not-json-at-all");
   });
 });
-
-// --- session memory tools ------------------------------------------------
 
 function fakeMemoryStore(): SessionMemoryStore {
   const chunks: SessionChunk[] = [];
@@ -961,7 +920,6 @@ describe("session-memory tools", () => {
       sessionMemoryStore: store,
     });
     const tool = await getTool(agent, "appendSessionMemory");
-    // No context-set sessionId, but explicit in input.
     const env = parseEnvelope(
       await tool.execute({ sessionId: "explicit-sess", role: "tool", text: "note" }),
     );
@@ -969,8 +927,6 @@ describe("session-memory tools", () => {
     expect(appended[0]?.sessionId).toBe("explicit-sess");
   });
 });
-
-// --- wrapToolForLlm audit-write paths ------------------------------------
 
 describe("wrapToolForLlm (auditDb branches)", () => {
   test("writes a tool_call_log row with status='ok' on success", async () => {
@@ -1003,7 +959,6 @@ describe("wrapToolForLlm (auditDb branches)", () => {
 
   test("writes a tool_call_log row with status='error' on throw, then re-throws", async () => {
     const { db, localIndex } = freshIndex();
-    // Force searchRankedAsync to throw inside the wrapper.
     (
       localIndex as unknown as {
         searchRankedAsync: () => Promise<never>;

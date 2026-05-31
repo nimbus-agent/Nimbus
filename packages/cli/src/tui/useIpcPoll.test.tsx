@@ -69,7 +69,6 @@ describe("useIpcPoll", () => {
     );
     await new Promise((r) => setTimeout(r, 160));
     unmount();
-    // Immediate + ~3 interval fires in 160 ms with 50 ms interval.
     expect(stub.calls.length).toBeGreaterThanOrEqual(3);
   });
 

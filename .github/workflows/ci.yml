@@ -30,9 +30,24 @@ jobs:
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
+      # gateway-touched / cli-touched gate the per-package cross-platform
+      # matrix entries (see pr-quality-cross-platform). True when any path
+      # *could* affect that package's tests — including shared deps (sdk,
+      # client, mcp-connectors), root config (bun.lock, package.json,
+      # tsconfig, biome), and scripts/. CLI imports from sdk/client/
+      # mcp-connectors, so any change there triggers both. The result is
+      # that a pure cli-src PR skips the Windows-gateway cross-platform
+      # leg (the slowest in the matrix) and vice versa.
+      gateway-touched: ${{ steps.changes.outputs.gateway-touched }}
+      cli-touched: ${{ steps.changes.outputs.cli-touched }}
+      # JSON-encoded matrix `include:` list for pr-quality-cross-platform.
+      # Built from gateway-touched / cli-touched so each matrix entry is
+      # only emitted when its package was touched. Empty list ("[]") on a
+      # PR that affects neither package — the job is skipped wholesale.
+      cross-platform-matrix: ${{ steps.changes.outputs.cross-platform-matrix }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -55,6 +70,35 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
           echo "ui=$(echo "$CHANGED" | grep -qE '^packages/(ui|sdk)/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          # gateway-touched / cli-touched use "exclude" logic — true unless
+          # every changed file is exclusively under a path that can't affect
+          # that package's tests. This is more robust than enumerating the
+          # positive set: workflow changes, root config, scripts, and shared
+          # deps (sdk, client, mcp-connectors) all correctly trigger both.
+          GATEWAY_EXCLUDE='^(packages/(cli|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          CLI_EXCLUDE='^(packages/(gateway|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          if [[ -z "$CHANGED" ]]; then
+            GW=true
+            CLI=true
+          else
+            echo "$CHANGED" | grep -qvE "$GATEWAY_EXCLUDE" && GW=true || GW=false
+            echo "$CHANGED" | grep -qvE "$CLI_EXCLUDE" && CLI=true || CLI=false
+          fi
+          echo "gateway-touched=$GW" >> "$GITHUB_OUTPUT"
+          echo "cli-touched=$CLI" >> "$GITHUB_OUTPUT"
+
+          # Cross-platform matrix: always emit all 4 entries. Branch
+          # protection rulesets require the expanded check names
+          # (`PR quality — Cross-platform (cli, macos-15)` etc.); a
+          # per-package skip would post the un-expanded template name and
+          # leave the 4 required checks "Expected — Waiting for status to
+          # be reported" forever. The `code-changed` gate already
+          # short-circuits docs-only PRs, so per-package gating saves
+          # nothing here.
+          MATRIX='[{"os":"macos-15","pkg":"gateway"},{"os":"windows-2025","pkg":"gateway"},{"os":"macos-15","pkg":"cli"},{"os":"windows-2025","pkg":"cli"}]'
+          echo "cross-platform-matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
           # "code might have changed" so we never skip the test suite on an
           # unknown change set.
@@ -106,7 +150,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -125,14 +169,29 @@ jobs:
   # (BUG-009 cross-OS path-shape mismatch was the motivating example)
   # surface before the merge button is pressed. Scope is intentionally narrow:
   # no integration, no e2e, no coverage upload — just `bun test` on source.
+  #
+  # Gateway and CLI run as SEPARATE matrix entries so they execute in parallel,
+  # not back-to-back in one runner. This halves the critical-path wall time on
+  # Windows (the slowest leg of the PR matrix). The per-package isolation also
+  # remains a hard requirement: the CLI suite's mock harness
+  # (`packages/cli/test/helpers/cli-mocks.ts`) installs process-global
+  # `mock.module` registrations and assumes per-package process isolation —
+  # running gateway + CLI tests in one process let a gateway test's global
+  # `mock.restore()` corrupt CLI repl tests on macOS. Separate matrix entries
+  # restore that isolation by construction.
   pr-quality-cross-platform:
-    name: PR quality — Cross-platform (${{ matrix.os }})
+    name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
+    # The filter always emits the full 4-entry matrix on `pull_request`
+    # events (see ci.yml#Detect-changed-paths). The `code-changed` gate
+    # above already short-circuits docs-only PRs at the filter, so this
+    # job just needs to confirm the PR event + non-doc trigger before
+    # expanding the matrix.
     if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
     needs: filter
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2025]
+        include: ${{ fromJson(needs.filter.outputs.cross-platform-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -140,7 +199,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -167,13 +226,34 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
+      # Build + typecheck run on the gateway matrix entry only. Typecheck is
+      # monorepo-wide and identical between entries, so doing it twice per OS
+      # would be pure runner-minute waste with no signal gain — host-specific TS
+      # quirks still surface on the gateway entry. Client build is only needed
+      # for vscode-extension typecheck, which only runs alongside typecheck.
       - name: Build @nimbus-dev/client (for vscode-extension typecheck)
+        if: matrix.pkg == 'gateway'
         run: cd packages/client && bun run build
 
       - name: Typecheck (catches host-specific TS quirks)
-        run: bun run typecheck
+        if: matrix.pkg == 'gateway'
+        shell: bash
+        # @nimbus/docs is excluded here: it has no host-specific TS surface and
+        # its astro-sync content-type generation flakes a 60s Vite timeout on slow
+        # macOS runners. Full workspace typecheck (incl. docs) still runs once on
+        # Ubuntu in _test-suite.yml. Retry-once mirrors the unit-tests step below.
+        run: |
+          set +e
+          for attempt in 1 2; do
+            bun run typecheck:no-docs
+            code=$?
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            if [ "$attempt" -eq 2 ]; then echo "Both attempts failed (exit $code)"; exit "$code"; fi
+            echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
+            sleep 5
+          done
 
-      - name: Gateway + CLI unit tests (retry once on slow runners)
+      - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
         shell: bash
         # Retry-once mirrors the macOS/Windows pattern in `_test-suite.yml`. Two
         # tests in `packages/gateway/src/perf/` and `packages/gateway/src/platform/`
@@ -184,7 +264,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun test packages/gateway/src packages/cli/src
+            bun test "packages/${{ matrix.pkg }}/src"
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0
@@ -213,7 +293,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -260,6 +340,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       contents: read
+      checks: write
       id-token: write
 
   # Rust/Tauri checks — all 3 OSes, runs in parallel with ci-ts
@@ -277,7 +358,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -315,7 +396,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -383,7 +464,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 

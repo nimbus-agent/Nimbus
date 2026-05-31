@@ -9,13 +9,9 @@ export interface PersistedModelRow {
 export interface ModelSlice {
   readonly installedModels: ReadonlyArray<PersistedModelRow>;
   readonly activePullId: string | null;
-  /** Transient — latest `llm.getRouterStatus` snapshot. Not persisted. */
   readonly routerStatus: RouterStatusResult | null;
-  /** Transient — keyed by `pullId`. Not persisted. */
   readonly pullProgress: Readonly<Record<string, LlmPullProgressPayload>>;
-  /** Transient — `true` when no `llm.pullProgress` arrived in the last 15 s. */
   readonly pullStalled: boolean;
-  /** Transient — keyed by `${provider}:${modelName}`; patched by load/unload notifications. */
   readonly loadedKeys: Readonly<Record<string, boolean>>;
   setInstalledModels: (list: ReadonlyArray<PersistedModelRow>) => void;
   setActivePullId: (id: string | null) => void;

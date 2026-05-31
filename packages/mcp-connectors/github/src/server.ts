@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-github — GitHub REST MCP server.
- * Personal access token is injected as GITHUB_PAT (never logged).
- * Mutating repo operations require Gateway HITL (`repo.pr.merge`, `repo.pr.close`, …).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

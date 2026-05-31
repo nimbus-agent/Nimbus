@@ -1,27 +1,24 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { stripAffixChars } from "../util/strip-affixes.ts";
 
-/** Inputs for one spec-file inference. */
 export type ServiceNameInput = {
-  /** Absolute path of the spec file. */
   specPath: string;
-  /** `info.title` from the parsed spec, or `""` if missing/blank. */
   infoTitle: string;
-  /** Absolute path of the [[filesystem.roots]] root containing this spec. */
   rootPath: string;
 };
 
 const SLUG_DROP = /[^a-z0-9]+/g;
 
 function slugify(s: string): string {
-  return s
+  const collapsed = s
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim()
-    .replace(SLUG_DROP, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(SLUG_DROP, "-");
+  return stripAffixChars(collapsed, "-");
 }
 
 function readOverride(specPath: string): string | undefined {

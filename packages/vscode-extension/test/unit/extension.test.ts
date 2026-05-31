@@ -1,19 +1,3 @@
-/**
- * Activation wiring tests for `activateWithDeps`. These exercise the
- * shim-based DI entry point so the real `vscode` module never loads —
- * the same approach the rest of the package uses for unit tests.
- *
- * What this covers:
- *   1. activate() registers the expected commands and keeps disposables
- *      pushed to ctx.subscriptions.
- *   2. nimbus.ask invokes ChatController.start with the user's input.
- *   3. nimbus.startGateway calls the auto-starter and reconnects on success.
- *   4. nimbus.openLogs surfaces the output channel.
- *   5. Connection state changes paint the status bar (connected → disconnected).
- *   6. A configuration change re-renders the status bar.
- *   7. Disposing every subscription tears everything down without throwing.
- */
-
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,9 +14,6 @@ import type {
   WorkspaceApi,
 } from "../../src/vscode-shim.js";
 
-// ---------------------------------------------------------------------------
-// Test fixtures
-
 class FakeMemento implements MementoLike {
   private readonly store = new Map<string, unknown>();
   get<T>(key: string, defaultValue?: T): T | undefined {
@@ -47,11 +28,6 @@ class FakeMemento implements MementoLike {
 type ActivateDeps = Parameters<typeof activateWithDeps>[1];
 type ClientLike = Awaited<ReturnType<NonNullable<ActivateDeps["openClient"]>>>;
 
-/**
- * Build a stub `NimbusClient`-shaped object accepted by `ActivateDeps.openClient`.
- * Tests pass `overrides` to swap a single method (typically `askStream`) without
- * having to repeat the full surface.
- */
 function makeFakeClient(overrides: Partial<ClientLike> = {}): () => Promise<ClientLike> {
   const base: ClientLike = {
     close: async () => undefined,
@@ -233,9 +209,6 @@ describe("activateWithDeps", () => {
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
     }
-    // We expect: 1 output channel + 1 connection dispose + 1 status item + 1
-    // status controller + 1 stateSub + 1 hitl subscription wrapper +
-    // 1 onDidChangeConfiguration + 10 commands = 17 subscriptions.
     expect(f.ctx.subscriptions.length).toBeGreaterThanOrEqual(17);
   });
 
@@ -318,10 +291,6 @@ describe("activateWithDeps", () => {
   });
 
   test("nimbus.startGateway exercises the auto-starter without throwing", async () => {
-    // The auto-starter spawns `nimbus start`; in the test environment the
-    // command is unlikely to exist, so we expect either timeout or
-    // spawn-error. We only assert the handler resolves cleanly and the
-    // extension's subscriptions stay intact.
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();

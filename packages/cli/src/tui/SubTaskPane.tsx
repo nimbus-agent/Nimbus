@@ -8,7 +8,7 @@ interface SubTaskProgressPayload {
   subTaskId: string;
   name: string;
   status: "pending" | "running" | "completed" | "failed" | "hitl_paused" | "skipped";
-  progress: number; // 0..1
+  progress: number;
 }
 
 function isSubTaskPayload(value: unknown): value is SubTaskProgressPayload {
@@ -60,14 +60,9 @@ interface SubTaskPaneProps {
 export function SubTaskPane({ clearKey }: SubTaskPaneProps): React.JSX.Element {
   const { client } = useIpc();
 
-  // Use a ref as the mutable backing store so the notification handler always
-  // has the latest map without stale closures. State only drives re-renders.
   const mapRef = React.useRef<Map<string, SubTaskProgressPayload>>(new Map());
   const [, forceUpdate] = React.useReducer((n: number) => n + 1, 0);
 
-  // useLayoutEffect fires synchronously after the DOM commit, ensuring the
-  // handler is registered before any test code emits notifications after render().
-  // Also resets the map when clearKey changes (a new query was submitted).
   // biome-ignore lint/correctness/useExhaustiveDependencies: clearKey is a prop value used to trigger reset; mapRef mutation is intentional
   React.useLayoutEffect(() => {
     mapRef.current = new Map();

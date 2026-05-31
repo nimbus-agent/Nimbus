@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-circleci — CircleCI API v2 MCP server.
- * Mutations require Gateway HITL: `circleci.pipeline.trigger`, `circleci.job.cancel`.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -85,7 +80,7 @@ reg(
 reg(
   "circleci_pipeline_get",
   "Get a pipeline by UUID.",
-  z.object({ pipelineId: z.string().uuid() }),
+  z.object({ pipelineId: z.uuid() }),
   async (parsed) => {
     const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}`;
     return circleciAuthorizedJsonResult(path);
@@ -95,7 +90,7 @@ reg(
 reg(
   "circleci_workflow_list",
   "List workflows for a pipeline.",
-  z.object({ pipelineId: z.string().uuid() }),
+  z.object({ pipelineId: z.uuid() }),
   async (parsed) => {
     const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}/workflow`;
     return circleciAuthorizedJsonResult(path);
@@ -105,7 +100,7 @@ reg(
 reg(
   "circleci_job_list",
   "List jobs for a workflow.",
-  z.object({ workflowId: z.string().uuid() }),
+  z.object({ workflowId: z.uuid() }),
   async (parsed) => {
     const path = `/workflow/${encodeURIComponent(parsed.workflowId)}/job`;
     return circleciAuthorizedJsonResult(path);

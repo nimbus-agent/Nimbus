@@ -1,21 +1,3 @@
-/**
- * Unit tests for `LazyConnectorMesh` — the lazy MCP mesh that spawns
- * per-connector child processes. The class is constructed against a real
- * `MockVault` + a tmp-dir-backed `PlatformPaths`; tests exercise:
- *
- *   - the constructor (filesystem MCPClient wiring, spawn context)
- *   - the simple getters (`getToolsEpoch`)
- *   - every `ensure<Service>Running` delegator (no vault keys present →
- *     each delegate is a no-op, but the wrapper line is still covered)
- *   - `disconnect()` with no active slots
- *   - `stopExtensionClient` against an unknown extension id (no-op)
- *
- * We intentionally do NOT exercise actual MCP child spawning here — that
- * path requires real `bunx` resolution and would launch real subprocesses.
- * Slot-state plumbing is covered by `lazy-mesh.test.ts` (LazyDrainTracker
- * + mergeToolMapsOrThrow). This file targets the wiring boilerplate.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
@@ -97,9 +79,6 @@ describe("createLazyConnectorMesh", () => {
 });
 
 describe("ensure<Service>Running delegators (no vault keys → all no-op)", () => {
-  // Each ensure*Running wraps a free `ensureXxxMcp` function. With no vault
-  // keys + no MCP spawn path triggered, each one returns without effect.
-  // The point here is line coverage of the delegator wrapper itself.
   beforeEach(() => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault());
   });
@@ -110,8 +89,6 @@ describe("ensure<Service>Running delegators (no vault keys → all no-op)", () =
   test("ensureGoogleDriveRunning", async () => {
     await mesh!.ensureGoogleDriveRunning();
   });
-  // ensureMicrosoftBundleRunning spawns onedrive/outlook/teams unconditionally
-  // — skip in unit tests; covered by E2E.
   test("ensureGithubRunning", async () => {
     await mesh!.ensureGithubRunning();
   });
@@ -161,7 +138,6 @@ describe("user-mcp + extension lifecycle (no rows)", () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
       listUserMcpConnectors: () => [],
     });
-    // No connectors → returns silently.
     await mesh.ensureUserMcpRunning("nonexistent");
   });
 
@@ -175,21 +151,10 @@ describe("disconnect with no active slots", () => {
   test("disconnect after construction tears down filesystem MCP cleanly", async () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault());
     await mesh.disconnect();
-    // After disconnect, calling again should also not throw (lazySlots is
-    // empty so the loop is empty and filesystem.disconnect catches errors).
     await mesh.disconnect();
-    // Mark as already disconnected so afterEach doesn't re-disconnect.
     mesh = undefined;
   });
 });
-
-// ─── Fakes for exercising slot state-machine + listTools envelope ──────────
-//
-// The collection / wrap / listTools paths normally consult the real
-// `@mastra/mcp` MCPClient (which spawns a `bunx` child). Below we swap in a
-// fake client that implements only the `listTools()` + `disconnect()` shape
-// the mesh exercises, so we can hit the dispatcher + the I11 envelope path
-// (~line 397) without spawning real subprocesses.
 
 interface FakeMcpClient {
   listTools(): Promise<Record<string, { execute?: (i: unknown, c?: unknown) => Promise<unknown> }>>;
@@ -229,12 +194,6 @@ function makeFakeMcpClient(opts: {
   return fake as FakeMcpClient & { disconnectCalls: number; listToolsCalls: number };
 }
 
-/**
- * Cast helper for poking the private `filesystem` field + the `lazySlots`
- * map. The lazy mesh exposes these only as `private`, but for unit tests
- * we deliberately swap them to fake `MCPClient` shapes so the dispatcher
- * + envelope wiring can be exercised without subprocess spawning.
- */
 function asPrivate(m: LazyConnectorMesh): {
   filesystem: { listTools(): Promise<unknown>; disconnect(): Promise<void> };
   lazySlots: Map<string, LazyMcpSlot>;
@@ -244,8 +203,6 @@ function asPrivate(m: LazyConnectorMesh): {
     lazySlots: Map<string, LazyMcpSlot>;
   };
 }
-
-// ─── listToolsForDispatcher + listTools (I11 envelope + V29 audit) ─────────
 
 describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
   test("with only filesystem tools → returns wrapped fs tools, no other entries", async () => {
@@ -262,9 +219,6 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
     const merged = await mesh.listToolsForDispatcher();
 
     expect(Object.keys(merged).sort()).toEqual(["fs_read"]);
-    // Drain-counter wrap is present (slotForTool has no entry for fs_read
-    // since the filesystem slot is not in lazySlots — wrap is skipped, the
-    // original execute survives), but the merged map is the raw shape.
     const fsRead = merged["fs_read"];
     if (fsRead?.execute === undefined) throw new Error("fs_read missing");
     const result = (await fsRead.execute({}, undefined)) as { ok: boolean };
@@ -280,7 +234,6 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
     });
     asPrivate(mesh).filesystem = fsClient;
 
-    // Inject a fake github slot with a drain tracker we can observe.
     const ghDrain = new LazyDrainTracker();
     const ghClient = makeFakeMcpClient({
       tools: {
@@ -299,15 +252,10 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
 
     expect(Object.keys(merged).sort()).toEqual(["fs_list", "gh_repos"]);
 
-    // The github tool flows through wrapMergedToolsWithRefcount (because
-    // its key appears in slotForTool). Calling it must bump+drop the drain.
     const ghReposExec = merged["gh_repos"]?.execute;
     if (ghReposExec === undefined) throw new Error("gh_repos missing");
     expect(ghDrain.count).toBe(0);
     const pending = ghReposExec({}, undefined);
-    // While the call is in flight, drain.count is 1 (bump happened
-    // synchronously). The Promise resolves after the original returns, at
-    // which point drop() runs and count returns to 0.
     expect(ghDrain.count).toBe(1);
     const out = (await pending) as { repos: string[] };
     expect(out.repos).toEqual(["alpha", "beta"]);
@@ -315,11 +263,6 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
   });
 
   test("merges user-mcp slot tools when key starts with mesh:user: prefix", async () => {
-    // ensureUserMcpConnectorsRunning tears down any user-prefix slot whose
-    // service id is not in the row list, so we keep the row list in sync
-    // with the slot we inject. We also stub ensureUserMcpClient by
-    // pre-registering an existing client so the inner call hits the
-    // early-return branch (no real subprocess construction).
     const rows = [
       {
         service_id: "mcp_custom",
@@ -353,9 +296,7 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
       tools: { fs_ok: { execute: async (): Promise<unknown> => "ok" } },
     });
 
-    // Slot whose client.listTools() throws — must not poison the merged map.
     const flakyClient = makeFakeMcpClient({ tools: {}, listToolsThrows: false });
-    // Second listTools (from buildSlotForToolMap) throws.
     let calls = 0;
     flakyClient.listTools = async (): Promise<
       Record<string, { execute?: (i: unknown, c?: unknown) => Promise<unknown> }>
@@ -393,13 +334,11 @@ describe("listTools wraps every result in the I11 envelope", () => {
 
     const envelope = (await exec({}, undefined)) as string;
 
-    // Structural assertion: must be the I11 envelope shape.
     expect(typeof envelope).toBe("string");
     expect(envelope.startsWith("<tool_output ")).toBe(true);
     expect(envelope.endsWith("</tool_output>")).toBe(true);
     expect(envelope).toContain('service="filesystem"');
     expect(envelope).toContain('tool="filesystem_read"');
-    // The JSON-stringified body must be embedded.
     expect(envelope).toContain('{"data":"hello world"}');
   });
 
@@ -419,9 +358,6 @@ describe("listTools wraps every result in the I11 envelope", () => {
     const exec = merged["filesystem_boom"]?.execute;
     if (exec === undefined) throw new Error("filesystem_boom missing");
 
-    // The wrapped execute always re-throws so the caller sees the original
-    // failure; the envelope is written to tool_call_log (when auditDb set)
-    // and discarded otherwise.
     await expect(exec({}, undefined)).rejects.toThrow(/kaboom/);
   });
 
@@ -443,7 +379,6 @@ describe("listTools wraps every result in the I11 envelope", () => {
       },
     });
 
-    // Run inside an agent-request context so sessionId is captured.
     await agentRequestContext.run({ sessionId: "session-xyz" }, async () => {
       const merged = await mesh!.listTools();
       const list = merged["github_pr_list"]?.execute;
@@ -484,8 +419,6 @@ describe("listTools wraps every result in the I11 envelope", () => {
   });
 });
 
-// ─── Slot state-machine: drain / disconnect / idle scheduling ──────────────
-
 describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
   test("scheduling then immediately stopping a slot drains 0-count cleanly", async () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), { inactivityMs: 50 });
@@ -496,10 +429,6 @@ describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
       drain: new LazyDrainTracker(),
     });
 
-    // Stop the slot directly via stopExtensionClient (which routes through
-    // stopLazyClient via stopUserMcpClient + the bare-key path). The slot
-    // is not under a user-mesh prefix or extension id we registered, so we
-    // also exercise stopLazyClient through disconnect() at the end.
     await mesh.disconnect();
     expect(fake.disconnectCalls).toBe(1);
   });
@@ -514,12 +443,9 @@ describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
       drain,
     });
 
-    // Simulate an in-flight tool call.
     drain.bump();
 
     const stopP = mesh.disconnect();
-    // The disconnect should be pending until we drop().
-    // Give the event loop a tick.
     await new Promise<void>((r) => setTimeout(r, 5));
     expect(fake.disconnectCalls).toBe(0);
 
@@ -537,7 +463,6 @@ describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
       drain: new LazyDrainTracker(),
     });
 
-    // Must not throw despite the underlying disconnect failure.
     await mesh.disconnect();
     expect(fake.disconnectCalls).toBe(1);
   });
@@ -552,8 +477,6 @@ describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
 
     expect(mesh.getToolsEpoch()).toBe(0);
     await mesh.disconnect();
-    // disconnect() iterates lazySlots, and stopLazyClient bumps the epoch
-    // whenever it tore down a non-undefined client.
     expect(mesh.getToolsEpoch()).toBeGreaterThanOrEqual(1);
   });
 
@@ -570,14 +493,10 @@ describe("scheduleLazyDisconnect + stopLazyClient drain semantics", () => {
     await mesh.stopExtensionClient(extId);
 
     expect(fake.disconnectCalls).toBe(1);
-    // The slot is removed after teardown (no idleTimer pending).
     expect(asPrivate(mesh).lazySlots.has(userMcpMeshKey(extId))).toBe(false);
-    // Mark mesh as already disconnected so afterEach does not re-disconnect.
     mesh = undefined;
   });
 });
-
-// ─── ensureUserMcpRunning happy path (uses real user-mcp module) ──────────
 
 describe("ensureUserMcpRunning constructs a slot when a matching row exists", () => {
   test("matching service_id → MCPClient is constructed and tools epoch bumps", async () => {
@@ -597,7 +516,6 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
     await mesh.ensureUserMcpRunning("mcp_unit_test");
     expect(mesh.getToolsEpoch()).toBe(epochBefore + 1);
 
-    // A slot was registered under the user-mesh key.
     expect(asPrivate(mesh).lazySlots.has(userMcpMeshKey("mcp_unit_test"))).toBe(true);
   });
 
@@ -616,7 +534,6 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
 
     const epochBefore = mesh.getToolsEpoch();
     await mesh.ensureUserMcpRunning("mcp_bad_args");
-    // No slot was ever populated (no setLazyClient call).
     expect(mesh.getToolsEpoch()).toBe(epochBefore);
   });
 });

@@ -1,16 +1,11 @@
 import { type Mock, spyOn } from "bun:test";
 
-/** A call captured by MockSpawn for assertions. */
 export type SpawnCall = {
-  /** Binary name, e.g. "aws". The first element of the cmd array. */
   readonly binary: string;
-  /** Arguments after the binary, in original order. */
   readonly argv: readonly string[];
-  /** Spawn-time env passed via `options.env`, frozen. Empty if no env was set. */
   readonly env: Readonly<Record<string, string>>;
 };
 
-/** Staged response for a spawn. */
 type Stub = {
   readonly binary: string;
   readonly argvMatch?: (argv: readonly string[]) => boolean;
@@ -25,39 +20,11 @@ type FakeSubprocess = {
 
 const ENCODER = new TextEncoder();
 
-/**
- * Test-only `Bun.spawn` shim. Stages canned subprocess results keyed by
- * (binary, optional argv-matcher) and records every call.
- *
- * Lives under test/helpers/ so it is NOT subject to the per-file coverage
- * floor — this is the testing tool, not production code.
- *
- * Usage:
- *
- *   const mock = new MockSpawn();
- *   mock.install();
- *   try {
- *     mock.respond("aws", { exitCode: 0, stdout: '{"Functions":[]}' });
- *     // ...run code that calls Bun.spawn(["aws", ...])...
- *     expect(mock.calls[0].binary).toBe("aws");
- *     expect(mock.calls[0].env["AWS_ACCESS_KEY_ID"]).toBe("aws-stub-akid");
- *   } finally {
- *     mock.restore();
- *   }
- */
 export class MockSpawn {
   readonly calls: SpawnCall[] = [];
   private readonly stubs: Stub[] = [];
   private spy: Mock<typeof Bun.spawn> | null = null;
 
-  /**
-   * Stage a subprocess result.
-   *
-   * @param binary First element of the cmd array (e.g. "aws").
-   * @param response exitCode (default 0), stdout (default ""), stderr (default "").
-   * @param opts.argvMatch optional predicate over the argv tail (everything after binary).
-   *                       More-specific matchers should be registered BEFORE catch-alls.
-   */
   respond(
     binary: string,
     response: { exitCode?: number; stdout?: string; stderr?: string },
@@ -74,14 +41,6 @@ export class MockSpawn {
     });
   }
 
-  /**
-   * Install the spawn shim. Uses `spyOn(Bun, "spawn")`, which manages its own
-   * restore stack — unlike MockFetch (which saves the original `globalThis.fetch`
-   * pointer directly). Do not install a second `MockSpawn` instance before the
-   * first is restored: the spy stack will unwind LIFO, not in instance order.
-   * Phase 2C's `beforeEach` / `afterEach` lifecycle keeps installations
-   * one-per-test, which is the supported usage.
-   */
   install(): void {
     if (this.spy !== null) {
       throw new Error("MockSpawn.install() called twice without restore()");

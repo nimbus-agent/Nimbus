@@ -9,7 +9,6 @@ import { DataRpcError, dispatchDataRpc } from "./data-rpc.ts";
 
 const testKdf = { t: 1, m: 1024, p: 1 } as const;
 
-// S2-F10 — register the test KDF profile so import-path tests succeed.
 let _restoreTestKdf: () => void;
 beforeAll(() => {
   _restoreTestKdf = _addTestKdfProfile({ ...testKdf });
@@ -22,8 +21,6 @@ function emptyCtx(): Parameters<typeof dispatchDataRpc>[2] {
   return { index: undefined, vault: undefined, platform: "linux", nimbusVersion: "0.0.0-test" };
 }
 
-/** Auto-approving stub executor that bypasses HITL for tests that just want
- *  to exercise the post-gate code path. */
 function approvingExecutor(): ToolExecutor {
   return {
     gate: async () => "proceed" as const,
@@ -203,7 +200,7 @@ describe("data.getDeletePreflight", () => {
       expect(v.itemCount).toBe(0);
       expect(v.embeddingCount).toBe(0);
       expect(typeof v.vaultKeyCount).toBe("number");
-      expect(v.vaultKeyCount).toBeGreaterThan(0); // github has github.pat
+      expect(v.vaultKeyCount).toBeGreaterThan(0);
     }
   });
 
@@ -285,7 +282,6 @@ describe("data.export emits progress notifications", () => {
 
 describe("data.import emits progress notifications", () => {
   test("emits importProgress and importCompleted", async () => {
-    // First create a bundle to import
     const exportDir = mkdtempSync(join(tmpdir(), "nimbus-rpc-imp-"));
     const bundlePath = join(exportDir, "bundle.tar.gz");
     await dispatchDataRpc(

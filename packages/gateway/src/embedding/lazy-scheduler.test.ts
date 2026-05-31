@@ -1,36 +1,13 @@
-/**
- * Coverage for the lazy embedding runtime fallback used when the Bun
- * embedding worker can't start. Tests two configurations:
- *
- *  1. `preloadedEmbedder` provided — no MiniLM load needed; covers the
- *     synchronous and happy-path branches without `mock.module`.
- *  2. `preloadedEmbedder` omitted — `mock.module` swaps `./model.ts`'s
- *     `createLocalEmbedder` for an in-test fake (or a throwing fake).
- *
- * All happy-path tests are gated on `sqlite-vec` availability via
- * `describe.skipIf(!VEC_AVAILABLE)`.
- */
-
 import { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import pino from "pino";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import { createLazyEmbeddingRuntime } from "./lazy-scheduler.ts";
 import type { Embedder } from "./types.ts";
-
-const MODEL_MOD = resolve(import.meta.dir, "model.ts");
-
-// Capture the real ./model.ts up-front so afterAll can re-mock with the
-// real exports — Bun's mock.module is not cleared by mock.restore(), so
-// without this our stub would leak into later test files.
-const realModelMod = await import(MODEL_MOD);
-afterAll(() => {
-  mock.module(MODEL_MOD, () => realModelMod);
-});
 
 function vecAvailable(): boolean {
   const d = new Database(":memory:");
@@ -193,7 +170,6 @@ describe("createLazyEmbeddingRuntime — ensurePipeline gate", () => {
         fakeEmbedder(),
       );
       expect(() => runtime.startBackgroundJobs()).not.toThrow();
-      // Calling twice exercises the `backfillStarted` short-circuit.
       expect(() => runtime.startBackgroundJobs()).not.toThrow();
       await new Promise((r) => setTimeout(r, 20));
     } finally {
@@ -218,8 +194,6 @@ describe.skipIf(!VEC_AVAILABLE)(
         const vec = await runtime.embedQuery("hello");
         expect(vec).toBeInstanceOf(Float32Array);
         expect(vec?.length).toBe(384);
-        // After the first call, the pipeline is cached — getEmbeddingModel
-        // now reflects the pipeline's tag.
         expect(runtime.getEmbeddingModel()).toBe("local:test");
         expect(runtime.getEmbeddingDims()).toBe(384);
       } finally {
@@ -272,7 +246,6 @@ describe.skipIf(!VEC_AVAILABLE)(
     test("embedQueryDual returns all-null when the embedder yields no vectors", async () => {
       const h = makeHarness({ migrateTo: 30 });
       try {
-        // Empty embedder: returns [] for any input.
         const emptyEmbedder: Embedder = {
           model: "empty",
           dims: 384,
@@ -381,7 +354,6 @@ describe.skipIf(!VEC_AVAILABLE)(
     test("startBackgroundJobs runs backfill once and ignores subsequent calls", async () => {
       const h = makeHarness({ migrateTo: 30 });
       try {
-        // Insert a couple of items so backfill has something to find.
         insertItem(h.db, "unit:bf-1");
         insertItem(h.db, "unit:bf-2");
         const runtime = createLazyEmbeddingRuntime(
@@ -392,7 +364,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           fakeEmbedder(),
         );
         runtime.startBackgroundJobs();
-        runtime.startBackgroundJobs(); // exercises `if (backfillStarted) return`
+        runtime.startBackgroundJobs();
         await new Promise((r) => setTimeout(r, 150));
         const chunks = h.db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as {
           c: number;
@@ -413,9 +385,7 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.toml,
           fakeEmbedder("seq:test", 384),
         );
-        // First sequential call: builds the pipeline.
         const v1 = await runtime.embedQuery("first");
-        // Second sequential call: must hit `if (pipeline !== null) return pipeline`.
         const v2 = await runtime.embedQuery("second");
         expect(v1).toBeInstanceOf(Float32Array);
         expect(v2).toBeInstanceOf(Float32Array);
@@ -443,18 +413,11 @@ describe.skipIf(!VEC_AVAILABLE)(
           h.toml,
           slowEmbedder,
         );
-        // Three concurrent calls — each one triggers ensurePipeline.
         await Promise.all([
           runtime.embedQuery("a"),
           runtime.embedQuery("b"),
           runtime.embedQuery("c"),
         ]);
-        // After the first `loading` promise resolves, subsequent calls reuse
-        // `pipeline`. The fake embedder fires once per query (3 times) but
-        // pipeline construction itself happens only once. We can't measure
-        // construction count directly without intrusive hooks; settle for
-        // confirming the embedder produced 3 vectors (one per query) without
-        // throwing — proves the cached pipeline was reused.
         expect(initCalls).toBe(3);
       } finally {
         h.cleanup();
@@ -466,25 +429,24 @@ describe.skipIf(!VEC_AVAILABLE)(
 describe.skipIf(!VEC_AVAILABLE)(
   "createLazyEmbeddingRuntime — createLocalEmbedder failure path",
   () => {
-    beforeEach(() => {
-      mock.restore();
-    });
-    afterEach(() => {
-      mock.restore();
-    });
+    async function throwingCreateEmbedder(): Promise<Embedder> {
+      throw new Error("synthetic createLocalEmbedder failure");
+    }
+    async function fromMockCreateEmbedder(): Promise<Embedder> {
+      return fakeEmbedder("loaded:from-mock", 384);
+    }
 
     test("returns null pipeline when createLocalEmbedder throws (no preloaded embedder)", async () => {
-      mock.module(MODEL_MOD, () => ({
-        LOCAL_EMBEDDING_MODEL_ID: "all-MiniLM-L6-v2",
-        async createLocalEmbedder(): Promise<Embedder> {
-          throw new Error("synthetic createLocalEmbedder failure");
-        },
-      }));
-      const mod = await import(resolve(import.meta.dir, "lazy-scheduler.ts"));
-      const factory = mod.createLazyEmbeddingRuntime as typeof createLazyEmbeddingRuntime;
       const h = makeHarness({ migrateTo: 30 });
       try {
-        const runtime = factory(h.db, h.dataDir, silentLogger, h.toml);
+        const runtime = createLazyEmbeddingRuntime(
+          h.db,
+          h.dataDir,
+          silentLogger,
+          h.toml,
+          undefined,
+          throwingCreateEmbedder,
+        );
         const vec = await runtime.embedQuery("hello");
         expect(vec).toBeNull();
       } finally {
@@ -506,17 +468,16 @@ describe.skipIf(!VEC_AVAILABLE)(
           },
         },
       );
-      mock.module(MODEL_MOD, () => ({
-        LOCAL_EMBEDDING_MODEL_ID: "all-MiniLM-L6-v2",
-        async createLocalEmbedder(): Promise<Embedder> {
-          throw new Error("synthetic createLocalEmbedder failure");
-        },
-      }));
-      const mod = await import(resolve(import.meta.dir, "lazy-scheduler.ts"));
-      const factory = mod.createLazyEmbeddingRuntime as typeof createLazyEmbeddingRuntime;
       const h = makeHarness({ migrateTo: 30 });
       try {
-        const runtime = factory(h.db, h.dataDir, captureLogger, h.toml);
+        const runtime = createLazyEmbeddingRuntime(
+          h.db,
+          h.dataDir,
+          captureLogger,
+          h.toml,
+          undefined,
+          throwingCreateEmbedder,
+        );
         await runtime.embedQuery("hello");
         expect(
           warnings.some((w) =>
@@ -529,17 +490,16 @@ describe.skipIf(!VEC_AVAILABLE)(
     });
 
     test("uses createLocalEmbedder when preloadedEmbedder is omitted (happy path)", async () => {
-      mock.module(MODEL_MOD, () => ({
-        LOCAL_EMBEDDING_MODEL_ID: "all-MiniLM-L6-v2",
-        async createLocalEmbedder(): Promise<Embedder> {
-          return fakeEmbedder("loaded:from-mock", 384);
-        },
-      }));
-      const mod = await import(resolve(import.meta.dir, "lazy-scheduler.ts"));
-      const factory = mod.createLazyEmbeddingRuntime as typeof createLazyEmbeddingRuntime;
       const h = makeHarness({ migrateTo: 30 });
       try {
-        const runtime = factory(h.db, h.dataDir, silentLogger, h.toml);
+        const runtime = createLazyEmbeddingRuntime(
+          h.db,
+          h.dataDir,
+          silentLogger,
+          h.toml,
+          undefined,
+          fromMockCreateEmbedder,
+        );
         const vec = await runtime.embedQuery("hello");
         expect(vec).toBeInstanceOf(Float32Array);
         expect(runtime.getEmbeddingModel()).toBe("loaded:from-mock");

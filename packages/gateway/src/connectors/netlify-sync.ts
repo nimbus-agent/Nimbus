@@ -1,0 +1,109 @@
+import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import {
+  syncPassCursorHttpEmpty,
+  syncPassCursorParseEmpty,
+  syncPassCursorSuccess,
+} from "../sync/pass-cursor-sync-result.ts";
+import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { readConnectorSecret } from "./connector-vault.ts";
+import { mapNetlifySiteToItem } from "./netlify-site-mapping.ts";
+import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+
+const SERVICE_ID = "netlify";
+const CURSOR_PREFIX = "nimbus-netlify1:";
+const BASE = "https://api.netlify.com";
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
+
+type NetlifyCursorV1 = { pass: number };
+
+function pass1Cursor(): string {
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies NetlifyCursorV1);
+}
+
+export type NetlifySyncableOptions = {
+  ensureNetlifyMcpRunning: () => Promise<void>;
+};
+
+interface NetlifyCreds {
+  readonly token: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<NetlifyCreds | null> {
+  const token = (await readConnectorSecret(ctx.vault, "netlify", "token"))?.trim() ?? "";
+  if (token === "") {
+    return null;
+  }
+  return { token };
+}
+
+function sitesPath(page: number): string {
+  const params = new URLSearchParams({ per_page: String(PAGE_SIZE), page: String(page) });
+  return `/api/v1/sites?${params.toString()}`;
+}
+
+function netlifyGet(ctx: SyncContext, creds: NetlifyCreds, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${BASE}${path}`, {
+    headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
+  });
+}
+
+function extractSites(parsed: unknown): unknown[] {
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function upsertSites(ctx: SyncContext, sites: readonly unknown[], now: number): number {
+  let upserted = 0;
+  for (const s of sites) {
+    const mapped = mapNetlifySiteToItem(s, { syncedAt: now });
+    if (mapped === null) {
+      continue;
+    }
+    upsertIndexedItemForSync(ctx, mapped);
+    upserted += 1;
+  }
+  return upserted;
+}
+
+export function createNetlifySyncable(options: NetlifySyncableOptions): Syncable {
+  return {
+    serviceId: SERVICE_ID,
+    defaultIntervalMs: 10 * 60 * 1000,
+    initialSyncDepthDays: 30,
+    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      const t0 = performance.now();
+      await options.ensureNetlifyMcpRunning();
+      const creds = await loadCreds(ctx);
+      if (creds === null) {
+        return syncNoopResult(cursor, t0);
+      }
+
+      const now = Date.now();
+      let totalBytes = 0;
+      let totalUpserted = 0;
+
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const outcome = await netlifyGet(ctx, creds, sitesPath(page));
+        totalBytes += outcome.bytes;
+        if (outcome.kind !== "ok") {
+          if (page === 1) {
+            return outcome.kind === "http_error"
+              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
+              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
+          }
+          break;
+        }
+
+        const sites = extractSites(outcome.parsed);
+        totalUpserted += upsertSites(ctx, sites, now);
+
+        if (sites.length < PAGE_SIZE) {
+          break;
+        }
+      }
+
+      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+    },
+  };
+}

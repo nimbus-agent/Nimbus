@@ -1,15 +1,3 @@
-/**
- * Integration: exercise `createBitriseSyncable` against a Bun.serve fake
- * Bitrise REST endpoint. Complements the unit tests by proving the sync
- * handler emits well-formed HTTP requests (URL, Authorization header)
- * and consumes the live response shape end-to-end through real fetch +
- * JSON parsing.
- *
- * Pattern: install a fetch interceptor that rewrites `api.bitrise.io`
- * requests to the local `Bun.serve` URL, then assert the gateway's
- * `item` table contains the upserted rows after `sync()` returns.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
@@ -145,22 +133,18 @@ describe("bitrise-sync against Bun.serve fake API", () => {
     const syncable = createBitriseSyncable({ ensureBitriseMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 
-    // 2 apps + 2 builds (one per app) = 4 upserts.
     expect(result.itemsUpserted).toBe(4);
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-bitrise1:")).toBe(true);
 
-    // Every request carries the bare-token Authorization header (no "Bearer").
     expect(h.fake.requests.length).toBeGreaterThan(0);
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("fake-bitrise-token");
     }
 
-    // me/apps called once.
     const meAppsCalls = h.fake.requests.filter((r) => r.path === "/v0.1/me/apps");
     expect(meAppsCalls).toHaveLength(1);
 
-    // Both apps land as bitrise:app rows.
     const appRows = h.db
       .query<{ external_id: string; title: string }, []>(
         "SELECT external_id, title FROM item WHERE service = 'bitrise' AND type = 'app' ORDER BY external_id",
@@ -168,7 +152,6 @@ describe("bitrise-sync against Bun.serve fake API", () => {
       .all();
     expect(appRows.map((r) => r.external_id)).toEqual(["android-app-slug", "ios-app-slug"]);
 
-    // Both builds land with metadata.
     const buildRows = h.db
       .query<{ external_id: string; metadata: string }, []>(
         "SELECT external_id, metadata FROM item WHERE service = 'bitrise' AND type = 'build' ORDER BY external_id",

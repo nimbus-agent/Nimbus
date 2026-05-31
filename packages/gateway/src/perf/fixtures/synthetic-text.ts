@@ -1,18 +1,5 @@
-/**
- * Deterministic synthetic-text generator for the S8 embedding throughput
- * benches. Produces N strings of approximately `length` characters from a
- * fixed-seed Mulberry32 PRNG over a small word vocabulary.
- *
- * The output is realistic enough that the embedding model exercises its
- * tokenizer + encoder paths (not just zero-width strings), but small
- * enough that the harness can hold the entire corpus in memory at the
- * largest tier (length=5000 × count=64 ≈ 20 MB).
- */
-
-export const SYNTHETIC_TEXT_DEFAULT_SEED = 0x6e696d62; // "nimb"
-
+export const SYNTHETIC_TEXT_DEFAULT_SEED = 0x6e696d62;
 export interface SynthesizeTextOptions {
-  /** Approximate character length per string (target; actual is within ±10%). */
   length: number;
   count: number;
   seed?: number;
@@ -72,7 +59,7 @@ export function synthesizeText(opts: SynthesizeTextOptions): string[] {
     while (used < opts.length) {
       const w = WORDS[Math.floor(rng() * WORDS.length)] ?? "context";
       parts.push(w);
-      used += w.length + 1; // +1 for the joining space
+      used += w.length + 1;
     }
     out.push(parts.join(" "));
   }

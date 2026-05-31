@@ -1,25 +1,3 @@
-/**
- * Coverage Phase 4 — companion to `test/unit/db/verify.test.ts`, focused on the
- * branches that the unit suite does not exercise:
- *
- *  - fts5 / vec / orphan catch paths (broken schema)
- *  - skipped branches when prerequisite tables are absent
- *  - vec_rowid_mismatch (vec count != embedding_chunk count)
- *  - schema_version on a brand-new DB without `_schema_migrations`
- *  - foreign_key_integrity violation row
- *  - schema_version "fresh" branch where uv === 0 && expected === 0
- *
- * Watermark-deferred branches (intentionally NOT covered here):
- *  - `checkIntegrity`'s catch block (verify.ts lines 49-54). The natural
- *    forcing function is to close the DB and call `verifyIndex`, but
- *    `checkFts5Consistency`'s `tableExists` call sits outside its own
- *    try/catch and throws uncaught before any assertion can prove
- *    `checkIntegrity`'s catch arm executed. Tightening would require
- *    exporting `checkIntegrity` directly so it can be tested in isolation;
- *    `verify.ts` doesn't currently support that, so the branch is left to a
- *    future refactor.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
@@ -43,7 +21,6 @@ afterEach(() => {
 describe("verifyIndex — skipped-branch coverage", () => {
   test("fts5_consistency reports skipped when item_fts is absent", () => {
     const fresh = new Database(":memory:");
-    // Do NOT run migrations — `item_fts` will not exist
     const result = verifyIndex(fresh, 0);
     const fts = result.findings.find((f) => f.label === "fts5_consistency");
     expect(fts?.status).toBe("ok");
@@ -73,7 +50,6 @@ describe("verifyIndex — skipped-branch coverage", () => {
 describe("verifyIndex — schema_version branches", () => {
   test("fresh DB without _schema_migrations + expected=0 reports ok", () => {
     const fresh = new Database(":memory:");
-    // Brand-new DB has user_version = 0 and no _schema_migrations table.
     const result = verifyIndex(fresh, 0);
     const sv = result.findings.find((f) => f.label === "schema_version");
     expect(sv?.status).toBe("ok");
@@ -100,15 +76,10 @@ describe("verifyIndex — schema_version branches", () => {
 
 describe("verifyIndex — vec_rowid_mismatch true-mismatch path", () => {
   test("more embedding_chunk rows than vec rows produces FAIL with negative diff", () => {
-    // Some platforms have no vec_items_384 (no sqlite-vec build). The check
-    // returns "skipped" in that case — which is a separate branch we test
-    // above. When the table exists, we force a count mismatch by inserting a
-    // chunk row whose vec counterpart we never create.
     const hasVec = db
       .query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vec_items_384'`)
       .get();
     if (hasVec === null) {
-      // No vec table on this platform → skipped path already covered.
       return;
     }
 
@@ -116,8 +87,6 @@ describe("verifyIndex — vec_rowid_mismatch true-mismatch path", () => {
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES ('vec:1', 'vec', 'note', '1', 'x', 1, 1)`,
     );
-    // vec_rowid is NOT NULL when sqlite-vec is loaded — use sentinel 9999999
-    // that has no matching vec_items_384 row.
     db.run(
       `INSERT INTO embedding_chunk
        (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)
@@ -153,13 +122,9 @@ describe("verifyIndex — foreign_key_integrity violation path", () => {
 
 describe("verifyIndex — catch-block coverage via broken queries", () => {
   test("orphaned_sync_tokens catch block fires when sync_state is altered to omit connector_id", () => {
-    // Rename the `connector_id` column away so `tableExists` (which only
-    // checks the sqlite_master entry) still returns true, but the SELECT
-    // referencing connector_id throws — exercising lines 160-165.
     const fresh = new Database(":memory:");
     LocalIndex.ensureSchema(fresh);
     fresh.run("DROP TABLE sync_state");
-    // Recreate without the column the verify query references.
     fresh.run("CREATE TABLE sync_state (other_col TEXT PRIMARY KEY)");
     const result = verifyIndex(fresh, LocalIndex.SCHEMA_VERSION);
     const orph = result.findings.find((f) => f.label === "orphaned_sync_tokens");
@@ -169,9 +134,6 @@ describe("verifyIndex — catch-block coverage via broken queries", () => {
   });
 
   test("fts5_consistency catch block fires when the FTS5 command targets a non-fts5 table", () => {
-    // Replace item_fts with a plain table that doesn't have the column the
-    // INSERT references. The dbRun then throws "no such column: item_fts" —
-    // exercising the catch path at lines 85-90.
     const fresh = new Database(":memory:");
     LocalIndex.ensureSchema(fresh);
     fresh.run("DROP TABLE IF EXISTS item_fts");

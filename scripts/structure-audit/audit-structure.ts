@@ -1,9 +1,4 @@
 #!/usr/bin/env bun
-// B3 audit orchestrator. Runs every signal source and writes a single
-// run-<timestamp>.json blob at docs/structure-audit/. The Phase 2 missed.md
-// is generated from this blob.
-//
-// Usage: bun run audit:structure
 
 import { auditOutputPath, REPO_ROOT } from "./lib.ts";
 
@@ -28,9 +23,6 @@ async function step(name: string, cmd: readonly string[]): Promise<StepResult> {
 async function run(): Promise<void> {
   const timestamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
 
-  // Steps run serially (intentional — they all walk packages/) so a single
-  // for-of loop replaces the previous chain of results.push() calls and
-  // closes the SonarCloud "multiple push" warning.
   const steps: ReadonlyArray<readonly [string, readonly string[]]> = [
     [
       "dependency-cruiser",

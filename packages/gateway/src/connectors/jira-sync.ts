@@ -49,7 +49,6 @@ function decodeCursor(raw: string | null): JiraSyncCursorV1 | null {
   return { v: 1, floorJql: typeof fj === "string" ? fj : null };
 }
 
-/** Jira JQL datetime literal after `updated >` (exclusive), one second after API `fields.updated`. */
 function isoToJqlExclusiveFloor(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) {

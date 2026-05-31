@@ -1,23 +1,3 @@
-/**
- * Bitrise REST sync handler. Walks `/v0.1/me/apps` → for each app,
- * `/v0.1/apps/<slug>/builds?limit=50` and upserts the app + each build
- * into the unified `item` table as `service = "bitrise"`,
- * `type ∈ {"app", "build"}` via the pure mapping helpers in
- * {@link mapBitriseAppToItem} / {@link mapBitriseBuildToItem}.
- *
- * Single-pass cursor model (matches `snyk-sync.ts` / `sentry-sync.ts`):
- * every successful run emits a fresh `nimbus-bitrise1:{pass: 1}` cursor
- * so the scheduler does not re-queue immediately. Bitrise v0.1 has no
- * native delta endpoint for the recent-builds list; a full single-page
- * walk per cycle is acceptable at the 10-minute default cadence because
- * each `builds` response is bounded by Bitrise's max page size of 50.
- *
- * v1 surfaces only "apps" + the most recent builds per app. The
- * connector deliberately does NOT walk multi-page `next`-cursor build
- * history — the roadmap row scopes Bitrise to mobile CI observability,
- * not deep historical replay. Long-tail backfills are a follow-up.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -25,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import {
   type BitriseMappedRow,
   mapBitriseAppToItem,
@@ -52,28 +33,6 @@ function pass1Cursor(): string {
 export type BitriseSyncableOptions = {
   ensureBitriseMcpRunning: () => Promise<void>;
 };
-
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function bitriseGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${BITRISE_API}${path}`, {
-    headers: { Authorization: token, Accept: "application/json" },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "bitrise GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
-}
 
 function extractAppRows(parsed: unknown): Record<string, unknown>[] {
   const root = asRecord(parsed) ?? {};
@@ -109,7 +68,14 @@ export function createBitriseSyncable(options: BitriseSyncableOptions): Syncable
         return syncNoopResult(cursor, t0);
       }
 
-      const appsOutcome = await bitriseGet(ctx, token, "/v0.1/me/apps?limit=50");
+      const appsOutcome = await connectorFetch(
+        ctx,
+        SERVICE_ID,
+        `${BITRISE_API}/v0.1/me/apps?limit=50`,
+        {
+          headers: { Authorization: token, Accept: "application/json" },
+        },
+      );
       if (appsOutcome.kind === "http_error") {
         return syncPassCursorHttpEmpty(t0, appsOutcome.bytes, cursor, pass1Cursor());
       }
@@ -132,10 +98,11 @@ export function createBitriseSyncable(options: BitriseSyncableOptions): Syncable
         if (slug === undefined) {
           continue;
         }
-        const buildsOutcome = await bitriseGet(
+        const buildsOutcome = await connectorFetch(
           ctx,
-          token,
-          `/v0.1/apps/${encodeURIComponent(slug)}/builds?limit=${String(DEFAULT_BUILDS_PAGE_SIZE)}`,
+          SERVICE_ID,
+          `${BITRISE_API}/v0.1/apps/${encodeURIComponent(slug)}/builds?limit=${String(DEFAULT_BUILDS_PAGE_SIZE)}`,
+          { headers: { Authorization: token, Accept: "application/json" } },
         );
         totalBytes += buildsOutcome.bytes;
         if (buildsOutcome.kind !== "ok") {

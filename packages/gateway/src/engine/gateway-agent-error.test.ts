@@ -21,8 +21,6 @@ describe("GatewayAgentUnavailableError messages", () => {
     });
     expect(e.message).toContain("OpenAI");
     expect(e.message).toContain("no credits remaining");
-    // Topping up is a server-side change — the user does NOT need to restart
-    // the gateway, and the message should make that explicit.
     expect(e.message).toContain("no gateway restart needed");
   });
 

@@ -27,7 +27,6 @@ describe("parseLcov", () => {
   });
 
   test("parses a record with partial coverage and computes percent to 2 decimals", () => {
-    // 3 of 7 lines covered → 42.857142...% → round to 42.86
     const lines = [
       "SF:packages/gateway/src/bar.ts",
       "DA:1,5",
@@ -45,9 +44,6 @@ describe("parseLcov", () => {
   });
 
   test("treats a record with zero DA lines as 100% (empty source)", () => {
-    // An empty/all-comment source file still emits an SF record. With zero
-    // executable lines, the coverage ratio is undefined; the floor's intent
-    // is satisfied (no uncovered lines), so we report 100%.
     const lcov = "SF:packages/gateway/src/types/empty.ts\nend_of_record\n";
     const rec = parseLcov(lcov).get("packages/gateway/src/types/empty.ts");
     expect(rec).toEqual({ lines: 0, covered: 0, pct: 100 });
@@ -95,8 +91,6 @@ describe("parseLcov", () => {
   });
 
   test("a duplicate SF record (re-emitted from a second test run) keeps the last record", () => {
-    // If lcov gets concatenated naively, the same SF can appear twice.
-    // We pick the LAST occurrence — matches lcov-merge's "second wins" rule.
     const lcov = ["SF:a.ts", "DA:1,0", "end_of_record", "SF:a.ts", "DA:1,1", "end_of_record"].join(
       "\n",
     );

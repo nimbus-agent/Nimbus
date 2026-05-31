@@ -47,7 +47,6 @@ type ConnectorFlags = {
   kubeconfig?: string;
   kubeContext?: string;
   full?: boolean;
-  /** Opt-in flag for Discord bot connector. */
   enable?: boolean;
   help?: boolean;
   awsAccessKey?: string;
@@ -322,7 +321,6 @@ function resolveAtlassianSiteCredentials(opts: {
   return { email: mail, token: apiTok, base: stripTrailingSlashes(baseRaw) };
 }
 
-/** PAT-style connectors: CLI `--token` or first non-empty env in the list. */
 function requirePatFromFlagsOrEnv(
   token: string | undefined,
   envKeys: readonly string[],
@@ -401,7 +399,6 @@ type ConnectorAuthParams = {
   scopes?: string[];
   personalAccessToken?: string;
   bitbucketUsername?: string;
-  /** Jenkins user id (HTTP Basic); also used for Jira/Confluence via atlassianEmail. */
   username?: string;
   atlassianEmail?: string;
   apiBaseUrl?: string;

@@ -6,7 +6,6 @@ function isWindowsNamedPipe(socketPath: string): boolean {
   return socketPath.toLowerCase().startsWith("\\\\.\\pipe\\");
 }
 
-/** Creates configured dirs (and Unix socket parent) before services use them. */
 export async function ensurePlatformDirectories(paths: PlatformPaths): Promise<void> {
   const dirs = [
     paths.configDir,

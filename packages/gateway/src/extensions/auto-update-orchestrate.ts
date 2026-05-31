@@ -17,20 +17,8 @@ export interface PerformUpgradeDeps {
   maxBytes?: number;
   signal: AbortSignal;
   sha256OfTarball: (bytes: Uint8Array) => Promise<string>;
-  /**
-   * Hook to extract the downloaded tarball into `destDir`. Production wires
-   * to the existing extension install pipeline's extractor; tests inject a
-   * lightweight stub that writes a marker file.
-   */
   extractTarball: (bytes: Uint8Array, destDir: string) => Promise<void>;
-  /**
-   * Drains in-flight calls and tears down the running MCP client for this
-   * extension. Production binding: `mesh.stopExtensionClient.bind(mesh)`
-   * (S7-F10 in mesh.ts; existing helper used by `extension.disable` and the
-   * verify-extensions startup pass).
-   */
   stopExtensionClient: (extensionId: string) => Promise<void>;
-  /** dbRun-backed UPDATE of the `extension` row (version + manifest/entry hash). */
   dbUpdateExtensionRow: (
     id: string,
     version: string,
@@ -39,17 +27,6 @@ export interface PerformUpgradeDeps {
   ) => Promise<void>;
 }
 
-/**
- * Compose the apply primitives (download → SHA-256 verify → extract →
- * atomic swap) and post-swap effects (DB row update + mesh client teardown
- * so the next spawn picks up the new code).
- *
- * Failure boundary: a thrown `sha256_mismatch` happens BEFORE any disk
- * mutation. A thrown `swap_failed` happens after `applyUpgradeSwap` could
- * not roll back; the pending dir is best-effort cleaned, but `active/` may
- * be in an intermediate state — the I14 startup crash recovery handles that
- * (Task 14).
- */
 export function createPerformUpgrade(deps: PerformUpgradeDeps) {
   return async function performUpgrade(update: AvailableUpdate): Promise<void> {
     const pendingDir = join(
@@ -108,13 +85,6 @@ export interface PerformDowngradeDeps {
   ) => Promise<void>;
 }
 
-/**
- * Atomically swap `active/` with the cached `_prev/<toVersion>/` and tear
- * down the live MCP client so the next spawn picks up the older code.
- * Manifest / entry hash are taken from the cached AvailableUpdate; the
- * startup `verifyExtensionsBestEffort` re-validates them on next boot so a
- * tampered `_prev/` would be caught immediately.
- */
 export function createPerformDowngrade(deps: PerformDowngradeDeps) {
   return async function performDowngrade(update: AvailableUpdate): Promise<void> {
     const extRoot = join(deps.extensionsRoot, update.id);

@@ -1,13 +1,3 @@
-/**
- * Unit tests for StubIpcClient to nudge the file above the 80% coverage floor.
- *
- * The TUI integration tests exercise most of StubIpcClient's call() and
- * onNotification() / emit() surface, but a few paths remain uncovered:
- *   - connect() / disconnect() lifecycle methods
- *   - emit() with no registered handler (set === undefined early return)
- *   - call() throwing when no result is configured for a method
- */
-
 import { describe, expect, test } from "bun:test";
 
 import { StubIpcClient } from "./stub-client.ts";
@@ -51,7 +41,6 @@ describe("StubIpcClient — call()", () => {
 describe("StubIpcClient — emit() with no registered handler", () => {
   test("emit() for an unregistered method is a no-op", () => {
     const stub = new StubIpcClient();
-    // Should not throw even though nothing is registered for "agent.chunk"
     expect(() => stub.emit("agent.chunk", { text: "hello" })).not.toThrow();
   });
 });
@@ -85,7 +74,6 @@ describe("StubIpcClient — calls recording", () => {
 describe("StubIpcClient — asClient()", () => {
   test("asClient() returns the stub cast to IPCClient", () => {
     const stub = new StubIpcClient();
-    // The return is the same object cast; equality is sufficient
     expect(stub.asClient()).toBe(stub as unknown as ReturnType<typeof stub.asClient>);
   });
 });

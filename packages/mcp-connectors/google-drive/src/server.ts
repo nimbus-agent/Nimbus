@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-google-drive — Google Drive MCP server (read + write tools).
- * OAuth access token is injected by the Gateway as GOOGLE_OAUTH_ACCESS_TOKEN (never logged).
- * Destructive writes require Gateway HITL (`file.create`, `file.delete`, `file.move`, `file.rename`).
- */
-
 import { randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

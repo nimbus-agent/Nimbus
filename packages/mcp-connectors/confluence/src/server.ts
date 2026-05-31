@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-confluence — Confluence Cloud REST MCP server.
- * CONFLUENCE_BASE_URL (e.g. https://site.atlassian.net), CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN.
- * Mutations require Gateway HITL.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

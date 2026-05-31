@@ -72,7 +72,7 @@ describe("appendQuery", () => {
     }
     const history = await readHistory(historyPath);
     expect(history.length).toBe(QUERY_HISTORY_CAP);
-    expect(history[0]).toBe("q10"); // oldest surviving
+    expect(history[0]).toBe("q10");
     expect(history.at(-1)).toBe(`q${String(QUERY_HISTORY_CAP + 9)}`);
   });
 

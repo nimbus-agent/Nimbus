@@ -1,15 +1,3 @@
-/**
- * Coverage for the gateway state-file helpers (`gateway.json`).
- *
- * Tier D — was at 0 % line coverage.
- *
- * Exercises:
- *  - `gatewayStateFilePath` — joins dataDir with "gateway.json".
- *  - `writeGatewayStateFile` — JSON shape, logPath param, NIMBUS_GATEWAY_LOG_PATH env fallback,
- *    and "logPath absent when neither source is set".
- *  - `removeGatewayStateFile` — silent no-op when the file is absent.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,7 +55,6 @@ describe("writeGatewayStateFile", () => {
     const obj = JSON.parse(raw) as Record<string, unknown>;
     expect(obj["pid"]).toBe(12345);
     expect(obj["socketPath"]).toBe("/tmp/sock");
-    // logPath omitted because no opts.logPath and no env var.
     expect("logPath" in obj).toBe(false);
     expect(raw.endsWith("\n")).toBe(true);
   });
@@ -149,7 +136,6 @@ describe("removeGatewayStateFile", () => {
 
   test("silently no-ops when the file is absent", () => {
     const paths = makePaths(dir);
-    // File doesn't exist — call must not throw.
     expect(() => removeGatewayStateFile(paths)).not.toThrow();
   });
 });

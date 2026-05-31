@@ -4,7 +4,6 @@ function elapsedMs(t0: number): number {
   return Math.round(performance.now() - t0);
 }
 
-/** HTTP error path: keep prior cursor when present, else `defaultCursor`. */
 export function syncPassCursorHttpEmpty(
   t0: number,
   bytesTransferred: number,
@@ -21,7 +20,6 @@ export function syncPassCursorHttpEmpty(
   };
 }
 
-/** JSON parse failure: reset to `defaultCursor`, zero items. */
 export function syncPassCursorParseEmpty(
   t0: number,
   bytesTransferred: number,
@@ -37,7 +35,6 @@ export function syncPassCursorParseEmpty(
   };
 }
 
-/** Successful pass-1 cursor sync with item count. */
 export function syncPassCursorSuccess(
   t0: number,
   bytesTransferred: number,

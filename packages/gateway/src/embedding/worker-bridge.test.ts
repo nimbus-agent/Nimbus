@@ -119,18 +119,15 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     try {
       const handle = currentHandle();
       handle.fire({ type: "ready" });
-      // Drain microtasks so the gate-settle propagates.
       await Promise.resolve();
 
       const pending = bridge.embedQuery("hello world");
-      // The bridge should have posted an embed_texts message.
       const sent = handle
         .posted()
         .find((m): m is PostedMessage & { id: string } => m["type"] === "embed_texts");
       expect(sent).toBeDefined();
       const id = sent?.["id"];
       expect(typeof id).toBe("string");
-      // Respond with a result; the bridge should resolve the promise.
       handle.fire({
         type: "embed_texts_result",
         id,
@@ -178,7 +175,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       const before = handle.posted().length;
       const result = await bridge.embedQuery("warmup");
       expect(result).toBeNull();
-      // No new embed_texts message should have been posted.
       const after = handle
         .posted()
         .slice(before)
@@ -205,7 +201,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
         .posted()
         .filter((m): m is PostedMessage & { itemId: string } => m["type"] === "embed_item");
       expect(embedItems.length).toBe(2);
-      // Verify ordering — scheduleItemEmbedding posts serially.
       expect(embedItems[0]?.["itemId"]).toBe("item-post-1");
       expect(embedItems[1]?.["itemId"]).toBe("item-post-2");
     } finally {
@@ -218,26 +213,20 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const bridge = makeBridge();
     try {
       const handle = currentHandle();
-      // Each of these should be silently ignored (no throws).
       handle.fire(null);
       handle.fire("not-an-object");
       handle.fire([1, 2, 3]);
       handle.fire({ type: "no_such_type" });
-      handle.fire({}); // no type field
-      // init_error with non-string message should be ignored.
+      handle.fire({});
       handle.fire({ type: "init_error", message: 123 });
-      // backfill_progress with bad shape should not update progress.
       expect(bridge.getBackfillProgress()).toBeNull();
       handle.fire({ type: "backfill_progress", done: "x", total: "y" });
       expect(bridge.getBackfillProgress()).toBeNull();
       handle.fire({ type: "backfill_progress", done: 3, total: 10 });
       expect(bridge.getBackfillProgress()).toEqual({ done: 3, total: 10 });
-      // backfill_done with success:true is a no-op; success:false logs but returns.
       handle.fire({ type: "backfill_done", success: true });
       handle.fire({ type: "backfill_done", success: false });
-      // embed_texts_result with non-string id is silently ignored.
       handle.fire({ type: "embed_texts_result", id: 42 });
-      // embed_texts_result for an unknown id is silently ignored.
       handle.fire({
         type: "embed_texts_result",
         id: "no-such-id",
@@ -251,7 +240,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
 
   test("rejects messages from disallowed origins", async () => {
     installFakeWorker();
-    // Force a known self-origin so cross-origin messages are rejected.
     const g = globalThis as typeof globalThis & { origin?: unknown };
     const originalOrigin = g.origin;
     Object.defineProperty(g, "origin", {
@@ -262,11 +250,9 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const bridge = makeBridge();
     try {
       const handle = currentHandle();
-      // ready from a different origin must not flip workerReady.
       handle.fire({ type: "ready" }, "https://evil.example");
       const result = await bridge.embedQuery("ignored");
       expect(result).toBeNull();
-      // ready from the matching origin must flip readiness.
       handle.fire({ type: "ready" }, "https://nimbus.test");
       const pending = bridge.embedQuery("hi");
       const sent = handle.posted().find((m) => m["type"] === "embed_texts");
@@ -297,13 +283,10 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     try {
       const handle = currentHandle();
       handle.fire({ type: "ready" });
-      // A subsequent init_error must not re-settle the gate.
       handle.fire({ type: "init_error", message: "late error" });
-      // The bridge should still treat itself as ready.
       const pending = bridge.embedQuery("ready check");
       const sent = handle.posted().find((m) => m["type"] === "embed_texts");
       expect(sent).toBeDefined();
-      // Resolve so we don't leave a pending timer.
       handle.fire({
         type: "embed_texts_result",
         id: sent?.["id"] as string,
@@ -322,7 +305,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     try {
       const handle = currentHandle();
       handle.fire({ type: "init_error", message: "model download failed" });
-      // The bridge should still be usable (queries return null) but workerReady stays false.
       const result = await bridge.embedQuery("anything");
       expect(result).toBeNull();
     } finally {
@@ -336,7 +318,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     try {
       expect(typeof bridge.getEmbeddingModel()).toBe("string");
       expect(bridge.getEmbeddingDims()).toBe(384);
-      // startBackgroundJobs is a no-op for the worker bridge.
       expect(bridge.startBackgroundJobs()).toBeUndefined();
     } finally {
       bridge.terminate();
@@ -386,9 +367,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const bridge = makeBridge();
     const handle = currentHandle();
     handle.fire({ type: "ready" });
-    // Start a query but never respond — terminate must resolve it to null.
     const pending = bridge.embedQuery("never-responds");
-    // Tiny tick so the embed_texts message is posted.
     await Promise.resolve();
     bridge.terminate();
     const result = await pending;
@@ -397,7 +376,6 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
   });
 
   test("returns a bridge synchronously without blocking on worker init (real Worker)", () => {
-    // No fake — uses the real Bun Worker spawn.
     const logger = pino({ level: "silent" });
     const start = Date.now();
     const bridge = tryCreateEmbeddingWorkerBridge(

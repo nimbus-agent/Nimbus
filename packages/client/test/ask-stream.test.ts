@@ -36,11 +36,6 @@ beforeEach(() => {
   ipc = new FakeIpc();
 });
 
-/**
- * Start an askStream and begin draining events. Awaits two microtasks so the
- * `engine.askStream` call resolves and the notification handlers are wired up
- * before the caller starts emitting notifications.
- */
 async function startAndDrain(ipcInstance: FakeIpc): Promise<{
   handle: ReturnType<typeof createAskStream>;
   events: StreamEvent[];

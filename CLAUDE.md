@@ -7,7 +7,7 @@ Nimbus is a **local-first AI agent framework** — a headless Bun Gateway proces
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict
 **Linter:** Biome
 **License:** AGPL-3.0 (gateway/cli/mcp-connectors) + MIT (sdk)
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active · T4 PR 2 DORA metrics ✅ · T4 PR 3a pre-deploy check ✅ · T4 PR 3b annotation ✅ · T4 wrap-up: PagerDuty enrichment ✅ (2026-05-14) · T4 wrap-up: PagerDuty pagination + severity_p1_aliases ✅ (2026-05-16) · T6 sequencing spec ✅ (2026-05-14) · T6 PR 1 I10 helpers ✅ · T6 PR 2 `tool_call_log` V29 ✅ (2026-05-15) · T6 PR 3 `vec_items_1536` V30 ✅ (2026-05-15) · T6 PR 4 typed `dbRun` migration + I14 ✅ (2026-05-16) · T2 PR 1 sandbox + I15 ✅ (2026-05-17) · Coverage floor Phase 1A ✅ (2026-05-17) · Coverage floor Phase 2A ✅ (2026-05-18) · Coverage floor Phase 3A ✅ (2026-05-20) · Coverage floor Phase 3B-rest ✅ (2026-05-20) · Coverage floor Phase 4 ✅ (2026-05-21) · Coverage floor Phase 5 ✅ (2026-05-22) · T2 PR 2 verified publisher + I16 ✅ (2026-05-18) · T2 PR 3 auto-update ✅ (2026-05-20) · T2 PR 4 dependency-resolution ✅ (2026-05-21) · T2/Wave-A connector Snyk ✅ (2026-05-21) · Wave-B connector Bitrise ✅ (2026-05-21) · nimbus security scan ✅ (2026-05-21) · Published OpenAPI spec ✅ (2026-05-22) · Pre-commit hook docs ✅ (2026-05-22) · Tier-2 connector SonarQube/SonarCloud ✅ (2026-05-22) · Tier-2 connector Semgrep ✅ (2026-05-22) · `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Workstream-level status is in [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Workstream-level status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 **Gemini CLI:** [`GEMINI.md`](./GEMINI.md) mirrors this file for the same repository — update both when changing commands, roadmap rows, or non-negotiables.
 
@@ -107,7 +107,24 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 
 **Worktree directory:** `.worktrees/` (project-local, git-ignored). When setting up isolated workspaces for feature branches, use `.worktrees/<branch-name>`.
 
-**Pre-flight before pushing a PR:** `bun run test:ci` (full CI parity). Full command catalogue + coverage thresholds + env-var overrides live in the [`nimbus-commands`](./.claude/commands/nimbus-commands.md) skill. File-location pointers live in [`nimbus-file-map`](./.claude/commands/nimbus-file-map.md).
+**Pre-flight before pushing a PR:** `bun run preflight` (full local CI parity — every gate CI runs) or `bun run preflight:fast` (~2-3 min, all the cheap static gates). **`bun run test:ci` is only the test suite — it is NOT the full gate set; `preflight` is.** The gate manifest lives in `scripts/lib/preflight-gates.ts`; a drift test (`scripts/preflight.test.ts`) fails if a CI gate is missing from it. See the [`nimbus-preflight`](./.claude/commands/nimbus-preflight.md) skill.
+
+**Branch hygiene:** never commit on `main` / `develop` — branch first (`git switch -c dev/<you>/<topic>`) and verify `git rev-parse --abbrev-ref HEAD` before committing. `bun run hooks:install` installs a pre-commit guard that enforces this and a pre-push `preflight:fast`.
+
+**Cross-platform:** build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators — `bun run audit:cross-platform` flags hardcoded Windows-separator path assertions (backslash / drive-letter / UNC) in tests, the Windows-dev → Ubuntu-CI footgun (escape hatch: `// cross-platform-ok`).
+
+**Reproducing CI-Linux-only failures (don't guess — reproduce):** CI runs on Ubuntu with `bun-version: latest`. Some failures never reproduce on local Windows/macOS and are *not* version-related — e.g. `mock.module` contamination in the combined per-package `bun test packages/cli/src` run (a sibling's `mock.restore()` clears another file's process-global mock; prefer **dependency injection over `mock.module`** for anything driven through a dispatcher), and `@types/*` hoisting differences (e.g. a package with no `compilerOptions.types` auto-includes the root `@types/bun`, which conflicts with `@types/node`). When a gate is red on CI but green on Windows, reproduce on Linux **before** pushing a speculative fix:
+
+```bash
+# Match CI's bun first:  bun upgrade   (CI uses latest)
+docker run --rm -v "$PWD":/src:ro oven/bun:latest bash -lc \
+  'mkdir -p /app && (cd /src && tar --exclude=node_modules --exclude=.git -cf - .) | (cd /app && tar -xf -) \
+   && cd /app && bun install && cd packages/cli && bun test src/'
+```
+
+WSL Ubuntu works too (`curl -fsSL https://bun.sh/install | bash`, then run from a Linux-native copy — not `/mnt/c`, whose `node_modules` are Windows binaries). The coverage floor (`audit:coverage-floor`) is **CI-Linux-authoritative**: a file can read ≥80% on Windows yet `<80%` on Linux if its tests flake in the combined run.
+
+Full command catalogue + coverage thresholds + env-var overrides live in the [`nimbus-commands`](./.claude/commands/nimbus-commands.md) skill. File-location pointers live in [`nimbus-file-map`](./.claude/commands/nimbus-file-map.md).
 
 ---
 
@@ -132,6 +149,7 @@ When implementing, focus on the current phase. Do not add Phase N+1 features in 
 @.claude/commands/nimbus-file-map.md
 @.claude/commands/nimbus-http-write-surface.md
 @.claude/commands/nimbus-ipc.md
+@.claude/commands/nimbus-preflight.md
 @.claude/commands/nimbus-security-invariants.md
 @.claude/commands/nimbus-tauri-allowlist.md
 @.claude/commands/nimbus-testing.md

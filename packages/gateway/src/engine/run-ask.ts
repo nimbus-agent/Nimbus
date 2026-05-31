@@ -22,22 +22,8 @@ export type RunAskParams = {
   localIndex: LocalIndex;
   dispatcher: ConnectorDispatcher;
   sendChunk: (text: string) => void;
-  /** Mastra agent with local index tools; when set, high-confidence `unknown` intent uses this path. */
   conversationalAgent?: Agent;
-  /**
-   * BUG-005: when both this and `getAgentRequestSessionId()` are set, runAsk
-   * appends the user input and the assistant's reply to session memory after
-   * the conversational turn returns. This is what makes multi-turn TUI work
-   * — Layer 3 (`runConversationalAgent`) loads recent turns from the same
-   * store and prepends them to the agent's prompt.
-   */
   sessionMemoryStore?: SessionMemoryStore;
-  /**
-   * Test-only override for the intent classifier. Production code never
-   * supplies this; the default `classifyIntentForAsk` is used. Tests of the
-   * conversational/memory path use this so they don't have to mint a real
-   * Anthropic/OpenAI API key just to get past intent classification.
-   */
   classify?: (input: string) => Promise<ClassifiedIntent>;
 };
 
@@ -52,11 +38,9 @@ To get started, connect a service and run an initial sync:
 
 Then try your question again, or run nimbus doctor for a health summary.`;
 
-/** Short TTL cache so repeated `runAsk` turns do not each pay `COUNT(*)` on large FTS tables. */
 const INDEX_ITEM_COUNT_CACHE = new WeakMap<Database, { at: number; value: number }>();
 const INDEX_ITEM_COUNT_TTL_MS = 8000;
 
-/** Item count when the DB is reachable; `undefined` if we cannot query (e.g. test stubs without `getDatabase`). */
 function countIndexedItems(localIndex: LocalIndex): number | undefined {
   if (typeof localIndex.getDatabase !== "function") {
     return undefined;
@@ -205,9 +189,6 @@ async function persistConversationTurn(
   }
 }
 
-/**
- * NL ask pipeline: classify → plan → HITL-gated {@link ToolExecutor} steps.
- */
 export async function runAsk(p: RunAskParams): Promise<{ reply: string }> {
   const indexed = countIndexedItems(p.localIndex);
   const empty = emptyIndexGuidanceIfNeeded(p, indexed);

@@ -36,7 +36,6 @@ describe("PendingUpdates", () => {
   it("renders nothing when cache is empty", async () => {
     callMock.mockResolvedValue([]);
     render(<PendingUpdates offline={false} />);
-    // Wait one tick for the query to resolve.
     await new Promise((r) => setTimeout(r, 10));
     expect(screen.queryByTestId("pending-updates")).toBeNull();
   });
@@ -90,7 +89,6 @@ describe("PendingUpdates", () => {
     });
     render(<PendingUpdates offline={false} />);
     await waitFor(() => screen.getByTestId("update-button-com.x.a"));
-    // Sanity: button is disabled — userEvent respects disabled buttons.
     await userEvent.click(screen.getByTestId("update-button-com.x.a"));
     const updateCalls = callMock.mock.calls.filter((c) => c[0] === "extension.update");
     expect(updateCalls).toHaveLength(0);

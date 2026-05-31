@@ -52,11 +52,6 @@ type PiperTtsOptions = {
   modelPath: string;
 };
 
-/**
- * Higher-quality TTS via Piper (https://github.com/rhasspy/piper).
- * Piper reads text from stdin and writes WAV to stdout; we pipe to `aplay`/`afplay`/`powershell`.
- * Used when `piper_path` + `piper_model` are both configured.
- */
 export class PiperTtsProvider implements TtsProvider {
   private readonly piperBin: string;
   private readonly modelPath: string;

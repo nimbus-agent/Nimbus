@@ -15,6 +15,22 @@ export type CatchupCliArgs = {
   service?: string;
 };
 
+function parseSinceFlag(raw: string | undefined): number {
+  if (typeof raw !== "string") throw new Error("--since requires a value (e.g. 3d, 12h, 1w)");
+  const sinceMs = parseSinceDurationToMs(raw);
+  if (sinceMs > MAX_SINCE_MS) {
+    throw new Error("--since must be at most 90 days (e.g. 90d, 12w)");
+  }
+  return sinceMs;
+}
+
+function parseServiceFlag(raw: string | undefined): string {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new Error("--service requires a non-empty value");
+  }
+  return raw.trim();
+}
+
 export function parseCatchupArgs(args: string[]): CatchupCliArgs {
   let sinceMs = DEFAULT_SINCE_MS;
   let json = false;
@@ -23,28 +39,13 @@ export function parseCatchupArgs(args: string[]): CatchupCliArgs {
     const a = args[i];
     if (a === "--json") {
       json = true;
-      continue;
-    }
-    if (a === "--since") {
-      const v = args[i + 1];
-      if (typeof v !== "string") throw new Error("--since requires a value (e.g. 3d, 12h, 1w)");
-      sinceMs = parseSinceDurationToMs(v);
-      if (sinceMs > MAX_SINCE_MS) {
-        throw new Error("--since must be at most 90 days (e.g. 90d, 12w)");
-      }
+    } else if (a === "--since") {
+      sinceMs = parseSinceFlag(args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a === "--service") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
-        throw new Error("--service requires a non-empty value");
-      }
-      service = v.trim();
+    } else if (a === "--service") {
+      service = parseServiceFlag(args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a !== undefined && !a.startsWith("--")) {
+    } else if (a !== undefined && !a.startsWith("--")) {
       throw new Error(
         `Unknown positional argument: ${a}. Usage: nimbus catchup [--since 3d] [--json] [--service <id>]`,
       );
@@ -53,6 +54,39 @@ export function parseCatchupArgs(args: string[]): CatchupCliArgs {
   const out: CatchupCliArgs = { sinceMs, json };
   if (service !== undefined) out.service = service;
   return out;
+}
+
+function awaitCatchupBrief(
+  client: IPCClient,
+  onTimer: (t: ReturnType<typeof setTimeout>) => void,
+): Promise<{ brief: string; findings: CatchupBrief }> {
+  return new Promise<{ brief: string; findings: CatchupBrief }>((resolve, reject) => {
+    onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
+    client.onNotification("catchup.briefReady", (params: unknown) => {
+      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
+      if (typeof p.brief !== "string" || !isCatchupBrief(p.findings)) {
+        reject(new Error("Malformed catchup.briefReady payload"));
+        return;
+      }
+      resolve({ brief: p.brief, findings: p.findings });
+    });
+    client.onNotification("catchup.briefError", (params: unknown) => {
+      const p = params as { error?: string };
+      reject(new Error(p.error ?? "Agent failed"));
+    });
+  });
+}
+
+function renderCatchupBrief(brief: string, findings: CatchupBrief, json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
+    return;
+  }
+  if (findings.gaps.some((g) => g.category === "empty_index")) {
+    process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
+    process.exit(1);
+  }
+  process.stdout.write(`${brief}\n`);
 }
 
 export async function runCatchupCli(args: string[]): Promise<void> {
@@ -70,21 +104,8 @@ export async function runCatchupCli(args: string[]): Promise<void> {
   registerInteractiveCliIpcHandlers(client);
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  const briefPromise = new Promise<{ brief: string; findings: CatchupBrief }>((resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS);
-    client.onNotification("catchup.briefReady", (params: unknown) => {
-      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
-      if (typeof p.brief !== "string" || !isCatchupBrief(p.findings)) {
-        reject(new Error("Malformed catchup.briefReady payload"));
-        return;
-      }
-      resolve({ brief: p.brief, findings: p.findings });
-    });
-    client.onNotification("catchup.briefError", (params: unknown) => {
-      const p = params as { error?: string };
-      reject(new Error(p.error ?? "Agent failed"));
-    });
+  const briefPromise = awaitCatchupBrief(client, (t) => {
+    timeout = t;
   });
 
   const callParams: { sinceMs: number; service?: string } = { sinceMs: parsed.sinceMs };
@@ -93,15 +114,7 @@ export async function runCatchupCli(args: string[]): Promise<void> {
   try {
     await client.call<{ sessionId: string }>("agents.catchup", callParams);
     const { brief, findings } = await briefPromise;
-    if (parsed.json) {
-      process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
-      return;
-    }
-    if (findings.gaps.some((g) => g.category === "empty_index")) {
-      process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
-      process.exit(1);
-    }
-    process.stdout.write(`${brief}\n`);
+    renderCatchupBrief(brief, findings, parsed.json);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

@@ -1,15 +1,3 @@
-/**
- * DORA service-config types + URN helpers.
- *
- * `[metrics.dora.<service-id>]` in nimbus.toml maps an abstract service id
- * to: a list of repo URNs (multi-provider), PagerDuty service ids, a deploy
- * workflow name regex, and behaviour overrides.
- *
- * Provider URN format: `<provider>:<provider-specific-id>`. The provider
- * prefix is used to compute the `service` column filter on the unified
- * `item` table (verified 2026-05-10 against the four CI connectors).
- */
-
 export type DoraProvider = "github" | "gitlab" | "bitbucket" | "jenkins" | "circleci";
 
 export type ParsedDoraRepoUrn = {
@@ -18,31 +6,16 @@ export type ParsedDoraRepoUrn = {
 };
 
 export type ServiceConfig = {
-  /** Stable service id from the table key. */
   readonly serviceId: string;
   readonly repos: readonly ParsedDoraRepoUrn[];
   readonly pagerdutyServices: readonly string[];
   readonly deployWorkflowPattern: RegExp;
   readonly incidentWindowMinutes: number;
   readonly excludePrLabels: readonly string[];
-  /**
-   * Logical deploy environments this service ships to (e.g. `["prod"]`,
-   * `["staging", "prod"]`). Sourced from the optional `deploy_environments`
-   * key in `[ci.service.<id>]` / `[metrics.dora.<id>]`. Defaults to
-   * `["prod"]` when omitted.
-   */
   readonly deployEnvironments: readonly string[];
-  /**
-   * Lowercased, deduplicated priority-name aliases that preflight treats as
-   * P1. Sourced org-wide from `[pagerduty].severity_p1_aliases` and copied
-   * onto every materialized ServiceConfig at load time. Empty default
-   * preserves the pre-existing strict `severity = 'P1'` filter behavior.
-   * Phase 5 T4 wrap-up.
-   */
   readonly severityP1Aliases: readonly string[];
 };
 
-/** Back-compat alias. New code should import `ServiceConfig`. */
 export type DoraServiceConfig = ServiceConfig;
 
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";
@@ -50,11 +23,6 @@ export const DEFAULT_INCIDENT_WINDOW_MINUTES = 60;
 export const DEFAULT_EXCLUDE_PR_LABELS: readonly string[] = ["revert"];
 export const DEFAULT_DEPLOY_ENVIRONMENTS: readonly string[] = ["prod"];
 
-/**
- * Validates a logical deploy-environment name. Allowed character set matches
- * the `service` field accepted by `annotateDeployment` (lowercase ASCII, digits,
- * `.`, `_`, `-`, starting with a letter or digit).
- */
 const DEPLOY_ENV_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 export function isValidDeployEnvironmentName(name: string): boolean {
   return DEPLOY_ENV_NAME_PATTERN.test(name);
@@ -86,11 +54,6 @@ export function parseDoraRepoUrn(raw: string): ParsedDoraRepoUrn {
   return { provider: provider as DoraProvider, providerId };
 }
 
-/**
- * Maps a provider URN prefix to the `service` column values it covers
- * on the indexed `item` table. Asymmetric for GitHub: PRs live under
- * `github`, CI runs under `github_actions`.
- */
 export function providerServiceColumns(provider: DoraProvider): {
   prServices: readonly string[];
   ciServices: readonly string[];

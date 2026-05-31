@@ -11,7 +11,6 @@ export type TelemetryFlushHandle = {
   readonly stop: () => void;
 };
 
-/** Matches `crypto.randomUUID()` output (RFC 4122 version 4). */
 const STORED_SESSION_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -25,7 +24,7 @@ function parseStoredTelemetrySessionId(raw: string): string | undefined {
 
 function readErrorCode(err: unknown): string | undefined {
   if (err !== null && typeof err === "object" && "code" in err) {
-    const c = (err as { code: unknown }).code;
+    const c = err.code;
     return typeof c === "string" ? c : undefined;
   }
   return undefined;
@@ -53,7 +52,6 @@ function persistCorruptSessionFile(path: string): string {
   return id;
 }
 
-/** @returns created id, or `retry` if another writer won the race (`wx` + EEXIST). */
 function tryExclusiveCreateSessionFile(path: string): { id: string; retry: boolean } {
   const id = crypto.randomUUID();
   try {
@@ -64,7 +62,6 @@ function tryExclusiveCreateSessionFile(path: string): { id: string; retry: boole
   }
 }
 
-/** Persists a random session id without echoing arbitrary file bytes into outbound telemetry. */
 function readOrCreateSessionId(dataDir: string): string {
   const p = join(dataDir, ".nimbus-telemetry-session");
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -86,18 +83,12 @@ function readOrCreateSessionId(dataDir: string): string {
   return crypto.randomUUID();
 }
 
-/**
- * Starts a timer that POSTs aggregate telemetry to the configured endpoint when enabled.
- * Reloads `[telemetry]` from `activeTomlPath` on each tick (pick up edits after restart-free
- * interval elapses — interval itself is fixed at scheduler start from the same file).
- */
 export function startTelemetryFlushScheduler(opts: {
   readonly dataDir: string;
   readonly activeTomlPath: string;
   readonly getDatabase: () => Database;
   readonly gatewayVersion: string;
   readonly logger: Logger;
-  /** One-shot assembly cost (ms) attributed to this Gateway process boot. */
   readonly coldStartMs?: number;
 }): TelemetryFlushHandle {
   let stopped = false;

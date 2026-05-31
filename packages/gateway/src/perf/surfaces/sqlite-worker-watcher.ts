@@ -1,18 +1,10 @@
 #!/usr/bin/env bun
-/**
- * S10 watcher writer Worker — inserts watcher_event rows via the
- * production `dbRun` wrapper. Pre-seeds one watcher row at init so the
- * `watcher_event.watcher_id → watcher.id` FK constraint passes (FKs
- * are turned ON by `LocalIndex.ensureSchema`).
- *
- * INSERT shape matches `automation/watcher-store.ts:99-103`.
- */
 
 import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
-import { runWorkerEntry, type WorkerSelf } from "./sqlite-worker-shared.ts";
+import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
 
@@ -26,7 +18,7 @@ const WATCHER_EVENT_INSERT_SQL = `INSERT INTO watcher_event (
   watcher_id, fired_at, condition_snapshot, action_result
 ) VALUES (?, ?, ?, ?)`;
 
-runWorkerEntry<Record<string, unknown>>(self as unknown as WorkerSelf, {
+runWorkerEntry<Record<string, unknown>>(self, {
   init: (_config, dbPath) => {
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);

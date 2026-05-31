@@ -25,7 +25,6 @@ describe("compareAgainstHistory", () => {
   test("returns one entry per gated SLO row even when missing from current", () => {
     const current = fakeLine("gha-ubuntu", {});
     const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
-    // 29 rows total — every row should produce one comparison entry.
     expect(out.length).toBe(SLO_THRESHOLDS.length);
   });
 
@@ -45,8 +44,6 @@ describe("compareAgainstHistory", () => {
   });
 
   test("delta-fail when delta > floorPct AND > floorAbs/previous*100", () => {
-    // S2-a: ghaMax 200ms, floorPct 25, floorAbs 5ms.
-    // Previous: 50ms → +30% = 65ms is delta-fail (within absolute, fails delta).
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 65 } });
     const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 50 } });
     const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
@@ -55,7 +52,6 @@ describe("compareAgainstHistory", () => {
   });
 
   test("delta-fail floor protects small previous values", () => {
-    // S2-a: floorAbs 5ms. Previous 4ms → +50% = 6ms is +2ms abs, BELOW the 5ms floor → pass.
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 6 } });
     const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 4 } });
     const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
@@ -113,9 +109,6 @@ describe("isFloorMetric", () => {
 });
 
 describe("compareAgainstHistory — floor metrics", () => {
-  // No production row currently has floor metric + numeric ghaMax + gated:true
-  // (PR-C-2b will eventually flip them after PR-C-2c lands). Construct a
-  // synthetic row to exercise the direction-aware branches.
   const floorRow: SloThreshold = {
     surfaceId: "S6-drive",
     metric: "throughput_per_sec",
@@ -155,7 +148,6 @@ describe("compareAgainstHistory — floor metrics", () => {
   });
 
   test("delta-fail when throughput drops more than the noise floor; deltaPct stays signed", () => {
-    // Previous 100, current 70 → -30% drop, exceeds 25% floor, fail.
     const previous = fakeLine("gha-ubuntu", {
       "S6-drive": { samples_count: 100, throughput_per_sec: 100 },
     });
@@ -168,14 +160,11 @@ describe("compareAgainstHistory — floor metrics", () => {
       kind: "delta-fail",
       previous: 100,
       current: 70,
-      // natural sign preserved so the formatter renders `-30.0%`
       deltaPct: -30,
     });
   });
 
   test("improvement (throughput rises) is never a delta-fail", () => {
-    // Previous 70, current 100 → +43% rise; ceiling-style this would fail
-    // delta floor 25%, but for a floor metric an increase is good.
     const previous = fakeLine("gha-ubuntu", {
       "S6-drive": { samples_count: 100, throughput_per_sec: 70 },
     });
@@ -188,7 +177,6 @@ describe("compareAgainstHistory — floor metrics", () => {
   });
 
   test("small drop within the noise floor passes", () => {
-    // Previous 100, current 85 → -15%, within the 25% noise floor.
     const previous = fakeLine("gha-ubuntu", {
       "S6-drive": { samples_count: 100, throughput_per_sec: 100 },
     });
@@ -201,8 +189,6 @@ describe("compareAgainstHistory — floor metrics", () => {
   });
 
   test("absolute-fail (measured below ghaMax) fires before delta-fail considered", () => {
-    // Previous 70 (already below floor), current 50 → both ≤ ghaMax 60.
-    // Absolute fires first with the current measured value.
     const previous = fakeLine("gha-ubuntu", {
       "S6-drive": { samples_count: 100, throughput_per_sec: 70 },
     });
@@ -217,7 +203,6 @@ describe("compareAgainstHistory — floor metrics", () => {
 
 describe("compareAgainstHistory — ceiling metrics regression direction", () => {
   test("ceiling-metric improvement (latency drop) does not fail delta", () => {
-    // S2-a: prev 100ms → current 50ms. -50% delta. Ceiling-metric improvement.
     const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 100 } });
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 50 } });
     const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");

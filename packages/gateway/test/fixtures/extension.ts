@@ -13,10 +13,6 @@ function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-/**
- * Create a fresh in-memory SQLite DB with the indexed schema migrated up,
- * plus a temp extensions directory. Caller cleans up.
- */
 export function setupFreshExtensionDb(): { db: Database; extensionsDir: string } {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
@@ -24,10 +20,6 @@ export function setupFreshExtensionDb(): { db: Database; extensionsDir: string }
   return { db, extensionsDir };
 }
 
-/**
- * Stage a signed extension on disk under `<extensionsDir>/<id>/` plus the
- * matching `extension` table row. Returns the install path.
- */
 export async function stageSignedExtensionOnDisk(opts: {
   db: Database;
   extensionsDir: string;

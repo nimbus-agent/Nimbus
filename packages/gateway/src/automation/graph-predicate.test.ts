@@ -302,7 +302,6 @@ describe("countItemsMatchingGraphPredicate", () => {
     const db = seededDb();
     const t0 = 1_700_000_000_000;
 
-    // Insert 3 items all within the since window.
     for (let i = 0; i < 3; i++) {
       db.run(
         `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
@@ -311,7 +310,6 @@ describe("countItemsMatchingGraphPredicate", () => {
       );
     }
 
-    // maxScan=1 limits the scan to 1 row even though 3 exist.
     const n = countItemsMatchingGraphPredicate({
       db,
       sinceMs: t0,
@@ -321,7 +319,6 @@ describe("countItemsMatchingGraphPredicate", () => {
         target: { type: "person", externalId: "gh:scan-none" },
       },
     });
-    // No graph edges exist, so count is 0 regardless of scan size.
     expect(n).toBe(0);
   });
 
@@ -329,8 +326,6 @@ describe("countItemsMatchingGraphPredicate", () => {
     const db = seededDb();
     const t0 = 1_700_000_000_000;
 
-    // Seed two PRs as items *and* as graph entities; only the newer PR is
-    // within the since window.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES ('i1', 'github', 'pr', 'pr-old', 'old', ?, ?)`,

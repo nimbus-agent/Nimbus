@@ -4,22 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * Lightweight smoke for `nimbus deploy annotate`: spawn the CLI without a
- * running Gateway and verify the arg-parse exit paths and help integration.
- *
- * Mirrors deploy.smoke.e2e.test.ts. Exit-code convention for the annotate
- * subcommand:
- *   2 = arg-parse / validation error (caught locally, never reaches IPC)
- *   1 = internal failure (gateway unreachable, IPC error, malformed envelope)
- *   0 = success (deployment recorded)
- *
- * `getCliPlatformPaths` in `packages/cli/src/paths.ts` does NOT honour
- * `NIMBUS_DATA_DIR`; it derives `dataDir` from platform-specific env vars.
- * To deterministically force the no-gateway branch in `readGatewayState`,
- * we point those vars at an empty temp dir so `<dataDir>/gateway.json`
- * does not exist.
- */
 describe("nimbus deploy annotate e2e (no-Gateway smoke)", () => {
   const cliEntry = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 

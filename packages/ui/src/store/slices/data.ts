@@ -5,7 +5,6 @@ import type {
   ExportPreflightResult,
 } from "../../ipc/types";
 
-/** Reason string attached to transient error state. Keyed so tests can match against constants. */
 export type DataFlowErrorKind = "gateway_disconnected" | "rpc_failed" | "validation" | "terminal";
 
 type FlowStatus = "idle" | "running" | "error";
@@ -35,10 +34,6 @@ export interface DataSlice {
   readonly exportFlow: ExportFlowState;
   readonly importFlow: ImportFlowState;
   readonly deleteFlow: DeleteFlowState;
-  /**
-   * Memory-only cache so the Export card keeps data visible under `StaleChip` when offline.
-   * Initialised as `null`; use a falsy check (`if (lastExportPreflight)`) not `=== undefined`.
-   */
   readonly lastExportPreflight: ExportPreflightResult | null;
   setExportFlow: (patch: Partial<ExportFlowState>) => void;
   setImportFlow: (patch: Partial<ImportFlowState>) => void;
@@ -46,11 +41,6 @@ export interface DataSlice {
   setExportProgress: (progress: DataExportProgressPayload) => void;
   setImportProgress: (progress: DataImportProgressPayload) => void;
   setLastExportPreflight: (preflight: ExportPreflightResult | null) => void;
-  /**
-   * Called by the connection-state subscription in DataPanel. Transitions any
-   * currently-running flow to `{ status: "error", errorKind: "gateway_disconnected" }`
-   * so the concurrent-flow guard releases the other two cards.
-   */
   markDisconnected: () => void;
   resetDataTransients: () => void;
 }

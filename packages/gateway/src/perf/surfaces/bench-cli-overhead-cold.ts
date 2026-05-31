@@ -1,17 +1,3 @@
-/**
- * S11-a — CLI invocation overhead (cold).
- *
- * Spawns a fresh `bun packages/cli/src/index.ts help` per sample and times
- * to clean exit. `help` is chosen because it dispatches synchronously to
- * `printHelp()` and exits 0 — no gateway connection, no async I/O beyond
- * the unavoidable file-logger setup. That isolates the measurement to
- * Bun runtime warm-up + module loading + argv dispatch (the actual
- * "invocation overhead" we're trying to characterise).
- *
- * 10 samples per run — CLI invocation is fast enough that a larger sample
- * size is cheap and tightens the p95 estimate.
- */
-
 import { resolve } from "node:path";
 
 import { spawnAndTimeToMarker } from "../process-spawn-bench.ts";

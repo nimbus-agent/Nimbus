@@ -9,20 +9,12 @@ import {
 const ENSURE_MCP = { ensureGrafanaMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-grafana1:";
 
-// Exact-anchor regex — the Grafana search URL is a fixed string with no
-// optional query params. If a future change adds query params (e.g.
-// `&orgId=1`), drop the `$` anchor or convert to a `toMatch` substring check.
 const SEARCH_RE = /^https:\/\/grafana\.example\.com\/api\/search\?type=dash-db&limit=30$/;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -94,11 +86,6 @@ describe("grafana-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it. Phase 2B's bitbucket reference
-// installed the fetch mock at module scope, but Phase 2C deliberately scopes
-// it here — the credential-short-circuit suite above uses `withIsolatedFixture`
-// and a module-level mock would nest under that helper's per-test install.
 describe("grafana-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 

@@ -1,7 +1,3 @@
-// `@readme/openapi-parser` v6 exposes only async helpers (parse/dereference/
-// validate/bundle). For synchronous string→JSON conversion we use `js-yaml`
-// directly. External `$ref` resolution is explicitly out of scope for PR 1
-// — see the "Known limitations" section at the top of this plan.
 import { load as yamlLoad } from "js-yaml";
 
 export type ParsedEndpoint = {
@@ -130,9 +126,7 @@ function extractAsyncapiEndpoints(doc: {
   return out;
 }
 
-function parseStringToJson(absPath: string, source: string): unknown | undefined {
-  // Try JSON first when the extension is .json or the content starts with
-  // a JSON brace; fall back to YAML otherwise.
+function parseStringToJson(absPath: string, source: string): unknown {
   const trimmed = source.trimStart();
   if (
     absPath.toLowerCase().endsWith(".json") ||
@@ -146,7 +140,7 @@ function parseStringToJson(absPath: string, source: string): unknown | undefined
     }
   }
   try {
-    return yamlLoad(source) as unknown;
+    return yamlLoad(source);
   } catch {
     return undefined;
   }
@@ -172,7 +166,7 @@ export function parseSpec(input: ParseInput): ParseResult {
   try {
     endpoints = isAsync
       ? extractAsyncapiEndpoints(raw as { channels?: Record<string, unknown> })
-      : extractOpenapiEndpoints(raw as { paths?: Record<string, unknown> });
+      : extractOpenapiEndpoints(raw);
   } catch {
     return { kind: "skipped", reason: "parse_failed" };
   }

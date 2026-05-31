@@ -10,7 +10,6 @@ const CURSOR_PREFIX = "nimbus-dsc1:";
 const DISCORD_API = "https://discord.com/api/v10";
 const MAX_API_CALLS_PER_SYNC = 8;
 
-/** Text-like channels we index (GUILD_TEXT, GUILD_NEWS). */
 const TEXT_CHANNEL_TYPES = new Set([0, 5]);
 
 type DiscordSyncCursorV1 = {
@@ -106,7 +105,6 @@ async function discordFetch(
   return { ok: res.ok, status: res.status, json, text };
 }
 
-/** Seconds to wait from a Discord 429 JSON body (avoids stringifying non-primitive `retry_after`). */
 function discordRetryAfterSeconds(json: unknown): number {
   if (typeof json !== "object" || json === null || Array.isArray(json)) {
     return 1;
@@ -168,7 +166,6 @@ function discordTextChannelIdsFromJson(json: unknown): string[] {
   return chIds;
 }
 
-/** Returns whether a row was written (valid id + author). */
 function upsertOneDiscordMessageIfValid(
   ctx: SyncContext,
   mr: Record<string, unknown>,
@@ -378,10 +375,6 @@ async function discordFetchAndApplyMessages(
   };
 }
 
-/**
- * One pass through the state machine. Returns a {@link SyncResult} when the sync should end this round,
- * or `undefined` to continue the outer loop.
- */
 async function discordSyncTick(
   ctx: SyncContext,
   token: string,

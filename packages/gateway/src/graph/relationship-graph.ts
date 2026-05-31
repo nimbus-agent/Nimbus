@@ -25,7 +25,6 @@ export function isItemLinkedGraphType(t: string): t is ItemLinkedEntityType {
   return (ITEM_LINKED_ENTITY_TYPES as readonly string[]).includes(t);
 }
 
-/** Deterministic primary key for `graph_entity` (stable across process restarts). */
 export function deterministicGraphEntityId(type: string, externalId: string): string {
   return createHash("sha256").update(`nimbus.graph.v1\0${type}\0${externalId}`).digest("hex");
 }
@@ -90,7 +89,6 @@ export function upsertGraphRelation(
   );
 }
 
-/** Removes the primary index-backed graph node for this item (relations cascade). */
 export function deleteGraphEntitiesForItemKeys(db: Database, itemPrimaryKeys: string[]): void {
   if (itemPrimaryKeys.length === 0) {
     return;
@@ -223,9 +221,6 @@ export type TraverseGraphResult = {
   relations: GraphRelationRow[];
 };
 
-/**
- * BFS expansion over the relationship graph (both directions along edges).
- */
 export function traverseGraph(
   db: Database,
   startRef: string,

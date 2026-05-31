@@ -76,7 +76,6 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
       createdAt: 200,
     });
     await store.append({ sessionId: sid, text: "second user turn", role: "user", createdAt: 300 });
-    // A turn from a different session must NOT leak into the result.
     await store.append({
       sessionId: "sess-other",
       text: "unrelated user turn",
@@ -97,11 +96,6 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
   test("BUG-005 follow-up: append still records the literal turn when embedText returns null", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
-    // The user's gateway hits this path when the embedding worker fails to
-    // initialize ("embedding worker failed to initialize; semantic search
-    // disabled"). Without this fallback, append silently no-ops and
-    // multi-turn TUI memory never works in environments without a healthy
-    // embedding runtime.
     const store = new SessionMemoryStore({
       db,
       dims: 384,
@@ -117,7 +111,6 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
       createdAt: 200,
     });
 
-    // Literal-turn replay must work even though the row was written without a vector.
     const recent = await store.getRecentTurns(sid, 10);
     expect(recent.length).toBe(2);
     expect(recent.map((t) => t.text)).toEqual(["user turn one", "assistant reply one"]);
@@ -141,8 +134,6 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
         createdAt: 1000 + i,
       });
     }
-    // Only the 3 most recent should come back, but in chronological order
-    // (so the LLM reads them oldest→newest the way a human would).
     const recent = await store.getRecentTurns(sid, 3);
     expect(recent.map((t) => t.text)).toEqual(["turn 3", "turn 4", "turn 5"]);
   });

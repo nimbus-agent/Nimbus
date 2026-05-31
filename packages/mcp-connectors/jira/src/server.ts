@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-jira — Jira Cloud REST MCP server.
- * Credentials: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN (never logged).
- * Mutations require Gateway HITL (`jira.issue.create`, `jira.issue.update`, `jira.comment.add`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

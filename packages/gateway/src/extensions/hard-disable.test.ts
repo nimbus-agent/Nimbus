@@ -125,13 +125,6 @@ describe("hardDisablePreT2Extensions", () => {
   });
 
   test("does NOT disable manifest with missing permissions field (no key at all)", () => {
-    // A manifest with no `permissions` key is normalized to default-deny by
-    // the validator. It is NOT the pre-T2 legacy form (which used an array)
-    // — we cannot distinguish "I wrote this for T2 and forgot the key" from
-    // "I wrote this pre-T2 and had no key" any other way, so we err on the
-    // permissive side. The intended target of hard-disable is the legacy
-    // ARRAY form, which is the only form that was ever shipped under
-    // pre-T2 documentation.
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const { dir, manifestHex } = writeExtensionDir("nimbus-preT2-missing-", "no.perms", {

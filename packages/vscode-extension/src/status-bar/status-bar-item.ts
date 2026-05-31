@@ -5,8 +5,6 @@ export type StatusBarInputs = {
   connection: ConnectionState;
   profile: string;
   degradedConnectorCount: number;
-  /** Names of degraded connectors so the tooltip can list them — keeps users
-   *  out of the chat panel for a quick "what's broken?" check. */
   degradedConnectorNames: string[];
   pendingHitlCount: number;
   autoStartGateway: boolean;

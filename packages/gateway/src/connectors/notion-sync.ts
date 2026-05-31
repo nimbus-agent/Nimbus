@@ -167,7 +167,6 @@ function notionAuthorIdFromPageRow(ctx: SyncContext, row: Record<string, unknown
   return resolvePersonForSync(ctx.db, { notionUserId });
 }
 
-/** `true` when the caller should stop iterating (watermark hit). */
 function notionConsumeSearchResultRow(
   ctx: SyncContext,
   item: unknown,

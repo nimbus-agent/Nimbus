@@ -1,13 +1,3 @@
-/**
- * Shared loop + message-protocol types for the S10 SQLite contention
- * Worker scripts. Each per-role worker (sync/watcher/audit) supplies a
- * `doOneWrite` callback; this module owns:
- *  - the time-bounded loop (durationMs deadline + AbortSignal);
- *  - the BEGIN IMMEDIATE + 100 ms retry budget on SQLITE_BUSY;
- *  - the writes / busyRetries counters;
- *  - the message-protocol shape that runWorkerBench (../worker-bench.ts) drives.
- */
-
 const SQLITE_BUSY = 5;
 const BUSY_RETRY_MS = 100;
 
@@ -26,13 +16,11 @@ function isSqliteBusy(err: unknown): boolean {
   const code = (err as { code?: unknown }).code;
   if (typeof code === "number") return (code & 0xff) === SQLITE_BUSY;
   if (typeof code === "string") return code === "SQLITE_BUSY";
-  // bun:sqlite SQLiteError messages also include "database is locked"
   const msg = (err as { message?: unknown }).message;
   return typeof msg === "string" && /database is locked/i.test(msg);
 }
 
 export interface WorkerLoopDeps {
-  /** Performs one write inside its own BEGIN IMMEDIATE. Must throw on SQLITE_BUSY. */
   doOneWrite: () => void;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -67,29 +55,15 @@ export async function runWorkerLoop(
   return { writes, busyRetries };
 }
 
-/**
- * Minimal Worker-globals shape — `self.postMessage` + `self.onmessage`.
- * Each per-role worker script imports `self` from its Worker context and
- * passes it here so `runWorkerEntry` can drive the protocol without
- * reaching into module-global state itself.
- */
 export interface WorkerSelf {
   postMessage: (msg: WorkerMsg) => void;
   onmessage: ((e: MessageEvent<unknown>) => Promise<void> | void) | null;
 }
 
 export interface WorkerEntryHooks<TConfig> {
-  /** Called once during init. Should construct/seed the DB and return the per-write fn. */
   init: (config: TConfig, dbPath: string) => { doOneWrite: () => void };
 }
 
-/**
- * Wires the standard init → ready → start → done|error message protocol on
- * `worker`. Each per-role worker file (sync/watcher/audit) collapses to:
- *   import { runWorkerEntry } from "./sqlite-worker-shared.ts";
- *   runWorkerEntry(self as unknown as WorkerSelf, { init: ... });
- * Owns the AbortController, stop-flag, error-shape mapping, and timing.
- */
 export function runWorkerEntry<TConfig>(
   worker: WorkerSelf,
   hooks: WorkerEntryHooks<TConfig>,

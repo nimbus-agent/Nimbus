@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-teams — Microsoft Graph Teams (channels + chats). Token: MICROSOFT_OAUTH_ACCESS_TOKEN.
- * Channel/chat posts require Gateway HITL (`teams.message.post`, `teams.message.postChat`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -52,7 +47,7 @@ const reg = createZodToolRegistrar(registerSimpleTool);
 
 const teamsTeamListSchema = z.object({
   top: z.number().int().min(1).max(100).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 reg(
@@ -70,7 +65,7 @@ reg(
 const teamsChannelListSchema = z.object({
   teamId: z.string().min(1),
   top: z.number().int().min(1).max(100).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 reg(
@@ -90,7 +85,7 @@ const teamsChannelMessagesSchema = z.object({
   teamId: z.string().min(1),
   channelId: z.string().min(1),
   top: z.number().int().min(1).max(50).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 reg(
@@ -109,7 +104,7 @@ reg(
 
 const teamsChatListSchema = z.object({
   top: z.number().int().min(1).max(50).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 reg(
@@ -127,7 +122,7 @@ reg(
 const teamsChatMessagesSchema = z.object({
   chatId: z.string().min(1),
   top: z.number().int().min(1).max(50).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 reg("teams_chat_messages", "List messages in a chat.", teamsChatMessagesSchema, async (parsed) => {

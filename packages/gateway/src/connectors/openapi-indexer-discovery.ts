@@ -29,11 +29,6 @@ function pathMatchesAnyGlob(rel: string, globs: readonly string[]): boolean {
   return false;
 }
 
-/**
- * Minimal glob matcher: `*` (no slashes), `**` (any chars including slashes),
- * literal `?` (one char). Anchored. Sufficient for `ignore_globs` patterns
- * like `**\/legacy\/**`.
- */
 function matchesGlob(input: string, glob: string): boolean {
   let re = "^";
   for (let i = 0; i < glob.length; i++) {
@@ -65,6 +60,37 @@ export function discoverSpecFiles(root: string, opts: DiscoveryOptions): readonl
   return out;
 }
 
+type DirEntry = {
+  name: string;
+  isDirectory: () => boolean;
+  isFile: () => boolean;
+  isSymbolicLink: () => boolean;
+};
+
+function readDirEntries(dir: string): readonly DirEntry[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function maybePushSpecFile(abs: string, rel: string, opts: DiscoveryOptions, out: string[]): void {
+  if (!SPEC_FILENAME_RE.test(basename(abs))) {
+    return;
+  }
+  if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
+    return;
+  }
+  try {
+    if (statSync(abs).isFile()) {
+      out.push(abs);
+    }
+  } catch {
+    // ignore — file disappeared between readdir and stat
+  }
+}
+
 function walk(
   root: string,
   dir: string,
@@ -75,57 +101,20 @@ function walk(
   if (depth > opts.maxWalkDepth) {
     return;
   }
-  let entries: readonly {
-    name: string;
-    isDirectory: () => boolean;
-    isFile: () => boolean;
-    isSymbolicLink: () => boolean;
-  }[] = [];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
-    // Never follow symlinks — protects against directory cycles and against
-    // a hostile vault that links into the user's home dir.
+  for (const e of readDirEntries(dir)) {
     if (e.isSymbolicLink()) {
       continue;
     }
     const abs = join(dir, e.name);
     const rel = abs.slice(root.length + 1);
     if (e.isDirectory()) {
-      if (DEFAULT_IGNORE_DIRS.has(e.name)) {
-        continue;
+      if (!DEFAULT_IGNORE_DIRS.has(e.name) && !pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
+        walk(root, abs, depth + 1, opts, out);
       }
-      if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
-        continue;
-      }
-      walk(root, abs, depth + 1, opts, out);
       continue;
     }
-    if (!e.isFile()) {
-      continue;
-    }
-    if (!SPEC_FILENAME_RE.test(basename(abs))) {
-      continue;
-    }
-    if (pathMatchesAnyGlob(rel, opts.ignoreGlobs)) {
-      continue;
-    }
-    try {
-      if (statSync(abs).isFile()) {
-        out.push(abs);
-      }
-    } catch {
-      // ignore — file disappeared between readdir and stat
+    if (e.isFile()) {
+      maybePushSpecFile(abs, rel, opts, out);
     }
   }
 }
-
-// Performance note: we do NOT pre-compile `ignoreGlobs` into a single regex.
-// The `DEFAULT_IGNORE_DIRS` Set covers the high-fanout paths (`node_modules`,
-// `.git`, `dist`, ...) at O(1); `pathMatchesAnyGlob` runs only on directories
-// and files that survived that check, which is bounded. Pre-compilation is
-// a hot-path optimisation we can add later if a real workload shows it
-// matters.

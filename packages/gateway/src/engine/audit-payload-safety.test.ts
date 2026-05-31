@@ -10,10 +10,6 @@ import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } fr
 
 type AuditRecord = Parameters<AuditSink["recordAudit"]>[0];
 
-/**
- * Patterns that must never appear in persisted HITL audit `action_json` (or consent prompts
- * derived from actions). Aligns with §7.8 / §7.6 — no credential material in audit surfaces.
- */
 const CREDENTIAL_ARTIFACT_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, // JWT-shaped
   /\bghp_[a-z0-9]{20,}\b/i,

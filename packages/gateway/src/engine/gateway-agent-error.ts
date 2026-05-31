@@ -1,9 +1,3 @@
-/**
- * Thrown when NL routing cannot reach an LLM. Discriminates the *why* so the
- * CLI can surface an actionable message instead of a generic "check your
- * network and key" line that conflates four unrelated failure modes.
- */
-
 export type AgentUnavailableReason =
   | "no_api_key"
   | "invalid_api_key"
@@ -19,16 +13,17 @@ export type AgentProviderName = "anthropic" | "openai";
 export type AgentUnavailableInit = {
   reason: AgentUnavailableReason;
   provider?: AgentProviderName;
-  /** Already-redacted, safe-to-show context. NEVER include API keys. */
   detail?: string;
 };
+
+const DEFAULT_AGENT_UNAVAILABLE_INIT: AgentUnavailableInit = { reason: "unknown" };
 
 export class GatewayAgentUnavailableError extends Error {
   override readonly name = "GatewayAgentUnavailableError";
   readonly reason: AgentUnavailableReason;
   readonly provider: AgentProviderName | undefined;
 
-  constructor(init: AgentUnavailableInit = { reason: "unknown" }) {
+  constructor(init: AgentUnavailableInit = DEFAULT_AGENT_UNAVAILABLE_INIT) {
     super(buildAgentErrorMessage(init));
     this.reason = init.reason;
     this.provider = init.provider;
@@ -81,7 +76,7 @@ function parseProviderErrorBody(body: string): ProviderErrorBody {
   try {
     const parsed = JSON.parse(body) as unknown;
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as ProviderErrorBody;
+      return parsed;
     }
   } catch {
     /* not JSON */
@@ -89,10 +84,6 @@ function parseProviderErrorBody(body: string): ProviderErrorBody {
   return {};
 }
 
-/**
- * Maps an HTTP error response from `fetch` to a typed
- * `GatewayAgentUnavailableError`. Used by the classifier in `router.ts`.
- */
 export function agentErrorFromHttpResponse(
   provider: AgentProviderName,
   status: number,
@@ -126,16 +117,10 @@ export function agentErrorFromHttpResponse(
   return new GatewayAgentUnavailableError({
     reason: "provider_error",
     provider,
-    detail: msg !== "" ? `HTTP ${String(status)}: ${clipDetail(msg)}` : `HTTP ${String(status)}`,
+    detail: msg === "" ? `HTTP ${String(status)}` : `HTTP ${String(status)}: ${clipDetail(msg)}`,
   });
 }
 
-/**
- * Maps an arbitrary caught Error (e.g., from a Mastra agent that wraps the
- * provider SDK) to a typed `GatewayAgentUnavailableError` when the error
- * string matches a known LLM-side failure. Returns `null` when the error
- * doesn't look LLM-related — caller should re-throw via `sanitizeExternalError`.
- */
 export function agentErrorFromCaughtError(
   e: unknown,
   provider?: AgentProviderName,
@@ -144,7 +129,7 @@ export function agentErrorFromCaughtError(
   const msg = raw.toLowerCase();
 
   const init = (reason: AgentUnavailableReason): AgentUnavailableInit =>
-    provider !== undefined ? { reason, provider } : { reason };
+    provider === undefined ? { reason } : { reason, provider };
 
   if (
     msg.includes("insufficient_quota") ||

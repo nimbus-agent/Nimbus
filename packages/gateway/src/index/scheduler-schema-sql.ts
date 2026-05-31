@@ -1,7 +1,3 @@
-/**
- * Scheduler + telemetry tables (user_version 2).
- * Kept separate from `sync_state` (connector delta tokens) until unified migration.
- */
 export const SCHEDULER_V2_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS scheduler_state (
   service_id TEXT PRIMARY KEY,

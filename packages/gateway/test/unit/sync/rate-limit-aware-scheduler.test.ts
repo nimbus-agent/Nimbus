@@ -1,14 +1,3 @@
-/**
- * Rate-limit-aware scheduler tests — Phase 3.5 §2.2 / §2.3 / §2.5
- *
- * Covers:
- *  - RateLimitError thrown by connector → health transitions to rate_limited
- *  - Scheduler skips dispatch while within rate-limit window
- *  - UnauthenticatedError → health transitions to unauthenticated, notify called once
- *  - Connectivity guard: _online=false → no backoff_attempt incremented, no transient_error
- *  - Generic error still transitions health to degraded/error
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import pino from "pino";
@@ -65,8 +54,6 @@ afterEach(() => {
   db.close();
 });
 
-// ─── Rate limit ───────────────────────────────────────────────────────────────
-
 describe("RateLimitError", () => {
   test("transitions health to rate_limited after connector throws", async () => {
     const ctx = makeCtx();
@@ -92,9 +79,7 @@ describe("RateLimitError", () => {
   test("scheduler does not dispatch while within rate-limit window", async () => {
     const ctx = makeCtx();
     let syncCalls = 0;
-    const retryAfter = new Date(Date.now() + 10_000); // 10s in future
-
-    // First call: throw rate limit; subsequent calls: succeed
+    const retryAfter = new Date(Date.now() + 10_000);
     const c: Syncable = {
       serviceId: "rl-skip",
       defaultIntervalMs: 20, // very short so tick fires immediately if not gated
@@ -110,20 +95,16 @@ describe("RateLimitError", () => {
     sched.register(c);
     await forceSyncExpectReject(sched, "rl-skip");
 
-    // Start the scheduler loop — should NOT dispatch again because retryAfter is 10s ahead
     sched.start();
     await sleep(100);
     sched.stop();
 
-    // Only the initial forceSync call should have happened
     expect(syncCalls).toBe(1);
 
     const health = getConnectorHealth(db, "rl-skip");
     expect(health.state).toBe("rate_limited");
   });
 });
-
-// ─── Unauthenticated ─────────────────────────────────────────────────────────
 
 describe("UnauthenticatedError", () => {
   test("transitions health to unauthenticated", async () => {
@@ -194,8 +175,6 @@ describe("UnauthenticatedError", () => {
   });
 });
 
-// ─── Connectivity guard ───────────────────────────────────────────────────────
-
 describe("connectivity guard", () => {
   test("when offline: no backoff_attempt incremented, no transient_error health transition", async () => {
     const ctx = makeCtx();
@@ -223,22 +202,17 @@ describe("connectivity guard", () => {
     await sleep(100);
     sched.stop();
 
-    // Sync must never have been called
     expect(syncCalled).toBe(false);
 
-    // Scheduler state must have no backoff consumed
     const row = loadSchedulerState(db, "guard-test");
     expect(row?.consecutive_failures).toBe(0);
     expect(row?.status).toBe("ok");
 
-    // Health state must NOT be degraded/error from a transient_error event
     const health = getConnectorHealth(db, "guard-test");
     expect(health.state === "degraded" || health.state === "error").toBe(false);
     expect(health.backoffAttempt).toBe(0);
   });
 });
-
-// ─── Generic error still records health transition ────────────────────────────
 
 describe("generic error", () => {
   test("transitions health to degraded on first failure", async () => {
@@ -277,7 +251,6 @@ describe("generic error", () => {
       { initialOnline: true, isOnline: async () => true, random: () => 0 },
     );
     sched.register(c);
-    // Drive 5 failures via forceSync; after 5 the scheduler enters error state
     for (let i = 0; i < 5; i++) {
       await forceSyncExpectReject(sched, "multi-fail");
     }

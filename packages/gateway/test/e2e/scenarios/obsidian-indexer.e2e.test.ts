@@ -37,7 +37,6 @@ test("e2e: fixture vault produces queryable obsidian_note rows + daily-note flag
   expect(daily.length).toBe(1);
   expect(daily[0]?.path).toBe("Daily/2026-05-10.md");
 
-  // FTS path: title 'Welcome' should be reachable through item_fts.
   const ftsHits = db
     .query(
       "SELECT COUNT(*) AS n FROM item WHERE rowid IN (SELECT rowid FROM item_fts WHERE item_fts MATCH ?)",

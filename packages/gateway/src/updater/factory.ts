@@ -12,18 +12,10 @@ export interface CreateUpdaterFromConfigArgs {
   currentVersion: string;
   emit: UpdaterEmit;
   logger: Logger;
-  /** Test-only override: pin the resolved platform target. */
   _platformOverride?: PlatformTarget | undefined;
-  /** Test-only: force the unsupported-platform path even on a supported host. */
   _forceUnsupported?: boolean;
 }
 
-/**
- * Build an `Updater` from the user's `[updater]` config. Returns `undefined`
- * when `enabled` is false or the host architecture is not in the supported
- * release set. The dispatcher then returns `ERR_UPDATER_NOT_CONFIGURED` for
- * `updater.*` calls — the correct signal in both cases.
- */
 export function createUpdaterFromConfig(args: CreateUpdaterFromConfigArgs): Updater | undefined {
   const { updaterCfg, currentVersion, emit, logger } = args;
 

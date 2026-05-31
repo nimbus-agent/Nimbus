@@ -9,7 +9,7 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
-import { createLocalEmbedder } from "./model.ts";
+import { type CreateLocalEmbedderOptions, createLocalEmbedder } from "./model.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import { EMBEDDING_DIM_LOCAL, EMBEDDING_DIM_OPENAI } from "./routing.ts";
@@ -25,18 +25,13 @@ async function resolveOpenAIApiKey(vault: NimbusVault): Promise<string> {
   return typeof v === "string" ? v.trim() : "";
 }
 
-/**
- * Hybrid embedding runtime — wraps two `SqliteEmbeddingPipeline` instances
- * (MiniLM 384 + OpenAI 1536) in a `RoutingEmbeddingPipeline`. Returns
- * `null` if the OpenAI key is missing, the OpenAI embedder fails to build,
- * or sqlite-vec is unavailable — caller falls back to MiniLM-only.
- */
 export async function tryCreateRoutingEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,
   logger: Logger,
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   vault: NimbusVault,
+  createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
 ): Promise<EmbeddingRuntime | null> {
   const apiKey = await resolveOpenAIApiKey(vault);
   if (apiKey === "") {
@@ -47,7 +42,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
   let localEmbedder: Embedder;
   let openaiEmbedder: Embedder;
   try {
-    localEmbedder = await createLocalEmbedder({ cacheDir: join(paths.dataDir, "models") });
+    localEmbedder = await createEmbedder({ cacheDir: join(paths.dataDir, "models") });
     openaiEmbedder = await createOpenAIEmbedder({
       apiKey,
       model: "text-embedding-3-small",
@@ -110,7 +105,6 @@ export async function tryCreateRoutingEmbeddingRuntime(
     },
 
     async embedQuery(text: string): Promise<Float32Array | null> {
-      // Single-vec API stays on the local embedder for back-compat.
       const vecs = await localEmbedder.embed([text]);
       return vecs[0] ?? null;
     },

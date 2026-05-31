@@ -21,10 +21,6 @@ export async function auditSvgFile(path: string): Promise<SvgAuditResult> {
     resvg = new Resvg(content);
   } catch (err) {
     const message = (err as Error).message;
-    // resvg rejects width="0"/height="0" with "SVG has an invalid size" before
-    // the constructor returns — classify these as dimension failures rather
-    // than parse failures so callers can distinguish malformed XML from
-    // structurally-parseable but zero-sized SVGs.
     if (/invalid size/i.test(message)) {
       return { ok: false, reason: `zero dimension: ${message}` };
     }

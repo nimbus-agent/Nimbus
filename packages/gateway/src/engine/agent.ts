@@ -20,19 +20,8 @@ import {
 import { buildContextWindow } from "./context-ranker.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 
-/** Max length for free-text tool string args (search queries, paths fragments, etc.). */
 const MAX_TOOL_STRING_LEN = 2000;
 
-/**
- * S8-F3 / chain C4 — wrap a tool definition so its execute returns a
- * `<tool_output>`-tagged string. The LLM is instructed by the system prompt
- * to treat envelope contents as data, never instructions.
- *
- * Phase 5 T6 PR 2 — when `auditDb` is supplied, also writes a `tool_call_log`
- * row capturing the envelope, duration, sessionId, and ok/error status.
- * Errors are logged then re-thrown so the existing LLM-facing error
- * handling path is unchanged.
- */
 function wrapToolForLlm<T>(
   service: string,
   tool: string,
@@ -90,11 +79,6 @@ function clipToolString(s: string, max = MAX_TOOL_STRING_LEN): string {
   return s.length > max ? s.slice(0, max) : s;
 }
 
-/**
- * Mastra's `ModelRouterLanguageModel` requires `"<provider>/<model>"`. We accept bare
- * Anthropic/OpenAI ids in env/TOML for ergonomics, then prefix here. Unknown families
- * pass through so Mastra's own error message guides the user.
- */
 function toMastraModelId(modelId: string): string {
   const s = modelId.trim();
   if (s.includes("/")) return s;
@@ -110,20 +94,12 @@ function isStringArray(xs: unknown): xs is string[] {
 export type NimbusEngineAgentDeps = {
   localIndex: LocalIndex;
   agentModel?: string;
-  /** Defaults to {@link Config.engineContextWindowItems}. */
   contextWindowItems?: number;
-  /** Defaults to {@link Config.searchServicePriorityMap}. */
   searchServicePriority?: ReadonlyMap<string, number>;
-  /** When set, exposes recall/append session memory tools (requires `agent.invoke` sessionId). */
   sessionMemoryStore?: SessionMemoryStore;
-  /** Database handle for tool_call_log audit writes (Phase 5 T6 PR 2). */
   auditDb?: Database;
 };
 
-/**
- * Mastra agent with read-only gateway tools (index search, connector list, audit tail).
- * Destructive filesystem work stays on the planner + {@link ToolExecutor} path.
- */
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   mastra: Mastra;
   agent: Agent;
@@ -332,9 +308,6 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           ? Math.min(1000, Math.max(1, Math.floor(q["limit"])))
           : 20;
       const raw = deps.localIndex.listAudit(limit);
-      // S1-F6 — re-redact persisted action_json before exposing to LLM context.
-      // Write-side redaction (S2-F2) covers new rows; legacy rows pre-dating
-      // that fix are scrubbed here as defense-in-depth.
       const entries = raw.map((row) => {
         let parsed: unknown;
         try {
@@ -436,14 +409,11 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       " When the client passes sessionId on agent.invoke, use recallSessionMemory for cross-turn references and appendSessionMemory only for explicit durable notes.";
   }
 
-  // Instructs the agent to invoke tools directly rather than asking for verbal consent,
-  // relying on the structural HITL gate in ToolExecutor.
   const consentGuidance =
     " For destructive or irreversible actions (send/draft email, move/delete files, modify connector data, etc.), call the tool directly. Nimbus's structural consent gate surfaces a separate HITL dialog to the user before the action executes — that dialog is the authoritative consent surface. Do not ask the user in chat for permission, do not say 'are you happy with this?', and do not require a verbal go-ahead before invoking a tool. Just invoke it; the consent gate handles the rest.";
 
   const toolGuidance = `Use searchLocalIndex for ranked index search; it returns a window of full items plus sourceSummary for the rest—call fetchMoreIndexResults(service, indexedType, offset, limit) when the user needs more rows from a bucket. Use traverseGraph(entityId, depth?, relationTypes?) when the user asks what is linked to a PR, issue, repo, channel, or person already identified in the index. Use resolvePerson to map names to person ids before reasoning about authors. Use listConnectors and getAuditLog as needed. Do not claim you moved or deleted files unless the user already did so outside this chat.${consentGuidance}`;
 
-  // Wraps each LLM-facing read tool results in a <tool_output> envelope (Invariant I11).
   const baseTools = {
     searchLocalIndex: wrapToolForLlm("index", "searchLocalIndex", searchLocalIndex, deps.auditDb),
     fetchMoreIndexResults: wrapToolForLlm(

@@ -47,13 +47,9 @@ const PROVIDER_VALUES: ReadonlySet<DeploymentProvider> = new Set([
   "other",
 ]);
 
-/**
- * Default deploy-counted environments. Override per-service via
- * `[ci.service.<id>].deploy_environments` once Task 11 lands.
- */
 const DEFAULT_DEPLOY_ENVIRONMENTS: readonly string[] = ["prod"];
 
-function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
+function validateServiceAndProvider(input: DeploymentAnnotateInput): void {
   if (
     typeof input.service !== "string" ||
     input.service.length === 0 ||
@@ -67,6 +63,9 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
   if (!PROVIDER_VALUES.has(input.provider)) {
     throw new AnnotateError("provider", "provider must be one of the supported values");
   }
+}
+
+function validateEnvironment(input: DeploymentAnnotateInput): void {
   if (
     typeof input.environment !== "string" ||
     input.environment.length === 0 ||
@@ -77,33 +76,37 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
   if (!ENV_RE.test(input.environment)) {
     throw new AnnotateError("environment", `environment must match ${ENV_RE.source}`);
   }
-  const lcSha = typeof input.sha === "string" ? input.sha.toLowerCase() : "";
-  if (!SHA_RE.test(lcSha)) {
-    throw new AnnotateError("sha", "sha must be 7..64 lowercase hex chars");
-  }
+}
+
+function validateRefAndStatus(input: DeploymentAnnotateInput): void {
   if (typeof input.ref !== "string" || input.ref.length === 0 || input.ref.length > REF_MAX) {
     throw new AnnotateError("ref", `ref must be 1..${REF_MAX} chars`);
   }
   if (!STATUS_VALUES.has(input.status)) {
     throw new AnnotateError("status", "status must be one of the four supported values");
   }
+}
+
+function validateTimestamps(input: DeploymentAnnotateInput, nowMs: number): void {
   if (!Number.isFinite(input.started_at_ms) || !Number.isInteger(input.started_at_ms)) {
     throw new AnnotateError("started_at_ms", "started_at_ms must be an integer (ms since epoch)");
   }
   if (input.started_at_ms < nowMs - ONE_YEAR_MS || input.started_at_ms > nowMs + ONE_HOUR_MS) {
     throw new AnnotateError("started_at_ms", "started_at_ms must be within [now-365d, now+1h]");
   }
-  if (input.finished_at_ms !== undefined) {
-    if (!Number.isFinite(input.finished_at_ms) || !Number.isInteger(input.finished_at_ms)) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must be an integer");
-    }
-    if (input.finished_at_ms < input.started_at_ms) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must be >= started_at_ms");
-    }
-    if (input.finished_at_ms > nowMs + ONE_HOUR_MS) {
-      throw new AnnotateError("finished_at_ms", "finished_at_ms must not exceed now+1h");
-    }
+  if (input.finished_at_ms === undefined) return;
+  if (!Number.isFinite(input.finished_at_ms) || !Number.isInteger(input.finished_at_ms)) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must be an integer");
   }
+  if (input.finished_at_ms < input.started_at_ms) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must be >= started_at_ms");
+  }
+  if (input.finished_at_ms > nowMs + ONE_HOUR_MS) {
+    throw new AnnotateError("finished_at_ms", "finished_at_ms must not exceed now+1h");
+  }
+}
+
+function validateOptionalStrings(input: DeploymentAnnotateInput): void {
   if (input.workflow_url !== undefined) {
     if (typeof input.workflow_url !== "string" || input.workflow_url.length > URL_MAX) {
       throw new AnnotateError(
@@ -115,10 +118,6 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
       throw new AnnotateError("workflow_url", "workflow_url must be http(s)");
     }
   }
-  // Empty string is treated as absent (matches the external-id helper's
-  // `!== undefined && !== ""` contract) so callers passing `run_id: ""`
-  // (e.g. GH Action inputs that default to "") fall through to the
-  // next tier instead of getting a "must be 1..64 chars" error.
   if (input.run_id !== undefined && input.run_id !== "") {
     if (typeof input.run_id !== "string" || input.run_id.length > RUN_ID_MAX) {
       throw new AnnotateError("run_id", `run_id must be 1..${RUN_ID_MAX} chars`);
@@ -129,6 +128,18 @@ function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnno
       throw new AnnotateError("job_id", `job_id must be 1..${JOB_ID_MAX} chars`);
     }
   }
+}
+
+function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
+  validateServiceAndProvider(input);
+  validateEnvironment(input);
+  const lcSha = typeof input.sha === "string" ? input.sha.toLowerCase() : "";
+  if (!SHA_RE.test(lcSha)) {
+    throw new AnnotateError("sha", "sha must be 7..64 lowercase hex chars");
+  }
+  validateRefAndStatus(input);
+  validateTimestamps(input, nowMs);
+  validateOptionalStrings(input);
   return { ...input, sha: lcSha };
 }
 
@@ -148,10 +159,6 @@ export function annotateDeployment(
   const deployEnvs = opts.deployEnvironments ?? DEFAULT_DEPLOY_ENVIRONMENTS;
   const doraEligible = input.status === "success" && deployEnvs.includes(input.environment);
 
-  // Bind `isNew` to a successful commit by RETURNING it from the
-  // transaction closure. If the writes below throw, the transaction
-  // rolls back and `isNew` is never assigned at all — preventing a
-  // stale `true` from leaking back to the caller after rollback.
   const isNew = db.transaction(() => {
     const existing = db
       .query("SELECT 1 AS one FROM item WHERE service = ? AND external_id = ? LIMIT 1")
@@ -238,7 +245,7 @@ export function annotateDeployment(
       timestamp: nowMs,
     });
     return isNewInner;
-  })() as boolean;
+  })();
 
   return {
     external_id: externalId,

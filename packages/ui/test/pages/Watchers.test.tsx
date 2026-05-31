@@ -97,9 +97,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// ---------------------------------------------------------------------------
-// List behaviour
-// ---------------------------------------------------------------------------
 describe("Watchers page — list", () => {
   it("renders watcher names from the list", async () => {
     stubWatcherList([WATCHER_1, WATCHER_2]);
@@ -181,16 +178,12 @@ describe("Watchers page — list", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Condition builder — graph type
-// ---------------------------------------------------------------------------
 async function openDialog() {
   stubWatcherList([]);
   renderPage();
   await waitFor(() => expect(callMock).toHaveBeenCalled());
   await userEvent.click(screen.getByRole("button", { name: /new watcher/i }));
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
-  // Wait for candidate relations to load
   await waitFor(() => expect(screen.getByLabelText("Graph relation")).toBeInTheDocument());
 }
 
@@ -224,7 +217,6 @@ describe("Watchers page — graph condition builder", () => {
     await userEvent.type(screen.getByLabelText("Target entity type"), "person");
     await userEvent.type(screen.getByLabelText("Target entity ID"), "user-42");
 
-    // Advance past the 500 ms debounce
     await act(async () => {
       vi.advanceTimersByTime(600);
     });
@@ -284,14 +276,10 @@ describe("Watchers page — graph condition builder", () => {
   it("Create button is disabled when graph fields are incomplete", async () => {
     await openDialog();
     await userEvent.type(screen.getByLabelText("Watcher name"), "Incomplete");
-    // targetType and targetId left empty
     expect(screen.getByRole("button", { name: /create/i })).toBeDisabled();
   });
 });
 
-// ---------------------------------------------------------------------------
-// History drawer
-// ---------------------------------------------------------------------------
 describe("Watchers page — history drawer", () => {
   it("clicking History on a watcher row fetches and renders the last N fires", async () => {
     stubWatcherList([WATCHER_1]);
@@ -317,7 +305,7 @@ describe("Watchers page — history drawer", () => {
     renderPage();
     await screen.findByText("PR opened");
     await userEvent.click(await screen.findByRole("button", { name: /history for PR opened/i }));
-    await screen.findByText(/no fires yet/i);
+    expect(await screen.findByText(/no fires yet/i)).toBeInTheDocument();
   });
 
   it("clicking History again collapses the drawer", async () => {
@@ -331,7 +319,6 @@ describe("Watchers page — history drawer", () => {
     const historyButton = await screen.findByRole("button", { name: /history for PR opened/i });
     await userEvent.click(historyButton);
     await screen.findByText('{"x":3}');
-    // Click again to close
     await userEvent.click(historyButton);
     await waitFor(() => expect(screen.queryByText('{"x":3}')).not.toBeInTheDocument());
   });

@@ -1,15 +1,3 @@
-/**
- * Integration: exercise `createSonarqubeSyncable` against a `Bun.serve`
- * fake SonarCloud / SonarQube endpoint. Complements the pure-mapper unit
- * tests by proving the sync handler emits well-formed HTTP requests
- * (URL, Authorization header, page params) and consumes the live
- * response shape end-to-end through real fetch + JSON parsing.
- *
- * Pattern: install a fetch interceptor that rewrites `sonarcloud.io`
- * requests to the local `Bun.serve` URL, then assert the gateway's
- * `item` table contains the upserted rows after `sync()` returns.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
@@ -48,8 +36,6 @@ function startFakeSonar(): FakeSonar {
         search: u.searchParams,
       });
       if (req.method === "GET" && u.pathname === "/api/components/search") {
-        // Two projects — one in the SaaS org, asserted via the
-        // `organization` query param the syncable forwards.
         return Response.json({
           components: [
             { key: "myorg_web", name: "Web", qualifier: "TRK" },
@@ -110,8 +96,6 @@ function startHarness(): Harness {
   const vault = createMockVault();
   const fake = startFakeSonar();
   const originalFetch = globalThis.fetch;
-  // Rewrite sonarcloud.io → fake.baseUrl so production code stays
-  // unchanged (no test-only env-var override of `DEFAULT_API`).
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -152,21 +136,16 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
     expect(result.hasMore).toBe(false);
     expect(result.cursor?.startsWith("nimbus-sonarqube1:")).toBe(true);
 
-    // Every request carries the Bearer header.
     expect(h.fake.requests.length).toBeGreaterThan(0);
     for (const r of h.fake.requests) {
       expect(r.auth).toBe("Bearer fake-sq-token");
     }
 
-    // The handler called the project-discovery endpoint exactly once
-    // and propagated the SaaS `organization` query param.
     const projectCalls = h.fake.requests.filter((r) => r.path === "/api/components/search");
     expect(projectCalls).toHaveLength(1);
     expect(projectCalls[0]?.search.get("organization")).toBe("myorg");
     expect(projectCalls[0]?.search.get("qualifiers")).toBe("TRK");
 
-    // Two issues land in the index — one per project — with the expected
-    // metadata fields surfaced by `mapSonarIssueToItem`.
     const rows = h.db
       .query<{ external_id: string; title: string; metadata: string }, []>(
         "SELECT external_id, title, metadata FROM item WHERE service = 'sonarqube' ORDER BY external_id",
@@ -208,7 +187,6 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
   });
 
   test("HTTP 4xx on components/search returns a fresh pass cursor and no rows", async () => {
-    // Restart the fake to return a 401 on the components endpoint.
     h.fake.stop();
     let server: Server | undefined;
     server = Bun.serve({
@@ -222,7 +200,6 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
       },
     });
     const newBase = `http://${server.hostname}:${server.port}`;
-    // Re-install the rewriter pointing at the new fake.
     const originalFetch = globalThis.fetch;
     globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
       const url =

@@ -82,7 +82,7 @@ paths:
     const issues = findOpenApiDrift(file, routes);
     expect(issues.length).toBeGreaterThan(0);
     const kinds = issues.map((i) => i.kind);
-    expect(kinds).toContain("schema_without_handler"); // POST /v1/health has no handler
-    expect(kinds).toContain("handler_without_schema"); // GET /v1/health is in routes but the schema only documents POST
+    expect(kinds).toContain("schema_without_handler");
+    expect(kinds).toContain("handler_without_schema");
   });
 });

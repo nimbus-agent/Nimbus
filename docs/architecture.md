@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 6.x (strict)
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active · T4 PR 2 DORA metrics ✅ · T4 PR 3a pre-deploy check ✅ · T4 PR 3b annotation ✅ · T4 wrap-up: PagerDuty enrichment ✅ (2026-05-14) · T4 wrap-up: PagerDuty pagination + severity_p1_aliases ✅ (2026-05-16) · T6 sequencing spec ✅ (2026-05-14) · T6 PR 1 I10 helpers ✅ · T6 PR 2 `tool_call_log` V29 ✅ (2026-05-15) · T6 PR 3 `vec_items_1536` V30 ✅ (2026-05-15) · T6 PR 4 typed `dbRun` migration + I14 ✅ (2026-05-16) · T2 PR 1 sandbox + I15 ✅ (2026-05-17) · Coverage floor Phase 1A ✅ (2026-05-17) · Coverage floor Phase 2A ✅ (2026-05-18) · Coverage floor Phase 3A ✅ (2026-05-20) · Coverage floor Phase 3B-rest ✅ (2026-05-20) · Coverage floor Phase 4 ✅ (2026-05-21) · Coverage floor Phase 5 ✅ (2026-05-22) · T2 PR 2 verified publisher + I16 ✅ (2026-05-18) · T2 PR 3 auto-update ✅ (2026-05-20) · T2 PR 4 dependency-resolution ✅ (2026-05-21) · T2/Wave-A connector Snyk ✅ (2026-05-21) · Wave-B connector Bitrise ✅ (2026-05-21) · nimbus security scan ✅ (2026-05-21) · Published OpenAPI spec ✅ (2026-05-22) · Pre-commit hook docs ✅ (2026-05-22) · Tier-2 connector SonarQube/SonarCloud ✅ (2026-05-22) · Tier-2 connector Semgrep ✅ (2026-05-22) · `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Workstream-level status is in [`roadmap.md`](./roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`CHANGELOG.md`](./CHANGELOG.md). Workstream-level status is in [`roadmap.md`](./roadmap.md).
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -20,6 +20,7 @@
 
 ## Contents
 
+- [How to read this document](#how-to-read-this-document)
 - [Overview](#overview)
 - [Cross-Platform Architecture](#cross-platform-architecture)
 - [Package Dependency Rules](#package-dependency-rules)
@@ -36,6 +37,32 @@
 - [Testing Architecture](#testing-architecture)
 - [Security Model](#security-model)
 - [Directory Structure](#directory-structure)
+
+---
+
+## How to read this document
+
+New to the codebase? Read in this order — the first four give you the mental model in ~20 minutes; the rest is deep-dive reference you consult when you touch a subsystem.
+
+1. **[Non-Negotiables](./CONTRIBUTING.md#non-negotiables)** (in `CONTRIBUTING.md`) — the seven load-bearing constraints. Everything else follows from these.
+2. **[Overview](#overview)** + **[Data Flow Diagram](#data-flow-diagram)** — the four subsystems and how a request flows Client → IPC → Engine → HITL gate → connector.
+3. **[Package Dependency Rules](#package-dependency-rules)** + **[Directory Structure](#directory-structure)** — what's allowed to import what, and where code lives.
+4. **[Security Model](#security-model)** — the invariants you must not regress (full list in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md)).
+
+Then, when you start on a specific area, read its subsystem section **plus its `nimbus-*` skill** — the skill is the *how-to* (step-by-step authoring contract), this doc is the *what + where*:
+
+| You're touching… | Read this section | …and this skill |
+|---|---|---|
+| The agent / HITL gate / planner | [Subsystem 1: Engine](#subsystem-1-the-nimbus-engine) | [`nimbus-agent-patterns`](../.claude/commands/nimbus-agent-patterns.md), [`nimbus-tool-output-envelope`](../.claude/commands/nimbus-tool-output-envelope.md) |
+| A connector / MCP server | [Subsystem 2: Connector Mesh](#subsystem-2-the-mcp-connector-mesh) | [`nimbus-connector-authoring`](../.claude/commands/nimbus-connector-authoring.md) |
+| Credentials / OAuth | [Subsystem 3: Vault](#subsystem-3-the-secure-vault) | [`nimbus-security-invariants`](../.claude/commands/nimbus-security-invariants.md) |
+| Extensions / sandbox | [Subsystem 4: Extension Registry](#subsystem-4-the-extension-registry) | [`nimbus-connector-authoring`](../.claude/commands/nimbus-connector-authoring.md) |
+| An IPC method | [IPC Protocol](#ipc-protocol) | [`nimbus-ipc`](../.claude/commands/nimbus-ipc.md), [`nimbus-tauri-allowlist`](../.claude/commands/nimbus-tauri-allowlist.md) |
+| A DB table / migration | [Local Database Schema](#local-database-schema) → [`schema-reference.md`](./schema-reference.md) | [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) |
+| A built-in agent (`expert` / `impact` / …) | [Built-in Agents Pattern](#built-in-agents-pattern) | [`nimbus-agent-patterns`](../.claude/commands/nimbus-agent-patterns.md) |
+| Writing a test | [Testing Architecture](#testing-architecture) | [`nimbus-testing`](../.claude/commands/nimbus-testing.md) |
+
+For "what does X mean / where does X live" lookups, the [`nimbus-file-map`](../.claude/commands/nimbus-file-map.md) skill is faster than scrolling. For *current vs planned*, this doc describes the system **as it is today**; forward-looking phases live in [`roadmap.md`](./roadmap.md).
 
 ---
 
@@ -100,7 +127,7 @@ export async function createPlatformServices(): Promise<PlatformServices> {
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |
 | **Release artifact** | `.zip` (unsigned in v0.1.0)¹ | `.tar.gz` (unsigned in v0.1.0)¹ | `.deb` (GPG-signed) + AppImage + tarball |
 
-¹ macOS and Windows ship unsigned in `v0.1.0`; integrity is provided by the GPG-signed `SHA256SUMS.asc` manifest. Apple Developer notarization and Windows Authenticode signing are deferred to a later point release. See [`SECURITY.md`](./SECURITY.md#v010-signing-cut-line).
+¹ macOS and Windows ship unsigned in `v0.1.0`; integrity is provided by the GPG-signed `SHA256SUMS.asc` manifest. Apple Developer notarization and Windows Authenticode signing are deferred to a later point release. See [`SECURITY.md`](./release/signing-keys.md#v010-signing-cut-line).
 
 ### Platform Path API
 
@@ -350,9 +377,11 @@ The HITL gate is the most security-critical component. Its invariants are struct
 ```typescript
 // packages/gateway/src/engine/executor.ts
 
-// Module-level constant. Object.freeze prevents reassignment of the variable.
-// The set contents are statically declared — not populated from any runtime source.
-const HITL_REQUIRED: ReadonlySet<string> = Object.freeze(new Set([
+// Module-private backing set, statically declared — never populated from any
+// runtime source (config files, IPC, or extension APIs). HITL_REQUIRED (below)
+// is a frozen façade over this set exposing only `has` + iteration, no mutators
+// (invariant I2). The set holds *logical action types* — never MCP tool ids.
+const HITL_REQUIRED_BACKING = new Set<string>([
   // Cloud storage & communication
   "file.delete", "file.move", "file.rename", "file.create",
   "email.send", "email.draft.send", "email.draft.create",
@@ -380,31 +409,21 @@ const HITL_REQUIRED: ReadonlySet<string> = Object.freeze(new Set([
   // Monitoring & incidents
   "alert.acknowledge", "alert.silence",
   "incident.escalate", "incident.resolve",
-  // Data warehouse, orchestration & BI (Phase 5/6 — forward-looking; added to
-  // executor.ts only when the corresponding connectors land)
-  "warehouse.task.run", "warehouse.pipe.resume",
-  "warehouse.job.trigger", "warehouse.job.cancel",
-  "warehouse.cluster.restart",
-  "orchestration.run.trigger", "orchestration.run.cancel",
-  "dbt.job.trigger",
-  "bi.comment.post", "bi.dataset.refresh", "bi.schedule.send",
-  // ML / MLOps (Phase 5 — forward-looking)
-  "ml.model.promote", "ml.model.transition-stage",
-  "ml.endpoint.update", "ml.endpoint.delete",
-  "ml.job.stop", "ml.pipeline.cancel",
-  // Data Quality (Phase 5/6 — forward-looking)
-  "dq.incident.resolve", "dq.sla.acknowledge",
-]));
+  // Planned data-stack / ML / data-quality action types (warehouse.* / dbt.* /
+  // bi.* / ml.* / dq.*) are added to the real set only when their connectors
+  // land — see roadmap.md § Planned. The list above is the currently-wired set.
+]);
+
+// Frozen façade — `has`, iteration, and `forEach`; mutators are absent or throw.
+const HITL_REQUIRED: ReadonlySet<string> = freezeAsReadonlySet(HITL_REQUIRED_BACKING);
 
 export class ToolExecutor {
   async execute(action: PlannedAction): Promise<ActionResult> {
-    // Resolve the tool identity the same way the dispatcher does (C4 / S1-F3 fix):
-    // a payload mcpToolId shadows action.type so HITL cannot be bypassed by pairing
-    // a non-gated action.type with a gated mcpToolId.
-    const rawToolId = action.payload?.["mcpToolId"];
-    const resolvedToolId = typeof rawToolId === "string" ? rawToolId : action.type;
+    // The gate consults action.type ONLY — never payload.mcpToolId or any other
+    // dispatch hint. Gating on mcpToolId opened a bypass (the set holds action
+    // types, not MCP ids) and was reverted in 2c9ff06. See SECURITY-INVARIANTS.md §I3.
     const requiresHITL =
-      HITL_REQUIRED.has(resolvedToolId) ||
+      HITL_REQUIRED.has(action.type) ||
       this.extensionRegistry.isHITLRequired(action.extensionId, action.toolName);
 
     let hitlStatus: "approved" | "rejected" | "not_required";
@@ -430,7 +449,7 @@ export class ToolExecutor {
 }
 ```
 
-> **Security note:** `Object.freeze` on the `Set` reference prevents the variable from being reassigned. It does not prevent prototype-level manipulation. The contents of `HITL_REQUIRED` are static source declarations and are not populated from any runtime-writable source (config files, IPC calls, or extension APIs), which is the primary attack surface concern. A future hardening step (tracked in the risk register) will switch to a plain frozen object used as a lookup map, which has no prototype mutation risk.
+> **Security note:** `HITL_REQUIRED` is a frozen façade over the module-private `HITL_REQUIRED_BACKING` set (invariant I2) — it exposes `has` and iteration but no mutators, so it cannot be extended at runtime. The contents are static source declarations, never populated from any runtime-writable source (config files, IPC calls, or extension APIs). The gate keys on `action.type` only, never on `payload.mcpToolId` (invariant I3).
 
 ### Script Execution Mode
 
@@ -668,67 +687,35 @@ Infrastructure resources are indexed with: `provider`, `service`, `resource_type
 
 Alerts are indexed with: `monitor_name`, `severity`, `status`, `service`, `fired_at`, `resolved_at`, `url`. Cross-service correlation (alert → deployment → PR → commit) is performed by the Memory Layer's hybrid search over indexed items from multiple connectors.
 
-#### Data Warehouse, Orchestration & BI (Phase 5/6)
+#### Data Warehouse, Orchestration, BI & ML (Phase 5/6 — planned)
 
-Warehouse, orchestration, and BI connectors ingest **metadata only** — schema definitions (DDL), column tags, job statuses, run history, and query plans. Row data, binary extracts, and result sets are forbidden at the connector boundary: there is no code path in any connector that fetches them, and a contract test asserts the absence of row-fetch tools on each connector's MCP surface. The same boundary applies to the Phase 5 local data-file profiler (Parquet / CSV / JSONL / ORC under `[[filesystem.roots]]`): it reads footers, header rows, and line counts to derive column names, types, and row-count estimates — it never reads row groups, samples rows, or captures cell values.
+Warehouse, orchestration, BI, and ML/MLOps connectors are forward-looking; the **architectural boundary** they hold is the load-bearing fact here:
 
-**Warehouse & compute** (Databricks, Snowflake, BigQuery, Athena):
+> **Metadata-only boundary.** These connectors ingest schema definitions (DDL), column tags, job/run status, run history, and query plans — **never row data, binary extracts, or result sets**. There is no code path in any connector that fetches them, and a contract test asserts the absence of row-fetch tools on each connector's MCP surface (see the [Security threat-to-mitigation table](#threat-to-mitigation-table)). The same boundary applies to the Phase 5 local data-file profiler (Parquet / CSV / JSONL / ORC under `[[filesystem.roots]]`): it reads footers, header rows, and line counts to derive column names, types, and row-count estimates — it never reads row groups, samples rows, or captures cell values.
+
+They introduce these item types (write tools — `warehouse.job.trigger`, `dbt.job.trigger`, `bi.dataset.refresh`, `ml.model.promote`, `dq.incident.resolve`, … — are all HITL-gated):
+
+| Item type | Source domain | Key indexed fields |
+|---|---|---|
+| `data_model` | warehouse schemas + local-file profiler | `provider`, `database`, `schema`, `object_name`, `object_type`, `column_tags`, `owner`, `row_count_estimate` (footer/line-count, never row contents) |
+| `data_pipeline` | orchestration DAGs + warehouse jobs | `provider`, `dag_name`, `task_id`, `status`, `started_at`, `finished_at`, `upstream_refs`, `downstream_refs` |
+| `dashboard` / `log_alarm` | BI & visualisation | `provider`, `name`, `folder`, `author`, `upstream_models`, `refresh_status` |
+| `ml_model` / `data_quality_test` | ML/MLOps + DQ | `provider`, `registered_model`/`suite_or_monitor_name`, `stage`/`status`, `severity`, `metric_snapshot` |
+
+Cross-stack lineage (Tableau → Looker view → dbt model → Snowflake table → Airflow DAG → PR) resolves via the Memory Layer's hybrid search plus `traverseGraph` over `upstream_refs` / `downstream_refs` relations. Per-tool surfaces and phase sequencing live in [`roadmap.md` § Planned](./roadmap.md#planned).
+
+#### Meetings (Zoom — Phase 5 Tier 1 PR-2 + PR-3)
 
 | Tool | HITL Required | Indexed Item Type |
 |---|---|---|
-| `warehouse.schema.list` / `warehouse.schema.get` | No | `data_model` |
-| `warehouse.table.describe` | No | `data_model` |
-| `warehouse.job.list` / `warehouse.job.get` | No | `data_pipeline` |
-| `warehouse.query.history` | No | — |
-| `warehouse.job.trigger` / `warehouse.job.cancel` | **Always** | — |
-| `warehouse.task.run` / `warehouse.pipe.resume` | **Always** | — |
-| `warehouse.cluster.restart` | **Always** | — |
-| `fs.dataset.profile` (local files) | No | `data_model` |
+| `zoom_list` / `zoom_get` / `zoom_search` | No | `zoom:meeting` |
+| `zoom_recordings_list` / `zoom_transcript_get` | No | `zoom:transcript` |
 
-`data_model` items are indexed with: `provider`, `database`, `schema`, `object_name`, `object_type` (`table` / `view` / `model`), `column_tags`, `owner`, `last_altered_at`, `row_count_estimate`. For local files, `provider = "filesystem"`, `database = <root id>`, `schema = <relative dir>`, `object_name = <file name>`, and `row_count_estimate` is derived from the Parquet footer or line count — never from reading row contents.
+Zoom meetings are indexed via `GET /v2/users/me/meetings?type=scheduled` (next-page-token walk, `MAX_PAGES=20`). Auth: 3-legged OAuth (PKCE + Basic-header client-secret) via the provider registry (`zoom.oauth` vault key); rotating refresh tokens handled by the single-flight lock. Fixed sandbox hosts: `api.zoom.us` + `zoom.us` (I15). Env vars: `NIMBUS_OAUTH_ZOOM_CLIENT_ID` + `NIMBUS_OAUTH_ZOOM_CLIENT_SECRET`.
 
-**Orchestration** (Airflow, Prefect, Dagster, dbt Cloud):
+`zoom:meeting` items are indexed with: `meeting_id`, `uuid`, `host_id`, `topic`, `type`, `start_time`, `duration_min`, `timezone`, `agenda`, `join_url`, `created_at`. `external_id = String(<meeting_id>)` (numeric); `canonical_url` = `join_url`; `modifiedAt` = `created_at` (NOT `start_time` — future meeting dates corrupt recency queries). Sparse-structured: NOT added to `PROSE_HEAVY_TYPES` (local MiniLM, 384-dim). `hitlRequired: []`.
 
-| Tool | HITL Required | Indexed Item Type |
-|---|---|---|
-| `orchestration.dag.list` / `orchestration.dag.get` | No | `data_pipeline` |
-| `orchestration.run.list` / `orchestration.run.get` | No | `data_pipeline` |
-| `orchestration.logs.get` | No | — |
-| `orchestration.run.trigger` / `orchestration.run.cancel` | **Always** | — |
-| `dbt.job.trigger` | **Always** | — |
-
-`data_pipeline` items are indexed with: `provider`, `dag_name`, `task_id`, `status`, `triggering_user`, `started_at`, `finished_at`, `duration_ms`, `upstream_refs`, `downstream_refs`.
-
-**BI & visualisation** (Tableau, Looker, PowerBI, Metabase, Superset, Kibana):
-
-| Tool | HITL Required | Indexed Item Type |
-|---|---|---|
-| `bi.dashboard.list` / `bi.dashboard.get` | No | `dashboard` |
-| `bi.query.list` / `bi.query.get` | No | `dashboard` |
-| `bi.alarm.list` | No | `log_alarm` |
-| `bi.comment.post` | **Always** | — |
-| `bi.dataset.refresh` | **Always** | — |
-| `bi.schedule.send` | **Always** | — |
-| `alarm.acknowledge` / `alarm.silence` | **Always** | — |
-
-`dashboard` items are indexed with: `provider`, `name`, `folder`, `author`, `upstream_models`, `last_refreshed_at`, `refresh_status`, `url`. Cross-stack lineage (Tableau → Looker view → dbt model → Snowflake table → Airflow DAG → PR) resolves via the Memory Layer's hybrid search plus `traverseGraph` over `upstream_refs` / `downstream_refs` relations in the graph substrate.
-
-**ML / MLOps & Data Quality** (MLflow, SageMaker, Vertex AI, Great Expectations, Monte Carlo, Bigeye):
-
-| Tool | HITL Required | Indexed Item Type |
-|---|---|---|
-| `ml.experiment.list` / `ml.experiment.get` | No | `ml_model` |
-| `ml.run.list` / `ml.run.get` / `ml.run.metrics` | No | `ml_model` |
-| `ml.model.list` / `ml.model.version.get` | No | `ml_model` |
-| `ml.endpoint.list` / `ml.endpoint.describe` | No | — |
-| `ml.model.promote` / `ml.model.transition-stage` | **Always** | — |
-| `ml.endpoint.update` / `ml.endpoint.delete` | **Always** | — |
-| `ml.job.stop` / `ml.pipeline.cancel` | **Always** | — |
-| `dq.test.list` / `dq.test.result.get` | No | `data_quality_test` |
-| `dq.incident.list` / `dq.incident.get` | No | `data_quality_test` |
-| `dq.incident.resolve` / `dq.sla.acknowledge` | **Always** | — |
-
-`ml_model` items are indexed with: `provider`, `experiment`, `run_id`, `framework`, `registered_model`, `stage`, `metric_snapshot`, `last_updated_at`. `data_quality_test` items are indexed with: `provider`, `suite_or_monitor_name`, `target_table`, `last_run_at`, `status`, `severity`, `first_seen_at`.
+`zoom:transcript` items (PR-3) are indexed from cloud-recording AI transcripts via `GET /v2/users/me/recordings` (token-paginated, ≤1-month-windowed walk; the `nimbus-zoom1:` cursor gains a `lastRecordingsTo` ISO-8601 field — first sync backfills 30 days, incremental cycles cover one ≤30-day window). For each meeting's `recording_files[]` entry with `file_type === "TRANSCRIPT"`, a skip-if-exists check on `external_id = <meeting_uuid>:<recording_file_id>` (transcript immutability) avoids re-downloading; on miss the VTT is fetched via an `Authorization: Bearer` header (never a URL token, never logged) and reduced to plaintext, stored as `transcript_text` in metadata. The recordings walk also upserts each meeting's `zoom:meeting` row (dedupe under the same `external_id`) so past recorded meetings missed by the `type=scheduled` filter still get indexed. A 429 mid-walk is a graceful break (cursor not advanced; cheap replay). `zoom:transcript` IS added to `PROSE_HEAVY_TYPES` (prose-heavy / OpenAI 1536-dim in hybrid mode; MiniLM-only fallback when `openai.api_key` is absent). Same OAuth grant as PR-2 — no re-consent. `hitlRequired: []`.
 
 ### Delta Sync
 
@@ -945,6 +932,20 @@ The Tauri desktop application ships an Extension Marketplace panel. It is not a 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Tauri Desktop — UI behaviour notes
+
+**`restartApp()` on profile switch** (`packages/ui/src/lib/restart.ts:7` — added 2026-05-28)
+
+`window.location.reload()` is insufficient when the user switches profiles because a profile change alters the Vault key prefix, invalidating MCP client singletons, IPC subscription channels, and any module-scope cache that captured the previous profile's data. Secondary windows (HITL popup, Quick Query, onboarding) would continue serving stale data. The fix is a full Tauri process restart via `invoke("plugin:app|restart")`. In the Vitest jsdom environment (no Tauri runtime) the invoke call throws and is caught; the fallback calls `window.location.reload()`. Most tests stub this module entirely.
+
+**`profile.switched` global rebroadcast** (`packages/ui/src-tauri/src/gateway_bridge.rs:140` — added 2026-05-28)
+
+`profile.switched` is in `GLOBAL_BROADCAST_METHODS` — it fans out to every Tauri window rather than being delivered only to the subscribing window. Each window's JS listener calls `restartApp()` (see above); the first call to fire wins and the process exits; subsequent calls in other windows are no-ops because the process has already started shutting down.
+
+**Zustand persist whitelist** (`packages/ui/src/store/partialize.ts:5` — added 2026-05-28)
+
+The `persistPartialize` function enforces Spec §2.1: exactly three slice surfaces (`connectors`, `model`, `profile`) are persisted to `localStorage`; all transient state (HITL queue, tray, dashboard, audit, telemetry counters, pull progress, export/import progress, router status, connection state) is memory-only and rebuilt on reconnect. A forbidden-key blocklist mirrors the whitelist as defence-in-depth: even if a future slice happens to share a name with a whitelisted key, the blocklist prevents a secret value from being persisted under that name.
+
 ---
 
 ## Phase 4 Subsystems
@@ -1078,19 +1079,9 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 
 ## Phase 6+ Subsystems (Planned)
 
-The five planned phases beyond Phase 5 each introduce subsystems that extend — but do not replace — the Phase 4 multi-agent + connector-mesh foundation. No new Gateway IPC transport, no new process model. Each row points at the canonical design spec; treat the spec as the source of truth and this section as a roadmap-shaped index.
+The phases beyond Phase 5 each introduce subsystems that **extend, not replace**, the Phase 4 multi-agent + connector-mesh foundation: no new Gateway IPC transport, no new process model. New work surfaces as new item types + new connectors + new built-in agents that follow the existing patterns ([Built-in Agents Pattern](#built-in-agents-pattern), [Connector Tool Contract](#connector-tool-contract)).
 
-| Phase | Subsystem additions | Canonical design spec |
-|---|---|---|
-| Phase 6 — Team | Nimbus-to-Nimbus federation over the Phase 4 LAN E2E channel; Team Vault (one Gateway as trust anchor); shared index namespaces; SSO/OIDC/SAML; SCIM 2.0 provisioning; multi-user HITL with delegation; ChatOps (Slack/Teams bot); admin console; SSO-gated warehouse + BI connectors (Snowflake / Tableau / Looker / PowerBI / Monte Carlo / Bigeye). No direct cloud relay; mDNS LAN discovery; org-level policy engine consumes Phase 7 policy fragments. | [`docs/roadmap.md` § Phase 6](./roadmap.md#phase-6--team) |
-| Phase 7 — Engineering Excellence | Service catalog item types (`service`, `component`, `team`, `scorecard`); ownership graph extending the Phase 3 relationship graph with `code_symbol → service → team`; DORA / engineering-metrics ingestion; feature-flag connectors with HITL on toggles; cross-team dependency graph; automation template library; team policy library; `nimbus excellence` built-in agent. | [`docs/superpowers/specs/2026-05-10-phase-7-engineering-excellence-design.md`](./superpowers/specs/2026-05-10-phase-7-engineering-excellence-design.md) |
-| Phase 8 — Security Engineering | Code & dependency scanning (`security_finding`, `dependency`, `cve` item types); CSPM / IaC / runtime posture (`posture_finding`); incident response & SOC (`security_incident`, `siem_event`, `threat_indicator`); supply chain & identity (`sbom_artifact`, `attestation`, `identity_event`); four built-in agents (`security`, `posture`, `incident`, `supply-chain`). The `nimbus incident` agent is **deliberately distinct** from the Phase 10 operational `nimbus incident-brief` — the security one is attacker-shape, the operational one is deploy-shape; each brief includes a section sourced from the other. | [`docs/superpowers/specs/2026-05-10-phase-8-security-engineering-design.md`](./superpowers/specs/2026-05-10-phase-8-security-engineering-design.md) |
-| Phase 9 — AI Engineering Loop | LLM observability + eval (`llm_trace`, `prompt_version`, `eval_run`); ML lifecycle (`ml_model`, `feature`, `monitor`); vector stores + RAG (`vector_index`, `rag_eval_run`, `embedding_version`); AI cost & governance (`ai_spend_event`, `model_policy`); two built-in agents (`model-health`, `rag-health`). Privacy floor: trace-body indexing default-OFF; only metadata indexed unless explicit per-provider opt-in. | [`docs/superpowers/specs/2026-05-10-phase-9-ai-engineering-loop-design.md`](./superpowers/specs/2026-05-10-phase-9-ai-engineering-loop-design.md) |
-| Phase 10 — The Autonomous Agent | Standing approvals (compile-time-frozen plus user-pre-authorised pattern store); scheduled workflows; morning briefing; deadline tracking; agent-to-agent privacy-preserving scheduling; incident correlation engine (operational shape); long-term episodic memory; point-in-time index queries; LAN forward secrecy redesign; LoRA fine-tuning (stretch); SRE loop (stretch); FinOps + sustainability connectors (stretch). | [`docs/roadmap.md` § Phase 10](./roadmap.md#phase-10--the-autonomous-agent) |
-| Phase 11 — Sovereign Mesh | P2P index sync between user's own machines; iOS / Android mobile companions over E2EE LAN or WireGuard; biometric HITL with secure-enclave signing; hardware vault integration (YubiKey / Ledger / Nitrokey); DIDs; Digital Executor (dead man's switch + Shamir's Secret Sharing); i18n / l10n stretch (string extraction + 3 reference locales + RTL + FTS5 CJK). | [`docs/roadmap.md` § Phase 11](./roadmap.md#phase-11--sovereign-mesh) |
-| Phase 12 — Enterprise | Docker / Helm; air-gapped bundle; HA active/passive Gateway clustering; managed update channel; remote vector store adapters; policy-as-code (`nimbus.policy.toml`); DLP gate; audit log shipping to SIEM; compliance posture tooling; data residency controls; formal third-party penetration test; GRC platforms (Drata / Vanta / Secureframe / Tugboat Logic); enterprise SSO (SAML 2.0 + OIDC); SCIM 2.0; admin console; credential rotation assistant; SLA support. | [`docs/roadmap.md` § Phase 12](./roadmap.md#phase-12--enterprise) |
-| Phase 13 — Desktop Distribution | Signed Tauri installers (`.dmg` notarised, `.msi` Authenticode, `.AppImage` + `.deb` GPG-signed); per-OS `build-ui` matrix in `release.yml`; Tauri-native file picker for `data.import` (S4-F6); profile-switch broadcast refactor (S4-F8); native package-manager channel reach stretch (Homebrew / winget / Chocolatey / Snap / Flatpak / AUR / MacPorts / Nix flake). | [`docs/roadmap.md` § Phase 13](./roadmap.md#phase-13--desktop-distribution) |
-| Phase 14 — Agent Evolution / AI v2 | **Core (gates phase):** multimodal I/O (image / video / audio understanding via local VLM + STT + frame captioning); code execution sandbox (`bwrap` / `sandbox-exec` / AppContainer; per-execution capability flags; HITL on every execution; **standing approvals explicitly NOT supported**). **Stretch:** computer use (browser / terminal / screen) with per-action HITL; runtime tool generation with contract-test gating; local instruction fine-tuning (full-precision 3B–7B). Org-level lockoff via Phase 12 policy-as-code. | [`docs/superpowers/specs/2026-05-10-phase-14-agent-evolution-design.md`](./superpowers/specs/2026-05-10-phase-14-agent-evolution-design.md) |
+The per-phase subsystem breakdown, acceptance criteria, and links to each canonical design spec live in **[`roadmap.md` § Planned](./roadmap.md#planned)** (Phases 6–15) — that's the single source of truth for forward-looking scope, so it isn't duplicated here. In brief: Phase 6 (Team federation + Team Vault), 7 (Engineering Excellence — service catalog, DORA, `nimbus excellence`), 8 (Security Engineering — `security_finding` / `posture_finding` / four agents), 9 (AI Engineering Loop — `llm_trace` / `ml_model` / `vector_index`), 10 (Autonomous Agent — standing approvals, scheduled workflows), 11 (Sovereign Mesh), 12 (Enterprise), 13 (Desktop Distribution), 14 (Agent Evolution / AI v2 — multimodal + code-exec sandbox), 15 (Cross-Organizational Federation), 16 (The Platform Layer — fleet config-as-code, paved roads, lead's-eye intelligence), 17 (The On-Call Copilot — predict/understand/mitigate/coordinate). Plus cross-phase North-Star capabilities + a near-term First-Run/Time-to-Wow initiative (incl. `nimbus demo`) + the killer-demo milestone.
 
 ---
 
@@ -1180,262 +1171,56 @@ const streamReq: JSONRPCRequest = {
 // Client → Gateway: { method: "consent.respond", params: { actionId, approved: true } }
 ```
 
+### AbortController scope in `engine.cancelStream`
+
+**Source:** `packages/gateway/src/ipc/server/inline-handlers.ts:288` — added 2026-05-28
+
+The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed into `AgentInvokeContext` yet. The existing `AgentInvokeContext` type does not carry an `abort` field; adding it is a future task. For the current implementation the `AbortController` only short-circuits two observable paths: (a) the `sendChunk` callback (token streaming stops immediately on cancellation) and (b) the post-completion `streamDone` / `streamError` notification. This is sufficient for `cancelStream` to terminate all client-visible behaviour without requiring a full `AgentInvokeContext` type change.
+
 ---
 
 ## Local Database Schema
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V29** (`tool_call_log` audit table — Phase 5 T6 PR 2, complement to invariant `I11`). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
->
-> The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables (covered in [§ Phase 6+ Subsystems](#phase-6-subsystems-planned)) will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14).
+The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, and `extensions` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
 
-```sql
--- Core metadata index
--- item_type values: "file" | "email" | "event" | "photo"
---                   "pr" | "issue" | "pipeline_run" | "deployment"
---                   "alert" | "incident" | "infra_resource"
---                   "data_model" | "data_pipeline" | "dashboard" | "log_alarm"  -- Phase 5/6
---                   "ml_model" | "data_quality_test"                             -- Phase 5/6 (pass 2)
---                   "api_endpoint"                                               -- Phase 5 Wave A PR 1 (V25)
---                   "obsidian_note"                                              -- Phase 5 Wave A PR 2 (V26)
--- Phase 7+: "service" | "team" | "scorecard" | "dora_metric" | "feature_flag" | ...
--- Phase 8+: "security_finding" | "posture_finding" | "security_incident" | "sbom_artifact" | ...
--- Phase 9+: "llm_trace" | "prompt_version" | "eval_run" | "vector_index" | "ai_spend_event" | ...
--- Note: "task" is not a currently emitted item_type; use "issue" for Linear/Jira items.
-CREATE TABLE indexed_items (
-    id          TEXT PRIMARY KEY,   -- "<service>:<native_id>"
-    service     TEXT NOT NULL,      -- "google_drive" | "gmail" | "github" | "jenkins" | ...
-    item_type   TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    mime_type   TEXT,
-    size_bytes  INTEGER,
-    created_at  INTEGER,            -- Unix ms
-    modified_at INTEGER,
-    url         TEXT,
-    parent_id   TEXT,
-    sync_token  TEXT,
-    raw_meta    TEXT                -- JSON blob: service-specific fields
-);
+**What you need to know here:**
 
-CREATE INDEX idx_items_service_modified ON indexed_items(service, modified_at DESC);
-CREATE INDEX idx_items_name ON indexed_items(name COLLATE NOCASE);
+- The unified index is keyed `<service>:<native_id>`; `item_type` is an open enum (`file` / `email` / `pr` / `issue` / `pipeline_run` / `deployment` / `alert` / `incident` / `api_endpoint` / `obsidian_note` / …), extended by new connectors.
+- Hybrid search rides two vec tables: `vec_items_384` (local MiniLM) and `vec_items_1536` (OpenAI), routed per `(service, type)` — see [§ Memory Layer](#memory-layer).
+- `audit_log` is the BLAKE3-chained tamper-evident trail (V18 `row_hash`/`prev_hash`); `tool_call_log` (V29) is the forensic complement to invariant `I11`.
+- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V31.** Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
+- **SQLite write boundary:** every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `db/write.ts` (invariant `I14`, static gate `D12`).
 
--- Full-text search (FTS5)
-CREATE VIRTUAL TABLE items_fts USING fts5(
-    name, raw_meta,
-    content=indexed_items, content_rowid=rowid
-);
+Planned Phase 6+ tables (`service` / `scorecard` / `security_finding` / `llm_trace` / …) are tracked in [`roadmap.md` § Planned](./roadmap.md#planned).
 
--- Vector search (sqlite-vec)
--- Dimension-qualified to support multi-model coexistence side by side.
--- Phase 3: vec_items_384 (float[384], all-MiniLM-L6-v2).
-CREATE VIRTUAL TABLE vec_items_384 USING vec0(
-    embedding FLOAT[384]
-);
--- Phase 5 T6 PR 3 (V30): vec_items_1536 (float[1536], text-embedding-3-small).
--- Per-(service, type) routing in embedding/routing.ts:PROSE_HEAVY_TYPES
--- dispatches prose-heavy items to OpenAI in hybrid mode; everything else
--- stays on the 384-dim local table. Dim-aware delete triggers
--- (embedding_chunk_ad_delete_vec384 / _vec1536) fan deletes to the matching
--- vec table only.
-CREATE VIRTUAL TABLE vec_items_1536 USING vec0(
-    embedding FLOAT[1536]
-);
--- embedding_chunk table (metadata per chunk) references vec_items_*.rowid
--- and tracks model + dims to support multi-model coexistence.
+### Concurrency & Consistency Model
 
--- Full audit trail — append-only; written before each action executes
-CREATE TABLE action_log (
-    id          TEXT PRIMARY KEY,
-    timestamp   INTEGER NOT NULL,
-    action_type TEXT NOT NULL,
-    connector   TEXT NOT NULL,
-    payload     TEXT,               -- JSON
-    hitl_status TEXT NOT NULL,      -- "approved" | "rejected" | "not_required"
-    outcome     TEXT NOT NULL       -- "success" | "error"
-);
+The Gateway is a single OS process, but several SQLite handles are open against the one `nimbus.db` file at once:
 
--- Sync state per connector (Phase 3.5: extended health model)
-CREATE TABLE sync_state (
-    connector_id    TEXT PRIMARY KEY,
-    last_sync_at    INTEGER,
-    next_sync_token TEXT,
-    -- Phase 3.5 health columns
-    health_state    TEXT NOT NULL DEFAULT 'healthy'
-                    CHECK(health_state IN
-                      ('healthy','degraded','error','rate_limited','unauthenticated','paused')),
-    retry_after     INTEGER,        -- unix ms; non-null when health_state = 'rate_limited'
-    backoff_until   INTEGER,        -- unix ms; non-null when in exponential backoff
-    backoff_attempt INTEGER NOT NULL DEFAULT 0,
-    last_error      TEXT,           -- last error message, truncated to 512 chars
-    -- Phase 4 WS1: LLM context window discovered during model sync
-    context_window_tokens INTEGER
-);
+| Handle | Opened at | Mode |
+|---|---|---|
+| Main writer | `platform/assemble.ts` | read-write; `PRAGMA busy_timeout = 8000` |
+| Embedding worker | `embedding/embedding-worker.ts` | its **own** connection; `busy_timeout = 8000`; `foreign_keys = ON` |
+| Read-only HTTP API | `ipc/http-server.ts` | `SQLITE_OPEN_READONLY` + `PRAGMA query_only = ON` |
+| HTTP write surface (`I13`) | `ipc/http-server.ts` | dedicated read-write handle; the single allowlisted `POST /v1/deployments` route only |
+| Raw-SQL guard | `db/query-guard.ts` | separate handle (Layer-2 isolation for `nimbus query --sql`) |
 
--- Connector health transition history (Phase 3.5) — last 7 days retained
-CREATE TABLE connector_health_history (
-    id           INTEGER PRIMARY KEY,
-    connector_id TEXT NOT NULL,
-    from_state   TEXT,
-    to_state     TEXT NOT NULL,
-    reason       TEXT,
-    occurred_at  INTEGER NOT NULL   -- unix ms
-);
-CREATE INDEX idx_chh_connector_occurred
-    ON connector_health_history(connector_id, occurred_at DESC);
+The intended model is **WAL journaling** (so readers never block the writer and vice versa), with `busy_timeout = 8000` as the contention backstop when two write paths (delta sync, embedding backfill, the `I13` deploy-annotation route) briefly compete. Every write goes through `dbRun` / `dbExec` / `dbStmtRun` (invariant `I14`), which translates `SQLITE_FULL` into a typed `DiskFullError` rather than a silently swallowed write. On clean shutdown the index issues `PRAGMA wal_checkpoint(TRUNCATE)` to fold the WAL back into the main file.
 
--- OpenAPI / AsyncAPI endpoint shadow (Phase 5 Wave A PR 1) — V25 migration.
--- One row per indexed endpoint, keyed by `item.id`. The `item.service`
--- column is always "openapi" for these rows; `service_name` here is the
--- inferred service that owns the endpoint (from the spec's enclosing
--- directory, info.title slug, or sha8 fallback).
-CREATE TABLE api_endpoint (
-    id            TEXT PRIMARY KEY,
-    service_name  TEXT NOT NULL,
-    path          TEXT NOT NULL,
-    method        TEXT NOT NULL,        -- "GET"/"POST"/... or "PUBLISH"/"SUBSCRIBE" for AsyncAPI
-    operation_id  TEXT,
-    tags_json     TEXT NOT NULL DEFAULT '[]',
-    deprecated    INTEGER NOT NULL DEFAULT 0,
-    spec_file     TEXT NOT NULL,        -- absolute path
-    spec_version  TEXT NOT NULL,        -- "openapi-3.1.0" / "swagger-2.0" / "asyncapi-2.6.0"
-    last_modified INTEGER NOT NULL,
-    created_at    INTEGER NOT NULL,
-    CHECK (deprecated IN (0, 1))
-);
-CREATE INDEX idx_api_endpoint_service_path_method
-    ON api_endpoint(service_name, path, method);
-CREATE INDEX idx_api_endpoint_spec_file
-    ON api_endpoint(spec_file);
+> **Status note (2026-05-25):** `PRAGMA journal_mode = WAL` is not currently set explicitly at any production open site. Until it is, the handles fall back to SQLite's default rollback journal — where readers and the writer block each other and the shutdown `wal_checkpoint(TRUNCATE)` is a no-op — and the 8 s busy-timeout is the only thing preventing immediate `SQLITE_BUSY` under contention. Enabling WAL explicitly, plus a regression guard that asserts it across every write handle, is tracked as **B5** in [`roadmap.md`](./roadmap.md#maintenance-initiative-follow-ups-b-series) and issue #426. This note documents the gap honestly rather than asserting a concurrency property the code does not yet guarantee.
 
--- Obsidian vault note shadow (Phase 5 Wave A PR 2) — V26 migration.
--- One row per indexed Markdown note, keyed by `item.id`. Body content
--- lives in the standard `item` / `item_fts` tables (via upsertIndexedItem);
--- this shadow table holds structured metadata only.
---
--- Caveat: `vault_id = sha256(absoluteVaultRootPath).slice(0, 12)`. Moving
--- a vault re-issues every note id at the new path (delete-then-upsert).
--- Any user-attached metadata (manual pins, manual graph edges in the UI)
--- is orphaned. A future `nimbus connector obsidian remap-vault` migration
--- command may bridge old and new IDs; out of scope for PR 2.
-CREATE TABLE obsidian_notes (
-    id                TEXT PRIMARY KEY,
-    vault_id          TEXT NOT NULL,
-    vault_name        TEXT NOT NULL,
-    path              TEXT NOT NULL,        -- relative to vault root, forward-slashed
-    title             TEXT NOT NULL,
-    frontmatter_json  TEXT NOT NULL DEFAULT '{}',
-    tags_json         TEXT NOT NULL DEFAULT '[]',
-    wikilinks_json    TEXT NOT NULL DEFAULT '[]',
-    daily_note_date   TEXT,                 -- ISO date or NULL
-    last_modified     INTEGER NOT NULL,
-    created_at        INTEGER NOT NULL
-);
-CREATE INDEX idx_obsidian_notes_vault_path
-    ON obsidian_notes(vault_id, path);
-CREATE INDEX idx_obsidian_notes_daily_note_date
-    ON obsidian_notes(daily_note_date)
-    WHERE daily_note_date IS NOT NULL;
+### Scaling Limits
 
--- Query latency log (Phase 3.5) — batch-written from in-memory ring buffer
-CREATE TABLE query_latency_log (
-    id          INTEGER PRIMARY KEY,
-    latency_ms  REAL NOT NULL,
-    query_type  TEXT NOT NULL,   -- 'fts' | 'vector' | 'hybrid' | 'sql'
-    recorded_at INTEGER NOT NULL
-);
+The index is designed for a single engineer's working set, not a data warehouse. Honest ceilings and what degrades first:
 
--- Slow query log (Phase 3.5) — queries exceeding [db.slow_query_threshold_ms] (default 500ms)
-CREATE TABLE slow_query_log (
-    id          INTEGER PRIMARY KEY,
-    query_text  TEXT,
-    latency_ms  REAL NOT NULL,
-    query_type  TEXT NOT NULL,
-    recorded_at INTEGER NOT NULL
-);
+| Index size | Expected behaviour |
+|---|---|
+| ≤ 50k items | Comfortable; structured `nimbus query` p95 well under the 500 ms gate (measured: p95 < 500 ms at 8k rows). |
+| 50k–250k items | Hybrid search (FTS5 BM25 + dual-vec KNN over `vec_items_384` + `vec_items_1536`) stays interactive; embedding backfill is the slow path on first sync. *(target)* |
+| 250k–1M items | KNN latency and FTS5 index size become the first constraints; prune via `retentionDays` / `nimbus connector reindex --depth` to stay responsive. *(target)* |
+| > 1M items | Beyond the single-Gateway design point; partition by profile or shorten retention. *(design ceiling, not benchmarked)* |
 
--- Local LLM model registry (Phase 4 WS1 — V16 migration)
-CREATE TABLE llm_models (
-    id               TEXT PRIMARY KEY,   -- "<provider>:<model_name>"
-    provider         TEXT NOT NULL       CHECK(provider IN ('ollama','llamacpp','remote')),
-    model_name       TEXT NOT NULL,
-    parameter_count  TEXT,               -- "3B" | "7B" | "13B" etc.
-    context_window   INTEGER,
-    quantization     TEXT,               -- "Q4_K_M" etc.
-    vram_estimate_mb INTEGER,
-    last_error       TEXT,
-    bench_tps        REAL,               -- tokens/sec from last benchmark
-    last_seen_at     INTEGER NOT NULL    -- unix ms
-);
-
--- Multi-agent sub-task results (Phase 4 WS1 — V17 migration)
-CREATE TABLE sub_task_results (
-    id           TEXT PRIMARY KEY,
-    session_id   TEXT NOT NULL,
-    parent_id    TEXT,                  -- references sub_task_results(id); null for root
-    task_index   INTEGER NOT NULL,
-    task_type    TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'pending'
-                 CHECK(status IN ('pending','running','done','rejected','error')),
-    result_json  TEXT,
-    error_text   TEXT,
-    model_used   TEXT,
-    tokens_in    INTEGER,
-    tokens_out   INTEGER,
-    started_at   INTEGER,               -- unix ms
-    completed_at INTEGER,               -- unix ms
-    created_at   INTEGER NOT NULL
-);
-CREATE INDEX idx_str_session ON sub_task_results(session_id, task_index);
-
--- Workflow dry run and params override (Phase 4 WS5-D — V23 migration)
-ALTER TABLE workflow_run ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE workflow_run ADD COLUMN params_override_json TEXT;
-
--- Audit session rehydration (Phase 4 WS6 — V24 migration)
-ALTER TABLE audit_log ADD COLUMN session_id TEXT;
-CREATE INDEX idx_audit_log_session_id ON audit_log(session_id);
-
--- Tool-call audit log (Phase 5 T6 PR 2 — V29 migration)
--- Forensic complement to invariant I11 (the <tool_output> envelope on the
--- LLM-facing path). Written at both wrapToolOutput sites (engine/agent.ts
--- wrapToolForLlm + connectors/lazy-mesh/mesh.ts listTools) via writeToolCallLog
--- in db/tool-call-log.ts (best-effort — never breaks the LLM-facing path).
--- Envelopes >64 KiB are truncated with a "...[truncated, N bytes total]" marker.
--- Read surface: audit.toolCalls IPC (read-only, IPC-only — NOT LAN-callable per
--- I5, NOT in Tauri ALLOWED_METHODS per I7, NOT exposed via the HTTP API).
-CREATE TABLE tool_call_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id      TEXT,                                       -- NULL when no agentRequestContext.run in scope
-    tool_id         TEXT NOT NULL,                              -- "github_repo_pr_list" | "searchLocalIndex" | ...
-    service         TEXT NOT NULL,                              -- "github" | "filesystem" | "local" | ...
-    called_at       INTEGER NOT NULL,                           -- unix ms when the wrapped tool was invoked
-    duration_ms     INTEGER NOT NULL,                           -- wall-clock ms from invocation to envelope emission
-    result_envelope TEXT NOT NULL,                              -- full <tool_output>...</tool_output> (capped 64 KiB)
-    status          TEXT NOT NULL CHECK(status IN ('ok','error'))
-);
-CREATE INDEX idx_tool_call_log_session   ON tool_call_log(session_id);
-CREATE INDEX idx_tool_call_log_tool_time ON tool_call_log(tool_id, called_at);
-CREATE INDEX idx_tool_call_log_called_at ON tool_call_log(called_at);
-
--- Extension registry (mirrors the extensions SQLite schema in Subsystem 4)
-CREATE TABLE extensions (
-    id              TEXT PRIMARY KEY,   -- "com.example.notion"
-    display_name    TEXT NOT NULL,
-    version         TEXT NOT NULL,
-    package_path    TEXT NOT NULL,
-    entrypoint      TEXT NOT NULL,
-    permissions     TEXT NOT NULL,      -- JSON array: ["read","write"]
-    hitl_required   TEXT NOT NULL,      -- JSON array: ["write"]
-    manifest_hash   TEXT NOT NULL,      -- SHA-256 of nimbus.extension.json
-    installed_at    INTEGER NOT NULL,
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    last_sync_at    INTEGER,
-    last_error      TEXT,
-    registry_source TEXT               -- "npm" | "local" | "registry.nimbus-agent.dev"
-);
-```
-
-**SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
+Embedding storage is the dominant on-disk cost at scale: each item contributes one or more chunk vectors to a `vec_items_*` table (384 floats local MiniLM, 1536 floats for prose-heavy types routed to OpenAI). Rows marked *(target)* / *(design ceiling)* are estimates pending a dedicated scaling benchmark; only the 8k-row figure is measured (the `nimbus query` latency harness, `NIMBUS_RUN_QUERY_BENCH=1`).
 
 ---
 
@@ -1505,27 +1290,9 @@ A new structural defense lands as a *triple*: the production wiring, an entry in
 
 ### Active invariants summary
 
-The current `I1`–`I15` set, mirrored from [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md). When changing a wiring site listed below, update the invariants file *and* the enforcement test in the same commit.
+The canonical invariant table (currently **I1–I16**) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
 
-| # | Invariant | Wired at | Anti-pattern that regresses it |
-|---|---|---|---|
-| I1 | Child-process env scoping via `extensionProcessEnv()` | `connectors/lazy-mesh/` (every spawn across `mesh.ts`, `connector-spawns.ts`, `phase3-config.ts`, `user-mcp.ts`) | `spawn(..., { env: { ...process.env } })` anywhere under `connectors/` |
-| I2 | HITL frozen-set membership; `HITL_REQUIRED_BACKING` is module-private | `engine/executor.ts` `ToolExecutor.gate()` | New destructive RPC that skips `ToolExecutor` or omits the action type from the set |
-| I3 | HITL gate consults `action.type` only (not `payload.mcpToolId`) | `engine/executor.ts` `ToolExecutor.gate()` | Gating on `mcpToolId` or `resolvedToolId` — the set holds logical types, not MCP ids |
-| I4 | `hitlStatus` is set only by the consent gate | `engine/executor.ts` `ToolExecutor.gate()` | Hardcoding `hitlStatus: "approved"` in any handler |
-| I5 | `checkLanMethodAllowed` is intrinsic to `LanServer` | `ipc/lan-server.ts` `LanServer.handleEncryptedMessage()` | Moving the check into the dispatcher or any caller |
-| I6 | LAN bind defaults to `127.0.0.1` | `config/nimbus-toml.ts` | Defaulting to `0.0.0.0` or auto-binding all interfaces from an env var |
-| I7 | Tauri `ALLOWED_METHODS` matches gateway handlers; no RCE-class methods exposed to renderer | `ui/src-tauri/src/gateway_bridge.rs` | Adding `extension.install` / `connector.addMcp` to the renderer allowlist |
-| I8 | Tauri renderer CSP is restrictive (no `unsafe-inline`, no `unsafe-eval`) | `ui/src-tauri/tauri.conf.json` | `"csp": null` or loosening with `unsafe-*` |
-| I9 | All SQL uses bound parameters; identifiers go through `escapeIdentifier` | `db/write.ts`, `db/repair.ts`, `people/person-store.ts` | Template-literal SQL on caller-supplied data |
-| I10 | Constant-time compare for hashes / MACs / pairing codes / bearer tokens | `util/timing-safe-compare.ts` (canonical) — `sha256HexEqualConstantTime` consumed by `extensions/verify-extensions.ts` + `updater/updater.ts`; `constantTimeStringEqual` consumed by `ipc/lan-pairing.ts` + `ipc/http-auth.ts` | `===` / `!==` on hash bytes; redefining a local `timingSafeEqual` / `constantTimeStringEqual` outside `util/timing-safe-compare.ts` |
-| I11 | LLM-facing tool results wrapped via `wrapToolOutput` | `engine/agent.ts`, `engine/tool-output-envelope.ts` | New agent surface that feeds raw tool results to the LLM |
-| I12 | DPAPI calls pass `pOptionalEntropy` from `<configDir>/vault/.entropy` | `vault/win32.ts` | Dropping the entropy parameter "for compatibility" |
-| I13 | HTTP write routes go through `WRITE_ROUTE_ALLOWLIST` + bearer auth | `ipc/http-server.ts`, `ipc/http-write-routes.ts` | New POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` or opens a second writable DB outside the server context |
-| I14 | All SQLite write paths route through `dbRun` / `dbExec` / `dbStmtRun` | `db/write.ts` (`dbRun`, `dbExec`, `dbStmtRun`); enforced statically by `D12` in `check-nimbus-invariants.ts` | Direct `db.run(` or `db.exec(` outside `DB_RUN_EXEC_ALLOW_LIST` — swallows `SQLITE_FULL` |
-| I15 | Sandbox runner intrinsic to every extension spawn — every lazy-mesh `ServerSpec` flows through `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` | `connectors/lazy-mesh/{mesh.ts,connector-spawns.ts,phase3-config.ts,user-mcp.ts}` (call `wrapServerSpec`); `connectors/lazy-mesh/wrap-server-spec.ts` (defines `wrapServerSpec`); `platform/sandbox/sandbox-wrapper.ts` (calls `runner.spawn`); enforced statically by `D10` in `check-nimbus-invariants.ts` | Constructing an MCPClient `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)` |
-
-A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), and I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
+A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`D12` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), and I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
 
 ### Threat-to-mitigation table
 

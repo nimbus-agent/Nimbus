@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { listTomlKeysWithEnv } from "./nimbus-toml-config.ts";
+import {
+  getTomlValueFromFile,
+  listTomlKeysWithEnv,
+  setTomlValueInFile,
+} from "./nimbus-toml-config.ts";
 
 const SAVED = {
   agent: process.env["NIMBUS_AGENT_MODEL"],
@@ -90,5 +94,161 @@ describe("listTomlKeysWithEnv — llm.* entries", () => {
     const rows = listTomlKeysWithEnv(tomlPath);
     expect(rows.find((r) => r.key === "llm.remote_model")).toBeUndefined();
     expect(rows.find((r) => r.key === "llm.classifier_model")).toBeUndefined();
+  });
+
+  test("trims whitespace-only env values to undefined and falls back to file", () => {
+    process.env["NIMBUS_AGENT_MODEL"] = "   ";
+    writeFileSync(tomlPath, `[llm]\nremote_model = "from-file"\n`);
+    const rows = listTomlKeysWithEnv(tomlPath);
+    const row = rows.find((r) => r.key === "llm.remote_model");
+    expect(row?.source).toBe("file");
+  });
+});
+
+describe("getTomlValueFromFile", () => {
+  test("returns undefined when the file does not exist (ENOENT swallowed)", () => {
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBeUndefined();
+  });
+
+  test("returns undefined for a malformed dotted key (no dot)", () => {
+    writeFileSync(tomlPath, `[llm]\nremote_model = "x"\n`);
+    expect(getTomlValueFromFile(tomlPath, "no_dot_here")).toBeUndefined();
+  });
+
+  test("returns undefined for a dotted key starting with '.' (dot index <= 0)", () => {
+    writeFileSync(tomlPath, `[llm]\nremote_model = "x"\n`);
+    expect(getTomlValueFromFile(tomlPath, ".leading-dot")).toBeUndefined();
+  });
+
+  test("returns undefined when the section is absent", () => {
+    writeFileSync(tomlPath, `[other]\nkey = "x"\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBeUndefined();
+  });
+
+  test("returns undefined when the key is absent in an existing section", () => {
+    writeFileSync(tomlPath, `[llm]\nclassifier_model = "x"\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBeUndefined();
+  });
+
+  test("returns the value when the key is present in the requested section", () => {
+    writeFileSync(tomlPath, `[llm]\nremote_model = "claude-sonnet-4-6"\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"claude-sonnet-4-6"`);
+  });
+
+  test("ignores inline comments and blank lines", () => {
+    writeFileSync(
+      tomlPath,
+      `# top-comment\n\n[llm] # section header with comment\nremote_model = "v1" # inline\n`,
+    );
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"v1"`);
+  });
+
+  test("respects CRLF line endings", () => {
+    writeFileSync(tomlPath, `[llm]\r\nremote_model = "crlf-value"\r\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"crlf-value"`);
+  });
+
+  test("rethrows non-ENOENT read errors (passing a directory path triggers EISDIR)", () => {
+    expect(() => getTomlValueFromFile(dir, "llm.remote_model")).toThrow();
+  });
+
+  test("ignores keys with an unparseable '=' position (eq <= 0)", () => {
+    writeFileSync(tomlPath, `[llm]\n= bare\nremote_model = "still-found"\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"still-found"`);
+  });
+
+  test("does not read keys from a different section even if names collide", () => {
+    writeFileSync(tomlPath, `[other]\nremote_model = "wrong"\n[llm]\nremote_model = "right"\n`);
+    expect(getTomlValueFromFile(tomlPath, "llm.remote_model")).toBe(`"right"`);
+    expect(getTomlValueFromFile(tomlPath, "other.remote_model")).toBe(`"wrong"`);
+  });
+});
+
+describe("setTomlValueInFile", () => {
+  test("throws on a malformed dotted key", () => {
+    expect(() => setTomlValueInFile(tomlPath, "no_dot_here", "x")).toThrow(/Invalid key/);
+  });
+
+  test("throws on a dotted key starting with '.'", () => {
+    expect(() => setTomlValueInFile(tomlPath, ".leading", "x")).toThrow(/Invalid key/);
+  });
+
+  test("creates the TOML file and writes a new section when none exists", () => {
+    setTomlValueInFile(tomlPath, "llm.remote_model", "claude-sonnet-4-6");
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain("[llm]");
+    expect(contents).toContain(`remote_model = "claude-sonnet-4-6"`);
+  });
+
+  test("appends a new section to an existing file without one", () => {
+    writeFileSync(tomlPath, `[other]\nkey = "x"\n`);
+    setTomlValueInFile(tomlPath, "llm.remote_model", "claude-sonnet-4-6");
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain("[other]");
+    expect(contents).toContain("[llm]");
+    expect(contents).toContain(`remote_model = "claude-sonnet-4-6"`);
+  });
+
+  test("inserts a key into an existing section when the key is absent", () => {
+    writeFileSync(tomlPath, `[llm]\nclassifier_model = "haiku"\n`);
+    setTomlValueInFile(tomlPath, "llm.remote_model", "sonnet");
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain(`classifier_model = "haiku"`);
+    expect(contents).toContain(`remote_model = "sonnet"`);
+  });
+
+  test("replaces an existing key in place when one is already set", () => {
+    writeFileSync(tomlPath, `[llm]\nremote_model = "old"\nclassifier_model = "haiku"\n`);
+    setTomlValueInFile(tomlPath, "llm.remote_model", "new");
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain(`remote_model = "new"`);
+    expect(contents).not.toContain(`remote_model = "old"`);
+    expect(contents).toContain(`classifier_model = "haiku"`);
+  });
+
+  test("formats boolean literals without quotes (true/false)", () => {
+    setTomlValueInFile(tomlPath, "telemetry.enabled", "true");
+    expect(readFileSync(tomlPath, "utf8")).toContain("enabled = true");
+
+    setTomlValueInFile(tomlPath, "telemetry.enabled", "false");
+    expect(readFileSync(tomlPath, "utf8")).toContain("enabled = false");
+  });
+
+  test("formats integer literals without quotes (positive and negative)", () => {
+    setTomlValueInFile(tomlPath, "telemetry.flush_interval_seconds", "30");
+    expect(readFileSync(tomlPath, "utf8")).toContain("flush_interval_seconds = 30");
+
+    setTomlValueInFile(tomlPath, "telemetry.offset", "-7");
+    expect(readFileSync(tomlPath, "utf8")).toContain("offset = -7");
+  });
+
+  test("escapes embedded backslashes and double quotes in string values", () => {
+    setTomlValueInFile(tomlPath, "llm.remote_model", 'tricky\\"value');
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain(`remote_model = "tricky\\\\\\"value"`);
+    const read = getTomlValueFromFile(tomlPath, "llm.remote_model");
+    expect(read).toBe(`"tricky\\\\\\"value"`);
+  });
+
+  test("scopes section boundary correctly — does not touch identically-named keys in a sibling section", () => {
+    writeFileSync(tomlPath, `[other]\nremote_model = "keep"\n[llm]\nremote_model = "old"\n`);
+    setTomlValueInFile(tomlPath, "llm.remote_model", "new");
+    const contents = readFileSync(tomlPath, "utf8");
+    expect(contents).toContain(`[other]`);
+    expect(contents.match(/remote_model = "keep"/g)?.length).toBe(1);
+    expect(contents).toContain(`remote_model = "new"`);
+  });
+
+  test("appends a key at section end even when followed by another section", () => {
+    writeFileSync(tomlPath, `[llm]\nclassifier_model = "haiku"\n[other]\nx = "y"\n`);
+    setTomlValueInFile(tomlPath, "llm.remote_model", "sonnet");
+    const contents = readFileSync(tomlPath, "utf8");
+    const llmStart = contents.indexOf("[llm]");
+    const otherStart = contents.indexOf("[other]");
+    const newKey = contents.indexOf(`remote_model = "sonnet"`);
+    expect(llmStart).toBeGreaterThanOrEqual(0);
+    expect(otherStart).toBeGreaterThan(llmStart);
+    expect(newKey).toBeGreaterThan(llmStart);
+    expect(newKey).toBeLessThan(otherStart);
   });
 });

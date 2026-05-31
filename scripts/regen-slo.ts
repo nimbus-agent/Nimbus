@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Regenerates `docs/perf/slo.md` from
- * `packages/gateway/src/perf/slo-thresholds.ts`. Run after editing
- * thresholds; CI runs `--check` to fail the build on drift.
- *
- * Layout: a header + caveat, a UX table (rows from spec § 3.2),
- * a workload table (S6/S7/S9/S10 + a single S8 collapsing row),
- * an S8 sub-table enumerating the 12 cells (D-N), and a generated-
- * doc footer. The comparator sees the flat 29-row array regardless;
- * the doc layout is purely presentational.
- */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,9 +14,7 @@ interface RowFmt {
   noiseFloor: string;
 }
 
-/** Render a number with single-space thousands separators (e.g. 2_000 → "2 000"). */
 function fmtThousands(n: number): string {
-  // Integer separators; floats and small numbers pass through .toString().
   if (!Number.isInteger(n)) return n.toString();
   if (Math.abs(n) < 1000) return n.toString();
   const sign = n < 0 ? "-" : "";
@@ -123,7 +110,6 @@ const FOOTER = `
 ## What this sheet is not
 
 - **Not a regression-tracking document.** The ongoing per-run history lives in workflow artifacts (GHA) and \`docs/perf/history.jsonl\` (reference machine).
-- **Not the missed-threshold list.** That lives in \`docs/perf/missed.md\` once PR-C-2 ranks violations.
 
 ---
 
@@ -150,7 +136,6 @@ function workloadTable(): string {
     const f = fmtRow(t);
     rows.push(`| ${id} | ${t.metric} | ${f.refMax} | ${f.ghaMax} | ${f.noiseFloor} |`);
   }
-  // Collapsed S8 row
   rows.push(
     `| S8 (12 cells, see § Workload › S8 cells below) | throughput_per_sec | TBD | TBD — Phase 5 reference run (PR-C-2) | 25 %, 5 items/sec |`,
   );

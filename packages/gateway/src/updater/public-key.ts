@@ -1,13 +1,3 @@
-/**
- * Embedded Ed25519 public key for updater signature verification.
- *
- * Replaced once at the start of WS4 implementation by running:
- *   bun scripts/generate-updater-keypair.ts
- *
- * The matching private key is stored in GitHub secret `UPDATER_SIGNING_KEY`.
- *
- * Override for tests via the NIMBUS_DEV_UPDATER_PUBLIC_KEY env var.
- */
 import { processEnvGet } from "../platform/env-access.ts";
 
 export const UPDATER_PUBLIC_KEY_BASE64 = "U7/GT29afUsu28rHK0B1OBgHVub9fX4iCaC8zMCh6Bk=";

@@ -1,12 +1,7 @@
 import type { JsonRpcNotification } from "./jsonrpc.ts";
 
-/**
- * Thrown when the initiating IPC client disconnects while consent is pending.
- * The executor should treat this as rejection and audit with reason "client disconnected".
- */
 export class ConsentDisconnectedError extends Error {
   readonly code = "CONSENT_CLIENT_DISCONNECTED" as const;
-  /** Value for audit `hitlRejectReason` when consent ends without user approval. */
   readonly hitlAuditReason: string;
   override readonly name = "ConsentDisconnectedError";
   constructor(message = "client disconnected", hitlAuditReason: string = "client disconnected") {
@@ -16,20 +11,11 @@ export class ConsentDisconnectedError extends Error {
 }
 
 export interface ConsentCoordinator {
-  /**
-   * Sends `consent.request` to the given client only; resolves when that client
-   * sends `consent.respond`, or rejects with {@link ConsentDisconnectedError}.
-   */
   requestConsent(
     clientId: string,
     params: { requestId: string; prompt: string; details?: unknown },
   ): Promise<boolean>;
-  /**
-   * Reject every pending consent (e.g. gateway shutdown). Uses {@link ConsentDisconnectedError}
-   * so {@link ToolExecutor} records a rejected HITL audit entry.
-   */
   rejectAllPending(message: string, hitlAuditReason: string): void;
-  /** Diagnostic: how many HITL prompts are awaiting `consent.respond`. */
   pendingCount(): number;
 }
 
@@ -41,9 +27,6 @@ type PendingConsent = {
 
 export type ConsentSessionWriter = (notification: JsonRpcNotification) => void;
 
-/**
- * Routes consent to a single client; clears pending entries on disconnect.
- */
 export class ConsentCoordinatorImpl implements ConsentCoordinator {
   private readonly pending = new Map<string, PendingConsent>();
 
@@ -70,9 +53,6 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
     });
   }
 
-  /**
-   * @returns Error body for JSON-RPC response, or null if handled successfully.
-   */
   handleRespond(clientId: string, params: unknown): { code: number; message: string } | null {
     if (typeof params !== "object" || params === null || Array.isArray(params)) {
       return { code: -32602, message: "Invalid params" };

@@ -9,12 +9,6 @@ export class GpuArbiter {
   private lastActivityAt = 0;
   private readonly onForceRelease: ((providerId: string) => void) | undefined;
 
-  /**
-   * @param timeoutMs   Inactivity timeout before a stale lock is force-released (default 30 s).
-   * @param onForceRelease  Called with the stale provider's ID when a force-release fires.
-   *   Use this to send SIGTERM/SIGKILL to a crashed llama-server, or to send a
-   *   `keep_alive: 0` eviction request to Ollama to free VRAM.
-   */
   constructor(timeoutMs = 30_000, onForceRelease?: (providerId: string) => void) {
     this.timeoutMs = timeoutMs;
     this.onForceRelease = onForceRelease;

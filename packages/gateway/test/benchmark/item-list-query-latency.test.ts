@@ -1,7 +1,3 @@
-/**
- * Phase 3.5 — `nimbus query` / HTTP item list path stays fast on a wide `item` table.
- * Uses a single bulk INSERT (not 50k round-trips) so CI stays within budget; threshold is tuned for CI runners.
- */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 

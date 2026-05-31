@@ -1,6 +1,14 @@
+import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export type UpdateArgs = { mode: "check" | "apply"; yes: boolean };
+
+export type UpdateCheckResult = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  notes?: string;
+};
 
 export function parseUpdateArgs(argv: string[]): UpdateArgs {
   let mode: UpdateArgs["mode"] = "apply";
@@ -21,36 +29,35 @@ export function parseUpdateArgs(argv: string[]): UpdateArgs {
   return { mode, yes };
 }
 
+export async function runUpdateCheck(client: IPCClient): Promise<void> {
+  const result = await client.call<UpdateCheckResult>("updater.checkNow", {});
+  console.log(`current: ${result.currentVersion}`);
+  console.log(`latest:  ${result.latestVersion}`);
+  if (result.notes) {
+    console.log(`notes:   ${result.notes}`);
+  }
+  process.exitCode = result.updateAvailable ? 1 : 0;
+}
+
+export async function runUpdateApply(client: IPCClient): Promise<void> {
+  await client.call<unknown>("updater.applyUpdate", {});
+  console.log("Update applied. Gateway will restart.");
+}
+
 export async function runUpdate(argv: string[]): Promise<void> {
   const args = parseUpdateArgs(argv);
 
   if (args.mode === "check") {
-    const result = await withGatewayIpc((c) =>
-      c.call<{
-        currentVersion: string;
-        latestVersion: string;
-        updateAvailable: boolean;
-        notes?: string;
-      }>("updater.checkNow", {}),
-    );
-    console.log(`current: ${result.currentVersion}`);
-    console.log(`latest:  ${result.latestVersion}`);
-    if (result.notes) {
-      console.log(`notes:   ${result.notes}`);
-    }
-    process.exitCode = result.updateAvailable ? 1 : 0;
+    await withGatewayIpc(async (c) => {
+      await runUpdateCheck(c);
+    });
     return;
   }
 
   if (!args.yes) {
     console.log("Check for updates?");
     const checkResult = await withGatewayIpc((c) =>
-      c.call<{
-        currentVersion: string;
-        latestVersion: string;
-        updateAvailable: boolean;
-        notes?: string;
-      }>("updater.checkNow", {}),
+      c.call<UpdateCheckResult>("updater.checkNow", {}),
     );
     console.log(`current: ${checkResult.currentVersion}`);
     console.log(`latest:  ${checkResult.latestVersion}`);
@@ -72,14 +79,14 @@ export async function runUpdate(argv: string[]): Promise<void> {
     }
   }
 
-  await withGatewayIpc((c) => c.call<unknown>("updater.applyUpdate", {}));
-  console.log("Update applied. Gateway will restart.");
+  await withGatewayIpc(async (c) => {
+    await runUpdateApply(c);
+  });
 }
 
 async function readLine(): Promise<string> {
   return new Promise((resolve) => {
     if (!process.stdin.isTTY) {
-      // If not a TTY, don't try to read
       resolve("");
       return;
     }

@@ -201,7 +201,6 @@ describe("kubernetes-sync — with shared fixture", () => {
       expect(meta.namespace).toBe("default");
       expect(meta.name).toBe("frontend");
       expect(meta.kind).toBe("Deployment");
-      // resourceVersion from list metadata flows into the cursor.
       expect(res.cursor).toBe(encodeCursor({ resourceVersion: "12345" }));
     });
 

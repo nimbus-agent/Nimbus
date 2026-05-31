@@ -135,7 +135,6 @@ describe("createOpenAIEmbedder", () => {
     captureFetch(new Response(longBody, { status: 429, statusText: "Too Many Requests" }));
     const embedder = await createOpenAIEmbedder({ apiKey: "k" });
     await expect(embedder.embed(["hello"])).rejects.toThrow(/OpenAI embeddings failed \(429\)/);
-    // Verify body is truncated to 200 chars (full 500-char body would not match this length-bounded regex).
     await expect(embedder.embed(["hello"])).rejects.toThrow(/^[\s\S]{0,260}$/);
   });
 
@@ -170,8 +169,6 @@ describe("createOpenAIEmbedder", () => {
   });
 
   test("numeric coercion: stringified numbers in embedding still produce a Float32Array", async () => {
-    // The implementation calls Number(...) on every element, so JSON-encoded
-    // numeric strings (legal per JSON but unusual from OpenAI) still work.
     const embedding = Array.from({ length: 384 }, (_, i) => String(i / 384));
     captureFetch(jsonResponse({ data: [{ index: 0, embedding }] }));
     const embedder = await createOpenAIEmbedder({ apiKey: "k" });

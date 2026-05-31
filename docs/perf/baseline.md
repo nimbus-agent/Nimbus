@@ -33,5 +33,3 @@ _TBD — populated by PR-C-2 reference run. Each row sourced from a `history.jso
 ## What lands in PR-C-2
 
 - The TBD cells above, sourced from a single `nimbus bench --all --reference` run.
-- `docs/perf/missed.md` — top-5 threshold violations ranked by `user_felt_impact_score / engineering_cost_estimate`.
-- `docs/perf/deferred-backlog.md` — misses 6–N with one-line "why deferred" annotations.

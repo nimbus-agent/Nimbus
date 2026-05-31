@@ -1,17 +1,22 @@
 # Gitleaks repo config.
 #
-# Inherits the default ruleset and adds a path-based allowlist for the two
+# Inherits the default ruleset and adds a path-based allowlist for two
 # locations that legitimately carry secret-shaped fixtures by design:
 #
 #   1. packages/gateway/src/security/secret-patterns.test.ts
-#      — unit-test fixtures that intentionally assert SECRET_PATTERNS regexes
-#        fire on canonical prefix strings (PEM headers, `xoxb-…`, `sk-…`, etc).
-#        Required for the Phase 5 `nimbus security scan` test suite.
+#      — unit-test fixtures that intentionally assert SECRET_PATTERNS
+#        regexes fire on canonical prefix strings (PEM headers, `xoxb-…`,
+#        `sk-…`, etc). Required for the Phase 5 `nimbus security scan`
+#        test suite.
 #
 #   2. docs/superpowers/plans/**/*.md
-#      — implementation plan docs frequently quote test source verbatim,
-#        so any plan covering security-adjacent work reproduces the same
-#        fixture strings. Plans never carry real credentials.
+#      — historical implementation-plan docs frequently quoted test source
+#        verbatim, so several plans covering security-adjacent work
+#        reproduced the same fixture strings. The plans/ tree was pruned
+#        from HEAD on 2026-05-28, but **gitleaks scans full git history**:
+#        the files still exist in past commits, and a path-based allowlist
+#        is the only durable suppression. Plans never carried real
+#        credentials.
 #
 # Why path-based instead of fingerprint pins in `.gitleaksignore`:
 # fingerprints are `<commit-sha>:<path>:<rule>:<line>`. Squash-merges rewrite
@@ -24,7 +29,7 @@
 useDefault = true
 
 [allowlist]
-description = "Synthetic fixtures for the secret-pattern unit tests and committed planning docs"
+description = "Synthetic fixtures for the secret-pattern unit tests + pruned plan docs (historical commits)"
 paths = [
   '''packages/gateway/src/security/secret-patterns\.test\.ts''',
   '''docs/superpowers/plans/.*\.md''',

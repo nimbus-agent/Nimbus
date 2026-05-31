@@ -17,7 +17,6 @@ function isHistoryFile(value: unknown): value is HistoryFile {
   return v["entries"].every((item): item is string => typeof item === "string");
 }
 
-/** Read the history file. Returns [] on missing, corrupt, or mis-shaped file. */
 export async function readHistory(path: string): Promise<string[]> {
   let raw: string;
   try {
@@ -37,11 +36,6 @@ export async function readHistory(path: string): Promise<string[]> {
   return parsed.entries;
 }
 
-/**
- * Append a query to the history, deduping on repeat-of-last and capping at
- * QUERY_HISTORY_CAP. Empty or whitespace-only queries are ignored.
- * Corrupt-file recovery: silently overwrites with the new entry alone.
- */
 export async function appendQuery(path: string, query: string): Promise<void> {
   if (query.trim() === "") {
     return;

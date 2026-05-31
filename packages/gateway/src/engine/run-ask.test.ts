@@ -38,16 +38,7 @@ const stubDispatcher: ConnectorDispatcher = {
   },
 };
 
-/**
- * Minimal Mastra Agent stub for the conversational path. Returns a fixed
- * reply via both `generate` (non-stream) and `stream` (yields nothing then
- * resolves the text promise). The test only cares that runAsk completes
- * the conversational turn and then writes turns to the session store.
- */
 function fakeConversationalAgent(reply = "agent reply"): Agent {
-  // Hand-rolled empty AsyncIterable instead of an empty `async function*` —
-  // biome's `useYield` rule (correctly) flags a generator that yields nothing,
-  // and we want this stub to be a real iterable, not need a suppress-comment.
   const emptyAsyncIterable: AsyncIterable<unknown> = {
     [Symbol.asyncIterator]() {
       return {
@@ -66,11 +57,6 @@ function fakeConversationalAgent(reply = "agent reply"): Agent {
   } as unknown as Agent;
 }
 
-/**
- * Spy `SessionMemoryStore` that records every `append` call. We don't
- * exercise embedding/recall here — only that runAsk writes both turns
- * when a sessionId is present.
- */
 function spySessionMemoryStore(): {
   store: SessionMemoryStore;
   appended: SessionChunk[];
@@ -107,8 +93,6 @@ describe("runAsk", () => {
   test("BUG-005: appends user input + assistant reply to SessionMemoryStore when sessionId is in the request context", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
-    // Seed a row so the empty-index guidance branch doesn't short-circuit
-    // before the conversational agent runs.
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
     );
@@ -127,9 +111,6 @@ describe("runAsk", () => {
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("ok, draft created"),
         sessionMemoryStore: store,
-        // Bypass the LLM classifier so the test doesn't depend on
-        // ANTHROPIC_API_KEY / OPENAI_API_KEY (CI runs without keys; the
-        // real classifier would throw GatewayAgentUnavailableError).
         classify: async () => ({
           intent: "unknown",
           entities: {},
@@ -163,7 +144,6 @@ describe("runAsk", () => {
     const localIndex = new LocalIndex(db);
     const { store, appended } = spySessionMemoryStore();
 
-    // Note: NOT wrapped in agentRequestContext.run() — sessionId is undefined.
     await runAsk({
       input: "draft a gmail to me",
       stream: false,

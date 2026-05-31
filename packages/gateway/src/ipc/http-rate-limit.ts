@@ -1,11 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — Sliding-window rate limiter for the HTTP write surface.
- *
- * Keyed by `token_fingerprint` (sha256(token).slice(0,8)). 60 req/min per
- * fingerprint by default. Used by `dispatchWriteRoute` to set the
- * X-RateLimit-* headers on every response and enforce 429 on overflow.
- */
-
 export interface HttpWriteRateLimitConfig {
   readonly maxRequests: number;
   readonly windowMs: number;
@@ -28,12 +20,6 @@ export class HttpWriteRateLimiter {
     this.now = now ?? (() => Date.now());
   }
 
-  /**
-   * Returns the rate-limit decision and headers metadata for `fingerprint`.
-   * Side effect: when `allowed=true`, this call IS counted (it appends to
-   * the window). When `allowed=false`, nothing is appended (caller is being
-   * rejected).
-   */
   check(fingerprint: string): RateLimitCheck {
     const t = this.now();
     const cutoff = t - this.cfg.windowMs;

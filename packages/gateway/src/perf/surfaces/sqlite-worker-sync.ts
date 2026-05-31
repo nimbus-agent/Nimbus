@@ -1,28 +1,15 @@
 #!/usr/bin/env bun
-/**
- * S10 sync writer Worker — bulk-inserts items via the production
- * `dbRun` wrapper. Runs in its own bun:sqlite handle so the OS sees a
- * second writer competing for the database file lock with the watcher
- * + audit Workers.
- *
- * Every write goes through `dbRun` (packages/gateway/src/db/write.ts)
- * so SQLITE_FULL is converted to DiskFullError just like in production.
- * The INSERT shape mirrors `index/item-store.ts:71` — 13 columns +
- * ON CONFLICT(id) DO UPDATE — same schema we'd hit on a real sync.
- */
 
 import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
-import { runWorkerEntry, type WorkerSelf } from "./sqlite-worker-shared.ts";
+import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
 
 interface SyncConfig {
-  /** Per-write batch size for the row PK. Default 100. Higher = fewer transactions. */
   batchSize?: number;
-  /** Suffix prepended to row IDs to keep this worker's writes from colliding. */
   idPrefix?: string;
 }
 
@@ -44,7 +31,7 @@ ON CONFLICT(id) DO UPDATE SET
   synced_at = excluded.synced_at,
   pinned = excluded.pinned`;
 
-runWorkerEntry<SyncConfig>(self as unknown as WorkerSelf, {
+runWorkerEntry<SyncConfig>(self, {
   init: (config, dbPath) => {
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);

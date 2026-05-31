@@ -12,7 +12,6 @@ export interface ReverseDep {
   readonly range: string;
 }
 
-/** Insert one row per (extensionId, dep) pair. First clears existing forward edges so a downgraded `dependsOn` set is reflected. `ON CONFLICT` re-writes `range` + `created_at` so retries are idempotent. */
 export function recordInstall(
   db: Database,
   extensionId: string,
@@ -20,8 +19,6 @@ export function recordInstall(
   deps: readonly ResolvedDep[],
   now: number,
 ): void {
-  // `_version` is intentionally unused — version is owned by `extension_state`.
-  // The signature keeps it for caller-side readability.
   dbRun(db, "DELETE FROM extension_dependency WHERE extension_id = ?", [extensionId]);
   for (const dep of deps) {
     dbRun(

@@ -22,7 +22,6 @@ function freshDb(): Database {
 
 function seed(db: Database) {
   const now = Date.now();
-  // Two items: a-384 and b-1536
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview,
         modified_at, synced_at)
@@ -109,7 +108,6 @@ describe("vectorSearchChunksDual", () => {
     seed(db);
     const v1536 = new Float32Array(1536);
     v1536[0] = 1.0;
-    // model1536 missing → skip the 1536 side
     const hits = vectorSearchChunksDual(db, {
       queryEmbedding1536: v1536,
       limit: 10,

@@ -37,9 +37,6 @@ describe("listLazyMeshClientTools", () => {
 
   it("delegates to client.listTools when client is provided", async () => {
     const fakeMap: LazyMeshToolMap = { foo: { execute: async () => "ok" } };
-    // Minimal stub — only listTools is touched by the helper. Cast through
-    // unknown so we satisfy the @mastra/mcp MCPClient surface without pulling
-    // in its 100+-method type into a tiny test.
     const fakeClient = { listTools: async () => fakeMap } as unknown as Parameters<
       typeof listLazyMeshClientTools
     >[0];

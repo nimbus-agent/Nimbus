@@ -13,7 +13,6 @@ import {
 describe("verifyTarballSha256", () => {
   it("returns true when the buffer matches the expected hex hash", async () => {
     const bytes = new TextEncoder().encode("hello");
-    // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
     const expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
     expect(await verifyTarballSha256(bytes, expected)).toBe(true);
   });
@@ -134,7 +133,7 @@ describe("applyUpgradeSwap", () => {
       });
 
       const prevEntries = await readdir(join(extRoot, "_prev"));
-      expect(prevEntries).toEqual(["1.0.0"]); // older 0.9.0 retired
+      expect(prevEntries).toEqual(["1.0.0"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -144,8 +143,7 @@ describe("applyUpgradeSwap", () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
     try {
       const extRoot = await makeExt(root, "1.0.0");
-      const pendingDir = join(root, "_pending", "com.example.x-1.1.0"); // does NOT exist
-
+      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
       await expect(
         applyUpgradeSwap({
           extRoot,
@@ -155,7 +153,6 @@ describe("applyUpgradeSwap", () => {
         }),
       ).rejects.toThrow();
 
-      // active/ still present and unchanged after failed swap revert
       expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("active=1.0.0");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -186,7 +183,7 @@ describe("applyDowngradeSwap", () => {
   it("rejects when _prev/<to> is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.1.0"); // no _prev
+      const extRoot = await makeExt(root, "1.1.0");
       await expect(
         applyDowngradeSwap({
           extRoot,

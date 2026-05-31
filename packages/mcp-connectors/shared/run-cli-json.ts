@@ -1,10 +1,5 @@
-/**
- * Run a CLI and parse stdout as JSON (for kubectl / aws / az / gcloud in MCP servers).
- */
-
 export type RunCliJsonResult = { ok: true; data: unknown } | { ok: false; message: string };
 
-/** Run a CLI; succeed when exit code is 0 (stdout ignored). */
 export async function runCliOk(
   command: readonly string[],
   env: Record<string, string | undefined>,
@@ -28,7 +23,6 @@ export async function runCliOk(
   return { ok: true };
 }
 
-/** Like {@link runCliOk} but throws with the CLI stderr message on failure (MCP tool handlers). */
 export async function runCliOkThrowing(
   command: readonly string[],
   env: Record<string, string | undefined>,

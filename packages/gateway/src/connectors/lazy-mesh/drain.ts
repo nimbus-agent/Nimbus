@@ -1,7 +1,3 @@
-/**
- * S8-F7 — per-slot in-flight refcount with awaitable drain.
- * Used by LazyConnectorMesh to defer disconnect while tool calls are running.
- */
 export class LazyDrainTracker {
   private inFlight = 0;
   private resolveDrained: (() => void) | undefined;

@@ -1,7 +1,6 @@
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
 
-/** PAT / API keys cleared when removing a connector (OAuth keys use provider-wide clear elsewhere). */
 export const CONNECTOR_VAULT_SECRET_KEYS = {
   google_drive: [],
   gmail: [],
@@ -35,6 +34,29 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   bitrise: ["bitrise.token"],
   sonarqube: ["sonarqube.token", "sonarqube.url", "sonarqube.organization"],
   semgrep: ["semgrep.token", "semgrep.deployment_slug"],
+  wiz: ["wiz.client_id", "wiz.client_secret", "wiz.api_url", "wiz.auth_url"],
+  launchdarkly: ["launchdarkly.token", "launchdarkly.base_url", "launchdarkly.project_key"],
+  flagsmith: ["flagsmith.token", "flagsmith.api_base"],
+  argocd: ["argocd.url", "argocd.token"],
+  flux: ["flux.api_url", "flux.token"],
+  dbt: ["dbt.token", "dbt.api_base", "dbt.account_id"],
+  metabase: ["metabase.url", "metabase.api_key"],
+  superset: ["superset.url", "superset.username", "superset.password"],
+  databricks: ["databricks.host", "databricks.token"],
+  mlflow: ["mlflow.host", "mlflow.token"],
+  vercel: ["vercel.token", "vercel.team_id"],
+  netlify: ["netlify.token"],
+  stripe: ["stripe.api_key"],
+  mercury: ["mercury.token"],
+  readwise: ["readwise.token"],
+  raindrop: ["raindrop.token"],
+  intercom: ["intercom.token"],
+  zendesk: ["zendesk.url", "zendesk.email", "zendesk.api_token"],
+  lever: ["lever.api_key"],
+  greenhouse: ["greenhouse.api_key"],
+  pipedrive: ["pipedrive.token"],
+  stackoverflow: ["stackoverflow.token", "stackoverflow.team"],
+  zoom: ["zoom.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

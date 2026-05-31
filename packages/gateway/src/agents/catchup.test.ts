@@ -39,10 +39,6 @@ describe("scoreAndGroup", () => {
     const sections = scoreAndGroup(items, involvement);
     expect(sections.length).toBe(1);
     expect(sections[0]?.serviceId).toBe("github");
-    // Both items match owned_service:github → both score the same and have
-    // equal modifiedAt; stable sort preserves insertion order ("low" first,
-    // then "high"). This test does NOT assert intra-section order — see the
-    // next test for the deterministic ordering assertion.
     expect(sections[0]?.items.map((i) => i.title).sort()).toEqual(["high", "low"]);
   });
 
@@ -88,10 +84,7 @@ describe("scoreAndGroup", () => {
       },
     ];
     const sections = scoreAndGroup(items, involvement);
-    // Expect three sections: github (highest aggregate), slack (collaborator),
-    // linear (default-only).
     expect(sections.map((s) => s.serviceId)).toEqual(["github", "slack", "linear"]);
-    // Within github: owned+repo > owned-only.
     const ghTitles = sections.find((s) => s.serviceId === "github")?.items.map((i) => i.title);
     expect(ghTitles).toEqual(["owned+repo", "owned"]);
   });
@@ -132,7 +125,6 @@ describe("runCatchup", () => {
     const brief = await runCatchup(
       {
         sinceMs: 3 * 24 * 60 * 60 * 1000,
-        // Force the resolver miss path by injecting empty/null deps.
         runGitOverride: async () => null,
         osUsernameOverride: "",
       },

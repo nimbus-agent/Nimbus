@@ -13,14 +13,6 @@ import {
   tryLoadSqliteVec,
 } from "./sqlite-vec-load.ts";
 
-// Probe whether the upstream `sqlite-vec` package can actually load its prebuilt
-// shared library in this environment. On most dev/CI machines it can; on
-// macos-15 GitHub runners the arm64 dylib's `com.apple.quarantine` xattr
-// occasionally survives the strip step in `_test-suite.yml`, and the upstream
-// `db.loadExtension(...)` call throws. The chain regression-guard below uses
-// this probe to gate its assertion so the test stays meaningful where upstream
-// works and is honestly skipped where it doesn't, instead of being masked by
-// a buggy CI retry loop.
 const upstreamSqliteVecLoadable = ((): boolean => {
   try {
     const probe = new Database(":memory:");
@@ -48,8 +40,6 @@ describe("sidecarFilename", () => {
 });
 
 describe("sidecarPath", () => {
-  // Platform-explicit `posix.join` / `win32.join` — must not depend on host OS
-  // (a Linux runner asserting a Windows-shaped path is the regression that broke CI).
   test("returns vec0.{ext} adjacent to the given exec path (linux)", () => {
     expect(sidecarPath("/opt/nimbus/bin/nimbus-gateway", "linux")).toBe(
       posixPath.join("/opt/nimbus/bin", "vec0.so"),
@@ -108,8 +98,6 @@ describe("tryLoadFromSidecar", () => {
   });
 
   test("falls back to dirname(process.execPath) as default baseDir", () => {
-    // process.execPath in tests is the Bun binary; vec0.{ext} won't be next to it,
-    // so the function must return false without throwing — exercising the default-arg branch.
     const fakeDb = {
       loadExtension: (_p: string) => {
         throw new Error("should not be called when sidecar is absent");
@@ -120,11 +108,6 @@ describe("tryLoadFromSidecar", () => {
   });
 });
 
-// Regression guard for the chain change: when upstream succeeds, the fallback
-// must not be reached. Skipped honestly on environments where upstream itself
-// can't load (see `upstreamSqliteVecLoadable` probe above) — the fallback path
-// is already covered by tryLoadFromSidecar's own tests, so we don't need to
-// re-cover it here.
 describe("tryLoadSqliteVec — upstream-first chain", () => {
   const guarded = upstreamSqliteVecLoadable ? test : test.skip;
   guarded("returns true on a fresh db when upstream sqlite-vec is loadable", () => {

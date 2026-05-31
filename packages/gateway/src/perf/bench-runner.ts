@@ -1,17 +1,4 @@
 #!/usr/bin/env bun
-/**
- * `nimbus bench` standalone entry script.
- *
- * Invoked by `packages/cli/src/commands/bench.ts` via `Bun.spawn` so the
- * CLI package does not have to import gateway source (IPC-only rule —
- * see packages/cli/src/commands/index.ts JSDoc line 1). Subprocess
- * startup is a one-time invocation cost; per-surface aggregation
- * (5 runs × 100 samples) dominates.
- *
- * Generates the run UUID at the top, threads it through both the
- * orchestrator and the signal-handler context factory, so an interrupted
- * run records the same run_id it would have on success.
- */
 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -66,7 +53,6 @@ function detectRunner(args: string[]): RunnerKind {
 
 export interface BenchRunnerDeps {
   stdout?: (s: string) => void;
-  /** Override default `<cwd>/docs/perf/history.jsonl`. Tests inject a tmp dir. */
   historyPath?: string;
 }
 
@@ -80,8 +66,6 @@ export async function runBenchRunnerMain(
     return 0;
   }
 
-  // Strip --protocol-confirmed before runBenchCli sees args; capture its
-  // presence to wire confirmReferenceProtocol non-interactively (D-X).
   const protocolConfirmed = hasFlag(args, "--protocol-confirmed");
   const cliArgs = protocolConfirmed ? args.filter((a) => a !== "--protocol-confirmed") : args;
 
@@ -118,7 +102,6 @@ export async function runBenchRunnerMain(
   }
 }
 
-// `bun packages/gateway/src/perf/bench-runner.ts ...` enters here.
 if (import.meta.main) {
   process.exitCode = await runBenchRunnerMain(process.argv.slice(2));
 }

@@ -1,0 +1,16 @@
+{
+  "id": "com.nimbus.mlflow",
+  "displayName": "MLflow",
+  "version": "0.1.0",
+  "description": "MLflow connector (read-only). Surfaces MLflow registered models — name, description, latest version/stage/status/run, created + updated timestamps, and tags — into the local index as `mlflow:ml_model` items via the Model Registry API (`GET /api/2.0/mlflow/registered-models/search`, token-paginated on `next_page_token`). API-token auth (sent as `Authorization: Bearer <token>`). MLflow has no universal SaaS host: the tracking-server URL is supplied via the `mlflow.host` vault key and added to the sandbox network list at spawn time by `phase3AddMlflowMcp`, so the static manifest network list is intentionally empty. v1 indexes registered models only — experiments, runs, metrics, params, and artifacts are a deferred follow-up; `ml.model.promote` / `ml.model.transition-stage` (HITL) writes are deferred to Phase 6. No write tools.",
+  "author": "Nimbus",
+  "entrypoint": "dist/server.js",
+  "runtime": "bun",
+  "permissions": {
+    "network": [],
+    "filesystem": { "read": [], "write": [] }
+  },
+  "hitlRequired": [],
+  "syncInterval": 600,
+  "minNimbusVersion": "0.2.0"
+}

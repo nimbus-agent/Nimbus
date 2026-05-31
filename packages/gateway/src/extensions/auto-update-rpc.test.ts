@@ -226,7 +226,6 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
     );
-    // Yield so first acquires the mutex before second runs.
     await new Promise((r) => setTimeout(r, 0));
     const second = (await dispatchAutoUpdateRpc(
       "extension.update",

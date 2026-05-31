@@ -90,7 +90,6 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     if (r.kind !== "hit") return;
     expect(r.value).toEqual({ status: "rejected", reason: "user declined" });
     expect(calls).toEqual([{ type: "connector.addMcp" }]);
-    // Underlying row was NOT inserted.
     const row = db
       .query("SELECT service_id FROM user_mcp_connector WHERE service_id = ?")
       .get("mcp_blocked");
@@ -228,16 +227,12 @@ describe("dispatchConnectorRpc — connector.startAuth alias + reset helper", ()
       return true;
     }) as typeof process.stderr.write;
     try {
-      // The handler will likely throw because we're not seeding all the
-      // required dependencies — but the warning path (the actual line
-      // we're trying to cover) fires before any handler logic.
       await dispatchConnectorRpc({
         ...baseOpts({}),
         method: "connector.startAuth",
         params: { serviceId: "github" },
       }).catch(() => undefined);
 
-      // Second call should NOT emit the warning again (once-flag).
       warned.length = 0;
       await dispatchConnectorRpc({
         ...baseOpts({}),
@@ -246,7 +241,6 @@ describe("dispatchConnectorRpc — connector.startAuth alias + reset helper", ()
       }).catch(() => undefined);
       expect(warned.find((m) => m.includes("connector.startAuth is deprecated"))).toBeUndefined();
 
-      // After reset, the next call warns again.
       _resetStartAuthWarnFlagForTest();
       warned.length = 0;
       await dispatchConnectorRpc({

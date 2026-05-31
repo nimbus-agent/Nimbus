@@ -3,16 +3,6 @@ import { fetchUpdateManifest, isPermittedSchemeForUpdater } from "./manifest-fet
 import { sha256Hex, verifyBinarySignature, verifyManifestEnvelope } from "./signature-verifier.ts";
 import type { PlatformTarget, UpdateManifest, UpdaterStatus } from "./types.ts";
 
-/**
- * S6-F9 — strip URL userinfo (user:pass@) from a message string before it
- * lands in `lastError` or in any externally-visible field.
- *
- * Bounded repetition prevents catastrophic backtracking on adversarial
- * inputs: scheme ≤32 chars, userinfo ≤256 chars, host ≤256 chars. The
- * scheme pattern permits compound schemes (`git+https://`, `chrome-extension://`)
- * and the authority pattern stops at the first `/` so paths containing `@`
- * (mailto-like, query strings) are bounded.
- */
 const URL_USERINFO_RE = /[a-zA-Z0-9+\-.]{1,32}:\/\/[^\s/@]{1,256}@[^\s/]{1,256}/g;
 
 export function redactUrlUserinfo(message: string): string {
@@ -28,7 +18,6 @@ export function redactUrlUserinfo(message: string): string {
   });
 }
 
-/** S6-F3 — manifest-controlled OOM defence. 500 MiB is well above any realistic Nimbus binary. */
 export const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
 export type UpdaterEmit = (
@@ -55,9 +44,7 @@ export interface UpdaterOptions {
   emit: UpdaterEmit;
   timeoutMs: number;
   invokeInstaller?: (binaryPath: string) => Promise<void>;
-  /** S6-F7 — opt-in callback for audit_log row recording. */
   recordUpdateEvent?: (phase: UpdateEventPhase, payload: Record<string, unknown>) => void;
-  /** S6-F3 — override download size cap (defaults to MAX_DOWNLOAD_BYTES). Tests use a small value. */
   maxDownloadBytes?: number;
 }
 
@@ -104,9 +91,6 @@ export class Updater {
       return result;
     } catch (err) {
       this.state = "failed";
-      // S6-F9 — never echo URL userinfo into `lastError`. The fetch error chain
-      // sometimes embeds the request URL verbatim, which can include
-      // user:pass@ if a misconfigured manifestUrl carries credentials.
       this.lastError = redactUrlUserinfo(err instanceof Error ? err.message : String(err));
       throw err;
     }
@@ -169,14 +153,11 @@ export class Updater {
   ): void {
     this.state = "verifying";
     const computedSha = sha256Hex(bytes);
-    // S6-F10 — constant-time compare prevents partial-prefix timing leakage.
     if (!sha256HexEqualConstantTime(computedSha, asset.sha256)) {
       this.failVerification(toVersion, "hash_mismatch");
       throw new Error(`binary hash mismatch: expected ${asset.sha256}, got ${computedSha}`);
     }
     const sigBytes = new Uint8Array(Buffer.from(asset.signature, "base64"));
-    // S6-F6 — envelope-signed first, then fall back to bare-binary signature
-    // for one-release migration window. Either path emits a verified audit row.
     const envelopeOk = verifyManifestEnvelope({
       version: toVersion,
       target: this.opts.target,
@@ -204,8 +185,6 @@ export class Updater {
 
   private async installOrFail(bytes: Uint8Array, toVersion: string): Promise<void> {
     this.state = "applying";
-    // S6-F8 — write to a fresh temp dir, ALWAYS clean up in finally so the
-    // verified binary doesn't linger on disk between updates.
     const { dir, path: binaryPath } = await writeToTempFile(bytes);
     try {
       if (this.opts.invokeInstaller) {
@@ -316,10 +295,7 @@ async function writeToTempFile(bytes: Uint8Array): Promise<{ dir: string; path: 
   const { join } = await import("node:path");
   const dir = mkdtempSync(join(tmpdir(), "nimbus-update-"));
   const path = join(dir, "installer.bin");
-  // S6-F8 — explicit 0o600 so the installer binary is never readable by
-  // other users on a shared machine. Bytes are SHA-256 and Ed25519 verified
-  // by the caller before reaching here. // lgtm[js/path-injection,js/unsafe-deserialization]
-  writeFileSync(path, bytes, { mode: 0o600 }); // lgtm[js/network-data-written-to-file]
+  writeFileSync(path, bytes, { mode: 0o600 });
   try {
     chmodSync(path, 0o600);
   } catch {

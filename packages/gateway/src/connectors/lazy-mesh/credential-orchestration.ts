@@ -9,13 +9,6 @@ import {
 import * as defaultSpawners from "./connector-spawns.ts";
 import type { MeshSpawnContext } from "./slot.ts";
 
-/**
- * Subset of `connector-spawns.ts` that `ensureCredentialConnectorsRunning`
- * consumes. Exposed as a parameter so unit tests can pass a recorder without
- * needing `mock.module("connector-spawns.ts", ...)` — which is process-global
- * in bun:test and leaks into sibling test files. Production callers always
- * use the default (the real exports).
- */
 export type CredentialSpawners = {
   readonly ensureBitbucketMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureCircleciMcp: (ctx: MeshSpawnContext) => Promise<void>;
@@ -34,12 +27,8 @@ export type CredentialSpawners = {
   readonly ensurePagerdutyMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensurePhase3BundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureSlackMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureZoomMcp: (ctx: MeshSpawnContext) => Promise<void>;
 };
-
-// All 11 wrappers below are file-private (no `export`). Their sole caller is
-// `ensureCredentialConnectorsRunning` at the bottom of this file. Adding
-// `export` to anything not used externally pollutes the module surface for
-// no benefit.
 
 async function ensureIfConnectorSecretSet<S extends ConnectorServiceId>(
   ctx: MeshSpawnContext,
@@ -168,14 +157,6 @@ async function ensureKubernetesIfVaultCreds(
   }
 }
 
-/**
- * Spawns connector MCP children when matching vault keys are present (used
- * before aggregating tools). The `spawners` parameter defaults to the real
- * exports from `connector-spawns.ts` — production callers omit it. Unit
- * tests pass a recorder to observe which spawn helpers fire without
- * relying on process-global `mock.module()`, which leaks across sibling
- * test files in bun:test.
- */
 export async function ensureCredentialConnectorsRunning(
   ctx: MeshSpawnContext,
   spawners: CredentialSpawners = defaultSpawners,
@@ -189,14 +170,13 @@ export async function ensureCredentialConnectorsRunning(
   await ensureIfConnectorSecretSet(ctx, "linear", "api_key", () => spawners.ensureLinearMcp(ctx));
   await ensureJiraIfVaultCreds(ctx, spawners);
   await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "zoom", "oauth", () => spawners.ensureZoomMcp(ctx));
   await ensureConfluenceIfVaultCreds(ctx, spawners);
   await ensureDiscordIfOptIn(ctx, spawners);
   await ensureJenkinsIfVaultCreds(ctx, spawners);
   await ensureCircleciIfVaultCreds(ctx, spawners);
   await ensurePagerdutyIfVaultCreds(ctx, spawners);
   await ensureKubernetesIfVaultCreds(ctx, spawners);
-  // Wave A PR 2 — Obsidian MCP starts when `[[filesystem.roots]]` are
-  // configured (no vault credential).
   await spawners.ensureObsidianMcp(ctx);
   await spawners.ensurePhase3BundleMcp(ctx);
 }

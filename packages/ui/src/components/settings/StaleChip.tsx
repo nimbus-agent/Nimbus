@@ -1,5 +1,4 @@
 export interface StaleChipProps {
-  /** ISO timestamp of last successful connection; omit to show generic stale chip. */
   readonly offlineSinceIso?: string;
 }
 

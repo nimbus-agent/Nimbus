@@ -1,15 +1,3 @@
-// Sandbox contract test — verifies the declared manifest permissions match
-// runtime enforcement when this connector is spawned under the gateway's
-// sandbox runner.
-//
-// Gated on NIMBUS_TEST_HARNESS because `runSandboxContractTests` expects the
-// probe to run inside a sandbox-wrapped process (typically wired by
-// `packages/gateway/test/helpers/sandbox-harness.ts`). Outside that harness
-// — i.e. on bare CI without the gateway-side wrapper — probes 2 + 3 report
-// non-sandboxed exit codes and the assertion throws. PR 1 ships the per-
-// connector contract surface; the harness that lights the suite up is a
-// tracked follow-up (Phase 5 T2 PR 1 / Task 19).
-
 import { describe, it } from "bun:test";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

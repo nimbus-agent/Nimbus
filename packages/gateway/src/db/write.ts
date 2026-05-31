@@ -1,25 +1,12 @@
-/**
- * Central DB write wrapper — catches SQLITE_FULL (error code 13), sets the
- * disk-space warning flag and re-throws as `DiskFullError` so callers can
- * abort cleanly without leaving partial writes.
- *
- * All DB write paths in the gateway MUST go through `dbRun` / `dbExec` so
- * that `SQLITE_FULL` is never swallowed silently.
- */
-
 import type { Database } from "bun:sqlite";
-
-// ─── Disk-full state ────────────────────────────────────────────────────────
 
 let _diskSpaceWarning = false;
 const _diskFullListeners: Array<() => void> = [];
 
-/** True after the first SQLITE_FULL event since process start. */
 export function isDiskSpaceWarning(): boolean {
   return _diskSpaceWarning;
 }
 
-/** Imperatively set (used by polling path in db/health.ts). */
 export function setDiskSpaceWarning(value: boolean): void {
   const prev = _diskSpaceWarning;
   _diskSpaceWarning = value;
@@ -34,7 +21,6 @@ export function setDiskSpaceWarning(value: boolean): void {
   }
 }
 
-/** Register a one-time-per-transition callback for disk-full events. */
 export function onDiskFull(fn: () => void): () => void {
   _diskFullListeners.push(fn);
   return () => {
@@ -45,8 +31,6 @@ export function onDiskFull(fn: () => void): () => void {
   };
 }
 
-// ─── DiskFullError ───────────────────────────────────────────────────────────
-
 export class DiskFullError extends Error {
   override readonly cause: unknown;
   constructor(cause: unknown) {
@@ -56,9 +40,6 @@ export class DiskFullError extends Error {
   }
 }
 
-// ─── SQLITE_FULL detection ───────────────────────────────────────────────────
-
-/** SQLite extended error code for SQLITE_FULL (13). */
 const SQLITE_FULL = 13;
 
 function isSqliteFull(err: unknown): boolean {
@@ -66,12 +47,10 @@ function isSqliteFull(err: unknown): boolean {
     return false;
   }
   const e = err as Record<string, unknown>;
-  // bun:sqlite throws SQLiteError with a numeric `code` property
   const code = e["code"];
   if (typeof code === "number") {
     return (code & 0xff) === SQLITE_FULL;
   }
-  // Fallback: check errno string used by some builds
   if (typeof code === "string") {
     return code === "SQLITE_FULL";
   }
@@ -86,12 +65,6 @@ function handleWriteError(err: unknown): never {
   throw err;
 }
 
-// ─── Public write helpers ────────────────────────────────────────────────────
-
-/**
- * Execute a single parameterised SQL statement.
- * Converts SQLITE_FULL into `DiskFullError`.
- */
 export function dbRun(db: Database, sql: string, params?: unknown[]): ReturnType<Database["run"]> {
   try {
     if (params !== undefined && params.length > 0) {
@@ -103,10 +76,6 @@ export function dbRun(db: Database, sql: string, params?: unknown[]): ReturnType
   }
 }
 
-/**
- * Execute one or more SQL statements (no parameters).
- * Converts SQLITE_FULL into `DiskFullError`.
- */
 export function dbExec(db: Database, sql: string): void {
   try {
     db.exec(sql);
@@ -115,17 +84,6 @@ export function dbExec(db: Database, sql: string): void {
   }
 }
 
-/**
- * Execute a prepared statement's `.run(...)` with the same SQLITE_FULL →
- * DiskFullError translation as `dbRun` / `dbExec`. Variadic positional args
- * so the wrapper accepts BigInt, Float32Array, and other native bind types
- * that the embedding hot loop emits.
- *
- * Used by the three production prepared-statement write loops:
- *   - index/migrations/runner.ts:283   (audit-chain backfill)
- *   - embedding/pipeline.ts:86,89      (vec + chunk inserts)
- *   - perf/perf-fixture.ts:100         (bench fixture seeding)
- */
 export function dbStmtRun<S extends { run: (...args: never[]) => unknown }>(
   stmt: S,
   ...params: Parameters<S["run"]>

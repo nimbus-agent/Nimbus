@@ -1,11 +1,3 @@
-/**
- * Synthetic SQLite snapshot generator for perf fixtures.
- * Deterministic from a fixed PRNG seed; lazy-cached under cacheDir.
- *
- * See the B2 perf audit design §3.5 for the
- * corpus rationale.
- */
-
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,10 +13,8 @@ export const FIXTURE_TIER_SIZES = {
 } as const satisfies Record<CorpusTier, number>;
 
 export const FIXTURE_SEED = 0x12345678;
-export const FIXTURE_TIMESTAMP = 1704067200000; // 2024-01-01T00:00:00Z
-
+export const FIXTURE_TIMESTAMP = 1704067200000;
 export interface BuildOptions {
-  /** Override default cache dir (`<tmpdir>/nimbus-bench-fixtures`). */
   cacheDir?: string;
 }
 
@@ -32,7 +22,6 @@ function defaultCacheDir(): string {
   return join(tmpdir(), "nimbus-bench-fixtures");
 }
 
-/** Mulberry32 — small deterministic PRNG; fine for fixture generation. */
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -44,16 +33,6 @@ function makeRng(seed: number): () => number {
   };
 }
 
-/**
- * Minimal DDL for the `item` table used by perf fixtures.
- *
- * We intentionally avoid calling `LocalIndex.ensureSchema` here. That function
- * loads the sqlite-vec native extension (a DLL/dylib). On Windows, a loaded
- * DLL is file-locked for the lifetime of the process, which causes `EBUSY`
- * errors when tests try to `rmSync` the temp directory after the Database is
- * closed. The fixture only needs the `item` table — it does not exercise
- * vector search — so we create only that table.
- */
 const FIXTURE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS item (
   id              TEXT PRIMARY KEY,
@@ -76,10 +55,6 @@ CREATE INDEX IF NOT EXISTS idx_item_type        ON item(type);
 CREATE INDEX IF NOT EXISTS idx_item_modified_at ON item(modified_at);
 `;
 
-/**
- * Build (or reuse) a synthetic index snapshot for the given tier.
- * Returns the absolute path to a SQLite file.
- */
 export async function buildSyntheticIndex(
   tier: CorpusTier,
   opts: BuildOptions = {},
@@ -109,9 +84,6 @@ export async function buildSyntheticIndex(
       dbStmtRun(ins, `gh:${i}`, String(i), `Synthetic PR ${i}`, now - t, now - t);
     }
     dbRun(db, "COMMIT");
-    // Finalize the prepared statement before closing the DB. On Windows,
-    // un-finalized statements keep the file handle open even after db.close(),
-    // causing EBUSY when tests attempt to rmSync the temp directory.
     ins.finalize();
   } finally {
     db.close();

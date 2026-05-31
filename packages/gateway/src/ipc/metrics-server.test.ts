@@ -1,12 +1,11 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { transitionHealth } from "../connectors/health.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { type MetricsServerHandle, startMetricsServer } from "./metrics-server.ts";
 
 function makeDbWithItems(items: Array<{ id: string; service: string }>): Database {
-  const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 30);
+  const db = openSeededInMemoryDb(30);
   const now = Date.now();
   for (const it of items) {
     db.run(
@@ -107,10 +106,8 @@ describe("startMetricsServer", () => {
   });
 
   test("escapes label backslash, double-quote, and newline characters", async () => {
-    const escapeDb = new Database(":memory:");
-    runIndexedSchemaMigrations(escapeDb, 30);
+    const escapeDb = openSeededInMemoryDb(30);
     const now = Date.now();
-    // Service name carrying every Prometheus-sensitive character at once.
     const wild = `${String.raw`tricky"name\with`}\nnewline`;
     escapeDb.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
@@ -120,7 +117,6 @@ describe("startMetricsServer", () => {
     const localHandle = startMetricsServer(() => escapeDb, 0);
     try {
       const body = await (await get(localHandle.port, "/metrics")).text();
-      // Backslash becomes \\, quote becomes \", newline becomes a literal space.
       expect(body).toContain(String.raw`service="tricky\"name\\with newline"`);
     } finally {
       localHandle.stop();

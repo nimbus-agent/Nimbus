@@ -1,16 +1,33 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  DEFAULT_DEPLOY_ENVIRONMENTS,
-  DEFAULT_DEPLOY_WORKFLOW_PATTERN,
-  DEFAULT_EXCLUDE_PR_LABELS,
-  DEFAULT_INCIDENT_WINDOW_MINUTES,
-  isValidDeployEnvironmentName,
-  parseDoraRepoUrn,
-  type ServiceConfig,
-} from "../metrics/dora-config.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
+import { parseNimbusCiServiceToml, parseNimbusDoraToml } from "./service-config-toml.ts";
+import {
+  isTableHeader,
+  parseIntDec,
+  parseString,
+  parseStringArray,
+  splitKeyValue,
+  stripComment,
+} from "./toml-primitives.ts";
+
+// Re-export the DORA / CI service-config surface so external importers
+// (http-server.ts, ipc/server/dispatchers.ts, config + metrics tests) keep
+// working through `./nimbus-toml.ts` unchanged.
+export * from "./service-config-toml.ts";
+
+function loadTomlSection<T>(tomlPath: string, fallback: T, parse: (raw: string) => T): T {
+  if (!existsSync(tomlPath)) {
+    return structuredClone(fallback);
+  }
+  try {
+    return parse(readFileSync(tomlPath, "utf8"));
+  } catch {
+    return structuredClone(fallback);
+  }
+}
 
 export type NimbusEmbeddingToml = {
   enabled: boolean;
@@ -32,14 +49,6 @@ export const DEFAULT_NIMBUS_EMBEDDING_TOML: NimbusEmbeddingToml = {
   pauseOnBattery: true,
 };
 
-function stripComment(line: string): string {
-  const hash = line.indexOf("#");
-  if (hash < 0) {
-    return line;
-  }
-  return line.slice(0, hash);
-}
-
 function parseBool(raw: string): boolean | undefined {
   const s = raw.trim().toLowerCase();
   if (s === "true") {
@@ -51,17 +60,29 @@ function parseBool(raw: string): boolean | undefined {
   return undefined;
 }
 
-function parseString(raw: string): string {
-  const t = raw.trim();
-  if (t.startsWith('"') && t.endsWith('"') && t.length >= 2) {
-    return t.slice(1, -1).replaceAll(String.raw`\\"`, '"');
+function forEachSectionEntry(
+  source: string,
+  sectionHeader: string,
+  onEntry: (key: string, valRaw: string) => void,
+): void {
+  let inSection = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") {
+      continue;
+    }
+    if (isTableHeader(trimmed)) {
+      inSection = trimmed === sectionHeader;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const kv = splitKeyValue(trimmed);
+    if (kv !== undefined) {
+      onEntry(kv.key, kv.valRaw);
+    }
   }
-  return t;
-}
-
-function parseIntDec(raw: string): number | undefined {
-  const n = Number.parseInt(raw.trim(), 10);
-  return Number.isFinite(n) ? n : undefined;
 }
 
 function setEmbeddingEnabled(out: Partial<NimbusEmbeddingToml>, valRaw: string): void {
@@ -135,38 +156,14 @@ function applyNimbusEmbeddingKey(
   }
 }
 
-/**
- * Best-effort `[embedding]` section from `nimbus.toml` (no full TOML dependency).
- */
 export function parseNimbusTomlEmbeddingSection(source: string): Partial<NimbusEmbeddingToml> {
-  const lines = source.split(/\r?\n/);
-  let inEmbedding = false;
   const out: Partial<NimbusEmbeddingToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") {
-      continue;
-    }
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inEmbedding = trimmed === "[embedding]";
-      continue;
-    }
-    if (!inEmbedding) {
-      continue;
-    }
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) {
-      continue;
-    }
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[embedding]", (key, valRaw) => {
     applyNimbusEmbeddingKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
-/** Active profile from `NIMBUS_PROFILE` (default profile uses `nimbus.toml`). */
 export function resolveNimbusTomlForProfile(configDir: string): string {
   const p = processEnvGet("NIMBUS_PROFILE")?.trim();
   if (p === undefined || p === "" || p === "default") {
@@ -177,30 +174,21 @@ export function resolveNimbusTomlForProfile(configDir: string): string {
 }
 
 export function loadNimbusEmbeddingFromPath(tomlPath: string): NimbusEmbeddingToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_EMBEDDING_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return structuredClone({
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_EMBEDDING_TOML, (raw) =>
+    structuredClone({
       ...DEFAULT_NIMBUS_EMBEDDING_TOML,
       ...parseNimbusTomlEmbeddingSection(raw),
-    });
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_EMBEDDING_TOML);
-  }
+    }),
+  );
 }
 
 export function loadNimbusEmbeddingFromConfigDir(configDir: string): NimbusEmbeddingToml {
   return loadNimbusEmbeddingFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [llm] section ──────────────────────────────────────────────────────────
-
 export type NimbusLlmToml = {
   preferLocal: boolean;
   remoteModel: string;
-  /** Cheaper/faster model used by the engine intent classifier. May differ from {@link remoteModel}. */
   classifierModel: string;
   localModel: string;
   llamacppServerPath: string;
@@ -267,83 +255,37 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
 }
 
 export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml> {
-  const lines = source.split(/\r?\n/);
-  let inLlm = false;
   const out: Partial<NimbusLlmToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inLlm = trimmed === "[llm]";
-      continue;
-    }
-    if (!inLlm) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[llm]", (key, valRaw) => {
     applyNimbusLlmKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
 export function loadNimbusLlmFromPath(tomlPath: string): NimbusLlmToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_LLM_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return structuredClone({
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_LLM_TOML, (raw) =>
+    structuredClone({
       ...DEFAULT_NIMBUS_LLM_TOML,
       ...parseNimbusTomlLlmSection(raw),
-    });
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_LLM_TOML);
-  }
+    }),
+  );
 }
 
-/**
- * Load only the keys the user explicitly set in `[llm]`. Returns an empty
- * object when the file is missing, unreadable, or has no `[llm]` section.
- *
- * Use this when the caller wants to distinguish "user wrote it" from
- * "defaulted" — e.g. to layer on top of an env-var resolution chain.
- */
 export function loadNimbusLlmPartialFromPath(tomlPath: string): Partial<NimbusLlmToml> {
-  if (!existsSync(tomlPath)) {
-    return {};
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusTomlLlmSection(raw);
-  } catch {
-    return {};
-  }
+  return loadTomlSection<Partial<NimbusLlmToml>>(tomlPath, {}, parseNimbusTomlLlmSection);
 }
 
 export function loadNimbusLlmFromConfigDir(configDir: string): NimbusLlmToml {
   return loadNimbusLlmFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [voice] section ────────────────────────────────────────────────────────
-
 export type NimbusVoiceToml = {
   enabled: boolean;
-  /** Absolute path to the whisper-cli binary. Falls back to NIMBUS_WHISPER_PATH env var, then PATH. */
   whisperPath: string;
-  /** Whisper model for full STT transcription, e.g. "base.en", "small", "medium". */
   whisperModel: string;
-  /**
-   * Whisper model used exclusively by the wake word detector loop.
-   * Defaults to "tiny.en" to keep CPU load low — independent of `whisperModel`.
-   */
   wakeWordWhisperModel: string;
-  /** Wake word phrase. Case-insensitive substring match against Whisper transcript. */
   wakeWord: string;
-  /** Optional path to piper TTS binary for higher-quality output. */
   piperPath: string;
-  /** Optional path to piper voice model (.onnx file). */
   piperModel: string;
 };
 
@@ -388,47 +330,25 @@ function applyNimbusVoiceKey(out: Partial<NimbusVoiceToml>, key: string, valRaw:
 }
 
 export function parseNimbusTomlVoiceSection(source: string): Partial<NimbusVoiceToml> {
-  const lines = source.split(/\r?\n/);
-  let inVoice = false;
   const out: Partial<NimbusVoiceToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inVoice = trimmed === "[voice]";
-      continue;
-    }
-    if (!inVoice) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[voice]", (key, valRaw) => {
     applyNimbusVoiceKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
 export function loadNimbusVoiceFromPath(tomlPath: string): NimbusVoiceToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_VOICE_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return structuredClone({
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_VOICE_TOML, (raw) =>
+    structuredClone({
       ...DEFAULT_NIMBUS_VOICE_TOML,
       ...parseNimbusTomlVoiceSection(raw),
-    });
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_VOICE_TOML);
-  }
+    }),
+  );
 }
 
 export function loadNimbusVoiceFromConfigDir(configDir: string): NimbusVoiceToml {
   return loadNimbusVoiceFromPath(join(configDir, "nimbus.toml"));
 }
-
-// ─── [updater] section ──────────────────────────────────────────────────────
 
 export type NimbusUpdaterToml = {
   enabled: boolean;
@@ -470,24 +390,10 @@ function applyNimbusUpdaterKey(out: Partial<NimbusUpdaterToml>, key: string, val
 }
 
 export function parseNimbusTomlUpdaterSection(source: string): Partial<NimbusUpdaterToml> {
-  const lines = source.split(/\r?\n/);
-  let inUpdater = false;
   const out: Partial<NimbusUpdaterToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inUpdater = trimmed === "[updater]";
-      continue;
-    }
-    if (!inUpdater) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[updater]", (key, valRaw) => {
     applyNimbusUpdaterKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -509,22 +415,12 @@ export function parseNimbusUpdaterToml(
 }
 
 export function loadNimbusUpdaterFromPath(tomlPath: string): NimbusUpdaterToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_UPDATER_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusUpdaterToml(raw);
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_UPDATER_TOML);
-  }
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_UPDATER_TOML, parseNimbusUpdaterToml);
 }
 
 export function loadNimbusUpdaterFromConfigDir(configDir: string): NimbusUpdaterToml {
   return loadNimbusUpdaterFromPath(join(configDir, "nimbus.toml"));
 }
-
-// ─── [lan] section ──────────────────────────────────────────────────────────
 
 export type NimbusLanToml = {
   enabled: boolean;
@@ -580,24 +476,10 @@ function applyNimbusLanKey(out: Partial<NimbusLanToml>, key: string, valRaw: str
 }
 
 function parseNimbusTomlLanSection(source: string): Partial<NimbusLanToml> {
-  const lines = source.split(/\r?\n/);
-  let inLan = false;
   const out: Partial<NimbusLanToml> = {};
-
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inLan = trimmed === "[lan]";
-      continue;
-    }
-    if (!inLan) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[lan]", (key, valRaw) => {
     applyNimbusLanKey(out, key, valRaw);
-  }
+  });
   return out;
 }
 
@@ -617,25 +499,14 @@ export function parseNimbusLanToml(
 }
 
 export function loadNimbusLanFromPath(tomlPath: string): NimbusLanToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_LAN_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusLanToml(raw);
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_LAN_TOML);
-  }
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_LAN_TOML, parseNimbusLanToml);
 }
 
 export function loadNimbusLanFromConfigDir(configDir: string): NimbusLanToml {
   return loadNimbusLanFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [automation] ───────────────────────────────────────────────────────────
-
 export type NimbusAutomationToml = {
-  /** When true (default), graph predicates on watchers are evaluated. */
   graphConditions: boolean;
 };
 
@@ -644,26 +515,13 @@ export const DEFAULT_NIMBUS_AUTOMATION_TOML: NimbusAutomationToml = {
 };
 
 function parseNimbusTomlAutomationSection(source: string): Partial<NimbusAutomationToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
   const out: Partial<NimbusAutomationToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[automation]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[automation]", (key, valRaw) => {
     if (key === "graph_conditions") {
       const b = parseBool(valRaw);
       if (b !== undefined) out.graphConditions = b;
     }
-  }
+  });
   return out;
 }
 
@@ -675,28 +533,14 @@ export function parseNimbusAutomationToml(
 }
 
 export function loadNimbusAutomationFromPath(tomlPath: string): NimbusAutomationToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_AUTOMATION_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusAutomationToml(raw);
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_AUTOMATION_TOML);
-  }
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_AUTOMATION_TOML, parseNimbusAutomationToml);
 }
 
 export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAutomationToml {
   return loadNimbusAutomationFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ─── [extensions] section (T2 PR 3) ─────────────────────────────────────────
-
 export type NimbusExtensionsToml = {
-  /**
-   * Polling cadence (hours) for the `ExtensionAutoUpdater` daemon. Integer in
-   * [1, 168]. Default 24.
-   */
   updateCheckIntervalHours: number;
 };
 
@@ -704,35 +548,26 @@ export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
   updateCheckIntervalHours: 24,
 };
 
-function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
-  const out: Partial<NimbusExtensionsToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[extensions]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
-    if (key === "update_check_interval_hours") {
-      const n = Number(valRaw);
-      if (!Number.isFinite(n) || !Number.isInteger(n)) {
-        throw new Error(
-          `[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`,
-        );
-      }
-      if (n < 1 || n > 168) {
-        throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);
-      }
-      out.updateCheckIntervalHours = n;
-    }
+function parseUpdateCheckIntervalHours(valRaw: string): number {
+  const n = Number(valRaw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new TypeError(
+      `[extensions].update_check_interval_hours must be an integer (got: ${valRaw})`,
+    );
   }
+  if (n < 1 || n > 168) {
+    throw new Error(`[extensions].update_check_interval_hours must be in [1, 168] (got: ${n})`);
+  }
+  return n;
+}
+
+function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
+  const out: Partial<NimbusExtensionsToml> = {};
+  forEachSectionEntry(source, "[extensions]", (key, valRaw) => {
+    if (key === "update_check_interval_hours") {
+      out.updateCheckIntervalHours = parseUpdateCheckIntervalHours(valRaw);
+    }
+  });
   return out;
 }
 
@@ -744,53 +579,27 @@ export function parseNimbusExtensionsToml(
 }
 
 export function loadNimbusExtensionsFromPath(tomlPath: string): NimbusExtensionsToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_EXTENSIONS_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusExtensionsToml(raw);
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_EXTENSIONS_TOML);
-  }
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_EXTENSIONS_TOML, parseNimbusExtensionsToml);
 }
 
 export function loadNimbusExtensionsFromConfigDir(configDir: string): NimbusExtensionsToml {
   return loadNimbusExtensionsFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [user] — first-class identity hint for built-in agents (T3 PR 3).
-// ---------------------------------------------------------------------------
-
 export type NimbusUserToml = {
-  /** Optional override for self-person resolution; consumed by `nimbus catchup`. */
   mePersonId?: string;
 };
 
 export const DEFAULT_NIMBUS_USER_TOML: NimbusUserToml = {};
 
 function parseNimbusTomlUserSection(source: string): Partial<NimbusUserToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
   const out: Partial<NimbusUserToml> = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[user]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
+  forEachSectionEntry(source, "[user]", (key, valRaw) => {
     if (key === "me_person_id") {
       const v = parseString(valRaw);
       if (v.length > 0) out.mePersonId = v;
     }
-  }
+  });
   return out;
 }
 
@@ -802,34 +611,15 @@ export function parseNimbusUserToml(
 }
 
 export function loadNimbusUserFromPath(tomlPath: string): NimbusUserToml {
-  if (!existsSync(tomlPath)) {
-    return structuredClone(DEFAULT_NIMBUS_USER_TOML);
-  }
-  try {
-    const raw = readFileSync(tomlPath, "utf8");
-    return parseNimbusUserToml(raw);
-  } catch {
-    return structuredClone(DEFAULT_NIMBUS_USER_TOML);
-  }
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_USER_TOML, parseNimbusUserToml);
 }
 
 export function loadNimbusUserFromConfigDir(configDir: string): NimbusUserToml {
   return loadNimbusUserFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [pagerduty] — Top-level PagerDuty connector + preflight knobs
-// (Phase 5 T4 wrap-up).
-// ---------------------------------------------------------------------------
-
 export type NimbusPagerdutyToml = {
-  /** Hard cap on pages walked per `pagerduty-sync.ts` invocation. 1..100. */
   maxPagesPerSync: number;
-  /**
-   * Priority names that preflight should treat as equivalent to "P1".
-   * Stored lowercased + deduplicated. Empty by default (preflight matches
-   * the verbatim "P1" string only, identical to pre-existing behavior).
-   */
   severityP1Aliases: readonly string[];
 };
 
@@ -838,45 +628,35 @@ export const DEFAULT_NIMBUS_PAGERDUTY_TOML: NimbusPagerdutyToml = {
   severityP1Aliases: [],
 };
 
-function parseNimbusPagerdutySection(source: string): Partial<NimbusPagerdutyToml> {
-  const lines = source.split(/\r?\n/);
-  let inSection = false;
-  const out: { maxPagesPerSync?: number; severityP1Aliases?: readonly string[] } = {};
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inSection = trimmed === "[pagerduty]";
-      continue;
-    }
-    if (!inSection) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
-    if (key === "max_pages_per_sync") {
-      const n = parseIntDec(valRaw);
-      if (n === undefined || n < 1 || n > 100) {
-        throw new Error(
-          `[pagerduty].max_pages_per_sync must be an integer in 1..100, got '${valRaw}'`,
-        );
-      }
-      out.maxPagesPerSync = n;
-    } else if (key === "severity_p1_aliases") {
-      // Reuse parseStringArray (defined later in this file) — already drops empty entries.
-      const raw = parseStringArray(valRaw);
-      const seen = new Set<string>();
-      const collected: string[] = [];
-      for (const v of raw) {
-        const lower = v.trim().toLowerCase();
-        if (lower === "") continue;
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        collected.push(lower);
-      }
-      out.severityP1Aliases = collected;
-    }
+function parseMaxPagesPerSync(valRaw: string): number {
+  const n = parseIntDec(valRaw);
+  if (n === undefined || n < 1 || n > 100) {
+    throw new Error(`[pagerduty].max_pages_per_sync must be an integer in 1..100, got '${valRaw}'`);
   }
+  return n;
+}
+
+function parseSeverityP1Aliases(valRaw: string): string[] {
+  const seen = new Set<string>();
+  const collected: string[] = [];
+  for (const v of parseStringArray(valRaw)) {
+    const lower = v.trim().toLowerCase();
+    if (lower === "" || seen.has(lower)) continue;
+    seen.add(lower);
+    collected.push(lower);
+  }
+  return collected;
+}
+
+function parseNimbusPagerdutySection(source: string): Partial<NimbusPagerdutyToml> {
+  const out: { maxPagesPerSync?: number; severityP1Aliases?: readonly string[] } = {};
+  forEachSectionEntry(source, "[pagerduty]", (key, valRaw) => {
+    if (key === "max_pages_per_sync") {
+      out.maxPagesPerSync = parseMaxPagesPerSync(valRaw);
+    } else if (key === "severity_p1_aliases") {
+      out.severityP1Aliases = parseSeverityP1Aliases(valRaw);
+    }
+  });
   return out;
 }
 
@@ -904,10 +684,6 @@ export function loadNimbusPagerdutyFromPath(tomlPath: string): NimbusPagerdutyTo
   try {
     return parseNimbusPagerdutyToml(raw);
   } catch (err) {
-    // Surface validation errors (e.g. max_pages_per_sync out of range) so
-    // operators don't silently fall back to defaults. Matches the
-    // ci.service / metrics.dora conflict-warning pattern used elsewhere in
-    // this file (see loadNimbusServiceConfigsFromConfigDir).
     process.stderr.write(
       `nimbus: [pagerduty] config in ${tomlPath} rejected, using defaults: ` +
         `${err instanceof Error ? err.message : String(err)}\n`,
@@ -920,204 +696,12 @@ export function loadNimbusPagerdutyFromConfigDir(configDir: string): NimbusPager
   return loadNimbusPagerdutyFromPath(join(configDir, "nimbus.toml"));
 }
 
-// ---------------------------------------------------------------------------
-// [metrics.dora.<service-id>] — DORA service map (Phase 5 T4 PR 2)
-// ---------------------------------------------------------------------------
-
-const DORA_TABLE_PREFIX = "[metrics.dora.";
-// Canonical set of service-config keys shared by [metrics.dora.<id>] and [ci.service.<id>] parsers.
-const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "repos",
-  "pagerduty_services",
-  "deploy_workflow_pattern",
-  "incident_window_minutes",
-  "exclude_pr_labels",
-  "deploy_environments",
-]);
-
-function parseStringArray(raw: string): string[] {
-  const t = raw.trim();
-  if (!t.startsWith("[") || !t.endsWith("]")) {
-    throw new Error(`expected array, got: ${raw}`);
-  }
-  const inner = t.slice(1, -1).trim();
-  if (inner.length === 0) return [];
-  const out: string[] = [];
-  // Naive split — repos / pagerduty ids don't contain commas or quotes.
-  for (const part of inner.split(",")) {
-    const v = parseString(part);
-    if (v.length > 0) out.push(v);
-  }
-  return out;
-}
-
-/**
- * Shared materialization of accumulated key-value pairs into ServiceConfig
- * instances. Used by both `[metrics.dora.<id>]` and `[ci.service.<id>]` parsers.
- *
- * `blockLabel` is the table-prefix label used in error messages
- * (e.g. "metrics.dora" or "ci.service").
- */
-function materializeServiceConfigs(
-  accum: Map<string, Record<string, string>>,
-  blockLabel: string,
-): Map<string, ServiceConfig> {
-  const out: Map<string, ServiceConfig> = new Map();
-  for (const [serviceId, kv] of accum.entries()) {
-    const reposRaw = kv["repos"];
-    if (reposRaw === undefined) {
-      throw new Error(`[${blockLabel}.${serviceId}] missing required 'repos'`);
-    }
-    const repos = parseStringArray(reposRaw).map(parseDoraRepoUrn);
-    const pagerdutyServices =
-      kv["pagerduty_services"] === undefined ? [] : parseStringArray(kv["pagerduty_services"]);
-    const patternSrc =
-      kv["deploy_workflow_pattern"] === undefined
-        ? DEFAULT_DEPLOY_WORKFLOW_PATTERN
-        : parseString(kv["deploy_workflow_pattern"]);
-    let deployWorkflowPattern: RegExp;
-    try {
-      deployWorkflowPattern = new RegExp(patternSrc);
-    } catch (e) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].deploy_workflow_pattern is not a valid regex: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    }
-    const windowRaw = kv["incident_window_minutes"];
-    const windowMins =
-      windowRaw === undefined ? DEFAULT_INCIDENT_WINDOW_MINUTES : parseIntDec(windowRaw);
-    if (windowMins === undefined || windowMins < 1 || windowMins > 1440) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].incident_window_minutes must be 1..1440, got '${windowRaw}'`,
-      );
-    }
-    const excludePrLabels =
-      kv["exclude_pr_labels"] === undefined
-        ? Array.from(DEFAULT_EXCLUDE_PR_LABELS)
-        : parseStringArray(kv["exclude_pr_labels"]);
-    const deployEnvironmentsRaw = kv["deploy_environments"];
-    const deployEnvironments =
-      deployEnvironmentsRaw === undefined
-        ? Array.from(DEFAULT_DEPLOY_ENVIRONMENTS)
-        : parseStringArray(deployEnvironmentsRaw);
-    if (deployEnvironments.length === 0) {
-      throw new Error(
-        `[${blockLabel}.${serviceId}].deploy_environments must be a non-empty array of names`,
-      );
-    }
-    for (const env of deployEnvironments) {
-      if (!isValidDeployEnvironmentName(env)) {
-        throw new Error(
-          `[${blockLabel}.${serviceId}].deploy_environments entry '${env}' is invalid: ` +
-            `must match /^[a-z0-9][a-z0-9._-]*$/`,
-        );
-      }
-    }
-    out.set(serviceId, {
-      serviceId,
-      repos,
-      pagerdutyServices,
-      deployWorkflowPattern,
-      incidentWindowMinutes: windowMins,
-      excludePrLabels,
-      deployEnvironments,
-      severityP1Aliases: [], // attached by loadNimbusServiceConfigsFromConfigDir
-    });
-  }
-  return out;
-}
-
-export function parseNimbusDoraToml(raw: string): Map<string, ServiceConfig> {
-  const lines = raw.split(/\r?\n/);
-  const accum: Map<string, Record<string, string>> = new Map();
-  let currentId: string | undefined;
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      if (trimmed.startsWith(DORA_TABLE_PREFIX) && trimmed.endsWith("]")) {
-        const id = trimmed.slice(DORA_TABLE_PREFIX.length, -1);
-        if (id.length === 0) throw new Error("empty service id in [metrics.dora.<id>]");
-        currentId = id;
-        if (!accum.has(id)) accum.set(id, {});
-      } else {
-        currentId = undefined;
-      }
-      continue;
-    }
-    if (currentId === undefined) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!SERVICE_CONFIG_KNOWN_KEYS.has(key)) {
-      throw new Error(`unknown key '${key}' in [metrics.dora.${currentId}]`);
-    }
-    const bucket = accum.get(currentId);
-    if (bucket !== undefined) {
-      bucket[key] = trimmed.slice(eq + 1).trim();
-    }
-  }
-  return materializeServiceConfigs(accum, "metrics.dora");
-}
-
-export function loadNimbusDoraFromPath(tomlPath: string): Map<string, ServiceConfig> {
-  if (!existsSync(tomlPath)) return new Map();
-  const raw = readFileSync(tomlPath, "utf8");
-  return parseNimbusDoraToml(raw);
-}
-
-export function loadNimbusDoraFromConfigDir(configDir: string): Map<string, ServiceConfig> {
-  return loadNimbusDoraFromPath(join(configDir, "nimbus.toml"));
-}
-
-// ---------------------------------------------------------------------------
-// [ci.service.<service-id>] — Generic service map for CI/CD features
-// (Phase 5 T4 PR 3a). Same fields and semantics as [metrics.dora.<id>];
-// reading either block yields a ServiceConfig.
-// ---------------------------------------------------------------------------
-
-const CI_SERVICE_TABLE_PREFIX = "[ci.service.";
-
-export function parseNimbusCiServiceToml(raw: string): Map<string, ServiceConfig> {
-  const lines = raw.split(/\r?\n/);
-  const accum: Map<string, Record<string, string>> = new Map();
-  let currentId: string | undefined;
-  for (const line of lines) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      if (trimmed.startsWith(CI_SERVICE_TABLE_PREFIX) && trimmed.endsWith("]")) {
-        const id = trimmed.slice(CI_SERVICE_TABLE_PREFIX.length, -1);
-        if (id.length === 0) throw new Error("empty service id in [ci.service.<id>]");
-        currentId = id;
-        if (!accum.has(id)) accum.set(id, {});
-      } else {
-        currentId = undefined;
-      }
-      continue;
-    }
-    if (currentId === undefined) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!SERVICE_CONFIG_KNOWN_KEYS.has(key)) {
-      throw new Error(`unknown key '${key}' in [ci.service.${currentId}]`);
-    }
-    const bucket = accum.get(currentId);
-    if (bucket === undefined) continue;
-    bucket[key] = trimmed.slice(eq + 1).trim();
-  }
-  return materializeServiceConfigs(accum, "ci.service");
-}
-
-/**
- * Loads service configs from `<configDir>/nimbus.toml`, unioning the
- * `[metrics.dora.<id>]` and `[ci.service.<id>]` blocks. When a service id
- * appears under both keys, the `[ci.service.<id>]` block wins and a warning
- * is logged once naming the conflict.
- */
+// The DORA / CI service-config machinery (parsing + materialization) lives in
+// `./service-config-toml.ts` and is re-exported from this module via the
+// `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`
+// stays here because it bridges that machinery with the `[pagerduty]` section
+// parser (`parseNimbusPagerdutyToml`) defined above — keeping it here avoids a
+// `service-config-toml.ts` → `nimbus-toml.ts` circular import.
 export function loadNimbusServiceConfigsFromConfigDir(
   configDir: string,
 ): Map<string, ServiceConfig> {
@@ -1126,9 +710,6 @@ export function loadNimbusServiceConfigsFromConfigDir(
   const raw = readFileSync(tomlPath, "utf8");
   const dora = parseNimbusDoraToml(raw);
   const ci = parseNimbusCiServiceToml(raw);
-  // Phase 5 T4 wrap-up: read [pagerduty].severity_p1_aliases once and
-  // attach to every materialized ServiceConfig. The aliases array is
-  // already lowercased + deduped by parseNimbusPagerdutyToml.
   const pagerdutyCfg = parseNimbusPagerdutyToml(raw);
   const aliases = pagerdutyCfg.severityP1Aliases;
   const merged: Map<string, ServiceConfig> = new Map();

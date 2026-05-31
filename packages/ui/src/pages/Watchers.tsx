@@ -21,10 +21,6 @@ function formatTimestamp(ms: number | null): string {
   return new Date(ms).toLocaleString();
 }
 
-// ---------------------------------------------------------------------------
-// Graph condition builder
-// ---------------------------------------------------------------------------
-
 interface GraphPredicateFields {
   relation: GraphRelationKind;
   targetType: string;
@@ -54,7 +50,6 @@ function GraphConditionBuilder({
   >(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Debounced validation — fires only when all three fields are non-empty
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!value.relation || !value.targetType.trim() || !value.targetId.trim()) {
@@ -136,10 +131,6 @@ function GraphConditionBuilder({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Create dialog
-// ---------------------------------------------------------------------------
-
 interface CreateDialogProps {
   onClose: () => void;
   onCreated: () => void;
@@ -160,7 +151,6 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load static candidate relations once on mount
   useEffect(() => {
     createIpcClient()
       .watcherListCandidateRelations()
@@ -172,7 +162,6 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
         }
       })
       .catch(() => {
-        // Fall back to static list on failure
         setCandidateRelations([
           {
             relation: "owned_by",
@@ -193,7 +182,7 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
       });
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
@@ -326,10 +315,6 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Watcher list row
-// ---------------------------------------------------------------------------
-
 interface WatcherRowProps {
   readonly watcher: WatcherSummary;
   readonly disabled: boolean;
@@ -398,10 +383,6 @@ function WatcherRow({
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export function Watchers() {
   const connectionState = useNimbusStore((s) => s.connectionState);

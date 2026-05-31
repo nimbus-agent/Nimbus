@@ -1,17 +1,3 @@
-/**
- * `nimbus db repair` — targeted recovery actions.
- *
- * Each action is conditional on the corresponding `verify` finding being "fail".
- * Requires explicit confirmation unless `--yes` is passed.
- * Writes a structured repair report to `audit_log` with action = 'db.repair'.
- *
- * Actions:
- *  - vec_rowid_mismatch  → delete orphaned vec_items_384 rows; re-queue affected
- *                          connectors via scheduler (reset cursor)
- *  - fts5_consistency    → INSERT INTO item_fts(item_fts) VALUES('rebuild')
- *  - orphaned_sync_tokens → DELETE FROM sync_state WHERE connector_id NOT IN (...)
- */
-
 import type { Database } from "bun:sqlite";
 import { verifyIndex } from "./verify.ts";
 import { dbRun } from "./write.ts";
@@ -30,16 +16,12 @@ export type RepairOutcome = {
 
 export type RepairReport = {
   outcomes: RepairOutcome[];
-  /** ISO-8601 timestamp */
   repairedAt: string;
 };
-
-// ─── Individual repair actions ───────────────────────────────────────────────
 
 function repairVecOrphans(db: Database): RepairOutcome {
   const action: RepairAction = "vec_orphan_delete";
   try {
-    // Find vec rowids that have no corresponding embedding_chunk row
     const orphans = db
       .query(
         `SELECT v.rowid FROM vec_items_384 v
@@ -54,7 +36,6 @@ function repairVecOrphans(db: Database): RepairOutcome {
     const ids = orphans.map((r) => r.rowid);
 
     db.transaction(() => {
-      // Delete orphaned vec rows in batches to stay within SQLite parameter limits
       const BATCH = 999;
       for (let i = 0; i < ids.length; i += BATCH) {
         const slice = ids.slice(i, i + BATCH);
@@ -67,7 +48,6 @@ function repairVecOrphans(db: Database): RepairOutcome {
       }
     })();
 
-    // Reset scheduler cursors for all connectors to trigger a full resync
     dbRun(db, `UPDATE scheduler_state SET cursor = NULL`);
 
     return {
@@ -124,10 +104,6 @@ function repairOrphanedSyncTokens(db: Database): RepairOutcome {
   }
 }
 
-// S5-F6 — defense-in-depth helper. SQLite never produces empty-string or
-// null-byte-bearing identifiers from PRAGMA foreign_key_check, but skip them
-// anyway so a future code path that injects synthetic violations cannot
-// smuggle a malformed identifier past escapeIdentifier.
 const NUL_CHAR = String.fromCodePoint(0);
 function isUnsafeSqlIdentifier(id: string): boolean {
   return id.length === 0 || id.includes(NUL_CHAR);
@@ -148,7 +124,6 @@ function repairForeignKeys(db: Database): RepairOutcome {
       return { action, status: "skipped", detail: "no FK violations" };
     }
 
-    // Group by table so we can delete in bulk
     const byTable = new Map<string, number[]>();
     for (const v of violations) {
       const list = byTable.get(v.table) ?? [];
@@ -192,8 +167,6 @@ function repairForeignKeys(db: Database): RepairOutcome {
   }
 }
 
-// ─── Audit log ───────────────────────────────────────────────────────────────
-
 function writeAuditEntry(db: Database, report: RepairReport): void {
   try {
     dbRun(
@@ -207,14 +180,6 @@ function writeAuditEntry(db: Database, report: RepairReport): void {
   }
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
-
-/**
- * Run all applicable repair actions on `db`.
- *
- * @param db              Open read-write bun:sqlite Database.
- * @param expectedVersion Expected schema version (passed through to `verifyIndex`).
- */
 export function repairIndex(db: Database, expectedVersion: number): RepairReport {
   const verify = verifyIndex(db, expectedVersion);
   const failLabels = new Set(
@@ -240,7 +205,6 @@ export function repairIndex(db: Database, expectedVersion: number): RepairReport
   }
 
   if (outcomes.length === 0) {
-    // Nothing to repair
     return { outcomes: [], repairedAt: new Date().toISOString() };
   }
 
@@ -253,9 +217,6 @@ export function repairIndex(db: Database, expectedVersion: number): RepairReport
   return report;
 }
 
-/**
- * Format a `RepairReport` for CLI output.
- */
 export function formatRepairReport(report: RepairReport): string {
   if (report.outcomes.length === 0) {
     return "Nothing to repair — index is clean.";

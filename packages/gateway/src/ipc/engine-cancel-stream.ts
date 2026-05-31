@@ -15,7 +15,6 @@ export function createCancelStreamHandler(
     if (typeof sid !== "string" || sid.length === 0) {
       throw new RpcMethodError(-32602, "engine.cancelStream requires non-empty streamId");
     }
-    // Cancellation is idempotent — unknown streams resolve as ok
     registry.cancel(sid);
     return { ok: true };
   };

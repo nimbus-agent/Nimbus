@@ -1,21 +1,8 @@
-/**
- * @vitest-environment jsdom
- *
- * Unit tests for the render helpers in src/chat/webview/render.ts. The
- * helpers themselves operate on strings, but `renderMarkdown` runs DOMPurify
- * over the marked output for in-depth defence against agent-supplied HTML —
- * DOMPurify v3 requires a `window`, so this file runs under jsdom rather
- * than Node. Other test files in this package stay in the default Node env.
- */
-
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-// Per-process temp socket path so the test never references a literal under
-// /tmp (Sonar S5443 — publicly-writable directory hotspot) and never collides
-// across parallel test runs on the same host.
 const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-render-${process.pid}.sock`);
 
 import {
@@ -64,9 +51,6 @@ describe("renderTurn", () => {
     expect(html).toContain('<article class="turn turn-user">');
     expect(html).toContain('<pre class="user-text">');
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-    // No raw script tag anywhere — XSS would be unforgivable here.
-    // Case-insensitive: HTML tag names match ASCII-case-insensitively, so a
-    // payload of `<SCRIPT>` is just as exploitable as `<script>`.
     expect(html).not.toMatch(/<script[\s>]/i);
     expect(html).not.toMatch(/<\/script>/i);
   });

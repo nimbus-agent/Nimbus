@@ -246,7 +246,6 @@ function slackHistoryRequestBody(state: SlackSyncCursorV1, ch: string): Record<s
   return histBody;
 }
 
-/** Returns message `ts` when indexed; `null` when the row is skipped. */
 function slackTryUpsertIndexedHistoryMessage(
   ctx: SyncContext,
   state: SlackSyncCursorV1,

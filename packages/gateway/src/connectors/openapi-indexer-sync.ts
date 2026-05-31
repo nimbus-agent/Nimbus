@@ -11,6 +11,7 @@ import { discoverSpecFiles } from "./openapi-indexer-discovery.ts";
 import { type ParsedEndpoint, parseSpec } from "./openapi-indexer-parsing.ts";
 import { inferServiceName } from "./openapi-indexer-service-name.ts";
 
+// connectorFetch opt-out: indexes filesystem OpenAPI/AsyncAPI specs, not paginated HTTP.
 const SERVICE_ID = "openapi";
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const INITIAL_SYNC_DEPTH_DAYS = 365;
@@ -71,9 +72,9 @@ function upsertEndpoint(
     externalId,
     title: `${args.ep.method} ${args.ep.path}`,
     bodyPreview:
-      args.ep.operationId !== undefined
-        ? `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim()
-        : args.ep.tags.join(" ").trim(),
+      args.ep.operationId === undefined
+        ? args.ep.tags.join(" ").trim()
+        : `${args.ep.operationId} ${args.ep.tags.join(" ")}`.trim(),
     modifiedAt: args.mtimeMs,
     metadata: {
       service_name: args.serviceName,
@@ -138,6 +139,94 @@ function deleteEndpointsAbsentFromSpec(
   return deleted;
 }
 
+function readSpecIfNewer(
+  specPath: string,
+  tip: number,
+): { source: string; mtimeMs: number } | null {
+  let mtimeMs = 0;
+  let source: string | undefined;
+  let fd: number | undefined;
+  try {
+    fd = openSync(specPath, "r");
+    mtimeMs = fstatSync(fd).mtimeMs;
+    if (mtimeMs > tip) {
+      source = readFileSync(fd, "utf8");
+    }
+  } catch {
+    // file disappeared / unreadable — skip to next entry
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+  return source === undefined ? null : { source, mtimeMs };
+}
+
+function recordSkippedSpec(stats: OpenapiSyncStats, reason: string): void {
+  if (reason === "too_large") stats.skippedTooLarge++;
+  else if (reason === "parse_failed") stats.skippedParseFailed++;
+  else if (reason === "not_a_spec") stats.skippedNotASpec++;
+}
+
+type SpecIngestTotals = { upserted: number; deleted: number; nextTip: number };
+
+function ingestSpecPath(
+  ctx: SyncContext,
+  args: {
+    specPath: string;
+    root: string;
+    config: OpenapiConfig;
+    tip: number;
+    now: number;
+    stats: OpenapiSyncStats;
+    totals: SpecIngestTotals;
+  },
+): void {
+  const { specPath, root, config, tip, now, stats, totals } = args;
+  const read = readSpecIfNewer(specPath, tip);
+  if (read === null) {
+    return;
+  }
+  const parsed = parseSpec({
+    absPath: specPath,
+    source: read.source,
+    maxBytes: config.maxSpecBytes,
+  });
+  if (parsed.kind === "skipped") {
+    recordSkippedSpec(stats, parsed.reason);
+    ctx.logger.warn({ specPath, reason: parsed.reason }, "openapi-indexer: skipped spec");
+    return;
+  }
+  const serviceName = inferServiceName({ specPath, infoTitle: parsed.infoTitle, rootPath: root });
+  const keep = new Set<string>();
+  let perSpecUpserted = 0;
+  let perSpecDeleted = 0;
+  ctx.db.transaction(() => {
+    for (const ep of parsed.endpoints) {
+      const id = upsertEndpoint(ctx, {
+        specPath,
+        serviceName,
+        specVersion: parsed.specVersion,
+        ep,
+        mtimeMs: read.mtimeMs,
+        syncedAt: now,
+      });
+      keep.add(id);
+      perSpecUpserted++;
+    }
+    perSpecDeleted = deleteEndpointsAbsentFromSpec(ctx.db, specPath, keep);
+  })();
+  totals.upserted += perSpecUpserted;
+  totals.deleted += perSpecDeleted;
+  if (read.mtimeMs > totals.nextTip) {
+    totals.nextTip = read.mtimeMs;
+  }
+}
+
 export function createOpenapiIndexerSyncable(
   options: OpenapiIndexerSyncableOptions,
 ): OpenapiIndexerSyncable {
@@ -162,14 +251,12 @@ export function createOpenapiIndexerSyncable(
       await ctx.rateLimiter.acquire("filesystem");
       const state = decodeCursor(cursor);
       const now = Date.now();
-      let upserted = 0;
-      let deleted = 0;
-      let nextTip = state.tip;
       const stats: OpenapiSyncStats = {
         skippedTooLarge: 0,
         skippedParseFailed: 0,
         skippedNotASpec: 0,
       };
+      const totals: SpecIngestTotals = { upserted: 0, deleted: 0, nextTip: state.tip };
 
       for (const rootCfg of options.roots) {
         const root = rootCfg.path;
@@ -183,84 +270,23 @@ export function createOpenapiIndexerSyncable(
           continue;
         }
         for (const specPath of entries) {
-          // Open once and use the file descriptor for both fstat and read.
-          // This eliminates the time-of-check / time-of-use race between a
-          // separate `statSync(path)` and `readFileSync(path)` — both calls
-          // now resolve through the same open inode rather than re-traversing
-          // the path.
-          let mtimeMs = 0;
-          let source: string | undefined;
-          let fd: number | undefined;
-          try {
-            fd = openSync(specPath, "r");
-            mtimeMs = fstatSync(fd).mtimeMs;
-            if (mtimeMs > state.tip) {
-              source = readFileSync(fd, "utf8");
-            }
-          } catch {
-            // file disappeared / unreadable — skip to next entry
-          } finally {
-            if (fd !== undefined) {
-              try {
-                closeSync(fd);
-              } catch {
-                // ignore close errors
-              }
-            }
-          }
-          if (source === undefined) {
-            continue;
-          }
-          const parsed = parseSpec({
-            absPath: specPath,
-            source,
-            maxBytes: config.maxSpecBytes,
-          });
-          if (parsed.kind === "skipped") {
-            if (parsed.reason === "too_large") stats.skippedTooLarge++;
-            else if (parsed.reason === "parse_failed") stats.skippedParseFailed++;
-            else if (parsed.reason === "not_a_spec") stats.skippedNotASpec++;
-            ctx.logger.warn({ specPath, reason: parsed.reason }, "openapi-indexer: skipped spec");
-            continue;
-          }
-          const serviceName = inferServiceName({
+          ingestSpecPath(ctx, {
             specPath,
-            infoTitle: parsed.infoTitle,
-            rootPath: root,
+            root,
+            config,
+            tip: state.tip,
+            now,
+            stats,
+            totals,
           });
-          // One transaction per spec: upsert all of the spec's endpoints AND
-          // its sticky-delete pass commit together. This bounds DB round-trips
-          // for monorepos with many specs and guarantees a spec is never
-          // half-applied if the process is killed mid-iteration.
-          const keep = new Set<string>();
-          let perSpecDeleted = 0;
-          ctx.db.transaction(() => {
-            for (const ep of parsed.endpoints) {
-              const id = upsertEndpoint(ctx, {
-                specPath,
-                serviceName,
-                specVersion: parsed.specVersion,
-                ep,
-                mtimeMs,
-                syncedAt: now,
-              });
-              keep.add(id);
-              upserted++;
-            }
-            perSpecDeleted = deleteEndpointsAbsentFromSpec(ctx.db, specPath, keep);
-          })();
-          deleted += perSpecDeleted;
-          if (mtimeMs > nextTip) {
-            nextTip = mtimeMs;
-          }
         }
       }
 
       lastStats = stats;
       return {
-        cursor: encodeCursor({ tip: nextTip }),
-        itemsUpserted: upserted,
-        itemsDeleted: deleted,
+        cursor: encodeCursor({ tip: totals.nextTip }),
+        itemsUpserted: totals.upserted,
+        itemsDeleted: totals.deleted,
         hasMore: false,
         durationMs: Math.round(performance.now() - t0),
       };

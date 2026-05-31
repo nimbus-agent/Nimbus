@@ -12,10 +12,6 @@ type Pending = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-// Generous upper bound for the asynchronous worker-init watchdog. The bridge
-// no longer blocks gateway startup on this; it only governs how long we wait
-// before logging an init-failure warning. Override via
-// NIMBUS_EMBEDDING_INIT_TIMEOUT_MS for first-time downloads on very slow links.
 const DEFAULT_EMBEDDING_INIT_TIMEOUT_MS = 600_000;
 
 function resolveEmbeddingInitTimeoutMs(): number {
@@ -30,19 +26,6 @@ function resolveEmbeddingInitTimeoutMs(): number {
   return n;
 }
 
-/**
- * Constructs the embedding worker bridge and returns it immediately, without
- * blocking on the worker's internal init (transformers.js model load + ONNX
- * runtime setup). The bridge gracefully no-ops `embedQuery` and
- * `scheduleItemEmbedding` until `workerReady` flips to true, and the worker
- * runs `backfillAll()` after init so any items added during warmup are
- * eventually embedded. If init fails, embeddings stay disabled for the life
- * of the process; semantic search degrades to keyword search.
- *
- * Returns `null` only when `new Worker(...)` itself throws (the runtime can't
- * spawn a worker), in which case `createEmbeddingRuntime` falls back to the
- * lazy in-process runtime.
- */
 export function tryCreateEmbeddingWorkerBridge(
   dbPath: string,
   dataDir: string,

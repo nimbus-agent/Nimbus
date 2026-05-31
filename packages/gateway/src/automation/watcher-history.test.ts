@@ -39,7 +39,6 @@ test("listWatcherHistory returns empty for an unknown watcher", () => {
 test("listWatcherHistory returns empty on a pre-v8 schema", () => {
   const fresh = new Database(":memory:");
   try {
-    // Fresh DB with no migrations applied — user_version = 0.
     const out = listWatcherHistory(fresh, { watcherId: "w1", limit: 10 });
     expect(out.events).toEqual([]);
   } finally {

@@ -65,7 +65,6 @@ describe("syncPublisherKeys end-to-end with mock HTTP registry (T2 PR 2 Task 23)
     const { privkey, pubkey: oldPub } = generateEd25519Keypair();
     const newPub = generateEd25519Keypair().pubkey;
     await writePublisherKey(vault, "rotated-pub", oldPub);
-    // Sign with old; registry will serve new.
     await stageSignedExtensionOnDisk({
       db,
       extensionsDir,
@@ -85,7 +84,6 @@ describe("syncPublisherKeys end-to-end with mock HTTP registry (T2 PR 2 Task 23)
     expect(result.publishersUpdated).toHaveLength(1);
     expect(result.publishersUpdated[0]!.id).toBe("rotated-pub");
     expect(result.publishersUpdated[0]!.reverifyResult).toBe("failed");
-    // Cache rewritten to new
     const cached = await readPublisherKey(vault, "rotated-pub");
     expect(cached).toEqual(newPub);
   });
@@ -102,7 +100,6 @@ describe("syncPublisherKeys end-to-end with mock HTTP registry (T2 PR 2 Task 23)
       pubkey,
       privkey,
     });
-    // Don't add "deleted-pub" to publishers map → 404
 
     const fetcher = createPublisherKeyFetcher({ baseUrl });
     const result = await syncPublisherKeys({

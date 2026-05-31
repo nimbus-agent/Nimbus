@@ -1,7 +1,3 @@
-/**
- * Heuristic HITL action hints for workflow dry-run (no agent / no tool execution).
- * Maps natural-language step text to likely {@link HITL_REQUIRED} action ids for CLI preview.
- */
 const STEP_HITL_RULES: ReadonlyArray<{ pattern: RegExp; actions: readonly string[] }> = [
   { pattern: /\bterraform\s+apply\b/i, actions: ["iac.terraform.apply"] },
   { pattern: /\bterraform\s+destroy\b/i, actions: ["iac.terraform.destroy"] },
@@ -102,9 +98,6 @@ const STEP_HITL_RULES: ReadonlyArray<{ pattern: RegExp; actions: readonly string
   },
 ];
 
-/**
- * Returns deduplicated HITL action ids that may apply to this step text (best-effort).
- */
 export function previewHitlActionsForStepText(runText: string): string[] {
   const t = runText.trim();
   if (t === "") {

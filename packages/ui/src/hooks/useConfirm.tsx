@@ -3,7 +3,6 @@ import { type ReactNode, useCallback, useState } from "react";
 export interface ConfirmOptions {
   readonly title: string;
   readonly description: string;
-  /** When set, the user must type this exact string to enable the confirm button. */
   readonly expectedText?: string;
   readonly confirmLabel: string;
 }

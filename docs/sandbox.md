@@ -2,8 +2,7 @@
 
 Phase 5 T2 PR 1 introduced OS-native kernel-level sandboxing for every
 extension child process. This document is the operator-facing reference;
-the design rationale lives in
-`docs/superpowers/specs/2026-05-16-phase-5-t2-pr1-sandbox-design.md`.
+the load-bearing invariant is `I15` in [`docs/SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md).
 
 ## Model
 

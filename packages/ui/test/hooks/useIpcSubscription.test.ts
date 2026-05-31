@@ -30,7 +30,6 @@ describe("useIpcSubscription", () => {
   it("attaches a listener for the event", async () => {
     const handler = vi.fn();
     renderHook(() => useIpcSubscription("connector://health-changed", handler));
-    // flush microtasks
     await Promise.resolve();
     expect(mockListen).toHaveBeenCalledWith("connector://health-changed", expect.any(Function));
   });

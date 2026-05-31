@@ -1,12 +1,3 @@
-/**
- * Synthetic Drive `files.list` page generator. Deterministic via a
- * seeded LCG. Tier-scaled item counts feed the S6-drive bench driver
- * through MSW handlers in fixtures/msw-handlers.ts.
- *
- * Mirrors the Google Drive v3 response shape:
- *   { files: [...], nextPageToken?: string }
- */
-
 import type { CorpusTier } from "../types.ts";
 
 export const DRIVE_TIER_COUNTS: Record<CorpusTier, number> = {

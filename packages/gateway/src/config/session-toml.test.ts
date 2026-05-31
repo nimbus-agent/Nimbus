@@ -1,14 +1,3 @@
-/**
- * Coverage for the pure TOML `[session]` section parser.
- *
- * Tier D — was at 20.75 % line coverage. Targets:
- *  - `parseNimbusTomlSessionSection` (pure parser, the bulk of the file)
- *  - `loadNimbusSessionFromPath` (file present / absent / unreadable)
- *  - `loadNimbusSessionFromConfigDir` (path-join wrapper)
- *
- * No bun:sqlite, no spawn, no env mutation — this is a string-in/value-out test.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,7 +56,6 @@ describe("parseNimbusTomlSessionSection", () => {
   test("after [session], a new section switches the parser off", () => {
     const src = "[session]\nmemory_ttl_hours = 5\n[other]\nmemory_ttl_hours = 99\n";
     const out = parseNimbusTomlSessionSection(src);
-    // First match takes effect; the [other] block must NOT overwrite it.
     expect(out.memoryTtlHours).toBe(5);
   });
 

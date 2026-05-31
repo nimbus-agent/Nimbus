@@ -63,9 +63,7 @@ describe("PairingWindow", () => {
     w.open("abc");
     const expiresAt = w.getExpiresAt();
     expect(expiresAt).toBe(t0 + 5_000);
-    // Exactly at the boundary should still consume.
     expect(w.consumeAt("abc", t0 + 5_000)).toBe(true);
-    // After consume the window is closed.
     expect(w.getExpiresAt()).toBeNull();
   });
 });

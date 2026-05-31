@@ -3,7 +3,6 @@ import { describe, expect, it, mock } from "bun:test";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 
-// Minimal valid publisher key (44-char base64 of 32 bytes) and signature (88-char base64 of 64 bytes).
 const FAKE_KEY = "x".repeat(43) + "=";
 const FAKE_SIG = "y".repeat(86) + "==";
 
@@ -262,19 +261,13 @@ describe("ExtensionAutoUpdater", () => {
     expect(updater.isRunning()).toBe(true);
     await updater.stop();
     expect(updater.isRunning()).toBe(false);
-    await updater.stop(); // no-op
+    await updater.stop();
     expect(updater.isRunning()).toBe(false);
   });
 });
 
 describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
   it("populates conflicts on AvailableUpdate when bump would break installed reverse-dep", async () => {
-    // Setup:
-    // - A@1.5.0 installed (no deps).
-    // - C@1.0.0 installed; C dependsOn A@^1.0.0.
-    // - Registry latest for A is 2.0.0 (incompatible with ^1.0.0).
-    //
-    // After pollOnce: cache entry for A should have conflicts set, kind=unsatisfiable.
     const cache = new AutoUpdateCache();
     const updater = new ExtensionAutoUpdater({
       cache,
@@ -346,7 +339,6 @@ describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
   });
 
   it("leaves conflicts undefined when solverRemoteFetchManifest is not provided", async () => {
-    // Existing behaviour: no solver → no conflicts field set.
     const cache = new AutoUpdateCache();
     const updater = new ExtensionAutoUpdater({
       cache,
@@ -385,7 +377,6 @@ describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
       verifyManifestSignature: async () => {},
       lookupPublisherKey: async () => new Uint8Array(32),
       appendAudit: async () => {},
-      // solverRemoteFetchManifest deliberately absent
       intervalHours: 24,
       enforceAirGap: false,
       now: () => 0,

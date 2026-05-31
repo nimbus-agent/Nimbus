@@ -17,9 +17,6 @@ function renderPanel(initialEntries: string[] = ["/settings/connectors"]) {
   );
 }
 
-/**
- * Helper: stub `callMock` so `useIpcQuery("connector.listStatus")` returns `rows`.
- */
 function stubListStatus(rows: unknown): void {
   callMock.mockImplementation(async (method: string) => {
     if (method === "connector.listStatus") return rows;
@@ -64,10 +61,8 @@ describe("ConnectorsPanel", () => {
       expect(screen.getByText("github")).toBeInTheDocument();
       expect(screen.getByText("slack")).toBeInTheDocument();
     });
-    // interval shown as the unit-appropriate number — 120000 ms == 2 min.
     expect(screen.getByLabelText("github interval value")).toHaveValue(2);
     expect(screen.getByLabelText("github interval unit")).toHaveValue("min");
-    // slack is paused → enable checkbox unchecked.
     expect(screen.getByLabelText("slack enabled")).not.toBeChecked();
   });
 
@@ -95,7 +90,6 @@ describe("ConnectorsPanel", () => {
       const input = screen.getByLabelText("github interval value");
       await user.clear(input);
       await user.type(input, "3");
-      // before the debounce fires, no call
       expect(connectorSetConfigMock).not.toHaveBeenCalled();
       vi.advanceTimersByTime(500);
       await waitFor(() =>
@@ -196,7 +190,7 @@ describe("ConnectorsPanel", () => {
         },
       ],
     } as never);
-    stubListStatus([]); // never invoked because useIpcQuery is paused
+    stubListStatus([]);
     renderPanel();
     await waitFor(() => screen.getByLabelText("github enabled"));
     expect(screen.getByLabelText("github enabled")).toBeDisabled();
@@ -215,14 +209,11 @@ describe("ConnectorsPanel", () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const input = screen.getByLabelText("github interval value");
       const unit = screen.getByLabelText("github interval unit");
-      // Type a valid value (3 min = 180 s > 60 s) — this arms the debounce timer
       await user.clear(input);
       await user.type(input, "3");
       expect(connectorSetConfigMock).not.toHaveBeenCalled();
-      // Switch to seconds before the debounce fires: 3 s < 60 s → invalid → must clear debounce
       await user.selectOptions(unit, "sec");
       expect(screen.getByText(/minimum 60 seconds/i)).toBeInTheDocument();
-      // Advance past debounce window — setConfig must NOT have been called
       vi.advanceTimersByTime(600);
       expect(connectorSetConfigMock).not.toHaveBeenCalled();
     } finally {
@@ -273,7 +264,6 @@ describe("ConnectorsPanel — connector.configChanged reconcile", () => {
         enabled: true,
       },
     ]);
-    // Capture the subscribe handler so the test can fire a notification.
     let captured: ((n: { method: string; params: unknown }) => void) | null = null;
     subscribeMock.mockImplementation(async (handler) => {
       captured = handler;

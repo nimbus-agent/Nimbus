@@ -1,5 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 export type TomlKeySource = "file" | "env";
 
@@ -10,7 +17,6 @@ export type TomlKeyEntry = {
   readonly envVar?: string;
 };
 
-/** Known env overrides for `nimbus config list`. */
 const ENV_BY_DOTTED: Readonly<Record<string, string>> = {
   "telemetry.enabled": "NIMBUS_TELEMETRY_ENABLED",
   "telemetry.endpoint": "NIMBUS_TELEMETRY_ENDPOINT",
@@ -56,17 +62,29 @@ function parseSectionKey(source: string, section: string, key: string): string |
 }
 
 function writeUtf8FileAtomicReplace(path: string, content: string): void {
-  const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, content, "utf8");
+  const dir = dirname(path);
+  const swap = mkdtempSync(join(dir, `.${basename(path)}.swap-`));
+  const tmp = join(swap, "content");
   try {
-    renameSync(tmp, path);
-  } catch {
+    writeFileSync(tmp, content, "utf8");
     try {
-      unlinkSync(path);
+      renameSync(tmp, path);
     } catch {
-      /* ignore */
+      try {
+        unlinkSync(path);
+      } catch {
+        /* ignore */
+      }
+      renameSync(tmp, path);
     }
-    renameSync(tmp, path);
+  } finally {
+    try {
+      rmdirSync(swap);
+    } catch {
+      /* the rename may have left the dir empty (success) or the file
+         may still be inside if writeFileSync threw before rename; either
+         way we don't want to throw from the cleanup path. */
+    }
   }
 }
 
@@ -75,12 +93,7 @@ export function getTomlValueFromFile(tomlPath: string, dotted: string): string |
   try {
     raw = readFileSync(tomlPath, "utf8");
   } catch (e: unknown) {
-    if (
-      e !== null &&
-      typeof e === "object" &&
-      "code" in e &&
-      (e as { code: unknown }).code === "ENOENT"
-    ) {
+    if (e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT") {
       return undefined;
     }
     throw e;
@@ -164,14 +177,7 @@ export function setTomlValueInFile(tomlPath: string, dotted: string, value: stri
   try {
     full = readFileSync(tomlPath, "utf8");
   } catch (e: unknown) {
-    if (
-      !(
-        e !== null &&
-        typeof e === "object" &&
-        "code" in e &&
-        (e as { code: unknown }).code === "ENOENT"
-      )
-    ) {
+    if (!(e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT")) {
       throw e;
     }
   }

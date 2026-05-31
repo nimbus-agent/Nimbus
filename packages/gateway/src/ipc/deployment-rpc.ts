@@ -1,13 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — `deployment.annotate` JSON-RPC handler.
- *
- * Surface: CLI, HTTP (POST /v1/deployments) — NOT LLM-facing. Security
- * invariant I11 (wrapToolOutput) therefore does not apply here. If a
- * future built-in agent registers `deployment.annotate` as a tool, the
- * wrap must be added at the agent's tool-registration site per
- * `nimbus-tool-output-envelope` (wrap at the agent surface, not in the
- * tool handler).
- */
 import type { Database } from "bun:sqlite";
 import { AnnotateError, type AnnotateOptions, annotateDeployment } from "../deployment/annotate.ts";
 import type { DeploymentAnnotateInput, DeploymentAnnotateResult } from "../deployment/types.ts";
@@ -33,8 +23,6 @@ function requireParams(params: unknown): DeploymentAnnotateInput {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new DeploymentRpcError(-32602, "deployment.annotate requires a JSON-object body");
   }
-  // Pass through to annotateDeployment's validator; the RPC layer only
-  // checks the shape. Field-level errors translate below.
   return params as DeploymentAnnotateInput;
 }
 

@@ -1,8 +1,6 @@
 /// <reference types="bun-types" />
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
-// dpkg-deb, appimagetool, and the AppImage FUSE runtime are Linux-only prerequisites.
-// These tests are designed to run on ubuntu-22.04 CI; skip gracefully on other platforms.
 const linuxTest = process.platform === "linux" ? test : test.skip;
 
 import { spawnSync } from "node:child_process";
@@ -25,7 +23,6 @@ let stubToolPath: string;
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1");
 
-// Create a bash stub script under workDir and return its path.
 function makeStub(name: string, body: string): string {
   const p = join(workDir, name);
   writeFileSync(p, `#!/usr/bin/env bash\nset -e\n${body}\n`, "utf8");
@@ -33,8 +30,6 @@ function makeStub(name: string, body: string): string {
   return p;
 }
 
-// Run package-linux-installers.ts via the current Bun executable. Using process.execPath
-// instead of "bun" avoids PATH-based tool hijacking (Sonar S4036).
 function runInstaller(extraArgs: string[]) {
   return spawnSync(
     process.execPath,
@@ -59,15 +54,11 @@ beforeEach(() => {
   mkdirSync(bundleDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
 
-  // Synthetic binaries: any non-empty file is fine (real build output isn't required
-  // for the packaging logic under test).
   writeFileSync(join(bundleDir, "nimbus-gateway"), "#!/bin/sh\necho gw\n", "utf8");
   writeFileSync(join(bundleDir, "nimbus"), "#!/bin/sh\necho cli\n", "utf8");
   chmodSync(join(bundleDir, "nimbus-gateway"), 0o755);
   chmodSync(join(bundleDir, "nimbus"), 0o755);
 
-  // Stub appimagetool: writes a 4-byte marker so the test can recognise its output
-  // without needing FUSE / real AppImage magic.
   stubToolPath = makeStub("stub-appimagetool", `OUT="$2"\nprintf 'AITS' > "$OUT"`);
 });
 
@@ -93,7 +84,7 @@ linuxTest("produces .AppImage with stubbed appimagetool", () => {
   const appImage = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.AppImage");
   expect(existsSync(appImage)).toBe(true);
   const head = readFileSync(appImage).subarray(0, 4).toString();
-  expect(head).toBe("AITS"); // stub's magic bytes — proves the tool was invoked with the right output path
+  expect(head).toBe("AITS");
 });
 
 linuxTest("populates AppDir with AppRun, .desktop, icon, and binaries before invoking tool", () => {
@@ -154,14 +145,12 @@ linuxTest(".deb DEBIAN/control declares bubblewrap + libcap2-bin as Depends", ()
   expect(r.status).toBe(0);
   const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
   expect(existsSync(debPath)).toBe(true);
-  // dpkg-deb -I prints the control file metadata.
   const info = spawnSync("/usr/bin/dpkg-deb", ["-I", debPath], { encoding: "utf8" });
   expect(info.status).toBe(0);
   expect(info.stdout).toMatch(/Depends:\s*bubblewrap,\s*libcap2-bin/);
 });
 
 linuxTest(".deb postinst runs setcap on nimbus-sandbox-helper", () => {
-  // Pre-build a stub helper so we exercise the helper-bundling path too.
   const stubHelper = join(workDir, "stub-helper");
   writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");
   chmodSync(stubHelper, 0o755);
@@ -170,7 +159,6 @@ linuxTest(".deb postinst runs setcap on nimbus-sandbox-helper", () => {
   expect(r.status).toBe(0);
   const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
   expect(existsSync(debPath)).toBe(true);
-  // dpkg-deb -e extracts the DEBIAN control directory into the given dir.
   const ctrlDir = join(workDir, "deb-ctrl");
   mkdirSync(ctrlDir, { recursive: true });
   const extract = spawnSync("/usr/bin/dpkg-deb", ["-e", debPath, ctrlDir], { encoding: "utf8" });
@@ -179,7 +167,6 @@ linuxTest(".deb postinst runs setcap on nimbus-sandbox-helper", () => {
   expect(postinst).toContain("setcap cap_net_admin+ep");
   expect(postinst).toContain("/usr/lib/nimbus/bin/nimbus-sandbox-helper");
 
-  // Verify the helper itself was copied into the .deb payload.
   const contents = spawnSync("/usr/bin/dpkg-deb", ["-c", debPath], { encoding: "utf8" });
   expect(contents.status).toBe(0);
   expect(contents.stdout).toContain("./usr/lib/nimbus/bin/nimbus-sandbox-helper");
@@ -197,7 +184,6 @@ linuxTest("tarball linux-postinstall.sh prints bwrap pre-check banner", () => {
   });
   expect(x.status).toBe(0);
   const postScript = readFileSync(join(extractDir, "linux-postinstall.sh"), "utf8");
-  // bwrap banner with per-distro install hints (T2 PR 1, Step 7.4).
   expect(postScript).toContain("command -v bwrap");
   expect(postScript).toContain("sudo apt install bubblewrap");
   expect(postScript).toContain("sudo dnf install bubblewrap");

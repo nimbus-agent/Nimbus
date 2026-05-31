@@ -195,7 +195,6 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 2);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 99_999 }));
     expect(r.kind).toBe("hit");
-    // Still only 2 rows exist; clamp just bounds the SQL LIMIT.
     expect((r.value as unknown[]).length).toBe(2);
   });
 

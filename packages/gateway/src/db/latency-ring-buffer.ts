@@ -1,13 +1,7 @@
-/**
- * In-memory ring buffer for index query latency samples with batched flush to SQLite.
- * Avoids a write transaction after every read query.
- */
-
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "./write.ts";
 
-/** Matches `query_latency_log.query_type` CHECK constraint. */
 export type QueryLatencyKind = "fts" | "vector" | "hybrid" | "sql";
 
 export type LatencySample = {
@@ -38,7 +32,6 @@ export class LatencyRingBuffer {
     }
   }
 
-  /** Ordered oldest → newest; empties the ring and clears the dirty flag. */
   drainOrdered(): LatencySample[] {
     if (this.count === 0) {
       this.dirty = false;
@@ -123,10 +116,6 @@ function tableExists(db: Database, name: string): boolean {
   return row !== null;
 }
 
-/**
- * Persists drained samples in one transaction; prunes old rows.
- * If the DB is unavailable or tables are missing, samples are discarded.
- */
 export function flushLatencyBuffer(db: Database, buffer: LatencyRingBuffer): void {
   if (!tableExists(db, "query_latency_log")) {
     buffer.drainOrdered();
@@ -185,7 +174,6 @@ export function recordSlowQuery(
   );
 }
 
-/** Percentiles from DB when the ring buffer is cold (e.g. after restart). */
 export function readLatencyPercentilesFromDb(db: Database): {
   p50Ms: number;
   p95Ms: number;

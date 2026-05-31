@@ -62,7 +62,6 @@ describe("user-mcp-store", () => {
     const args = ["run", "./srv.ts", "--flag"];
     const out = validateUserMcpArgsJson(args);
     expect(JSON.parse(out)).toEqual(args);
-    // Empty args is a valid serialization too.
     expect(validateUserMcpArgsJson([])).toBe("[]");
   });
 
@@ -79,7 +78,6 @@ describe("user-mcp-store", () => {
     const row = getUserMcpConnector(db, "mcp_demo");
     expect(row?.command).toBe("bun");
     expect(row?.created_at).toBe(1_700_000_000_000);
-    // Delete returns true on a hit, false on a miss (already-deleted row).
     expect(deleteUserMcpConnector(db, "mcp_demo")).toBe(true);
     expect(deleteUserMcpConnector(db, "mcp_demo")).toBe(false);
     expect(getUserMcpConnector(db, "mcp_demo")).toBeNull();

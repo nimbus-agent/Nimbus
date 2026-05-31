@@ -57,8 +57,6 @@ describe("getNimbusPaths per platform", () => {
 
   test("darwin honors TMPDIR for socketPath", () => {
     setPlatform("darwin");
-    // Pure string-prefix assertion — never written to. Use a synthetic, non-FHS
-    // path so the test does not resemble a writable-directory usage.
     process.env.TMPDIR = "/synthetic-tmpdir-test/";
     const p = getNimbusPaths();
     expect(p.socketPath).toBe("/synthetic-tmpdir-test/nimbus-gateway.sock");

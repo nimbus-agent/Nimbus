@@ -126,17 +126,14 @@ describe("watcher-store", () => {
       target: { type: "person", externalId: "gh:1" },
     });
 
-    // Set a predicate — should return true (1 row changed).
     expect(setWatcherGraphPredicate(db, id, predicateJson)).toBe(true);
     const row = listWatchers(db).find((w) => w.id === id);
     expect(row?.graph_predicate_json).toBe(predicateJson);
 
-    // Clear the predicate — should also return true.
     expect(setWatcherGraphPredicate(db, id, null)).toBe(true);
     const cleared = listWatchers(db).find((w) => w.id === id);
     expect(cleared?.graph_predicate_json).toBeNull();
 
-    // Non-existent id — returns false (0 changes).
     expect(setWatcherGraphPredicate(db, "no-such-id", predicateJson)).toBe(false);
   });
 });

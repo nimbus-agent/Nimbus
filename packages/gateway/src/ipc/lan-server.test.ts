@@ -56,7 +56,6 @@ async function sendEncryptedRpc(
   const header = new Uint8Array(4);
   new DataView(header.buffer).setUint32(0, frame.length, false);
 
-  // Build hello handshake frame
   const helloMsg = JSON.stringify({
     kind: "hello",
     client_pubkey: Buffer.from(clientKeypair.publicKey).toString("base64"),
@@ -82,11 +81,9 @@ async function sendEncryptedRpc(
               const body = chunk.slice(4, 4 + len);
               const text = new TextDecoder().decode(body);
               if (text.includes("hello_ok")) {
-                // Now send encrypted RPC
                 socket.write(header);
                 socket.write(frame);
               } else {
-                // Encrypted response
                 const plain = openBoxFrame(body, serverPubkey, clientKeypair.secretKey);
                 resolve(
                   JSON.parse(new TextDecoder().decode(plain)) as {
@@ -175,7 +172,6 @@ describe("LanServer gate (G4)", () => {
   });
 });
 
-/** Connect, send a single length header, wait, return whether the server closed the socket. */
 async function probeClosedAfterHeader(port: number, declaredLength: number): Promise<boolean> {
   let closed = false;
   const conn = await Bun.connect({
@@ -202,7 +198,6 @@ async function probeClosedAfterHeader(port: number, declaredLength: number): Pro
   return result;
 }
 
-/** Build a LanServer with no-op pairing/peer hooks; caller injects an optional rateLimit recorder. */
 async function buildBareLanServer(
   rateLimit?: Partial<{ recordFailure: (ip: string) => void }>,
 ): Promise<LanServer> {
@@ -237,7 +232,6 @@ describe("LanServer frame-size caps (S3-F3)", () => {
     svr = undefined;
   });
 
-  /** Wraps `buildBareLanServer` to track the instance for `afterEach` teardown. */
   async function startBareServer(
     rateLimit?: Partial<{ recordFailure: (ip: string) => void }>,
   ): Promise<{ port: number }> {
@@ -259,9 +253,6 @@ describe("LanServer frame-size caps (S3-F3)", () => {
 
   test("permits a small declared length (e.g. tiny JSON handshake) without closing", async () => {
     const { port } = await startBareServer();
-    // Connect and send only a length header for a small (well under cap) frame.
-    // We do NOT send the body, so handleChunk will return without closing —
-    // proving the cap is what triggers the close, not the mere presence of a header.
     const closed = await probeClosedAfterHeader(port, 100);
     expect(closed).toBe(false);
   });

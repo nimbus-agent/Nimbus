@@ -3,12 +3,6 @@ import { useState } from "react";
 import { useIpcQuery } from "../hooks/useIpcQuery";
 import { createIpcClient } from "../ipc/client";
 
-/**
- * T2 PR 3 — Marketplace "Pending updates" panel. Read-only against
- * `extension.checkForUpdates`; the Update button fires `extension.update`
- * which routes through HITL. Polls every 5 minutes (configurable via the
- * `pollIntervalMs` prop for tests).
- */
 export interface AvailableUpdateUi {
   readonly id: string;
   readonly displayName: string;
@@ -30,6 +24,17 @@ interface PendingUpdatesProps {
   readonly pollIntervalMs?: number;
 }
 
+function formatApplyResult(applyResult: {
+  readonly id: string;
+  readonly result: UpdateApplyResultUi;
+}): string {
+  if (applyResult.result.applied) {
+    return `Updated ${applyResult.id}`;
+  }
+  const hintSuffix = applyResult.result.hint === undefined ? "" : ` — ${applyResult.result.hint}`;
+  return `Update failed: ${applyResult.result.reason}${hintSuffix}`;
+}
+
 const DEFAULT_POLL_MS = 5 * 60_000;
 
 export function PendingUpdates({
@@ -49,10 +54,7 @@ export function PendingUpdates({
   } | null>(null);
   const [inFlight, setInFlight] = useState<string | null>(null);
 
-  // Defensive coercion — `useIpcQuery<T>` doesn't enforce the runtime shape,
-  // and a stale mock or schema regression could hand back a non-array. Render
-  // nothing in that case instead of crashing the Marketplace page.
-  const list: AvailableUpdateUi[] = Array.isArray(data) ? (data as AvailableUpdateUi[]) : [];
+  const list: AvailableUpdateUi[] = Array.isArray(data) ? data : [];
 
   async function handleApply(id: string, toVersion: string): Promise<void> {
     setApplyError(null);
@@ -64,8 +66,6 @@ export function PendingUpdates({
         toVersion,
       });
       setApplyResult({ id, result: res });
-      // Refresh the cache after apply — the row is removed from the cache on success
-      // and stays on failure.
       refetch();
     } catch (e) {
       setApplyError(e instanceof Error ? e.message : String(e));
@@ -74,8 +74,6 @@ export function PendingUpdates({
     }
   }
 
-  // Render nothing when offline, error from check (e.g. daemon not configured),
-  // or no entries — keeps the Marketplace tidy when auto-update is dormant.
   if (offline) return null;
   if (error !== null) return null;
   if (list.length === 0) return null;
@@ -96,11 +94,7 @@ export function PendingUpdates({
           className={`text-sm ${applyResult.result.applied ? "text-green-700" : "text-red-600"}`}
           data-testid={`apply-result-${applyResult.id}`}
         >
-          {applyResult.result.applied
-            ? `Updated ${applyResult.id}`
-            : `Update failed: ${applyResult.result.reason}${
-                applyResult.result.hint !== undefined ? ` — ${applyResult.result.hint}` : ""
-              }`}
+          {formatApplyResult(applyResult)}
         </p>
       )}
       <ul className="flex flex-col gap-2">

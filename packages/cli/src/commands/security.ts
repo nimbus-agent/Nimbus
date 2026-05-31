@@ -1,11 +1,3 @@
-/**
- * `nimbus security scan` — local credential-hygiene scan over the index.
- *
- * Read-only. CLI-only. The Gateway's `security.scan` JSON-RPC method is
- * NOT in the Tauri renderer allowlist and NOT callable over LAN (it is in
- * `FORBIDDEN_OVER_LAN`). See the design spec for the full posture rationale.
- */
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -90,8 +82,8 @@ export function formatScanPretty(result: SecurityScanResult, options: RenderOpti
   const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[0m` : s);
 
   const lines: string[] = [];
-  lines.push("Nimbus security scan");
   lines.push(
+    "Nimbus security scan",
     `Scanned ${String(result.items_scanned)} items, ${String(result.findings_count)} findings.`,
   );
   if (result.items_skipped_depth > 0) {
@@ -116,8 +108,8 @@ export function formatScanPretty(result: SecurityScanResult, options: RenderOpti
       `  ${f.item_id.padEnd(40)}  ${red(f.pattern_name.padEnd(24))}  ${f.match_redacted.padEnd(14)}  ${date}`,
     );
   }
-  lines.push("");
   lines.push(
+    "",
     `${String(result.findings_count)} findings. Review the locations above and rotate credentials if real.`,
   );
   return lines.join("\n");

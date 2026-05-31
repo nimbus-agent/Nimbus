@@ -1,11 +1,3 @@
-/**
- * Bench harness — runs a surface fn N times, captures samples per run,
- * computes per-run aggregates and the across-runs median (median-of-medians).
- *
- * See the B2 perf audit design §4.5 for the
- * aggregation contract.
- */
-
 import { computePercentiles } from "./percentiles.ts";
 import type {
   BenchResultKind,
@@ -29,7 +21,6 @@ function median(values: number[]): number | undefined {
 }
 
 export interface RunBenchDeps {
-  /** Caller-injectable stderr writer (defaults to process.stderr). Tests inject a stub. */
   stderr?: (s: string) => void;
 }
 

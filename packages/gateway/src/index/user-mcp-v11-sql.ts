@@ -1,7 +1,3 @@
-/**
- * User-defined MCP connector spawn specs (generic `connector add --mcp`).
- */
-
 export const USER_MCP_V11_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS user_mcp_connector (
   service_id  TEXT PRIMARY KEY,

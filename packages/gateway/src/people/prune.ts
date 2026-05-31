@@ -2,10 +2,6 @@ import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
 
-/**
- * After index rows for a connector are removed: clear that connector's handle column on all
- * people, then delete persons no longer referenced by any `item.author_id`.
- */
 export function prunePeopleAfterServiceRemoval(db: Database, serviceId: string): void {
   switch (serviceId) {
     case "github":

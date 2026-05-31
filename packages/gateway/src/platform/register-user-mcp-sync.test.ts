@@ -61,11 +61,7 @@ describe("registerUserMcpSyncablesFromDatabase", () => {
     const { scheduler, registered } = fakeScheduler();
     const { mesh, ensureCalls } = fakeMesh();
     registerUserMcpSyncablesFromDatabase(db, scheduler, mesh);
-    // Order matches listUserMcpConnectors' ORDER BY service_id.
     expect(registered.map((r) => r.serviceId)).toEqual(["mcp_alpha", "mcp_beta"]);
-    // The registered Syncable forwards to mesh.ensureUserMcpRunning when its
-    // sync() runs. Validate the closure capture is per-row by invoking the
-    // first one through a fresh sync context.
     expect(ensureCalls).toEqual([]);
   });
 });

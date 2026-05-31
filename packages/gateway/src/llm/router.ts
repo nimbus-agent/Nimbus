@@ -98,7 +98,6 @@ export class LlmRouter {
     if (opts.task === "summarisation" || opts.task === "classification") {
       return { kind: "opts", opts: truncated };
     }
-    // reasoning / agent_step: try remote fallback before falling back to truncation.
     if (this.config.enforceAirGap) {
       throw new Error(
         `Prompt exceeds provider context window and air-gap mode prevents remote fallback`,

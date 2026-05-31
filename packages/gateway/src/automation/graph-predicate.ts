@@ -1,25 +1,3 @@
-/**
- * Graph-aware watcher predicates.
- *
- * Predicate JSON shape (stored in `watcher.graph_predicate_json`):
- *
- *   {
- *     "relation": "owned_by" | "upstream_of" | "downstream_of",
- *     "target":   { "type": string, "externalId": string }
- *   }
- *
- * Logical relation kinds map onto sets of concrete `graph_relation.type`
- * values emitted by `graph-populator.ts`:
- *
- *   owned_by       ← target PERSON → item via  authored | opened | posted
- *   upstream_of    ← item → target  via  any outgoing edge (belongs_to, targets, in_repo, defined_in, depends_on)
- *   downstream_of  ← target → item  via  any outgoing edge (same set, direction reversed)
- *
- * Predicate evaluation is a *filter*: a candidate item matches the watcher
- * iff its `graph_entity` row (resolved via `deterministicGraphEntityId`) has
- * a direct graph-edge to the target entity in the logical direction.
- */
-
 import type { Database } from "bun:sqlite";
 import { deterministicGraphEntityId, traverseGraph } from "../graph/relationship-graph.ts";
 
@@ -129,9 +107,6 @@ export type ItemMatchContext = {
   predicate: GraphPredicate;
 };
 
-// `upstream_of` checks item→target; all other relations check target→item.
-// `traverseGraph` fetches edges in both directions, so the target→item edge
-// for `downstream_of` appears in the depth=1 result.
 function edgeMatchesDirection(
   rel: { from_id: string; to_id: string },
   relation: GraphRelationKind,
@@ -144,11 +119,6 @@ function edgeMatchesDirection(
   return rel.from_id === targetEntityId && rel.to_id === itemEntityId;
 }
 
-/**
- * Returns `true` iff the item referenced by (`itemEntityType`, `itemExternalId`)
- * has a **direct graph edge** (depth 1) to the predicate's target in the
- * direction implied by `predicate.relation`.
- */
 export function itemMatchesGraphPredicate(ctx: ItemMatchContext): boolean {
   const { db, itemEntityType, itemExternalId, predicate } = ctx;
   const itemEntityId = deterministicGraphEntityId(itemEntityType, itemExternalId);
@@ -172,17 +142,10 @@ export function itemMatchesGraphPredicate(ctx: ItemMatchContext): boolean {
 export type ValidateCountContext = {
   db: Database;
   predicate: GraphPredicate;
-  /** `item.modified_at` lower bound (exclusive). Prevents unbounded scans. */
   sinceMs: number;
-  /** Hard cap on scanned candidate items. Default 5_000. */
   maxScan?: number;
 };
 
-/**
- * Read-only preview count used by `watcher.validateCondition`. Scans at most
- * `maxScan` recent items and returns how many satisfy the predicate. Does
- * NOT leak item content or secrets — caller only sees the count.
- */
 export function countItemsMatchingGraphPredicate(ctx: ValidateCountContext): number {
   const { db, predicate, sinceMs } = ctx;
   const maxScan = ctx.maxScan ?? 5_000;

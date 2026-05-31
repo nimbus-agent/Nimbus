@@ -43,7 +43,6 @@ test("indexes notes from a fixture vault root", async () => {
   const shadow = db
     .query("SELECT path, daily_note_date FROM obsidian_notes ORDER BY path")
     .all() as Array<{ path: string; daily_note_date: string | null }>;
-  // The Daily/2026-05-10.md note has its dailyNoteDate set.
   const daily = shadow.find((s) => s.path === "Daily/2026-05-10.md");
   expect(daily?.daily_note_date).toBe("2026-05-10");
 });
@@ -92,7 +91,6 @@ test("touching a note re-emits only that note", async () => {
   const db = createMemoryIndexDb();
   const r1 = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
   expect(r1.itemsUpserted).toBe(2);
-  // Bump A.md mtime by 60 s
   const future = new Date(Date.now() + 60_000);
   utimesSync(join(root, "A.md"), future, future);
   const r2 = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), r1.cursor);

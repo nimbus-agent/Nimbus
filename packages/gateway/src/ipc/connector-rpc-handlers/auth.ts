@@ -4,7 +4,10 @@ import {
   NOTION_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_SECRET_HELP,
   SLACK_OAUTH_CLIENT_ID_HELP,
+  ZOOM_OAUTH_CLIENT_ID_HELP,
+  ZOOM_OAUTH_CLIENT_SECRET_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
+import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
 import { type PKCEOptions, runPKCEFlow } from "../../auth/pkce.ts";
 import { Config } from "../../config.ts";
 import {
@@ -518,15 +521,26 @@ async function connectorAuthBitbucket(
   return authSuccess("bitbucket");
 }
 
-function oauthClientConfigForProvider(profile: ReturnType<typeof oauthProfileForService>): {
-  clientId: string;
-  emptyClientIdMessage: string;
-} {
+interface OAuthClientConfig {
+  readonly clientId: string;
+  readonly emptyClientIdMessage: string;
+  /** Present when the provider has a config-driven client secret AND it is set. */
+  readonly clientSecret?: string;
+  /** Present when the provider's `clientSecret` is `required` (for the missing-secret error). */
+  readonly clientSecretMissingHelp?: string;
+}
+
+function oauthClientConfigForProvider(
+  profile: ReturnType<typeof oauthProfileForService>,
+): OAuthClientConfig {
   switch (profile.provider) {
     case "google":
       return {
         clientId: Config.oauthGoogleClientId,
         emptyClientIdMessage: GOOGLE_OAUTH_CLIENT_ID_HELP,
+        ...(Config.oauthGoogleClientSecret === ""
+          ? {}
+          : { clientSecret: Config.oauthGoogleClientSecret }),
       };
     case "microsoft":
       return {
@@ -542,6 +556,15 @@ function oauthClientConfigForProvider(profile: ReturnType<typeof oauthProfileFor
       return {
         clientId: Config.oauthNotionClientId,
         emptyClientIdMessage: NOTION_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthNotionClientSecret,
+        clientSecretMissingHelp: NOTION_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "zoom":
+      return {
+        clientId: Config.oauthZoomClientId,
+        emptyClientIdMessage: ZOOM_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthZoomClientSecret,
+        clientSecretMissingHelp: ZOOM_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;
@@ -558,36 +581,37 @@ async function connectorAuthOAuthPkce(
   openUrl: (url: string) => Promise<void>,
 ): Promise<ConnectorRpcHit> {
   const profile = oauthProfileForService(id);
-  const { clientId, emptyClientIdMessage } = oauthClientConfigForProvider(profile);
-  if (clientId === "") {
-    throw new ConnectorRpcError(-32602, emptyClientIdMessage);
+  const config = oauthClientConfigForProvider(profile);
+  if (config.clientId === "") {
+    throw new ConnectorRpcError(-32602, config.emptyClientIdMessage);
   }
-  const notionSecret = profile.provider === "notion" ? Config.oauthNotionClientSecret : undefined;
-  if (profile.provider === "notion" && (notionSecret === undefined || notionSecret === "")) {
-    throw new ConnectorRpcError(-32602, NOTION_OAUTH_CLIENT_SECRET_HELP);
+  if (
+    OAUTH_PROVIDERS[profile.provider].clientSecret === "required" &&
+    (config.clientSecret === undefined || config.clientSecret === "")
+  ) {
+    throw new ConnectorRpcError(
+      -32602,
+      config.clientSecretMissingHelp ?? `Missing OAuth client secret for ${profile.provider}`,
+    );
   }
   const scopes = oauthScopesFromConnectorRequest(rec, profile.defaultScopes);
   const redirectPort = oauthRedirectPortFromRec(rec);
 
   const pkceBase: PKCEOptions = {
-    clientId,
+    clientId: config.clientId,
     scopes,
     provider: profile.provider,
     vault,
     openUrl,
   };
-  let merged: PKCEOptions = pkceBase;
-  if (profile.provider === "notion" && notionSecret !== undefined && notionSecret !== "") {
-    merged = { ...merged, oauthClientSecret: notionSecret };
-  } else if (profile.provider === "google" && Config.oauthGoogleClientSecret !== "") {
-    merged = { ...merged, oauthClientSecret: Config.oauthGoogleClientSecret };
-  }
+  const merged: PKCEOptions =
+    config.clientSecret !== undefined && config.clientSecret !== ""
+      ? { ...pkceBase, oauthClientSecret: config.clientSecret }
+      : pkceBase;
   const pkceFlowInput: PKCEOptions =
     redirectPort === undefined ? merged : { ...merged, redirectPort };
   const tokens = await runPKCEFlow(pkceFlowInput);
 
-  // Mirror the token to the per-service vault key so each connector reads
-  // only its own key (scope isolation).
   let sharedKey: string | undefined;
   if (profile.provider === "google") {
     sharedKey = sharedOAuthKey("google");

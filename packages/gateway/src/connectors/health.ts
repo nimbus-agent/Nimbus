@@ -1,30 +1,13 @@
-/**
- * Connector health state machine.
- *
- * `transitionHealth()` is the single point of entry for all health state changes.
- * It updates `sync_state` in place and appends a row to `connector_health_history`
- * so that `nimbus connector history <name>` can show a timeline.
- *
- * Design notes:
- *  - All state transitions go through this function — callers never write directly
- *    to `sync_state.health_state`.
- *  - History rows are pruned by the weekly retentionDays pruner (>7 days old).
- *  - `last_error` is truncated to 512 chars to prevent runaway DB growth.
- */
-
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
 
-/** Uniform jitter in [0, maxExclusive) for backoff spacing (CSPRNG). */
 function jitterBelowMs(maxExclusive: number): number {
   const word = new Uint32Array(1);
   crypto.getRandomValues(word);
   const u = word[0] ?? 0;
   return (u / 2 ** 32) * maxExclusive;
 }
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ConnectorHealthState =
   | "healthy"
@@ -61,14 +44,8 @@ function truncate(s: string): string {
   return s.length > MAX_ERROR_LENGTH ? `${s.slice(0, MAX_ERROR_LENGTH - 3)}...` : s;
 }
 
-// ─── State-transition table ───────────────────────────────────────────────────
-
 type HealthEventWithStateChange = Exclude<HealthEvent, { type: "skipped_offline" }>;
 
-/**
- * Derive the next `ConnectorHealthState` from an incoming event.
- * The `attempt` field on `transient_error` is provided by the caller (scheduler).
- */
 function nextState(event: HealthEventWithStateChange, maxAttempts: number): ConnectorHealthState {
   switch (event.type) {
     case "sync_success":
@@ -87,8 +64,6 @@ function nextState(event: HealthEventWithStateChange, maxAttempts: number): Conn
       return "healthy";
   }
 }
-
-// ─── DB helpers ───────────────────────────────────────────────────────────────
 
 interface SyncStateHealthRow {
   health_state: string;
@@ -121,7 +96,6 @@ function upsertHealthRow(
     last_error: string | null;
   },
 ): void {
-  // Ensure a sync_state row exists (may not exist yet for brand-new connectors).
   dbRun(
     db,
     `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token) VALUES (?, NULL, NULL)`,
@@ -164,20 +138,8 @@ function appendHistory(
   );
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/** Default max transient-error attempts before entering `error` state. */
 export const DEFAULT_MAX_BACKOFF_ATTEMPTS = 10;
 
-/**
- * Apply `event` to the health state of `connectorId`, persist the new state,
- * and append a history row. Returns the updated snapshot.
- *
- * @param db            Open read-write bun:sqlite Database (V13+ schema).
- * @param connectorId   The connector's `service_id` string.
- * @param event         The health event to apply.
- * @param maxAttempts   Max transient failures before entering `error` (default 10).
- */
 export function transitionHealth(
   db: Database,
   connectorId: string,
@@ -195,7 +157,6 @@ export function transitionHealth(
 
   const to = nextState(event, maxAttempts);
 
-  // Compute updated fields based on event type.
   let retryAfterMs: number | null = current?.retry_after ?? null;
   let backoffUntilMs: number | null = current?.backoff_until ?? null;
   let backoffAttempt: number = current?.backoff_attempt ?? 0;
@@ -226,7 +187,6 @@ export function transitionHealth(
       backoffAttempt = event.attempt;
       lastError = truncate(event.error);
       reason = truncate(`transient error (attempt ${String(event.attempt)}): ${event.error}`);
-      // Compute exponential backoff window.
       const baseMs = 5_000;
       const maxBackoffMs = 3_600_000;
       const jitter = jitterBelowMs(500);
@@ -253,7 +213,6 @@ export function transitionHealth(
       break;
   }
 
-  // Persist only when the state actually changes (or fields differ).
   const effectiveState = to;
 
   db.transaction(() => {
@@ -271,18 +230,11 @@ export function transitionHealth(
   return buildSnapshot(connectorId, updated);
 }
 
-/**
- * Read the current health snapshot for a connector without mutating state.
- * Returns a default healthy snapshot if the connector has no `sync_state` row.
- */
 export function getConnectorHealth(db: Database, connectorId: string): ConnectorHealthSnapshot {
   const row = readHealthRow(db, connectorId);
   return buildSnapshot(connectorId, row);
 }
 
-/**
- * Read health snapshots for all connectors that have a `sync_state` row.
- */
 export function getAllConnectorHealth(db: Database): ConnectorHealthSnapshot[] {
   const rows = db
     .query(
@@ -304,9 +256,6 @@ export function getAllConnectorHealth(db: Database): ConnectorHealthSnapshot[] {
   );
 }
 
-/**
- * Retrieve the last `limit` history rows for a connector, most recent first.
- */
 export interface HealthHistoryRow {
   id: number;
   connectorId: string;
@@ -348,10 +297,6 @@ export function getConnectorHealthHistory(
   }));
 }
 
-/**
- * Prune history rows older than `maxAgeDays` for all connectors.
- * Called by the weekly retention pruner.
- */
 export function pruneConnectorHealthHistory(db: Database, maxAgeDays: number): number {
   const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   const result = dbRun(db, `DELETE FROM connector_health_history WHERE occurred_at < ?`, [
@@ -359,8 +304,6 @@ export function pruneConnectorHealthHistory(db: Database, maxAgeDays: number): n
   ]);
   return result.changes;
 }
-
-// ─── Internal helper ─────────────────────────────────────────────────────────
 
 function buildSnapshot(
   connectorId: string,

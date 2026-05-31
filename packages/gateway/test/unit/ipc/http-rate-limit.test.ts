@@ -30,7 +30,7 @@ describe("HttpWriteRateLimiter", () => {
     t = 600;
     const r = rl.check("fp1");
     expect(r.allowed).toBe(false);
-    expect(r.resetMs).toBe(1000); // earliest at t=0 expires at t=1000
+    expect(r.resetMs).toBe(1000);
   });
 
   test("sliding window — old requests roll off", () => {

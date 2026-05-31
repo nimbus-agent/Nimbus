@@ -73,11 +73,11 @@ describe("UpdaterRestartChrome", () => {
         useNimbusStore.getState().setUpdaterUiState("reconnecting");
       });
       await act(async () => {
-        vi.advanceTimersByTime(60_000); // 1 minute — still reconnecting
+        vi.advanceTimersByTime(60_000);
       });
       expect(useNimbusStore.getState().updaterUiState).toBe("reconnecting");
       await act(async () => {
-        vi.advanceTimersByTime(61_000); // pass the 2-minute mark
+        vi.advanceTimersByTime(61_000);
       });
       expect(useNimbusStore.getState().updaterUiState).toBe("failed");
       expect(useNimbusStore.getState().updaterFailure).toEqual({ reason: "reconnect_timeout" });

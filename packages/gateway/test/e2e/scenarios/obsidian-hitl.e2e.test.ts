@@ -17,10 +17,6 @@ test("obsidian.note.append is in HITL_REQUIRED (structural)", () => {
 });
 
 test("audit log entry is written before the dispatcher executes the append", async () => {
-  // executor.ts:228–247 enforces audit-before-dispatch ordering. We verify
-  // by recording call order on spies. The third constructor arg is named
-  // `connectors` in the executor source; any value with a `dispatch` method
-  // satisfies the `ConnectorDispatcher` shape used here.
   const calls: Array<"audit" | "dispatch"> = [];
   const audit = {
     recordAudit: () => {
@@ -52,8 +48,6 @@ test("audit log entry is written before the dispatcher executes the append", asy
 
 test("rejecting the consent prompt returns rejected and never dispatches", async () => {
   const { root, vaultId } = buildVault();
-  // Existing daily-note content — confirms a rejected execute() does not
-  // touch the file.
   const dailyPath = join(root, "2026-05-10.md");
   writeFileSync(dailyPath, "before");
 
@@ -86,9 +80,7 @@ test("rejecting the consent prompt returns rejected and never dispatches", async
 
   expect(result.status).toBe("rejected");
   expect(dispatched).toBe(false);
-  // Audit row is still written for rejected actions (executor.ts:228–236).
   expect(auditCalls).toBe(1);
-  // File is untouched.
   expect(existsSync(dailyPath)).toBe(true);
   expect(readFileSync(dailyPath, "utf8")).toBe("before");
 });

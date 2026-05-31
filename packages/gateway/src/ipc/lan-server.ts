@@ -3,15 +3,8 @@ import type { BoxKeypair } from "./lan-crypto.ts";
 import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 
-/**
- * Frame-size caps — S3-F3.
- * MAX_HANDSHAKE_FRAME caps the unauthenticated pre-pair JSON envelope.
- * MAX_ENCRYPTED_FRAME caps the post-pair NaCl-box ciphertext (incl. nonce + tag).
- * MAX_PENDING_BYTES caps the per-socket merged buffer (defends against TCP
- * drip-feed where the attacker streams bytes one at a time).
- */
 export const MAX_HANDSHAKE_FRAME = 4_096;
-export const MAX_ENCRYPTED_FRAME = 4 * 1024 * 1024; // 4 MiB
+export const MAX_ENCRYPTED_FRAME = 4 * 1024 * 1024;
 export const MAX_PENDING_BYTES = MAX_ENCRYPTED_FRAME + 65_536;
 
 export interface PairingService {
@@ -89,7 +82,6 @@ export class LanServer {
   private async handleChunk(socket: Socket<SessionState>, chunk: Uint8Array): Promise<void> {
     const prev = socket.data.buffer;
     if (prev.length + chunk.length > MAX_PENDING_BYTES) {
-      // S3-F3 — refuse to accumulate gigabytes of drip-fed bytes.
       socket.end();
       return;
     }
@@ -107,8 +99,6 @@ export class LanServer {
       const length = view.getUint32(0, false);
       const cap = socket.data.peerPubkey ? MAX_ENCRYPTED_FRAME : MAX_HANDSHAKE_FRAME;
       if (length > cap) {
-        // S3-F3 — declared frame is too large; for unauthenticated peers, also
-        // record a rate-limit failure so repeat offenders are locked out.
         if (!socket.data.peerPubkey) {
           this.opts.rateLimit.recordFailure(socket.data.peerIp);
         }
@@ -155,10 +145,6 @@ export class LanServer {
 
     const ip = socket.data.peerIp;
     if (!this.opts.rateLimit.checkAllowed(ip)) {
-      // S3-F6 — kind-aware lockout reply: replying `pair_err` to a `hello`
-      // probe leaks the fact that the IP is locked-out from the pair flow,
-      // a small cross-kind side-channel. Match the request kind so a hello
-      // gets `hello_err` and a pair gets `pair_err`.
       this.writeFrame(
         socket,
         JSON.stringify({ kind: msg.kind === "hello" ? "hello_err" : "pair_err" }),
@@ -196,12 +182,8 @@ export class LanServer {
       return;
     }
 
-    // kind === "hello"
     const match = this.opts.isKnownPeer(clientPubkey);
     if (!match) {
-      // S3-F4 — record the failure so an attacker cannot churn through
-      // unknown pubkeys without consuming the per-IP failure budget. Silent
-      // socket.end() previously left the rate limiter blind to scanning.
       this.opts.rateLimit.recordFailure(ip);
       this.writeFrame(socket, JSON.stringify({ kind: "hello_err" }));
       socket.end();

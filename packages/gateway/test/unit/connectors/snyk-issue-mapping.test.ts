@@ -2,11 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { mapSnykAggregatedIssueToItem } from "../../../src/connectors/snyk-issue-mapping.ts";
 
-// Build a realistic Snyk aggregated-issue row. Snyk's payload shape is stable
-// across the open-source / container / IaC issue types we care about for
-// indexing. Tests below mutate this fixture and assert specific mapping
-// behaviours — they document the contract `mapSnykAggregatedIssueToItem`
-// owes the gateway's `snyk-sync.ts` integration.
 function makeIssue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base: Record<string, unknown> = {
     id: "SNYK-JS-LODASH-1018905",

@@ -1,18 +1,3 @@
-/**
- * Node-compat test for @nimbus-dev/client. Runs under `node --test`,
- * not `bun test`. Validates the dual-runtime IPC transport against a
- * real Gateway subprocess on Linux/macOS (Unix socket) and Windows
- * (named pipe).
- *
- * This file is inert when NIMBUS_GATEWAY_BIN is not set, so `bun test`
- * (which runs without the env var) discovers it without side effects;
- * CI invokes it explicitly via `node --import tsx/esm --test` with
- * the env var set.
- *
- * The import of `../dist/index.js` is dynamic and guarded so `bun test`
- * does not fail with module-not-found when no build artefacts exist.
- */
-
 import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -21,16 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 const GATEWAY_BIN = process.env.NIMBUS_GATEWAY_BIN;
-// Gateway startup includes initializing the embedding runtime (@xenova/
-// transformers + native sharp binaries). On a cold-cache Windows GHA
-// runner this regularly takes 20-40 s. Empirical: rc3 release run
-// 25454797314 had the gateway alive (exit=null) but pipe-not-yet-ready
-// at the 15 s cutoff. 60 s gives ~2× headroom over observed worst-case.
 const STARTUP_TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 30_000;
-// Per-test cap. Must comfortably exceed STARTUP_TIMEOUT_MS + STREAM_TIMEOUT_MS
-// + teardown, otherwise node:test cancels the whole test before its assertions
-// can run. 60 s + 30 s + slack = 120 s.
 const NODE_TEST_TIMEOUT_MS = 120_000;
 
 if (GATEWAY_BIN === undefined) {
@@ -100,7 +77,6 @@ if (GATEWAY_BIN === undefined) {
       exitSignal = signal;
     });
     const diag = (): ProcDiagnostics => ({ stdout, stderr, exitCode, exitSignal });
-    // Discover the socket path the gateway will write to its state file
     const r = await discoverSocketPath();
     try {
       await waitForSocket(r.socketPath, STARTUP_TIMEOUT_MS, diag);
@@ -111,11 +87,6 @@ if (GATEWAY_BIN === undefined) {
     return { proc, socketPath: r.socketPath, diag };
   };
 
-  // Race a promise against a per-stream deadline. On timeout, throw an error
-  // that includes the gateway's captured stdout+stderr so we can see what the
-  // gateway was doing while the stream hung (e.g. blocked on an unconfigured
-  // LLM, model download, connector init, etc.) instead of staring at a bare
-  // wall-clock timeout.
   const withStreamTimeout = async <T>(
     label: string,
     p: Promise<T>,

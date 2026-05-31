@@ -38,7 +38,6 @@ describe("scrubRedactedValuePatterns (S2-F9)", () => {
   });
 
   test("strips Slack xoxb tokens", () => {
-    // gitleaks:allow — synthetic fixture for redaction unit test
     expect(scrubRedactedValuePatterns("token=xoxb-1234-5678-AbCdEf")).toBe("token=[REDACTED]");
   });
 
@@ -47,7 +46,6 @@ describe("scrubRedactedValuePatterns (S2-F9)", () => {
   });
 
   test("strips JWT tokens", () => {
-    // gitleaks:allow — synthetic fixture for redaction unit test
     const jwt = "eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NX0.SflKxwRJSMeKKF2QT4fwpMeJ";
     expect(scrubRedactedValuePatterns(`bearer ${jwt}`)).toBe("bearer [REDACTED]");
   });
@@ -68,7 +66,6 @@ describe("createGatewayPinoLoggerForStream — redaction (S2-F9)", () => {
     logger.warn({ err }, "OpenAI embedder init failed");
     const blob = lines().join("");
     expect(blob.includes("top-secret-token-1234567890")).toBe(false);
-    // The bare label must remain so the operator sees what failed.
     expect(blob.includes("OpenAI embedder init failed")).toBe(true);
   });
 

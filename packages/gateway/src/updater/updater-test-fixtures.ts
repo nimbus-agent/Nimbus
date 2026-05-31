@@ -33,11 +33,6 @@ export function buildSignedManifest(
   };
 }
 
-/**
- * S6-F6 — builds a manifest where each per-target signature is over the
- * canonical envelope `JSON.stringify({ version, target, sha256 })` rather
- * than over the bare SHA-256. Use this in tests for envelope-mode fixtures.
- */
 export function buildEnvelopeSignedManifest(
   binary: Uint8Array,
   kp: nacl.SignKeyPair,

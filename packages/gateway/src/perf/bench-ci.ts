@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-/**
- * `bench-ci.ts` — orchestrator invoked by `_perf.yml` after the bench
- * step writes its current history line. Pulls the latest same-runner
- * main artifact, compares against current via the pure
- * `compareAgainstHistory()`, upserts a PR comment via the
- * `<!-- nimbus-perf-delta:${runner} -->` marker, and exits non-zero
- * when any **gated** UX surface fails its threshold.
- *
- * Spec source: § 5.4 of the PR-C-1 design.
- */
 
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,11 +16,9 @@ import type { RunnerKind } from "./types.ts";
 
 export interface RunBenchCiDeps {
   gh: GhCli;
-  /** Lookup for env vars. Tests inject a literal record. */
   env?: Record<string, string | undefined>;
   stdout?: (s: string) => void;
   stderr?: (s: string) => void;
-  /** Tmp directory for temp files (body file, prev artifact). */
   tmpDir?: string;
 }
 
@@ -56,9 +44,6 @@ function parseArgs(args: string[]): ParsedArgs {
 }
 
 function parseHistoryFile(path: string): HistoryLine {
-  // history.jsonl is append-only — read the last non-empty line. Earlier
-  // lines may exist when a SIGTERM-incomplete entry was written before a
-  // complete one, or when the path is reused across runs.
   const raw = readFileSync(path, "utf8");
   const lines = raw.split("\n").filter((s) => s.trim() !== "");
   const last = lines[lines.length - 1];
@@ -67,7 +52,6 @@ function parseHistoryFile(path: string): HistoryLine {
 }
 
 function readPullRequestNumber(env: Record<string, string | undefined>): number | null {
-  // GITHUB_REF on a pull_request event looks like "refs/pull/<num>/merge".
   const ref = env["GITHUB_REF"];
   if (ref === undefined) return null;
   const m = /^refs\/pull\/(\d+)\//.exec(ref);
@@ -103,11 +87,6 @@ async function resolvePreviousArtifact(
   if (prevSha === null) return null;
 
   mkdirSync(prevDir, { recursive: true });
-  // Artifact name must match the upload step in `.github/workflows/_perf.yml`.
-  // We use the full runner kind (e.g. `gha-ubuntu`) on both sides — see
-  // `runner_id` derivation in the workflow's "Compare" step. Earlier
-  // versions stripped `gha-` here, but the upload kept the matrix OS
-  // version (`ubuntu-24.04`), causing every download to silently 404.
   const artifactName = `perf-${runner}-${prevSha}`;
   let downloaded = false;
   try {
@@ -120,7 +99,6 @@ async function resolvePreviousArtifact(
   }
   if (!downloaded) return null;
 
-  // bench-runner.ts artifact contains run-history.jsonl in the dir root.
   try {
     return parseHistoryFile(join(prevDir, "run-history.jsonl"));
   } catch (err) {
@@ -139,12 +117,6 @@ async function upsertComment(
   tmpDir: string,
   env: Record<string, string | undefined>,
 ): Promise<void> {
-  // Write the comment body to a file inside a freshly-created per-call
-  // scratch dir, not to a predictable path under `tmpDir`. CodeQL
-  // (`js/insecure-temporary-file`) flags writeFileSync on a fixed name
-  // in os tmpdir as a TOCTOU/symlink-attack hazard. `mkdtempSync` returns
-  // a unique 0700 directory we own, so the bodyFile path is not
-  // predictable to a coresident process.
   const scratchDir = mkdtempSync(join(tmpDir, `bench-ci-comment-${runner}-`));
   const bodyFile = join(scratchDir, "body.md");
   writeFileSync(bodyFile, body, "utf8");
@@ -203,7 +175,6 @@ export async function runBenchCiMain(args: string[], deps: RunBenchCiDeps): Prom
       try {
         await upsertComment(deps.gh, pr, runner, body, tmpRoot, env);
       } catch (err) {
-        // Comment failures must not fail the build.
         stderr(
           `bench-ci: comment upsert failed: ${err instanceof Error ? err.message : String(err)}`,
         );

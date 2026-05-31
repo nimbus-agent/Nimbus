@@ -34,13 +34,15 @@ const CHECK_ORDER = ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"
 
 export function renderJobSummary(env: Envelope): string {
   const lines: string[] = [];
-  lines.push(`### Nimbus pre-deploy preflight — ${env.service} @ \`${env.target_ref}\``);
-  lines.push("");
-  lines.push(`**Verdict:** \`${env.verdict}\``);
-  lines.push(`**Computed at:** ${env.computed_at}`);
-  lines.push("");
-  lines.push("| Check | Count | Gap |");
-  lines.push("|---|---:|---|");
+  lines.push(
+    `### Nimbus pre-deploy preflight — ${env.service} @ \`${env.target_ref}\``,
+    "",
+    `**Verdict:** \`${env.verdict}\``,
+    `**Computed at:** ${env.computed_at}`,
+    "",
+    "| Check | Count | Gap |",
+    "|---|---:|---|",
+  );
   for (const key of CHECK_ORDER) {
     const m = env.checks[key];
     const gap = m.gap === null ? "" : `\`${m.gap}\``;
@@ -49,9 +51,7 @@ export function renderJobSummary(env: Envelope): string {
   for (const key of CHECK_ORDER) {
     const m = env.checks[key];
     if (m.findings.length === 0) continue;
-    lines.push("");
-    lines.push(`<details><summary>${CHECK_LABELS[key]} (${m.count})</summary>`);
-    lines.push("");
+    lines.push("", `<details><summary>${CHECK_LABELS[key]} (${m.count})</summary>`, "");
     for (const f of m.findings) {
       const linkPart = f.url ? ` — ${f.url}` : "";
       lines.push(`- \`${f.id}\` — ${f.title}${linkPart}`);
@@ -84,10 +84,6 @@ export function renderAnnotations(env: Envelope, mode: PreflightMode): Annotatio
   return out;
 }
 
-/**
- * Maps server verdict + mode + reachability to the Action's exit code.
- * Per spec §6.5 (with the allow-gateway-failure escape hatch).
- */
 export function decideExitCode(args: {
   verdict: "ok" | "warn";
   mode: PreflightMode;

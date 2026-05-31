@@ -1,18 +1,6 @@
-/**
- * Bun-Worker coordinator for S10 (SQLite write contention).
- *
- * Spawns N Workers via the injectable `WorkerCtor` (defaults to native
- * `Worker`), drives them through a typed message protocol
- * (init → ready → start → done | error), and aggregates writes/sec +
- * busyRetries + errors[] across the fleet.
- */
-
 export interface WorkerSpec {
-  /** Logical role — "sync" | "watcher" | "audit"; surfaced in perWorker[] and errors[]. */
   name: string;
-  /** URL to the worker entry script. */
   url: URL;
-  /** Worker-specific config blob; passed verbatim in the `init` message. */
   config: Record<string, unknown>;
 }
 
@@ -20,12 +8,7 @@ export interface WorkerBenchOptions {
   workers: WorkerSpec[];
   durationMs: number;
   sharedDbPath: string;
-  /**
-   * Test-injectable Worker constructor. Defaults to global `Worker`.
-   * D-1 in the plan: native Worker takes only a URL — no opts arg.
-   */
   WorkerCtor?: typeof Worker;
-  /** Hard deadline. Defaults to durationMs + 5000. */
   timeoutMs?: number;
 }
 
@@ -155,7 +138,6 @@ function terminateAll(states: PerWorkerState[]): void {
 }
 
 async function drainAndTerminate(states: PerWorkerState[]): Promise<void> {
-  // Give workers up to 2 s to drain after stop, then terminate.
   await Promise.race([
     Promise.all(states.map((s) => s.donePromise)),
     new Promise<void>((r) => setTimeout(r, 2_000)),
@@ -195,14 +177,11 @@ export async function runWorkerBench(opts: WorkerBenchOptions): Promise<WorkerBe
     setupWorker(spec, Ctor, opts.sharedDbPath),
   );
 
-  // Wait for ready (or error) from each Worker.
   await Promise.all(states.map((s) => s.readyPromise));
 
-  // Drive the run from any worker that hit ready, then race done-promises against the deadline.
   dispatchStart(states, opts.durationMs);
   const winner = await awaitDoneOrTimeout(states, timeoutMs);
 
-  // After done OR timeout, broadcast stop, then terminate (with grace period on done).
   broadcastStop(states);
   if (winner === "timeout") {
     terminateAll(states);

@@ -2,6 +2,12 @@ name: Test Suite
 
 # Reusable workflow — called by ci.yml (pr-quality-ts and ci-ts).
 # Runs all TS/Bun checks and tests for a single OS runner.
+#
+# Structure: split into parallel jobs so the PR critical path is the max
+# of the longest job, not the sum. The old monolithic `test` job ran for
+# ~9.5 min on ubuntu PRs; with this split the critical path is the
+# `unit-coverage` job (~5 min on ubuntu) plus the `coverage-gates` matrix
+# (~1 min), and the other jobs run alongside.
 on:
   workflow_call:
     inputs:
@@ -26,17 +32,77 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test — ${{ inputs.runner }}
+  # ── Static checks: typecheck, lint, audits, monorepo build ────────────────
+  # All static gates that don't need a test environment. Runs in parallel with
+  # the test jobs below; the longest job (unit-coverage) sets the critical
+  # path on ubuntu PRs.
+  static:
+    name: Static — ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      # Required before Typecheck — vscode-extension imports @nimbus-dev/client
+      # whose exports field points at dist/index.d.ts. Without an explicit build
+      # the workspace symlink resolves but the type declarations don't exist.
+      - name: Build @nimbus-dev/client (for vscode-extension typecheck)
+        run: cd packages/client && bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint + format (Biome)
+        run: bun run lint
+
+      - name: Doc references (CLAUDE.md / GEMINI.md / docs / .claude/commands)
+        # Verifies that every file path written as a backtick-wrapped repo
+        # ref or as a Markdown link target in the AI-context docs resolves
+        # to a real file in the working tree, and that any `:NN` line-number
+        # suffix is within the file's bounds. See
+        # scripts/structure-audit/check-doc-references.ts for the scan
+        # surface and exclusions (roadmap.md is exempt — it describes
+        # forward-looking phase files by design).
+        run: bun run audit:doc-refs
+
+      - name: OpenAPI drift check
+        run: bun run audit:openapi-drift
+
+      - name: Cross-platform audit (test path assertions)
+        run: bun run audit:cross-platform
+
+      - name: regen-slo drift check
+        run: bun run regen-slo:check
+
+      - name: Build all packages
+        run: bun run build
+
+  # ── Unit tests + UI + coverage + Sonar ─────────────────────────────────────
+  # The longest single job. Produces the merged coverage/lcov.info that the
+  # coverage-gates matrix and the per-file coverage floor consume.
+  unit-coverage:
+    name: Unit + Coverage — ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
-
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -51,8 +117,8 @@ jobs:
           # refs/remotes/origin` and falls back to treating every changed file
           # as new — which flips `new_coverage` to ~0% and surfaces every
           # legacy hotspot as unreviewed-new, failing the Quality Gate
-          # spuriously. Only the `test` job checkout needs this; `coverage-
-          # gates` and `client-node-compat` do not invoke the scanner.
+          # spuriously. Only this job's checkout needs the full history; the
+          # other jobs use the default shallow clone.
           fetch-depth: 0
 
       - name: Setup Bun and install dependencies
@@ -88,37 +154,6 @@ jobs:
           security default-keychain -s nimbus-ci.keychain
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
-
-      # Required before Typecheck — vscode-extension imports @nimbus-dev/client
-      # whose exports field points at dist/index.d.ts. Without an explicit build
-      # the workspace symlink resolves but the type declarations don't exist.
-      - name: Build @nimbus-dev/client (for vscode-extension typecheck)
-        run: cd packages/client && bun run build
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint + format (Biome)
-        run: bun run lint
-
-      - name: Doc references (CLAUDE.md / GEMINI.md / docs / .claude/commands)
-        # Verifies that every file path written as a backtick-wrapped repo
-        # ref or as a Markdown link target in the AI-context docs resolves
-        # to a real file in the working tree, and that any `:NN` line-number
-        # suffix is within the file's bounds. See
-        # scripts/structure-audit/check-doc-references.ts for the scan
-        # surface and exclusions (roadmap.md is exempt — it describes
-        # forward-looking phase files by design).
-        run: bun run audit:doc-refs
-
-      - name: OpenAPI drift check
-        run: bun run audit:openapi-drift
-
-      - name: regen-slo drift check
-        run: bun run regen-slo:check
-
-      - name: Build all packages
-        run: bun run build
 
       # Bun writes JUnit XML here. Do not use `reports/` — it is gitignored and dorny/test-reporter's fast-glob skips ignored paths.
       - name: Prepare test report directory
@@ -346,45 +381,151 @@ jobs:
         # action directly so its SHA pin is visible (the repo enforces
         # sha_pinning_required=true, which blocks transitively-unpinned actions).
         if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
+        # Advisory, not a gate: an external sonar-scanner failure (e.g. exit 3) must
+        # not fail the build. Analysis still uploads to the SonarCloud dashboard.
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      - name: Integration tests
-        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
-        env:
-          CI: "true"
-
-      - name: E2E Gateway tests
-        run: bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
-        env:
-          CI: "true"
-
-      - name: E2E CLI tests
-        run: bun test packages/cli/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-cli.xml
-        env:
-          CI: "true"
-
-      - name: Headless bundle + Linux installers
-        if: inputs.run-packaging
-        shell: bash
-        run: |
-          set -e
-          mkdir -p dist
-          (cd packages/gateway && bun build src/index.ts --compile --outfile ../../dist/nimbus-gateway --target bun)
-          (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
-          bun scripts/package-headless-bundle.ts --skip-embedding-model
-          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
-          test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
-          test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz
 
       - name: JUnit test report
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
         if: always()
         with:
           token: ${{ secrets.NIMBUS_CHECKS_TOKEN || github.token }}
-          name: Tests (${{ inputs.runner }})
+          name: Unit + Coverage (${{ inputs.runner }})
+          path: junit-reports/junit-*.xml
+          reporter: java-junit
+          fail-on-error: false
+          fail-on-empty: false
+
+  # ── Integration tests ──────────────────────────────────────────────────────
+  integration:
+    name: Integration — ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Linux — libsecret + D-Bus (vault / PAL tests)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+
+      - name: macOS — Strip quarantine from native SQLite extensions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: find node_modules -name "*.dylib" -print0 2>/dev/null | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
+
+      - name: macOS — Create and unlock CI Keychain (vault / PAL tests)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          security create-keychain -p "" nimbus-ci.keychain
+          security list-keychains -d user -s nimbus-ci.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s nimbus-ci.keychain
+          security unlock-keychain -p "" nimbus-ci.keychain
+          security set-keychain-settings -lut 7200 nimbus-ci.keychain
+
+      - name: Prepare test report directory
+        shell: bash
+        run: mkdir -p junit-reports
+
+      - name: Integration tests
+        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
+        env:
+          CI: "true"
+
+      - name: JUnit test report
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
+        if: always()
+        with:
+          token: ${{ secrets.NIMBUS_CHECKS_TOKEN || github.token }}
+          name: Integration (${{ inputs.runner }})
+          path: junit-reports/junit-*.xml
+          reporter: java-junit
+          fail-on-error: false
+          fail-on-empty: false
+
+      - name: Cleanup integration test artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -rf /tmp/nimbus-test-* 2>/dev/null || true
+          rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
+
+  # ── E2E Gateway tests ──────────────────────────────────────────────────────
+  e2e-gateway:
+    name: E2E Gateway — ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Linux — libsecret + D-Bus (vault / PAL tests)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+
+      - name: macOS — Strip quarantine from native SQLite extensions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: find node_modules -name "*.dylib" -print0 2>/dev/null | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
+
+      - name: macOS — Create and unlock CI Keychain (vault / PAL tests)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          security create-keychain -p "" nimbus-ci.keychain
+          security list-keychains -d user -s nimbus-ci.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s nimbus-ci.keychain
+          security unlock-keychain -p "" nimbus-ci.keychain
+          security set-keychain-settings -lut 7200 nimbus-ci.keychain
+
+      - name: Prepare test report directory
+        shell: bash
+        run: mkdir -p junit-reports
+
+      - name: E2E Gateway tests
+        run: bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
+        env:
+          CI: "true"
+
+      - name: JUnit test report
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
+        if: always()
+        with:
+          token: ${{ secrets.NIMBUS_CHECKS_TOKEN || github.token }}
+          name: E2E Gateway (${{ inputs.runner }})
           path: junit-reports/junit-*.xml
           reporter: java-junit
           fail-on-error: false
@@ -397,11 +538,117 @@ jobs:
           rm -rf /tmp/nimbus-test-* 2>/dev/null || true
           rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
 
+  # ── E2E CLI tests ──────────────────────────────────────────────────────────
+  e2e-cli:
+    name: E2E CLI — ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Linux — libsecret + D-Bus (vault / PAL tests)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+
+      - name: macOS — Strip quarantine from native SQLite extensions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: find node_modules -name "*.dylib" -print0 2>/dev/null | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
+
+      - name: macOS — Create and unlock CI Keychain (vault / PAL tests)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          security create-keychain -p "" nimbus-ci.keychain
+          security list-keychains -d user -s nimbus-ci.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s nimbus-ci.keychain
+          security unlock-keychain -p "" nimbus-ci.keychain
+          security set-keychain-settings -lut 7200 nimbus-ci.keychain
+
+      - name: Prepare test report directory
+        shell: bash
+        run: mkdir -p junit-reports
+
+      - name: E2E CLI tests
+        run: bun test packages/cli/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-cli.xml
+        env:
+          CI: "true"
+
+      - name: JUnit test report
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
+        if: always()
+        with:
+          token: ${{ secrets.NIMBUS_CHECKS_TOKEN || github.token }}
+          name: E2E CLI (${{ inputs.runner }})
+          path: junit-reports/junit-*.xml
+          reporter: java-junit
+          fail-on-error: false
+          fail-on-empty: false
+
+      - name: Cleanup E2E test artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -rf /tmp/nimbus-test-* 2>/dev/null || true
+          rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
+
+  # ── Headless bundle + Linux installers ─────────────────────────────────────
+  # Runs only when explicitly enabled (currently: ubuntu-24.04 on both PR and
+  # push). Builds compiled standalone binaries via `bun build --compile`
+  # (distinct from the per-package `bun run build` validated by `static`).
+  packaging:
+    name: Packaging — ${{ inputs.runner }}
+    if: inputs.run-packaging
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Headless bundle + Linux installers
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist
+          (cd packages/gateway && bun build src/index.ts --compile --outfile ../../dist/nimbus-gateway --target bun)
+          (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
+          bun scripts/package-headless-bundle.ts --skip-embedding-model
+          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
+          test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
+          test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz
+
   # Run coverage gates in parallel to reduce critical path.
   # These re-run specific tests to enforce thresholds.
   coverage-gates:
     name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
-    needs: test
+    needs: unit-coverage
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -464,7 +711,7 @@ jobs:
             script: "test:coverage:sandbox"
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
@@ -536,7 +783,7 @@ jobs:
         os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 

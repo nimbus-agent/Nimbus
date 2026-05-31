@@ -77,7 +77,6 @@ describe("runDriver", () => {
       MIN_EVENTS,
     );
 
-    // First, populate the snapshot via update mode.
     await runDriver({
       mode: "update",
       scriptPaths: [yamlPath],
@@ -87,7 +86,6 @@ describe("runDriver", () => {
       harness: fakeHarness("stable bytes\n"),
     });
 
-    // Then run check against the same captured stdout.
     const result = await runDriver({
       mode: "check",
       scriptPaths: [yamlPath],
@@ -111,7 +109,6 @@ describe("runDriver", () => {
     const artifactsDir = join(workDir, "artifacts");
     mkdirSync(artifactsDir, { recursive: true });
 
-    // Populate snapshot.
     await runDriver({
       mode: "update",
       scriptPaths: [yamlPath],
@@ -121,7 +118,6 @@ describe("runDriver", () => {
       harness: fakeHarness("original output\n"),
     });
 
-    // Check with mutated stdout.
     const result = await runDriver({
       mode: "check",
       scriptPaths: [yamlPath],

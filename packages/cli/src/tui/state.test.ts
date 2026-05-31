@@ -86,7 +86,7 @@ describe("tuiReducer", () => {
       },
       { type: "hitl-advance", approved: true },
     ]);
-    expect(s.mode).toBe("awaiting-hitl"); // still waiting on action 2
+    expect(s.mode).toBe("awaiting-hitl");
     expect(s.hitlBatch?.cursor).toBe(1);
     expect(s.hitlBatch?.decisions).toEqual([{ actionId: "a1", approved: true }]);
   });
@@ -128,7 +128,6 @@ describe("tuiReducer", () => {
     ]);
     expect(s.mode).toBe("idle");
     expect(s.activeStreamId).toBeNull();
-    // Live buffer preserved so the ResultStream can flush a final "(canceled)" line.
     expect(s.liveBuffer).toContain("partial");
   });
 

@@ -1,8 +1,3 @@
-/**
- * Aggregate-only telemetry fields sourced from SQLite.
- * Never includes row content (e.g. sync error messages) — counts and durations only.
- */
-
 import type { Database } from "bun:sqlite";
 
 const SEVEN_D_MS = 7 * 24 * 60 * 60 * 1000;
@@ -122,10 +117,6 @@ function collectEnabledExtensionIds(db: Database): Record<string, number> {
   return extension_installs_by_id;
 }
 
-/**
- * Collects bounded aggregates from the last 7 days of `sync_telemetry` / health history,
- * plus a snapshot of enabled extension ids (count 1 each — not a time series).
- */
 export function collectTelemetryDbAggregates(db: Database): TelemetryDbAggregateSlice {
   const cutoff = Date.now() - SEVEN_D_MS;
   const sync = collectSyncTelemetryAggregates(db, cutoff);

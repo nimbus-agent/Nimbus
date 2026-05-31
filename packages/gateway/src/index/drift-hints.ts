@@ -29,11 +29,6 @@ function appendIacHeartbeatLines(lines: string[], hb: IacHeartbeatRow, lambdaCou
   }
 }
 
-/**
- * Best-effort hints for `nimbus status --drift` / `gateway.ping` with `includeDrift: true`.
- * Full Terraform-state ↔ cloud reconciliation is deferred; this surfaces indexed counts
- * captured at the last IaC connector heartbeat.
- */
 export function driftHintsFromIndex(db: Database): string[] {
   if (readIndexedUserVersion(db) < 1) {
     return ["Index schema not initialized."];

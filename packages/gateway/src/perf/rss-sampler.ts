@@ -1,23 +1,10 @@
-/**
- * RSS sampler for S7-a/b/c drivers. Polls `pidusage(pid)` at
- * `intervalMs` for `durationMs`; returns the sample array, p95, and
- * the count of polls that errored (process gone, permission denied,
- * etc.).
- *
- * Tests inject the pidusage function. Production callers omit it and
- * the helper imports the real npm package lazily.
- */
-
 import { computePercentiles } from "./percentiles.ts";
 
 export interface SampleRssOptions {
   pid: number;
-  /** 60_000 in production; tests pass 100–200. */
   durationMs: number;
-  /** Default 1000. */
   intervalMs?: number;
   signal?: AbortSignal;
-  /** Injectable for tests; defaults to a lazy `pidusage` import. */
   pidusage?: (pid: number) => Promise<{ memory: number }>;
 }
 
@@ -32,7 +19,7 @@ let cachedPidusage: ((pid: number) => Promise<{ memory: number }>) | undefined;
 async function realPidusage(pid: number): Promise<{ memory: number }> {
   if (cachedPidusage === undefined) {
     const mod = await import("pidusage");
-    cachedPidusage = mod.default as (pid: number) => Promise<{ memory: number }>;
+    cachedPidusage = mod.default;
   }
   return cachedPidusage(pid);
 }
@@ -44,12 +31,6 @@ export async function sampleRss(opts: SampleRssOptions): Promise<SampleRssResult
   let intervalsMissed = 0;
   const start = performance.now();
   const deadline = start + opts.durationMs;
-  // Deadline-based scheduling — feedback F-2.2. Each tick fires at
-  // start + intervalMs * tickIdx (not "now + intervalMs"), so the
-  // sampler-call cost doesn't accumulate into cadence drift. If a
-  // sampler call ran long enough that we missed a tick, we fire the
-  // next one immediately (and continue to advance tickIdx by 1 each
-  // iteration so we don't loop forever in the catch-up case).
   let tickIdx = 0;
 
   while (performance.now() < deadline) {

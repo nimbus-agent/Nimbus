@@ -18,8 +18,6 @@ describe("derivePlatformTarget", () => {
     expect(derivePlatformTarget("win32", "x64")).toBe("windows-x86_64");
   });
 
-  // Explicitly-deferred unsupported combos — return undefined so the
-  // factory can skip wiring without crashing the gateway.
   test("linux + arm64 → undefined (linux-aarch64 deferred)", () => {
     expect(derivePlatformTarget("linux", "arm64")).toBeUndefined();
   });
@@ -33,8 +31,6 @@ describe("derivePlatformTarget", () => {
   });
 
   test("with no arguments uses process.platform + process.arch (smoke)", () => {
-    // The result depends on the host the test runs on. Just verify it
-    // returns either a known target or undefined — never throws.
     const result = derivePlatformTarget();
     if (result !== undefined) {
       expect(["darwin-x86_64", "darwin-aarch64", "linux-x86_64", "windows-x86_64"]).toContain(

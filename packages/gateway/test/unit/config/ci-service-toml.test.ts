@@ -75,11 +75,8 @@ repos = ["github:org/d"]
     const cfg = parsed.get("defaults");
     if (cfg === undefined) throw new Error("defaults missing");
     expect(cfg.pagerdutyServices).toEqual([]);
-    // DEFAULT_INCIDENT_WINDOW_MINUTES = 60
     expect(cfg.incidentWindowMinutes).toBe(60);
-    // DEFAULT_EXCLUDE_PR_LABELS = ["revert"]
     expect(cfg.excludePrLabels).toEqual(["revert"]);
-    // DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy" — test by matching
     expect("Deploy production".match(cfg.deployWorkflowPattern)).not.toBeNull();
   });
 });
@@ -154,7 +151,6 @@ repos = ["github:org/c"]
     const parsed = parseNimbusDoraToml(raw);
     const cfg = parsed.get("svc-c");
     if (cfg === undefined) throw new Error("svc-c missing");
-    // The rename is type-level only; runtime shape is identical.
     expect(cfg.serviceId).toBe("svc-c");
   });
 });

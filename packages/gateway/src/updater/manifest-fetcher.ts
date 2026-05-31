@@ -1,10 +1,5 @@
 import type { PlatformTarget, UpdateManifest } from "./types.ts";
 
-/**
- * S6-F9 — strip URL userinfo before it lands in any error message. Mirror
- * of `redactUrlUserinfo` in updater.ts; kept here too to avoid a circular
- * import. Bounded repetition prevents super-linear backtracking.
- */
 const URL_USERINFO_RE = /[a-zA-Z0-9+\-.]{1,32}:\/\/[^\s/@]{1,256}@[^\s/]{1,256}/g;
 
 function redactUrlUserinfoInMessage(message: string): string {
@@ -30,12 +25,6 @@ export class ManifestFetchError extends Error {
   }
 }
 
-/**
- * S6-F4 — permit https:// always; permit http://127.0.0.1 / http://localhost
- * ONLY when NODE_ENV is not "production". In production, even a local
- * malicious process serving a manifest on loopback cannot bypass HTTPS.
- * Mirrors the dev-key override gate added in the High-tier PR (public-key.ts).
- */
 export function isPermittedSchemeForUpdater(url: string): boolean {
   try {
     const u = new URL(url);
@@ -54,13 +43,6 @@ export function isPermittedSchemeForUpdater(url: string): boolean {
 }
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-/**
- * S6-F11 — accept either a bare ISO date (`2026-04-26`) or a full ISO-8601
- * datetime with timezone (`2026-04-26T12:34:56Z` or `+02:00` offset).
- *
- * Two simpler regexes (each below Sonar's complexity limit) combined via
- * `isWellFormedIso8601`.
- */
 const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 function isWellFormedIso8601(s: string): boolean {
@@ -107,9 +89,6 @@ function validateManifest(raw: unknown): UpdateManifest {
   if (typeof pub_date !== "string") {
     throw new ManifestFetchError("manifest.pub_date must be a string");
   }
-  // S6-F11 — pub_date must be a well-formed ISO-8601 date so any future
-  // consumer (sort, freshness check, audit row) can parse it without ad-hoc
-  // string checks downstream.
   if (!isWellFormedIso8601(pub_date)) {
     throw new ManifestFetchError(`manifest.pub_date is not well-formed ISO-8601: ${pub_date}`);
   }

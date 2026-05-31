@@ -173,11 +173,6 @@ async function ensureGithubCircleCiSchedulerCompanions(
   });
 }
 
-/**
- * Default vector dimension when the embedding runtime is unavailable. Matches
- * `vec_items_384`. The store still records literal turns (vec_rowid=0
- * sentinel) so multi-turn TUI memory works without embeddings.
- */
 const DEFAULT_EMBEDDING_DIMS = 384;
 
 function maybeAttachSessionMemoryStore(
@@ -186,10 +181,6 @@ function maybeAttachSessionMemoryStore(
   sessionToml: ReturnType<typeof loadNimbusSessionFromPath>,
   sidecarStops: Array<() => void>,
 ): SessionMemoryStore | undefined {
-  // BUG-005 follow-up: keep going even when the embedding runtime failed
-  // to start. The store still works for literal-turn replay (the path the
-  // multi-turn TUI memory fix relies on); semantic recall just stays empty
-  // until embeddings come back.
   if (readIndexedUserVersion(db) < 10) {
     return undefined;
   }
@@ -254,7 +245,6 @@ async function createSchedulerWithMesh(
   if (fsV2Roots.length > 0) {
     localIndex.ensureConnectorSchedulerRegistration("filesystem", 10 * 60 * 1000, Date.now());
     syncScheduler.register(createFilesystemV2Syncable({ roots: fsV2Roots }));
-    // Wave A PR 1 — gateway-side OpenAPI / AsyncAPI spec indexer.
     localIndex.ensureConnectorSchedulerRegistration("openapi", 10 * 60 * 1000, Date.now());
     syncScheduler.register(
       createOpenapiIndexerSyncable({
@@ -262,22 +252,14 @@ async function createSchedulerWithMesh(
         config: loadOpenapiConfig(paths.configDir),
       }),
     );
-    // Wave A PR 2 — gateway-side Obsidian vault indexer.
     localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
     syncScheduler.register(createObsidianSyncable({ roots: fsV2Roots }));
   }
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
-    // S8-F9 — pass db + logger so args_json failures surface as
-    // persistent_error in connector health and a warn log line.
     healthDb: db,
-    // Phase 5 T6 PR 2 — same db handle used for tool_call_log audit writes
-    // from listTools' wrapped execute path. Two distinct field names so
-    // the two concerns stay readable.
     auditDb: db,
     logger: syncLogger,
-    // Wave A PR 2 — thread the absolute filesystem-root paths so the
-    // obsidian MCP child can discover `.obsidian/` markers itself.
     obsidianVaultPaths: fsV2Roots.map((r) => r.path),
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
@@ -316,11 +298,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
   const vault = await createNimbusVault(paths);
-  // T2 PR 1 — construct the per-platform sandbox runner singleton. The
-  // wrapper subprocess (sandbox-wrapper.ts) constructs its own runner per
-  // spawn; this handle is the gateway-process view used by `diag.snapshot`
-  // and the startup posture banner so the same probe result (e.g. Linux
-  // helper present + CAP_NET_ADMIN) is observable from both surfaces.
   const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
   const notifications = createStubNotifications();
@@ -347,11 +324,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   );
   await ensureGithubCircleCiSchedulerCompanions(localIndex, vault);
 
-  // Copy shared provider OAuth keys to per-service keys for any service that
-  // hasn't been re-authenticated since the migration landed.
   await migrateToPerServiceOAuthKeys(vault);
 
-  // Complete any connector removals that were interrupted by a crash. Idempotent.
   await resumePendingRemovals(vault, localIndex);
 
   const syncBase: SyncContext = { vault, db, logger: syncLogger, rateLimiter };
@@ -371,17 +345,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncLogger,
   );
 
-  // S7-F10 — pass the mesh so a hash mismatch can terminate the running
-  // child. Must run AFTER mesh creation; the mesh handle did not exist
-  // pre-G7 so this call was placed before mesh creation in the original
-  // wiring.
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
-  // T2 PR 3 — auto-update daemon. Constructed when a registry base URL is
-  // configured via env (`NIMBUS_EXTENSIONS_REGISTRY_URL`) and air-gap is not
-  // enforced via env (`NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`). Without
-  // either the daemon is omitted and `extension.checkForUpdates` /
-  // `extension.update` return `-32603 not configured` at the dispatcher.
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
   const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
@@ -397,7 +362,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       enforceAirGap: false,
       stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
     });
-    // Fire-and-forget daemon start; stop is registered in sidecarStops below.
     void autoUpdateRuntime.daemon.start();
     sidecarStops.push(() => {
       autoUpdateRuntime?.abortController.abort();
@@ -418,17 +382,17 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncScheduler,
     connectorMesh,
     sandboxRunner,
-    ...(autoUpdateRuntime !== undefined ? { extensionsAutoUpdate: autoUpdateRuntime.deps } : {}),
-    ...(autoUpdateRuntime !== undefined
-      ? {
+    ...(autoUpdateRuntime === undefined ? {} : { extensionsAutoUpdate: autoUpdateRuntime.deps }),
+    ...(autoUpdateRuntime === undefined
+      ? {}
+      : {
           extensionsAutoUpdateDiag: {
             cachedUpdatesCount: (): number => autoUpdateRuntime?.deps.cache.list().length ?? 0,
             intervalHours: loadNimbusExtensionsFromConfigDir(paths.configDir)
               .updateCheckIntervalHours,
             airGapBlocked: autoUpdateDisabled,
           },
-        }
-      : {}),
+        }),
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;
@@ -443,11 +407,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   const ipc = createIpcServer(ipcOpts);
 
-  // Updater wiring (S6-F1). Uses GATEWAY_VERSION (Task 1) so future bumps
-  // don't skew across the three consumers. Skips wiring when [updater].enabled
-  // is false or when the host arch isn't in the supported release set; the
-  // dispatcher returns ERR_UPDATER_NOT_CONFIGURED for `updater.*` calls in
-  // that case, which is the correct signal.
   const updaterCfg = loadNimbusUpdaterFromConfigDir(paths.configDir);
   const updater = createUpdaterFromConfig({
     updaterCfg,
@@ -458,11 +417,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   if (updater !== undefined) {
     ipc.setUpdater(updater);
     if (updaterCfg.checkOnStartup) {
-      // Non-blocking. `Updater.checkNow()` redacts userinfo into private
-      // `lastError` but re-throws the un-redacted original — logging
-      // `err.message` directly would leak credentials embedded in the
-      // configured manifest URL into the gateway log file. The
-      // `redactUrlUserinfo` import above is mandatory for this call site.
       void updater
         .checkNow()
         .catch((err: unknown) =>

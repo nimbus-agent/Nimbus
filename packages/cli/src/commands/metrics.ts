@@ -1,15 +1,3 @@
-/**
- * `nimbus metrics dora --service <id> [--since 30d] [--json]`
- *
- * Calls the Gateway `metrics.dora` JSON-RPC method and renders the
- * `DoraMetricsResult` envelope. `--json` emits the envelope verbatim;
- * pretty mode prints a labelled card. NO_COLOR and non-TTY stdout
- * suppress ANSI codes.
- *
- * Exit codes: 0 = success; 1 = usage error or gateway-not-running;
- * 2 = runtime error (IPC failure, malformed response).
- */
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -40,7 +28,7 @@ export function parseMetricsDoraArgs(args: string[]): MetricsDoraArgs {
     if (a === "--since") {
       const v = args[i + 1];
       if (typeof v !== "string" || !SINCE_RE.test(v)) {
-        throw new Error("--since must match \\d+(d|h), e.g. '30d' or '24h'");
+        throw new Error(String.raw`--since must match \d+(d|h), e.g. '30d' or '24h'`);
       }
       since = v;
       i += 1;
@@ -129,29 +117,15 @@ export interface MetricRowInput {
   readonly gap: string | null;
 }
 
-/**
- * Pure renderer for a single DORA metric row.
- *
- * When `gap === "mixed_source"` AND output is a TTY with colour enabled,
- * the row is prefixed with a yellow ⚠ icon to flag annotation drift between
- * explicit `deployment` items and ci_run regex matches. The icon is omitted
- * for piped output (`tty: false`) and when `NO_COLOR` is set (`noColor: true`).
- */
 export function renderMetricRow(metric: MetricRowInput, options: RenderOptions): string {
   const useColor = options.tty && !options.noColor;
   const valueStr = metric.value === null ? "—" : metric.value.toFixed(3);
-  const gapStr =
-    metric.gap === null ? "" : useColor ? `\x1b[33m[${metric.gap}]\x1b[0m` : `[${metric.gap}]`;
+  const gapText = metric.gap === null ? "" : `[${metric.gap}]`;
+  const gapStr = gapText !== "" && useColor ? `\x1b[33m${gapText}\x1b[0m` : gapText;
   const prefix = metric.gap === "mixed_source" && useColor ? "\x1b[33m⚠\x1b[0m " : "";
   return `  ${prefix}${metric.label.padEnd(20)} ${valueStr.padStart(10)} ${metric.unit.padEnd(20)} n=${String(metric.sample)}  ${gapStr}`;
 }
 
-/**
- * Two-line hint explaining the `mixed_source` gap. The hint is always shown
- * verbatim regardless of TTY / NO_COLOR — it is information, not styling.
- * The strings "deployment" and "ci_run" are intentionally present so future
- * readers can map the warning back to the underlying data sources.
- */
 export function renderMixedSourceHint(): string {
   return [
     "Note: this window contains both explicit `deployment` annotations and ci_run regex matches.",
@@ -162,8 +136,7 @@ export function renderMixedSourceHint(): string {
 export function formatDoraPretty(env: DoraEnvelope, options: RenderOptions): string {
   const sinceDays = Math.floor(env.since_ms / 86_400_000);
   const lines: string[] = [];
-  lines.push(`DORA metrics — ${env.service} (since ${sinceDays}d)`);
-  lines.push("");
+  lines.push(`DORA metrics — ${env.service} (since ${sinceDays}d)`, "");
   let hasMixedSource = false;
   for (const key of METRIC_ORDER) {
     const m = env.metrics[key];
@@ -182,8 +155,7 @@ export function formatDoraPretty(env: DoraEnvelope, options: RenderOptions): str
     );
   }
   if (hasMixedSource) {
-    lines.push("");
-    lines.push(renderMixedSourceHint());
+    lines.push("", renderMixedSourceHint());
   }
   return lines.join("\n");
 }

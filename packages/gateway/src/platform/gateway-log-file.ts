@@ -1,7 +1,3 @@
-/**
- * Daily gateway log path and Pino factory. Basename must stay in sync with
- * `packages/cli/src/lib/spawn-gateway.ts` (`gatewayLogBasename`).
- */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
@@ -11,7 +7,6 @@ import pino from "pino";
 import { processEnvGet } from "./env-access.ts";
 import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
 
-/** Keep in sync with `packages/cli/src/lib/spawn-gateway.ts` — local calendar date, append same file per day. */
 export function gatewayLogBasename(): string {
   const d = new Date();
   const y = d.getFullYear();
@@ -24,24 +19,12 @@ export function gatewayDailyLogPath(logDir: string): string {
   return join(logDir, gatewayLogBasename());
 }
 
-/**
- * S2-F9 — paths consumed by `pino`'s redact config. Covers the most common
- * third-party SDK error shapes (Authorization headers, nested config.headers,
- * common token field names) so an OpenAI/Anthropic/Slack SDK error chain
- * cannot smuggle credentials through these structured paths.
- *
- * Both top-level (`apiKey`, `token`) and one-level-deep (`*.apiKey`,
- * `err.apiKey`) variants are listed because pino's redact path syntax does
- * not match implicitly across depths.
- */
 const PINO_REDACT_PATHS: readonly string[] = [
-  // Legacy paths
   "*.token",
   "*.secret",
   "oauth.*",
   "*.password",
   "*.key",
-  // Top-level direct names (pino's `*.foo` does not match top-level `foo`).
   "apiKey",
   "api_key",
   "token",
@@ -53,14 +36,12 @@ const PINO_REDACT_PATHS: readonly string[] = [
   "app_password",
   "authorization",
   "Authorization",
-  // One-level-deep
   "*.apiKey",
   "*.api_key",
   "*.accessToken",
   "*.refreshToken",
   "*.bot_token",
   "*.app_password",
-  // Header chains
   "*.headers.authorization",
   "*.headers.Authorization",
   "*.config.headers.authorization",
@@ -77,11 +58,6 @@ const PINO_REDACT_PATHS: readonly string[] = [
   "err.accessToken",
 ];
 
-/**
- * S2-F9 — value-level patterns scrubbed from `msg` and from `err.message` /
- * `err.stack`. Defends against future third-party SDK error formats that
- * embed credentials in the bare message string instead of structured fields.
- */
 export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /Bearer\s+[A-Za-z0-9._\-+/=]+/g,
   /sk-[A-Za-z0-9_-]{16,}/g,
@@ -103,10 +79,6 @@ export function scrubRedactedValuePatterns(s: string): string {
 
 function pinoLogFormatter(o: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...o };
-  // pino calls `formatters.log` on the merged input bindings (the first
-  // object arg). The bare `msg` string is NOT in this object — it is added
-  // separately by pino — so message-string scrubbing happens in the
-  // `hooks.logMethod` stage below.
   const e = out["err"];
   if (e !== null && typeof e === "object") {
     const eObj = { ...(e as Record<string, unknown>) };
@@ -123,13 +95,6 @@ function pinoLogFormatter(o: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/**
- * S2-F9 — intercept user-supplied log args and scrub credential-shaped
- * substrings from any string arg before pino formats them. Catches the
- * common case `logger.warn("token rejected: Bearer abc...")` where the
- * sensitive value is in the bare msg string, never reaching the
- * `formatters.log` hook.
- */
 function pinoLogMethodHook(
   this: unknown,
   args: unknown[],
@@ -157,15 +122,6 @@ function resolveLogLevel(): string {
   return "warn";
 }
 
-/**
- * Pino logger: always appends JSON lines to the daily file under `logDir`.
- * When stdout is a TTY, also mirrors to stdout for local development.
- *
- * S2-F9 — applies both pino's `redact` config (structured paths) and a
- * value-level scrubber via `formatters.log` for `msg` / `err.message` /
- * `err.stack` so unstructured credential leakage from third-party SDK
- * error chains is also stripped.
- */
 export function createGatewayPinoLogger(logDir: string): Logger {
   const level = resolveLogLevel();
   const logPath = gatewayDailyLogPath(logDir);
@@ -190,11 +146,6 @@ export function createGatewayPinoLogger(logDir: string): Logger {
   return pino(baseOpts, fileDest);
 }
 
-/**
- * Test-only — build a pino logger that writes to the supplied stream and
- * applies the production redact config. Used by S2-F9 unit tests so they
- * can capture log lines without touching the filesystem.
- */
 export function createGatewayPinoLoggerForStream(
   stream: NodeJS.WritableStream,
   level = "warn",
@@ -210,10 +161,6 @@ export function createGatewayPinoLoggerForStream(
   );
 }
 
-/**
- * Best-effort append when startup fails before returning `PlatformServices`
- * (e.g. missing native deps). Plain text; no secrets.
- */
 export function emergencyGatewayLog(err: unknown): void {
   try {
     const p = platform();

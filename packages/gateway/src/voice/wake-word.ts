@@ -11,25 +11,11 @@ import type {
 type WakeWordDetectorOptions = {
   stt: SttProvider;
   wakeWord: string;
-  /** Audio chunk duration in ms (default 2000). */
   chunkDurationMs?: number;
-  /** Poll interval in ms between recordings (default 500). */
   pollIntervalMs?: number;
-  /** Cooldown after detection in ms (default 3000) — prevents double-firing. */
   cooldownMs?: number;
-  /** For tests: stop after this many polls automatically (undefined = no limit). */
   maxPolls?: number;
-  /**
-   * Inject an audio recorder for testing.
-   * Default implementation uses ffmpeg to capture from the default audio input.
-   * Output must be 16kHz 16-bit mono WAV (Whisper requirement).
-   */
   recordAudio?: (durationMs: number) => Promise<string>;
-  /**
-   * Inject a silence checker for testing.
-   * Default uses ffmpeg silencedetect filter.
-   * Returns true if the chunk contains only silence (skip Whisper).
-   */
   isChunkSilent?: (audioPath: string) => Promise<boolean>;
 };
 
@@ -47,7 +33,6 @@ function defaultRecordAudio(durationMs: number): Promise<string> {
   const outPath = join(tmpdir(), `nimbus-wake-${randomUUID()}.wav`);
   const durationSec = Math.ceil(durationMs / 1000).toString();
 
-  // -ar 16000 -ac 1: Whisper.cpp requires 16kHz mono WAV
   const platform = process.platform;
   let cmd: string[];
   if (platform === "darwin") {

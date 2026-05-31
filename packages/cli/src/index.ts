@@ -1,9 +1,3 @@
-/**
- * Nimbus CLI — `nimbus <command> [options]`
- *
- * Communicates with the Gateway over JSON-RPC IPC only.
- */
-
 import { intro, outro } from "@clack/prompts";
 
 import {
@@ -56,7 +50,6 @@ const isPiped = process.stdout.isTTY !== true;
 const isJsonMode = rawArgv.includes("--json");
 const isExplicitlyQuiet = process.env["NIMBUS_QUIET"] === "1";
 
-/** Suppress banner chrome for programmatic consumers or explicit quiet requests. */
 const shouldSuppressBanner = isPiped || isJsonMode || isExplicitlyQuiet;
 
 type CommandHandler = (args: string[]) => Promise<void> | void;

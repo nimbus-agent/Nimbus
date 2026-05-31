@@ -52,12 +52,11 @@ export function canonicalize(value: unknown, depth = 0): string {
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    // Explicit UTF-16 code-unit compare. MUST stay locale-independent — this
-    // canonicalization feeds Ed25519 manifest verification (I16); a localized
-    // comparator (e.g. localeCompare) would make a manifest signed in en-US
-    // verify differently in tr-TR. Default Array.sort already does this, but
-    // Sonar S2871 demands an explicit comparator.
-    const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const keys = Object.keys(obj).sort((a, b) => {
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
+    });
     return (
       "{" +
       keys.map((k) => `${JSON.stringify(k)}:${canonicalize(obj[k], depth + 1)}`).join(",") +

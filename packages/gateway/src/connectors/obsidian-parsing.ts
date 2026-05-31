@@ -7,16 +7,13 @@ const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
 const DAILY_NOTE_RE = /^(\d{4})-(\d{2})-(\d{2})\.md$/;
 
 export type ParsedNote = {
-  /** Forward-slashed vault-relative path. */
   readonly relPath: string;
   readonly title: string;
   readonly body: string;
   readonly frontmatter: Record<string, unknown>;
   readonly tags: readonly string[];
   readonly aliases: readonly string[];
-  /** Wikilink targets (raw strings — `Page`, not `[[Page]]`). Heading and alias parts stripped. */
   readonly wikilinks: readonly string[];
-  /** ISO date string (YYYY-MM-DD) when the filename matches a daily-note pattern. */
   readonly dailyNoteDate: string | undefined;
 };
 
@@ -74,11 +71,8 @@ function extractAliases(fm: Record<string, unknown>): readonly string[] {
 
 function extractWikilinks(body: string): readonly string[] {
   const out: string[] = [];
-  // `WIKILINK_RE` is a `/g` regex so we use `matchAll` rather than the
-  // `while ((m = exec()) !== null)` form (Biome `noAssignInExpressions`).
   for (const match of body.matchAll(WIKILINK_RE)) {
     const inner = match[1] ?? "";
-    // Strip alias `|...` then heading `#...`
     const noAlias = inner.split("|")[0] ?? "";
     const target = noAlias.split("#")[0]?.trim() ?? "";
     if (target !== "") {
@@ -119,15 +113,6 @@ export function parseNote(relPath: string, source: string): ParsedNote {
   };
 }
 
-/**
- * Resolves wikilink targets to note ids by exact filename (case-insensitive)
- * first, then by exact title (case-insensitive). Best-effort — does not
- * replicate Obsidian's full shortest-path resolver.
- *
- * @param targets raw wikilink targets (without `[[`/`]]`, alias, or heading)
- * @param byFilenameLower map of `<lowercased filename including .md>` → `{ id, title }`
- * @param byTitleLower map of `<lowercased title>` → `id`
- */
 export function resolveWikilinks(
   targets: readonly string[],
   byFilenameLower: ReadonlyMap<string, { id: string; title: string }>,

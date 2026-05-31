@@ -65,7 +65,7 @@ describe("createPerformUpgrade", () => {
         signal: new AbortController().signal,
         sha256OfTarball: async (b) => {
           expect(b).toEqual(tarballBytes);
-          return "e".repeat(64); // matches entryHash on AvailableUpdate
+          return "e".repeat(64);
         },
         extractTarball,
         stopExtensionClient,

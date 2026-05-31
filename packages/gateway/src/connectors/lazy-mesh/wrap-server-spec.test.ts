@@ -85,10 +85,6 @@ describe("wrapServerSpec", () => {
   });
 
   test("the env-control keys overlay (not replace) when the spec already has them", () => {
-    // A spec author cannot smuggle in a different manifest by including
-    // NIMBUS_SANDBOX_MANIFEST_JSON in their spec.env — wrapServerSpec
-    // overlays its own values last (object-spread order), so the
-    // wrapper-controlled keys always win.
     const wrapped = wrapServerSpec(
       makeSpec({
         NIMBUS_SANDBOX_MANIFEST_JSON:
@@ -110,7 +106,6 @@ describe("wrapServerSpec", () => {
 describe("SANDBOX_WRAPPER_PATH", () => {
   test("resolves to an absolute path under platform/sandbox/", () => {
     expect(SANDBOX_WRAPPER_PATH).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    // Absolute path check — POSIX starts with /, Windows starts with a drive letter.
     expect(SANDBOX_WRAPPER_PATH).toMatch(/^([A-Za-z]:[\\/]|[\\/])/);
   });
 });

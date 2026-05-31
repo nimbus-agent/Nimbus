@@ -1,12 +1,3 @@
-/**
- * S7-a — Memory RSS while the gateway is warm-and-idle.
- *
- * Spawns a fresh gateway, sleeps for 60 s while the rss-sampler polls
- * `pidusage(pid)` at 1 Hz, returns the RSS sample array (bytes).
- *
- * resultKind = "rss" → BenchSurfaceResult.rssBytesP95 = p95(samples).
- */
-
 import { resolve } from "node:path";
 
 import { spawnGatewayForBench } from "../gateway-spawn-bench.ts";

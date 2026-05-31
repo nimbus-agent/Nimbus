@@ -4,13 +4,9 @@ import { processEnvGet } from "./env-access.ts";
 import { PlatformInitError } from "./errors.ts";
 
 export interface PlatformPaths {
-  /** nimbus.toml location */
   configDir: string;
-  /** SQLite DB, embeddings */
   dataDir: string;
-  /** structured JSON logs */
   logDir: string;
-  /** domain socket or named pipe path */
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
@@ -41,7 +37,6 @@ export function createWindowsPaths(): PlatformPaths {
   };
 }
 
-/** Per architecture.md §Platform Divergence Table: config and data share Application Support/Nimbus on macOS. */
 export function createDarwinPaths(): PlatformPaths {
   const root = join(homedir(), "Library", "Application Support", "Nimbus");
   const tmp = processEnvGet("TMPDIR") ?? "/tmp";

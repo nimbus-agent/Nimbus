@@ -1,7 +1,3 @@
-/**
- * Stop processes running the compiled gateway binary (by image name).
- * Used when gateway.json is missing or `rename`/`overwrite` of dist/nimbus-gateway fails on Windows.
- */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -31,7 +27,6 @@ export function terminateCompiledGatewayBinary(): TerminateGatewayBinaryResult {
     if (r.status === 0) {
       return { ran: true, message: "Terminated nimbus-gateway.exe (and child processes)." };
     }
-    // 128: "not found" for taskkill
     if (r.status === 128) {
       return { ran: true, message: "No nimbus-gateway.exe process was running." };
     }

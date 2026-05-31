@@ -1,15 +1,3 @@
-/**
- * Integration: exercise `createSemgrepSyncable` against a `Bun.serve`
- * fake Semgrep AppSec Platform endpoint. Complements the pure-mapper
- * unit tests by proving the sync handler emits well-formed HTTP
- * requests (URL, Authorization header, page params) and consumes the
- * live response shape end-to-end through real fetch + JSON parsing.
- *
- * Pattern: install a fetch interceptor that rewrites `semgrep.dev`
- * requests to the local `Bun.serve` URL, then assert the gateway's
- * `item` table contains the upserted rows after `sync()` returns.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
@@ -113,8 +101,6 @@ function startHarness(): Harness {
   const vault = createMockVault();
   const fake = startFakeSemgrep();
   const originalFetch = globalThis.fetch;
-  // Rewrite semgrep.dev → fake.baseUrl so production code stays
-  // unchanged (no test-only env-var override of `SEMGREP_API`).
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;

@@ -39,7 +39,6 @@ export async function synthesize(brief: SynthInput, opts: SynthesizeOpts = {}): 
   const deterministic = deterministicRender(brief);
   if (opts.llm === undefined) return deterministic;
 
-  // Invariant I11: any structured payload reaching the LLM is wrapped.
   const wrapped = wrapToolOutput({ service: "nimbus", tool: toolNameFor(brief) }, brief);
   const prompt = [
     SYNTHESIS_INSTRUCTIONS,

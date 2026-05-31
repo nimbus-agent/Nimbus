@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-// Token-getter must be mocked BEFORE importing slack-sync so the
-// `getValidSlackAccessToken` reference is replaced at module-load time.
 const tokenState: { throwNext: boolean; value: string } = {
   throwNext: false,
   value: "slack-stub-token",
@@ -36,8 +34,6 @@ beforeEach(async () => {
   fixture.fetchMock.install();
   tokenState.throwNext = false;
   tokenState.value = "slack-stub-token";
-  // Seed the vault so the rawVault-null short-circuit doesn't fire in
-  // tests that DO want to reach the rate-limiter / fetch path.
   await fixture.vault.set("slack.oauth", "slack-stub-oauth-blob");
 });
 
@@ -86,10 +82,6 @@ describe("slack-sync — credential short-circuits", () => {
 });
 
 describe("slack-sync — cursor decode", () => {
-  // Each malformed cursor below produces `decodeCursor() === null`, which
-  // falls back to the default `phase: "list"` state. We then stage an
-  // empty channel list so the run ends without hitting any other path,
-  // confirming the cursor was silently discarded.
   function stageListEmpty(): void {
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
@@ -203,8 +195,6 @@ describe("slack-sync — cursor decode", () => {
   });
 
   test("cursor with non-object hw still decodes (hw defaults to empty)", async () => {
-    // This branch covers slackDecodeHighWater's non-object input path.
-    // The cursor decodes successfully with hw = {}.
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
       ok: true,
@@ -249,7 +239,6 @@ describe("slack-sync — cursor decode", () => {
       }),
     );
     expect(res.hasMore).toBe(false);
-    // The conversations.history body should include oldest=100.0 (hwVal for C1).
     const bodies = fixture.fetchMock.bodiesFor(
       "POST",
       "https://slack.com/api/conversations.history",
@@ -265,7 +254,6 @@ describe("slack-sync — cursor decode", () => {
       messages: [],
       response_metadata: { next_cursor: "" },
     });
-    // floorTs is a non-empty string but Number(floorTs) is NaN -> reset path.
     const res = await createSlackSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
       encodeCursor({
@@ -284,7 +272,6 @@ describe("slack-sync — cursor decode", () => {
       "POST",
       "https://slack.com/api/conversations.history",
     );
-    // hw was empty and histCursor null -> body should carry oldest = fresh floorTs.
     const body = bodies[0] as Record<string, unknown>;
     expect(typeof body["oldest"]).toBe("string");
     expect(Number(body["oldest"])).not.toBeNaN();
@@ -300,8 +287,6 @@ describe("slack-sync — slackWebApi error shapes", () => {
       "https://slack.com/api/conversations.list",
       "<html>500</html>",
     );
-    // The conversations.list non-JSON triggers the !res.ok throw inside
-    // slackAdvanceListPhase because okField is undefined and res.ok matters.
     await expect(
       createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null),
     ).rejects.toThrow(/conversations\.list/);
@@ -314,8 +299,6 @@ describe("slack-sync — slackWebApi error shapes", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    // auth.test returns an array -> slackTryFillTeamSubdomain bails to !ok branch
-    // -> teamSubdomain stays null -> sync still completes through empty list.
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
   });
@@ -332,7 +315,6 @@ describe("slack-sync — slackWebApi error shapes", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    // auth.test 500 -> !res.ok -> bail; sync completes through empty list.
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
   });
@@ -355,10 +337,6 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       response_metadata: { next_cursor: "" },
     });
 
-    // Single sync call: list phase (finds C1) then immediately runs history
-    // phase within the same invocation. The implementation only returns early
-    // from the list phase when there is a next_cursor for pagination; when the
-    // list is complete it falls through to the history phase in the same call.
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.itemsUpserted).toBe(1);
 
@@ -380,7 +358,6 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       messages: [{ ts: "1700000000.000200", text: "hi", user: "U1" }],
       response_metadata: { next_cursor: "" },
     });
-    // Single sync call processes list then history in one invocation.
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
@@ -445,7 +422,6 @@ describe("slack-sync — slackTryFillTeamSubdomain", () => {
       channels: [],
       response_metadata: { next_cursor: "" },
     });
-    // No auth.test stub: if it gets called, MockFetch throws "no stub matched".
     const res = await createSlackSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
       encodeCursor({
@@ -482,15 +458,10 @@ describe("slack-sync — list phase", () => {
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(true);
     expect(res.itemsUpserted).toBe(0);
-    // Cursor carries forward listCursor=page2 and ids=[C1]
     expect(res.cursor).toStartWith("nimbus-slk1:");
   });
 
   test("ratelimited list error -> throws (covers penalise-branch)", async () => {
-    // The `if (error === "ratelimited") { rateLimiter.penalise(...) }` line
-    // executes here; line-coverage records it without needing to inspect
-    // the limiter's internal bucket state. ProviderRateLimiter has no read
-    // accessor and adding one would scope-creep into the 85% sync gate.
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
       ok: false,
@@ -513,10 +484,6 @@ describe("slack-sync — list phase", () => {
   });
 
   test("done_list with non-empty unique sort - transitions to history with hasMore=true", async () => {
-    // NOTE: production falls from list → history in the same call when done_list
-    // returns with non-empty ids. So a single sync call runs both phases for the
-    // first channel. We assert the first history call hit C1 (alpha-first after
-    // dedup of [C2, C1, C1] -> [C1, C2]).
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
       ok: true,
@@ -534,8 +501,6 @@ describe("slack-sync — list phase", () => {
     });
 
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // After single call: list ran (done_list with [C1, C2]), then history ran for
-    // C1 (no messages), advanced nextIdx to 1, returned hasMore=true because 1 < 2.
     expect(res.hasMore).toBe(true);
     const histCalls = fixture.fetchMock.bodiesFor(
       "POST",
@@ -558,9 +523,6 @@ describe("slack-sync — list phase", () => {
   });
 
   test("missing response_metadata -> defaults to empty next_cursor -> done_list", async () => {
-    // production: meta = asRecord(json["response_metadata"]) -> undefined when missing
-    // -> nextList = "" (the else branch). With non-empty ids, done_list falls through
-    // to history. Stage an empty-message history so the run completes cleanly.
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
       ok: true,
@@ -572,8 +534,6 @@ describe("slack-sync — list phase", () => {
       response_metadata: { next_cursor: "" },
     });
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // After single call: list (done_list, ids=[C1]) -> history C1 -> nextIdx=1,
-    // hasMore = 1 < 1 = false.
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -634,7 +594,6 @@ describe("slack-sync — history phase", () => {
       historyCursor({ ids: [""] }),
     );
     expect(res.hasMore).toBe(false);
-    // conversations.history NOT called
     const histCalls = fixture.fetchMock.calls.filter((c) =>
       c.url.includes("conversations.history"),
     );
@@ -727,7 +686,7 @@ describe("slack-sync — history phase", () => {
       fixture.createSyncContext(),
       historyCursor({ ids: ["C1", "C2"], nextIdx: 0 }),
     );
-    expect(res.hasMore).toBe(true); // C2 still pending
+    expect(res.hasMore).toBe(true);
     expect(res.itemsUpserted).toBe(1);
   });
 
@@ -851,7 +810,6 @@ describe("slack-sync — message indexing skip paths", () => {
   });
 
   test("non-finite ts number -> modifiedAt falls back to now", async () => {
-    // ts="abc" -> parseFloat -> NaN -> non-finite -> modifiedAt=now
     stageHistory([{ ts: "abc", text: "hi", user: "U1" }]);
     const beforeMs = Date.now();
     await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), historyCursor());
@@ -892,8 +850,8 @@ describe("slack-sync — message indexing skip paths", () => {
         "SELECT title, body_preview FROM item WHERE service = 'slack' LIMIT 1",
       )
       .get();
-    expect(row?.title.length).toBeLessThanOrEqual(120); // shortIndexedMessageTitleFromPreview caps title at ~118 chars
-    expect(row?.body_preview?.length).toBe(512); // preview clipped at 512
+    expect(row?.title.length).toBeLessThanOrEqual(120);
+    expect(row?.body_preview?.length).toBe(512);
   });
 
   test("maxTs updated across batch -> stored as hwVal in next cursor", async () => {
@@ -921,7 +879,6 @@ describe("slack-sync — message indexing skip paths", () => {
       }),
     );
     expect(res.itemsUpserted).toBe(3);
-    // Decode the returned cursor and verify hw.C1 == "200.0"
     const raw = res.cursor!.slice("nimbus-slk1:".length);
     const decoded = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as {
       hw: Record<string, string | null>;

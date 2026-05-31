@@ -1,6 +1,5 @@
 import type { OAuthProvider } from "../auth/pkce.ts";
 
-/** Normalised connector `service_id` values (Q2 plan / scheduler_state). */
 export const CONNECTOR_SERVICE_IDS = [
   "google_drive",
   "gmail",
@@ -34,6 +33,29 @@ export const CONNECTOR_SERVICE_IDS = [
   "bitrise",
   "sonarqube",
   "semgrep",
+  "wiz",
+  "launchdarkly",
+  "flagsmith",
+  "argocd",
+  "flux",
+  "dbt",
+  "metabase",
+  "superset",
+  "databricks",
+  "mlflow",
+  "vercel",
+  "netlify",
+  "stripe",
+  "mercury",
+  "readwise",
+  "raindrop",
+  "intercom",
+  "zendesk",
+  "lever",
+  "greenhouse",
+  "pipedrive",
+  "stackoverflow",
+  "zoom",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -58,7 +80,6 @@ const SEC90 = 90 * 1000;
 const MIN120 = 120 * 1000;
 const HOUR6 = 6 * 60 * 60 * 1000;
 
-/** Default scheduler interval per service (must list every {@link ConnectorServiceId}). */
 const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number } = {
   google_drive: MIN30,
   onedrive: MIN30,
@@ -92,6 +113,29 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   bitrise: MIN10,
   sonarqube: MIN10,
   semgrep: MIN10,
+  wiz: MIN10,
+  launchdarkly: MIN10,
+  flagsmith: MIN10,
+  argocd: MIN10,
+  flux: MIN10,
+  dbt: MIN10,
+  metabase: MIN10,
+  superset: MIN10,
+  databricks: MIN10,
+  mlflow: MIN10,
+  vercel: MIN10,
+  netlify: MIN10,
+  stripe: MIN10,
+  mercury: MIN10,
+  readwise: MIN10,
+  raindrop: MIN10,
+  intercom: MIN10,
+  zendesk: MIN10,
+  lever: MIN10,
+  greenhouse: MIN10,
+  pipedrive: MIN10,
+  stackoverflow: MIN10,
+  zoom: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -115,15 +159,6 @@ function oauthUnsupported(serviceId: ConnectorServiceId, detail: string): never 
   throw new Error(`oauthProfileForService: ${serviceId} ${detail}`);
 }
 
-/**
- * Services that authenticate via a PAT / API token / kubeconfig / service-account
- * key rather than OAuth. Calling `oauthProfileForService` for one of these is a
- * misuse — callers should read the connector's vault keys directly via
- * `readConnectorSecret`. The detail string explains the correct auth shape.
- *
- * Adding a new non-OAuth connector: add an entry here. Adding a new OAuth
- * connector: add a branch in the `switch` below.
- */
 const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   github: "uses a PAT (connector.auth personalAccessToken)",
   github_actions: "uses the same PAT as github (connector.auth github)",
@@ -149,6 +184,28 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   bitrise: "uses a personal access token (connector.auth bitrise)",
   sonarqube: "uses an API token (connector.auth sonarqube)",
   semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
+  wiz: "uses OAuth client_credentials (connector.auth wiz)",
+  launchdarkly: "uses an API token (connector.auth launchdarkly)",
+  flagsmith: "uses an admin API token (connector.auth flagsmith)",
+  argocd: "uses a bearer API token (connector.auth argocd)",
+  flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
+  dbt: "uses a dbt Cloud API token (connector.auth dbt)",
+  metabase: "uses a Metabase API key (connector.auth metabase)",
+  superset: "uses Superset username/password (connector.auth superset)",
+  databricks: "uses a Databricks PAT (connector.auth databricks)",
+  mlflow: "uses an MLflow API token (connector.auth mlflow)",
+  vercel: "uses an access token + optional team id (connector.auth vercel)",
+  netlify: "uses a personal access token (connector.auth netlify)",
+  stripe: "uses a secret API key (connector.auth stripe)",
+  mercury: "uses a Mercury API token (connector.auth mercury)",
+  readwise: "uses a Readwise API token (connector.auth readwise)",
+  raindrop: "uses a Raindrop.io API token (connector.auth raindrop)",
+  intercom: "uses an Intercom access token (connector.auth intercom)",
+  zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
+  lever: "uses a Lever API key (connector.auth lever)",
+  greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
+  pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
+  stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
@@ -233,10 +290,16 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       };
     case "notion":
       return { provider: "notion", defaultScopes: [] };
+    case "zoom":
+      return {
+        provider: "zoom",
+        defaultScopes: [
+          "user:read:user",
+          "meeting:read:list_meetings",
+          "cloud_recording:read:list_user_recordings",
+        ],
+      };
     default:
-      // All remaining ids are in `OAUTH_UNSUPPORTED_DETAILS` and threw above.
-      // The throw is the actual control-flow exit; this branch only exists so
-      // TypeScript's exhaustiveness check passes for the OAuth-supported switch.
       return oauthUnsupported(
         serviceId,
         "is missing both an OAuth branch and an unsupported entry",

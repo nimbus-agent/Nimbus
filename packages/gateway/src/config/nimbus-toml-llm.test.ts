@@ -116,7 +116,7 @@ describe("loadNimbusLlmFromPath", () => {
     const result = loadNimbusLlmFromPath(tomlPath);
     expect(result.preferLocal).toBe(false);
     expect(result.maxAgentDepth).toBe(2);
-    expect(result.enforceAirGap).toBe(false); // default preserved
+    expect(result.enforceAirGap).toBe(false);
   });
 });
 

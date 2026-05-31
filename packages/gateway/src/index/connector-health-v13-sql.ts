@@ -1,11 +1,3 @@
-/**
- * Connector health state columns + history table (user_version 13).
- *
- * Adds health tracking columns to `sync_state` and a new `connector_health_history`
- * table so the scheduler, diag, and doctor commands can observe connector health
- * transitions over time.
- */
-
 export const CONNECTOR_HEALTH_V13_SQL = `
 ALTER TABLE sync_state ADD COLUMN health_state TEXT NOT NULL DEFAULT 'healthy'
   CHECK(health_state IN ('healthy','degraded','error','rate_limited','unauthenticated','paused'));

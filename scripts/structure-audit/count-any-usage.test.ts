@@ -29,14 +29,9 @@ describe("stripComments", () => {
     expect(stripComments('const u = "x"; // any')).toBe('const u = "x"; ');
   });
   test("preserves newlines inside block comments", () => {
-    // D9 (list-risky-assertions) maps regex matches back to original line
-    // numbers via stripped.split("\n"). A multi-line block comment must
-    // contribute the same newline count as the original so downstream line
-    // numbers don't shift.
     const src = "/*\n line1\n line2\n*/\nconst x = y as Foo;";
     const stripped = stripComments(src);
     expect(stripped.split("\n").length).toBe(src.split("\n").length);
-    // The cast still appears on line 5 (1-indexed) of the stripped output.
     expect(stripped.split("\n")[4]).toBe("const x = y as Foo;");
   });
 });

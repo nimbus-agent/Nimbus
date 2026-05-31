@@ -1,11 +1,3 @@
-/**
- * Renders a `SurfaceComparison[]` into the markdown body for the PR
- * comment described in spec § 4.6. The leading hidden HTML marker
- * (`<!-- nimbus-perf-delta:${runner} -->`) lets `bench-ci.ts` find +
- * edit a prior comment on subsequent `synchronize` events instead of
- * spamming a new comment per push (D-L).
- */
-
 import type { HistoryLine, HistoryLineSurface } from "./history-line.ts";
 import { isFloorMetric, type SurfaceComparison } from "./threshold-comparator.ts";
 

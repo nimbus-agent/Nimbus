@@ -9,9 +9,6 @@ describe("getAuditLog redaction (S1-F6)", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const localIndex = new LocalIndex(db);
-    // Write a legacy-style audit row (pre-S2-F2 fix) that contains a credential
-    // value inside the action_json column. This simulates rows persisted before
-    // the write-side redaction landed.
     db.run(
       "INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp) VALUES (?, ?, ?, ?)",
       [

@@ -1,15 +1,7 @@
-/**
- * Test double for `IPCClient` — satisfies only the method surface the TUI uses.
- *
- * Not a public export; used only from TUI *.test.tsx/*.test.ts files.
- */
-
 import type { IPCClient } from "@nimbus-dev/client";
 
 export interface StubClientOptions {
-  /** Map of method name → static result. Throws if method is absent. */
   readonly results?: Record<string, unknown>;
-  /** Map of method name → throw spec. Errors take precedence over results. */
   readonly errors?: Record<string, Error>;
 }
 
@@ -52,7 +44,6 @@ export class StubIpcClient {
     set.add(handler);
   }
 
-  /** Push a synthetic notification to registered handlers. Test-only. */
   emit(method: string, params: unknown): void {
     const set = this.handlers.get(method);
     if (set === undefined) {
@@ -63,7 +54,6 @@ export class StubIpcClient {
     }
   }
 
-  /** Cast to the real IPCClient interface for component props. */
   asClient(): IPCClient {
     return this as unknown as IPCClient;
   }

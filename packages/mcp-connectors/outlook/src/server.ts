@@ -41,7 +41,7 @@ const grantedOutlookScopes = parseMicrosoftOAuthScopesFromEnv();
 
 const outlookMailFoldersArgs = z.object({
   top: z.number().int().min(1).max(200).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 if (outlookToolShouldRegister("outlook_mail_folders", grantedOutlookScopes)) {
@@ -75,7 +75,7 @@ const outlookMailListArgs = z.object({
   folderId: z.string().min(1).optional(),
   top: z.number().int().min(1).max(100).optional(),
   skip: z.number().int().min(0).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
   filter: z.string().max(500).optional(),
 });
 
@@ -207,7 +207,7 @@ const outlookCalendarListArgs = z.object({
   startDateTime: z.string().min(1),
   endDateTime: z.string().min(1),
   top: z.number().int().min(1).max(200).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 if (outlookToolShouldRegister("outlook_calendar_list", grantedOutlookScopes)) {
@@ -344,7 +344,7 @@ if (outlookToolShouldRegister("outlook_calendar_delete", grantedOutlookScopes)) 
 const outlookContactListArgs = z.object({
   top: z.number().int().min(1).max(200).optional(),
   skip: z.number().int().min(0).optional(),
-  nextLink: z.string().url().optional(),
+  nextLink: z.url().optional(),
 });
 
 if (outlookToolShouldRegister("outlook_contact_list", grantedOutlookScopes)) {

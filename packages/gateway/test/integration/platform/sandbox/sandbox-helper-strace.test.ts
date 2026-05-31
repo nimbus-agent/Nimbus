@@ -9,11 +9,8 @@ describe.skipIf(process.platform !== "linux")(
   () => {
     it("does not call setns or unshare(CLONE_NEWUSER) after the initial unshare(CLONE_NEWNET)", () => {
       if (!existsSync(helperPath)) {
-        return; // skip if not built in this environment
+        return;
       }
-      // Intentionally NO `-f`: we trace the helper process itself, not its
-      // forked /bin/sh children (which exec iptables/ip6tables). The helper's
-      // own syscalls are the invariant — children get their own audit chain.
       const result = spawnSync(
         "strace",
         ["-e", "trace=setns,unshare", helperPath, "--allow", "example.com", "--", "/bin/true"],

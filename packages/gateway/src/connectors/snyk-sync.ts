@@ -1,16 +1,3 @@
-/**
- * Snyk REST sync handler. Walks `/v1/orgs` → `/v1/org/<id>/projects` →
- * `/v1/org/<id>/project/<pid>/aggregated-issues` and upserts each issue
- * into the unified `item` table as `service = "snyk", type =
- * "vulnerability"` via {@link mapSnykAggregatedIssueToItem}.
- *
- * Single-pass cursor model (matches `sentry-sync.ts`): every successful
- * run emits a fresh `nimbus-snyk1:{pass: 1}` cursor so the scheduler does
- * not re-queue immediately. Snyk does not expose a delta endpoint for
- * issues; full-walk-per-cycle is acceptable at the 10-minute default
- * cadence because the aggregated-issues responses are small.
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -18,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSnykAggregatedIssueToItem } from "./snyk-issue-mapping.ts";
@@ -49,36 +37,14 @@ export type SnykSyncableOptions = {
   ensureSnykMcpRunning: () => Promise<void>;
 };
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function snykGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${SNYK_API}${path}`, {
+function snykGet(ctx: SyncContext, token: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${SNYK_API}${path}`, {
     headers: { Authorization: `token ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "snyk GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
-async function snykPost(
-  ctx: SyncContext,
-  token: string,
-  path: string,
-  body: unknown,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${SNYK_API}${path}`, {
+function snykPost(ctx: SyncContext, token: string, path: string, body: unknown) {
+  return connectorFetch(ctx, SERVICE_ID, `${SNYK_API}${path}`, {
     method: "POST",
     headers: {
       Authorization: `token ${token}`,
@@ -87,16 +53,6 @@ async function snykPost(
     },
     body: JSON.stringify(body),
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "snyk POST failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractOrgIds(parsed: unknown): string[] {
@@ -145,6 +101,60 @@ function extractIssues(parsed: unknown): unknown[] {
   return Array.isArray(issues) ? issues : [];
 }
 
+type IngestTally = { upserted: number; bytes: number };
+
+async function ingestProjectIssues(
+  ctx: SyncContext,
+  token: string,
+  orgId: string,
+  projectId: string,
+  now: number,
+): Promise<IngestTally> {
+  const issuesOutcome = await snykPost(
+    ctx,
+    token,
+    `/v1/org/${encodeURIComponent(orgId)}/project/${encodeURIComponent(projectId)}/aggregated-issues`,
+    DEFAULT_AGG_ISSUES_BODY,
+  );
+  if (issuesOutcome.kind !== "ok") {
+    return { upserted: 0, bytes: issuesOutcome.bytes };
+  }
+  let upserted = 0;
+  for (const issue of extractIssues(issuesOutcome.parsed)) {
+    const mapped = mapSnykAggregatedIssueToItem(issue, { orgId, projectId, syncedAt: now });
+    if (mapped === null) {
+      continue;
+    }
+    upsertIndexedItemForSync(ctx, mapped);
+    upserted += 1;
+  }
+  return { upserted, bytes: issuesOutcome.bytes };
+}
+
+async function ingestOrgProjects(
+  ctx: SyncContext,
+  token: string,
+  orgId: string,
+  now: number,
+): Promise<IngestTally> {
+  const projectsOutcome = await snykGet(
+    ctx,
+    token,
+    `/v1/org/${encodeURIComponent(orgId)}/projects`,
+  );
+  if (projectsOutcome.kind !== "ok") {
+    return { upserted: 0, bytes: projectsOutcome.bytes };
+  }
+  let upserted = 0;
+  let bytes = projectsOutcome.bytes;
+  for (const projectId of extractProjectIds(projectsOutcome.parsed)) {
+    const tally = await ingestProjectIssues(ctx, token, orgId, projectId, now);
+    upserted += tally.upserted;
+    bytes += tally.bytes;
+  }
+  return { upserted, bytes };
+}
+
 export function createSnykSyncable(options: SnykSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -166,46 +176,14 @@ export function createSnykSyncable(options: SnykSyncableOptions): Syncable {
         return syncPassCursorParseEmpty(t0, orgsOutcome.bytes, pass1Cursor());
       }
 
-      const orgIds = extractOrgIds(orgsOutcome.parsed);
       const now = Date.now();
       let upserted = 0;
       let totalBytes = orgsOutcome.bytes;
 
-      for (const orgId of orgIds) {
-        const projectsOutcome = await snykGet(
-          ctx,
-          token,
-          `/v1/org/${encodeURIComponent(orgId)}/projects`,
-        );
-        totalBytes += projectsOutcome.bytes;
-        if (projectsOutcome.kind !== "ok") {
-          continue;
-        }
-        const projectIds = extractProjectIds(projectsOutcome.parsed);
-        for (const projectId of projectIds) {
-          const issuesOutcome = await snykPost(
-            ctx,
-            token,
-            `/v1/org/${encodeURIComponent(orgId)}/project/${encodeURIComponent(projectId)}/aggregated-issues`,
-            DEFAULT_AGG_ISSUES_BODY,
-          );
-          totalBytes += issuesOutcome.bytes;
-          if (issuesOutcome.kind !== "ok") {
-            continue;
-          }
-          for (const issue of extractIssues(issuesOutcome.parsed)) {
-            const mapped = mapSnykAggregatedIssueToItem(issue, {
-              orgId,
-              projectId,
-              syncedAt: now,
-            });
-            if (mapped === null) {
-              continue;
-            }
-            upsertIndexedItemForSync(ctx, mapped);
-            upserted += 1;
-          }
-        }
+      for (const orgId of extractOrgIds(orgsOutcome.parsed)) {
+        const tally = await ingestOrgProjects(ctx, token, orgId, now);
+        upserted += tally.upserted;
+        totalBytes += tally.bytes;
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);

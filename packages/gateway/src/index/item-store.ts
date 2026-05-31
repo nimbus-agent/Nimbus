@@ -43,9 +43,6 @@ function clipPreview(text: string): string {
   return text.length <= 512 ? text : text.slice(0, 512);
 }
 
-/**
- * Upsert a unified index row (FTS triggers maintain item_fts).
- */
 export function upsertIndexedItem(
   db: Database,
   row: {
@@ -114,7 +111,6 @@ export function upsertIndexedItem(
   });
 }
 
-/** Like {@link upsertIndexedItem}, plus optional {@link SyncContext.scheduleItemEmbedding}. */
 export function upsertIndexedItemForSync(
   ctx: SyncContext,
   row: Parameters<typeof upsertIndexedItem>[1],

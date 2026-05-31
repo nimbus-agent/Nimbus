@@ -1,10 +1,3 @@
-/**
- * Narrow interfaces over `vscode` so source-under-test never imports `vscode` directly.
- * extension.ts is the only file that constructs real implementations from `vscode.*`.
- */
-
-// VS Code declares Thenable as a global, but it is not in the standard TS lib.
-// Define it locally so this shim has no dependency on the `vscode` module.
 type Thenable<T> = PromiseLike<T>;
 
 export interface DisposableLike {
@@ -79,8 +72,6 @@ export interface CommandsApi {
 }
 
 export interface ExtensionContextLike {
-  /** VS Code pushes any disposable here and disposes them all on extension deactivate. */
   subscriptions: DisposableLike[];
-  /** Per-workspace persistent key/value store; backs SessionStore. */
   workspaceState: MementoLike;
 }

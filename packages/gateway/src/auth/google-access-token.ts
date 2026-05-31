@@ -10,7 +10,6 @@ import {
   type ParseStoredOAuthErrors,
 } from "./oauth-vault-tokens.ts";
 
-/** Google connectors that use delegated OAuth and per-service vault keys. */
 export type GoogleConnectorOAuthServiceId = "google_drive" | "gmail" | "google_photos";
 
 const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
@@ -24,7 +23,6 @@ const GOOGLE_OAUTH_PARSE_ERRORS: ParseStoredOAuthErrors = {
 const NOT_CONFIGURED =
   "Google OAuth not configured; run: nimbus connector auth google_drive (or gmail / google_photos)";
 
-/** True if any Google delegated OAuth credential exists in the vault. */
 export async function anyGoogleOAuthVaultPresent(vault: NimbusVault): Promise<boolean> {
   for (const k of ALL_GOOGLE_OAUTH_VAULT_KEYS) {
     const v = await vault.get(k);
@@ -35,10 +33,6 @@ export async function anyGoogleOAuthVaultPresent(vault: NimbusVault): Promise<bo
   return false;
 }
 
-/**
- * Resolves which vault key holds the token for this connector: per-service key
- * when present, else legacy `google.oauth`.
- */
 export async function resolveGoogleOAuthVaultKey(
   vault: NimbusVault,
   serviceId: GoogleConnectorOAuthServiceId,
@@ -57,10 +51,6 @@ export async function resolveGoogleOAuthVaultKey(
   return null;
 }
 
-/**
- * Returns a valid Google access token for the given connector, refreshing when
- * near expiry. Persists refreshed tokens to the same vault key that was read.
- */
 export async function getValidGoogleAccessToken(
   vault: NimbusVault,
   serviceId: GoogleConnectorOAuthServiceId,

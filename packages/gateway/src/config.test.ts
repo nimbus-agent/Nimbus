@@ -82,14 +82,6 @@ describe("getEffectiveAgentModel / getEffectiveClassifierModel", () => {
   });
 });
 
-/**
- * Coverage Phase 4 — exercises every branch of the module-private env parsers
- * (`parseSearchPriorityJson` / `parseEngineContextWindowItems` /
- * `parseConversationalAgentMaxSteps` / `parseMaxAgentDepth` /
- * `parseMaxToolCallsPerSession` / `parseEmbeddingsEnabled`). The parsers run
- * at module load when reading `process.env`, so we drive them directly by
- * stubbing the env var on each call.
- */
 describe("env-var parsers", () => {
   const ENV_KEYS = [
     "NIMBUS_SEARCH_PRIORITY_JSON",

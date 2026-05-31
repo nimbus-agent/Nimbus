@@ -1,17 +1,3 @@
-/**
- * Unit tests for the per-namespace `tryDispatch*Rpc` helpers in
- * `dispatchers.ts`. Each helper is a thin namespace router that either:
- *
- *   - returns the appropriate "skipped" sentinel when the method does not
- *     match its namespace prefix, or
- *   - delegates to the inner `dispatch*Rpc` handler.
- *
- * The skip-path tests build a minimal `ServerCtx` and assert each helper
- * returns the right sentinel for off-namespace methods, missing dependencies,
- * etc. The delegated-call paths are tested where the handler accepts a small
- * set of inputs without requiring a fully-wired Gateway.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -60,8 +46,6 @@ import {
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
 
-// ---------------------------------------------------------------- helpers --
-
 function makeDb(): Database {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -93,8 +77,6 @@ function makeCtx(overrides: Partial<ServerCtx["options"]> = {}): {
   return { ctx, notifications };
 }
 
-// We track DBs we open so we can close them in afterEach without holding
-// across-test state.
 const openDbs: Database[] = [];
 
 afterEach(() => {
@@ -114,8 +96,6 @@ function trackedDb(): Database {
   return db;
 }
 
-// ---------------------------------------------------------------- llm ------
-
 describe("tryDispatchLlmRpc", () => {
   test("skips non-llm methods", async () => {
     const { ctx } = makeCtx();
@@ -126,8 +106,6 @@ describe("tryDispatchLlmRpc", () => {
     expect(await tryDispatchLlmRpc(ctx, "llm.listModels", {})).toBe(phase4RpcSkipped);
   });
 });
-
-// ---------------------------------------------------------------- agents ---
 
 describe("tryDispatchAgentsRpc", () => {
   test("skips non-agents methods", async () => {
@@ -140,8 +118,6 @@ describe("tryDispatchAgentsRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- voice ----
-
 describe("tryDispatchVoiceRpc", () => {
   test("skips non-voice methods", async () => {
     const { ctx } = makeCtx();
@@ -153,8 +129,6 @@ describe("tryDispatchVoiceRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- updater --
-
 describe("tryDispatchUpdaterRpc", () => {
   test("skips non-updater methods", async () => {
     const { ctx } = makeCtx();
@@ -162,12 +136,9 @@ describe("tryDispatchUpdaterRpc", () => {
   });
   test("delegates with undefined updater (handler decides)", async () => {
     const { ctx } = makeCtx();
-    // updater handler returns a typed error when no updater is plumbed.
     await expect(tryDispatchUpdaterRpc(ctx, "updater.checkNow", {})).rejects.toBeDefined();
   });
 });
-
-// ---------------------------------------------------------------- audit ----
 
 describe("tryDispatchAuditRpc", () => {
   test("skips other methods", async () => {
@@ -176,8 +147,6 @@ describe("tryDispatchAuditRpc", () => {
   });
   test("throws when localIndex undefined and method is audit.*", async () => {
     const { ctx } = makeCtx();
-    // dispatchAuditRpc throws AuditRpcError when localIndex is undefined;
-    // the helper remaps to RpcMethodError.
     await expect(tryDispatchAuditRpc(ctx, "audit.verify", {})).rejects.toThrow(
       /LocalIndex not configured/,
     );
@@ -186,14 +155,10 @@ describe("tryDispatchAuditRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // audit.verify with empty payload should not throw; it returns its
-    // own envelope shape.
     const out = await tryDispatchAuditRpc(ctx, "audit.verify", {});
     expect(out).toBeDefined();
   });
 });
-
-// ---------------------------------------------------------------- metrics --
 
 describe("tryDispatchMetricsRpc", () => {
   test("skips non-metrics methods", async () => {
@@ -214,8 +179,6 @@ describe("tryDispatchMetricsRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- preflight
-
 describe("tryDispatchPreflightRpc", () => {
   test("skips non-deploy methods", async () => {
     const { ctx } = makeCtx();
@@ -235,8 +198,6 @@ describe("tryDispatchPreflightRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- deployment
-
 describe("tryDispatchDeploymentRpc", () => {
   test("skips non-deployment.annotate methods", async () => {
     const { ctx } = makeCtx();
@@ -252,13 +213,9 @@ describe("tryDispatchDeploymentRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // Empty payload fails validation in dispatchDeploymentRpc -> the helper
-    // remaps the typed error to RpcMethodError.
     await expect(tryDispatchDeploymentRpc(ctx, "deployment.annotate", {})).rejects.toBeDefined();
   });
 });
-
-// ---------------------------------------------------------------- reindex --
 
 describe("tryDispatchReindexRpc", () => {
   test("skips non-connector.reindex methods", async () => {
@@ -269,19 +226,13 @@ describe("tryDispatchReindexRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // connector.reindex needs a service param — missing → throws.
     await expect(tryDispatchReindexRpc(ctx, "connector.reindex", {}, "c1")).rejects.toBeDefined();
   });
   test("skips when localIndex missing (no toolExecutor branch)", async () => {
     const { ctx } = makeCtx();
-    // localIndex undefined → toolExecutor undefined → dispatcher still runs
-    // but throws on missing params; either way we should not crash before
-    // reaching the inner dispatcher.
     await expect(tryDispatchReindexRpc(ctx, "connector.reindex", {}, "c1")).rejects.toBeDefined();
   });
 });
-
-// ---------------------------------------------------------------- index reembed
 
 describe("tryDispatchIndexReembedRpc", () => {
   test("skips other methods", async () => {
@@ -307,8 +258,6 @@ describe("tryDispatchIndexReembedRpc", () => {
     const localIndex = new LocalIndex(db);
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-reembed-"));
     const { ctx } = makeCtx({ localIndex, dataDir: tmp });
-    // Cancel of a non-existent jobId; the dispatcher decides; either resolves
-    // or throws a typed error. Just exercise the delegation.
     try {
       await tryDispatchIndexReembedRpc(ctx, "index.reembedCancel", { jobId: "missing" });
     } catch {
@@ -317,8 +266,6 @@ describe("tryDispatchIndexReembedRpc", () => {
     }
   });
 });
-
-// ---------------------------------------------------------------- profile -
 
 describe("tryDispatchProfileRpc", () => {
   test("skips non-profile methods", async () => {
@@ -333,8 +280,6 @@ describe("tryDispatchProfileRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- data ----
-
 describe("tryDispatchDataRpc", () => {
   test("skips non-data methods", async () => {
     const { ctx } = makeCtx();
@@ -342,21 +287,15 @@ describe("tryDispatchDataRpc", () => {
   });
   test("delegates with valid prefix and bubbles up validation errors", async () => {
     const { ctx } = makeCtx();
-    // dispatchDataRpc throws DataRpcError when output is missing; the
-    // helper remaps to RpcMethodError.
     await expect(tryDispatchDataRpc(ctx, "data.export", {}, "c1")).rejects.toThrow(/output/);
   });
   test("delegates data.* with localIndex (toolExecutor branch)", async () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // Exercises the localIndex !== undefined branch where ToolExecutor is
-    // constructed.
     await expect(tryDispatchDataRpc(ctx, "data.export", {}, "c1")).rejects.toBeDefined();
   });
 });
-
-// ---------------------------------------------------------------- LAN -----
 
 describe("tryDispatchLanRpc", () => {
   test("skips non-lan methods", async () => {
@@ -392,8 +331,6 @@ describe("tryDispatchLanRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // grant a peer that doesn't exist — the LocalIndex methods may noop; we
-    // assert the dispatcher returned ok shape without throwing.
     const granted = (await tryDispatchLanRpc(ctx, "lan.grantWrite", {
       peerId: "peer-1",
     })) as Record<string, unknown>;
@@ -418,8 +355,6 @@ describe("tryDispatchLanRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- session -
-
 describe("tryDispatchSessionRpc", () => {
   test("skips non-session methods", async () => {
     const { ctx } = makeCtx();
@@ -432,8 +367,6 @@ describe("tryDispatchSessionRpc", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------- automation
 
 describe("tryDispatchAutomationRpc", () => {
   const fakeSession = {} as unknown as Parameters<typeof tryDispatchAutomationRpc>[2];
@@ -452,7 +385,6 @@ describe("tryDispatchAutomationRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // workflow.list is a read; should not throw on empty db.
     await expect(
       tryDispatchAutomationRpc(ctx, "c1", fakeSession, "workflow.list", {}),
     ).resolves.toBeDefined();
@@ -479,8 +411,6 @@ describe("tryDispatchAutomationRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- people --
-
 describe("tryDispatchPeopleRpc", () => {
   test("skips non-people methods", () => {
     const { ctx } = makeCtx();
@@ -494,8 +424,6 @@ describe("tryDispatchPeopleRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    // Whatever dispatchPeopleRpc returns (hit/miss) — we just want the
-    // inner branch covered.
     try {
       const out = tryDispatchPeopleRpc(ctx, "people.list", {});
       expect(out).toBeDefined();
@@ -504,8 +432,6 @@ describe("tryDispatchPeopleRpc", () => {
     }
   });
 });
-
-// ---------------------------------------------------------------- connector
 
 describe("tryDispatchConnectorRpc", () => {
   test("skips non-connector methods", async () => {
@@ -540,8 +466,6 @@ describe("tryDispatchConnectorRpc", () => {
       localIndex,
       openUrl: async () => {},
     });
-    // dispatchConnectorRpc may throw on missing params, but the code path
-    // through the auth branch (openUrl resolved) is exercised.
     try {
       await tryDispatchConnectorRpc(ctx, "connector.auth", {}, "c1");
     } catch {
@@ -549,8 +473,6 @@ describe("tryDispatchConnectorRpc", () => {
     }
   });
 });
-
-// ---------------------------------------------------------------- diagnostics
 
 describe("tryDispatchDiagnosticsRpc", () => {
   test("skips off-namespace methods", async () => {
@@ -590,13 +512,6 @@ describe("tryDispatchDiagnosticsRpc", () => {
   });
 });
 
-// ---------------------------------------------------------------- LLM happy path
-
-// Note: LLM tests can't easily run without an LlmRegistry, but the skip
-// paths already cover the early-return.
-
-// ---------------------------------------------------------------- profile (with manager)
-
 describe("tryDispatchProfileRpc with manager", () => {
   let tmpDir: string;
   beforeEach(() => {
@@ -617,8 +532,6 @@ describe("tryDispatchProfileRpc with manager", () => {
     expect(out).toBe(phase4RpcSkipped);
   });
 });
-
-// ---------------------------------------------------------------- LAN with pairing
 
 describe("tryDispatchLanRpc with pairing window", () => {
   test("lan.openPairingWindow returns code + expiresAt", async () => {
@@ -642,8 +555,6 @@ describe("tryDispatchLanRpc with pairing window", () => {
   });
 });
 
-// ---------------------------------------------------------------- session with store
-
 describe("tryDispatchSessionRpc with store", () => {
   test("session.list delegates and returns envelope", async () => {
     const db = trackedDb();
@@ -658,13 +569,9 @@ describe("tryDispatchSessionRpc with store", () => {
   });
 });
 
-// ---------------------------------------------------------------- phase4 --
-
 describe("tryDispatchPhase4Rpc", () => {
   test("walks the chain and returns the dispatcher's skip sentinel for non-matching method", async () => {
     const { ctx } = makeCtx();
-    // engine.ask doesn't match any phase-4 namespace; the final
-    // tryDispatchReindexRpc returns phase4RpcSkipped.
     const out = await tryDispatchPhase4Rpc(ctx, "engine.ask", {}, "c1");
     expect(out).toBe(phase4RpcSkipped);
   });

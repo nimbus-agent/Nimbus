@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-github-actions — GitHub Actions REST MCP (shared `GITHUB_PAT` with GitHub connector).
- * Mutating runs require Gateway HITL: `github_actions.run.trigger`, `github_actions.run.cancel`.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -44,7 +39,6 @@ const runListSchema = repoSlugArgs.extend({
   page: z.number().int().min(1).optional(),
   branch: z.string().optional(),
   event: z.string().optional(),
-  /** GitHub REST `status` query value (e.g. completed, in_progress). */
   status: z.string().optional(),
 });
 

@@ -1,11 +1,3 @@
-/**
- * S2-c — Query p95 on the 1 M-row corpus tier (reference-only).
- *
- * Reference-only because generating a 1 M-item SQLite fixture on every CI
- * run would take minutes per run. The skip is enforced at the CLI layer
- * (REFERENCE_ONLY set in bench-cli.ts) — this driver itself has no guard.
- */
-
 import type { BenchRunOptions, CorpusTier } from "../types.ts";
 import { type RunOptions as BaseRunOptions, runQueryLatencyOnce } from "./bench-query-latency.ts";
 

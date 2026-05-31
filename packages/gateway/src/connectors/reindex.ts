@@ -47,6 +47,5 @@ export async function reindexConnector(input: ReindexInput): Promise<ReindexResu
     }
     return { itemsAffected: rowids.length, depth: input.depth, mode: "shallow" };
   }
-  // deepen: in-place; background re-sync is out of scope for this WS.
   return { itemsAffected: 0, depth: input.depth, mode: "deepen" };
 }

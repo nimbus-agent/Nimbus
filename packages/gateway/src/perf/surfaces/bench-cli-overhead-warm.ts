@@ -1,18 +1,3 @@
-/**
- * S11-b — CLI invocation overhead (warm).
- *
- * Approximates "second invocation in the same shell" by running one
- * discarded warm-up invocation before the measurement loop. This warms
- * the OS file cache for the CLI entry; Bun runtime caches are inherently
- * per-process so the warm/cold distinction here is dominated by
- * file-system caching.
- *
- * Uses `nimbus help` (same as S11-a) so cold-vs-warm differs only in
- * file-cache state, not in the work the CLI does post-startup.
- *
- * 20 samples per run — each sample is one cheap invocation.
- */
-
 import { resolve } from "node:path";
 
 import { spawnAndTimeToMarker } from "../process-spawn-bench.ts";
@@ -38,7 +23,6 @@ export async function runCliOverheadWarmOnce(
   const entry = runOpts.cliEntry ?? defaultCliEntry();
   const args = [entry, "help"];
 
-  // One discarded invocation outside the loop primes the file cache.
   await spawnAndTimeToMarker({
     cmd: process.execPath,
     args,

@@ -1,12 +1,3 @@
-/**
- * Phase 5 T3 PR 1 — `nimbus expert` end-to-end (in-process).
- *
- * Seeds two persons (alice + bob) and a small set of GitHub PR + commit items
- * touching the topic file, then calls runExpert directly and asserts the brief
- * shape, ranking, gap-note presence, latency budget, and the structural HITL-
- * free guarantee.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { isExpertBrief } from "../../../src/agents/_lib/findings.ts";
@@ -27,7 +18,6 @@ describe("nimbus expert (e2e, in-process)", () => {
          ('bob',   'Bob',   'bob@example.com',   0)`,
     );
 
-    // 4 commits authored by alice + 2 PRs (alice = 2, bob = 1).
     for (let i = 0; i < 4; i += 1) {
       upsertIndexedItem(db, {
         service: "github",
@@ -71,15 +61,11 @@ describe("nimbus expert (e2e, in-process)", () => {
     expect(elapsedMs).toBeLessThan(8_000);
     expect(isExpertBrief(brief)).toBe(true);
     expect(brief.ranked[0]?.displayName).toBe("Alice");
-    // Sparse-fixture assertion: gaps array is non-empty (reviewed/incident
-    // sub-agents always emit structural gaps until the populator catches up).
     expect(brief.gaps.length).toBeGreaterThan(0);
     expect(brief.gaps.some((g) => g.category === "missing_relation_emit")).toBe(true);
   });
 
   test("zero HITL actions fired (structural)", () => {
-    // F-2/I-2 assertion is structural: expert.ts must not import ToolExecutor.
-    // A unit-test grep over the source enforces that read-only contract.
     const source = require("node:fs").readFileSync(
       require("node:path").resolve(__dirname, "../../../src/agents/expert.ts"),
       "utf8",

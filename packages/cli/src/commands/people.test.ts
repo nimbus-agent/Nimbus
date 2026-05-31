@@ -1,0 +1,269 @@
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+
+import "../../test/helpers/cli-mocks.ts";
+import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { captureOutput } from "../../test/helpers/cli-output.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+
+const peopleMod = await import("./people.ts");
+const { runPeople } = peopleMod;
+
+const out = captureOutput();
+
+afterAll(() => {
+  out.restore();
+});
+
+function fakePerson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "p1",
+    displayName: "Alice",
+    canonicalEmail: "alice@example.com",
+    githubLogin: "alice",
+    gitlabLogin: null,
+    slackHandle: null,
+    linearMemberId: null,
+    jiraAccountId: null,
+    notionUserId: null,
+    linked: true,
+    ...overrides,
+  };
+}
+
+describe("runPeople — help & dispatch", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("prints help when no subcommand is given", async () => {
+    await runPeople([]);
+    expect(out.stdout).toContain("nimbus people");
+    expect(out.stdout).toContain("Usage:");
+  });
+
+  it("prints help for 'help' / '--help' / '-h'", async () => {
+    await runPeople(["help"]);
+    expect(out.stdout).toContain("nimbus people");
+    out.reset();
+    await runPeople(["--help"]);
+    expect(out.stdout).toContain("nimbus people");
+    out.reset();
+    await runPeople(["-h"]);
+    expect(out.stdout).toContain("nimbus people");
+  });
+
+  it("prints error and sets exitCode=1 for unknown subcommand", async () => {
+    await runPeople(["bogus"]);
+    expect(out.stderr).toContain("Unknown people subcommand: bogus");
+    expect(out.stderr).toContain("nimbus people help");
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("runPeople — list", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("calls people.list with default unlinkedOnly=false, limit=100", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["list"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.list",
+      params: { unlinkedOnly: false, limit: 100 },
+    });
+    expect(out.stdout).toContain("p1");
+    expect(out.stdout).toContain("Alice");
+    expect(out.stdout).toContain("github=alice");
+    expect(out.stdout).toContain("linked");
+  });
+
+  it("honours --unlinked and --limit flags", async () => {
+    const mock = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["list", "--unlinked", "--limit", "10"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.list",
+      params: { unlinkedOnly: true, limit: 10 },
+    });
+  });
+
+  it("prints '—' placeholders when name + email are null", async () => {
+    const mock = createMockIpcClient([
+      [fakePerson({ displayName: null, canonicalEmail: null, githubLogin: null, linked: false })],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["list"]);
+    expect(out.stdout).toContain("unlinked");
+    expect(out.stdout).toContain("—");
+  });
+});
+
+describe("runPeople — search", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("calls people.search with query + default limit 25", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["search", "alice"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.search",
+      params: { query: "alice", limit: 25 },
+    });
+  });
+
+  it("throws usage when query missing", async () => {
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    await expect(runPeople(["search"])).rejects.toThrow(/Usage: nimbus people search/);
+  });
+});
+
+describe("runPeople — get", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("calls people.get and prints person row", async () => {
+    const mock = createMockIpcClient([fakePerson()]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["get", "p1"]);
+    expect(mock.calls[0]).toEqual({ method: "people.get", params: { id: "p1" } });
+    expect(out.stdout).toContain("p1");
+  });
+
+  it("prints '(not found)' when null returned", async () => {
+    const mock = createMockIpcClient([null]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["get", "missing"]);
+    expect(out.stdout).toContain("(not found)");
+  });
+
+  it("throws usage when id missing", async () => {
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    await expect(runPeople(["get"])).rejects.toThrow(/Usage: nimbus people get/);
+  });
+});
+
+describe("runPeople — items", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("calls people.items with personId and prints tab-delimited rows", async () => {
+    const mock = createMockIpcClient([[{ id: "github:pr_1", service: "github", name: "Fix bug" }]]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["items", "p1"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.items",
+      params: { personId: "p1", limit: 50 },
+    });
+    expect(out.stdout).toContain("github\tgithub:pr_1\tFix bug");
+  });
+
+  it("throws usage when id missing", async () => {
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    await expect(runPeople(["items"])).rejects.toThrow(/Usage: nimbus people items/);
+  });
+});
+
+describe("runPeople — link", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("calls people.merge with both ids and prints 'Merged into <id>'", async () => {
+    const mock = createMockIpcClient([{ survivorId: "p1", person: fakePerson() }]);
+    setFixture({
+      gatewayState: { socketPath: "/tmp/fake.sock" },
+      ipcClient: mock.client as unknown as {
+        call: unknown;
+        connect: unknown;
+        disconnect: unknown;
+      },
+    });
+    await runPeople(["link", "p1", "p2"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.merge",
+      params: { personIdA: "p1", personIdB: "p2" },
+    });
+    expect(out.stdout).toContain("Merged into p1");
+  });
+
+  it("throws usage when ids missing", async () => {
+    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    await expect(runPeople(["link"])).rejects.toThrow(/Usage: nimbus people link/);
+    await expect(runPeople(["link", "p1"])).rejects.toThrow(/Usage: nimbus people link/);
+  });
+});

@@ -1,7 +1,3 @@
-/**
- * Embedding store (`vec_items_384` + `embedding_chunk`).
- * Requires the sqlite-vec extension to be loaded before this SQL runs.
- */
 export const EMBEDDING_V6_MIGRATION_SQL = `
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_items_384
   USING vec0(embedding float[384]);
@@ -30,13 +26,6 @@ BEGIN
 END;
 `;
 
-/**
- * Fallback v6 schema used when sqlite-vec cannot be loaded on the current platform
- * (e.g. macOS CI without a notarised native extension).  The embedding_chunk table
- * is created with a nullable vec_rowid so the rest of the schema (FTS5, graph, sync,
- * people, …) continues to work.  Vector-specific columns/triggers are omitted; tests
- * that genuinely exercise sqlite-vec will skip themselves via isVecLoaded().
- */
 export const EMBEDDING_V6_NO_VEC_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS embedding_chunk (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,

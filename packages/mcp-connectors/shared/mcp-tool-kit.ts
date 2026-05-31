@@ -4,7 +4,6 @@ export function mcpJsonResult(data: unknown): McpListResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 
-/** Shape of `z.object()` — structural so `shared/` does not depend on `zod` (not a workspace package). */
 export type ZodObjectSchema<T> = {
   readonly shape: Record<string, unknown>;
   safeParse: (
@@ -12,7 +11,6 @@ export type ZodObjectSchema<T> = {
   ) => { success: true; data: T } | { success: false; error: { message: string } };
 };
 
-/** Registers a tool with one schema object — avoids duplicating the shape for MCP metadata vs `safeParse`. */
 export function registerZodTool<T>(
   registerSimpleTool: RegisterSimpleToolFn,
   name: string,
@@ -34,7 +32,6 @@ export function registerZodTool<T>(
   );
 }
 
-/** Curried registrar — drops the per-connector `reg` boilerplate. */
 export function createZodToolRegistrar(registerSimpleTool: RegisterSimpleToolFn) {
   return <T>(
     name: string,
@@ -126,13 +123,11 @@ export type RegisterSimpleToolFn = (
 ) => unknown;
 
 export function createRegisterSimpleTool(server: unknown): RegisterSimpleToolFn {
-  /* Callers pass `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js`. This file cannot import
-   * that module: `shared/` is not a workspace package, so `tsc` does not resolve the SDK for these paths. */
   if (
     typeof server !== "object" ||
     server === null ||
     !("tool" in server) ||
-    typeof (server as { tool: unknown }).tool !== "function"
+    typeof server.tool !== "function"
   ) {
     throw new Error("createRegisterSimpleTool: expected MCP server with .tool");
   }

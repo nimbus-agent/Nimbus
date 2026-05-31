@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import pino from "pino";
 
+import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -56,7 +57,6 @@ export function requestUrlString(input: string | URL | Request): string {
   return input.url;
 }
 
-/** Registers `afterEach` to restore `globalThis.fetch` (connector sync tests mock fetch). */
 export function registerGlobalFetchRestore(afterEachImpl: (callback: () => void) => void): void {
   const originalFetch = globalThis.fetch;
   afterEachImpl(() => {
@@ -72,12 +72,11 @@ function testOAuthVaultJson(): string {
   });
 }
 
-/** Vault + in-memory index + {@link SyncContext} for connector unit tests. */
 export async function createOAuthConnectorTestSetup(
   provider: "google" | "microsoft",
 ): Promise<{ db: Database; vault: NimbusVault; ctx: SyncContext }> {
   const vault = createMemoryVault();
-  await vault.set(provider === "google" ? "google.oauth" : "microsoft.oauth", testOAuthVaultJson());
+  await vault.set(OAUTH_PROVIDERS[provider].vaultKey, testOAuthVaultJson());
   const db = openMemoryIndexDatabase();
   return { db, vault, ctx: createSyncTestContext(db, vault) };
 }
@@ -95,10 +94,6 @@ export function expectPrefixedCursorCodecRoundTrip<T>(
   }
 }
 
-/**
- * Issues a GET to the local OAuth callback URL without using `globalThis.fetch`.
- * Connector tests often replace global fetch; this keeps PKCE harness tests stable.
- */
 async function pkceTestHttpGetStatus(url: string): Promise<number> {
   const u = new URL(url);
   if (u.protocol !== "http:" && u.protocol !== "https:") {
@@ -115,7 +110,6 @@ async function pkceTestHttpGetStatus(url: string): Promise<number> {
   });
 }
 
-/** Completes the browser step of PKCE tests by GETting the redirect_uri callback with code/state query params. */
 export function googlePkceOpenUrlCompleter(
   code: string,
   options?: {

@@ -1,13 +1,3 @@
-/**
- * E2E-style tests for the annotate-action GitHub Action.
- *
- * The Action's main.ts calls `process.exit` at module load time, so it
- * cannot be imported into a vitest/bun-test process without side effects.
- * Instead, we spawn `bun run src/main.ts` as a subprocess, set the
- * GitHub-Actions-style env vars (INPUT_*, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY),
- * and point it at a local `Bun.serve` mock that emulates the Gateway's
- * write surface at /v1/deployments.
- */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -82,7 +72,6 @@ async function runAction(args: {
     GITHUB_OUTPUT: args.outputFile,
     GITHUB_STEP_SUMMARY: args.summaryFile,
   };
-  // Make sure no INPUT_* leaks from the harness's parent shell.
   for (const k of Object.keys(env)) {
     if (k.startsWith("INPUT_") && !(k in envForInputs(args.inputs))) {
       delete env[k];
@@ -308,7 +297,6 @@ describe("annotate-action main()", () => {
   });
 
   test("network failure (unreachable port) → exit 1 by default", async () => {
-    // Pick a port that nothing should be listening on by binding then closing.
     const probe = Bun.serve({ port: 0, fetch: () => new Response() });
     const deadUrl = `http://127.0.0.1:${probe.port}`;
     probe.stop(true);

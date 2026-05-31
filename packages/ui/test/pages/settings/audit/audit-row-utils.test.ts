@@ -65,7 +65,6 @@ describe("toDisplayRow", () => {
       actor: "alice",
       rowHash: "abc",
     });
-    // Sanity-check the ISO roundtrip:
     expect(d.tsIso).toBe(new Date(baseRow.timestamp).toISOString());
   });
 });
@@ -109,7 +108,7 @@ describe("rowsToCsv", () => {
   it("escapes commas inside fields", () => {
     const csv = rowsToCsv([{ ...baseRow, actionJson: '{"actor":"a,b"}' }]);
     const [, line] = csv.split("\n");
-    expect(line.split(",").length).toBeGreaterThan(6); // because of the embedded comma being quoted
+    expect(line.split(",").length).toBeGreaterThan(6);
     expect(line).toContain('"a,b"');
   });
 });

@@ -12,7 +12,6 @@
 export { runSandboxContractTests } from "./sandbox-contract";
 
 export class MockGateway {
-  // Roadmap Q3: mock Gateway for extension testing
   async callTool(_toolName: string, _input: Record<string, unknown>): Promise<unknown> {
     return {};
   }

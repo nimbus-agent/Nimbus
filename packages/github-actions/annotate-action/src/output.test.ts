@@ -35,7 +35,6 @@ describe("setOutput", () => {
   test("writes name<<delim\\nvalue\\ndelim heredoc when GITHUB_OUTPUT is set", () => {
     setOutput("external-id", "github-actions:abc123:production");
     const written = readFileSync(outFile, "utf8");
-    // Match the heredoc shape: name<<EOF_<32-hex>\nvalue\nEOF_<same-hex>\n
     const m = /^external-id<<(EOF_[0-9a-f]{32})\ngithub-actions:abc123:production\n\1\n$/.exec(
       written,
     );
@@ -49,8 +48,6 @@ describe("setOutput", () => {
   test("silently no-ops when GITHUB_OUTPUT is unset", () => {
     delete process.env.GITHUB_OUTPUT;
     expect(() => setOutput("external-id", "v")).not.toThrow();
-    // The file should not exist — setOutput must not touch the filesystem when
-    // the env var is absent.
     expect(() => readFileSync(outFile, "utf8")).toThrow();
   });
 
@@ -59,9 +56,6 @@ describe("setOutput", () => {
     setOutput("is-new", "true");
     const written = readFileSync(outFile, "utf8");
     const delims = Array.from(written.matchAll(/EOF_[0-9a-f]{32}/g)).map((m) => m[0]);
-    // Two writes × two delimiters per write = four matches; the per-write pair
-    // must be identical (open + close), and the two writes must use different
-    // delimiters (proves crypto.randomUUID is re-rolled each call).
     expect(delims).toHaveLength(4);
     expect(delims[0]).toBe(delims[1]);
     expect(delims[2]).toBe(delims[3]);
@@ -74,6 +68,6 @@ describe("setOutput", () => {
     const delim = written.match(/EOF_([0-9a-f-]+)/)?.[1];
     expect(delim).toBeDefined();
     expect(delim).not.toContain("-");
-    expect(delim).toHaveLength(32); // 32 hex chars (16 bytes of UUID minus 4 dashes)
+    expect(delim).toHaveLength(32);
   });
 });

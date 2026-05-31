@@ -1,24 +1,13 @@
-/**
- * Phase 5 T4 PR 3b — End-to-end integration coverage for
- * `POST /v1/deployments`.
- *
- * Each test boots a real `startReadOnlyHttpServer` with the write surface
- * wired (`resolveDeploymentToken`) on a fresh temp DB migrated to v28, then
- * exercises the HTTP error matrix from the outside via `fetch`. The audit
- * log is queried with the same `bun:sqlite` Database instance the server
- * uses so rejection rows are observable.
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import {
   type ReadOnlyHttpServerHandle,
   startReadOnlyHttpServer,
 } from "../../../src/ipc/http-server.ts";
+import { seedDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const TOKEN = "hunter2";
 const NOW = 1747142641204;
@@ -62,9 +51,7 @@ describe("POST /v1/deployments (integration)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "deploy-post-"));
     dbPath = join(dir, "nimbus.db");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 28);
-    db.close();
+    seedDbFile(dbPath, 28);
     writeFileSync(
       join(dir, "nimbus.toml"),
       [
@@ -229,7 +216,6 @@ describe("POST /v1/deployments (integration)", () => {
 
   test("429 after exceeding 60 requests in the window with Retry-After header", async () => {
     handle = startServer();
-    // Burn the budget with 60 valid requests.
     for (let i = 0; i < 60; i++) {
       const res = await fetch(urlFor(handle), {
         method: "POST",
@@ -256,8 +242,6 @@ describe("POST /v1/deployments (integration)", () => {
       headers: authHeaders("wrong-token"),
       body: JSON.stringify(VALID_BODY),
     });
-    // Close the server before opening a fresh read handle to avoid contending
-    // on the same SQLite connection.
     handle.stop();
     handle = null;
     const reader = new Database(dbPath, { readonly: true });

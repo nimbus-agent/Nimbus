@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
 
-/**
- * Fixed namespace UUID (RFC 4122 DNS namespace) used as the v5 namespace for Nimbus person IDs.
- */
 export const NIMBUS_PERSON_NAMESPACE_UUID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 function uuidStringToBytes(uuid: string): Buffer {
@@ -18,10 +15,6 @@ function bytesToUuid(buf: Buffer): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-/**
- * Deterministic UUID-shaped person primary key: SHA-256 over namespace || name, first 128 bits
- * with RFC 9562 UUID version 8 and RFC 4122 variant bits (not RFC 4122 v5, which mandates SHA-1).
- */
 export function uuidV5(name: string, namespaceUuid: string): string {
   const ns = uuidStringToBytes(namespaceUuid);
   const hash = createHash("sha256");

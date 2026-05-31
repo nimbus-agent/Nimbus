@@ -1,23 +1,3 @@
-/**
- * S7-b — Memory RSS while the gateway is busy syncing 3 connectors.
- *
- * Workload: in parallel, fire `connector.sync { service }` for drive,
- * gmail, github via the IPC client. Sampler: poll RSS at 250 ms
- * (per cluster-c spec §5.2 — sync bursts can spike RSS between
- * coarser samples; 240 polls / 60 s catches peaks).
- *
- * Production IPC wiring (deferred to PR-C / PR-B-2b-3): construct a
- * `NimbusClient` from `@nimbus-dev/client` against the spawned
- * gateway's socket path (default `<NIMBUS_HOME>/gateway.sock` on
- * unix, `\\.\pipe\nimbus-<hash>` on win32). Example:
- *
- *   import { NimbusClient } from "@nimbus-dev/client";
- *   const client = await NimbusClient.connect({ socketPath: ... });
- *   await client.call("connector.sync", { service: "drive", full: true });
- *
- * Until then, tests inject a fake `ipcCall`.
- */
-
 import { resolve } from "node:path";
 
 import { spawnGatewayForBench } from "../gateway-spawn-bench.ts";
@@ -36,7 +16,6 @@ export interface RssHeavySyncRunOptions {
   durationMs?: number;
   intervalMs?: number;
   pidusage?: (pid: number) => Promise<{ memory: number }>;
-  /** Test injection. In production an IPC client is constructed inline. */
   ipcCall?: IpcCallFn;
 }
 

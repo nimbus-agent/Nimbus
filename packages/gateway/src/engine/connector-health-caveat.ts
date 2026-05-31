@@ -19,10 +19,6 @@ function collectDistinctServicesFromWindow(window: ContextWindow): string[] {
   return [...services].sort((a, b) => a.localeCompare(b));
 }
 
-/**
- * When the user scopes search to a single connector, surface non-healthy sync state
- * so the model can caveat incomplete results.
- */
 export function formatConnectorHealthCaveatForIndexSearch(
   serviceId: string,
   h: ConnectorHealthSnapshot,
@@ -49,9 +45,6 @@ export function formatConnectorHealthCaveatForIndexSearch(
   return parts.join(" ");
 }
 
-/**
- * Build caveat strings for a list of connector ids (stable order, capped).
- */
 export function collectConnectorHealthCaveatsForServices(
   db: Database,
   serviceIds: readonly string[],
@@ -76,10 +69,6 @@ export function collectConnectorHealthCaveatsForServices(
   return out;
 }
 
-/**
- * `searchLocalIndex` tool: single `connectorHealthCaveat` when `service` filter is set;
- * otherwise `connectorHealthCaveats` for any non-healthy services present in the context window.
- */
 export function buildSearchLocalIndexHealthExtras(
   db: Database,
   window: ContextWindow,

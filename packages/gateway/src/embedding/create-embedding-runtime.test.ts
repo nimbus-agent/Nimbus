@@ -1,36 +1,12 @@
-/**
- * Coverage for `createEmbeddingRuntime` — the gateway-startup branch picker that
- * decides between (a) returning null (disabled/missing/early-schema), (b) building
- * an OpenAI runtime, (c) building a hybrid runtime, (d) falling back to a local
- * worker / lazy in-process runtime.
- *
- * Tier D — was at 19.35 % line coverage. Targets:
- *   - NIMBUS_SKIP_EMBEDDING_RUNTIME=1 → null (line 80-82)
- *   - envAllowsEmbeddings === false → null (line 83-85)
- *   - tomlEmbedding.enabled === false → null (line 83-85)
- *   - readIndexedUserVersion < 6 → null (line 86-88)
- *   - provider "openai" + missing api key (vault + env) → warn + null
- *     (covers `tryCreateOpenAIEmbeddingRuntime` lines 28-36)
- *   - provider "openai" + present vault key → non-null lazy runtime
- *     (covers OpenAI happy path that builds a wrapper without hitting the network)
- *   - provider "openai" + invalid/MiniLM model string → overridden to text-embedding-3-small
- *     (covers lines 37-44)
- *
- * The hybrid + local-worker paths build runtimes that lazy-spawn workers; covering
- * them happens in `create-routing-runtime.test.ts` and `worker-bridge.test.ts`
- * respectively. This file focuses on the dispatching logic in
- * `createEmbeddingRuntime` proper.
- */
-
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
+import { openSeededDbFile } from "../../test/helpers/migrated-db-seed.ts";
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -70,13 +46,9 @@ type Harness = {
 
 function makeHarness(opts: { migrateTo: number; setOpenaiKey?: boolean }): Harness {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-cer-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  if (opts.migrateTo > 0) {
-    runIndexedSchemaMigrations(db, opts.migrateTo);
-  }
+  const db = openSeededDbFile(join(dir, "nimbus.db"), opts.migrateTo);
   const vault = new MockVault();
   if (opts.setOpenaiKey === true) {
-    // Presence-only fixture; shape avoids gitleaks.
     void vault.set("openai.api_key", "fixture-present");
   }
   return {
@@ -157,7 +129,6 @@ describe("createEmbeddingRuntime — early-exit branches", () => {
   });
 
   test("user_version < 6 returns null (DB not yet migrated to embedding schema)", async () => {
-    // Migrate only to v5 so the embedding tables don't yet exist.
     const h = makeHarness({ migrateTo: 5 });
     try {
       const rt = await createEmbeddingRuntime(
@@ -235,8 +206,6 @@ describe("createEmbeddingRuntime — provider 'openai'", () => {
         true,
         h.vault,
       );
-      // openai-embedder is a lazy fetch wrapper that never connects until .embed() is
-      // called, so this must return a non-null runtime even though we have no network.
       expect(rt).not.toBeNull();
     } finally {
       h.cleanup();
@@ -263,8 +232,6 @@ describe("createEmbeddingRuntime — provider 'openai'", () => {
   test("overrides MiniLM/Xenova model strings to text-embedding-3-small", async () => {
     const h = makeHarness({ migrateTo: 30, setOpenaiKey: true });
     try {
-      // The default toml carries "all-MiniLM-L6-v2" — which exercises the
-      // override branch at line 38-44 (model name contains "MiniLM").
       const rt = await createEmbeddingRuntime(
         h.db,
         h.paths,
@@ -344,9 +311,6 @@ describe("createEmbeddingRuntime — provider 'hybrid' fallback + provider 'loca
   });
 
   test("provider='hybrid' with no OpenAI key falls through to a local runtime (line 97 + fallthrough at 106-111)", async () => {
-    // The hybrid factory warns and returns null when openai.api_key is
-    // missing. createEmbeddingRuntime then falls through to the worker /
-    // lazy in-process path and returns a non-null runtime.
     const h = makeHarness({ migrateTo: 30, setOpenaiKey: false });
     try {
       const rt = await createEmbeddingRuntime(
@@ -357,9 +321,6 @@ describe("createEmbeddingRuntime — provider 'hybrid' fallback + provider 'loca
         true,
         h.vault,
       );
-      // Worker bridge attempt may succeed or fail (test env spawning is
-      // platform-dependent); either way we must end with a non-null runtime
-      // from the worker bridge or the lazy fallback.
       expect(rt).not.toBeNull();
     } finally {
       h.cleanup();
@@ -367,8 +328,6 @@ describe("createEmbeddingRuntime — provider 'hybrid' fallback + provider 'loca
   });
 
   test("provider='local' builds a runtime via worker bridge or lazy fallback (lines 106-111)", async () => {
-    // The 'local' provider skips the hybrid + openai branches and falls
-    // through to the worker / lazy path. Always non-null in a healthy env.
     const h = makeHarness({ migrateTo: 30 });
     try {
       const rt = await createEmbeddingRuntime(

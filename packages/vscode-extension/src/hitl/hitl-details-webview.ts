@@ -2,17 +2,6 @@ import type { HitlRequest } from "@nimbus-dev/client";
 
 import type { HitlDecision } from "./hitl-router.js";
 
-/**
- * Opens a transient WebviewPanel showing the HITL request's details payload
- * (for non-file-edit multi-action requests). For file-edit actions, callers
- * should use vscode.diff() instead — this Webview is the structured-payload
- * fallback.
- *
- * The full vscode-API binding lives in extension.ts (the only file allowed to
- * touch real vscode imports). This module exposes the pure render helper +
- * the dispatch contract.
- */
-
 export type HitlDetailsRenderInput = {
   request: HitlRequest;
   cspSource: string;

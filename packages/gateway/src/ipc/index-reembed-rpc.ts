@@ -8,6 +8,8 @@ import type { Embedder, IndexedItem } from "../embedding/types.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { LongRunningJobRegistry } from "./_lib/long-running.ts";
 
 export class IndexReembedRpcError extends Error {
   readonly rpcCode: number;
@@ -35,7 +37,7 @@ type ReembedParams = {
   dryRun?: boolean;
 };
 
-const activeReembeds = new Map<string, AbortController>();
+const reembedRegistry = new LongRunningJobRegistry();
 
 const MIN_BATCH = 1;
 const MAX_BATCH = 256;
@@ -45,10 +47,6 @@ const FALLBACK_RETRY_AFTER_MS = 2000;
 function clampBatchSize(raw: number | undefined): number {
   const n = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_BATCH;
   return Math.min(MAX_BATCH, Math.max(MIN_BATCH, n));
-}
-
-function newJobId(): string {
-  return `reembed_${String(Date.now())}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 function parseReembedParams(params: unknown): ReembedParams {
@@ -72,7 +70,7 @@ function parseReembedParams(params: unknown): ReembedParams {
     out.limit = Math.floor(rawLimit);
   }
   if (typeof rec["batchSize"] === "number") {
-    out.batchSize = rec["batchSize"] as number;
+    out.batchSize = rec["batchSize"];
   }
   if (rec["dryRun"] === true) {
     out.dryRun = true;
@@ -135,152 +133,173 @@ function buildCandidateSql(p: ReembedParams): {
   return { sql, params };
 }
 
-async function runReembedJob(
-  jobId: string,
+async function assertModelUsable(p: ReembedParams, ctx: IndexReembedRpcContext): Promise<void> {
+  if (p.model.startsWith("openai:")) {
+    const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
+    if (envKey === "") {
+      const v = await ctx.vault.get("openai.api_key");
+      const vaultKey = typeof v === "string" ? v.trim() : "";
+      if (vaultKey === "") {
+        throw new IndexReembedRpcError(
+          -32603,
+          "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
+        );
+      }
+    }
+  } else if (p.model !== "Xenova/all-MiniLM-L6-v2" && p.model !== "local") {
+    throw new IndexReembedRpcError(-32602, `Unsupported model: ${p.model}`);
+  }
+}
+
+export function isRetryableStatus(status: number | undefined): boolean {
+  return status === 429 || (typeof status === "number" && status >= 500 && status < 600);
+}
+
+type BatchCounters = { succeeded: number; skipped: number };
+
+export type ReembedSink = Pick<SqliteEmbeddingPipeline, "embedItem">;
+
+async function embedSlice(
+  pipeline: ReembedSink,
+  slice: readonly IndexedItem[],
+  counters: BatchCounters,
+): Promise<void> {
+  for (const row of slice) {
+    await pipeline.embedItem(row);
+    counters.succeeded += 1;
+  }
+}
+
+type EmbedErrorDecision =
+  | { kind: "retry"; retryAfterMs: number }
+  | { kind: "fatal-auth"; status: number }
+  | { kind: "rethrow" };
+
+function classifyEmbedError(err: unknown): EmbedErrorDecision {
+  const status = (err as { status?: number } | undefined)?.status;
+  if (isRetryableStatus(status)) {
+    const retryAfterMs = (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
+    return { kind: "retry", retryAfterMs };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: "fatal-auth", status };
+  }
+  return { kind: "rethrow" };
+}
+
+async function retryEmbedSliceOrSkip(
+  pipeline: ReembedSink,
+  ctx: IndexReembedRpcContext,
+  slice: readonly IndexedItem[],
+  batchStart: number,
+  counters: BatchCounters,
+): Promise<void> {
+  try {
+    await embedSlice(pipeline, slice, counters);
+  } catch (retryErr) {
+    ctx.logger.warn(
+      {
+        errName: retryErr instanceof Error ? retryErr.name : "Error",
+        errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        batchStart,
+        batchSize: slice.length,
+      },
+      "reembed batch failed after retry; skipping",
+    );
+    counters.skipped += slice.length;
+  }
+}
+
+export async function embedBatchWithRetry(
+  pipeline: ReembedSink,
+  ctx: IndexReembedRpcContext,
+  slice: readonly IndexedItem[],
+  batchStart: number,
+  counters: BatchCounters,
+): Promise<void> {
+  try {
+    await embedSlice(pipeline, slice, counters);
+    return;
+  } catch (err) {
+    const decision = classifyEmbedError(err);
+    if (decision.kind === "fatal-auth") {
+      throw new IndexReembedRpcError(
+        -32603,
+        `Fatal: OpenAI returned ${String(decision.status)}. Check openai.api_key validity.`,
+      );
+    }
+    if (decision.kind === "rethrow") {
+      throw err;
+    }
+    await new Promise((r) => setTimeout(r, decision.retryAfterMs));
+    await retryEmbedSliceOrSkip(pipeline, ctx, slice, batchStart, counters);
+  }
+}
+
+async function runReembed(
   p: ReembedParams,
   ctx: IndexReembedRpcContext,
-  controller: AbortController,
-): Promise<void> {
-  const startedAt = Date.now();
+  progress: (payload: Record<string, unknown>) => void,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
   const batchSize = clampBatchSize(p.batchSize);
-  let succeeded = 0;
-  let skipped = 0;
-  try {
-    // Validate model before any work — even dryRun must surface unsupported
-    // model names or missing openai.api_key as `index.reembedError`, since the
-    // operator's next call will use the same model. For dryRun we still skip
-    // the actual embedder construction (which would download weights), but
-    // openai:* requires the vault key check up front.
-    if (p.model.startsWith("openai:")) {
-      const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
-      if (envKey === "") {
-        const v = await ctx.vault.get("openai.api_key");
-        const vaultKey = typeof v === "string" ? v.trim() : "";
-        if (vaultKey === "") {
-          throw new IndexReembedRpcError(
-            -32603,
-            "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
-          );
-        }
-      }
-    } else if (p.model !== "Xenova/all-MiniLM-L6-v2" && p.model !== "local") {
-      throw new IndexReembedRpcError(-32602, `Unsupported model: ${p.model}`);
-    }
+  await assertModelUsable(p, ctx);
 
-    const { sql, params } = buildCandidateSql(p);
-    const candidates = ctx.db.query(sql).all(...params) as IndexedItem[];
-    const total = candidates.length;
-    if (p.dryRun === true) {
-      ctx.notify("index.reembedDone", {
-        jobId,
-        succeeded: 0,
-        skipped: 0,
-        durationMs: Date.now() - startedAt,
-        planned: total,
-        dryRun: true,
-      });
-      return;
-    }
-    const embedder = await resolveEmbedder(p.model, ctx);
-    const pipeline = new SqliteEmbeddingPipeline({
-      db: ctx.db,
-      embedder,
-      logger: ctx.logger,
-    });
-
-    for (let i = 0; i < candidates.length; i += batchSize) {
-      if (controller.signal.aborted) {
-        break;
-      }
-      const slice = candidates.slice(i, i + batchSize);
-      try {
-        for (const row of slice) {
-          await pipeline.embedItem(row);
-          succeeded += 1;
-        }
-      } catch (err) {
-        const status = (err as { status?: number } | undefined)?.status;
-        if (status === 429 || (typeof status === "number" && status >= 500 && status < 600)) {
-          const retryAfterMs =
-            (err as { retryAfterMs?: number }).retryAfterMs ?? FALLBACK_RETRY_AFTER_MS;
-          await new Promise((r) => setTimeout(r, retryAfterMs));
-          try {
-            for (const row of slice) {
-              await pipeline.embedItem(row);
-              succeeded += 1;
-            }
-          } catch (retryErr) {
-            ctx.logger.warn(
-              {
-                errName: retryErr instanceof Error ? retryErr.name : "Error",
-                errMessage: retryErr instanceof Error ? retryErr.message : String(retryErr),
-                batchStart: i,
-                batchSize: slice.length,
-              },
-              "reembed batch failed after retry; skipping",
-            );
-            skipped += slice.length;
-          }
-        } else if (status === 401 || status === 403) {
-          throw new IndexReembedRpcError(
-            -32603,
-            `Fatal: OpenAI returned ${String(status)}. Check openai.api_key validity.`,
-          );
-        } else {
-          throw err;
-        }
-      }
-      ctx.notify("index.reembedProgress", {
-        jobId,
-        done: succeeded + skipped,
-        total,
-        skipped,
-      });
-    }
-
-    ctx.notify("index.reembedDone", {
-      jobId,
-      succeeded,
-      skipped,
-      durationMs: Date.now() - startedAt,
-    });
-  } catch (err) {
-    ctx.notify("index.reembedError", {
-      jobId,
-      code: err instanceof IndexReembedRpcError ? err.rpcCode : -32603,
-      message: err instanceof Error ? err.message : String(err),
-    });
-  } finally {
-    activeReembeds.delete(jobId);
+  const { sql, params } = buildCandidateSql(p);
+  const candidates = ctx.db.query(sql).all(...params) as IndexedItem[];
+  const total = candidates.length;
+  if (p.dryRun === true) {
+    return { succeeded: 0, skipped: 0, planned: total, dryRun: true };
   }
+  const embedder = await resolveEmbedder(p.model, ctx);
+  const pipeline = new SqliteEmbeddingPipeline({
+    db: ctx.db,
+    embedder,
+    logger: ctx.logger,
+  });
+
+  const counters: BatchCounters = { succeeded: 0, skipped: 0 };
+  for (let i = 0; i < candidates.length; i += batchSize) {
+    if (signal.aborted) {
+      break;
+    }
+    const slice = candidates.slice(i, i + batchSize);
+    await embedBatchWithRetry(pipeline, ctx, slice, i, counters);
+    progress({ done: counters.succeeded + counters.skipped, total, skipped: counters.skipped });
+  }
+
+  return { succeeded: counters.succeeded, skipped: counters.skipped };
+}
+
+function handleReembed(params: unknown, ctx: IndexReembedRpcContext): { jobId: string } {
+  const p = parseReembedParams(params);
+  return reembedRegistry.start({
+    jobIdPrefix: "reembed",
+    progressMethod: "index.reembedProgress",
+    doneMethod: "index.reembedDone",
+    errorMethod: "index.reembedError",
+    emit: (m, payload) => ctx.notify(m, payload),
+    run: (progress, signal) => runReembed(p, ctx, progress, signal),
+  });
+}
+
+function handleReembedCancel(params: unknown): { cancelled: boolean } {
+  const rec =
+    params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  const jobId = rec["jobId"];
+  if (typeof jobId !== "string") {
+    throw new IndexReembedRpcError(-32602, "params.jobId is required");
+  }
+  return { cancelled: reembedRegistry.cancel(jobId) };
 }
 
 export async function dispatchIndexReembedRpc(
   method: string,
   params: unknown,
   ctx: IndexReembedRpcContext,
-): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
-  if (method === "index.reembed") {
-    const p = parseReembedParams(params);
-    const jobId = newJobId();
-    const controller = new AbortController();
-    activeReembeds.set(jobId, controller);
-    void runReembedJob(jobId, p, ctx, controller);
-    return { kind: "hit", value: { jobId } };
-  }
-  if (method === "index.reembedCancel") {
-    const rec =
-      params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
-    const jobId = rec["jobId"];
-    if (typeof jobId !== "string") {
-      throw new IndexReembedRpcError(-32602, "params.jobId is required");
-    }
-    const controller = activeReembeds.get(jobId);
-    if (controller === undefined) {
-      return { kind: "hit", value: { cancelled: false } };
-    }
-    controller.abort();
-    return { kind: "hit", value: { cancelled: true } };
-  }
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<IndexReembedRpcContext>(method, params, ctx, {
+    "index.reembed": handleReembed,
+    "index.reembedCancel": (p) => handleReembedCancel(p),
+  });
 }

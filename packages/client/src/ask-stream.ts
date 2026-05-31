@@ -103,14 +103,11 @@ export function createAskStream(
     ipc.onNotification("agent.subTaskProgress", onSubTask);
     ipc.onNotification("agent.hitlBatch", onHitl);
 
-    // IPCClient currently has no off() — track ourselves; finish() leaves
-    // them registered but every callback returns immediately once `done`.
     unsubscribers.push(() => {
       /* no-op: IPCClient has no off() yet; guarded by `done` flag */
     });
   };
 
-  // Kick off the stream; capture streamId asynchronously
   const startPromise = (async (): Promise<string> => {
     const params: Record<string, unknown> = { input };
     if (opts.sessionId !== undefined) params["sessionId"] = opts.sessionId;
@@ -124,7 +121,6 @@ export function createAskStream(
     }
     streamIdResolved = sid;
     if (cancelled) {
-      // Cancel was called before we knew the streamId
       await ipc.call("engine.cancelStream", { streamId: sid }).catch(() => undefined);
       finish();
       return sid;
@@ -145,7 +141,6 @@ export function createAskStream(
   })();
 
   startPromise.catch(() => {
-    // Already pushed an error event; ensure finish() ran
     finish();
   });
 

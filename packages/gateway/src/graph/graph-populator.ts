@@ -73,9 +73,6 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
     upsertGraphRelation(db, personEntityId, prEntityId, "authored", now);
   }
 
-  // Phase 5 T4 PR 2 (DORA Lead Time): when a PR is merged and the connector
-  // captured a merge_commit_sha, emit a `pr → commit` `merged_as` edge. The
-  // DORA calculator joins on this edge to compute commit-to-merge latency.
   const merged = row.metadata["merged"] === true;
   const mergeSha = stringField(row.metadata, "merge_commit_sha");
   if (merged && mergeSha !== undefined && mergeSha.length > 0) {
@@ -208,10 +205,6 @@ function syncObsidianNoteGraph(db: Database, row: IndexedItemGraphInput, now: nu
     service: row.service,
     metadata: { vault_id: vaultId },
   });
-  // Replace this note's outgoing edges atomically: clear all relations
-  // touching the note, then re-emit the freshly-resolved backlink set.
-  // (Edges where the deleted note is the *target* are pruned by the
-  // sync handler when it cascades a note-delete — see Task 10.)
   clearRelationsTouchingEntity(db, noteEntityId);
 
   const resolved = row.metadata["resolved_wikilink_ids"];
@@ -220,9 +213,6 @@ function syncObsidianNoteGraph(db: Database, row: IndexedItemGraphInput, now: nu
       if (typeof target !== "string" || target === "") {
         continue;
       }
-      // Look up the target's graph entity id by its `external_id` (which is
-      // the note's `item.id`). If the target hasn't been indexed yet the
-      // edge is skipped — re-syncing once both notes are indexed creates it.
       const tgt = db
         .query("SELECT id FROM graph_entity WHERE type = 'obsidian_note' AND external_id = ?")
         .get(target) as { id: string } | null;
@@ -304,9 +294,6 @@ function syncMessageGraph(db: Database, row: IndexedItemGraphInput, now: number)
   }
 }
 
-/**
- * Maintains `graph_entity` / `graph_relation` from a unified index row (schema v7+).
- */
 export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInput): void {
   if (readIndexedUserVersion(db) < 7) {
     return;

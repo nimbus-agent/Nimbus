@@ -9,8 +9,6 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runDataExport } from "./data-export.ts";
 import { DataImportVersionError, runDataImport } from "./data-import.ts";
 
-// S2-F10 — register the FAST_KDF profile used by these round-trip tests so
-// decryptVaultManifest accepts the bundles produced with kdfParams: { t:1, m:1024, p:1 }.
 let _restoreTestKdf: () => void;
 beforeAll(() => {
   _restoreTestKdf = _addTestKdfProfile({ t: 1, m: 1024, p: 1 });
@@ -99,7 +97,6 @@ describe("data import", () => {
       kdfParams,
     });
 
-    // Unpack, corrupt watchers.json, repack — manifest hash must no longer match.
     const { unpackBundle, packBundle } = await import("../db/tar-bundle.ts");
     const { writeFileSync } = await import("node:fs");
     const stage = mkdtempSync(join(tmpdir(), "nimbus-import-tamper-stage-"));

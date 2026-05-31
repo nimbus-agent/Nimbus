@@ -63,7 +63,6 @@ describe("parseNimbusPagerdutyToml", () => {
     const out = parseNimbusPagerdutyToml(
       '[pagerduty]\nseverity_p1_aliases = ["Critical", "critical", "P1"]\n',
     );
-    // "P1" lowercases to "p1" which dedupes against itself; "Critical"/"critical" dedupes.
     expect(out.severityP1Aliases).toEqual(["critical", "p1"]);
   });
 
@@ -95,8 +94,6 @@ describe("loadNimbusPagerdutyFromPath", () => {
     writeFileSync(p, "[pagerduty]\nmax_pages_per_sync = 0\n", "utf8");
     const captured: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // Type assertion: process.stderr.write is overloaded; we shim the
-    // chunk-as-first-arg form, which is what nimbus-toml.ts uses.
     process.stderr.write = ((chunk: string | Uint8Array) => {
       captured.push(typeof chunk === "string" ? chunk : chunk.toString());
       return true;

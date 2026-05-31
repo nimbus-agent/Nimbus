@@ -322,7 +322,6 @@ describeWithFetchRestore("pagerduty-sync", () => {
   });
 
   test("fresh install uses 30-day backfill window", async () => {
-    // Must match `initialSyncDepthDays` in pagerduty-sync.ts. Update both together.
     const EXPECTED_BACKFILL_DAYS = 30;
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -342,7 +341,6 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const since = new URL(capturedUrl as string).searchParams.get("since");
     expect(since).toBeDefined();
     const sinceMs = Date.parse(since as string);
-    // Allow ±2s slack for the assertion window since `now` is computed inside sync().
     const expectedMin = before - EXPECTED_BACKFILL_DAYS * 86_400_000 - 2000;
     const expectedMax = after - EXPECTED_BACKFILL_DAYS * 86_400_000 + 2000;
     expect(sinceMs).toBeGreaterThanOrEqual(expectedMin);
@@ -399,7 +397,6 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
     const result = await sync.sync(syncTestContext(db, vault), null);
     expect(calls.length).toBe(3);
-    // Load-bearing: ascending sort is what makes cap-aware cursor advance correct.
     expect(new URL(calls[0] as string).searchParams.get("sort_by")).toBe("updated_at:asc");
     expect(new URL(calls[1] as string).searchParams.get("offset")).toBe("100");
     expect(new URL(calls[2] as string).searchParams.get("offset")).toBe("200");
@@ -503,7 +500,6 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    // Cursor advances past page-1's max updated_at, NOT back to the original since.
     expect(JSON.parse(decoded)).toEqual({ lastUpdated: "2026-05-10T10:00:00Z" });
   });
 });

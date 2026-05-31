@@ -56,7 +56,6 @@ describe("LocalIndex.addLanPeer (S3-F5)", () => {
       displayName: "macbook",
     });
     const before = idx.getLanPeerByPubkey(pub);
-    // Sleep one millisecond so paired_at is provably advanced.
     await new Promise((r) => setTimeout(r, 5));
     idx.addLanPeer({
       peerId: "peer-1",
@@ -90,7 +89,6 @@ describe("LocalIndex.addLanPeer (S3-F5)", () => {
       direction: "inbound",
       hostIp: "192.0.2.5",
     });
-    // Re-pair must not reset write_allowed.
     expect(idx.getLanPeerByPubkey(pub)?.write_allowed).toBe(1);
   });
 

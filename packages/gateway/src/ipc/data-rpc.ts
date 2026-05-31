@@ -9,6 +9,7 @@ import type { ToolExecutor } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export type DataRpcContext = {
   index: LocalIndex | undefined;
@@ -16,15 +17,10 @@ export type DataRpcContext = {
   platform: "win32" | "darwin" | "linux";
   nimbusVersion: string;
   schemaVersion?: number;
-  /** Optional — tests override Argon2id params to keep runtime small. */
   kdfParams?: KdfParams;
-  /** Optional — emit JSON-RPC notifications back to the caller. */
   notify?: (method: string, params: Record<string, unknown>) => void;
-  /** Required for data.delete — runs HITL gate before deletion. */
   toolExecutor?: ToolExecutor;
 };
-
-type RpcResult = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 export class DataRpcError extends Error {
   readonly rpcCode: number;
@@ -62,9 +58,6 @@ async function handleDataExport(
     throw new DataRpcError(-32602, "Missing param: output");
   if (typeof passphrase !== "string" || passphrase === "")
     throw new DataRpcError(-32602, "Missing param: passphrase");
-  // S2-F5 — gate before unpacking. The encrypted bundle contains a vault dump,
-  // so producing one is a destructive credential operation that must require
-  // user consent.
   const executor = ctx.toolExecutor;
   if (executor === undefined) {
     throw new DataRpcError(-32603, "data.export requires a toolExecutor in context");
@@ -222,14 +215,12 @@ export async function dispatchDataRpc(
   method: string,
   params: unknown,
   ctx: DataRpcContext,
-): Promise<RpcResult> {
-  const rec = asRecord(params);
-  if (method === "data.export") return { kind: "hit", value: await handleDataExport(rec, ctx) };
-  if (method === "data.import") return { kind: "hit", value: await handleDataImport(rec, ctx) };
-  if (method === "data.delete") return { kind: "hit", value: await handleDataDelete(rec, ctx) };
-  if (method === "data.getExportPreflight")
-    return { kind: "hit", value: handleGetExportPreflight(ctx) };
-  if (method === "data.getDeletePreflight")
-    return { kind: "hit", value: handleGetDeletePreflight(params, ctx) };
-  return { kind: "miss" };
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod<DataRpcContext>(method, params, ctx, {
+    "data.export": (p, c) => handleDataExport(asRecord(p), c),
+    "data.import": (p, c) => handleDataImport(asRecord(p), c),
+    "data.delete": (p, c) => handleDataDelete(asRecord(p), c),
+    "data.getExportPreflight": (_p, c) => handleGetExportPreflight(c),
+    "data.getDeletePreflight": (p, c) => handleGetDeletePreflight(p, c),
+  });
 }

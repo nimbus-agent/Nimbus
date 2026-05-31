@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 
-/**
- * Lightweight E2E: real CLI process (no Gateway). Extend with IPC harness as needed.
- */
 describe("cli e2e smoke", () => {
   test("command module resolves without running CLI entry", async () => {
     const mod = await import("../../src/commands/index.ts");

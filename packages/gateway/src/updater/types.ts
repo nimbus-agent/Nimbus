@@ -2,13 +2,13 @@ export type PlatformTarget = "darwin-x86_64" | "darwin-aarch64" | "linux-x86_64"
 
 export interface PlatformAsset {
   url: string;
-  sha256: string; // lowercase hex, 64 chars
-  signature: string; // base64, 64 bytes Ed25519 signature over sha256 digest
+  sha256: string;
+  signature: string;
 }
 
 export interface UpdateManifest {
-  version: string; // semver
-  pub_date: string; // ISO 8601
+  version: string;
+  pub_date: string;
   notes?: string;
   platforms: Record<PlatformTarget, PlatformAsset>;
 }

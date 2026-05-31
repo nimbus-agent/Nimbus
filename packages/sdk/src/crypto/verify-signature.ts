@@ -34,8 +34,6 @@ function constantTimeBytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
-    // i is strictly < a.length so a[i] / b[i] are defined; the `?? 0` keeps
-    // the loop branchless without a non-null assertion.
     diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
   }
   return diff === 0;
@@ -100,8 +98,6 @@ export async function signManifest(
   privkey: Uint8Array,
 ): Promise<string> {
   if (privkey.length !== 32) throw new SignatureInvalidFormat();
-  // WebCrypto Ed25519 private keys cannot be imported via "raw" (raw is
-  // public-key-only). Import the 32-byte seed via JWK form using `d`.
   const d = Buffer.from(privkey).toString("base64url");
   const cryptoKey = await crypto.subtle.importKey(
     "jwk",
@@ -121,11 +117,6 @@ export async function signManifest(
  * fixture (no committed crypto material — see spec §6.3).
  */
 export function generateEd25519Keypair(): { privkey: Uint8Array; pubkey: Uint8Array } {
-  // Bun's WebCrypto generateKey is async, but we want a sync API for test
-  // helpers. Fall back to Bun's sync nodeCrypto bridge.
-  // node:crypto exposes generateKeyPairSync("ed25519").
-  // The "raw" export of an Ed25519 private key in node:crypto includes the
-  // DER prefix; we strip to the 32-byte seed via the JWK form.
   const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
   const { privateKey, publicKey } = nodeCrypto.generateKeyPairSync("ed25519");
   const privJwk = privateKey.export({ format: "jwk" }) as { d: string };

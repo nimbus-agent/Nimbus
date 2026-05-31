@@ -137,7 +137,7 @@ describe("github-sync: mergeable_state refresh-policy boundaries", () => {
         updatedAtMs: now - 7 * DAY, // exactly 7d ago
         nowMs: now,
       }),
-    ).toBe(true); // 7d exactly = within window; only >7d is excluded
+    ).toBe(true);
   });
 
   it("returns false when refresh-age is exactly at the 24h boundary", () => {
@@ -149,6 +149,6 @@ describe("github-sync: mergeable_state refresh-policy boundaries", () => {
         updatedAtMs: now - 1 * DAY,
         nowMs: now,
       }),
-    ).toBe(false); // 24h exactly = still fresh; only >24h triggers refresh
+    ).toBe(false);
   });
 });

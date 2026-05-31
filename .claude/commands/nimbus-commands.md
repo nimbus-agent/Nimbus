@@ -210,8 +210,9 @@ nimbus lan remove-peer <peer-id>
 ### Phase 5 T3 — Team Intelligence built-in agents
 
 ```bash
-nimbus expert <topic-or-file>     # IPC: agents.expert; emits agents.expert.briefReady
-nimbus impact <file-or-PR-url>    # IPC: agents.impact; emits agents.impact.briefReady
+nimbus expert <topic-or-file>             # IPC: agents.expert;  emits agents.expert.briefReady
+nimbus impact <file-or-PR-url>            # IPC: agents.impact;  emits agents.impact.briefReady
+nimbus catchup [--since <duration>]       # IPC: agents.catchup; emits agents.catchup.briefReady
 ```
 
 ### Phase 5 T4 — CI/CD data layer

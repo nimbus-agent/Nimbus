@@ -1,7 +1,3 @@
-/**
- * Filesystem v2 code_symbol: after sync, hybrid search can rank by body/docstring text
- * that does not appear in the symbol title (sqlite-vec required).
- */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";

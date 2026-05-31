@@ -1,6 +1,6 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { dispatchSecurityRpc, type SecurityScanResult } from "./security-rpc.ts";
 
 const TARGET_SCHEMA = 31;
@@ -51,16 +51,14 @@ function seedSyncState(db: Database, connectorId: string, depth: string): void {
 
 describe("dispatchSecurityRpc — routing", () => {
   test("non-security method returns miss", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     const r = await dispatchSecurityRpc("metrics.dora", {}, { db, nowMs: () => 1 });
     expect(r.kind).toBe("miss");
     db.close();
   });
 
   test("security.scan returns hit", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     const r = await dispatchSecurityRpc("security.scan", {}, { db, nowMs: () => 1 });
     expect(r.kind).toBe("hit");
     db.close();
@@ -70,8 +68,7 @@ describe("dispatchSecurityRpc — routing", () => {
 describe("dispatchSecurityRpc — depth filtering", () => {
   let db: Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    db = openSeededInMemoryDb(TARGET_SCHEMA);
   });
 
   test("items from summary-depth connectors are scanned", async () => {
@@ -116,10 +113,7 @@ describe("dispatchSecurityRpc — depth filtering", () => {
   });
 
   test("metadata_only connector with ZERO items is still reported in skipped_connectors", async () => {
-    // Review-fix #2: skipped_connectors must surface depth=metadata_only services
-    // even when they have no items yet, so the user sees they were intentionally skipped.
     seedSyncState(db, "gmail", "metadata_only");
-    // no item inserts
     const r = await dispatchSecurityRpc("security.scan", {}, { db, nowMs: () => 1 });
     if (r.kind !== "hit") throw new Error("expected hit");
     expect(r.value.findings_count).toBe(0);
@@ -129,7 +123,6 @@ describe("dispatchSecurityRpc — depth filtering", () => {
   });
 
   test("items from connectors with no sync_state row are included (default depth = summary)", async () => {
-    // no seedSyncState — relying on V21 default
     seedItem(db, {
       id: "filesystem:src/a.ts",
       service: "filesystem",
@@ -141,11 +134,6 @@ describe("dispatchSecurityRpc — depth filtering", () => {
   });
 
   test("body_preview for metadata_only items is never loaded into JS (SQL-level filter)", async () => {
-    // Review-fix #1: the metadata_only items' body_preview must never reach JS,
-    // so memory pressure stays bounded. Asserted indirectly: a body_preview
-    // containing a literal token that WOULD match aws_access_key is filtered
-    // out at the SQL layer; if the row had been loaded into JS, the scanner
-    // would have produced a finding.
     seedSyncState(db, "gmail", "metadata_only");
     seedItem(db, {
       id: "gmail:m-1",
@@ -161,8 +149,7 @@ describe("dispatchSecurityRpc — depth filtering", () => {
 
 describe("dispatchSecurityRpc — audit row", () => {
   test("writes exactly one security.scan_completed row with counts, no findings", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     seedSyncState(db, "filesystem", "summary");
     seedItem(db, {
       id: "filesystem:src/a.ts",
@@ -185,15 +172,13 @@ describe("dispatchSecurityRpc — audit row", () => {
     expect(payload["items_scanned"]).toBe(1);
     expect(payload["findings_count"]).toBe(1);
     expect(payload["scanned_at_ms"]).toBe(1_747_000_000_000);
-    // Crucially: no secret in the audit row.
     expect(audits[0]!.action_json).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 });
 
 describe("dispatchSecurityRpc — response shape", () => {
   test("frozen JSON schema fields are all populated", async () => {
-    const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, TARGET_SCHEMA);
+    const db = openSeededInMemoryDb(TARGET_SCHEMA);
     seedSyncState(db, "filesystem", "summary");
     seedItem(db, {
       id: "filesystem:src/a.ts",

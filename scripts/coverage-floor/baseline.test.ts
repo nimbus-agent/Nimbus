@@ -47,10 +47,6 @@ describe("parseBaseline", () => {
   });
 
   test("rejects backslash-separated paths with an actionable error", () => {
-    // Defensive: --update-baseline always emits forward slashes, but
-    // a Windows contributor hand-editing the file might typo a backslash.
-    // Silent acceptance would produce a misleading "regressed to 0%"
-    // error downstream — hard-fail here instead.
     const json = JSON.stringify({
       version: 1,
       generated_at: "x",
@@ -153,7 +149,6 @@ describe("computeBaselineDiff", () => {
     const actual = new Map<string, number>([["a.ts", 82.5]]);
     const diff = computeBaselineDiff(baseline, actual);
     expect(diff.mustRemove).toEqual([{ path: "a.ts", actual: 82.5 }]);
-    // Not also flagged as must-raise — the file is exiting the baseline.
     expect(diff.mustRaise).toEqual([]);
   });
 
@@ -165,7 +160,6 @@ describe("computeBaselineDiff", () => {
     };
     const actual = new Map<string, number>();
     const diff = computeBaselineDiff(baseline, actual);
-    // Missing means a regression from 40 to 0.
     expect(diff.regressions).toEqual([{ path: "a.ts", baseline: 40, actual: 0 }]);
     expect(diff.missingFromActual).toEqual(["a.ts"]);
   });

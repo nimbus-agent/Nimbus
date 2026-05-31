@@ -6,18 +6,9 @@ export type VectorChunkHit = {
   chunkIndex: number;
   chunkText: string;
   vecRowid: number;
-  /** sqlite-vec distance (lower is better). */
   distance: number;
 };
 
-/**
- * KNN over `vec_items_<dim>` joined to `embedding_chunk` for a given embedding model.
- * `dim` is derived from the query embedding's length and validated against
- * `SUPPORTED_EMBEDDING_DIMS` — same I9-safe enum-equivalent pattern as the
- * pipeline's `vecTable` derivation.
- *
- * Caller must have loaded sqlite-vec on this connection.
- */
 export function vectorSearchChunks(
   db: Database,
   options: {

@@ -48,16 +48,12 @@ describe("runBenchCiMain", () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const currentPath = writeHistory(dir, "current.jsonl", passingLine);
-      const { spawn, calls } = spawnSequence([
-        // gh run list — no prior run
-        { exitCode: 0, stdout: "\n", stderr: "" },
-      ]);
+      const { spawn, calls } = spawnSequence([{ exitCode: 0, stdout: "\n", stderr: "" }]);
       const exit = await runBenchCiMain(["--current", currentPath, "--runner", "gha-ubuntu"], {
         gh: new GhCli({ spawn, sleep: async () => {} }),
         env: { GITHUB_EVENT_NAME: "push" },
       });
       expect(exit).toBe(0);
-      // Did not call `pr comment`.
       expect(calls.some((c) => c.args[0] === "pr" && c.args[1] === "comment")).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -69,18 +65,12 @@ describe("runBenchCiMain", () => {
     try {
       const currentPath = writeHistory(dir, "current.jsonl", failingLine);
       const { spawn, calls } = spawnSequence([
-        // gh run list → run-id 42
         { exitCode: 0, stdout: "42\n", stderr: "" },
-        // gh run view 42 → headSha
         { exitCode: 0, stdout: "deadbeef\n", stderr: "" },
-        // gh run download 42 → succeeds (test pre-stages the artifact file)
         { exitCode: 0, stdout: "", stderr: "" },
-        // gh pr view --json comments → []
         { exitCode: 0, stdout: "[]\n", stderr: "" },
-        // gh pr comment <pr> --body-file <path>
         { exitCode: 0, stdout: "", stderr: "" },
       ]);
-      // Pre-stage the "downloaded" previous artifact in the path bench-ci.ts will look for.
       const prevDir = join(dir, "prev");
       const fs = await import("node:fs/promises");
       await fs.mkdir(prevDir, { recursive: true });
@@ -134,13 +124,11 @@ describe("runBenchCiMain", () => {
       const currentPath = writeHistory(dir, "current.jsonl", passingLine);
       const { spawn, calls } = spawnSequence([
         { exitCode: 0, stdout: "\n", stderr: "" }, // run list — first run
-        // pr view — one existing comment with our marker
         {
           exitCode: 0,
           stdout: '[{"id":"77","body":"<!-- nimbus-perf-delta:gha-ubuntu -->\\nold body"}]\n',
           stderr: "",
         },
-        // gh api PATCH /repos/.../comments/77
         { exitCode: 0, stdout: "", stderr: "" },
       ]);
       const exit = await runBenchCiMain(["--current", currentPath, "--runner", "gha-ubuntu"], {
@@ -152,7 +140,6 @@ describe("runBenchCiMain", () => {
         },
       });
       expect(exit).toBe(0);
-      // Did not create — patched.
       expect(calls.some((c) => c.args[0] === "api")).toBe(true);
       expect(
         calls.some(
@@ -165,19 +152,12 @@ describe("runBenchCiMain", () => {
   });
 
   test("artifact-name format passed to `gh run download` is `perf-<runner>-<sha>` (regression for C1)", async () => {
-    // C1 was a load-bearing bug: bench-ci.ts stripped `gha-` from the runner
-    // when constructing the artifact name (`perf-ubuntu-<sha>`), but the
-    // upload step in `_perf.yml` used the matrix OS (`perf-ubuntu-24.04-<sha>`).
-    // Names never matched, so every PR-comment delta said "no baseline yet"
-    // forever. This test pins the format on the lookup side; the upload
-    // side is pinned by the hand-aligned comment in `_perf.yml`.
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const currentPath = writeHistory(dir, "current.jsonl", passingLine);
       const { spawn, calls } = spawnSequence([
         { exitCode: 0, stdout: "42\n", stderr: "" }, // gh run list → 42
         { exitCode: 0, stdout: "deadbeef\n", stderr: "" }, // gh run view 42 → headSha
-        // gh run download — artifact missing path, returns "no artifact found"
         { exitCode: 1, stdout: "", stderr: "no artifact found matching name" },
       ]);
       await runBenchCiMain(["--current", currentPath, "--runner", "gha-ubuntu"], {
@@ -186,8 +166,6 @@ describe("runBenchCiMain", () => {
       });
       const downloadCall = calls.find((c) => c.args[0] === "run" && c.args[1] === "download");
       expect(downloadCall).toBeDefined();
-      // The exact `--name` value must match the upload format from
-      // `.github/workflows/_perf.yml` step "Upload run history artifact".
       const nameIdx = downloadCall!.args.indexOf("--name");
       expect(nameIdx).toBeGreaterThanOrEqual(0);
       expect(downloadCall!.args[nameIdx + 1]).toBe("perf-gha-ubuntu-deadbeef");

@@ -69,7 +69,6 @@ function applyTelemetryKv(out: Partial<NimbusTelemetryToml>, key: string, valRaw
   }
 }
 
-/** Best-effort `[telemetry]` section (no full TOML parser). */
 export function parseNimbusTomlTelemetrySection(source: string): Partial<NimbusTelemetryToml> {
   const lines = source.split(/\r?\n/);
   let inTelemetry = false;

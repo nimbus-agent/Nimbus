@@ -1,8 +1,3 @@
-/**
- * Read-only local HTTP API — dedicated SQLITE_OPEN_READONLY connection.
- * Binds 127.0.0.1 only.
- */
-
 import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
@@ -15,31 +10,13 @@ import { dispatchMetricsRpc, MetricsRpcError } from "./metrics-rpc.ts";
 import { loadOpenApiJsonBytes } from "./openapi-loader.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "./preflight-rpc.ts";
 
-/**
- * Optional context for the read-only HTTP server. Threaded through to handlers
- * that need configDir-scoped helpers (e.g. `/v1/metrics/dora` resolves
- * `[metrics.dora.<service>]` sections from `<configDir>/nimbus.toml`).
- */
 export type ReadOnlyHttpServerOptions = {
   readonly configDir?: string;
   readonly nowMs?: () => number;
-  /**
-   * Resolves the bearer token from the vault when the write surface is
-   * configured. Returns `""` when the vault key is absent — the write
-   * surface stays mounted but returns `503 write_surface_disabled`.
-   * Omitted entirely when this Gateway has no write surface at all
-   * (`POST /v1/deployments` will then return 405 Method Not Allowed).
-   */
   readonly resolveDeploymentToken?: () => Promise<string>;
 };
 
 export type ReadOnlyHttpServerHandle = {
-  /**
-   * The actual TCP port the server bound to. When the caller passed `port = 0`,
-   * this is the OS-assigned free port — useful for integration tests that want
-   * to avoid the flake of picking a random port that may collide on shared CI
-   * runners.
-   */
   readonly port: number;
   readonly stop: () => void;
 };
@@ -192,18 +169,12 @@ async function handleMetricsDora(
       },
     );
   } catch (e) {
-    // Only validation errors are surfaced to the client. Any other error
-    // bubbles to the outer `fetch` catch which returns a generic 500 —
-    // prevents internal details (paths, SQL fragments, stack frames) from
-    // reaching the response body.
     if (e instanceof MetricsRpcError) {
       return json({ error: e.message }, 400);
     }
     throw e;
   }
   if (out.kind === "miss") {
-    // `metrics.dora` should always hit; treat a miss as an internal error
-    // and let the outer catch produce a generic 500 response.
     throw new Error("metrics.dora dispatcher returned miss");
   }
   return json(out.value);
@@ -247,9 +218,6 @@ async function handleDeployPreflight(
       },
     );
   } catch (e) {
-    // Same safe-error pattern as handleMetricsDora: only PreflightRpcError
-    // surfaces as 400. Everything else bubbles to the outer fetch catch
-    // which returns a generic 500.
     if (e instanceof PreflightRpcError) {
       return json({ error: e.message }, 400);
     }
@@ -300,14 +268,50 @@ async function dispatchReadOnlyGet(
   return new Response("Not Found", { status: 404 });
 }
 
-/**
- * @param dbPath Absolute path to `nimbus.db`
- * @param port   TCP port to bind on `127.0.0.1`. Pass `0` to let the OS pick a
- *               free port; the actual port is exposed on the returned
- *               `handle.port` (preferred for integration tests).
- * @param opts   Optional context — `configDir` enables config-aware routes
- *               (e.g. `/v1/metrics/dora`); `nowMs` is a clock injector for tests.
- */
+async function handlePost(
+  req: Request,
+  writeDb: Database | null,
+  rateLimiter: HttpWriteRateLimiter,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  if (writeDb === null || opts.resolveDeploymentToken === undefined) {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
+  }
+  try {
+    const expectedToken = await opts.resolveDeploymentToken();
+    const cfgDir = opts.configDir;
+    const knownServices =
+      cfgDir === undefined
+        ? (): readonly string[] => []
+        : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
+    return await dispatchWriteRoute(req, {
+      writeDb,
+      expectedToken,
+      rateLimiter,
+      nowMs: opts.nowMs ?? ((): number => Date.now()),
+      knownServices,
+    });
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
+}
+
+async function handleGet(
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const path = url.pathname;
+  if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${path}`))) {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  }
+  try {
+    return await dispatchReadOnlyGet(path, url, db, opts);
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
+}
+
 export function startReadOnlyHttpServer(
   dbPath: string,
   port: number,
@@ -316,11 +320,6 @@ export function startReadOnlyHttpServer(
   const db = new Database(dbPath, { readonly: true, create: false });
   dbRun(db, "PRAGMA query_only = ON");
 
-  // Second handle is opened ONLY when the caller wires the write surface.
-  // The read-only handle above remains the default — every GET still runs
-  // against `SQLITE_OPEN_READONLY`. The write handle is reachable only
-  // through `dispatchWriteRoute` which enforces the allowlist (invariant
-  // I13), bearer auth, rate limit, and body cap before any SQL runs.
   const writeDb =
     opts.resolveDeploymentToken === undefined
       ? null
@@ -333,62 +332,19 @@ export function startReadOnlyHttpServer(
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       if (req.method === "POST") {
-        if (writeDb === null || opts.resolveDeploymentToken === undefined) {
-          return new Response("Method Not Allowed", {
-            status: 405,
-            headers: { Allow: "GET" },
-          });
-        }
-        try {
-          const expectedToken = await opts.resolveDeploymentToken();
-          // Capture configDir into a stable local so the closure doesn't
-          // re-narrow `opts.configDir` on every request.
-          const cfgDir = opts.configDir;
-          const knownServices =
-            cfgDir === undefined
-              ? (): readonly string[] => []
-              : (): readonly string[] =>
-                  Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
-          return await dispatchWriteRoute(req, {
-            writeDb,
-            expectedToken,
-            rateLimiter,
-            nowMs: opts.nowMs ?? ((): number => Date.now()),
-            knownServices,
-          });
-        } catch {
-          return json({ error: "internal_error" }, 500);
-        }
+        return handlePost(req, writeDb, rateLimiter, opts);
       }
       if (req.method !== "GET") {
-        // Hint both supported verbs when a write surface is mounted, GET
-        // only otherwise. Avoids advertising POST when it would 405 anyway.
-        const allow = writeDb !== null ? "GET, POST" : "GET";
+        const allow = writeDb === null ? "GET" : "GET, POST";
         return new Response("Method Not Allowed", { status: 405, headers: { Allow: allow } });
       }
-      const path = url.pathname;
-      // If a GET targets a path that is only served under a non-GET verb
-      // (e.g. `GET /v1/deployments`), respond 405 with the correct `Allow`
-      // hint rather than letting it fall through to 404.
-      if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${path}`))) {
-        return new Response("Method Not Allowed", {
-          status: 405,
-          headers: { Allow: "POST" },
-        });
-      }
-      try {
-        return await dispatchReadOnlyGet(path, url, db, opts);
-      } catch {
-        return json({ error: "internal_error" }, 500);
-      }
+      return handleGet(url, db, opts);
     },
   });
 
-  // Bun's server.port is typed `number | undefined` to cover unix-socket-style
-  // servers; for the hostname+port style we always use here it is always set.
   const actualPort = server.port;
   if (typeof actualPort !== "number") {
-    throw new Error(
+    throw new TypeError(
       `startReadOnlyHttpServer: Bun.serve did not bind a TCP port (server.port=${String(actualPort)})`,
     );
   }

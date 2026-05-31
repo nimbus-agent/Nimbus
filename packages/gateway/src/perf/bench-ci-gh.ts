@@ -1,15 +1,3 @@
-/**
- * Thin wrapper around `gh` CLI calls used by `bench-ci.ts`. Injectable
- * `spawn` + `sleep` make the orchestrator unit-testable without a real
- * gh process. Retry policy: 3 attempts, 5 s backoff between attempts,
- * then re-throw (spec § 4.6 says the bench must not fail because diff
- * plumbing failed — `bench-ci.ts` catches the throw and proceeds as
- * first-run).
- *
- * Why this is its own file: keeps `Bun.spawn` calls out of the
- * orchestrator so the orchestrator stays pure-coordination logic.
- */
-
 import { readFileSync } from "node:fs";
 
 export interface GhSpawnResult {
@@ -26,9 +14,7 @@ export type GhSpawnFn = (
 export interface GhCliOptions {
   spawn?: GhSpawnFn;
   sleep?: (ms: number) => Promise<void>;
-  /** Override default 3 attempts. Tests use 1 to skip retries. */
   maxAttempts?: number;
-  /** Backoff in ms; tests pass 0. */
   backoffMs?: number;
 }
 
@@ -77,8 +63,6 @@ export class GhCli {
       const r = await this.#spawn(args);
       if (r.exitCode === 0) return r;
       lastErr = r.stderr || `gh exited ${r.exitCode}`;
-      // Non-retriable: artifact-not-found is a permanent condition, not a
-      // transient API error. Throw immediately so the caller can classify it.
       if (NO_ARTIFACT_PATTERNS.some((re) => re.test(lastErr))) {
         throw new Error(
           `gh ${args[0] ?? "?"} ${args[1] ?? "?"} failed after 1 attempt: ${lastErr}`,
@@ -93,7 +77,6 @@ export class GhCli {
     );
   }
 
-  /** Returns databaseId of latest successful run; null when stdout is empty (no such run). */
   async runListLatestSuccess(args: { workflow: string; branch: string }): Promise<number | null> {
     const r = await this.#run([
       "run",
@@ -118,7 +101,6 @@ export class GhCli {
     return id;
   }
 
-  /** `gh run view <id> --json headSha`. Returns null when run is gone. */
   async runViewHeadSha(args: { runId: number }): Promise<string | null> {
     const r = await this.#run([
       "run",
@@ -133,11 +115,6 @@ export class GhCli {
     return sha === "" ? null : sha;
   }
 
-  /**
-   * Returns true on success, false when the artifact is gone (404 / "no
-   * artifact found" stderr — treated as not-an-error per spec § 4.6).
-   * Other failures bubble up as a thrown Error after retries.
-   */
   async runDownloadArtifact(args: { runId: number; name: string; dir: string }): Promise<boolean> {
     try {
       await this.#run([
@@ -157,16 +134,6 @@ export class GhCli {
     }
   }
 
-  /**
-   * Note on pagination: `gh pr view --json comments` returns the first
-   * page of comments (per GitHub's GraphQL connection default — typically
-   * 100). For PRs with >100 comments, our marker may not appear in the
-   * response and we'd post a duplicate. This is acceptable for v0.1.0
-   * because typical Nimbus PRs have well under 100 comments; if it
-   * becomes a problem, switch to the paginated REST endpoint
-   * `gh api repos/:owner/:repo/issues/:pr/comments?per_page=100` with
-   * explicit page traversal.
-   */
   async prCommentList(args: { pr: number }): Promise<{ id: string; body: string }[]> {
     const r = await this.#run([
       "pr",
@@ -193,8 +160,6 @@ export class GhCli {
   }
 
   async prCommentEdit(args: { commentId: string; bodyFile: string; repo: string }): Promise<void> {
-    // gh CLI does not expose `pr comment --edit`; use the underlying REST
-    // endpoint via `gh api`.
     const body = readFileSync(args.bodyFile, "utf8");
     await this.#run([
       "api",

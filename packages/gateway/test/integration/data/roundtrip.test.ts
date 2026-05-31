@@ -10,8 +10,6 @@ import type { LocalIndex } from "../../../src/index/local-index.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { memVault, newIndex } from "../../fixtures/data-test-helpers.ts";
 
-// S2-F10 — register the FAST_KDF profile used by the round-trip integration
-// test so decryptVaultManifest accepts the bundle on import.
 let _restoreTestKdf: () => void;
 beforeAll(() => {
   _restoreTestKdf = _addTestKdfProfile({ t: 1, m: 1024, p: 1 });

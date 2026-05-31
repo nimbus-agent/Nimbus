@@ -11,7 +11,6 @@ export interface FallbackEnv {
   rows: number | undefined;
 }
 
-/** First-match wins; returns null when every check passes. */
 export function detectFallbackReason(env: FallbackEnv): FallbackReason | null {
   if (env.TERM === "dumb") {
     return "TERM=dumb";
@@ -31,7 +30,6 @@ export function detectFallbackReason(env: FallbackEnv): FallbackReason | null {
   return null;
 }
 
-/** Read fallback env from process globals; isolated for testability. */
 export function currentFallbackEnv(): FallbackEnv {
   return {
     TERM: process.env["TERM"],

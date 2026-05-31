@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-discord — read-only Discord REST MCP (bot token).
- * Opt-in via Gateway: `discord.enabled` + `discord.bot_token` in the vault.
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

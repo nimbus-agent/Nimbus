@@ -70,11 +70,9 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
 
     const clientKp = generateBoxKeypair();
 
-    // Step 1 — pairing window open
     const code = generatePairingCode();
     host.pairing.open(code);
 
-    // Step 2 — pair handshake
     const sock = await Bun.connect<undefined>({
       hostname: "127.0.0.1",
       port: listen.port,
@@ -94,7 +92,6 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     await Bun.sleep(50);
     expect(host.peers.size).toBe(1);
 
-    // Step 3 — call a read method (allowed without write grant)
     const [peerId] = [...host.peers.keys()];
     const readReq = sealBoxFrame(
       new TextEncoder().encode(
@@ -106,14 +103,12 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     writeFrame(sock, readReq);
     await Bun.sleep(50);
 
-    // Step 4 — grant-write flips the flag
     expect(peerId).toBeDefined();
     if (!peerId) throw new Error("no peerId");
     const peer = host.peers.get(peerId);
     if (!peer) throw new Error("peer not registered");
     peer.writeAllowed = true;
 
-    // Step 5 — write method succeeds now
     const writeReq = sealBoxFrame(
       new TextEncoder().encode(JSON.stringify({ id: 2, method: "engine.ask", params: {} })),
       host.hostKp.publicKey,
@@ -122,7 +117,6 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     writeFrame(sock, writeReq);
     await Bun.sleep(50);
 
-    // Step 6 — tampered ciphertext terminates session
     const tampered = sealBoxFrame(
       new TextEncoder().encode(JSON.stringify({ id: 3, method: "index.search", params: {} })),
       host.hostKp.publicKey,
@@ -133,11 +127,9 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     await Bun.sleep(50);
     sock.end();
 
-    // Step 7 — pairing window expiry
     await Bun.sleep(2100);
     expect(host.pairing.isOpen()).toBe(false);
 
-    // Step 8 — rate-limit guard
     for (let i = 0; i < 4; i++) {
       host.rateLimit.recordFailure("192.0.2.3");
     }

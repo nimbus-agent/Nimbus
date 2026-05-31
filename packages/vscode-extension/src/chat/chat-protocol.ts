@@ -1,8 +1,3 @@
-/**
- * Typed messages exchanged between extension host and the chat Webview.
- * Both directions go through `webview.postMessage`. Discriminate on `type`.
- */
-
 export type ExtensionToWebview =
   | { type: "reset" }
   | {

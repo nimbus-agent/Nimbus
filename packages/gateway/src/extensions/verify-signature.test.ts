@@ -86,7 +86,6 @@ describe("signManifest + verifyManifestSignature round-trip", () => {
     const m = baseManifest(encodeBase64(pubkey));
     const sig1 = await signManifest(m, privkey);
     const sig2 = await signManifest({ ...m, signature: "garbage" }, privkey);
-    // Ed25519 is deterministic over the same input, so the two sigs must match.
     expect(sig1).toBe(sig2);
   });
 });

@@ -21,7 +21,6 @@ test("finds OpenAPI/Swagger/AsyncAPI files and skips default-ignored dirs", () =
   const root = setupTree();
   const files = discoverSpecFiles(root, { maxWalkDepth: 8, ignoreGlobs: [] });
   const rels = files.map((f) => {
-    // Handle both forward and backward slashes when trimming root
     let rel = f;
     if (rel.startsWith(root)) {
       rel = rel.slice(root.length);
@@ -57,24 +56,18 @@ test("matches case-insensitively for known filenames", () => {
 test("does not follow symlinks (file or directory)", () => {
   const { symlinkSync } = require("node:fs") as typeof import("node:fs");
   const root = mkdtempSync(join(tmpdir(), "openapi-discover-symlink-"));
-  // Real spec at the root.
   writeFileSync(join(root, "openapi.yaml"), "openapi: 3.0.0");
-  // Symlinked spec file pointing back at the real one.
   try {
     symlinkSync(join(root, "openapi.yaml"), join(root, "linked.yaml"));
   } catch {
-    // Some Windows / restricted environments cannot create symlinks; skip the
-    // assertion in that case rather than failing.
     return;
   }
-  // Symlinked directory pointing back at the parent (would loop if followed).
   try {
     symlinkSync(root, join(root, "self"));
   } catch {
     // ignore — same reason as above
   }
   const files = discoverSpecFiles(root, { maxWalkDepth: 8, ignoreGlobs: [] });
-  // Only the real spec — the symlinked file and the symlinked dir are skipped.
   expect(files.length).toBe(1);
   const first = files[0];
   expect(first).toBeDefined();
@@ -86,10 +79,9 @@ test("ignoreGlobs excludes both files and directories", () => {
   mkdirSync(join(root, "legacy"), { recursive: true });
   mkdirSync(join(root, "current", "active"), { recursive: true });
   writeFileSync(join(root, "openapi.yaml"), "");
-  writeFileSync(join(root, "legacy", "openapi.yaml"), ""); // dir-glob excluded
+  writeFileSync(join(root, "legacy", "openapi.yaml"), "");
   writeFileSync(join(root, "current", "active", "openapi.yaml"), "");
   writeFileSync(join(root, "current", "swagger.json"), "{}");
-  // Pattern 1 prunes the `legacy/` directory; pattern 2 prunes a single file.
   const files = discoverSpecFiles(root, {
     maxWalkDepth: 8,
     ignoreGlobs: ["legacy/**", "current/swagger.json"],
@@ -104,7 +96,6 @@ test("ignoreGlobs supports `?` single-char and literal special chars", () => {
   const root = mkdtempSync(join(tmpdir(), "openapi-discover-globs-q-"));
   writeFileSync(join(root, "openapi.yaml"), "");
   writeFileSync(join(root, "swagger.json"), "{}");
-  // `?wagger.json` matches a single char before `wagger.json`, so swagger.json is excluded.
   const files = discoverSpecFiles(root, {
     maxWalkDepth: 8,
     ignoreGlobs: ["?wagger.json"],

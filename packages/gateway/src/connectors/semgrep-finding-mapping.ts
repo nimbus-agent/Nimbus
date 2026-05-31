@@ -1,17 +1,3 @@
-/**
- * Pure mapping from a Semgrep AppSec Platform finding payload to the
- * {@link upsertIndexedItemForSync} row shape. Lives separately from
- * `semgrep-sync.ts` so the HTTP path and the indexing path can be
- * tested independently.
- *
- * Semgrep's findings envelope is documented at
- * https://semgrep.dev/api/v1/docs/. The fields surfaced into
- * `metadata` are the ones the Phase 5 roadmap row for `sast_finding`
- * calls out: severity, confidence, rule_name, rule_message, file_path,
- * line, repository — plus a couple of joins (`triage_state`, `status`,
- * `categories`) that downstream `nimbus query` predicates need.
- */
-
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -27,7 +13,6 @@ type FindingStatus = "open" | "fixed" | "removed" | "ignored";
 const STATUSES: ReadonlySet<string> = new Set(["open", "fixed", "removed", "ignored"]);
 
 export interface SemgrepMappingContext {
-  /** Deployment slug — used to construct canonical finding URLs. */
   readonly deploymentSlug: string;
   readonly syncedAt: number;
 }
@@ -78,9 +63,6 @@ function pickIntField(row: Record<string, unknown>, key: string): number | null 
 }
 
 function findingIdFrom(row: Record<string, unknown>): string | undefined {
-  // Semgrep's API has emitted both `id` (legacy) and `syntactic_id`
-  // (current canonical) across rev bumps. Either is acceptable as a
-  // stable per-finding external id.
   return stringField(row, "id") ?? stringField(row, "syntactic_id");
 }
 

@@ -107,9 +107,6 @@ export async function handleConnectorRemove(
   const id = requireRegisteredSchedulerServiceId(rec, localIndex);
   const db = localIndex.getDatabase();
 
-  // Write WAL intent before touching either store. A crash between here and
-  // clearRemoveIntent leaves an orphaned intent row that resumePendingRemovals
-  // will detect and complete on the next Gateway startup.
   writeRemoveIntent(db, id);
 
   const normalizedForFamily = normalizeConnectorServiceId(id);
@@ -134,16 +131,11 @@ export async function handleConnectorRemove(
     throw removeErr;
   }
 
-  // Both stores clean — clear the WAL intent.
   clearRemoveIntent(db, id);
 
   return { kind: "hit", value: { ok: true, itemsDeleted, vaultKeysRemoved: vaultKeys } };
 }
 
-/**
- * On Gateway startup, detect any connector removals that were interrupted by a crash
- * and complete them. Call once after both vault and localIndex are initialised.
- */
 export async function resumePendingRemovals(
   vault: NimbusVault,
   localIndex: LocalIndex,
@@ -153,7 +145,6 @@ export async function resumePendingRemovals(
   const completed: string[] = [];
   for (const serviceId of pending) {
     try {
-      // Index cleanup is idempotent; Vault deletes ignore missing keys.
       localIndex.removeConnectorIndexData(serviceId);
       await clearOAuthVaultIfProviderUnused(vault, db, serviceId);
       const normalizedBuiltin = normalizeConnectorServiceId(serviceId);

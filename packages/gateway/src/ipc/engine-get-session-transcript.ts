@@ -32,19 +32,12 @@ function clampLimit(raw: unknown): number {
 }
 
 function actionToRole(actionType: string): "user" | "assistant" | undefined {
-  // Returns undefined for action types that aren't part of a chat exchange
-  // (e.g., agent.invoke, MCP tool dispatches, audit-only rows). Callers
-  // skip such rows entirely — they are not chat turns and must not appear
-  // in the rehydrated transcript at all.
   if (actionType === "engine.askUser") return "user";
   if (actionType === "engine.askAssistant") return "assistant";
   return undefined;
 }
 
 function parseDetailsText(actionJson: string | null): string {
-  // For rows that ARE chat turns (actionToRole returned user/assistant)
-  // but whose text is missing/unparseable, return "[redacted]" so the
-  // turn count stays consistent in the UI even when content is absent.
   if (actionJson === null) return "[redacted]";
   try {
     const parsed = JSON.parse(actionJson) as { text?: unknown };

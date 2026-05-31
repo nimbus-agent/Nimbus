@@ -9,9 +9,6 @@ import {
 const ENSURE_MCP = { ensureDiscordMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-dsc1:";
 
-// URL matchers. Discord paths are simple — `users/@me/guilds`, `guilds/{id}/channels`,
-// and `channels/{id}/messages?limit=50[&after=...]`. We use anchored regexes so a
-// mistyped URL fragment in production fails fast.
 const GUILDS_URL = "https://discord.com/api/v10/users/@me/guilds";
 const CHANNELS_RE = /^https:\/\/discord\.com\/api\/v10\/guilds\/[^/]+\/channels$/;
 const MESSAGES_RE = /^https:\/\/discord\.com\/api\/v10\/channels\/[^/]+\/messages\?limit=50/;
@@ -27,12 +24,6 @@ function decodeCursor<T>(cursor: string): T {
   return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
 }
 
-/**
- * Run a callback against a fresh fixture that does NOT inherit the
- * default vault-seeded credentials from `beforeEach`. Mirrors the
- * bitbucket-sync.test.ts pattern. Used by the credential-short-circuit
- * tests so each can stage its own vault state (or none) without leakage.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -50,9 +41,6 @@ let fixture: ConnectorSyncFixture;
 beforeEach(async () => {
   fixture = createConnectorSyncFixture();
   fixture.fetchMock.install();
-  // Seed credentials so default cases reach the fetch path. Discord requires
-  // BOTH `discord.enabled === "1"` AND a non-empty `discord.bot_token`.
-  // Avoid all-caps gitleaks-trigger patterns in fixture values.
   await fixture.vault.set("discord.enabled", "1");
   await fixture.vault.set("discord.bot_token", "discord-stub-bot-token");
 });
@@ -95,7 +83,6 @@ describe("discord-sync — credential short-circuits", () => {
   });
 
   test("returns noop when enabled is set to a value other than '1'", async () => {
-    // Production gate is `enabled !== "1"`, so "true" / "yes" / "0" / "" all short-circuit.
     await withIsolatedFixture(async (iso) => {
       await iso.vault.set("discord.enabled", "true");
       await iso.vault.set("discord.bot_token", "discord-stub-bot-token");
@@ -118,8 +105,6 @@ describe("discord-sync — credential short-circuits", () => {
 
 describe("discord-sync — cursor decode failures", () => {
   function stageEmptyGuilds(): void {
-    // Empty guild list ends the cycle immediately; if the cursor was decoded
-    // successfully into a non-default state, no fetch would fire at all.
     fixture.fetchMock.respond("GET", GUILDS_URL, []);
   }
 
@@ -258,9 +243,6 @@ describe("discord-sync — cursor decode failures", () => {
   });
 
   test("cursor with lastMsgByChannel as array → silently defaults to empty map (decodes ok)", async () => {
-    // The decoder accepts the cursor (array channelIds is rejected, but a non-record
-    // lastMsgByChannel is silently treated as `{}`). With guildIds=["g1"] and
-    // guildIndex=0, the run progresses; stage a channel-list fetch.
     fixture.fetchMock.respond("GET", CHANNELS_RE, []);
     const res = await createDiscordSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
@@ -272,9 +254,7 @@ describe("discord-sync — cursor decode failures", () => {
         lastMsgByChannel: [42, "not-a-record"],
       }),
     );
-    // No channels in g1 → guildIndex advanced past length → cycle ends.
     expect(res.hasMore).toBe(false);
-    // One channel-list fetch fired; no guilds fetch because guildIds had length 1.
     const ch = fixture.fetchMock.calls.filter((c) => CHANNELS_RE.test(c.url));
     expect(ch).toHaveLength(1);
   });
@@ -295,8 +275,6 @@ describe("discord-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
     await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
-    // Production hard-codes `User-Agent: NimbusGateway (https://github.com/nimbus-dev/nimbus)`.
-    // Lower-cased lookup is correct (MockFetch normalises header keys).
     expect(fixture.fetchMock.calls.length).toBeGreaterThan(0);
     for (const call of fixture.fetchMock.calls) {
       expect(call.headers["user-agent"]).toBe(DISCORD_USER_AGENT);
@@ -357,15 +335,10 @@ describe("discord-sync — HTTP request paths", () => {
   });
 
   test("non-200 non-429 on messages silently advances the channel (no throw)", async () => {
-    // Production code at discord-sync.ts:344–346 only throws on 429; any other
-    // non-OK response is swallowed and `channelIndex` is incremented. That keeps
-    // a single bad channel from blocking the rest of the cycle.
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, { error: "forbidden" }, { status: 403 });
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // No items, but the cycle completes — c1 was the only channel in g1; after
-    // advancing channelIndex, the next tick advances guildIndex, and the cycle ends.
     expect(res.hasMore).toBe(false);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -422,7 +395,6 @@ describe("discord-sync — indexing skip paths", () => {
   });
 
   test("non-text-channel types are filtered at channel-list parse", async () => {
-    // Only types 0 (GUILD_TEXT) and 5 (GUILD_NEWS) are indexed.
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [
       { id: "c1", type: 0 }, // text
@@ -431,8 +403,6 @@ describe("discord-sync — indexing skip paths", () => {
     ]);
     fixture.fetchMock.respond("GET", MESSAGES_RE, []);
     await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Two channels visited (c1, c3); the voice channel was filtered before the
-    // message-fetch loop ever saw it.
     const msgCalls = fixture.fetchMock.calls.filter((c) => MESSAGES_RE.test(c.url));
     expect(msgCalls).toHaveLength(2);
     expect(msgCalls.some((c) => c.url.includes("/channels/c2/"))).toBe(false);
@@ -443,13 +413,6 @@ describe("discord-sync — phase machine transitions", () => {
   test("fresh start: fetches guilds → channels → messages → completes single-guild single-channel cycle", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
-    // The state machine fetches messages until an empty page comes back; only
-    // then does it advance channelIndex. To make this single-call deterministic
-    // we stage the `after=` follow-up as empty so the cycle terminates after
-    // exactly one non-empty page + one empty follow-up. The empty-follow-up
-    // matcher must be registered FIRST because MockFetch matches in
-    // registration order — a more specific matcher wins by virtue of being
-    // listed before the catch-all.
     const MESSAGES_AFTER_RE =
       /^https:\/\/discord\.com\/api\/v10\/channels\/[^/]+\/messages\?limit=50&after=/;
     fixture.fetchMock.respond("GET", MESSAGES_AFTER_RE, []);
@@ -457,7 +420,6 @@ describe("discord-sync — phase machine transitions", () => {
       { id: "m1", content: "hi", author: { id: "u1", username: "alice", global_name: "Alice" } },
     ]);
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // One unique message indexed; cycle completes.
     expect(res.itemsUpserted).toBe(1);
     expect(res.hasMore).toBe(false);
     expect(res.cursor).not.toBeNull();
@@ -479,7 +441,6 @@ describe("discord-sync — phase machine transitions", () => {
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
     const msgCalls = fixture.fetchMock.calls.filter((c) => MESSAGES_RE.test(c.url));
-    // Both channels visited exactly once each (empty page → channelIndex+1).
     expect(msgCalls).toHaveLength(2);
     expect(msgCalls.some((c) => c.url.includes("/channels/c1/"))).toBe(true);
     expect(msgCalls.some((c) => c.url.includes("/channels/c2/"))).toBe(true);
@@ -487,7 +448,6 @@ describe("discord-sync — phase machine transitions", () => {
 
   test("guild advance: empty channel list moves to next guild", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }, { id: "g2" }]);
-    // Both guilds return empty channel lists.
     fixture.fetchMock.respond("GET", CHANNELS_RE, []);
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
@@ -498,15 +458,6 @@ describe("discord-sync — phase machine transitions", () => {
   });
 
   test("API-call budget exhausted mid-cycle → hasMore=true with state preserved", async () => {
-    // MAX_API_CALLS_PER_SYNC is 8. Stage enough work that a single sync() can't
-    // finish: one guilds-list call + many guild/channel fetches.
-    // Strategy: 1 guild with 8 channels, each channel returns empty messages.
-    // Sequence per loop tick:
-    //   tick 1: GUILDS_URL          (1 api call → guildIds=[g1])
-    //   tick 2: CHANNELS_RE for g1   (1 api call → channelIds=[c1..c8])
-    //   ticks 3..N: MESSAGES_RE for c1, c2, ...
-    // With the budget of 8 we have 6 messages calls before the while loop exits.
-    // Expectation: hasMore=true with channelIndex preserved at 6.
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [
       { id: "c1", type: 0 },
@@ -532,10 +483,7 @@ describe("discord-sync — phase machine transitions", () => {
     expect(decoded.guildIds).toEqual(["g1"]);
     expect(decoded.guildIndex).toBe(0);
     expect(decoded.channelIds.length).toBe(8);
-    // After the budget exhausts at the 8th API call (1 guilds + 1 channels + 6 messages),
-    // channelIndex sits at 6 — the next call would have advanced to c7.
     expect(decoded.channelIndex).toBe(6);
-    // Total fetches in this sync == MAX_API_CALLS_PER_SYNC (8).
     expect(fixture.fetchMock.calls).toHaveLength(8);
   });
 });
@@ -544,8 +492,6 @@ describe("discord-sync — cycle-completion and integration", () => {
   test("indexed message persists with expected fields (author_id, url, metadata)", async () => {
     fixture.fetchMock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
     fixture.fetchMock.respond("GET", CHANNELS_RE, [{ id: "c1", type: 0 }]);
-    // Stage the `after=` follow-up as empty so the cycle terminates after
-    // exactly one upsert of m100.
     const MESSAGES_AFTER_RE =
       /^https:\/\/discord\.com\/api\/v10\/channels\/[^/]+\/messages\?limit=50&after=/;
     fixture.fetchMock.respond("GET", MESSAGES_AFTER_RE, []);
@@ -566,7 +512,6 @@ describe("discord-sync — cycle-completion and integration", () => {
     expect(row).not.toBeNull();
     expect(row?.external_id).toBe("c1:m100");
     expect(row?.url).toBe("https://discord.com/channels/g1/c1/m100");
-    // Author resolved → row.author_id non-null.
     expect(row?.author_id).not.toBeNull();
   });
 

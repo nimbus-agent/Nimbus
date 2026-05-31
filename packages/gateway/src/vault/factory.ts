@@ -4,10 +4,6 @@ import { PlatformInitError } from "../platform/errors.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "./nimbus-vault.ts";
 
-/**
- * OS-specific vault modules use native FFI / subprocesses — load only on the
- * matching platform so `dlopen` is never evaluated on the wrong OS.
- */
 export async function createNimbusVault(paths: PlatformPaths): Promise<NimbusVault> {
   const p = platform();
   switch (p) {

@@ -1,19 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Assembles a headless install directory with `nimbus` and `nimbus-gateway` binaries
- * (sibling layout expected by the CLI spawn resolver). Run after compiling both
- * binaries into `dist/` (same paths as `.github/workflows/release.yml`).
- *
- * By default, materializes `all-MiniLM-L6-v2` ONNX weights into `embedding-model/`
- * via the gateway embedder (may download on first run). Override with
- * `NIMBUS_EMBEDDING_MODEL_DIR` / `--embedding-model-dir`, or pass `--skip-embedding-model`
- * for CI without network.
- *
- * Usage:
- *   bun scripts/package-headless-bundle.ts
- *   bun scripts/package-headless-bundle.ts --out dist/headless-bundle
- *   bun scripts/package-headless-bundle.ts --gateway dist/custom-gw --cli dist/custom-cli
- */
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -35,7 +20,6 @@ const defaultCli = join(repoRoot, "dist", `nimbus${ext}`);
 const outDir = resolve(repoRoot, parseArg("--out") ?? join("dist", "headless-bundle"));
 const gatewaySrc = resolve(repoRoot, parseArg("--gateway") ?? defaultGateway);
 const cliSrc = resolve(repoRoot, parseArg("--cli") ?? defaultCli);
-/** Pre-downloaded Xenova ONNX weights dir; also read from env `NIMBUS_EMBEDDING_MODEL_DIR`. */
 const embeddingModelDir =
   parseArg("--embedding-model-dir") ?? process.env["NIMBUS_EMBEDDING_MODEL_DIR"];
 const skipEmbeddingModel = process.argv.includes("--skip-embedding-model");

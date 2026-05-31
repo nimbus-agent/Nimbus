@@ -26,7 +26,6 @@ describe("renderSloMarkdown", () => {
   test("collapses S8 in the top-level table and lists 12 cells in the sub-table", () => {
     const md = renderSloMarkdown();
     expect(md).toContain("S8 (12 cells");
-    // sub-table heading
     expect(md).toContain("S8 cells");
     for (const length of [50, 500, 5000]) {
       for (const batch of [1, 8, 32, 64]) {
@@ -37,7 +36,6 @@ describe("renderSloMarkdown", () => {
 
   test("S8 sub-table includes the cell-ID gloss for non-perf readers", () => {
     const md = renderSloMarkdown();
-    // The gloss must explain what `l<N>` and `b<N>` encode.
     expect(md).toMatch(/`l` = .* (length|chars)/i);
     expect(md).toMatch(/`b` = .* batch/i);
   });

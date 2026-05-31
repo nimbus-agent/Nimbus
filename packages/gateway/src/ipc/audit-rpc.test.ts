@@ -89,7 +89,6 @@ describe("audit.export alias", () => {
     const r2 = await dispatchAuditRpc("audit.export", null, { index: idx });
     expect(r1.kind).toBe("hit");
     expect(r2.kind).toBe("hit");
-    // Both return arrays of the same shape
     const rows1 = (r1 as { kind: "hit"; value: unknown }).value as Array<{ rowHash: string }>;
     const rows2 = (r2 as { kind: "hit"; value: unknown }).value as Array<{ rowHash: string }>;
     expect(rows1).toHaveLength(rows2.length);

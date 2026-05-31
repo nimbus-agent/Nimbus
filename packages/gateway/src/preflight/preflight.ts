@@ -1,15 +1,3 @@
-/**
- * Phase 5 T4 PR 3a — Pre-deploy preflight calculator.
- *
- * Pure SELECT-only against the unified `item` table. Three checks:
- *   1. Active P1 incidents on the configured PagerDuty service(s)
- *   2. Most-recent failing CI run per workflow on the target branch
- *   3. Open PRs with mergeable_state='dirty' on the configured repos
- *
- * Verdict rule: `verdict = "ok"` iff every check has `count === 0`.
- * Gaps are informational only and do NOT flip the verdict.
- */
-
 import type { Database } from "bun:sqlite";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
 import { providerServiceColumns } from "../metrics/dora-config.ts";
@@ -90,9 +78,6 @@ function repoFilterClause(repos: readonly ParsedDoraRepoUrn[]): {
   clause: string;
   params: string[];
 } {
-  // Build a disjunction:
-  //   (repo IN (?...) OR project IN (?...))
-  // GitHub/Bitbucket use `metadata.repo`; GitLab can use either `repo` or `project`.
   const repoIds = repos
     .filter((r) => r.provider === "github" || r.provider === "bitbucket" || r.provider === "gitlab")
     .map((r) => r.providerId);
@@ -112,9 +97,6 @@ function selectActiveP1Incidents(
   if (cfg.pagerdutyServices.length === 0) {
     return { count: 0, findings: [], gap: "no_pagerduty_mapping" };
   }
-  // Build the canonical set from the configured aliases (already lowercased
-  // by the bootstrap) unioned with "p1". The Set step is belt-and-braces
-  // against a user-supplied "P1" overlap.
   const severityMatches = Array.from(new Set(["p1", ...cfg.severityP1Aliases]));
   const sevPlaceholders = severityMatches.map(() => "?").join(",");
   const pdPlaceholders = cfg.pagerdutyServices.map(() => "?").join(",");
@@ -156,12 +138,6 @@ function selectActiveP1Incidents(
       url: r.url,
     };
   });
-  // Phase 5 T4 wrap-up: urgency-gap probe. When the strict + aliased
-  // severity filter yields zero matches AND services are configured, check
-  // whether high-urgency-without-priority incidents exist. They indicate
-  // either a missing severity_p1_aliases entry or a PagerDuty priority
-  // setup quirk — surface as a diagnostic gap. Probe is gated on count===0
-  // so any org with at least one active P1-equivalent skips it.
   let gap: PreflightGap = null;
   if (countRow.c === 0) {
     const probeRow = db
@@ -193,10 +169,6 @@ function selectFailingCiRuns(
   }
   const servicePlaceholders = ciServices.map(() => "?").join(",");
   const conclusionPlaceholders = FAILED_CONCLUSIONS.map(() => "?").join(",");
-  // Window function: pick the row with MAX(modified_at) per workflow grouping key.
-  // Requires SQLite ≥ 3.25 (window functions, 2018). Bun's bundled SQLite is
-  // current (>= 3.39 as of Bun 1.2) so this is safely supported.
-  // Grouping key (COALESCE ladder): workflow_name → title → head_sha:branch.
   const sql = `
     WITH ranked AS (
       SELECT
@@ -262,7 +234,6 @@ function selectMergeConflicts(
     AND json_extract(metadata, '$.state') = 'open'
     AND ${repoFilter.clause}
   `;
-  // Count dirty PRs.
   const countRow = db
     .query(
       `SELECT COUNT(*) as c FROM item
@@ -270,7 +241,6 @@ function selectMergeConflicts(
          AND json_extract(metadata, '$.mergeable_state') = 'dirty'`,
     )
     .get(...prServices, ...repoFilter.params) as { c: number };
-  // Detect any null mergeable_state on matching open PRs → gap.
   const nullRow = db
     .query(
       `SELECT COUNT(*) as c FROM item

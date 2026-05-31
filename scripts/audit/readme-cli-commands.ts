@@ -1,20 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-/**
- * Tokens that legitimately appear after `nimbus ` but are not subcommands.
- * Extend conservatively — false negatives here mean stale README references
- * slip through CI.
- */
 const STOP_WORDS = new Set(["--version", "--help", "-v", "-h"]);
 
-/**
- * Finds every `nimbus <token>` pair in the supplied markdown and returns the
- * unique set of `<token>` values that look like top-level subcommand names.
- *
- * The lookbehind `(?<![A-Za-z0-9_])` prevents matches inside identifiers like
- * `gnimbus` or `nimbus_helper`. The token pattern `[a-z][a-z0-9-]*` matches the
- * shape of every command registered in `packages/cli/src/index.ts`.
- */
 export function extractReadmeCliCommands(markdown: string): string[] {
   const found = new Set<string>();
   const pattern = /(?<![A-Za-z0-9_])nimbus\s+([a-z][a-z0-9-]*)/g;
@@ -39,14 +26,6 @@ export function validateReadmeCommands(
   return { ok: missing.length === 0, missing };
 }
 
-/**
- * Resolves the canonical list of registered CLI command names.
- *
- * Primary path: import `COMMAND_NAMES` from the leaf registry module in the
- * CLI package. Fallback path: regex-scan `packages/cli/src/index.ts` for
- * `.command("...")` and `command: "..."` literals so the audit still works if
- * the registry module is removed or replaced.
- */
 export async function readRegisteredCommands(): Promise<string[]> {
   try {
     const mod = await import("../../packages/cli/src/commands/registry.ts");

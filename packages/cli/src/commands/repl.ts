@@ -1,72 +1,19 @@
-import { stdin as input, stdout as output } from "node:process";
-import { createInterface } from "node:readline/promises";
-
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-function parseReplArgs(args: string[]): { sessionId: string | undefined } {
-  let sessionId: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--session" && args[i + 1] !== undefined) {
-      sessionId = args[i + 1];
-      i += 1;
-    }
-  }
-  return { sessionId };
-}
+import { runRepl as coreRunRepl, type ReplCoreDeps } from "./repl-core.ts";
 
-export async function runRepl(args: string[]): Promise<void> {
-  const { sessionId } = parseReplArgs(args);
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
-  }
+const productionDeps: ReplCoreDeps = {
+  readGatewayState,
+  getCliPlatformPaths,
+  makeClient: (socketPath) => new IPCClient(socketPath),
+  registerHandlers: (client) => {
+    registerInteractiveCliIpcHandlers(client);
+  },
+};
 
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  registerInteractiveCliIpcHandlers(client);
-
-  const rl = createInterface({ input, output, terminal: true });
-  try {
-    output.write("Nimbus REPL — type a message, or exit / quit to leave.\n");
-    for (;;) {
-      const line = await rl.question("nimbus> ");
-      const q = line.trim();
-      if (q === "" || q === "exit" || q === "quit") {
-        break;
-      }
-      const invokeParams: Record<string, unknown> = {
-        input: q,
-        stream: true,
-      };
-      if (sessionId !== undefined) {
-        invokeParams["sessionId"] = sessionId;
-      }
-      const result = await client.call<{ reply: string }>("agent.invoke", invokeParams);
-      if (typeof result.reply === "string" && result.reply.length > 0) {
-        output.write(`\n${result.reply}\n`);
-      }
-      if (sessionId !== undefined) {
-        await client.call("session.append", {
-          sessionId,
-          chunkText: q,
-          role: "user",
-        });
-        if (typeof result.reply === "string" && result.reply.trim() !== "") {
-          await client.call("session.append", {
-            sessionId,
-            chunkText: result.reply.slice(0, 8000),
-            role: "assistant",
-          });
-        }
-      }
-    }
-  } finally {
-    rl.close();
-    await client.disconnect();
-  }
+export function runRepl(args: string[]): Promise<void> {
+  return coreRunRepl(args, productionDeps);
 }

@@ -1,9 +1,3 @@
-/**
- * Publisher-key vault cache. Stores 32-byte Ed25519 pubkeys base64-encoded
- * under `extension.publisher_key.<publisher-id>`. The vault-key allow-list
- * (D11 static audit) restricts this namespace.
- */
-
 import { readFileSync } from "node:fs";
 
 import type { NimbusVault } from "../vault/index.ts";
@@ -86,15 +80,7 @@ export interface ResolvePublisherKeyOpts {
   enforceAirGap: boolean;
 }
 
-/**
- * Resolve a publisher's 32-byte pubkey in priority order:
- *   1. --publisher-key <path>
- *   2. cached vault key extension.publisher_key.<id>
- *   3. registry fetch (refused under enforceAirGap)
- * Throws on the documented error classes.
- */
 export async function resolvePublisherKey(opts: ResolvePublisherKeyOpts): Promise<Uint8Array> {
-  // Priority 1: explicit file
   if (opts.explicitKeyPath !== undefined) {
     let text: string;
     try {
@@ -115,10 +101,8 @@ export async function resolvePublisherKey(opts: ResolvePublisherKeyOpts): Promis
     }
     return bytes;
   }
-  // Priority 2: vault cache
   const cached = await readPublisherKey(opts.vault, opts.publisherId);
   if (cached !== undefined) return cached;
-  // Priority 3: registry
   if (opts.enforceAirGap) throw new AirGapNoPublisherKey(opts.publisherId);
   const result = await opts.fetcher.fetch(opts.publisherId);
   if (result.kind === "ok") return result.pubkey;

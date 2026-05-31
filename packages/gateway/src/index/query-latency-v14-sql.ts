@@ -1,7 +1,3 @@
-/**
- * Query latency batch log + slow query log (user_version 14).
- */
-
 export const QUERY_LATENCY_V14_SQL = `
 CREATE TABLE IF NOT EXISTS query_latency_log (
   id INTEGER PRIMARY KEY,

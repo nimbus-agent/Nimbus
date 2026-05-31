@@ -1,19 +1,17 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnnotateError, annotateDeployment } from "../../../src/deployment/annotate.ts";
 import type { DeploymentAnnotateInput } from "../../../src/deployment/types.ts";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const NOW = 1747142641204;
 
 function freshDb(): Database {
   const dir = mkdtempSync(join(tmpdir(), "annotate-"));
-  const db = new Database(join(dir, "nimbus.db"));
-  runIndexedSchemaMigrations(db, 28);
-  return db;
+  return openSeededDbFile(join(dir, "nimbus.db"), 28);
 }
 
 const valid: DeploymentAnnotateInput = {
@@ -172,10 +170,6 @@ describe("annotateDeployment", () => {
 
   test("transaction rollback does not leak stale is_new (regression for transactional boundary bug)", () => {
     const db = freshDb();
-    // Pre-insert an `item` row with the SAME `(service, external_id)` so the
-    // first UPSERT goes through ON CONFLICT — confirming the existence check
-    // runs INSIDE the transaction and the returned `is_new` reflects the
-    // actual committed state.
     const externalId = "github-actions:run-12345:job-67890";
     const itemId = `deployment:${externalId}`;
     db.run(
@@ -183,8 +177,6 @@ describe("annotateDeployment", () => {
        VALUES (?, 'github-actions', 'deployment', ?, 'pre-existing', '', NULL, NULL, ?, NULL, NULL, ?, 0)`,
       [itemId, externalId, NOW - 5000, NOW - 5000],
     );
-    // The shadow row doesn't exist yet, but the FK is on item(id) which DOES
-    // exist, so the shadow INSERT will succeed.
     const result = annotateDeployment(db, valid, NOW);
     expect(result.is_new).toBe(false);
     db.close();
@@ -192,7 +184,6 @@ describe("annotateDeployment", () => {
 
   test("accepts empty-string run_id / job_id as absent (treats them as undefined)", () => {
     const db = freshDb();
-    // Both empty → falls through to tier-3 fallback "<service>:<env>:<sha>".
     const result = annotateDeployment(db, { ...valid, run_id: "", job_id: "" }, NOW);
     expect(result.external_id).toBe(
       "payment-service:prod:a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4",

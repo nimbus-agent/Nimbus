@@ -72,7 +72,7 @@ describe("GatewayLogTailer", () => {
 
   test("ignores history before startOffset", () => {
     writeFileSync(path, "before\n");
-    const t = new GatewayLogTailer(7); // length of "before\n"
+    const t = new GatewayLogTailer(7);
     expect(t.pollLatest(path)).toBeNull();
     appendFileSync(path, "after\n");
     expect(t.pollLatest(path)).toBe("after");

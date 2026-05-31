@@ -1,4 +1,3 @@
-/** Non-array object from an API envelope — `undefined` if not a plain object. */
 export function asRecord(v: unknown): Record<string, unknown> | undefined {
   if (v === null || typeof v !== "object" || Array.isArray(v)) {
     return undefined;

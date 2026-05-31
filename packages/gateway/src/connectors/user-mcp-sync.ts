@@ -1,10 +1,6 @@
 import type { Syncable } from "../sync/types.ts";
 import { syncNoopResult } from "../sync/types.ts";
 
-/**
- * User MCP connectors do not sync into the local index; the scheduler job only
- * keeps the MCP child warm enough for tool discovery and agent runs.
- */
 export function createUserMcpSyncable(
   serviceId: string,
   ensureRunning: () => Promise<void>,

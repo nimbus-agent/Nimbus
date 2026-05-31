@@ -27,7 +27,7 @@ function jsonRpcErrorMessage(err: unknown): string {
   if (!("message" in err)) {
     return "JSON-RPC error";
   }
-  const msg = (err as { message: unknown }).message;
+  const msg = err.message;
   if (typeof msg !== "string") {
     return "JSON-RPC error";
   }

@@ -50,11 +50,6 @@ async function tryCreateOpenAIEmbeddingRuntime(
     });
     return createLazyEmbeddingRuntime(db, paths.dataDir, logger, slice, embedder);
   } catch (err) {
-    // S2-F9 — never pass the raw err object to pino. The OpenAI SDK's
-    // verbose error format may embed apiKey hints in nested fields the
-    // pino redact paths do not enumerate. Wrap in { errName, errMessage }
-    // so the redacted-pino value scrubber is the only path credentials can
-    // reach the log line.
     logger.warn(
       {
         errName: err instanceof Error ? err.name : "Error",
@@ -66,9 +61,6 @@ async function tryCreateOpenAIEmbeddingRuntime(
   }
 }
 
-/**
- * Tries the Bun embedding worker first (local provider only), then falls back to in-process lazy loading.
- */
 export async function createEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,

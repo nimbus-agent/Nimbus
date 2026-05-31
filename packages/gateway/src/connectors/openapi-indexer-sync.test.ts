@@ -71,8 +71,6 @@ test("re-running with no file changes upserts zero items", async () => {
 
 test("malformed and oversize specs are skipped without aborting the sync", async () => {
   const root = mkdtempSync(join(tmpdir(), "openapi-sync-bad-"));
-  // Each fixture goes in a sub-dir named after its role so it is found as
-  // "<subdir>/openapi.yaml" — all discoverable by SPEC_FILENAME_RE.
   const { mkdirSync } = await import("node:fs");
   mkdirSync(join(root, "good"), { recursive: true });
   mkdirSync(join(root, "broken"), { recursive: true });
@@ -88,16 +86,12 @@ test("malformed and oversize specs are skipped without aborting the sync", async
   });
   const db = createMemoryIndexDb();
   const r = await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT), null);
-  // petstore-3.0 = 2 endpoints; unresolvable-ref now also surfaces 1 endpoint
-  // (raw extraction; broken $ref is in a response body that we never read).
-  // bad-yaml + not-a-spec are skipped soft.
   expect(r.itemsUpserted).toBe(3);
 });
 
 test("removing an endpoint from a re-parsed spec deletes it; unchanged specs preserve their endpoints", async () => {
   const root = mkdtempSync(join(tmpdir(), "openapi-sync-sticky-"));
   copyFileSync(join(FIX, "petstore-3.0.yaml"), join(root, "openapi.yaml"));
-  // swagger.yaml matches SPEC_FILENAME_RE so it is discovered alongside openapi.yaml.
   copyFileSync(join(FIX, "petstore-3.1.yaml"), join(root, "swagger.yaml"));
   const sync = createOpenapiIndexerSyncable({
     roots: [{ path: root, gitAware: false, codeIndex: false, dependencyGraph: false, exclude: [] }],
@@ -108,7 +102,6 @@ test("removing an endpoint from a re-parsed spec deletes it; unchanged specs pre
   const first = await sync.sync(ctx, null);
   expect(first.itemsUpserted).toBe(3);
 
-  // Rewrite openapi.yaml to remove the DELETE endpoint, bump mtime.
   writeFileSync(
     join(root, "openapi.yaml"),
     `openapi: 3.0.0
@@ -174,7 +167,6 @@ test("syncing emits graph_relation edges from api_endpoint to its service", asyn
 test("skipped-by-size count is exposed via getLastSyncStats()", async () => {
   const root = mkdtempSync(join(tmpdir(), "openapi-sync-stats-"));
   copyFileSync(join(FIX, "petstore-3.0.yaml"), join(root, "openapi.yaml"));
-  // Force a too-large skip by setting maxSpecBytes very low.
   const sync = createOpenapiIndexerSyncable({
     roots: [{ path: root, gitAware: false, codeIndex: false, dependencyGraph: false, exclude: [] }],
     config: { ...DEFAULT_OPENAPI_CONFIG, maxSpecBytes: 8 },

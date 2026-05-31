@@ -9,13 +9,6 @@ import {
 const ENSURE_MCP = { ensureBitbucketMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-bbkt1:";
 
-// URL fragments — bitbucket endpoints carry query strings, so all URL matchers
-// are RegExp patterns (MockFetch's string matcher is an exact match).
-// Initial workspace list URL — must include `role=member` (the production code
-// always emits that param when fetching the first page). The `next` URL
-// returned by Bitbucket Cloud is a fully-qualified opaque link without
-// `role=member`, so this regex deliberately excludes it; explicit per-test
-// `respond("GET", page2Url, ...)` stubs handle the next-page case.
 const WORKSPACE_RE = /^https:\/\/api\.bitbucket\.org\/2\.0\/repositories\?[^/]*role=member[^/]*$/;
 const PR_LIST_RE_ANY =
   /^https:\/\/api\.bitbucket\.org\/2\.0\/repositories\/[^/]+\/[^/]+\/pullrequests\?/;
@@ -28,12 +21,6 @@ function authHeaderForUserPass(user: string, pass: string): string {
   return `Basic ${Buffer.from(`${user}:${pass}`, "utf8").toString("base64")}`;
 }
 
-/**
- * Run a callback against a fresh fixture that does NOT inherit the
- * default vault-seeded credentials from `beforeEach`. Used by the
- * credential-short-circuit tests so each can stage its own vault state
- * (or none) without leakage. Mirrors the slack-sync.test.ts pattern.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -51,8 +38,6 @@ let fixture: ConnectorSyncFixture;
 beforeEach(async () => {
   fixture = createConnectorSyncFixture();
   fixture.fetchMock.install();
-  // Seed credentials so default cases reach the fetch path. Avoid all-caps
-  // gitleaks-trigger patterns in fixture values (use stub-style names).
   await fixture.vault.set("bitbucket.username", "bitbucket-stub-username");
   await fixture.vault.set("bitbucket.app_password", "bitbucket-stub-pass");
 });
@@ -123,9 +108,7 @@ describe("bitbucket-sync — cursor decode failures", () => {
   test("null cursor falls back to default sync state and fetches workspace", async () => {
     stageEmptyWorkspace();
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // Workspace listed, no repos → cycle completes (advancedSince path), hasMore=false.
     expect(res.hasMore).toBe(false);
-    // One fetch: the workspace list.
     expect(fixture.fetchMock.calls).toHaveLength(1);
     expect(fixture.fetchMock.calls[0].url).toMatch(WORKSPACE_RE);
   });
@@ -153,8 +136,6 @@ describe("bitbucket-sync — cursor decode failures", () => {
       fixture.createSyncContext(),
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
-    // The base64 decoder is permissive, but JSON.parse fails on the decoded
-    // garbage → decodeNimbusJsonCursorPayload returns undefined → null cursor.
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(1);
   });
@@ -214,9 +195,6 @@ describe("bitbucket-sync — cursor decode failures", () => {
   });
 
   test("cursor with non-array pendingRepos → falls back to empty list (decodes successfully)", async () => {
-    // pendingRepos must be Array for entries to load, but non-array is silently
-    // treated as []. The cursor still decodes successfully because `since` is valid.
-    // With no pending repos and not-exhausted state, the workspace fetch fires.
     stageEmptyWorkspace();
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
@@ -227,9 +205,6 @@ describe("bitbucket-sync — cursor decode failures", () => {
   });
 
   test("cursor pendingRepos array filters non-string / no-slash entries", async () => {
-    // The decoder pushes only `string && includes("/")` entries. Other items are
-    // dropped silently. With the resulting empty pendingRepos and exhausted=true
-    // in the cursor, the workspace fetch is skipped entirely.
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
       encodeCursor({
@@ -241,7 +216,6 @@ describe("bitbucket-sync — cursor decode failures", () => {
         repositoryPagesExhausted: true,
       }),
     );
-    // No pending repos, exhausted=true, no active repo → cycle completes immediately.
     expect(res.hasMore).toBe(false);
     expect(fixture.fetchMock.calls).toHaveLength(0);
   });
@@ -253,9 +227,6 @@ describe("bitbucket-sync — HTTP request paths", () => {
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
     expect(fixture.fetchMock.calls).toHaveLength(1);
-    // MockFetch.FetchCall.headers captures the `init.headers` map normalized
-    // to lower-cased keys. The production code sets `Authorization: Basic ...`
-    // from the vault-resolved username + app_password.
     const expectedAuth = authHeaderForUserPass("bitbucket-stub-username", "bitbucket-stub-pass");
     expect(fixture.fetchMock.calls[0].headers["authorization"]).toBe(expectedAuth);
   });
@@ -281,7 +252,6 @@ describe("bitbucket-sync — HTTP request paths", () => {
     expect(url).toContain("pagelen=50");
     expect(url).toContain("sort=-updated_on");
     expect(url).toContain("q=updated_on");
-    // URLSearchParams encodes `>` as %3E and `:` as %3A.
     expect(url).toContain("updated_on%3E");
   });
 
@@ -362,7 +332,6 @@ describe("bitbucket-sync — indexing skip paths", () => {
       next: null,
     });
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // DB ground truth: only the id-bearing PR is indexed.
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'bitbucket'",
@@ -372,20 +341,10 @@ describe("bitbucket-sync — indexing skip paths", () => {
     expect(rows[0].external_id).toBe("acme/app#1");
     expect(res.hasMore).toBe(false);
 
-    // TODO: bug — `itemsUpserted` over-counts when a PR has a missing id.
-    // bitbucket-sync.ts:202 increments `upsertedDelta += 1` unconditionally
-    // after `upsertFromPullRequest()` returns, but the helper at
-    // bitbucket-sync.ts:105-108 returns early when `id` is missing without
-    // writing any row. The counter therefore reflects "PR records processed",
-    // not "items indexed" — a divergence from the SyncResult.itemsUpserted
-    // contract documented for other connectors. Filing a follow-up issue.
-    // This assertion locks in the current (buggy) production behavior so the
-    // fix will trip this test and force a coordinated update.
     expect(res.itemsUpserted).toBe(2);
   });
 
   test("pull request with malformed full_name (no slash) is filtered out at workspace parse", async () => {
-    // parseRepositoryFullNames requires full_name.includes("/").
     fixture.fetchMock.respond("GET", WORKSPACE_RE, {
       values: [
         { full_name: "no-slash-name" }, // dropped
@@ -474,7 +433,7 @@ describe("bitbucket-sync — indexing skip paths", () => {
     });
     const longTitle = "x".repeat(600);
     fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, {
-      values: [{ id: 11, title: longTitle }, { id: 12 /* no title */ }],
+      values: [{ id: 11, title: longTitle }, { id: 12 }],
       next: null,
     });
     await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
@@ -529,8 +488,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
 
   test("cursor with activeRepo + prNext resumes mid-pagination (no workspace fetch)", async () => {
     const resumeUrl = "https://api.bitbucket.org/2.0/repositories/acme/app/pullrequests?page=2";
-    // Stage the resume URL (string match is exact, so we use that here since
-    // we control the URL in the cursor).
     fixture.fetchMock.respond("GET", resumeUrl, { values: [], next: null });
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
@@ -543,7 +500,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
         repositoryPagesExhausted: true,
       }),
     );
-    // Resume drained; cycle was complete (no pending, exhausted=true).
     expect(res.hasMore).toBe(false);
     const calls = fixture.fetchMock.calls;
     expect(calls).toHaveLength(1);
@@ -564,7 +520,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
       }),
     );
     expect(res.hasMore).toBe(false);
-    // Only the PR list call should fire — workspace skipped.
     const wsCalls = fixture.fetchMock.calls.filter((c) => WORKSPACE_RE.test(c.url));
     expect(wsCalls).toHaveLength(0);
     const prCalls = fixture.fetchMock.calls.filter((c) => PR_LIST_RE_ANY.test(c.url));
@@ -584,7 +539,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
         repositoryPagesExhausted: true,
       }),
     );
-    // Scanned 3 repos this cycle; 2 remain pending → cycle incomplete.
     expect(res.hasMore).toBe(true);
     const prCalls = fixture.fetchMock.calls.filter((c) => PR_LIST_RE_ANY.test(c.url));
     expect(prCalls).toHaveLength(3);
@@ -595,14 +549,12 @@ describe("bitbucket-sync — phase machine transitions", () => {
       values: [{ full_name: "acme/app" }],
       next: null,
     });
-    // 7 staged PR pages, each pointing at the next; production caps at 6.
     let pageCount = 0;
     for (let i = 1; i <= 7; i++) {
       const next = i < 7 ? `https://api.bitbucket.org/2.0/pr-page-${String(i + 1)}` : null;
       fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, { values: [], next });
       pageCount++;
     }
-    // We also need to stage the explicit next-URLs:
     for (let i = 2; i <= 7; i++) {
       fixture.fetchMock.respond("GET", `https://api.bitbucket.org/2.0/pr-page-${String(i)}`, {
         values: [],
@@ -611,9 +563,7 @@ describe("bitbucket-sync — phase machine transitions", () => {
     }
     expect(pageCount).toBe(7);
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // After exactly 6 PR pages, the loop saves state and returns hasMore=true.
     expect(res.hasMore).toBe(true);
-    // Decode the returned cursor and assert activeRepo and prNext are set.
     const raw = res.cursor!.slice(CURSOR_PREFIX.length);
     const decoded = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as {
       activeRepo: string | null;
@@ -637,7 +587,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
     const decoded = JSON.parse(
       Buffer.from(res.cursor!.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     ) as { since: string };
-    // since should advance to >= "2099-01-01..." (greater than initial 30-day-ago).
     expect(decoded.since >= "2099-01-01T00:00:00.000000+00:00").toBe(true);
   });
 
@@ -648,8 +597,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
     });
     fixture.fetchMock.respond("GET", PR_LIST_RE_ANY, { values: [], next: null });
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    // After scanning the 1 repo from page 1, cycle is still incomplete because
-    // reposNext is set → hasMore=true.
     expect(res.hasMore).toBe(true);
     const decoded = JSON.parse(
       Buffer.from(res.cursor!.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
@@ -665,7 +612,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
     const decoded = JSON.parse(
       Buffer.from(res.cursor!.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     ) as { repositoryPagesExhausted: boolean };
-    // After a complete cycle, state is reset and `repositoryPagesExhausted` is reset to false.
     expect(decoded.repositoryPagesExhausted).toBe(false);
   });
 
@@ -687,7 +633,6 @@ describe("bitbucket-sync — phase machine transitions", () => {
         repositoryPagesExhausted: false,
       }),
     );
-    // The first call must be to the custom next URL (string-match exact).
     const calls = fixture.fetchMock.calls;
     expect(calls[0].url).toBe(customNextUrl);
   });
@@ -717,10 +662,6 @@ describe("bitbucket-sync — cycle-completion and integration", () => {
     });
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
-    // Both repos scanned. Note: bitbucket-sync's PR matcher uses substring
-    // matching, so both repo calls hit the same stub — each returns 1 PR.
-    // Both PRs have id=200 but different external_ids derived from repoFull:
-    // acme/app#200 and acme/lib#200.
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'bitbucket' ORDER BY external_id",
@@ -729,7 +670,6 @@ describe("bitbucket-sync — cycle-completion and integration", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].external_id).toBe("acme/app#200");
     expect(rows[1].external_id).toBe("acme/lib#200");
-    // author_id is resolved → not null.
     const authorRow = fixture.db
       .query<{ author_id: string | null }, []>(
         "SELECT author_id FROM item WHERE external_id = 'acme/app#200'",
@@ -740,7 +680,6 @@ describe("bitbucket-sync — cycle-completion and integration", () => {
 
   test("multi-call: workspace page-1 → workspace page-2 → drain via state preservation", async () => {
     const page2Url = "https://api.bitbucket.org/2.0/repositories?page=2";
-    // First call: workspace page-1 returns `next` → 1 repo on page 1.
     fixture.fetchMock.respond("GET", WORKSPACE_RE, {
       values: [{ full_name: "acme/app1" }],
       next: page2Url,
@@ -749,13 +688,11 @@ describe("bitbucket-sync — cycle-completion and integration", () => {
 
     const r1 = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(r1.hasMore).toBe(true);
-    // The cursor preserves reposNext=page2Url.
     const decoded1 = JSON.parse(
       Buffer.from(r1.cursor!.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     ) as { reposNext: string | null };
     expect(decoded1.reposNext).toBe(page2Url);
 
-    // Second call: page-2 (no `next` → exhausted) + new PR list call.
     fixture.fetchMock.respond("GET", page2Url, {
       values: [{ full_name: "acme/app2" }],
       next: null,

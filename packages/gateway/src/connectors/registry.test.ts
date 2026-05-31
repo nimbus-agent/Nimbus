@@ -77,7 +77,7 @@ describe("createConnectorDispatcher", () => {
 
 describe("createConnectorDispatcher G8 — size cap + timeout", () => {
   test("rejects oversized tool result (S8-F5)", async () => {
-    const big = "x".repeat(5 * 1024 * 1024); // 5 MiB > default 4 MiB cap
+    const big = "x".repeat(5 * 1024 * 1024);
     const client: McpToolListingClient = {
       async listTools() {
         return {

@@ -1,10 +1,6 @@
 import type { StateCreator } from "zustand";
 import type { ConnectorHealth } from "../../ipc/types";
 
-/**
- * Persisted per-connector snapshot — written to localStorage so cold-opening the app
- * with the Gateway already down still shows the last-known grid (spec §2.1).
- */
 export interface PersistedConnectorRow {
   readonly service: string;
   readonly intervalMs: number;
@@ -15,9 +11,7 @@ export interface PersistedConnectorRow {
 
 export interface ConnectorsSlice {
   readonly connectorsList: ReadonlyArray<PersistedConnectorRow>;
-  /** Transient — tracks which rows are mid-setConfig. Not persisted. */
   readonly perServiceInFlight: Readonly<Record<string, boolean>>;
-  /** Transient — deep-link target from Dashboard's degraded-connector tile. Not persisted. */
   readonly highlightService: string | null;
   setConnectorsList: (list: ReadonlyArray<PersistedConnectorRow>) => void;
   setConnectorInFlight: (service: string, inFlight: boolean) => void;

@@ -1,7 +1,3 @@
-/**
- * Watcher definitions and events.
- */
-
 export const WATCHER_V8_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS watcher (
   id              TEXT PRIMARY KEY,

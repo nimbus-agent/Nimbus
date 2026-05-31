@@ -11,10 +11,11 @@ function diffArrays(
   const removed: string[] = [];
   for (const v of a) if (!b.has(v)) added.push(v);
   for (const v of b) if (!a.has(v)) removed.push(v);
-  // Explicit byte-order compare. Default sort orders by UTF-16 code unit too,
-  // but Sonar S2871 demands an explicit comparator. Stay locale-independent —
-  // the diff is consumed by the HITL prompt and must look identical across hosts.
-  const byByteOrder = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+  const byByteOrder = (x: string, y: string): number => {
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+  };
   added.sort(byByteOrder);
   removed.sort(byByteOrder);
   return { added, removed };

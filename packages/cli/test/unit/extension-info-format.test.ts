@@ -1,13 +1,3 @@
-/**
- * T2 PR 1 Task 20 — `nimbus extension info <id>` "Network isolation:" line.
- *
- * The CLI extracts the sandbox posture from `diag.snapshot` and renders one
- * of three states: per-host, degraded all-or-nothing, or unavailable. The
- * formatter is pure; the IPC call site (`fetchSandboxPosture`) is a tiny
- * one-shot RPC that any e2e CLI test exercises end-to-end. Unit-testing the
- * formatter is sufficient for the rendering contract.
- */
-
 import { describe, expect, test } from "bun:test";
 
 import { formatNetworkIsolationLine } from "../../src/commands/extension-sandbox-format.ts";

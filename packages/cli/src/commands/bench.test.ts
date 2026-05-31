@@ -32,10 +32,8 @@ describe("runBench (CLI command)", () => {
     expect(exit).toBe(0);
     expect(calls.length).toBe(1);
     const cmd = calls[0]?.cmd ?? [];
-    // First arg is the bun executable; second arg is the resolved bench-runner.ts path.
     expect(cmd[0]).toMatch(/bun(?:\.exe)?$/);
     expect(cmd[1]).toMatch(/bench-runner\.ts$/);
-    // Forwards the full caller argv after the script path.
     expect(cmd.slice(2)).toEqual([
       "--surface",
       "S2-a",

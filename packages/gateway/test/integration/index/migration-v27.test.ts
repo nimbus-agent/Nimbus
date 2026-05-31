@@ -11,9 +11,6 @@ describe("V27 migration — merged_as graph_relation_type", () => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-v27-"));
   });
   afterEach(() => {
-    // Best-effort cleanup: SQLite may briefly hold file handles on Windows
-    // after close(), which surfaces as EBUSY here. The OS reclaims the temp
-    // dir at next reboot; do not fail the test for a cleanup race.
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
@@ -39,7 +36,7 @@ describe("V27 migration — merged_as graph_relation_type", () => {
     db1.close();
 
     const db2 = new Database(dbPath);
-    runIndexedSchemaMigrations(db2, 27); // should be a no-op for V27
+    runIndexedSchemaMigrations(db2, 27);
     const row = db2
       .query("SELECT name, directed FROM graph_relation_type WHERE name = 'merged_as'")
       .get() as { name: string; directed: number } | undefined;

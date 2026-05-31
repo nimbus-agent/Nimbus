@@ -36,9 +36,6 @@ function redact(value: unknown): unknown {
   return out;
 }
 
-/**
- * JSON audit line for persistence / IPC — bounded size to protect SQLite and logs.
- */
 export function formatAuditPayload(payload: unknown, maxBytes = DEFAULT_MAX_BYTES): string {
   const serialized = JSON.stringify(payload);
   if (serialized.length > maxBytes) {
@@ -47,11 +44,6 @@ export function formatAuditPayload(payload: unknown, maxBytes = DEFAULT_MAX_BYTE
   return serialized;
 }
 
-/**
- * Like formatAuditPayload but redacts object keys matching SENSITIVE_KEY and
- * high-confidence credential value patterns inside string leaves. See spec
- * finding S2-F2.
- */
 export function redactAuditPayload(payload: unknown, maxBytes = DEFAULT_MAX_BYTES): string {
   return formatAuditPayload(redact(payload), maxBytes);
 }

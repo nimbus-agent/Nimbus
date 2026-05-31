@@ -3,6 +3,7 @@ import type { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { IPCClient } from "../ipc-client/index.ts";
 import {
   getTomlValueFromFile,
   listTomlKeysWithEnv,
@@ -23,9 +24,10 @@ Usage:
 `);
 }
 
-async function configValidate(): Promise<void> {
-  const r = await withGatewayIpc((c) =>
-    c.call<{ ok: boolean; errors: string[]; warnings: string[] }>("config.validate", {}),
+export async function runConfigValidate(client: IPCClient): Promise<void> {
+  const r = await client.call<{ ok: boolean; errors: string[]; warnings: string[] }>(
+    "config.validate",
+    {},
   );
   if (r.warnings.length > 0) {
     for (const w of r.warnings) {
@@ -56,7 +58,7 @@ function printAdditionalEnvOverrideLegend(): void {
   );
 }
 
-function configList(tomlPath: string): void {
+export function runConfigList(tomlPath: string): void {
   console.log(tomlPath);
   const rows = listTomlKeysWithEnv(tomlPath);
   if (rows.length > 0) {
@@ -77,17 +79,52 @@ function configList(tomlPath: string): void {
   console.log(readFileSync(tomlPath, "utf8"));
 }
 
-async function configEdit(tomlPath: string): Promise<void> {
+export function runConfigGet(tomlPath: string, key: string): void {
+  if (key === "" || !key.includes(".")) {
+    throw new Error("Usage: nimbus config get <section.key>  (e.g. telemetry.enabled)");
+  }
+  const fromEnv = listTomlKeysWithEnv(tomlPath).find((e) => e.key === key && e.source === "env");
+  const fromFile = getTomlValueFromFile(tomlPath, key);
+  if (fromEnv !== undefined) {
+    console.log(fromEnv.value);
+    console.log(`(from env ${fromEnv.envVar ?? ""})`);
+    return;
+  }
+  if (fromFile !== undefined) {
+    console.log(fromFile);
+    return;
+  }
+  console.log("(not set)");
+}
+
+export function runConfigSet(tomlPath: string, key: string, val: string): void {
+  if (key === "" || !key.includes(".") || val === "") {
+    throw new Error("Usage: nimbus config set <section.key> <value>");
+  }
+  setTomlValueInFile(tomlPath, key, val);
+  console.log(`Updated ${key} in ${tomlPath}`);
+  console.log("Restart the Gateway to apply. Env vars still override file values when set.");
+}
+
+export type SpawnFn = (
+  cmd: string,
+  args: string[],
+  opts: { stdio: "inherit"; shell: boolean },
+) => EventEmitter;
+
+export async function runConfigEdit(tomlPath: string, spawnFn?: SpawnFn): Promise<void> {
   const editor = process.env["EDITOR"]?.trim() || (process.platform === "win32" ? "notepad" : "vi");
+  const factory: SpawnFn =
+    spawnFn ?? ((cmd, a, opts): EventEmitter => spawn(cmd, a, opts) as unknown as EventEmitter);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(editor, [tomlPath], {
+    const child = factory(editor, [tomlPath], {
       stdio: "inherit",
       shell: process.platform === "win32",
     });
-    (child as unknown as EventEmitter).on("error", (err: Error) => {
+    child.on("error", (err: Error) => {
       reject(err);
     });
-    (child as unknown as EventEmitter).on("close", (code: number | null) => {
+    child.on("close", (code: number | null) => {
       if (code === 0) {
         resolve();
       } else {
@@ -108,49 +145,30 @@ export async function runConfig(args: string[]): Promise<void> {
   const tomlPath = join(paths.configDir, "nimbus.toml");
 
   if (sub === "validate") {
-    await configValidate();
+    await withGatewayIpc((c) => runConfigValidate(c));
     return;
   }
 
   if (sub === "list") {
-    configList(tomlPath);
+    runConfigList(tomlPath);
     return;
   }
 
   if (sub === "edit") {
-    await configEdit(tomlPath);
+    await runConfigEdit(tomlPath);
     return;
   }
 
   if (sub === "get") {
     const key = args[1]?.trim() ?? "";
-    if (key === "" || !key.includes(".")) {
-      throw new Error("Usage: nimbus config get <section.key>  (e.g. telemetry.enabled)");
-    }
-    const fromEnv = listTomlKeysWithEnv(tomlPath).find((e) => e.key === key && e.source === "env");
-    const fromFile = getTomlValueFromFile(tomlPath, key);
-    if (fromEnv !== undefined) {
-      console.log(fromEnv.value);
-      console.log(`(from env ${fromEnv.envVar ?? ""})`);
-      return;
-    }
-    if (fromFile !== undefined) {
-      console.log(fromFile);
-      return;
-    }
-    console.log("(not set)");
+    runConfigGet(tomlPath, key);
     return;
   }
 
   if (sub === "set") {
     const key = args[1]?.trim() ?? "";
     const val = args[2]?.trim() ?? "";
-    if (key === "" || !key.includes(".") || val === "") {
-      throw new Error("Usage: nimbus config set <section.key> <value>");
-    }
-    setTomlValueInFile(tomlPath, key, val);
-    console.log(`Updated ${key} in ${tomlPath}`);
-    console.log("Restart the Gateway to apply. Env vars still override file values when set.");
+    runConfigSet(tomlPath, key, val);
     return;
   }
 

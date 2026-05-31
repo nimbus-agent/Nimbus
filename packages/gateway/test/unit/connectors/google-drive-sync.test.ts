@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-// Token-getter must be mocked BEFORE importing google-drive-sync so the
-// `getValidGoogleAccessToken` reference is replaced at module-load time.
-// Mirrors the slack-sync.test.ts pattern.
 const tokenState: { throwNext: boolean; value: string } = {
   throwNext: false,
   value: "google-drive-stub-token",
@@ -26,8 +23,6 @@ import {
 const ENSURE_MCP = { ensureGoogleDriveRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-gdrv1:";
 
-// URL fragments — google drive endpoints carry query strings, so URL matchers
-// are RegExp patterns (MockFetch's string matcher is an exact match).
 const START_TOKEN_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\/startPageToken\?/;
 const FILES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\?/;
 const CHANGES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\?/;
@@ -51,9 +46,6 @@ afterEach(() => {
 
 describe("google-drive-sync — credential short-circuits", () => {
   test("token getter throws → sync() rejects, no fetches", async () => {
-    // google-drive-sync.ts:410 calls `await getValidGoogleAccessToken(...)`
-    // WITHOUT a try/catch, so a thrown auth error propagates from sync().
-    // (slack-sync wraps the equivalent call; google-drive does not.)
     tokenState.throwNext = true;
     const syncable = createGoogleDriveSyncable(ENSURE_MCP);
     await expect(syncable.sync(fixture.createSyncContext(), null)).rejects.toThrow(
@@ -63,28 +55,17 @@ describe("google-drive-sync — credential short-circuits", () => {
   });
 
   test("token getter returns empty string → request fires with empty Bearer (no short-circuit)", async () => {
-    // google-drive-sync does not guard against an empty token — it just sets
-    // `Authorization: Bearer `. Asserting current behavior so any future
-    // hardening trips this test.
     tokenState.value = "";
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     const syncable = createGoogleDriveSyncable(ENSURE_MCP);
     await syncable.sync(fixture.createSyncContext(), null);
     expect(fixture.fetchMock.calls).toHaveLength(2);
-    // `new Headers({ Authorization: "Bearer " })` strips the trailing whitespace,
-    // so the captured header is the literal "Bearer" with no token. Asserting
-    // current behavior — production does not guard against empty tokens.
     expect(fixture.fetchMock.calls[0]?.headers["authorization"]).toBe("Bearer");
   });
 });
 
 describe("google-drive-sync — cursor decode", () => {
-  // Each malformed cursor below produces `decodeDriveSyncCursor() === undefined`.
-  // The production code branches: when cursor !== null && !startsWith(prefix),
-  // the legacy migration path runs (fetch startPageToken + files.list with the
-  // cursor used as a literal pageToken). When cursor starts with prefix but
-  // decodes undefined, sync() THROWS "corrupt cursor".
   function stageLegacyFlowEmpty(): void {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t-fresh" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
@@ -109,16 +90,12 @@ describe("google-drive-sync — cursor decode", () => {
     stageNullCursorFlowEmpty();
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
     expect(res.hasMore).toBe(true);
-    // The empty-string branch follows the cursor === "" branch in source,
-    // which fires startPageToken first, then files.list.
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0]?.url).toMatch(START_TOKEN_RE);
     expect(fixture.fetchMock.calls[1]?.url).toMatch(FILES_LIST_RE);
   });
 
   test("wrong-prefix cursor → legacy migration path (treated as literal page token)", async () => {
-    // Production: cursor !== null && !startsWith(CURSOR_PREFIX) → legacy path.
-    // Fetches startPageToken first, then files.list with the cursor as pageToken.
     stageLegacyFlowEmpty();
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext(),
@@ -137,7 +114,6 @@ describe("google-drive-sync — cursor decode", () => {
         `${CURSOR_PREFIX}!!!not-base64!!!`,
       ),
     ).rejects.toThrow(/corrupt cursor/);
-    // No fetches: we throw before any HTTP path.
     expect(fixture.fetchMock.calls).toHaveLength(0);
   });
 
@@ -207,10 +183,7 @@ describe("google-drive-sync — HTTP request paths", () => {
     const url = filesCall?.url ?? "";
     expect(url).toContain("pageSize=100");
     expect(url).toContain("fields=");
-    // URLSearchParams encodes the q value; check the key + an expected fragment.
     expect(url).toContain("q=");
-    // The q value is `trashed = false and modifiedTime > '<iso>'`, URL-encoded.
-    // `trashed+%3D+false` (= encodes as %3D, space as +), and `modifiedTime+%3E`.
     expect(url).toContain("trashed");
     expect(url).toContain("modifiedTime");
   });
@@ -284,7 +257,6 @@ describe("google-drive-sync — indexing skip paths", () => {
   });
 
   test("trashed file via changes.list → delete branch fires", async () => {
-    // Seed an existing row first, then run a drain that contains a removal.
     fixture.db.run(
       `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, modified_at, author_id, metadata, synced_at, pinned)
        VALUES (?, 'google_drive', 'file', 'gone-1', 'x', 'x', null, null, 1, null, '{}', 1, 0)`,
@@ -305,7 +277,7 @@ describe("google-drive-sync — indexing skip paths", () => {
 
   test("changes.list removed change with no fileId is skipped", async () => {
     fixture.fetchMock.respond("GET", CHANGES_LIST_RE, {
-      changes: [{ removed: true /* no fileId */ }],
+      changes: [{ removed: true }],
       newStartPageToken: "next-delta",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
@@ -320,7 +292,6 @@ describe("google-drive-sync — phase machine: init_list", () => {
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokA", listToken: "page2" });
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), cur);
     expect(res.hasMore).toBe(true);
-    // No startPageToken fetch — we resume into the init_list pages.
     expect(fixture.fetchMock.calls.filter((c) => START_TOKEN_RE.test(c.url))).toHaveLength(0);
     const filesCalls = fixture.fetchMock.calls.filter((c) => FILES_LIST_RE.test(c.url));
     expect(filesCalls).toHaveLength(1);
@@ -365,7 +336,6 @@ describe("google-drive-sync — phase machine: init_list", () => {
       Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     );
     expect(decoded).toEqual({ v: 1, phase: "drain", changePage: "tokFinal" });
-    // Folder type was indexed.
     const row = fixture.db
       .query<{ type: string }, []>(
         "SELECT type FROM item WHERE service = 'google_drive' AND external_id = 'final-1'",
@@ -416,7 +386,6 @@ describe("google-drive-sync — phase machine: drain", () => {
       Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     );
     expect(decoded).toEqual({ v: 1, phase: "delta", pageToken: "next-delta" });
-    // The non-removed file was upserted.
     const row = fixture.db
       .query<{ type: string }, []>(
         "SELECT type FROM item WHERE service = 'google_drive' AND external_id = 'drained-1'",
@@ -458,8 +427,6 @@ describe("google-drive-sync — phase machine: delta", () => {
   });
 
   test("DELTA_PAGE_LIMIT exceeded (deltaPage >= 10_000) → throws to prevent infinite loop", async () => {
-    // No fetch needed — the limit check fires synchronously inside runDrivePhaseDelta
-    // before any HTTP call when (deltaPage ?? 0) + 1 > DELTA_PAGE_LIMIT.
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "x", deltaPage: 10_000 });
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), cur),

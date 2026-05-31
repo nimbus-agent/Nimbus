@@ -43,20 +43,61 @@ function parsePagerdutyListResponse(text: string): { incidents: unknown[]; more:
   if (rec === undefined) return null;
   const incidents = rec["incidents"];
   if (!Array.isArray(incidents)) return null;
-  // PagerDuty's REST v2 list response wraps the array with a sibling
-  // boolean `more`. Absent (or non-boolean) is treated as `false` so the
-  // loop terminates on a malformed response.
   return { incidents, more: rec["more"] === true };
 }
 
 function pdServiceId(row: Record<string, unknown>): string | undefined {
   const svc = asRecord(row["service"]);
-  return svc !== undefined ? stringField(svc, "id") : undefined;
+  return svc === undefined ? undefined : stringField(svc, "id");
 }
 
 function pdPriorityName(row: Record<string, unknown>): string | undefined {
   const pri = asRecord(row["priority"]);
-  return pri !== undefined ? stringField(pri, "name") : undefined;
+  return pri === undefined ? undefined : stringField(pri, "name");
+}
+
+function buildPagerdutyMetadata(row: Record<string, unknown>, id: string): Record<string, unknown> {
+  const status = stringField(row, "status");
+  const createdAt = stringField(row, "created_at");
+  const openedAtMs = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
+  const serviceId = pdServiceId(row);
+  const severity = pdPriorityName(row);
+  const urgency = stringField(row, "urgency");
+
+  const metadata: Record<string, unknown> = { status: status ?? null, incidentId: id };
+  if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
+  if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
+  if (severity !== undefined && severity !== "") metadata["severity"] = severity;
+  if (urgency !== undefined && urgency !== "") metadata["urgency"] = urgency;
+  return metadata;
+}
+
+function upsertPagerdutyIncident(
+  ctx: SyncContext,
+  row: Record<string, unknown>,
+  id: string,
+  now: number,
+): void {
+  const title = stringField(row, "title") ?? `Incident ${id}`;
+  const status = stringField(row, "status");
+  const htmlUrl = stringField(row, "html_url");
+  const updated = stringField(row, "updated_at") ?? stringField(row, "created_at");
+  const modifiedAt = updated === undefined ? now : Date.parse(updated);
+
+  upsertIndexedItemForSync(ctx, {
+    service: SERVICE_ID,
+    type: "incident",
+    externalId: id,
+    title: title.length > 512 ? title.slice(0, 512) : title,
+    bodyPreview: status ?? "",
+    url: htmlUrl ?? null,
+    canonicalUrl: htmlUrl ?? null,
+    modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : now,
+    authorId: null,
+    metadata: buildPagerdutyMetadata(row, id),
+    pinned: false,
+    syncedAt: now,
+  });
 }
 
 export function syncPagerdutyIncidentItems(
@@ -76,41 +117,11 @@ export function syncPagerdutyIncidentItems(
     if (id === undefined || id === "") {
       continue;
     }
-    const title = stringField(row, "title") ?? `Incident ${id}`;
-    const status = stringField(row, "status");
-    const htmlUrl = stringField(row, "html_url");
     const updated = stringField(row, "updated_at") ?? stringField(row, "created_at");
     if (updated !== undefined && updated > maxUpdated) {
       maxUpdated = updated;
     }
-    const modifiedAt = updated === undefined ? now : Date.parse(updated);
-
-    const createdAt = stringField(row, "created_at");
-    const openedAtMs = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
-    const serviceId = pdServiceId(row);
-    const severity = pdPriorityName(row);
-
-    const metadata: Record<string, unknown> = { status: status ?? null, incidentId: id };
-    if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
-    if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
-    if (severity !== undefined && severity !== "") metadata["severity"] = severity;
-    const urgency = stringField(row, "urgency");
-    if (urgency !== undefined && urgency !== "") metadata["urgency"] = urgency;
-
-    upsertIndexedItemForSync(ctx, {
-      service: SERVICE_ID,
-      type: "incident",
-      externalId: id,
-      title: title.length > 512 ? title.slice(0, 512) : title,
-      bodyPreview: status ?? "",
-      url: htmlUrl ?? null,
-      canonicalUrl: htmlUrl ?? null,
-      modifiedAt: Number.isFinite(modifiedAt) ? modifiedAt : now,
-      authorId: null,
-      metadata,
-      pinned: false,
-      syncedAt: now,
-    });
+    upsertPagerdutyIncident(ctx, row, id, now);
     upserted += 1;
   }
   return { upserted, maxUpdated };
@@ -118,10 +129,6 @@ export function syncPagerdutyIncidentItems(
 
 export type PagerdutySyncableOptions = {
   ensurePagerdutyMcpRunning: () => Promise<void>;
-  /**
-   * Hard cap on pages walked per sync invocation. Default 20. Range 1..100
-   * enforced by config parser; not re-validated here.
-   */
   maxPagesPerSync?: number;
 };
 
@@ -141,10 +148,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
         return syncNoopResult(cursor, t0);
       }
       const prev = decodeCursor(cursor);
-      // Single `now` for the whole sync batch — standard atomic batch
-      // semantics. With maxPagesPerSync=20 and the default 2-minute
-      // sync interval, drift is at most seconds; `syncedAt` is the
-      // sync-start timestamp by design. (Reviewer concern #3 noted.)
       const now = Date.now();
       const floorIso = new Date(now - initialSyncDepthDays * 86_400_000).toISOString();
       const since = prev?.lastUpdated ?? floorIso;
@@ -175,11 +178,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             { serviceId: SERVICE_ID, status: res.status, page: pagesFetched },
             "pagerduty sync: list failed",
           );
-          // Preserve progress: cursor reflects pages already ingested.
-          // PD `since` is inclusive (`updated_at >= since`); if the failed
-          // page contained rows sharing the saved timestamp, next sync
-          // re-fetches them and SQLite UPSERT on (service, external_id)
-          // deduplicates idempotently.
           return {
             cursor: encodeCursor({ lastUpdated: maxUpdated }),
             itemsUpserted: totalUpserted,
@@ -189,7 +187,6 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
             bytesTransferred: totalBytesTransferred,
           };
         }
-        // Single JSON.parse per page — returns both `incidents` and `more`.
         const parsed = parsePagerdutyListResponse(text);
         if (parsed === null) {
           return {

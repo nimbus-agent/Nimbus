@@ -1,14 +1,3 @@
-/**
- * MSW v2 handler factories for S6 sync-throughput benches. Each factory
- * returns the `http.get(...)` handlers that intercept a connector's
- * actual HTTP traffic and serve responses from the synthetic trace
- * generators.
- *
- * Tests should register `setupServer` with `onUnhandledRequest: "error"`
- * (sentinel) so any URL the connector hits that is not covered fails
- * with a diagnostic.
- */
-
 import { HttpResponse, http } from "msw";
 
 import type { CorpusTier } from "../types.ts";

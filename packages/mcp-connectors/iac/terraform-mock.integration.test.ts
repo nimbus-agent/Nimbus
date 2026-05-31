@@ -1,8 +1,3 @@
-/**
- * CI-friendly check: a no-op terraform-shaped CLI accepts the same argv the IaC MCP
- * server uses for plan/apply (exit 0). Uses an explicit mock path so Windows resolves
- * `terraform.cmd` reliably under Bun.spawn.
- */
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,11 +22,11 @@ describe("terraform CLI mock (argv)", () => {
     const tfBin = join(binDir, process.platform === "win32" ? "terraform.cmd" : "terraform");
     const env: Record<string, string | undefined> = { ...process.env };
 
-    await runCliOkThrowing([tfBin, "-chdir", workDir, "plan", "-input=false"], env);
-    await runCliOkThrowing(
-      [tfBin, "-chdir", workDir, "apply", "-auto-approve", "-input=false"],
-      env,
-    );
-    expect(true).toBe(true);
+    await expect(
+      runCliOkThrowing([tfBin, "-chdir", workDir, "plan", "-input=false"], env),
+    ).resolves.toBeUndefined();
+    await expect(
+      runCliOkThrowing([tfBin, "-chdir", workDir, "apply", "-auto-approve", "-input=false"], env),
+    ).resolves.toBeUndefined();
   });
 });

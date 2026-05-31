@@ -1,32 +1,7 @@
-/**
- * Tests for the per-connector spawn functions in connectors/lazy-mesh/connector-spawns.ts.
- *
- * Each ensureXxxMcp function follows a three-state contract:
- *
- *  1. Credentials missing → no spawn, no setLazyClient, no MCPClient construction.
- *  2. Credentials present → spawn with scoped env: setLazyClient called once, MCPClient
- *     constructed with command: "bun", the connector's server.ts path, and an env
- *     produced by extensionProcessEnv (invariant I1) containing the expected creds —
- *     and NOT the rest of process.env. The leak-canary (NIMBUS_TEST_LEAK_CANARY) proves
- *     a regression like `{ env: { ...process.env, ...creds } }` would fail this test.
- *  3. Already running (getLazyClient returns existing) → scheduleLazyDisconnect fires,
- *     no new MCPClient is constructed.
- *
- * The @mastra/mcp module is mocked so MCPClient construction never spawns a subprocess —
- * the mock captures constructor args and exposes stubbed lifecycle methods (connect /
- * disconnect / getTools) defensively in case future code starts calling them.
- *
- * The four OAuth helper modules (Google / Microsoft / Notion / Slack) are mocked to
- * return predictable tokens without HTTP refresh; readConnectorSecret reads through the
- * real MockVault (deterministic, no I/O).
- */
-
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
-
-// ─── Module mocks ────────────────────────────────────────────────────────────
 
 type CapturedClientArgs = {
   readonly id: string;
@@ -44,8 +19,6 @@ mock.module("@mastra/mcp", () => ({
       this.servers = args.servers;
       capturedClients.push({ id: args.id, servers: args.servers });
     }
-    // Defensive lifecycle stubs — `ensureXxxMcp` does not call these today, but if
-    // future code does, tests must not hang or throw unhandled rejections.
     async connect(): Promise<void> {
       /* no-op */
     }
@@ -59,11 +32,6 @@ mock.module("@mastra/mcp", () => ({
 }));
 
 mock.module("../../../../src/auth/google-access-token.ts", () => ({
-  // anyGoogleOAuthVaultPresent is consumed by credential-orchestration.ts and
-  // tested in credential-orchestration.test.ts. Since `mock.module` is
-  // process-global and either test file's mock can win in any given bun:test
-  // run, BOTH files must export the full surface so loading
-  // credential-orchestration.ts never fails on a missing-export error.
   anyGoogleOAuthVaultPresent: async (vault: {
     get: (k: string) => Promise<string | null>;
   }): Promise<boolean> => {
@@ -95,10 +63,6 @@ mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
   getValidMicrosoftAccessToken: async (): Promise<string> => "fake-microsoft-access-token",
 }));
 
-// Slack and Notion auth helpers use a mutable behaviour flag so individual tests
-// can toggle the helper's behaviour (return empty / throw) without re-mocking the
-// module — `mock.module` is process-global, so re-mocking mid-suite is fragile.
-// Wrapped in an object so the formatter does not narrow the type to a literal.
 type AuthBehaviour = "ok" | "empty" | "throw";
 const authBehaviour: { slack: AuthBehaviour; notion: AuthBehaviour } = {
   slack: "ok",
@@ -121,9 +85,6 @@ mock.module("../../../../src/auth/notion-access-token.ts", () => ({
 }));
 
 mock.module("../../../../src/auth/oauth-vault-tokens.ts", () => ({
-  // Mirror the real implementation: parse `microsoft.oauth` JSON and extract the
-  // `scopes` string array. Vault keys must match the two-segment shape (one dot),
-  // so the scopes ride inside the OAuth JSON payload, not on a separate key.
   readMicrosoftOAuthScopesForOutlookEnv: async (vault: {
     get: (k: string) => Promise<string | null>;
   }): Promise<string | undefined> => {
@@ -143,7 +104,6 @@ mock.module("../../../../src/auth/oauth-vault-tokens.ts", () => ({
   },
 }));
 
-// Imports must be dynamic — they go through the mocked modules above.
 const {
   ensureBitbucketMcp,
   ensureCircleciMcp,
@@ -165,8 +125,6 @@ const {
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
 const { LAZY_MESH } = await import("../../../../src/connectors/lazy-mesh/keys.ts");
-
-// ─── Test-context helper ─────────────────────────────────────────────────────
 
 type Calls = {
   clearLazyIdle: string[];
@@ -205,10 +163,6 @@ beforeEach(() => {
   capturedClients.length = 0;
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
-  // I1 leak-canary — injected into process.env before each test so any spawn that
-  // does `{ env: { ...process.env, ...creds } }` (the exact regression I1 prevents)
-  // will surface the canary in the captured env. extensionProcessEnv() only allows
-  // a BASELINE_KEYS allow-list through, so this key MUST NOT appear.
   process.env.NIMBUS_TEST_LEAK_CANARY = "should-not-appear";
 });
 
@@ -217,15 +171,10 @@ function expectNoProcessEnvLeak(env: Record<string, string>): void {
 }
 
 function expectBaselineHostEnv(env: Record<string, string>): void {
-  // PATH (or its equivalent) is in BASELINE_KEYS — it should pass through. This
-  // is a positive control: a misconfigured mock that wipes ALL env vars would
-  // also avoid the canary, but would fail this check.
   if (process.env.PATH !== undefined) {
     expect(env).toHaveProperty("PATH");
   }
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("ensureLinearMcp", () => {
   test("missing linear.api_key → no spawn", async () => {
@@ -248,11 +197,6 @@ describe("ensureLinearMcp", () => {
 
     expect(capturedClients).toHaveLength(1);
     const linearSpec = capturedClients[0]?.servers["linear"];
-    // Post-T2 PR 1 (I15): ServerSpec is wrapped via wrapServerSpec — command
-    // is process.execPath (Bun), args[0] is sandbox-wrapper.ts, args[1] is
-    // the original command "bun", args[2..] are the original args. The env
-    // gains NIMBUS_SANDBOX_MANIFEST_JSON; the connector's vault-derived
-    // env vars + the baseline host env pass through unchanged.
     expect(linearSpec?.command).toBe(process.execPath);
     expect(linearSpec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
     expect(linearSpec?.args[1]).toBe("bun");
@@ -362,10 +306,6 @@ describe("ensureGithubMcp", () => {
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.github);
     const servers = capturedClients[0]?.servers ?? {};
 
-    // Post-T2 PR 1 (I15): both ServerSpecs are wrapped via wrapServerSpec —
-    // command is process.execPath (Bun), args[0] is sandbox-wrapper.ts,
-    // args[1] is the original command "bun", args[2..] are the original
-    // args. Vault-derived env vars + baseline host env pass through.
     expect(servers["github"]?.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(servers["github_actions"]?.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(servers["github"]?.command).toBe(process.execPath);
@@ -576,7 +516,7 @@ describe("ensureDiscordMcp", () => {
   test("token present but enabled !== '1' → no spawn (opt-in gate)", async () => {
     const { ctx, calls, vault } = makeCtx();
     await vault.set("discord.bot_token", "discord_tok");
-    await vault.set("discord.enabled", "true"); // any value other than "1"
+    await vault.set("discord.enabled", "true");
     await ensureDiscordMcp(ctx);
     expect(calls.setLazyClient).toHaveLength(0);
   });
@@ -679,8 +619,6 @@ describe("ensureKubernetesMcp", () => {
     await vault.set("kubernetes.kubeconfig", "  /home/u/.kube/config  ");
     await ensureKubernetesMcp(ctx);
     const env = capturedClients[0]?.servers["kubernetes"]?.env;
-    // The trim happens via .trim() === "" guard; the stored value with whitespace
-    // is forwarded as-is to KUBECONFIG (no implicit trimming for the value itself).
     expect(env?.["KUBECONFIG"]?.trim()).toBe("/home/u/.kube/config");
   });
 
@@ -818,8 +756,6 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
 describe("ensureMicrosoftBundleMcp", () => {
   test("no Outlook scopes → onedrive/outlook/teams spawned with shared token and no scopes env", async () => {
     const { ctx, vault } = makeCtx();
-    // The Microsoft auth helper is mocked to always return a token; the bundle
-    // unconditionally spawns all three child servers.
     await vault.set("microsoft.oauth", '{"access_token":"x"}');
     await ensureMicrosoftBundleMcp(ctx);
     const servers = capturedClients[0]?.servers ?? {};
@@ -832,8 +768,6 @@ describe("ensureMicrosoftBundleMcp", () => {
 
   test("outlook scopes present → MICROSOFT_OAUTH_SCOPES injected into outlook env only", async () => {
     const { ctx, vault } = makeCtx();
-    // Scopes are embedded in the microsoft.oauth JSON payload (the real
-    // implementation parses them out of the OAuth blob, not a separate key).
     await vault.set(
       "microsoft.oauth",
       JSON.stringify({ access_token: "x", scopes: ["Mail.Read", "Mail.Send"] }),

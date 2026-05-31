@@ -113,7 +113,6 @@ describe("ModelPanel", () => {
       provider: "ollama",
       modelName: "gemma:2b",
     });
-    // After setDefault we refetch getRouterStatus.
     llmGetRouterStatusMock.mockResolvedValueOnce({
       decisions: {
         reasoning: { providerId: "ollama", modelName: "gemma:2b", reason: "default" },
@@ -222,7 +221,6 @@ describe("ModelPanel", () => {
     useNimbusStore.setState({ activePullId: "pull_done" } as never);
     llmListModelsMock.mockResolvedValueOnce({ models: [] });
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
-    // Second fetch triggered by pullCompleted
     llmListModelsMock.mockResolvedValueOnce({
       models: [{ provider: "ollama", modelName: "gemma:2b" }],
     });
@@ -253,7 +251,6 @@ describe("ModelPanel", () => {
     subscribeMock.mockRejectedValueOnce(new Error("subscribe failed"));
     renderPanel();
     await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
-    // Component renders normally despite the subscribe error
     expect(screen.getByRole("button", { name: /pull new model/i })).toBeInTheDocument();
   });
 

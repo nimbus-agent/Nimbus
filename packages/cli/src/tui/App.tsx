@@ -106,7 +106,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
   const lastCtrlCRef = React.useRef<number>(0);
   const reconnectAttemptRef = React.useRef(0);
 
-  // Install notification handlers once.
   React.useEffect(() => {
     client.onNotification("engine.streamToken", (p) => {
       if (isStreamTokenPayload(p)) {
@@ -130,16 +129,12 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     });
   }, [client]);
 
-  // Bench marker for S4 first-paint (docs/perf/slo.md §S4). Fires after
-  // the first commit (i.e., after Ink has flushed the first frame to TTY).
-  // Env-gated so production users never see the stderr line.
   React.useEffect(() => {
     if (process.env["NIMBUS_BENCH"] === "1") {
       process.stderr.write("[tui] first-frame\n");
     }
   }, []);
 
-  // Flush live buffer into <Static> when stream ends.
   const prevModeRef = React.useRef(state.mode);
   React.useEffect(() => {
     const prev = prevModeRef.current;
@@ -156,7 +151,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     }
   }, [state.mode, state.liveBuffer, state.lastError]);
 
-  // Resize handling.
   React.useEffect(() => {
     const onResize = (): void => {
       setCols(stdout.columns ?? 120);
@@ -168,7 +162,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     };
   }, [stdout]);
 
-  // Short-terminal runtime drop.
   React.useEffect(() => {
     if (rows === 0) {
       return;
@@ -179,7 +172,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     }
   }, [rows, logger, onExit]);
 
-  // Reconnect loop on disconnect.
   React.useEffect(() => {
     if (state.mode !== "disconnected") {
       reconnectAttemptRef.current = 0;
@@ -212,11 +204,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     };
   }, [state.mode, client]);
 
-  // BUG-005: minted once per App lifetime so every `engine.askStream` call
-  // in this TUI process carries the same sessionId. Without this, the gateway
-  // cannot load prior turns from `SessionMemoryStore` and every prompt is a
-  // fresh, contextless agent run — a small follow-up like "asafgolombek@gmail.com"
-  // is treated as a brand-new query, not a continuation of the prior turn.
   const sessionIdRef = React.useRef<string>(crypto.randomUUID());
 
   const handleSubmit = async (query: string): Promise<void> => {
@@ -258,7 +245,6 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
     }
   };
 
-  // When cursor equals request count, send the full decision array and resolve.
   React.useEffect(() => {
     if (state.hitlBatch === null) {
       return;

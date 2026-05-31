@@ -205,7 +205,13 @@ The bare result still flows through the planner path (`ConnectorDispatcher` → 
 
 The hard structural barrier is the **HITL consent gate** in `executor.ts`: every action type in `HITL_REQUIRED` requires explicit user approval before the connector executes, regardless of what the LLM or an injected tool result requests. A malicious tool result cannot remove an action type from `HITL_REQUIRED`.
 
-In addition to the textual labeling, MCP tool results are returned to the agent via the LLM-provider SDK's typed message channel (`tool_result` for Anthropic, `function_call_response` for OpenAI). The provider SDK structurally labels these as tool output — not as system instructions — which is the primary soft barrier against prompt injection.
+In addition to the textual labeling, MCP tool results are returned to the agent via the LLM-provider SDK's typed message channel (`tool_result` for Anthropic, `function_call_response` for OpenAI). The provider SDK structurally labels these as tool output — not as system instructions — which is the primary soft barrier against prompt injection. For the autonomous and standing-approval flows arriving in later phases, this soft read-surface barrier is backed by a second structural defense — the proposed taint barrier (see § Standing Approvals) — so attacker-influenceable content can never satisfy an auto-approve path.
+
+---
+
+### Local Model Supply Chain
+
+Nimbus verifies its own binaries (Ed25519 updater), extensions (`I16`), and extension manifests (SHA-256) — but **local model weights (GGUF files) pulled via Ollama or llama.cpp are not integrity-verified today.** A poisoned or substituted local model is an attack on the agent's *reasoning* — it can bias plans, fabricate tool arguments, or steer a user toward approving a harmful action — and it is not covered by the Vault credential boundary (§ Credentials). This is an acknowledged residual risk pending the hardening item on the [Phase 9 roadmap](./roadmap.md#phase-9--ai-engineering-loop): optional digest pinning / signature verification reusing the existing SHA-256 + Ed25519 machinery (`nimbus llm verify`), with a fail-closed **`strict`** mode that refuses inference on a verification mismatch. It becomes a structural invariant — production wiring + a `SECURITY-INVARIANTS.md` row + an enforcement test — only once that work is wired, never before.
 
 ---
 
@@ -216,6 +222,8 @@ Every action the agent takes — including every HITL decision — is recorded i
 **Single source of truth:** The audit log lives exclusively in SQLite — there is no separate `audit.jsonl` file. This is a deliberate architectural decision: a split store would require two separate tamper-evident chains and create reconciliation risk.
 
 Migration V18 (`packages/gateway/src/index/audit-chain-v18-sql.ts`) added `row_hash` and `prev_hash` columns to `audit_log`, implementing a BLAKE3-chained tamper-evident log. Verify with `nimbus audit verify` (see `packages/cli/src/commands/audit.ts`).
+
+The chain is tamper-**evident**, not tamper-**proof**: a process running at the user's own UID can truncate the SQLite file and regenerate the chain, since the chain has no external anchor. Closing that window is the job of **scheduled, externally-anchored export** — periodically signing the chain head and the egress ledger to an external append-only sink (Phase 12 audit-log shipping / SIEM). See the North-Star **M7 (Provable Locality)** capability in [`roadmap.md`](./roadmap.md#north-star-capabilities-cross-phase).
 
 ---
 
@@ -238,6 +246,7 @@ A future phase will introduce standing approvals: pre-authorized patterns that a
 - Standing rules are stored in SQLite, not in config files — they are subject to the same integrity checks as the rest of the local index.
 - No standing rule may cover `vault.*` or `db.*` tool calls.
 - The rule editor in the UI must show a diff preview of the scope before saving.
+- **Taint barrier (proposed invariant).** Attacker-influenceable tool output — any MCP/connector result, any indexed content, any federated-peer response — may **never** satisfy a standing-approval match, a skill-pack auto-approve, or a template auto-adopt. The mechanism is a **metadata-driven provenance tag**, not dynamic runtime taint tracking: every indexed row already carries its origin (`<service>:<native_id>`) and every LLM-facing tool result already rides the `<tool_output service tool>` envelope (`I11`), so a two-class origin label is computed at that boundary and checked by the standing-approval matcher, which falls back to interactive HITL when the trigger is `untrusted`. The classes are drawn **conservatively**: `trusted` is *only* the user's direct, interactive CLI/UI input and the signed `nimbus.toml` / team baseline; `untrusted` is everything else — **including the output of executed scripts, `nimbus run` workflows, and any local process**, since a local script can fetch attacker-controlled content and local execution must not be a path to launder it into a trusted tag. This lands as a full invariant triple (production wiring + a `SECURITY-INVARIANTS.md` row + an enforcement test, taking the next free invariant number when it ships) once standing approvals are built; it unifies this section with Phase 16's "team skill packs cannot loosen HITL" guardrail and the Phase 16 federated-Q&A (M4) injection risk.
 
 ---
 
@@ -253,7 +262,7 @@ Nimbus is designed to support security-sensitive operational environments. The p
 
 **Credential isolation.** Connector credentials are injected at MCP server spawn time via environment variables scoped to that child process. They are never present in IPC messages, in the local index, in log output, or in the Engine's context. The `redact` configuration on the structured logger automatically censors any field matching `*.token`, `*.secret`, or `oauth.*`.
 
-**Integrated vulnerability scanning.** First-party connectors for Snyk, SonarQube / SonarCloud, and Semgrep bring vulnerability findings, code-quality issues, and static-analysis results into the local index, enabling CVE-to-repo-to-PR correlation queries without leaving the terminal. The `nimbus security scan` command runs a Gitleaks-compatible pattern set against already-indexed file content for local secret and credential hygiene.
+**Integrated vulnerability scanning.** First-party connectors for Snyk, SonarQube / SonarCloud, Semgrep, and Wiz bring vulnerability findings, code-quality issues, static-analysis results, and cloud-security (CSPM) findings into the local index, enabling CVE-to-repo-to-PR and misconfiguration-to-owner correlation queries without leaving the terminal. The `nimbus security scan` command runs a Gitleaks-compatible pattern set against already-indexed file content for local secret and credential hygiene.
 
 **Compliance tooling roadmap.** `nimbus compliance check` (Phase 12) will produce a machine-readable JSON report covering: credential storage status, audit log integrity, plaintext credential scan, connector scope minimization, and data residency posture. Structured for auditor consumption.
 
@@ -318,84 +327,8 @@ gh attestation verify nimbus-gateway-linux-x64 --owner nimbus-agent
 
 ---
 
-## Updater Signing Key Lifecycle
+## Signing Keys
 
-Nimbus auto-updates are gated on an **Ed25519 signature over a canonical JSON envelope** of `{ version, target, sha256 }` (see `packages/gateway/src/updater/signature-verifier.ts:verifyManifestEnvelope`). The verifier reconstructs this envelope from the manifest's claimed fields before checking the signature, so an attacker who replays a legitimate signed binary into a fresh manifest cannot mismatch the version/target without invalidating the signature. A legacy bare-SHA mode is retained for the migration window of one release; once the next signed manifest ships, the fallback is removed.
+Nimbus depends on two signing keys: the **updater signing key** (Ed25519, gates auto-update) and the **release signing key** (GPG, signs the `SHA256SUMS.asc` integrity manifest). The full operational runbooks — rotation procedures, compromise response, the published GPG fingerprint, and the `v0.1.0` signing cut-line — live in [`release/signing-keys.md`](./release/signing-keys.md).
 
-Update binaries are downloaded only over HTTPS (with an `http://127.0.0.1` test escape that is disabled in production). The download is hard-capped at 500 MiB (`MAX_DOWNLOAD_BYTES`) — any Content-Length above the cap is rejected before the body is read, and a streaming accumulator aborts mid-download if the running total exceeds the cap. Every `applyUpdate` invocation emits four ordered audit phases (`system.update.start` / `system.update.verified` / `system.update.installed` / `system.update.failed`) via the optional `recordUpdateEvent` callback, so `nimbus audit verify` shows install history.
-
-The public key is embedded in the binary at build time (`packages/gateway/src/updater/public-key.ts`); the private key lives only in the `UPDATER_SIGNING_KEY` repository secret and is never present on a developer machine.
-
-### Rotation procedure
-
-Plan a rotation at least once every 12 months, and immediately on any of these triggers:
-
-- A maintainer with secret-read access leaves the project.
-- A CI run is suspected of having leaked the key (e.g., a workflow added an unintended `echo "$UPDATER_SIGNING_KEY"`).
-- A new key algorithm becomes the default for the project.
-
-**Steps (must all happen in the same release cycle):**
-
-1. **Reset the embedded public key.** `scripts/generate-updater-keypair.ts` refuses to run if `packages/gateway/src/updater/public-key.ts` already contains a non-dev key (an intentional safety against accidental rotation). On a feature branch, replace the body of `UPDATER_PUBLIC_KEY_BASE64` with `"<DEV-PLACEHOLDER>"` so the script will run.
-2. **Generate the new keypair** locally on an air-gapped or hardened workstation:
-
-   ```bash
-   bun scripts/generate-updater-keypair.ts
-   ```
-
-   The script prints the new public key (base64 + hex) to stdout and writes the new private key to a freshly-created temp file under `<tmpdir>/nimbus-updater-key-*/updater-private.b64` (mode `0600`).
-3. **Update the embedded public key** in `packages/gateway/src/updater/public-key.ts` (and the test override `NIMBUS_DEV_UPDATER_PUBLIC_KEY` if used) using the printed base64 value. Land via PR.
-4. **Cut a transitional release** that ships *both* the old and new public key as trusted (the updater accepts either signature). This release must be signed with the **old** key.
-5. **Rotate the secret**: upload the temp-file private key to repository secret `UPDATER_SIGNING_KEY` (`gh secret set UPDATER_SIGNING_KEY < <path>`), then shred and delete the temp file immediately.
-6. **Cut a second release** signed with the new key. Verify clients on N-1, N, and N+1 all auto-update successfully.
-7. **Remove the old public key** from `public-key.ts` in the next release. Document the rotation in `docs/SECURITY.md` change history.
-
-### Compromise response
-
-If the active signing key is suspected to be compromised:
-
-1. **Disable auto-update server-side** by setting the `latest.json` manifest's `version` to a pinned safe value and the `forcedUpdate` flag to `false`.
-2. Generate a new keypair and ship a transitional release within 24 hours. Notify users via the GitHub Security advisory channel.
-3. Revoke the leaked key by removing it from `public-key.ts` in the immediate follow-up release.
-4. Audit the GitHub Actions workflow run logs for the period the key was active — look for any step that read `UPDATER_SIGNING_KEY` outside `scripts/sign-ed25519.ts`.
-
-**Long-term mitigation:** the project is tracking migration to **sigstore/cosign with GitHub OIDC** for keyless updater signing, eliminating the long-lived secret entirely. Tracked as Phase 5+ release-infra hardening.
-
----
-
-## Release Signing Key
-
-Nimbus release artifacts are distributed with a GPG-signed `SHA256SUMS.asc` integrity manifest (and per-artifact `.asc` sidecars on Linux). All release signing uses the single key whose fingerprint is published below.
-
-### v0.1.0 signing cut-line
-
-`v0.1.0` ships with **Linux binaries GPG-signed** and **macOS + Windows binaries unsigned**. The integrity guarantee for non-Linux platforms therefore comes from the GPG-signed `SHA256SUMS.asc` manifest, **not** from platform-native code-signing — macOS users do not get a notarized `.pkg`, Windows users do not get an Authenticode-signed installer, and both platforms require a documented one-time bypass on first install ([`install-macos-unsigned.md`](./install-macos-unsigned.md), [`install-windows-unsigned.md`](./install-windows-unsigned.md)).
-
-This is an explicit project decision, not a temporary regression: native code-signing requires recurring spend on an Apple Developer Program membership ($99/yr) and a Windows EV certificate (~$470–$840/yr including signing-service fees). Both are **deferred to a later point release** — *not* `v0.1.1` — gated on an explicit maintainer decision to fund the procurement once the product is stable enough to justify it. Until that decision is made, the GPG manifest remains the canonical integrity boundary on macOS and Windows.
-
-Verifying a release on any platform follows the same `SHA256SUMS.asc` workflow described in [`verify-release-integrity.md`](./verify-release-integrity.md); the platform OS may additionally raise a Gatekeeper / SmartScreen prompt, which the unsigned-install docs walk through.
-
-**Project GPG fingerprint (v0.1.0 and later):**
-
-```text
-5A20 457C CD8B 53FF AA94 5240 886A DA6B 487C AB6E
-```
-
-**Cross-check this fingerprint against four sources** — if any two disagree, **do not install**; open a private security issue per "Reporting a Vulnerability" above:
-
-1. This file (`docs/SECURITY.md`) — you're reading it now.
-2. The repository README (`README.md`, "Install → Verify any download" section).
-3. The public key ASCII-armored block at [`docs/release/SIGNING-KEY.asc`](release/SIGNING-KEY.asc).
-4. Either keyserver — `keys.openpgp.org` or `keyserver.ubuntu.com`.
-
-**To import the key from a keyserver:**
-
-```bash
-gpg --keyserver keys.openpgp.org --recv-keys 5A20457CCD8B53FFAA945240886ADA6B487CAB6E
-# or
-gpg --keyserver keyserver.ubuntu.com --recv-keys 5A20457CCD8B53FFAA945240886ADA6B487CAB6E
-```
-
-**First-time users:** the `nimbus-verify.sh` / `nimbus-verify.ps1` helper scripts print the fingerprint they imported before running `gpg --verify`. Match that printed value against this file, the README, and a keyserver lookup before allowing the script to touch your keyring. See [`docs/verify-release-integrity.md`](verify-release-integrity.md) for the full walkthrough.
-
-**Key rotation.** When the project rotates its signing key, the transition runs over two releases: one signed by the old key but carrying the new fingerprint in the scripts' `TRUSTED_FINGERPRINTS` array, and a subsequent release signed by the new key only. See [`docs/verify-release-integrity.md#key-rotation`](verify-release-integrity.md#key-rotation) for the worked example.
+Quick reference: release artifacts are integrity-protected by a GPG-signed `SHA256SUMS.asc`; on `v0.1.0`, Linux binaries are GPG-signed while macOS + Windows binaries ship unsigned (the manifest is the canonical integrity boundary there — see [`install-macos-unsigned.md`](./install-macos-unsigned.md) / [`install-windows-unsigned.md`](./install-windows-unsigned.md)). Verify any download with the workflow in [`verify-release-integrity.md`](./verify-release-integrity.md). Auto-update binaries are gated on an Ed25519 signature over a canonical `{ version, target, sha256 }` envelope before any installer runs.

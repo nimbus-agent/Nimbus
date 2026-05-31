@@ -1,25 +1,3 @@
-/**
- * Targeted unit tests for `socket-listeners.ts` — the unix-socket lifecycle
- * helpers and the `net.createServer`/`Bun.listen` arms that the
- * server.test.ts integration tests don't reach in isolation.
- *
- * Covers:
- *  - `removeStaleUnixSocketIfPresent` (no-op / unlink-success /
- *    swallow-error via directory-EISDIR)
- *  - `chmodListenSocketBestEffort` (success / missing-path swallow)
- *  - `startWin32NetServer` + `attachWin32Socket` (real net.createServer +
- *    net.connect with a unix socket path on POSIX; verifies push() +
- *    endInput() + dispose() on the session and winSockets removal on close)
- *  - `startBunUnixListener` (Bun.listen with a unix socket path; same
- *    data-flow + lifecycle verification)
- *
- * The "Win32"-named functions use plain `net` module APIs that work
- * cross-platform with any path; tests pass unix socket paths under tmp
- * dirs so Linux CI exercises every arm. The Bun-unix-listener test and
- * the net.createServer test are POSIX-only-guarded because the path-
- * based listener semantics differ on Windows (named pipes only).
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -33,10 +11,6 @@ import {
   startBunUnixListener,
   startWin32NetServer,
 } from "./socket-listeners.ts";
-
-// ---------------------------------------------------------------------------
-// Stub ClientSession used by the listener tests.
-// ---------------------------------------------------------------------------
 
 type StubState = {
   pushed: Uint8Array[];
@@ -63,14 +37,9 @@ function makeStubSession(state: StubState, write: SessionWrite): ClientSession {
     writeNotification: () => {
       /* unused */
     },
-    // Keep a way to verify the SessionWrite closure is the one wired up.
     _write: write,
   } as unknown as ClientSession;
 }
-
-// ---------------------------------------------------------------------------
-// removeStaleUnixSocketIfPresent — all three branches
-// ---------------------------------------------------------------------------
 
 describe("removeStaleUnixSocketIfPresent", () => {
   let tmpDir: string;
@@ -91,7 +60,6 @@ describe("removeStaleUnixSocketIfPresent", () => {
     const p = join(tmpDir, "nope.sock");
     expect(existsSync(p)).toBe(false);
     expect(() => removeStaleUnixSocketIfPresent(p)).not.toThrow();
-    // Still absent.
     expect(existsSync(p)).toBe(false);
   });
 
@@ -104,22 +72,13 @@ describe("removeStaleUnixSocketIfPresent", () => {
   });
 
   test("swallows unlink errors silently (path is a directory => EISDIR/EPERM)", () => {
-    // Passing a path that's a directory makes unlinkSync throw on every
-    // platform (EISDIR on POSIX, EPERM on Win32). The helper must swallow
-    // the throw — the caller's bind step will surface the real error.
     const dirPath = join(tmpDir, "dir-as-socket");
     mkdirSync(dirPath);
     expect(existsSync(dirPath)).toBe(true);
     expect(() => removeStaleUnixSocketIfPresent(dirPath)).not.toThrow();
-    // Directory is untouched — unlink failed (as expected) and the helper
-    // didn't propagate the throw.
     expect(existsSync(dirPath)).toBe(true);
   });
 });
-
-// ---------------------------------------------------------------------------
-// chmodListenSocketBestEffort — success + swallow-error paths
-// ---------------------------------------------------------------------------
 
 describe("chmodListenSocketBestEffort", () => {
   let tmpDir: string;
@@ -148,14 +107,6 @@ describe("chmodListenSocketBestEffort", () => {
     expect(() => chmodListenSocketBestEffort(p)).not.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// startWin32NetServer (POSIX-guarded; uses unix socket path under tmpdir)
-//
-// Although the function is named "Win32", it uses `net.createServer` which
-// accepts any path. On Linux/macOS we can pass a unix socket path and
-// exercise the full attach/data/end/close flow.
-// ---------------------------------------------------------------------------
 
 describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => {
   let tmpDir: string;
@@ -205,31 +156,25 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
     try {
       await new Promise<void>((resolve, reject) => {
         const client = net.connect(socketPath, () => {
-          client.write(Buffer.from([0x41, 0x42, 0x43])); // "ABC"
+          client.write(Buffer.from([0x41, 0x42, 0x43]));
           client.end();
         });
         client.on("close", () => resolve());
         client.on("error", reject);
       });
 
-      // Let the server-side on('data'/'end'/'close') handlers drain.
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-      // Captured SessionWrite must be the closure handed to attach.
       expect(capturedWrite).not.toBeNull();
 
-      // push() was called with the bytes we wrote.
       expect(state.pushed.length).toBeGreaterThanOrEqual(1);
       const total = state.pushed.reduce((acc, u) => acc + u.byteLength, 0);
       expect(total).toBe(3);
-      // First byte is 'A'.
       expect(state.pushed[0]?.[0]).toBe(0x41);
 
-      // end + close fired.
       expect(state.endedInput).toBe(true);
       expect(state.disposed).toBe(true);
 
-      // Socket removed from the tracking set.
       expect(handle.winSockets.size).toBe(0);
     } finally {
       await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
@@ -244,37 +189,25 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
 
     const handle = await startWin32NetServer(socketPath, attach);
     try {
-      // Open one client to make `attachWin32Socket` register the server-side
-      // socket in `winSockets`, then synchronously force an error from the
-      // server side by destroying the accepted socket with an Error. This
-      // fires the 'error' handler before 'close' on most platforms; either
-      // way both handlers converge on `dispose() + winSockets.delete(sock)`.
       const client = net.connect(socketPath);
       await new Promise<void>((resolve, reject) => {
         client.on("connect", () => resolve());
         client.on("error", reject);
       });
 
-      // Wait for the server to accept and register the socket.
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
       expect(handle.winSockets.size).toBe(1);
 
-      // Force an error on the server-side socket. (The set is iterable.)
       const serverSock = Array.from(handle.winSockets)[0];
       expect(serverSock).toBeDefined();
-      // destroy(err) emits 'error' then 'close'.
       serverSock?.destroy(new Error("forced-error-for-coverage"));
 
-      // Client also reacts; absorb to keep the test deterministic.
       client.on("error", () => {});
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-      // Either the 'error' or the 'close' handler (both run dispose +
-      // winSockets.delete) drained the set and disposed the session.
       expect(handle.winSockets.size).toBe(0);
       expect(state.disposed).toBe(true);
 
-      // Clean up the client socket.
       try {
         client.destroy();
       } catch {
@@ -285,10 +218,6 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// startBunUnixListener — POSIX-only; Bun.listen with `unix` path.
-// ---------------------------------------------------------------------------
 
 describe("startBunUnixListener (POSIX-only)", () => {
   let tmpDir: string;
@@ -322,19 +251,17 @@ describe("startBunUnixListener (POSIX-only)", () => {
     try {
       await new Promise<void>((resolve, reject) => {
         const client = net.connect(socketPath, () => {
-          client.write(Buffer.from([0x42])); // 'B'
+          client.write(Buffer.from([0x42]));
           client.end();
         });
         client.on("close", () => resolve());
         client.on("error", reject);
       });
 
-      // Let Bun.listen's socket handlers settle.
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
       expect(capturedWrite).not.toBeNull();
       expect(state.pushed.length).toBeGreaterThan(0);
-      // First chunk's first byte is 'B'.
       expect(state.pushed[0]?.[0]).toBe(0x42);
       expect(state.endedInput).toBe(true);
       expect(state.disposed).toBe(true);

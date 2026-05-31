@@ -1,8 +1,3 @@
-/**
- * Extracted handler for `engine.askStream`. Owns the stream's AbortController
- * via the StreamRegistry so `engine.cancelStream` can cancel by streamId.
- */
-
 export type StreamNotification = {
   jsonrpc: "2.0";
   method: string;
@@ -108,7 +103,6 @@ export function createAskStreamHandler(
   };
 }
 
-/** Default in-memory implementation of StreamRegistry. */
 export function createStreamRegistry(): StreamRegistry {
   const map = new Map<string, AbortController>();
   return {

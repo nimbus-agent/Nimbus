@@ -1,6 +1,3 @@
-/**
- * Parses compact durations: `30s`, `5m`, `1h`, `24h`, `500ms`.
- */
 export function parseDurationToMs(raw: string): number {
   const s = raw.trim();
   const m = /^(\d+)\s*(ms|s|m|h)$/i.exec(s);

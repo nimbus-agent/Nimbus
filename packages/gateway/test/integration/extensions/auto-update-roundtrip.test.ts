@@ -49,7 +49,6 @@ async function startFakeRegistry(): Promise<FakeRegistry> {
     port: 0,
     fetch: async (req) => {
       const u = new URL(req.url);
-      // GET /v1/extensions/<id>/latest?channel=stable
       let m = /^\/v1\/extensions\/([^/]+)\/latest$/.exec(u.pathname);
       if (m !== null) {
         const entry = entries.get(decodeURIComponent(m[1] ?? ""));
@@ -58,7 +57,6 @@ async function startFakeRegistry(): Promise<FakeRegistry> {
           status: 200,
         });
       }
-      // GET /v1/extensions/<id>/manifest?version=<v>
       m = /^\/v1\/extensions\/([^/]+)\/manifest$/.exec(u.pathname);
       if (m !== null) {
         const entry = entries.get(decodeURIComponent(m[1] ?? ""));
@@ -77,7 +75,6 @@ async function startFakeRegistry(): Promise<FakeRegistry> {
           { status: 200 },
         );
       }
-      // GET /v1/tarball/<id>.tar.gz
       m = /^\/v1\/tarball\/(.+)\.tar\.gz$/.exec(u.pathname);
       if (m !== null) {
         const entry = entries.get(decodeURIComponent(m[1] ?? ""));
@@ -130,7 +127,6 @@ async function buildSignedTarball(opts: {
   const signature = await signManifest(baseManifest, opts.privkey);
   const manifest = { ...baseManifest, signature };
 
-  // Stage on disk to tar up
   const stageRoot = mkdtempSync(join(tmpdir(), "nimbus-au-stage-"));
   try {
     const manifestText = JSON.stringify(manifest);
@@ -185,8 +181,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
 
-      // Stage the v1.0.0 install under the new two-version layout: active/.
-      // (T2 PR 3 expects install_path = <extRoot>/active for the swap to work.)
       const v1Manifest = {
         id: extensionId,
         version: "1.0.0",
@@ -240,14 +234,12 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         enforceAirGap: false,
       });
 
-      // 1. Poll once → cache populated with verified status.
       await runtime.daemon.pollOnce();
       const cached = runtime.deps.cache.get(extensionId);
       expect(cached).toBeDefined();
       expect(cached?.toVersion).toBe("1.1.0");
       expect(cached?.verificationStatus).toBe("verified");
 
-      // 2. Apply with auto-approving gate.
       const res = (await dispatchAutoUpdateRpc(
         "extension.update",
         { id: extensionId, toVersion: "1.1.0" },
@@ -255,18 +247,15 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       )) as { applied: boolean; reason?: string };
       expect(res.applied).toBe(true);
 
-      // 3. active/ now holds the new tarball-extracted manifest at 1.1.0.
       const newManifestText = readFileSync(
         join(extRoot, "active", "nimbus.extension.json"),
         "utf8",
       );
       expect(JSON.parse(newManifestText).version).toBe("1.1.0");
 
-      // 4. _prev/1.0.0/ holds the old content.
       const prevEntries = readdirSync(join(extRoot, "_prev"));
       expect(prevEntries).toEqual(["1.0.0"]);
 
-      // 5. extension row updated to 1.1.0.
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.1.0");
     } finally {
@@ -285,7 +274,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
 
-      // Manually stage the new two-version layout: active/ + _prev/1.0.0/.
       mkdirSync(join(extRoot, "active", "dist"), { recursive: true });
       writeFileSync(
         join(extRoot, "active", "nimbus.extension.json"),
@@ -306,7 +294,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         `export default { version: "1.0.0" };`,
       );
 
-      // Insert the DB row with install_path pointing at active/.
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
       const { createHash } = require("node:crypto") as typeof import("node:crypto");
       insertExtensionRow(db, {
@@ -334,7 +321,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         enforceAirGap: false,
       });
 
-      // Seed the cache as if the daemon detected a downgrade-able entry.
       runtime.deps.cache.upsert({
         id: extensionId,
         displayName: extensionId,
@@ -362,16 +348,13 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       )) as { applied: boolean; reason?: string };
       expect(res.applied).toBe(true);
 
-      // active/ now holds 1.0.0 content.
       const activeManifest = JSON.parse(
         readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8"),
       ) as { version: string };
       expect(activeManifest.version).toBe("1.0.0");
 
-      // _prev/1.1.0/ holds the old (rolled-back-from) content.
       expect(existsSync(join(extRoot, "_prev", "1.1.0"))).toBe(true);
 
-      // Extension row updated.
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
     } finally {
@@ -388,8 +371,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       await writePublisherKey(vault, "pub-1", pubkey);
 
       const extensionId = "ext-pub-1";
-      // Insert a row without staging the manifest — the gate test doesn't
-      // need the on-disk side, only the cache + mutex behaviour.
       const runtime = createAutoUpdateRuntime({
         db,
         vault,
@@ -420,8 +401,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         detectedAt: 1,
       });
 
-      // Block the first call inside performUpgrade so the second call can
-      // observe the mutex held.
       let release: () => void = () => {};
       const slowDeps = {
         ...runtime.deps,
@@ -438,7 +417,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         { id: extensionId, toVersion: "1.1.0" },
         slowDeps,
       );
-      // Yield so first acquires the mutex.
       await new Promise((r) => setTimeout(r, 0));
       const second = (await dispatchAutoUpdateRpc(
         "extension.update",
@@ -455,8 +433,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
   });
 
   test("verify-extensions crash recovery promotes _prev/<v>/ when active/ is missing", async () => {
-    // Re-uses the unit test fixture pattern. This integration variant proves
-    // the same code path runs cleanly with the runtime construction in place.
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
       const { pubkey } = generateEd25519Keypair();
@@ -465,7 +441,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
 
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
-      // _prev/1.0.0/ exists but active/ does NOT.
       mkdirSync(join(extRoot, "_prev", "1.0.0", "dist"), { recursive: true });
       const manifestText = JSON.stringify({ id: extensionId, version: "1.0.0" });
       writeFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json"), manifestText);
@@ -477,7 +452,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       const manifestHash = createHash("sha256").update(manifestBytes).digest("hex");
       const entryHash = createHash("sha256").update(entryBytes).digest("hex");
 
-      // Row points install_path at the missing active/ dir.
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
       insertExtensionRow(db, {
         id: extensionId,
@@ -496,12 +470,9 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       const pino = (await import("pino")).default;
       await verifyExtensionsBestEffort(db, pino({ level: "silent" }));
 
-      // active/ now exists.
       expect(existsSync(join(extRoot, "active"))).toBe(true);
-      // Row version rolled back.
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
-      // Audit row appended.
       const auditRow = db
         .query(`SELECT action_type FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`)
         .get("extension.autoUpdate.crash_recovered") as { action_type: string } | undefined;

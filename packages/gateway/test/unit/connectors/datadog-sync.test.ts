@@ -9,9 +9,6 @@ import {
 const ENSURE_MCP = { ensureDatadogMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-dd1:";
 
-// Exact URLs — no query params, no path variants beyond the site-host
-// substitution. If datadog-sync.ts ever appends a query string, convert
-// these to regex anchors.
 const MONITORS_DEFAULT_URL = "https://api.datadoghq.com/api/v1/monitor";
 const MONITORS_EU_URL = "https://api.datadoghq.eu/api/v1/monitor";
 
@@ -19,11 +16,6 @@ function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-/**
- * One-shot fixture for tests that need precise control over the vault state
- * (typically credential short-circuit assertions). The caller seeds the
- * vault inside `fn`; cleanup is guaranteed. No outer beforeEach.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -95,8 +87,6 @@ describe("datadog-sync — credential short-circuits", () => {
   });
 });
 
-// All shared-fixture tests live under this outer describe so the
-// `beforeEach`/`afterEach` are scoped to it (mirrors sentry-sync.test.ts).
 describe("datadog-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
@@ -136,7 +126,6 @@ describe("datadog-sync — with shared fixture", () => {
       fixture.fetchMock.respond("GET", MONITORS_DEFAULT_URL, []);
       await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       const call = fixture.fetchMock.firstCall();
-      // captured headers map lowercases keys
       expect(call.headers["dd-api-key"]).toBe("datadog-stub-api-key");
       expect(call.headers["dd-application-key"]).toBe("datadog-stub-app-key");
       expect(call.headers["accept"]).toBe("application/json");
@@ -288,7 +277,6 @@ describe("datadog-sync — with shared fixture", () => {
       ]);
       const res = await createDatadogSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(res.itemsUpserted).toBe(3);
-      // external_id values are lowercase: SQLite default collation is case-sensitive
       const rows = fixture.db
         .query<{ external_id: string }, []>(
           "SELECT external_id FROM item WHERE service = 'datadog' ORDER BY external_id",

@@ -28,13 +28,10 @@ const DEFAULT_CONFIG: SyncSchedulerConfig = {
   retentionDays: 90,
 };
 
-/** If `next_sync_at` is only slightly before `start()`'s clock, treat as due now — not as backlog from a prior run. */
 const STARTUP_NEXT_SYNC_SLACK_MS = 250;
 
-/** Re-check connectivity after this many ms when offline. */
 const CONNECTIVITY_RECHECK_MS = 30_000;
 
-/** Health states that cause the scheduler to skip a connector (not consume backoff). */
 const SKIP_HEALTH_STATES: ReadonlySet<ConnectorHealthState> = new Set([
   "rate_limited",
   "unauthenticated",
@@ -57,7 +54,6 @@ function genericSyncErrorMessage(): string {
   return "Sync failed";
 }
 
-/** User-visible / persisted sync failure text (no stack; bounded length). */
 const MAX_SYNC_FAILURE_MSG = 2048;
 
 function syncFailureUserMessage(err: unknown): string {
@@ -93,22 +89,18 @@ export class SyncScheduler {
   private readonly config: SyncSchedulerConfig;
   private readonly notify: ((title: string, body: string) => Promise<void>) | undefined;
   private readonly rand: () => number;
-  /** Override for connectivity probe host (tests / air-gapped environments). */
   private readonly connectivityProbeHost: string | undefined;
-  /** Injectable connectivity check — overridden in tests. */
   private readonly isOnlineFn: () => Promise<boolean>;
 
   private readonly connectors = new Map<string, Syncable>();
   private readonly inFlight = new Set<string>();
   private queue: Job[] = [];
-  /** Mirrors {@link queue} membership by `serviceId` for O(1) duplicate checks in `tick()`. */
   private readonly queuedServiceIds = new Set<string>();
   private runningGlobal = 0;
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private started = false;
   private stopped = false;
 
-  // ── Connectivity guard ────────────────────────────────────────────────────
   private _online = true;
   private _connectivityRecheckHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -125,16 +117,9 @@ export class SyncScheduler {
       notify?: (title: string, body: string) => Promise<void>;
       random?: () => number;
       onConnectorSyncSuccess?: (serviceId: string, result: SyncResult, durationMs: number) => void;
-      /** Override DNS probe host (tests / air-gapped environments). */
       connectivityProbeHost?: string;
-      /** Injectable connectivity function — overrides the default DNS probe (tests only). */
       isOnline?: () => Promise<boolean>;
-      /**
-       * Override the initial `_online` flag (tests only). When `false` the scheduler
-       * starts in offline mode immediately without waiting for the async probe.
-       */
       initialOnline?: boolean;
-      /** Injectable scheduler row / telemetry persistence (defaults to SQLite on `syncContext.db`). */
       schedulerStateRepository?: SchedulerStateRepository;
     },
   ) {
@@ -172,7 +157,6 @@ export class SyncScheduler {
     }
   }
 
-  /** Drop a connector from scheduling (e.g. after `connector.remove`). In-flight jobs finish best-effort. */
   unregister(serviceId: string): void {
     this.connectors.delete(serviceId);
     this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
@@ -203,7 +187,6 @@ export class SyncScheduler {
         }
       }
     }
-    // Kick off connectivity probe — updates _online before the first tick fires.
     void this.probeConnectivity();
     this.tickHandle = setInterval(() => {
       this.tick();
@@ -220,7 +203,6 @@ export class SyncScheduler {
       clearTimeout(this._connectivityRecheckHandle);
       this._connectivityRecheckHandle = null;
     }
-    // Wait for in-flight jobs to drain.
     while (this.runningGlobal > 0) {
       await new Promise((r) => setTimeout(r, 10));
     }
@@ -277,8 +259,6 @@ export class SyncScheduler {
     return out;
   }
 
-  // ── Connectivity management ───────────────────────────────────────────────
-
   private scheduleConnectivityRecheck(delayMs: number): void {
     if (this._connectivityRecheckHandle !== null || this.stopped) {
       return;
@@ -293,9 +273,6 @@ export class SyncScheduler {
     const online = await this.isOnlineFn();
     this._online = online;
     if (!online) {
-      // Record skipped_offline for any connector that is registered and would
-      // otherwise be eligible (not paused, not already in error). This writes
-      // a history row without changing health_state.
       for (const id of this.connectors.keys()) {
         const health = getConnectorHealth(this.db, id);
         if (!SKIP_HEALTH_STATES.has(health.state) && health.state !== "error") {
@@ -305,13 +282,10 @@ export class SyncScheduler {
       this.scheduleConnectivityRecheck(CONNECTIVITY_RECHECK_MS);
       return;
     }
-    // Back online — resume normal tick cycle.
     if (this.started && !this.stopped) {
       this.tick();
     }
   }
-
-  // ── Internal scheduling ───────────────────────────────────────────────────
 
   private getDepthForService(serviceId: string): "metadata_only" | "summary" | "full" {
     const row = this.db
@@ -352,10 +326,6 @@ export class SyncScheduler {
     };
   }
 
-  /**
-   * When true, health state blocks scheduling / dispatch (rate_limited in window, or
-   * unauthenticated / paused). Caller chooses whether to log rate_limited skips.
-   */
   private healthGatePreventsDispatchSnapshot(
     health: ConnectorHealthSnapshot,
     connectorId: string,
@@ -387,7 +357,6 @@ export class SyncScheduler {
     return this.healthGatePreventsDispatchSnapshot(snap, connectorId, now, opts);
   }
 
-  /** True when this connector should be skipped for the current tick (health gate). */
   private connectorSkippedForHealth(
     connectorId: string,
     now: number,
@@ -400,7 +369,6 @@ export class SyncScheduler {
     if (this.stopped) {
       return;
     }
-    // Connectivity guard: if offline, suspend dispatch without consuming backoff.
     if (!this._online) {
       this.scheduleConnectivityRecheck(CONNECTIVITY_RECHECK_MS);
       return;
@@ -458,7 +426,6 @@ export class SyncScheduler {
     if (row.status === "error" && job.reason !== "force") {
       return false;
     }
-    // Health-state gate (non-force jobs only).
     if (
       job.reason !== "force" &&
       this.healthGatePreventsDispatch(job.serviceId, Date.now(), { logRateLimited: false })
@@ -552,7 +519,6 @@ export class SyncScheduler {
         "Nimbus sync failed",
         `Service "${job.serviceId}" stopped after repeated failures.`,
       );
-      // Mirror to health state.
       transitionHealth(this.db, job.serviceId, { type: "persistent_error", error: msg });
     } else {
       const delay = this.backoffDelayMs(failures);
@@ -567,7 +533,6 @@ export class SyncScheduler {
         consecutiveFailures: failures,
         paused: row.paused === 1,
       });
-      // Mirror to health state as transient_error.
       transitionHealth(this.db, job.serviceId, {
         type: "transient_error",
         error: msg,
@@ -619,7 +584,6 @@ export class SyncScheduler {
       paused: row.paused === 1,
     });
 
-    // Mirror to health state.
     transitionHealth(this.db, job.serviceId, { type: "sync_success" });
 
     if (result.hasMore) {
@@ -631,7 +595,6 @@ export class SyncScheduler {
     this.onConnectorSyncSuccess?.(job.serviceId, result, durationMs);
   }
 
-  /** Telemetry for sync attempts that end without a successful result payload. */
   private recordAbortedSyncTelemetry(job: Job, startedAt: number, errorMsg: string): void {
     const durationMs = Date.now() - startedAt;
     this.sched.insertSyncTelemetry({
@@ -646,9 +609,6 @@ export class SyncScheduler {
     });
   }
 
-  /**
-   * Resolves connector + scheduler row or finishes waiters and returns null.
-   */
   private resolveRunJobContext(job: Job): { connector: Syncable; row: SchedulerStateRow } | null {
     const connector = this.connectors.get(job.serviceId);
     if (connector === undefined) {
@@ -689,33 +649,25 @@ export class SyncScheduler {
     try {
       result = await connector.sync(this.ctx, row.cursor);
     } catch (err) {
-      // ── Typed error: rate limit ───────────────────────────────────────────
       if (err instanceof RateLimitError) {
         transitionHealth(this.db, job.serviceId, {
           type: "rate_limited",
           retryAfter: err.retryAfter,
         });
-        // Record telemetry but do NOT call runJobRecordSyncFailure — that would
-        // call transitionHealth(transient_error) and overwrite the rate_limited state,
-        // and would also increment consecutive_failures which is wrong for a 429.
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
         this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
         return;
       }
-      // ── Typed error: unauthenticated ──────────────────────────────────────
       if (err instanceof UnauthenticatedError) {
         transitionHealth(this.db, job.serviceId, { type: "unauthenticated" });
-        // Notify user — once per healthy→unauthenticated transition.
         void this.notify?.(
           "Nimbus connector lost authentication",
           `${job.serviceId} connector lost authentication. Run: nimbus connector auth ${job.serviceId}`,
         );
-        // Do NOT call runJobRecordSyncFailure so backoff counters are not incremented.
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
         this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
         return;
       }
-      // ── Generic / transient error ─────────────────────────────────────────
       this.runJobRecordSyncFailure(job, row, startedAt, syncFailureUserMessage(err));
       return;
     }

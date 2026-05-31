@@ -12,9 +12,6 @@ describe("V30 migration — vec_items_1536 + dim-aware triggers", () => {
   });
 
   test("V30 no-vec fallback does not throw on bun:sqlite (regression: macOS rejected db.exec(''))", () => {
-    // This test deliberately skips loading sqlite-vec to force the no-vec
-    // branch. Bun on macOS rejects db.exec("") with "SQL string mustn't be
-    // blank"; the runner must guard against empty SQL.
     const db = new Database(":memory:");
     expect(() => runIndexedSchemaMigrations(db, 30)).not.toThrow();
   });
@@ -33,8 +30,6 @@ describe("V30 migration — vec_items_1536 + dim-aware triggers", () => {
   test("with sqlite-vec, vec_items_1536 exists and dim-aware triggers are wired", () => {
     const db = new Database(":memory:");
     if (!tryLoadSqliteVec(db)) {
-      // Skip the table/trigger assertions when the platform lacks sqlite-vec —
-      // covered by the no-vec test below.
       return;
     }
     runIndexedSchemaMigrations(db, 30);

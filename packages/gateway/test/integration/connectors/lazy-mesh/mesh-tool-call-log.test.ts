@@ -31,9 +31,6 @@ describe("mesh.ts:listTools — tool_call_log audit-write", () => {
       auditDb,
     });
 
-    // Inject a synthetic tool into the mesh's listTools output by stubbing
-    // listToolsForDispatcher at the prototype level. listTools() wraps each
-    // execute with the audit-write wrapper.
     const fakeKey = "github_repo_pr_list";
     const meshAny = mesh as unknown as {
       listToolsForDispatcher: () => Promise<
@@ -68,7 +65,6 @@ describe("mesh.ts:listTools — tool_call_log audit-write", () => {
     if (row === undefined) throw new Error("unreachable");
     expect(row.sessionId).toBe("s-mesh-1");
     expect(row.toolId).toBe(fakeKey);
-    // service is derived from key.split("_")[0] in mesh.ts:listTools
     expect(row.service).toBe("github");
     expect(row.status).toBe("ok");
   });

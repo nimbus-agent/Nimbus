@@ -75,9 +75,6 @@ describe("redactAuditPayload (S2-F2)", () => {
   });
 
   test("scrubs OpenAI / Anthropic / Slack / JWT / AWS values inside strings", () => {
-    // JWT sample is constructed from parts so secret scanners (e.g. gitleaks)
-    // do not flag the literal as a real credential. The reassembled string
-    // matches the value-pattern regex and exercises the redaction code path.
     const jwtSample = [
       "eyJhbGciOiJIUzI1NiJ9",
       "eyJzdWIiOiIxMjM0NTY3ODkwIn0",

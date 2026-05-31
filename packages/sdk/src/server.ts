@@ -21,7 +21,6 @@ export interface ToolDefinition<TInput, TClient> {
 }
 
 export class NimbusExtensionServer<TClient = unknown> {
-  // Roadmap Q3: store options and initialize MCP stdio server with manifest
   private readonly _options: ExtensionServerOptions<TClient>;
 
   constructor(options: ExtensionServerOptions<TClient>) {
@@ -33,7 +32,6 @@ export class NimbusExtensionServer<TClient = unknown> {
   }
 
   start(): void {
-    // Roadmap Q3: start MCP stdio server; manifest is validated at construction time for extensions.
     if (this._options.manifest.id.length === 0) {
       throw new Error("NimbusExtensionServer: manifest.id is required");
     }

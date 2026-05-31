@@ -1,9 +1,3 @@
-/**
- * nimbus-mcp-bitbucket — Bitbucket Cloud REST MCP server (API 2.0).
- * Username + app password via BITBUCKET_USERNAME / BITBUCKET_APP_PASSWORD (never logged).
- * PR merge requires Gateway HITL (`repo.pr.merge`).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

@@ -5,29 +5,6 @@ import {
   normalizeEmail,
 } from "../../people/person-store.ts";
 
-/**
- * Self-person resolution chain for `nimbus catchup`.
- *
- * Tiers (in order):
- *   1. `[user] me_person_id` from the active profile's nimbus.toml.
- *      Used verbatim — not validated against the index. If the override
- *      is wrong, downstream sub-agents return zero evidence and emit gaps,
- *      which is the correct user-facing signal.
- *   2. `git config user.email` — looked up via person.canonical_email after
- *      `normalizeEmail` (lowercase + trim). Common case: the user is a
- *      git user and their indexed person row already carries the same
- *      canonical email.
- *   3. OS username (`os.userInfo().username`) — looked up via
- *      person.github_login (the most common convention: dev's local user
- *      matches their github handle). We do NOT fan out to every per-service
- *      handle column because the false-match rate climbs quickly and the
- *      gap-note path is preferable to a wrong identity.
- *
- * If all three miss, returns `{ personId: null, source: "unresolved" }`. The
- * caller emits a `missing_user_identity` gap note pointing at
- * `nimbus config set user.me_person_id <id>`.
- */
-
 export type SelfPersonSource = "override" | "git" | "os" | "unresolved";
 
 export type SelfPersonResolution = {

@@ -1,8 +1,3 @@
-/**
- * nimbus-mcp-google-photos — Google Photos Library API (metadata only; no binary downloads by default).
- * OAuth access token is injected by the Gateway as GOOGLE_OAUTH_ACCESS_TOKEN (never logged).
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

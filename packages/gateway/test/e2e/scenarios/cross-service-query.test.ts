@@ -1,8 +1,3 @@
-/**
- * Q2 acceptance — cross-service ranked index search (no network).
- * Mirrors roadmap: merged results across Drive, GitHub, Slack, Linear from SQLite only.
- */
-
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
@@ -68,7 +63,6 @@ describe("cross-service query (local index)", () => {
     }
     timingsMs.sort((a, b) => a - b);
     const median = timingsMs[Math.floor(timingsMs.length / 2)] ?? 0;
-    // Q2 target ~200ms on a dev machine; CI runners vary — keep a loose ceiling.
     expect(median).toBeLessThan(800);
 
     idx.close();

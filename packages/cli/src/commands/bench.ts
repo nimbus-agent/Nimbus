@@ -1,19 +1,3 @@
-/**
- * `nimbus bench` — thin spawn wrapper.
- *
- * Spawns the gateway-side standalone entry script
- * `packages/gateway/src/perf/bench-runner.ts` so that all bench measurement
- * runs in a separate process. The CLI package is forbidden from importing
- * `gateway/src` — see ./index.ts JSDoc line 1.
- *
- * Subprocess startup is a one-time invocation cost (~50 ms); per-surface
- * aggregation (5 runs × 100 samples) dominates measurement time.
- *
- * Invocation forms (both produce identical output, per spec §6 criterion 1):
- *   bun packages/cli/src/index.ts bench --surface <id> --runs N --reference
- *   nimbus bench --surface <id> --runs N --gha
- */
-
 import { resolve } from "node:path";
 
 function hasFlag(args: string[], flag: string): boolean {
@@ -43,20 +27,12 @@ Flags:
 See the B2 perf audit design for the surface table.
 `;
 
-/**
- * Resolve the path to bench-runner.ts. In dev / source-tree invocation we
- * walk relative to this file's directory; in a built/bundled CLI a future
- * task can substitute a build-time-resolved constant.
- */
 function resolveBenchRunnerPath(): string {
-  // packages/cli/src/commands/bench.ts → packages/gateway/src/perf/bench-runner.ts
   return resolve(import.meta.dir, "..", "..", "..", "gateway", "src", "perf", "bench-runner.ts");
 }
 
 export interface RunBenchDeps {
-  /** Test-injectable spawn (defaults to Bun.spawn). */
   spawn?: typeof Bun.spawn;
-  /** Test-injectable stdout writer for the in-process --help branch. */
   stdout?: (s: string) => void;
 }
 
@@ -70,9 +46,6 @@ export async function runBench(args: string[], deps: RunBenchDeps = {}): Promise
   const spawn = deps.spawn ?? Bun.spawn;
   const runner = resolveBenchRunnerPath();
 
-  // Use the same `bun` executable that's running this CLI. When invoked as
-  // `bun packages/cli/src/index.ts bench …`, `process.execPath` already
-  // resolves to bun.
   const proc = spawn([process.execPath, runner, ...args], {
     stdin: "inherit",
     stdout: "inherit",

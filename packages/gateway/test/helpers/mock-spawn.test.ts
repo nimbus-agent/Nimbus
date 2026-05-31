@@ -44,7 +44,7 @@ describe("MockSpawn", () => {
         argvMatch: (a) => a[0] === "projects" && a[1] === "describe",
       },
     );
-    mock.respond("gcloud", { exitCode: 1, stdout: "" }); // catch-all
+    mock.respond("gcloud", { exitCode: 1, stdout: "" });
     const proc = Bun.spawn(["gcloud", "projects", "describe", "p"], {
       stdout: "pipe",
       stderr: "pipe",

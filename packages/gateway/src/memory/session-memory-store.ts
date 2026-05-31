@@ -22,14 +22,10 @@ export type SessionMemoryRecallHit = {
 
 export type SessionMemoryStoreDeps = {
   db: Database;
-  /** Vector dimension (must match `vec_items_384`). */
   dims: number;
   embedText: (text: string) => Promise<Float32Array | null>;
 };
 
-/**
- * RAG session chunks in `session_memory` + shared `vec_items_384` pool (schema v10+).
- */
 export class SessionMemoryStore {
   private readonly db: Database;
   private readonly dims: number;
@@ -56,9 +52,6 @@ export class SessionMemoryStore {
     const vec = await this.embedText(chunk.text);
     const hasVec = vec !== null && vec.length === this.dims;
     const now = chunk.createdAt;
-    // When the embedding runtime is unavailable, we still record the literal turn
-    // so multi-turn replay works. Insert into session_memory with vec_rowid=0
-    // as a "no vector" sentinel; semantic recall() will skip those rows.
     if (!hasVec) {
       dbRun(
         this.db,
@@ -129,10 +122,6 @@ export class SessionMemoryStore {
     return out;
   }
 
-  /**
-   * Return the N most recently appended turns for a session, oldest-first.
-   * Unlike `recall()`, this is a literal time-ordered tail for conversational context.
-   */
   async getRecentTurns(
     sessionId: string,
     limit: number,
@@ -151,8 +140,6 @@ export class SessionMemoryStore {
       )
       .all(sessionId, k) as Array<{ text: string; role: string; createdAt: number }>;
     const out: Array<{ text: string; role: SessionMemoryRole; createdAt: number }> = [];
-    // DB query is newest-first; reverse to chronological so the LLM reads
-    // them in turn order.
     for (let i = rows.length - 1; i >= 0; i--) {
       const r = rows[i];
       if (r === undefined) continue;
@@ -163,7 +150,6 @@ export class SessionMemoryStore {
     return out;
   }
 
-  /** Drop chunks older than `ttlMs` for every session (hourly job). */
   pruneExpired(ttlMs: number, nowMs: number): number {
     if (!this.ensureReady()) {
       return 0;

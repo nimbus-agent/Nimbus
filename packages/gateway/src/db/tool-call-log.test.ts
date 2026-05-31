@@ -153,9 +153,9 @@ describe("writeToolCallLog + readToolCallLog", () => {
   });
 
   test("ordering: called_at ASC, id ASC (deterministic across same-millisecond rows)", () => {
-    writeToolCallLog(db, entry({ calledAt: 200 })); // id=1
-    writeToolCallLog(db, entry({ calledAt: 100 })); // id=2
-    writeToolCallLog(db, entry({ calledAt: 200 })); // id=3
+    writeToolCallLog(db, entry({ calledAt: 200 }));
+    writeToolCallLog(db, entry({ calledAt: 100 }));
+    writeToolCallLog(db, entry({ calledAt: 200 }));
     const result = readToolCallLog(db, {});
     expect(result.toolCalls.map((r) => r.calledAt)).toEqual([100, 200, 200]);
     expect(result.toolCalls.map((r) => r.id)).toEqual([2, 1, 3]);
@@ -175,13 +175,11 @@ describe("writeToolCallLog + readToolCallLog", () => {
   });
 
   test("pagination is correct across same-millisecond rows", () => {
-    // 5 rows: t=100,200,200,300,400 (the two at 200 are ids 2 and 3 by insertion order)
-    writeToolCallLog(db, entry({ calledAt: 100 })); // id=1
-    writeToolCallLog(db, entry({ calledAt: 200 })); // id=2
-    writeToolCallLog(db, entry({ calledAt: 200 })); // id=3
-    writeToolCallLog(db, entry({ calledAt: 300 })); // id=4
-    writeToolCallLog(db, entry({ calledAt: 400 })); // id=5
-
+    writeToolCallLog(db, entry({ calledAt: 100 }));
+    writeToolCallLog(db, entry({ calledAt: 200 }));
+    writeToolCallLog(db, entry({ calledAt: 200 }));
+    writeToolCallLog(db, entry({ calledAt: 300 }));
+    writeToolCallLog(db, entry({ calledAt: 400 }));
     const page1 = readToolCallLog(db, { limit: 3 });
     expect(page1.toolCalls.map((r) => r.id)).toEqual([1, 2, 3]);
     expect(page1.hasMore).toBe(true);
@@ -203,13 +201,11 @@ describe("writeToolCallLog + readToolCallLog", () => {
 
   test("cursor + since combine without conflict", () => {
     for (let i = 0; i < 10; i++) writeToolCallLog(db, entry({ calledAt: 100 + i * 100 }));
-    // First call: since=200 lower bound, limit=5 → returns t=200..600 (5 rows)
     const page1 = readToolCallLog(db, { since: 200, limit: 5 });
     expect(page1.toolCalls.map((r) => r.calledAt)).toEqual([200, 300, 400, 500, 600]);
     expect(page1.hasMore).toBe(true);
     expect(page1.nextCursor).not.toBeNull();
     if (page1.nextCursor === null) throw new Error("unreachable");
-    // Second call: same since=200 lower bound, cursor advances → returns 700..1000
     const page2 = readToolCallLog(db, { since: 200, limit: 5, cursor: page1.nextCursor });
     expect(page2.toolCalls.map((r) => r.calledAt)).toEqual([700, 800, 900, 1_000]);
     expect(page2.hasMore).toBe(false);
@@ -223,10 +219,6 @@ describe("writeToolCallLog + readToolCallLog", () => {
   });
 
   test("write swallows DiskFullError-shaped errors gracefully (does not throw)", () => {
-    // Provoke a SQLiteError ("attempt to write a readonly database") and confirm
-    // the helper's internal try/catch swallows it so the LLM-facing path is
-    // never broken. Bun's `bun:sqlite` rejects `:memory:` + readonly:true at the
-    // constructor, so we use a file-backed DB instead (same contract).
     db.close();
     const tmpDir = mkdtempSync(join(tmpdir(), "tool-call-log-ro-"));
     const dbPath = join(tmpDir, "ro.sqlite");

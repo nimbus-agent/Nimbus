@@ -1,9 +1,5 @@
-// Shared typed surface for built-in agent results.
-// Versioned (`agentVersion: 1`) — any breaking change to the --json contract
-// requires a deliberate bump, not silent drift.
-
 export type Evidence = {
-  itemId: string; // "github:org/repo#42" or "graph:<entity_id>"
+  itemId: string;
   type:
     | "pr_authored"
     | "pr_reviewed"
@@ -13,17 +9,17 @@ export type Evidence = {
     | "commit_authored"
     | "chat_mention"
     | "chat_post";
-  serviceId: string; // "github" | "linear" | "slack" | ...
-  title: string; // <=512 chars; matches item.title
-  modifiedAt: number; // unix ms
-  weight: number; // >=0 - contribution to ranking score
+  serviceId: string;
+  title: string;
+  modifiedAt: number;
+  weight: number;
 };
 
 export type GapCategory =
   | "missing_entity_type"
   | "missing_relation_emit"
   | "missing_connector"
-  | "missing_user_identity" // catchup-only
+  | "missing_user_identity"
   | "empty_index";
 
 export type GapNote = {
@@ -34,23 +30,23 @@ export type GapNote = {
 
 export type AgentBriefBase = {
   agentVersion: 1;
-  generatedAt: number; // unix ms
-  latencyMs: number; // measured at start/end; always populated
+  generatedAt: number;
+  latencyMs: number;
   gaps: GapNote[];
 };
 
 export type ExpertFinding = {
-  personId: string; // empty string for unresolved authors
+  personId: string;
   displayName: string;
   evidence: Evidence[];
-  score: number; // 0..1
+  score: number;
   confidence: "high" | "medium" | "low";
 };
 
 export type ExpertBrief = AgentBriefBase & {
   kind: "expert";
   query: { topicOrFile: string };
-  ranked: ExpertFinding[]; // already ordered, length <= 10
+  ranked: ExpertFinding[];
 };
 
 export type ImpactCategory =
@@ -80,7 +76,7 @@ export type CatchupItem = {
   itemId: string;
   title: string;
   modifiedAt: number;
-  relevanceScore: number; // 0..1
+  relevanceScore: number;
   relevanceReasons: string[];
 };
 
@@ -107,16 +103,9 @@ export type AgentBrief = ExpertBrief | ImpactBrief | CatchupBrief;
 
 export type BriefReadyPayload<B extends AgentBrief> = {
   sessionId: string;
-  brief: string; // Markdown
-  findings: B; // structured
+  brief: string;
+  findings: B;
 };
-
-// Lightweight runtime validators — used by the e2e tests to round-trip --json.
-// Keep these as pure shape checks; they intentionally do not validate field
-// values (e.g., score range) so changes there don't ripple here.
-
-// Bracket access required by tsconfig's `noPropertyAccessFromIndexSignature: true`.
-// Matches the existing pattern in packages/gateway/src/auth/pkce.ts:192-195.
 
 export function isExpertBrief(x: unknown): x is ExpertBrief {
   if (x === null || typeof x !== "object") return false;

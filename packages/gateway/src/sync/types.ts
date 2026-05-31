@@ -4,20 +4,17 @@ import type { Logger } from "pino";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ProviderRateLimiter } from "./rate-limiter.ts";
 
-/** Per-sync execution context passed to `Syncable.sync`. */
 export interface SyncContext {
   vault: NimbusVault;
   db: Database;
   logger: Logger;
   rateLimiter: ProviderRateLimiter;
-  /** Fire-and-forget semantic embedding after index upsert (optional). */
   scheduleItemEmbedding?: (itemId: string) => void;
 }
 
 export interface Syncable {
   readonly serviceId: string;
   readonly defaultIntervalMs: number;
-  /** First sync window when `cursor` is null; connector-enforced. */
   readonly initialSyncDepthDays: number;
   sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult>;
 }
@@ -31,12 +28,6 @@ export interface SyncResult {
   bytesTransferred?: number;
 }
 
-// ─── Retry-After parsing (RFC 7231) ───────────────────────────────────────────
-
-/**
- * Parse a `Retry-After` response value: delay-seconds (`^\d+$`) or HTTP-date.
- * When the header is missing or not parseable, uses `fallbackSeconds` from now.
- */
 export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: number): Date {
   const fb = Number.isFinite(fallbackSeconds) && fallbackSeconds > 0 ? fallbackSeconds : 60;
   if (value === null) {
@@ -59,13 +50,6 @@ export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: 
   return new Date(Date.now() + fb * 1000);
 }
 
-// ─── Typed sync errors ───────────────────────────────────────────────────────
-
-/**
- * Throw from a connector's `sync()` to signal an HTTP 429 rate-limit response.
- * The scheduler will call `transitionHealth(rate_limited)` and skip dispatching
- * until `retryAfter` has passed.
- */
 export class RateLimitError extends Error {
   readonly retryAfter: Date;
   constructor(retryAfter: Date, message = "Rate limited") {
@@ -75,11 +59,6 @@ export class RateLimitError extends Error {
   }
 }
 
-/**
- * Throw from a connector's `sync()` to signal an HTTP 401/403 response.
- * The scheduler will call `transitionHealth(unauthenticated)` and emit a
- * notification prompting the user to re-authenticate.
- */
 export class UnauthenticatedError extends Error {
   constructor(message = "Connector authentication expired or revoked") {
     super(message);
@@ -87,7 +66,6 @@ export class UnauthenticatedError extends Error {
   }
 }
 
-/** Credential miss / token failure — no index changes, preserve incoming cursor. */
 export function syncNoopResult(cursor: string | null, t0: number): SyncResult {
   return {
     cursor,
@@ -113,12 +91,8 @@ export interface SyncStatus {
   itemCount: number;
   lastError: string | null;
   consecutiveFailures: number;
-  /** `sync_state.health_state` (connector health). */
   healthState?: string;
-  /** Epoch ms for `sync_state.retry_after` when rate-limited; otherwise `null`. */
   healthRetryAfterMs?: number | null;
-  /** Per-connector default reindex depth (V21). */
   depth: "metadata_only" | "summary" | "full";
-  /** True when the connector is NOT paused. */
   enabled: boolean;
 }

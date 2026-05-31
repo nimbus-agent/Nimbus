@@ -23,7 +23,6 @@ const UNKNOWN_INTENT_REPLY: PlanResult = {
   text: "I can search your indexed sandbox for files or move files with your approval. Try: “find files named *.md” or “move ./a.txt to ./b.txt”.",
 };
 
-/** Built-in NL intent → plan table (add a row here when introducing a new {@link IntentClass}). */
 const BUILTIN_INTENT_PLANNERS: Record<IntentClass, IntentPlanner> = {
   file_search: (classified, paths) => {
     const pattern = ent(classified.entities, "pattern").trim();
@@ -72,9 +71,6 @@ const BUILTIN_INTENT_PLANNERS: Record<IntentClass, IntentPlanner> = {
   unknown: () => UNKNOWN_INTENT_REPLY,
 };
 
-/**
- * Maps a classified intent to either a direct reply or connector actions (via {@link ToolExecutor}).
- */
 export function planFromIntent(classified: ClassifiedIntent, paths: PlatformPaths): PlanResult {
   if (classified.confidence < 0.6) {
     return LOW_CONFIDENCE_REPLY;

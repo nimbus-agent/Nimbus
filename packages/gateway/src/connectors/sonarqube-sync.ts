@@ -1,24 +1,3 @@
-/**
- * SonarQube + SonarCloud REST sync handler. Walks
- * `/api/components/search?qualifiers=TRK` → `/api/issues/search` (paged)
- * and upserts each open issue into the unified `item` table as
- * `service = "sonarqube", type = "code_issue"` via
- * {@link mapSonarIssueToItem}.
- *
- * Single-pass cursor model (matches `snyk-sync.ts` / `bitrise-sync.ts`):
- * every successful run emits a fresh `nimbus-sonarqube1:{pass: 1}`
- * cursor so the scheduler does not re-queue immediately. SonarQube does
- * not expose a delta endpoint for issues; full-walk-per-cycle is
- * acceptable at the 10-minute default cadence because the issues
- * endpoint paginates and we cap pages per cycle.
- *
- * Self-hosted SonarQube users supply their own `sonarqube.url` vault
- * key; otherwise we default to `https://sonarcloud.io`. SonarCloud
- * additionally requires the `sonarqube.organization` vault key — when
- * missing the connector returns a noop result (consistent with Sentry's
- * `org_slug` handling).
- */
-
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -26,6 +5,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSonarIssueToItem, stripTrailingSlashes } from "./sonarqube-issue-mapping.ts";
@@ -35,7 +15,7 @@ const SERVICE_ID = "sonarqube";
 const CURSOR_PREFIX = "nimbus-sonarqube1:";
 const DEFAULT_API = "https://sonarcloud.io";
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_PROJECT = 20; // 2000 issues per project per cycle cap.
+const MAX_PAGES_PER_PROJECT = 20;
 const ISSUE_TYPES = "BUG,VULNERABILITY,CODE_SMELL";
 const OPEN_STATUSES = "OPEN,CONFIRMED,REOPENED";
 
@@ -53,31 +33,10 @@ export type SonarqubeSyncableOptions = {
   ensureSonarqubeMcpRunning: () => Promise<void>;
 };
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
-async function sonarGet(
-  ctx: SyncContext,
-  token: string,
-  base: string,
-  path: string,
-): Promise<FetchOutcome> {
-  await ctx.rateLimiter.acquire(SERVICE_ID);
-  const res = await fetch(`${base}${path}`, {
+function sonarGet(ctx: SyncContext, token: string, base: string, path: string) {
+  return connectorFetch(ctx, SERVICE_ID, `${base}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
-  const text = await res.text();
-  if (!res.ok) {
-    ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, path }, "sonarqube GET failed");
-    return { kind: "http_error", bytes: text.length };
-  }
-  try {
-    return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
-  } catch {
-    return { kind: "parse_error", bytes: text.length };
-  }
 }
 
 function extractProjectKeys(parsed: unknown): string[] {
@@ -196,8 +155,6 @@ function upsertSonarIssues(
 }
 
 function buildComponentsPath(organization: string): string {
-  // The components endpoint accepts `organization` optionally; SonarCloud
-  // effectively requires it (returns empty otherwise), self-hosted ignores it.
   const params = new URLSearchParams({ qualifiers: "TRK", ps: String(PAGE_SIZE) });
   if (organization !== "") {
     params.set("organization", organization);

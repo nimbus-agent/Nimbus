@@ -1,17 +1,3 @@
-/**
- * Coverage for the dedicated-Worker origin acceptance check.
- *
- * Tier D — was at 0 % line coverage. The function has four branches:
- *  - `o === ""` (blank — typical Bun worker spawn)
- *  - `o === "null"` (sandboxed iframe-style origin)
- *  - `selfO === ""` (gateway is itself in a non-browser/blank context — accept anything)
- *  - cross-origin (`o !== selfO`) → reject
- *  - same-origin match → accept
- *
- * `getGlobalOrigin` reads `globalThis.origin` — we stub it via PropertyDescriptor
- * capture/restore so we never leak state into sibling tests.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isAcceptableWorkerOrigin } from "./worker-security.ts";
 
@@ -70,8 +56,6 @@ describe("isAcceptableWorkerOrigin", () => {
   });
 
   test("ignores a non-string self.origin (treats it as blank)", () => {
-    // The helper coerces non-string globalThis.origin to "" — exercise the
-    // typeof guard inside `getGlobalOrigin`.
     Object.defineProperty(globalThis, "origin", {
       value: 42,
       configurable: true,

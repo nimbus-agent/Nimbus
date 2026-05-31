@@ -1,7 +1,6 @@
 import { encodeBasicAuthHeader } from "./mcp-tool-kit.ts";
 import { stripTrailingSlashes } from "./strip-trailing-slashes.ts";
 
-/** Strip slashes, ensure scheme; throws `emptyMessage` when the usable base is empty. */
 export function normalizeRequiredSiteBaseUrl(raw: string, emptyMessage: string): string {
   const t = stripTrailingSlashes(raw);
   if (t === "") {
@@ -18,7 +17,6 @@ export function requireTrimmedEnv(name: string, notSetMessage: string): string {
   return v.trim();
 }
 
-/** JSON-oriented Atlassian Cloud fetch (Basic email:token); response body always read as text. */
 export async function fetchAtlassianBasicAuthJsonText(
   url: string,
   email: string,

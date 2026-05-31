@@ -54,14 +54,12 @@ export interface NimbusIpcClient {
   indexMetrics(): Promise<IndexMetrics>;
   auditList(limit?: number): Promise<AuditEntry[]>;
   consentRespond(requestId: string, approved: boolean): Promise<void>;
-  /** Profiles + Telemetry. */
   profileList(): Promise<ProfileListResult>;
   profileCreate(name: string): Promise<{ name: string }>;
   profileSwitch(name: string): Promise<{ active: string }>;
   profileDelete(name: string): Promise<{ deleted: string }>;
   telemetryGetStatus(): Promise<TelemetryStatus>;
   telemetrySetEnabled(enabled: boolean): Promise<{ enabled: boolean }>;
-  /** Connectors + Model panels. */
   connectorSetConfig(
     service: string,
     patch: ConnectorConfigPatch,
@@ -83,7 +81,6 @@ export interface NimbusIpcClient {
     provider: "ollama" | "llamacpp" | "remote",
     modelName: string,
   ): Promise<{ taskType: LlmTaskType; provider: string; modelName: string }>;
-  /** Audit + Updates panels. */
   auditGetSummary(): Promise<AuditSummary>;
   auditVerify(full?: boolean): Promise<AuditVerifyResult>;
   auditExport(): Promise<ReadonlyArray<AuditExportRow>>;
@@ -92,7 +89,6 @@ export interface NimbusIpcClient {
   updaterApplyUpdate(): Promise<UpdaterApplyStarted>;
   updaterRollback(): Promise<UpdaterRollbackResult>;
   diagGetVersion(): Promise<DiagVersionResult>;
-  /** Data panel. */
   dataGetExportPreflight(): Promise<ExportPreflightResult>;
   dataGetDeletePreflight(args: { service: string }): Promise<DeletePreflightResult>;
   dataExport(args: {
@@ -106,7 +102,6 @@ export interface NimbusIpcClient {
     recoverySeed?: string;
   }): Promise<DataImportResult>;
   dataDelete(args: { service: string; dryRun: false }): Promise<DataDeleteResult>;
-  /** Watchers, Workflows, Marketplace. */
   watcherList(): Promise<WatcherListResult>;
   watcherCreate(params: WatcherCreateParams): Promise<WatcherCreateResult>;
   watcherDelete(id: string): Promise<{ ok: boolean }>;
@@ -140,21 +135,9 @@ const FORBIDDEN_VALUE_KEYS: readonly string[] = [
   "mnemonic",
   "privateKey",
   "encryptedVaultManifest",
-  // S2-F6 — `pat` is a common shorthand for personal-access-token in the
-  // GitHub / GitLab / Bitbucket connector vocabulary. The generic
-  // SENSITIVE_KEY_PATTERN below would not catch the bare 3-letter form,
-  // so add it explicitly.
   "pat",
 ];
 
-/**
- * S2-F6 — mirror gateway-side `executor.ts:SENSITIVE_PAYLOAD_KEY` so the
- * renderer-side redactor catches the same connector-secret names that the
- * gateway audit redactor catches: `apiToken`, `clientSecret`, `accessToken`,
- * `refreshToken`, `bot_token`, `api_key`, `app_password`, etc.
- *
- * Keep this exact pattern in sync with packages/gateway/src/engine/executor.ts.
- */
 const SENSITIVE_KEY_PATTERN = /(token|key|secret|password|credential|bearer|auth)/i;
 
 function isSensitiveKeyName(name: string): boolean {
@@ -166,22 +149,15 @@ export { isSensitiveKeyName };
 function redactSensitiveSubstrings(input: string): string {
   let out = input;
   for (const key of FORBIDDEN_VALUE_KEYS) {
-    // `key=<run-of-non-whitespace-non-comma-non-brace>` — covers raw strings and JSON shards.
     const assignRe = new RegExp(String.raw`${key}\s*[=:]\s*"?([^\s",}]+)"?`, "gi");
     out = out.replace(assignRe, `${key}=[REDACTED]`);
-    // `"key":"value"` explicit JSON form (assignRe alone can miss quoted JSON).
     const jsonRe = new RegExp(String.raw`"${key}"\s*:\s*"[^"]*"`, "gi");
     out = out.replace(jsonRe, `"${key}":"[REDACTED]"`);
   }
-  // S2-F6 — generic redaction of any JSON key whose name matches the
-  // sensitive-key pattern. Catches connector secret names: apiToken,
-  // clientSecret, accessToken, refreshToken, bot_token, api_key,
-  // app_password, Authorization header values, etc.
   out = out.replaceAll(
     /"(\w*(?:token|key|secret|password|credential|bearer|auth)\w*)"\s*:\s*"[^"]*"/gi,
     (_match, k: string) => `"${k}":"[REDACTED]"`,
   );
-  // Bare `key=value` form for the same key shapes.
   out = out.replaceAll(
     /(\b\w*(?:token|key|secret|password|credential|bearer|auth)\w*)\s*[=:]\s*"?([^\s",}]+)"?/gi,
     (_match, k: string) => `${k}=[REDACTED]`,
@@ -270,7 +246,6 @@ export function createIpcClient(): NimbusIpcClient {
     },
     async consentRespond(requestId: string, approved: boolean): Promise<void> {
       await this.call<unknown>("consent.respond", { requestId, approved });
-      // Notify Rust to clear its inbox and fan `consent://resolved` out to all windows.
       await invoke("hitl_resolved", { requestId, approved });
     },
     async profileList(): Promise<ProfileListResult> {
@@ -552,7 +527,6 @@ export function createIpcClient(): NimbusIpcClient {
   return client;
 }
 
-/** For tests only. Resets the singleton so each suite starts clean. */
 export function __resetIpcClientForTests(): void {
   singleton = null;
 }

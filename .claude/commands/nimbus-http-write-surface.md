@@ -128,5 +128,5 @@ When a new POST/PUT/DELETE genuinely needs to live on the HTTP API (not the IPC 
 - [`docs/SECURITY.md`](../../docs/SECURITY.md) §"IPC Surface" — boundary description
 - [`docs/architecture.md`](../../docs/architecture.md) §"Security Model" — threat-to-mitigation table
 - `nimbus-tauri-allowlist` skill — parallel pattern for the renderer-callable surface (I7)
-- `nimbus-security-invariants` skill — the triple rule (production wiring + docs + test) that all fifteen invariants follow
+- `nimbus-security-invariants` skill — the triple rule (production wiring + docs + test) that all sixteen invariants follow
 - `nimbus-cicd-data-layer` skill — pair with this skill when authoring new DORA / preflight / deploy-annotation surfaces

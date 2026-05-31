@@ -48,7 +48,7 @@ describe("renderExpert", () => {
     expect(md).toContain("(high");
     expect(md).toContain("**Bob Wong**");
     expect(md).toContain("(medium");
-    expect(md).not.toContain("## Gaps"); // no gaps -> no section
+    expect(md).not.toContain("## Gaps");
     expect(md).toContain("_generated in 1.4 s_");
   });
 
@@ -111,7 +111,6 @@ describe("renderExpert", () => {
     expect(md).toContain("evidence row 4");
     expect(md).not.toContain("evidence row 5");
     expect(md).not.toContain("evidence row 6");
-    // Confidence-line still reflects the full count (7), even though only 5 are listed.
     expect(md).toContain("(high — 7 evidence rows)");
   });
 });
@@ -178,16 +177,13 @@ describe("renderImpact", () => {
     };
     const md = renderImpact(brief);
     expect(md).toContain("# Impact: src/billing/retry.ts");
-    // Verify headings with blank lines preserved
     expect(md).toContain("## Services\n\n- **payment-service**");
     expect(md).toContain("## Pipelines\n\n- **payment CI run");
     expect(md).toContain("## Oncall\n\n- **Payment oncall**");
-    // Coverage for all five buckets
     expect(md).toContain("## Dashboards");
     expect(md).toContain("Payment health dashboard");
     expect(md).toContain("## Downstream Repos");
     expect(md).toContain("payment-cli");
-    // Lock singular/plural hop rendering
     expect(md).toContain("1 hop)");
     expect(md).toContain("2 hops)");
     expect(md).not.toContain("## Gaps");
@@ -386,7 +382,6 @@ describe("renderCatchup", () => {
       ],
     };
     const md = renderCatchup(brief);
-    // The first item rendered under `## linear` must be the high-scoring one.
     const linearIdx = md.indexOf("## linear");
     const highIdx = md.indexOf("**high**");
     const lowIdx = md.indexOf("**low**");

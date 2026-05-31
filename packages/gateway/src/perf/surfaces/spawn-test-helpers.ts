@@ -1,12 +1,3 @@
-/**
- * Test-only fake `Bun.spawn` factories for surface driver unit tests.
- *
- * Lives next to the drivers (rather than a top-level fixtures module) so
- * each driver and its test stay together — the import path mirrors the
- * driver path. Not used in production code.
- */
-
-/** A fake `Bun.spawn` whose child has no output and exits 0 immediately. */
 export function fakeSpawnExitsClean(): typeof Bun.spawn {
   return ((..._args: unknown[]) => {
     return {
@@ -26,24 +17,12 @@ export function fakeSpawnExitsClean(): typeof Bun.spawn {
   }) as unknown as typeof Bun.spawn;
 }
 
-/**
- * A fake Bun.spawn whose child:
- *  - emits the configured stdoutChunks (and optional stderrChunks) at low cadence,
- *  - blocks `exited` until kill() is called when waitForKill=true, otherwise
- *    resolves immediately with exitCode (default 0).
- *
- * Used by the spawn-and-warm helper tests (Task 4) and the S6/S7 driver
- * tests (Tasks 10, 11, 13, 14, 15) to drive a synthetic gateway lifecycle
- * without booting a real child.
- */
 export interface FakeSpawnEmitsMarkerOptions {
   pid?: number;
   stdoutChunks?: string[];
   stderrChunks?: string[];
-  /** When true, exited resolves only after kill(). Default true. */
   waitForKill?: boolean;
   exitCode?: number;
-  /** Delay between chunk emissions (ms). Default 1. */
   chunkDelayMs?: number;
 }
 

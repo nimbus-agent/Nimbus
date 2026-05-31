@@ -1,20 +1,11 @@
-/**
- * Pure substring-match filter for `semgrep_search`. Extracted from
- * `server.ts` so the matching logic can be unit-tested without spawning an
- * MCP stdio transport. The server keeps the HTTP / envelope wrapper; this
- * module owns the rule/message/path haystack construction +
- * case-insensitive substring match.
- */
+import {
+  asObjectish,
+  makeQueryFilter,
+  type SearchMatchOptions,
+  stringField,
+} from "../../shared/search-filter.ts";
 
-export interface SemgrepSearchMatchOptions {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}
-
-function stringField(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  return typeof v === "string" ? v : "";
-}
+export type SemgrepSearchMatchOptions = SearchMatchOptions;
 
 function nestedString(row: Record<string, unknown>, parent: string, key: string): string {
   const p = row[parent];
@@ -24,33 +15,17 @@ function nestedString(row: Record<string, unknown>, parent: string, key: string)
   return stringField(p as Record<string, unknown>, key);
 }
 
-function buildHaystack(row: Record<string, unknown>): string {
-  const ruleName = stringField(row, "rule_name");
-  const ruleMessage = stringField(row, "rule_message");
-  const filePath = nestedString(row, "location", "file_path");
-  const repoName = nestedString(row, "repository", "name");
-  return `${ruleName} ${ruleMessage} ${filePath} ${repoName}`.toLowerCase();
+function fieldsOf(item: unknown): readonly string[] | null {
+  const row = asObjectish(item);
+  if (row === undefined) {
+    return null;
+  }
+  return [
+    stringField(row, "rule_name"),
+    stringField(row, "rule_message"),
+    nestedString(row, "location", "file_path"),
+    nestedString(row, "repository", "name"),
+  ];
 }
 
-export function filterSemgrepFindings(
-  findings: readonly unknown[],
-  options: SemgrepSearchMatchOptions,
-): unknown[] {
-  const needle = options.query.toLowerCase();
-  const cap = options.limit ?? 50;
-  const out: unknown[] = [];
-  for (const it of findings) {
-    if (it === null || typeof it !== "object") {
-      continue;
-    }
-    const row = it as Record<string, unknown>;
-    if (!buildHaystack(row).includes(needle)) {
-      continue;
-    }
-    out.push(it);
-    if (out.length >= cap) {
-      break;
-    }
-  }
-  return out;
-}
+export const filterSemgrepFindings = makeQueryFilter(fieldsOf);

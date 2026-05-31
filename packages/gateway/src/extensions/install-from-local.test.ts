@@ -49,7 +49,6 @@ describe("install-from-local", () => {
     expect(() => assertSafeExtensionId("@scope/pkg")).not.toThrow();
   });
 
-  // S7-F9
   test("assertSafeExtensionId rejects ids longer than 128 characters", () => {
     expect(() => assertSafeExtensionId("a".repeat(128))).not.toThrow();
     expect(() => assertSafeExtensionId("a".repeat(129))).toThrow(/too long/i);
@@ -123,8 +122,6 @@ describe("install-from-local", () => {
       "utf8",
     );
     writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
-    // Write the archive outside the tree being packed — creating a .tgz next to the
-    // source folder can make Windows tar exit non-zero while the archive grows in the same directory.
     const archive = join(tmpdir(), `nimbus-ext-test-${process.pid}-${Date.now()}.tgz`);
     const tarBin = resolveSystemTarCommand();
     try {
@@ -153,7 +150,6 @@ describe("install-from-local", () => {
 describe("install-from-local symlink + traversal hardening (G7)", () => {
   test("rejects extension source that contains a symlink (S7-F5)", async () => {
     if (process.platform === "win32") {
-      // Symlink creation requires elevated privileges on Windows; skip.
       return;
     }
     const { symlinkSync, unlinkSync } = await import("node:fs");
@@ -168,7 +164,6 @@ describe("install-from-local symlink + traversal hardening (G7)", () => {
     );
     writeFileSync(join(src, "dist", "index.js"), "/* legit */\n", "utf8");
 
-    // Replace dist/index.js with a symlink to a system file.
     const sym = join(src, "dist", "index.js");
     unlinkSync(sym);
     symlinkSync("/etc/hostname", sym);
@@ -319,7 +314,6 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
 
 describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)", () => {
   test("installs closure leaf-first: already-installed dep is skipped, root is newly installed", async () => {
-    // Pre-install dep A so the solver sees it as already installed.
     const {
       extensionsDir,
       src: srcA,
@@ -333,7 +327,6 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     writeFileSync(join(srcA, "dist", "index.js"), "export {}\n", "utf8");
     await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
 
-    // Now install root B which depends on A@^1.0.0.
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-closure-root-"));
     const srcB = join(tmp, "ext-b");
     mkdirSync(join(srcB, "dist"), { recursive: true });
@@ -355,27 +348,21 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
       sourcePath: srcB,
     });
 
-    // Root was installed.
     expect(result.id).toBe("closure.root.b");
     expect(result.version).toBe("1.0.0");
 
-    // The `installed` array contains both the dep and the root (leaf-first order).
     expect(result.installed.length).toBe(2);
 
     const depNode = result.installed.find((n) => n.id === "closure.dep.a");
     const rootNode = result.installed.find((n) => n.id === "closure.root.b");
     expect(depNode).toBeDefined();
     expect(rootNode).toBeDefined();
-    // A was already installed — should not be marked as newly installed.
     expect(depNode?.newlyInstalled).toBe(false);
-    // B is newly installed.
     expect(rootNode?.newlyInstalled).toBe(true);
 
-    // Root B's dep edge was recorded.
     expect(rootNode?.deps.length).toBe(1);
     expect(rootNode?.deps[0]?.id).toBe("closure.dep.a");
 
-    // Dep node appears before root in the leaf-first ordering.
     const depIdx = result.installed.findIndex((n) => n.id === "closure.dep.a");
     const rootIdx = result.installed.findIndex((n) => n.id === "closure.root.b");
     expect(depIdx).toBeLessThan(rootIdx);
@@ -384,7 +371,6 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
   });
 
   test("refuses install on conflict; zero disk mutation", async () => {
-    // Pre-install dep A at version 1.5.0.
     const {
       extensionsDir,
       src: srcA,
@@ -398,7 +384,6 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     writeFileSync(join(srcA, "dist", "index.js"), "export {}\n", "utf8");
     await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
 
-    // Root B requires A@^2.0.0 — conflicts with the installed 1.5.0.
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-conflict-root-"));
     const srcB = join(tmp, "ext-b-conflict");
     mkdirSync(join(srcB, "dist"), { recursive: true });
@@ -415,16 +400,13 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     writeFileSync(join(srcB, "dist", "index.js"), "export {}\n", "utf8");
 
     try {
-      // Solver must throw DependencyConflictError (1.5.0 does not satisfy ^2.0.0).
       await expect(
         installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcB }),
       ).rejects.toThrow(/dependency_conflict/i);
 
-      // Root B must NOT have been written to disk (error before any disk mutation).
       const { existsSync } = await import("node:fs");
       expect(existsSync(join(extensionsDir, "conflict.root.b"))).toBe(false);
 
-      // Only the pre-installed A is in the DB (root B was not inserted).
       const rows = listExtensions(db);
       expect(rows.every((r) => r.id !== "conflict.root.b")).toBe(true);
     } finally {
@@ -433,29 +415,23 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
   });
 
   test("rolls back newly-created directories on failure mid-install", async () => {
-    // Root with a missing entry file — completeExtensionInstallAfterCopy will throw
-    // "extension entry file missing" after cpSync. The rollback should remove the dest dir.
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-rollback-",
       "ext-rollback",
     );
-    // Write manifest pointing to an entry that does NOT exist.
     writeFileSync(
       join(src, "nimbus.extension.json"),
       JSON.stringify({ id: "rollback.root", version: "1.0.0", entry: "dist/missing.js" }),
       "utf8",
     );
-    // Note: intentionally NOT writing dist/missing.js
 
     await expect(
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
     ).rejects.toThrow(/entry file missing/i);
 
-    // The rollback must have removed the partially-installed directory.
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "rollback.root"))).toBe(false);
 
-    // Nothing was inserted into the DB.
     expect(listExtensions(db).length).toBe(0);
   });
 });
@@ -520,10 +496,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
   });
 
   test("install fails when destination directory already exists from a previous install at a different version", async () => {
-    // Install version 1.0.0 first, then try to install 2.0.0 with a fresh DB.
-    // The destination directory still exists from the prior install but the
-    // solver sees the root as newlyInstalled (no existing DB row), so the
-    // existsSync(dest) check on line 698 fires.
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-dest-exists-",
       "src-v1",
@@ -536,7 +508,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
     await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
 
-    // Fresh DB so solver sees nothing installed, but the dir still exists on disk.
     const db2 = new Database(":memory:");
     LocalIndex.ensureSchema(db2);
 
@@ -570,7 +541,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
     ).rejects.toThrow(/relative path/i);
 
-    // Rollback removed partial install.
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "abs.entry.ext"))).toBe(false);
   });
@@ -596,7 +566,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-badtgz-"));
     const extensionsDir = join(tmp, "extensions");
     const badArchive = join(tmp, "bad.tgz");
-    // Random non-gzip bytes — tar will refuse to extract.
     writeFileSync(badArchive, "not a real gzip archive at all");
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
@@ -617,7 +586,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-nomf-arch-"));
     const extensionsDir = join(tmp, "extensions");
     const stage = join(tmp, "stage");
-    // Two levels deep so the one-deep lookup also fails.
     mkdirSync(join(stage, "level1", "level2"), { recursive: true });
     writeFileSync(join(stage, "level1", "level2", "nimbus.extension.json"), "{}");
 
@@ -684,11 +652,9 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     );
     writeFileSync(
       join(src, "nimbus.extension.json"),
-      // entry points at a nonexistent path
       JSON.stringify({ id: "missing.entry.ext", version: "1.0.0", entry: "dist/nope.js" }),
       "utf8",
     );
-    // intentionally NOT writing dist/nope.js
     await expect(
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
     ).rejects.toThrow(/entry file missing/i);
@@ -698,14 +664,6 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
   });
 });
 
-// ─── Tier C-2 — dependency-install path through installDepFromRegistry ────────
-
-/**
- * Helper: build a real .tar.gz containing a single extension package. Returns
- * the tarball bytes and the entry-file SHA-256 the gateway will compute after
- * extraction. We return a closure that builds the bytes on demand so each test
- * controls the tmpdir lifecycle.
- */
 function buildExtensionTarball(opts: {
   id: string;
   version: string;
@@ -748,7 +706,6 @@ function buildExtensionTarball(opts: {
   }
 }
 
-/** Build a mock RegistryClient. fetchLatestVersion returns the dep version; fetchManifest returns a fixed response. */
 function makeMockRegistry(opts: {
   depId: string;
   depVersion: string;
@@ -802,7 +759,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
     );
     const depTarball = buildExtensionTarball({ id: "dep.fetched", version: "1.0.0" });
 
-    // Stub global fetch to return the tarball bytes when downloadTarball asks.
     globalThis.fetch = (async (input: unknown) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url === "https://mock.example/tarball.tgz") {
@@ -855,7 +811,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       throw new Error(`unexpected fetch: ${url}`);
     }) as typeof fetch;
 
-    // Advertise a different entry hash than what the tarball actually contains.
     const registryClient = makeMockRegistry({
       depId: "dep.hashmiss",
       depVersion: "1.0.0",
@@ -882,10 +837,8 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       }),
     ).rejects.toThrow(/entry hash mismatch/i);
 
-    // Roll-back: neither root nor dep should be in the DB.
     expect(listExtensions(db).find((e) => e.id === "dep.hashmiss")).toBeUndefined();
     expect(listExtensions(db).find((e) => e.id === "root.hashmiss")).toBeUndefined();
-    // Dep directory rolled back from disk.
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "dep.hashmiss"))).toBe(false);
   });
@@ -896,10 +849,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       "root-fetchfail",
     );
 
-    // The solver calls registryClient.fetchManifest once during planning to learn
-    // the dep's own transitive deps. Then installDepFromRegistry calls
-    // fetchManifest a SECOND time to learn the tarball URL. Fail only on the
-    // second call to drive the catch block at lines 438-443.
     let callCount = 0;
     const registryClient: RegistryClient = {
       fetchPublisherKey: async () => ({ kind: "not_found" }),
@@ -907,7 +856,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       fetchManifest: async (id, version) => {
         callCount++;
         if (callCount === 1) {
-          // Solver-time manifest fetch: succeed.
           return {
             manifest: { id, version, entry: "dist/index.js" } as FetchManifestResponse["manifest"],
             manifestRaw: { id, version },
@@ -916,7 +864,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
             tarballUrl: "https://mock.example/tarball.tgz",
           };
         }
-        // Install-time manifest fetch: fail.
         throw new Error("network down");
       },
     };
@@ -983,7 +930,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       "nimbus-dep-idmismatch-",
       "root-idmismatch",
     );
-    // Tarball has id "different.id" but registry says "dep.expected".
     const depTarball = buildExtensionTarball({ id: "different.id", version: "1.0.0" });
 
     globalThis.fetch = (async (input: unknown) => {
@@ -1026,7 +972,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       "nimbus-dep-vermismatch-",
       "root-vermismatch",
     );
-    // Tarball has version 9.9.9 but registry advertised 1.0.0.
     const depTarball = buildExtensionTarball({ id: "dep.ver", version: "9.9.9" });
 
     globalThis.fetch = (async (input: unknown) => {
@@ -1037,8 +982,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       throw new Error(`unexpected fetch: ${url}`);
     }) as typeof fetch;
 
-    // We need the solver to ask for 1.0.0, so listVersions must return 1.0.0
-    // and the manifest fetch must succeed with version 1.0.0 in the metadata.
     const registryClient: RegistryClient = {
       fetchPublisherKey: async () => ({ kind: "not_found" }),
       fetchLatestVersion: async (_id, channel, _signal) => ({ version: "1.0.0", channel }),
@@ -1073,8 +1016,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
   });
 
   test("root with dep but no registryClient errors out before any disk mutation", async () => {
-    // The solver tries to listVersions for the missing dep; with no registry
-    // and dep not installed, the solver should refuse (OfflineDependencyResolutionError-class).
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-dep-noregistry-",
       "root-noreg",
@@ -1094,14 +1035,12 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
     ).rejects.toThrow();
 
-    // No disk mutation.
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "root.noreg"))).toBe(false);
     expect(listExtensions(db).find((e) => e.id === "root.noreg")).toBeUndefined();
   });
 
   test("solverFetcher.fetchManifest reads installed dep from disk (pinned version path)", async () => {
-    // Pre-install dep A at 1.0.0 via the normal flow.
     const {
       extensionsDir,
       src: srcA,
@@ -1114,8 +1053,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
     writeFileSync(join(srcA, "dist", "index.js"), "export {}\n");
     await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: srcA });
 
-    // Install root B requiring A — the solverFetcher.fetchManifest with the
-    // pinned version should hit the disk-read branch (lines 660-670).
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-fromdisk-root-"));
     try {
       const srcB = join(tmp, "ext-b-disk");
@@ -1137,7 +1074,6 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
         sourcePath: srcB,
       });
       expect(r.id).toBe("disk.root.b");
-      // Dep A was already installed (newlyInstalled=false in the closure).
       const depNode = r.installed.find((n) => n.id === "disk.dep.a");
       expect(depNode?.newlyInstalled).toBe(false);
     } finally {

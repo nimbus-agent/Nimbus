@@ -1,26 +1,12 @@
-/**
- * Integration test: `deploymentFrequency` source preference.
- *
- * Verifies that:
- *   1. Annotated deploys (`deployment_items` joined to `item`) are preferred
- *      over regex-matched `ci_run` rows when both exist in the window.
- *   2. The `mixed_source` gap is emitted when both sources are present.
- *   3. The legacy regex-only window still returns gap = null.
- *   4. An empty window returns gap = `"no_deployment_data"`.
- *
- * `leadTimeForChanges` and `changeFailureRate` remain on the regex path in
- * this PR; they're out of scope.
- */
-
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
 import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { seedPaymentServiceFixture } from "../../fixtures/deployments/payment-service/seed.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 function cfg(): DoraServiceConfig {
   return {
@@ -41,8 +27,7 @@ describe("dora.deploymentFrequency — source preference", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "dora-source-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 28);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
   });
 
   afterEach(() => {
@@ -61,7 +46,6 @@ describe("dora.deploymentFrequency — source preference", () => {
     expect(df.sample).toBe(3);
     expect(df.gap).toBe("mixed_source");
     expect(df.value).not.toBeNull();
-    // 3 deploys over 30 days
     expect(df.value).toBeCloseTo(3 / 30, 5);
   });
 

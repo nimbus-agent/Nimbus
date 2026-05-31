@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripTrailingChars } from "../util/strip-affixes.ts";
 
 const SUPPORTED_TOKENS = ["YYYY", "YY", "MM", "DD", "HH", "mm"] as const;
 
@@ -8,8 +9,6 @@ function pad2(n: number): string {
 }
 
 export function formatDailyNoteFilename(format: string, date: Date): string {
-  // Use UTC components — daily notes don't depend on the user's locale at the
-  // sync layer, and tests are deterministic this way.
   const replacements: Record<string, string> = {
     YYYY: String(date.getUTCFullYear()),
     YY: String(date.getUTCFullYear() % 100).padStart(2, "0"),
@@ -26,7 +25,6 @@ export function formatDailyNoteFilename(format: string, date: Date): string {
 }
 
 export type DailyNotePath = {
-  /** Forward-slashed vault-relative path including `.md` suffix. */
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly warning: string | undefined;
@@ -70,7 +68,7 @@ export function resolveDailyNotePath(vaultRoot: string, date: Date): DailyNotePa
   const { config, warning } = readDailyNotesConfig(vaultRoot);
   const filename = `${formatDailyNoteFilename(config.format, date)}.md`;
   const rel =
-    config.folder === "" ? filename : `${config.folder.replace(/[/\\]+$/, "")}/${filename}`;
+    config.folder === "" ? filename : `${stripTrailingChars(config.folder, "/\\")}/${filename}`;
   return {
     relativePath: rel,
     absolutePath: join(vaultRoot, rel),

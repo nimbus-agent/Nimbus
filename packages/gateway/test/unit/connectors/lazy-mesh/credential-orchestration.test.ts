@@ -1,15 +1,3 @@
-/**
- * Unit tests for credential-orchestration.ts
- *
- * Strategy: mock `connector-spawns.ts` so that each ensureXxxMcp function is
- * replaced with a lightweight spy that records calls. The `anyGoogleOAuthVaultPresent`
- * helper (from `auth/google-access-token.ts`) is also mocked so Google OAuth tests
- * don't need real OAuth JSON payloads.
- *
- * `ensureObsidianMcp` and `ensurePhase3BundleMcp` are called unconditionally by
- * `ensureCredentialConnectorsRunning` — the mocks let us confirm they always fire.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import {
@@ -18,18 +6,6 @@ import {
 } from "../../../../src/connectors/lazy-mesh/credential-orchestration.ts";
 import type { MeshSpawnContext } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
-
-// ─── Spawn-call recorder ──────────────────────────────────────────────────────
-//
-// Earlier revisions of this file used `mock.module(...)` to replace the
-// `connector-spawns.ts` exports with recorders. bun:test's `mock.module`
-// is process-global with no unmock, so those mocks leaked into the sibling
-// `connector-spawns.test.ts` whenever the bun:test runner loaded files in
-// the Linux-CI order (alphabetical inode, opposite of NTFS). The fix is
-// dependency injection: `ensureCredentialConnectorsRunning` now accepts a
-// `CredentialSpawners` parameter that defaults to the real module exports,
-// and these tests pass a recorder directly. No process-global mock, no
-// cross-file contamination.
 
 const spawnCalls: Array<string> = [];
 
@@ -62,13 +38,9 @@ function makeRecorderSpawners(): CredentialSpawners {
 
 const recorderSpawners: CredentialSpawners = makeRecorderSpawners();
 
-// Convenience wrapper that always passes our recorder. Avoids repeating
-// `, recorderSpawners` in every test.
 async function runOrchestration(ctx: MeshSpawnContext): Promise<void> {
   await ensureCredentialConnectorsRunning(ctx, recorderSpawners);
 }
-
-// ─── Context factory ──────────────────────────────────────────────────────────
 
 function makeCtx(): {
   ctx: MeshSpawnContext;
@@ -87,8 +59,6 @@ function makeCtx(): {
   return { ctx, vault };
 }
 
-// ─── Lifecycle hooks ──────────────────────────────────────────────────────────
-
 beforeEach(() => {
   spawnCalls.length = 0;
 });
@@ -97,31 +67,18 @@ afterEach(() => {
   spawnCalls.length = 0;
 });
 
-// ─── Completion sentinel ──────────────────────────────────────────────────────
-
-/**
- * `ensureCredentialConnectorsRunning` calls `ensureObsidianMcp` and
- * `ensurePhase3BundleMcp` UNCONDITIONALLY — no vault check guards them.
- * Asserting that both appeared in `spawnCalls` proves the function ran to
- * completion rather than throwing or returning early before any credential
- * check happened.  Call this BEFORE every `.not.toContain()` absence assertion.
- */
 function expectRanToCompletion(): void {
   const names = spawnCalls.map((c) => c);
   expect(names).toContain("obsidian");
   expect(names).toContain("phase3");
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe("ensureCredentialConnectorsRunning — empty vault", () => {
   it("spawns only the unconditional connectors (obsidian + phase3) when vault is empty", async () => {
     const { ctx } = makeCtx();
     await runOrchestration(ctx);
-    // obsidian and phase3 are always called; all others require vault keys
     expect(spawnCalls).toContain("obsidian");
     expect(spawnCalls).toContain("phase3");
-    // credential-gated connectors must NOT fire
     const credGated = [
       "github",
       "gitlab",
@@ -144,8 +101,6 @@ describe("ensureCredentialConnectorsRunning — empty vault", () => {
     }
   });
 });
-
-// ─── Single-secret connectors ─────────────────────────────────────────────────
 
 describe("single-secret connectors", () => {
   describe("github — github.pat", () => {
@@ -309,8 +264,6 @@ describe("single-secret connectors", () => {
   });
 });
 
-// ─── Multi-secret AND-logic connectors ───────────────────────────────────────
-
 describe("multi-secret connectors require ALL keys", () => {
   describe("bitbucket — username + app_password", () => {
     it("does not spawn when only username is set", async () => {
@@ -433,8 +386,6 @@ describe("multi-secret connectors require ALL keys", () => {
   });
 });
 
-// ─── Discord opt-in ───────────────────────────────────────────────────────────
-
 describe("discord opt-in gate", () => {
   it("does not spawn when neither enabled nor bot_token is set", async () => {
     const { ctx } = makeCtx();
@@ -446,7 +397,7 @@ describe("discord opt-in gate", () => {
   it("does not spawn when bot_token is set but enabled is not '1'", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("discord.bot_token", "discord_tok");
-    await vault.set("discord.enabled", "true"); // any value other than "1"
+    await vault.set("discord.enabled", "true");
     await runOrchestration(ctx);
     expectRanToCompletion();
     expect(spawnCalls).not.toContain("discord");
@@ -478,8 +429,6 @@ describe("discord opt-in gate", () => {
   });
 });
 
-// ─── Google OAuth fan-out ─────────────────────────────────────────────────────
-
 describe("Google OAuth — anyGoogleOAuthVaultPresent", () => {
   it("does not spawn google-drive when no Google OAuth key is present", async () => {
     const { ctx } = makeCtx();
@@ -490,16 +439,11 @@ describe("Google OAuth — anyGoogleOAuthVaultPresent", () => {
 
   it("spawns google-drive when any Google OAuth vault key is set", async () => {
     const { ctx, vault } = makeCtx();
-    // ALL_GOOGLE_OAUTH_VAULT_KEYS in connectors/connector-vault.ts:
-    //   google.oauth | google_drive.oauth | google_gmail.oauth | google_photos.oauth
-    // Any one being non-empty makes anyGoogleOAuthVaultPresent return true.
     await vault.set("google_drive.oauth", '{"access_token":"ya29.test"}');
     await runOrchestration(ctx);
     expect(spawnCalls).toContain("google-drive");
   });
 });
-
-// ─── Microsoft OAuth ─────────────────────────────────────────────────────────
 
 describe("Microsoft OAuth — microsoft.oauth", () => {
   it("spawns microsoft bundle when microsoft.oauth is set", async () => {
@@ -517,8 +461,6 @@ describe("Microsoft OAuth — microsoft.oauth", () => {
   });
 });
 
-// ─── Multi-connector composite ───────────────────────────────────────────────
-
 describe("multi-connector composite — multiple creds spawn all matching connectors", () => {
   it("spawns github, linear, pagerduty when all three vault keys are set", async () => {
     const { ctx, vault } = makeCtx();
@@ -530,7 +472,6 @@ describe("multi-connector composite — multiple creds spawn all matching connec
     expect(sorted).toContain("github");
     expect(sorted).toContain("linear");
     expect(sorted).toContain("pagerduty");
-    // obsidian + phase3 also always fire
     expect(sorted).toContain("obsidian");
     expect(sorted).toContain("phase3");
   });

@@ -27,8 +27,6 @@ test("resolveDailyNotePath uses .obsidian/daily-notes.json folder + format when 
   const d = new Date("2026-05-10T00:00:00Z");
   const out = resolveDailyNotePath(root, d);
   expect(out.relativePath.replaceAll("\\", "/")).toBe("Daily/2026-05-10.md");
-  // Use forward slashes for the comparison; resolveDailyNotePath joins
-  // with the platform separator but our assertion is platform-agnostic.
   expect(out.absolutePath.replaceAll("\\", "/").endsWith("Daily/2026-05-10.md")).toBe(true);
   expect(out.warning).toBe(undefined);
 });

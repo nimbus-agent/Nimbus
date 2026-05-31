@@ -54,12 +54,6 @@ impl Default for HitlInbox {
     }
 }
 
-/// Methods exposed to the frontend over `rpc_call`. Alphabetized; size asserted by
-/// `allowlist_exact_size` to prevent accidental additions without a test update.
-///
-/// Vault and raw db writes are NEVER in this list
-/// (see `allowlist_rejects_vault_and_raw_db_writes`). Destructive domain ops
-/// (`data.delete`) live at the Gateway level, not the raw db layer.
 pub const ALLOWED_METHODS: &[&str] = &[
     "agents.catchup",
     "agents.expert",
@@ -131,11 +125,6 @@ pub fn is_method_allowed(method: &str) -> bool {
 
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Methods that must **not** be subject to the default `rpc_call` timeout — they are
-/// run-to-completion or fire-and-forget-with-progress-notifications. The UI relies
-/// on streamed notifications (`llm.pullProgress`, `data.exportProgress`, etc.) for
-/// liveness, and the native RPC may legitimately take many minutes on slow machines
-/// or large backups. See spec §2.2.
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
@@ -147,9 +136,6 @@ pub fn is_no_timeout_method(method: &str) -> bool {
     NO_TIMEOUT_METHODS.contains(&method)
 }
 
-/// Notification methods rebroadcast as **global** Tauri events (received by every
-/// window) rather than as window-scoped `gateway://notification`. Keep this tight —
-/// noisy methods (HITL, health changes) stay scoped to avoid fan-out.
 #[allow(dead_code)]
 pub const GLOBAL_BROADCAST_METHODS: &[&str] = &["profile.switched"];
 
@@ -434,23 +420,12 @@ mod tests {
         assert!(!is_method_allowed("db.delete"));
         assert!(!is_method_allowed("config.set"));
         assert!(!is_method_allowed("index.rebuild"));
-        // S5-F7 — `index.querySql` is the raw-SQL escape hatch behind the
-        // CLI `nimbus query --sql` flag; the renderer must not be able to
-        // reach it. Explicit guard against future allowlist drift.
+
         assert!(!is_method_allowed("index.querySql"));
     }
 
     #[test]
     fn allowlist_exact_size() {
-        // WS5-D adds extension.{disable,enable,install,list,remove} + watcher.{create,delete,
-        // list,pause,resume} + workflow.{delete,list,run,save} → 14 new methods → 54 total.
-        // WS5-D polish adds watcher.listHistory + workflow.listRuns → 2 new methods → 56 total.
-        // Security fix: remove extension.install → 55 total.
-        // Phase 5 T3 PR 1 adds agents.expert → 58 total.
-        // Phase 5 T3 PR 2 adds agents.impact → 59 total.
-        // Phase 5 T3 PR 3 adds agents.catchup → 60 total.
-        // Phase 5 T2 PR 3 adds extension.checkForUpdates + extension.update → 62 total.
-        // extension.install stays absent (chain C1 from B1 audit).
         assert_eq!(ALLOWED_METHODS.len(), 62);
     }
 
@@ -588,10 +563,6 @@ fn classify_notification(app: &AppHandle, method: &str, params: Option<&Value>) 
             }
         }
         "profile.switched" => {
-            // Global rebroadcast so every window (main, HITL popup, Quick Query,
-            // onboarding) can react. Each window's JS listener triggers `app.restart()`;
-            // the first to fire wins, the rest are no-ops because the process has
-            // already exited.
             if let Some(p) = params.cloned() {
                 let _ = app.emit("profile://switched", p);
             }

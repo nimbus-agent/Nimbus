@@ -8,7 +8,6 @@ import {
 describe("persistPartialize", () => {
   it("output contains ONLY the whitelisted slice-root fields", () => {
     const full = {
-      // Non-persisted slices (must be stripped):
       connectionState: "connected",
       aggregateHealth: "healthy",
       pendingHitl: 0,
@@ -18,13 +17,11 @@ describe("persistPartialize", () => {
       onboarding: {},
       dashboard: {},
       audit: [],
-      // Whitelisted roots (must survive):
       connectorsList: [{ service: "github" }],
       installedModels: [{ id: "gemma:2b" }],
       activePullId: null,
       active: "work",
       profiles: [{ name: "work" }],
-      // Slice-action functions must NOT be persisted:
       setConnectionState: () => {},
       setProfileList: () => {},
     } as unknown as Record<string, unknown>;
@@ -108,12 +105,10 @@ describe("persistPartialize", () => {
 describe("persistPartialize — Data slice (Plan 5)", () => {
   it("does not persist any data-slice fields", () => {
     const state = {
-      // transient data-slice fields
       exportFlow: { status: "running", progress: { stage: "packing", bytesWritten: 0 } },
       importFlow: { status: "error", errorKind: "rpc_failed" },
       deleteFlow: { status: "running", service: "github" },
       lastExportPreflight: { lastExportAt: 123, estimatedSizeBytes: 456, itemCount: 789 },
-      // plus one whitelisted key so the output isn't empty
       profiles: ["default"],
     };
     const out = persistPartialize(state as unknown as Record<string, unknown>);
@@ -158,7 +153,6 @@ describe("persistPartialize — S2-F6 connector-secret deep scrub", () => {
       const out = persistPartialize(state);
       const flat = JSON.stringify(out);
       expect(flat).not.toContain(value);
-      // Whitelisted neighbours must survive.
       expect(flat).toContain("github");
     });
   }

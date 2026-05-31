@@ -57,13 +57,13 @@ Usage:
 
 function fsErrorCode(e: unknown): string | undefined {
   if (e !== null && typeof e === "object" && "code" in e) {
-    const c = (e as { code: unknown }).code;
+    const c = e.code;
     return typeof c === "string" ? c : undefined;
   }
   return undefined;
 }
 
-function profileCreate(configDir: string, baseToml: string, tail: string[]): void {
+export function runProfileCreate(configDir: string, baseToml: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   if (name === "" || name === "default") {
     throw new Error("Usage: nimbus profile create <name>");
@@ -87,7 +87,7 @@ function profileCreate(configDir: string, baseToml: string, tail: string[]): voi
   console.log(`Created ${dest}`);
 }
 
-function profileList(configDir: string): void {
+export function runProfileList(configDir: string): void {
   const active = activeProfileName(configDir);
   const profiles = listProfileFiles(configDir);
   console.log(`active: ${active ?? "(default — nimbus.toml)"}`);
@@ -100,7 +100,7 @@ function profileList(configDir: string): void {
   }
 }
 
-function profileSwitch(configDir: string, tail: string[]): void {
+export function runProfileSwitch(configDir: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   if (name === "") {
     throw new Error("Usage: nimbus profile switch <name>");
@@ -120,7 +120,7 @@ function profileSwitch(configDir: string, tail: string[]): void {
   );
 }
 
-function profileDelete(configDir: string, tail: string[]): void {
+export function runProfileDelete(configDir: string, tail: string[]): void {
   const name = tail[0]?.trim() ?? "";
   const yes = tail.includes("--yes");
   if (name === "" || !yes) {
@@ -149,19 +149,19 @@ export function runProfile(args: string[]): void {
   const baseToml = join(paths.configDir, "nimbus.toml");
 
   if (sub === "create") {
-    profileCreate(paths.configDir, baseToml, tail);
+    runProfileCreate(paths.configDir, baseToml, tail);
     return;
   }
   if (sub === "list") {
-    profileList(paths.configDir);
+    runProfileList(paths.configDir);
     return;
   }
   if (sub === "switch") {
-    profileSwitch(paths.configDir, tail);
+    runProfileSwitch(paths.configDir, tail);
     return;
   }
   if (sub === "delete") {
-    profileDelete(paths.configDir, tail);
+    runProfileDelete(paths.configDir, tail);
     return;
   }
 

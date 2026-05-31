@@ -11,6 +11,21 @@ export type ImpactCliArgs = {
   service?: string;
 };
 
+function parseDepthFlag(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 5) {
+    throw new Error("--depth must be an integer in 1..5");
+  }
+  return n;
+}
+
+function parseServiceFlag(raw: string | undefined): string {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new Error("--service requires a non-empty value");
+  }
+  return raw.trim();
+}
+
 export function parseImpactArgs(args: string[]): ImpactCliArgs {
   const positional: string[] = [];
   let json = false;
@@ -20,27 +35,15 @@ export function parseImpactArgs(args: string[]): ImpactCliArgs {
     const a = args[i];
     if (a === "--json") {
       json = true;
-      continue;
-    }
-    if (a === "--depth") {
-      const n = Number(args[i + 1]);
-      if (!Number.isInteger(n) || n < 1 || n > 5) {
-        throw new Error("--depth must be an integer in 1..5");
-      }
-      depth = n;
+    } else if (a === "--depth") {
+      depth = parseDepthFlag(args[i + 1]);
       i += 1;
-      continue;
-    }
-    if (a === "--service") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
-        throw new Error("--service requires a non-empty value");
-      }
-      service = v.trim();
+    } else if (a === "--service") {
+      service = parseServiceFlag(args[i + 1]);
       i += 1;
-      continue;
+    } else if (a !== undefined && !a.startsWith("--")) {
+      positional.push(a);
     }
-    if (a !== undefined && !a.startsWith("--")) positional.push(a);
   }
   const fileOrPrUrl = positional.join(" ").trim();
   if (fileOrPrUrl.length === 0) {
@@ -55,6 +58,39 @@ export function parseImpactArgs(args: string[]): ImpactCliArgs {
 }
 
 const TIMEOUT_MS = 30_000;
+
+function awaitImpactBrief(
+  client: IPCClient,
+  onTimer: (t: ReturnType<typeof setTimeout>) => void,
+): Promise<{ brief: string; findings: ImpactBrief }> {
+  return new Promise<{ brief: string; findings: ImpactBrief }>((resolve, reject) => {
+    onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
+    client.onNotification("impact.briefReady", (params: unknown) => {
+      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
+      if (typeof p.brief !== "string" || !isImpactBrief(p.findings)) {
+        reject(new Error("Malformed impact.briefReady payload"));
+        return;
+      }
+      resolve({ brief: p.brief, findings: p.findings });
+    });
+    client.onNotification("impact.briefError", (params: unknown) => {
+      const p = params as { error?: string };
+      reject(new Error(p.error ?? "Agent failed"));
+    });
+  });
+}
+
+function renderImpactBrief(brief: string, findings: ImpactBrief, json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
+    return;
+  }
+  if (findings.gaps.some((g) => g.category === "empty_index")) {
+    process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
+    process.exit(1);
+  }
+  process.stdout.write(`${brief}\n`);
+}
 
 export async function runImpactCli(args: string[]): Promise<void> {
   const parsed = parseImpactArgs(args);
@@ -71,21 +107,8 @@ export async function runImpactCli(args: string[]): Promise<void> {
   registerInteractiveCliIpcHandlers(client);
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  const briefPromise = new Promise<{ brief: string; findings: ImpactBrief }>((resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS);
-    client.onNotification("impact.briefReady", (params: unknown) => {
-      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
-      if (typeof p.brief !== "string" || !isImpactBrief(p.findings)) {
-        reject(new Error("Malformed impact.briefReady payload"));
-        return;
-      }
-      resolve({ brief: p.brief, findings: p.findings });
-    });
-    client.onNotification("impact.briefError", (params: unknown) => {
-      const p = params as { error?: string };
-      reject(new Error(p.error ?? "Agent failed"));
-    });
+  const briefPromise = awaitImpactBrief(client, (t) => {
+    timeout = t;
   });
 
   const callParams: { fileOrPrUrl: string; depth?: number; service?: string } = {
@@ -97,15 +120,7 @@ export async function runImpactCli(args: string[]): Promise<void> {
   try {
     await client.call<{ sessionId: string }>("agents.impact", callParams);
     const { brief, findings } = await briefPromise;
-    if (parsed.json) {
-      process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
-      return;
-    }
-    if (findings.gaps.some((g) => g.category === "empty_index")) {
-      process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
-      process.exit(1);
-    }
-    process.stdout.write(`${brief}\n`);
+    renderImpactBrief(brief, findings, parsed.json);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

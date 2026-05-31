@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 
-/** Distinct `metadata.repo` values from indexed GitHub items (for derived syncs). */
 export function listGithubReposFromIndex(db: Database): string[] {
   const rows = db
     .query(

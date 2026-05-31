@@ -1,6 +1,3 @@
-/**
- * Parses compact "since" windows for `nimbus query --since 7d` (days, hours, minutes, seconds).
- */
 export function parseSinceDurationToMs(raw: string): number {
   const s = raw.trim();
   const m = /^(\d+)\s*(w|d|h|m|s|ms)$/i.exec(s);

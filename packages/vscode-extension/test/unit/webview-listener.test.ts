@@ -1,25 +1,3 @@
-/**
- * @vitest-environment jsdom
- *
- * Regression coverage for the webview message listener in
- * src/chat/webview/main.ts.
- *
- * The previous implementation rejected every event whose
- * `event.source !== window.parent`. That guard is intuitive but is *not*
- * how VS Code's webview message broker works in practice: real
- * `MessageEvent`s arriving inside the iframe have `source` set to a window
- * proxy that does not `===` compare equal to `window.parent`. The original
- * guard therefore silently dropped every extension→webview payload —
- * userMessage, token, done, error, hitlInline — leaving the chat panel
- * visually empty even though the Gateway streamed end-to-end (verified
- * 2026-05-08 with diagnostic instrumentation; "REJECTED by source check"
- * fired on every inbound message).
- *
- * These tests pin the contract: real VS Code messages must apply, jsdom
- * harness messages (empty origin) must apply, and foreign cross-origin
- * messages must be dropped.
- */
-
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 
 const CHAT_SHELL = `
@@ -53,10 +31,6 @@ function transcriptHtml(): string {
   return document.querySelector("#transcript")?.innerHTML ?? "";
 }
 
-// One-time setup: re-bootstrapping main.ts cleanly between tests is awkward
-// (top-level `acquireVsCodeApi()` runs once on import), so the suite shares
-// a single bootstrap. Each test resets the transcript before dispatching so
-// prior renders don't bleed across cases.
 beforeAll(async () => {
   document.body.innerHTML = CHAT_SHELL;
   (globalThis as unknown as { acquireVsCodeApi: () => VsCodeApi }).acquireVsCodeApi = () => ({
@@ -89,9 +63,6 @@ describe("webview message listener", () => {
   });
 
   test("regression: source: null is accepted when origin is trusted", () => {
-    // jsdom-constructed MessageEvents default to source: null. The previous
-    // listener required source === window.parent and would have dropped this
-    // exact event in production VS Code as well — pinning the case directly.
     const ev = new MessageEvent("message", {
       origin: "vscode-webview://xyz",
       data: { type: "userMessage", text: "no-source-payload" },

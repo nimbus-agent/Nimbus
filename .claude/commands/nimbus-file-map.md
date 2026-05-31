@@ -1,126 +1,196 @@
 ---
 name: nimbus-file-map
 description: >
-  Pointer index from "what subsystem owns X" to the file path holding the canonical implementation,
-  for the Nimbus monorepo. Use this skill when the user asks "where does X live?" or "where is the
-  HITL gate / vault / migration runner / Tauri allowlist / agents directory?", or when you are about
-  to grep for an entry-point and would benefit from a curated, semantically-described starting list.
-  This is faster and more accurate than `Glob` for high-traffic files like `engine/executor.ts`,
-  `vault/index.ts`, `connectors/`, `db/`, `llm/`, `ipc/`, agent surfaces (`agents/expert.ts`,
-  `agents/impact.ts`, `agents/_lib/*`), Tauri bridge (`gateway_bridge.rs`), and UI store slices.
-  Decay note: the table is curated by hand and lags real changes. If the user asks about something
-  recent (last 24 h) or a file you cannot find in the repo, treat the entry as a hint and verify
-  with `Glob` / `Grep` before recommending changes.
+  Pointer index from "where does X live?" to file path, for the Nimbus monorepo.
+  Use when the user asks where a subsystem, HITL gate, vault key, migration, Tauri
+  allowlist, agent, connector, or RPC handler lives — or when about to grep for an
+  entry-point. Faster than `Glob` for high-traffic files. Curated by hand and lags
+  recent changes — treat entries as hints and verify with `Glob` / `Grep` before
+  code changes.
 ---
 
 # Nimbus Key File Locations
 
-This is the curated pointer index. Source-of-truth is the working tree — verify a path with `Glob` before relying on it for code changes.
+Curated pointer index. Source of truth is the working tree — verify a path with `Glob` before editing.
 
 ## Engine + Security
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/engine/executor.ts` | HITL gate — `HITL_REQUIRED` frozen set; most security-critical file |
-| `packages/gateway/src/engine/coordinator.ts` | `AgentCoordinator` — multi-agent sub-task orchestration, depth + tool-call guards; `executeAll` runs sub-tasks in parallel (Phase 5 T3 PR 1) |
-| `packages/gateway/src/engine/sub-agent.ts` | `runSubAgent` — single sub-task executor with `sub_task_results` DB lifecycle |
-| `packages/gateway/src/engine/tool-output-envelope.ts` | `wrapToolOutput` — invariant `I11` envelope at the LLM-facing boundary |
-| `packages/gateway/src/db/tool-call-log.ts` | `writeToolCallLog` + `readToolCallLog` + `MAX_ENVELOPE_BYTES` — forensic complement to `I11` (Phase 5 T6 PR 2 / V29); called at both `wrapToolOutput` wiring sites in `engine/agent.ts` + `connectors/lazy-mesh/mesh.ts` |
-| `packages/gateway/src/index/tool-call-log-v29-sql.ts` | V29 migration SQL — `tool_call_log` table + 3 indexes (`session`, `tool_id+called_at`, `called_at`) |
-| `packages/gateway/src/ipc/audit-rpc.ts` | `dispatchAuditRpc` — `audit.verify` / `audit.exportAll` / `audit.getSummary` / `audit.toolCalls` (Phase 5 T6 PR 2). `audit.toolCalls` is IPC-only — NOT LAN-callable (I5), NOT in Tauri allowlist (I7), NOT exposed via the HTTP API |
+| `packages/gateway/src/engine/coordinator.ts` | `AgentCoordinator` — multi-agent orchestration; `executeAll` runs sub-tasks in parallel |
+| `packages/gateway/src/engine/sub-agent.ts` | `runSubAgent` — single sub-task executor; `sub_task_results` DB lifecycle |
+| `packages/gateway/src/engine/tool-output-envelope.ts` | `wrapToolOutput` — invariant `I11` envelope at LLM-facing boundary |
+| `packages/gateway/src/db/tool-call-log.ts` | `writeToolCallLog` + `readToolCallLog` + `MAX_ENVELOPE_BYTES` — forensic complement to `I11` (V29) |
+| `packages/gateway/src/index/tool-call-log-v29-sql.ts` | V29 — `tool_call_log` table + 3 indexes |
+| `packages/gateway/src/ipc/audit-rpc.ts` | `dispatchAuditRpc` — `audit.verify/exportAll/getSummary/toolCalls`; CLI-only (NOT LAN, NOT Tauri) |
 
 ## Platform Abstraction Layer
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/platform/index.ts` | PAL — `createPlatformServices()` dispatch |
-| `packages/gateway/src/platform/win32.ts` | Windows platform implementation |
-| `packages/gateway/src/platform/darwin.ts` | macOS platform implementation |
-| `packages/gateway/src/platform/linux.ts` | Linux platform implementation |
+| `packages/gateway/src/platform/win32.ts` | Windows platform impl |
+| `packages/gateway/src/platform/darwin.ts` | macOS platform impl |
+| `packages/gateway/src/platform/linux.ts` | Linux platform impl |
 
-## Extension Sandbox (T2 PR 1 — invariant `I15`)
-
-| File | Purpose |
-|---|---|
-| `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` PAL interface + `createSandboxRunner()` dispatcher (I15 entry point). |
-| `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script invoked by lazy-mesh ServerSpec entries — reads manifest from env, calls `runner.spawn`. **Single I15 execution boundary**. |
-| `packages/gateway/src/platform/sandbox/linux.ts` | Linux SandboxRunner — bwrap + nimbus-sandbox-helper + per-host iptables; `decideNetworkMode` + `buildBwrapArgv` exposed for unit tests. |
-| `packages/gateway/src/platform/sandbox/darwin.ts` | macOS SandboxRunner — sandbox-exec SBPL profile generator. |
-| `packages/gateway/src/platform/sandbox/win32.ts` | Windows SandboxRunner — AppContainer + `internetClient` capability + orphan-reap helpers; FFI WIP. |
-| `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode emit, no native libseccomp; includes AUDIT_ARCH_X86_64 guard. |
-| `packages/gateway/src/platform/sandbox/orphan-reap.ts` | Windows AppContainer orphan-reap at Gateway startup. |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint for every lazy-mesh ServerSpec. |
-| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | Static `FIRST_PARTY_MANIFESTS` registry — per-connector sandbox manifests (T2 PR 1 §6). |
-| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; enforce-and-exec mode + `--check-caps` probe; post-unshare AUDIT_ARCH guard + setns/unshare-killer. |
-| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for first- and third-party connector authors. |
-| `docs/sandbox.md` | Operator-facing sandbox reference; `#platform-asymmetry` + `#windows-platform-status` anchors. |
-
-## Extensions — Dependency Resolution (T2 PR 4)
+## Extension Sandbox (invariant `I15`)
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/extensions/dependency-types.ts` | Solver type contracts: `ResolvedDep`, `ResolvedNode`, `InstallPlan`, `RegistryFetcher`, `ExtensionManifestForSolver`, `ResolveClosureOptions`, `DependencyConstraint`, `DependencyConflict` (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` narrowing helpers (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — custom backtracking DFS solver; `ancestors: Set` separate from `pinned` so diamond DAGs aren't false-positive cycles (T2 PR 4) |
-| `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` — `dbRun`-backed CRUD over V31 `extension_dependency` (T2 PR 4) |
-| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter; installed ids resolve from on-disk manifest without network (T2 PR 4) |
-| `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reason types (parallel to `PreT2DisabledRegistry` + `SignatureDisabledRegistry`, T2 PR 4) |
-| `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 SQL constant: `extension_dependency` table + `idx_extension_dependency_reverse` index (T2 PR 4) |
+| `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` interface + `createSandboxRunner()` dispatcher (I15 entry) |
+| `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script — reads manifest from env, calls `runner.spawn`. **Single I15 boundary** |
+| `packages/gateway/src/platform/sandbox/linux.ts` | Linux runner — bwrap + helper + iptables; `decideNetworkMode` / `buildBwrapArgv` exposed |
+| `packages/gateway/src/platform/sandbox/darwin.ts` | macOS runner — sandbox-exec SBPL profile generator |
+| `packages/gateway/src/platform/sandbox/win32.ts` | Windows runner — AppContainer + `internetClient` capability; FFI WIP |
+| `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode; AUDIT_ARCH_X86_64 guard |
+| `packages/gateway/src/platform/sandbox/orphan-reap.ts` | Windows AppContainer orphan-reap at Gateway startup |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint |
+| `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | `FIRST_PARTY_MANIFESTS` — per-connector sandbox manifests |
+| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; setns/unshare-killer |
+| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for connector authors |
+| `docs/sandbox.md` | Operator-facing reference; `#platform-asymmetry` + `#windows-platform-status` |
+
+## Extensions — Dependency Resolution
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/extensions/dependency-types.ts` | Solver contracts: `ResolvedDep`, `InstallPlan`, `RegistryFetcher`, `DependencyConflict` |
+| `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` |
+| `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — backtracking DFS solver |
+| `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` over V31 `extension_dependency` |
+| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter |
+| `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reasons |
+| `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 — `extension_dependency` table + reverse index |
 
 ## Vault + Auth
 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/vault/index.ts` | `NimbusVault` interface |
-| `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth token resolution — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
-| `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth token storage/refresh helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
+| `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
+| `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
+| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom) + `getValidVaultAccessToken` single-flight |
+| `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
 
 ## Connectors + MCP Mesh
 
+Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper) + `mcp-connectors/<x>/src/server.ts` (read-only MCP tools `<x>_list/get/search`). For auth, pagination, deferred write tools — read the file.
+
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/connectors/` | MCP connector mesh (`lazy-mesh/` — Phase 3 bundle spawns AWS/Azure/GCP/IaC/observability MCPs when vault keys exist) |
-| `packages/gateway/src/connectors/health.ts` | Connector health state machine — `transitionHealth()`, `ConnectorHealthSnapshot` |
-| `packages/gateway/src/connectors/connector-vault.ts` | Per-service OAuth vault key helpers + typed connector-secret reader — `perServiceOAuthVaultKey()`, `writePerServiceOAuthKey()`, `migrateToPerServiceOAuthKeys()`, `readConnectorSecret()` |
-| `packages/gateway/src/connectors/connector-secrets-manifest.ts` | `CONNECTOR_VAULT_SECRET_KEYS` — per-connector PAT/API-key vault manifest; `clearConnectorVaultSecretKeys()` |
+| `packages/gateway/src/connectors/` | MCP connector mesh (`lazy-mesh/` bundle spawns AWS/Azure/GCP/IaC/observability MCPs when vault keys exist) |
+| `packages/gateway/src/connectors/health.ts` | Health state machine — `transitionHealth()`, `ConnectorHealthSnapshot` |
+| `packages/gateway/src/connectors/connector-vault.ts` | Per-service OAuth helpers — `perServiceOAuthVaultKey()`, `readConnectorSecret()` |
+| `packages/gateway/src/connectors/connector-secrets-manifest.ts` | `CONNECTOR_VAULT_SECRET_KEYS` — per-connector PAT/API-key manifest |
 | `packages/gateway/src/connectors/remove-intent.ts` | Connector removal — cascade vault + index cleanup via `executeRemoveIntent()` |
-| `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI / AsyncAPI spec indexer (Phase 5 Wave A PR 1); `getLastSyncStats()` exposes skipped-spec counters |
-| `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault connector (Phase 5 Wave A PR 2); emits `obsidian_note` items + `backlinks` graph edges |
-| `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP server — reads + HITL-gated `obsidian_append_to_daily_note` |
-| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulnerability connector (Phase 5 T2/Wave-A, 2026-05-21); walks `/v1/orgs → /v1/org/<id>/projects → aggregated-issues`; emits `snyk:vulnerability` items via `mapSnykAggregatedIssueToItem` |
-| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk aggregated-issue → `IndexedItem` mapper; surfaces `{ severity, cve_id, affected_package, fix_available, fix_version, project_url, ... }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP server — read-only tools `snyk_list` / `snyk_get` / `snyk_search`. `hitlRequired: []` — `snyk.issue.ignore` is a deferred Phase 8 follow-up |
-| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI connector (Phase 5 Wave B, 2026-05-21); walks `/v0.1/me/apps → /v0.1/apps/<slug>/builds`; emits `bitrise:app` + `bitrise:build` items via `mapBitriseAppToItem` / `mapBitriseBuildToItem` |
-| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` mappers; surfaces `{ status, status_code, workflow_id, app_slug, branch, commit_hash, commit_message, triggered_by, pull_request_id, triggered_at, started_at, finished_at, duration_ms }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP server — read-only tools `bitrise_list` / `bitrise_get` / `bitrise_search`. `hitlRequired: []` — trigger / abort writes are a deferred follow-up |
-| `packages/gateway/src/connectors/sonarqube-sync.ts` | SonarQube + SonarCloud code-quality connector (Phase 5 Tier 2, 2026-05-22); walks `GET /api/components/search?qualifiers=TRK → /api/issues/search` (paged 100/page, 20 pages/project cap); emits `sonarqube:code_issue` items via `mapSonarIssueToItem`. Default base `https://sonarcloud.io`; self-hosted via `sonarqube.url` vault key |
-| `packages/gateway/src/connectors/sonarqube-issue-mapping.ts` | Pure SonarQube issue → `IndexedItem` mapper; surfaces `{ severity, type (BUG/VULNERABILITY/CODE_SMELL), status, rule, component, project_key, file_path, line, tags, effort, debt, author, message, creation_date, update_date, canonical_url, organization }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/sonarqube/src/server.ts` | SonarQube MCP server — read-only tools `sonarqube_list` / `sonarqube_get` / `sonarqube_search`. `hitlRequired: []` — `sonarqube.hotspot.review` + `sonarqube.issue.transition` are deferred Phase 8 follow-ups |
-| `packages/gateway/src/connectors/semgrep-sync.ts` | Semgrep AppSec Platform SAST connector (Phase 5 Tier 2, 2026-05-22); walks `GET /api/v1/deployments → /api/v1/deployments/<slug>/findings` (paged 100/page, 20 pages/cycle cap); emits `semgrep:finding` items via `mapSemgrepFindingToItem`. Deployment slug auto-discovered when `semgrep.deployment_slug` is unset |
-| `packages/gateway/src/connectors/semgrep-finding-mapping.ts` | Pure Semgrep finding → `IndexedItem` mapper; surfaces `{ severity, confidence, rule_name, rule_message, categories, file_path, line, end_line, column, repository, branch, triage_state, status, created_at, relevant_since, line_of_code_url }` in metadata. Unit-tested independently of the HTTP path |
-| `packages/mcp-connectors/semgrep/src/server.ts` | Semgrep MCP server — read-only tools `semgrep_list` / `semgrep_get` / `semgrep_search`. `hitlRequired: []` — `semgrep.finding.triage` (ignore/suppress/accept-risk) is a deferred Phase 8 follow-up |
-| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards the sync scheduler against consuming backoff on offline events |
+| `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI/AsyncAPI spec indexer; `getLastSyncStats()` exposes skipped counters |
+| `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault — emits `obsidian_note` + `backlinks` edges |
+| `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP — reads + HITL-gated `obsidian_append_to_daily_note` |
+| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulns — emits `snyk:vulnerability` |
+| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk issue → `IndexedItem` |
+| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP — read-only `snyk_list/get/search` |
+| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI — emits `bitrise:app` + `bitrise:build` |
+| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` |
+| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP — read-only `bitrise_list/get/search` |
+| `packages/gateway/src/connectors/sonarqube-sync.ts` | SonarQube + SonarCloud — emits `sonarqube:code_issue` |
+| `packages/gateway/src/connectors/sonarqube-issue-mapping.ts` | Pure SonarQube issue → `IndexedItem` |
+| `packages/mcp-connectors/sonarqube/src/server.ts` | SonarQube MCP — read-only `sonarqube_list/get/search` |
+| `packages/gateway/src/connectors/semgrep-sync.ts` | Semgrep SAST — emits `semgrep:finding` |
+| `packages/gateway/src/connectors/semgrep-finding-mapping.ts` | Pure Semgrep finding → `IndexedItem` |
+| `packages/mcp-connectors/semgrep/src/server.ts` | Semgrep MCP — read-only `semgrep_list/get/search` |
+| `packages/gateway/src/connectors/wiz-sync.ts` | Wiz CSPM (GraphQL) — emits `wiz:issue` |
+| `packages/gateway/src/connectors/wiz-issue-mapping.ts` | Pure Wiz issue → `IndexedItem` |
+| `packages/mcp-connectors/wiz/src/server.ts` | Wiz MCP — read-only `wiz_list/get/search` |
+| `packages/gateway/src/connectors/launchdarkly-sync.ts` | LaunchDarkly flags — emits `launchdarkly:feature_flag` |
+| `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts` | Pure LaunchDarkly flag → `IndexedItem` |
+| `packages/mcp-connectors/launchdarkly/src/server.ts` | LaunchDarkly MCP — read-only `launchdarkly_list/get/search` |
+| `packages/gateway/src/connectors/flagsmith-sync.ts` | Flagsmith flags — emits `flagsmith:feature_flag` |
+| `packages/gateway/src/connectors/flagsmith-feature-mapping.ts` | Pure Flagsmith feature → `IndexedItem` |
+| `packages/mcp-connectors/flagsmith/src/server.ts` | Flagsmith MCP — read-only `flagsmith_list/get/search` |
+| `packages/gateway/src/connectors/argocd-sync.ts` | ArgoCD GitOps — emits `argocd:application` |
+| `packages/gateway/src/connectors/argocd-application-mapping.ts` | Pure ArgoCD Application → `IndexedItem` |
+| `packages/mcp-connectors/argocd/src/server.ts` | ArgoCD MCP — read-only `argocd_list/get/search` |
+| `packages/gateway/src/connectors/flux-sync.ts` | Flux GitOps Toolkit (9 CRD kinds) — emits `flux:resource` |
+| `packages/gateway/src/connectors/flux-resource-mapping.ts` | Pure Flux CR → `IndexedItem`; `kind` discriminator |
+| `packages/mcp-connectors/flux/src/server.ts` | Flux MCP — read-only `flux_list/get/search` |
+| `packages/gateway/src/connectors/dbt-sync.ts` | dbt Cloud — emits `dbt:job` |
+| `packages/gateway/src/connectors/dbt-job-mapping.ts` | Pure dbt Cloud job → `IndexedItem` |
+| `packages/mcp-connectors/dbt/src/server.ts` | dbt Cloud MCP — read-only `dbt_list/get/search` |
+| `packages/gateway/src/connectors/metabase-sync.ts` | Metabase BI — emits `metabase:dashboard` |
+| `packages/gateway/src/connectors/metabase-dashboard-mapping.ts` | Pure Metabase dashboard → `IndexedItem` |
+| `packages/mcp-connectors/metabase/src/server.ts` | Metabase MCP — read-only `metabase_list/get/search` |
+| `packages/gateway/src/connectors/superset-sync.ts` | Apache Superset BI — emits `superset:dashboard` |
+| `packages/gateway/src/connectors/superset-dashboard-mapping.ts` | Pure Superset dashboard → `IndexedItem` |
+| `packages/mcp-connectors/superset/src/server.ts` | Superset MCP — read-only `superset_list/get/search`; JWT cached per process |
+| `packages/gateway/src/connectors/databricks-sync.ts` | Databricks orchestration — emits `databricks:data_pipeline` |
+| `packages/gateway/src/connectors/databricks-job-mapping.ts` | Pure Databricks job → `IndexedItem` |
+| `packages/mcp-connectors/databricks/src/server.ts` | Databricks MCP — read-only `databricks_list/get/search` |
+| `packages/gateway/src/connectors/mlflow-sync.ts` | MLflow model registry — emits `mlflow:ml_model` |
+| `packages/gateway/src/connectors/mlflow-model-mapping.ts` | Pure MLflow `RegisteredModel` → `IndexedItem` |
+| `packages/mcp-connectors/mlflow/src/server.ts` | MLflow MCP — read-only `mlflow_list/get/search` |
+| `packages/gateway/src/connectors/vercel-sync.ts` | Vercel deployments — emits `vercel:deployment` |
+| `packages/gateway/src/connectors/vercel-deployment-mapping.ts` | Pure Vercel deployment → `IndexedItem` |
+| `packages/mcp-connectors/vercel/src/server.ts` | Vercel MCP — read-only `vercel_list/get/search` |
+| `packages/gateway/src/connectors/netlify-sync.ts` | Netlify sites — emits `netlify:site` |
+| `packages/gateway/src/connectors/netlify-site-mapping.ts` | Pure Netlify site → `IndexedItem` |
+| `packages/mcp-connectors/netlify/src/server.ts` | Netlify MCP — read-only `netlify_list/get/search` |
+| `packages/gateway/src/connectors/stripe-sync.ts` | Stripe billing — emits `stripe:invoice` |
+| `packages/gateway/src/connectors/stripe-invoice-mapping.ts` | Pure Stripe invoice → `IndexedItem` |
+| `packages/mcp-connectors/stripe/src/server.ts` | Stripe MCP — read-only `stripe_list/get/search` |
+| `packages/gateway/src/connectors/mercury-sync.ts` | Mercury banking — emits `mercury:account` |
+| `packages/gateway/src/connectors/mercury-account-mapping.ts` | Pure Mercury account → `IndexedItem`; stores `last4` only |
+| `packages/mcp-connectors/mercury/src/server.ts` | Mercury MCP — read-only `mercury_list/get/search` |
+| `packages/gateway/src/connectors/readwise-sync.ts` | Readwise — emits `readwise:highlight` |
+| `packages/gateway/src/connectors/readwise-highlight-mapping.ts` | Pure Readwise highlight → `IndexedItem` |
+| `packages/mcp-connectors/readwise/src/server.ts` | Readwise MCP — read-only `readwise_list/get/search` |
+| `packages/gateway/src/connectors/raindrop-sync.ts` | Raindrop.io bookmarks — emits `raindrop:bookmark` |
+| `packages/gateway/src/connectors/raindrop-bookmark-mapping.ts` | Pure Raindrop bookmark → `IndexedItem` |
+| `packages/mcp-connectors/raindrop/src/server.ts` | Raindrop MCP — read-only `raindrop_list/get/search` |
+| `packages/gateway/src/connectors/intercom-sync.ts` | Intercom support — emits `intercom:conversation` |
+| `packages/gateway/src/connectors/intercom-conversation-mapping.ts` | Pure Intercom conversation → `IndexedItem` |
+| `packages/mcp-connectors/intercom/src/server.ts` | Intercom MCP — read-only `intercom_list/get/search` |
+| `packages/gateway/src/connectors/zendesk-sync.ts` | Zendesk Support (per-tenant) — emits `zendesk:ticket` |
+| `packages/gateway/src/connectors/zendesk-ticket-mapping.ts` | Pure Zendesk ticket → `IndexedItem` |
+| `packages/mcp-connectors/zendesk/src/server.ts` | Zendesk MCP — read-only `zendesk_list/get/search` |
+| `packages/gateway/src/connectors/lever-sync.ts` | Lever recruiting/ATS — emits `lever:posting` (no candidate PII) |
+| `packages/gateway/src/connectors/lever-posting-mapping.ts` | Pure Lever posting → `IndexedItem` |
+| `packages/mcp-connectors/lever/src/server.ts` | Lever MCP — read-only `lever_list/get/search` |
+| `packages/gateway/src/connectors/greenhouse-sync.ts` | Greenhouse ATS (Harvest API) — emits `greenhouse:job` (no candidate PII) |
+| `packages/gateway/src/connectors/greenhouse-job-mapping.ts` | Pure Greenhouse job → `IndexedItem` |
+| `packages/mcp-connectors/greenhouse/src/server.ts` | Greenhouse MCP — read-only `greenhouse_list/get/search` |
+| `packages/gateway/src/connectors/pipedrive-sync.ts` | Pipedrive CRM — emits `pipedrive:deal`; token in query string (never logged) |
+| `packages/gateway/src/connectors/pipedrive-deal-mapping.ts` | Pure Pipedrive deal → `IndexedItem` |
+| `packages/mcp-connectors/pipedrive/src/server.ts` | Pipedrive MCP — read-only `pipedrive_list/get/search` |
+| `packages/gateway/src/connectors/stackoverflow-sync.ts` | Stack Overflow for Teams Q&A — emits `stackoverflow:question` |
+| `packages/gateway/src/connectors/stackoverflow-question-mapping.ts` | Pure SO question → `IndexedItem` |
+| `packages/mcp-connectors/stackoverflow/src/server.ts` | SO Teams MCP — read-only `stackoverflow_list/get/search` |
+| `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings + recordings (OAuth) — emits `zoom:meeting` + `zoom:transcript`; cursor `{ pass, lastRecordingsTo }` |
+| `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
+| `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
+| `packages/mcp-connectors/zoom/src/server.ts` | Zoom MCP — read-only `zoom_list/get/search/recordings_list/transcript_get` |
+| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/index/migrations/runner.ts` | Migration runner; orchestrates `INDEXED_SCHEMA_STEPS`; pre-migration backup; rollback on throw |
-| `packages/gateway/src/index/*-v<N>-sql.ts` | Migration SQL constants (e.g., `vec-items-1536-v30-sql.ts`, `obsidian-notes-v26-sql.ts`, `api-endpoint-v25-sql.ts`, `audit-session-v24-sql.ts`, `lan-peers-v19-sql.ts`) |
-| `packages/gateway/src/index/vec-items-1536-v30-sql.ts` | V30 migration SQL — `vec_items_1536` virtual table + dim-aware delete triggers (T6 PR 3). |
-| `packages/gateway/src/embedding/routing.ts` | `PROSE_HEAVY_TYPES` set + `EMBEDDING_DIM_*` constants + `routingKey` / `isProseHeavy` helpers (T6 PR 3). |
-| `packages/gateway/src/embedding/routing-pipeline.ts` | `RoutingEmbeddingPipeline` — wraps two `SqliteEmbeddingPipeline`s and dispatches by `(service, type)` (T6 PR 3). |
-| `packages/gateway/src/embedding/create-routing-runtime.ts` | `tryCreateRoutingEmbeddingRuntime` — hybrid-mode factory; falls back to MiniLM-only when `openai.api_key` missing (T6 PR 3). |
-| `packages/gateway/src/search/dual-search.ts` | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables, merge by distance (T6 PR 3). |
-| `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel` long-running handler (T6 PR 3). CLI-only — NOT LAN-callable (I5), NOT in Tauri allowlist (I7). |
+| `packages/gateway/src/index/migrations/runner.ts` | Migration runner; `INDEXED_SCHEMA_STEPS`; pre-migration backup; rollback on throw |
+| `packages/gateway/src/index/*-v<N>-sql.ts` | Migration SQL constants (e.g., `vec-items-1536-v30-sql.ts`, `audit-session-v24-sql.ts`) |
+| `packages/gateway/src/index/vec-items-1536-v30-sql.ts` | V30 — `vec_items_1536` virtual table + dim-aware delete triggers |
+| `packages/gateway/src/embedding/routing.ts` | `PROSE_HEAVY_TYPES` + `EMBEDDING_DIM_*` + `isProseHeavy` helper |
+| `packages/gateway/src/embedding/routing-pipeline.ts` | `RoutingEmbeddingPipeline` — dispatches by `(service, type)` |
+| `packages/gateway/src/embedding/create-routing-runtime.ts` | `tryCreateRoutingEmbeddingRuntime` — hybrid factory; MiniLM fallback |
+| `packages/gateway/src/search/dual-search.ts` | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables |
+| `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel`; CLI-only |
 | `packages/gateway/src/automation/graph-predicate.ts` | Graph predicate types/parser/evaluator |
-| `packages/gateway/src/automation/watcher-engine.ts` | Watcher evaluation loop; applies `graph_predicate_json` post-filter |
+| `packages/gateway/src/automation/watcher-engine.ts` | Watcher loop; applies `graph_predicate_json` post-filter |
 | `packages/gateway/src/db/verify.ts` | `nimbus db verify` — non-destructive integrity checks |
 | `packages/gateway/src/db/repair.ts` | `nimbus db repair` — targeted recovery, audit-logged |
 | `packages/gateway/src/db/snapshot.ts` | Manual + scheduled snapshots |
 | `packages/gateway/src/db/metrics.ts` | `IndexMetrics` — counts, embedding coverage, latency percentiles |
-| `packages/gateway/src/db/latency-ring-buffer.ts` | In-memory ring buffer; async batch flush to `query_latency_log` |
-| `packages/gateway/src/db/write.ts` | Central DB write wrapper — catches `SQLITE_FULL`, re-throws `DiskFullError` |
+| `packages/gateway/src/db/latency-ring-buffer.ts` | In-memory ring buffer → `query_latency_log` |
+| `packages/gateway/src/db/write.ts` | Central DB write wrapper — catches `SQLITE_FULL`, throws `DiskFullError` |
 
 ## LLM + Voice
 
@@ -139,10 +209,10 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents over PR/review/incident; emits `agents.expert.briefReady` |
-| `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius; emits `agents.impact.briefReady` |
-| `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking helpers |
-| `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector, missing entity, missing relation) |
+| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents; emits `agents.expert.briefReady` |
+| `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius |
+| `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking |
+| `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector/entity/relation) |
 | `packages/gateway/src/agents/_lib/render.ts` | Deterministic Markdown fallback renderer |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | LLM synthesis layer with deterministic fallback |
 
@@ -150,52 +220,52 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/metrics/dora.ts` | Four pure DORA calculators: `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr`. Returns `DoraMetricsResult` envelope. |
-| `packages/gateway/src/metrics/dora-config.ts` | `ServiceConfig` type (with `DoraServiceConfig` back-compat alias) + URN parser + provider→service-column map. |
-| `packages/gateway/src/preflight/preflight.ts` | Pure pre-deploy check: three counts (active P1 incidents, failing CI on target_ref, open PR conflicts). Returns `DeployPreflightResult` envelope. |
-| `packages/gateway/src/ipc/metrics-rpc.ts` | `dispatchMetricsRpc` — `metrics.dora` JSON-RPC handler. |
-| `packages/gateway/src/ipc/preflight-rpc.ts` | `dispatchPreflightRpc` — `deploy.preflight` JSON-RPC handler. |
-| `packages/cli/src/commands/metrics.ts` | `nimbus metrics dora --service <id> [--since 30d] [--json]`. |
-| `packages/cli/src/commands/deploy.ts` | `nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn\|block\|off] [--json]`. |
-| `packages/github-actions/preflight-query/` | First-party GitHub Action that wraps `GET /v1/preflight/deploy`. |
-| `packages/gateway/src/deployment/annotate.ts` | Pure post-deploy annotation calculator: validates payload, upserts `item` (`type='deployment'`) + the V28 `deployment_items` shadow row, writes one audit entry (Phase 5 T4 PR 3b). |
-| `packages/gateway/src/deployment/external-id.ts` | Stable `external_id` derivation for annotated deploys (provider + sha + env). |
-| `packages/gateway/src/deployment/types.ts` | `DeploymentAnnotateInput` / `DeploymentAnnotateResult` types shared by RPC + HTTP write route. |
-| `packages/gateway/src/ipc/deployment-rpc.ts` | `dispatchDeploymentRpc` — internal `deployment.annotate` JSON-RPC handler (NOT in renderer allowlist). |
-| `packages/gateway/src/ipc/http-write-routes.ts` | `WRITE_ROUTE_ALLOWLIST` + `dispatchWriteRoute` — invariant `I13` compile-time allowlist for HTTP write surface (Phase 5 T4 PR 3b). |
-| `packages/gateway/src/ipc/http-auth.ts` | `requireBearer` + `tokenFingerprint` — bearer-token auth for HTTP write routes; reads `http_api.deployment_token` from vault. |
-| `packages/gateway/src/ipc/http-rate-limit.ts` | `HttpWriteRateLimiter` — per-token sliding-window rate limit (60 req/min) for the HTTP write surface. |
-| `packages/cli/src/commands/deploy-annotate.ts` | `nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env> --status <s> --started-at <ms>`. |
-| `packages/github-actions/annotate-action/` | First-party GitHub Action that wraps `POST /v1/deployments`. |
+| `packages/gateway/src/metrics/dora.ts` | Four pure DORA calculators: `deploymentFrequency`, `leadTimeForChanges`, `changeFailureRate`, `mttr` |
+| `packages/gateway/src/metrics/dora-config.ts` | `ServiceConfig` type + URN parser + provider→service-column map |
+| `packages/gateway/src/preflight/preflight.ts` | Pure pre-deploy check — three counts (P1 incidents, failing CI, PR conflicts) |
+| `packages/gateway/src/ipc/metrics-rpc.ts` | `dispatchMetricsRpc` — `metrics.dora` |
+| `packages/gateway/src/ipc/preflight-rpc.ts` | `dispatchPreflightRpc` — `deploy.preflight` |
+| `packages/cli/src/commands/metrics.ts` | `nimbus metrics dora --service <id>` |
+| `packages/cli/src/commands/deploy.ts` | `nimbus deploy preflight --service <id> --target-ref <ref>` |
+| `packages/github-actions/preflight-query/` | First-party Action — wraps `GET /v1/preflight/deploy` |
+| `packages/gateway/src/deployment/annotate.ts` | Pure post-deploy annotation — upserts `item` + V28 `deployment_items` shadow + audit |
+| `packages/gateway/src/deployment/external-id.ts` | Stable `external_id` derivation (provider + sha + env) |
+| `packages/gateway/src/deployment/types.ts` | `DeploymentAnnotateInput` / `DeploymentAnnotateResult` |
+| `packages/gateway/src/ipc/deployment-rpc.ts` | `dispatchDeploymentRpc` — internal `deployment.annotate` (NOT in renderer allowlist) |
+| `packages/gateway/src/ipc/http-write-routes.ts` | `WRITE_ROUTE_ALLOWLIST` + `dispatchWriteRoute` — invariant `I13` |
+| `packages/gateway/src/ipc/http-auth.ts` | `requireBearer` + `tokenFingerprint` — reads `http_api.deployment_token` |
+| `packages/gateway/src/ipc/http-rate-limit.ts` | `HttpWriteRateLimiter` — per-token sliding window (60 req/min) |
+| `packages/cli/src/commands/deploy-annotate.ts` | `nimbus deploy annotate --service --sha --target-ref --env --status` |
+| `packages/github-actions/annotate-action/` | First-party Action — wraps `POST /v1/deployments` |
 
 ## IPC
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/ipc/` | JSON-RPC 2.0 IPC server (one file per namespace under `handlers/`) |
-| `packages/gateway/src/ipc/agents-rpc.ts` | `agents.expert` + `agents.impact` handlers; rejects array payloads |
+| `packages/gateway/src/ipc/` | JSON-RPC 2.0 server (one file per namespace under `handlers/`) |
+| `packages/gateway/src/ipc/agents-rpc.ts` | `agents.expert` + `agents.impact`; rejects array payloads |
 | `packages/gateway/src/ipc/llm-rpc.ts` | `dispatchLlmRpc` — `llm.listModels` / `llm.getStatus` |
-| `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` handlers |
-| `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus`/`checkNow`/`applyUpdate`/`rollback` |
-| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost` only, `SQLITE_OPEN_READONLY`) |
-| `packages/gateway/src/ipc/http-routes.ts` | `READ_ONLY_HTTP_ROUTES` — canonical route list; single source of truth for the OpenAPI drift CI gate (Phase 5 T4 PR 1) |
-| `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON parse for `GET /v1/openapi.json` (Phase 5 T4 PR 1) |
-| `packages/gateway/openapi/v1.yaml` | Hand-authored OpenAPI 3.1 schema for the read-only HTTP API; serves `/v1/metrics/dora` (T4 PR 2), `/v1/preflight/deploy` (T4 PR 3a), and `POST /v1/deployments` (T4 PR 3b). |
+| `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` |
+| `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus/checkNow/applyUpdate/rollback` |
+| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost`, `SQLITE_OPEN_READONLY`) |
+| `packages/gateway/src/ipc/http-routes.ts` | `READ_ONLY_HTTP_ROUTES` — source of truth for OpenAPI drift gate |
+| `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON for `GET /v1/openapi.json` |
+| `packages/gateway/openapi/v1.yaml` | OpenAPI 3.1 schema; serves `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |
 | `packages/gateway/src/ipc/metrics-server.ts` | Prometheus endpoint (`localhost`, off by default) |
 | `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` |
-| `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 pairing code, 5-min expiry |
-| `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding-window failure tracking |
+| `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 code, 5-min expiry |
+| `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding window |
 | `packages/gateway/src/ipc/lan-rpc.ts` | `LanError`, `checkLanMethodAllowed` — invariant `I5` |
-| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP server; length-framed NaCl-box RPC |
+| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed NaCl-box RPC |
 
 ## Updater
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/updater/updater.ts` | `Updater` state machine — manifest, semver compare, download, Ed25519 verify, install |
+| `packages/gateway/src/updater/updater.ts` | `Updater` state machine — manifest, semver, download, Ed25519 verify, install |
 | `packages/gateway/src/updater/manifest-fetcher.ts` | `fetchUpdateManifest` — typed fetch with `AbortController` timeout |
 | `packages/gateway/src/updater/signature-verifier.ts` | `verifyBinarySignature` — Ed25519 over SHA-256 |
-| `packages/gateway/src/updater/public-key.ts` | Embedded Ed25519 public key; `NIMBUS_DEV_UPDATER_PUBLIC_KEY` override for tests |
+| `packages/gateway/src/updater/public-key.ts` | Embedded Ed25519 pubkey; `NIMBUS_DEV_UPDATER_PUBLIC_KEY` override for tests |
 
 ## Telemetry + Config + Perf
 
@@ -220,10 +290,10 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 | `packages/cli/src/commands/expert.ts` | `nimbus expert` — calls `agents.expert`, streams Markdown |
 | `packages/cli/src/commands/impact.ts` | `nimbus impact` — calls `agents.impact`; `--json` / `--service` filter |
 | `packages/cli/src/commands/bench.ts` | `nimbus bench` — `Bun.spawn` wrapper around `bench-runner.ts` |
-| `packages/cli/src/commands/index-cmd.ts` | `nimbus index reembed` — IPC-driven reembed CLI with progress streaming (T6 PR 3). |
+| `packages/cli/src/commands/index-cmd.ts` | `nimbus index reembed` — IPC-driven with progress streaming |
 | `packages/cli/src/commands/tui.tsx` | `nimbus tui` entry — gateway check, fallback detection, Ink |
 | `packages/cli/src/tui/App.tsx` | TUI root — state machine + Option-1 layout |
-| `packages/cli/src/tui/state.ts` | Top-level reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
+| `packages/cli/src/tui/state.ts` | Reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
 
 ## SDK / Client / VS Code
 
@@ -231,26 +301,26 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
 | `packages/client/src/index.ts` | `@nimbus-dev/client` — `NimbusClient`, `MockClient` |
-| `packages/vscode-extension/` | `nimbus-vscode` — Marketplace + Open VSX (current tag `vscode-v0.1.2`) |
+| `packages/vscode-extension/` | `nimbus-vscode` — Marketplace + Open VSX |
 
 ## Tauri UI (frontend + Rust bridge)
 
 | File | Purpose |
 |---|---|
-| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (62), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS` (`profile.switched`); invariant `I7` |
+| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (62), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
 | `packages/ui/src-tauri/src/tray.rs` | System tray icon, menu, state forwarding |
 | `packages/ui/src-tauri/src/quick_query.rs` | Quick Query window lifecycle |
 | `packages/ui/src-tauri/src/hitl_popup.rs` | HITL popup window lifecycle |
 | `packages/ui/src-tauri/src/lib.rs` | Tauri app entry — plugins, tray init, global shortcut, macOS accessory mode |
 | `packages/ui/src-tauri/capabilities/default.json` | Tauri capability set — windows, permissions |
 | `packages/ui/src-tauri/tauri.conf.json` | CSP + window config (invariant `I8`) |
-| `packages/ui/src/ipc/client.ts` | `NimbusIpcClient`, `createIpcClient()`, `parseError()`; credential redaction (5 forbidden keys) |
+| `packages/ui/src/ipc/client.ts` | `NimbusIpcClient`, `createIpcClient()`, `parseError()`; credential redaction |
 | `packages/ui/src/ipc/types.ts` | Shared IPC types |
 | `packages/ui/src/store/index.ts` | `useNimbusStore` — Zustand v5 + `persist`; 11 slices |
 | `packages/ui/src/store/partialize.ts` | `persistPartialize` — 5-key whitelist + 5-key forbidden deep-scrub |
 | `packages/ui/src/providers/GatewayConnectionProvider.tsx` | `onConnectionState` mirror + first-run routing |
 | `packages/ui/src/App.tsx` | `createBrowserRouter` — all UI routes |
-| `packages/ui/src/pages/` | Route-level pages: `QuickQuery`, `Onboarding`, `Dashboard`, `HitlPopup`, `Settings`, `settings/*` panels |
+| `packages/ui/src/pages/` | Route-level pages: `QuickQuery`, `Onboarding`, `Dashboard`, `HitlPopup`, `Settings/*` |
 | `packages/ui/src/components/hitl/HitlPopupPage.tsx` | Head-of-queue consent dialog → `consent.respond` |
 | `packages/ui/src/components/hitl/StructuredPreview.tsx` | XSS-safe recursive preview of `consent.request` details |
 | `packages/ui/src/hooks/useIpcQuery.ts` | Typed polling hook (pauses on hidden / disconnected) |
@@ -262,21 +332,21 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 
 | File | Purpose |
 |---|---|
-| `scripts/structure-audit/lib.ts` | Shared B3 audit helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
+| `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (invariants `I1`, vault-key allow-list) |
-| `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — compares `v1.yaml` paths against `READ_ONLY_HTTP_ROUTES`; powers `audit:openapi-drift` CI gate (Phase 5 T4 PR 1) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist) |
+| `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `READ_ONLY_HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
-## Security Scan (Phase 5)
+## Security Scan
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/security/secret-patterns.ts` | `SECRET_PATTERNS` (v1: 21 prefix-anchored patterns) + `redactSecret` (first-4/last-4) + `buildContextSnippet` (±40 chars, `[REDACTED]` middle). |
-| `packages/gateway/src/security/scan.ts` | `scanItemsForSecrets` — pure scanner over `Iterable<ScanItem>`. No DB, no audit, no I/O. |
-| `packages/gateway/src/ipc/security-rpc.ts` | `dispatchSecurityRpc` — `security.scan` handler. Builds depth map from `sync_state.depth`, skips `metadata_only` (reported), writes one `security.scan_completed` audit row. CLI-only — NOT in Tauri allowlist (I7); namespace `security` is in `FORBIDDEN_OVER_LAN` (I5). |
-| `packages/cli/src/commands/security.ts` | `runSecurity` — `nimbus security scan [--json]`. Respects `NO_COLOR` + `isTTY`. |
-| `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Phase 5 acceptance test — AWS public example key in a `summary`-depth filesystem item. |
+| `packages/gateway/src/security/secret-patterns.ts` | `SECRET_PATTERNS` (21 prefix-anchored) + `redactSecret` + `buildContextSnippet` |
+| `packages/gateway/src/security/scan.ts` | `scanItemsForSecrets` — pure scanner over `Iterable<ScanItem>`; no I/O |
+| `packages/gateway/src/ipc/security-rpc.ts` | `dispatchSecurityRpc` — `security.scan`; CLI-only (NOT Tauri, NOT LAN) |
+| `packages/cli/src/commands/security.ts` | `nimbus security scan [--json]`; respects `NO_COLOR` + `isTTY` |
+| `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Acceptance — AWS public example key in a `summary`-depth filesystem item |
 
 ## Top-level docs
 
@@ -284,15 +354,15 @@ This is the curated pointer index. Source-of-truth is the working tree — verif
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I15 rationale + anti-patterns + audit cross-references (I15 = sandbox runner intrinsic to extension spawn, T2 PR 1) |
-| `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist for headless releases; per-platform results matrix |
-| `docs/cli/use-in-ci.md` | Worked CI integration examples (GitHub Actions self-hosted, GitLab CI, Jenkins) using `nimbus query --json` (Phase 5 T4 PR 1) |
-| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit hook template — fail-open `nimbus diag --json` reachability check + incident/CI gates (Phase 5 T4 PR 1). Install + extend recipes live in [`docs/cli/pre-commit.md`](../../docs/cli/pre-commit.md). |
-| `docs/cli/pre-commit.md` | User-facing pre-commit hook docs — install, env-var knobs (`NIMBUS_HOOK_BLOCK_ON_*`), exit codes, extension patterns (Phase 5 T4 PR 1 wrap-up). |
+| `docs/SECURITY-INVARIANTS.md` | I1–I16 rationale + anti-patterns + audit cross-references |
+| `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
+| `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
+| `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |
+| `docs/cli/pre-commit.md` | Pre-commit hook docs — install, env-var knobs, exit codes |
 | `docs/og-card.png` | OG social card PNG (1200×630, deterministic resvg-js render) |
 | `docs/assets/og-card.svg` | OG card source SVG |
-| `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular weight (SIL OFL 1.1) |
-| `docs/assets/fonts/JetBrainsMono-Bold.ttf` | Deterministic OG render font — Bold weight (SIL OFL 1.1) |
+| `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular (SIL OFL 1.1) |
+| `docs/assets/fonts/JetBrainsMono-Bold.ttf` | Deterministic OG render font — Bold (SIL OFL 1.1) |
 | `docs/assets/hero-cast-light.svg` | Rendered asciinema cast — light variant |
 | `docs/assets/hero-cast-dark.svg` | Rendered asciinema cast — dark variant |
 | `scripts/render-og-card.ts` | `bun run render:og-card` — resvg-js renderer for `docs/og-card.png` |

@@ -9,14 +9,8 @@ import {
 } from "../../../src/auth/pkce.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
 
-// ---------------------------------------------------------------------------
-// pkceCodeChallengeS256
-// ---------------------------------------------------------------------------
-
 describe("pkceCodeChallengeS256", () => {
   it("matches the RFC 7636 Appendix B test vector", async () => {
-    // RFC 7636 §Appendix B: verifier "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-    // produces challenge "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".
     const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const challenge = await pkceCodeChallengeS256(verifier);
     expect(challenge).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
@@ -27,10 +21,6 @@ describe("pkceCodeChallengeS256", () => {
     expect(challenge).not.toMatch(/[+/=]/);
   });
 });
-
-// ---------------------------------------------------------------------------
-// refreshAccessToken
-// ---------------------------------------------------------------------------
 
 describe("refreshAccessToken", () => {
   it("Google: posts to token endpoint and returns new access token", async () => {
@@ -131,9 +121,7 @@ describe("refreshAccessToken", () => {
 
     const defaultKey = await vault.get("google.oauth");
     const customKey = await vault.get("google.drive");
-    // Default key should not have been written
     expect(defaultKey).toBeNull();
-    // Custom key should have the data
     expect(customKey).not.toBeNull();
   });
 
@@ -176,10 +164,6 @@ describe("refreshAccessToken", () => {
     expect(result.accessToken).toBe("new-access");
   });
 });
-
-// ---------------------------------------------------------------------------
-// refreshSlackUserToken
-// ---------------------------------------------------------------------------
 
 describe("refreshSlackUserToken", () => {
   it("posts to slack.com/api/oauth.v2.access and returns authed_user.access_token", async () => {
@@ -256,10 +240,6 @@ describe("refreshSlackUserToken", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// refreshNotionToken
-// ---------------------------------------------------------------------------
-
 describe("refreshNotionToken", () => {
   it("posts to api.notion.com/v1/oauth/token with Basic auth header", async () => {
     const vault = createMockVault();
@@ -334,7 +314,6 @@ describe("refreshNotionToken", () => {
   });
 
   it("falls back to the supplied refresh token when response omits refresh_token", async () => {
-    // Notion may omit refresh_token on rotation — the implementation falls back to the input token.
     const vault = createMockVault();
 
     const fakeFetch: PKCEFetch = async () =>
@@ -351,10 +330,6 @@ describe("refreshNotionToken", () => {
     expect(result.refreshToken).toBe("original-refresh");
   });
 });
-
-// ---------------------------------------------------------------------------
-// runPKCEFlow — end-to-end: real Bun.serve callback server
-// ---------------------------------------------------------------------------
 
 async function waitForOpenUrl(signal: { value: string }, timeoutMs = 5_000): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -392,7 +367,6 @@ describe("runPKCEFlow", () => {
       );
     };
 
-    // Start the flow. No redirectPort supplied → OS picks an ephemeral port.
     const flowPromise = runPKCEFlow({
       provider: "google",
       clientId: "test-client",
@@ -402,7 +376,6 @@ describe("runPKCEFlow", () => {
       fetchImpl: fakeFetch,
     });
 
-    // Wait until openUrl was called (guarantees the server is bound + auth URL is ready).
     await waitForOpenUrl(capturedUrl);
     const capturedAuthUrl = capturedUrl.value;
 
@@ -412,27 +385,23 @@ describe("runPKCEFlow", () => {
     expect(redirectUri).toBeTruthy();
     expect(state).toBeTruthy();
 
-    // Verify standard PKCE / OAuth params in the auth URL.
     expect(authUrlParsed.hostname).toBe("accounts.google.com");
     expect(authUrlParsed.searchParams.get("response_type")).toBe("code");
     expect(authUrlParsed.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authUrlParsed.searchParams.get("client_id")).toBe("test-client");
 
-    // Drive the callback: GET redirect_uri?code=auth-code-xyz&state=<extracted state>.
     const callbackUrl = new URL(redirectUri!);
     callbackUrl.searchParams.set("code", "auth-code-xyz");
     callbackUrl.searchParams.set("state", state!);
     const callbackResp = await fetch(callbackUrl.toString());
     expect(callbackResp.status).toBe(200);
 
-    // Now wait for the full flow to resolve.
     const result = await flowPromise;
     expect(result.accessToken).toBe("flow-access");
     expect(result.refreshToken).toBe("flow-refresh");
     expect(result.expiresAt).toBeGreaterThan(Date.now());
     expect(result.scopes).toEqual(["read", "write"]);
 
-    // Token exchange request — verify wire contract.
     expect(tokenRequest).toBeDefined();
     const body = await tokenRequest!.text();
     expect(body).toContain("grant_type=authorization_code");
@@ -441,7 +410,6 @@ describe("runPKCEFlow", () => {
     expect(body).toContain("client_id=test-client");
     expect(tokenRequest!.url).toContain("oauth2.googleapis.com/token");
 
-    // Vault persistence — tokens stored under google.oauth as a JSON blob.
     const stored = await vault.get("google.oauth");
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!) as {
@@ -464,7 +432,6 @@ describe("runPKCEFlow", () => {
       capturedUrl.value = url;
     };
 
-    // fakeFetch should not be called for this path (error before token exchange).
     const fakeFetch: PKCEFetch = async () => {
       throw new Error("fakeFetch should not be called for the error path");
     };
@@ -478,7 +445,6 @@ describe("runPKCEFlow", () => {
       fetchImpl: fakeFetch,
     });
 
-    // Wait for the server to bind and openUrl to fire.
     await waitForOpenUrl(capturedUrl);
     const capturedAuthUrl = capturedUrl.value;
 
@@ -486,15 +452,12 @@ describe("runPKCEFlow", () => {
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
     const state = authUrlParsed.searchParams.get("state");
 
-    // Send back an OAuth error response (user clicked "Deny").
     const callbackUrl = new URL(redirectUri!);
     callbackUrl.searchParams.set("error", "access_denied");
     callbackUrl.searchParams.set("state", state!);
     const callbackResp = await fetch(callbackUrl.toString());
-    // Server returns 200 with a plain-text denial message.
     expect(callbackResp.status).toBe(200);
 
-    // The flow promise must reject with the OAuth error code or the production message.
     await expect(flowPromise).rejects.toThrow(/access_denied|authorization did not complete/i);
   }, 15_000);
 
@@ -533,7 +496,6 @@ describe("runPKCEFlow", () => {
     const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
-    // Microsoft auth URL uses login.microsoftonline.com
     expect(authUrlParsed.hostname).toBe("login.microsoftonline.com");
 
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
@@ -547,11 +509,9 @@ describe("runPKCEFlow", () => {
     const result = await flowPromise;
     expect(result.accessToken).toBe("ms-flow-access");
 
-    // Token exchange should target the Microsoft endpoint.
     expect(capturedTokenUrl).toContain("login.microsoftonline.com");
     expect(capturedTokenUrl).toContain("oauth2/v2.0/token");
 
-    // Persisted under microsoft.oauth.
     const stored = await vault.get("microsoft.oauth");
     expect(stored).not.toBeNull();
   }, 15_000);
@@ -575,7 +535,6 @@ describe("runPKCEFlow", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
 
-    // Not providing redirectPort or portRange → only path is "ephemeral".
     const flowPromise = runPKCEFlow({
       provider: "google",
       clientId: "fallback-client",
@@ -603,7 +562,6 @@ describe("runPKCEFlow", () => {
     const result = await flowPromise;
     expect(result.accessToken).toBe("fallback-access");
 
-    // onRandomPortFallback must have been invoked (ephemeral port path).
     expect(fallbackCalled).toBe(true);
   }, 15_000);
 
@@ -638,12 +596,10 @@ describe("runPKCEFlow", () => {
       fetchImpl: fakeFetch,
     });
 
-    // Wait for openUrl to fire.
     await waitForOpenUrl(capturedUrl);
     const capturedAuthUrl = capturedUrl.value;
 
     const authUrlParsed = new URL(capturedAuthUrl);
-    // Notion auth URL uses api.notion.com
     expect(authUrlParsed.hostname).toBe("api.notion.com");
     expect(authUrlParsed.searchParams.get("response_type")).toBe("code");
     expect(authUrlParsed.searchParams.get("owner")).toBe("user");
@@ -653,7 +609,6 @@ describe("runPKCEFlow", () => {
     expect(redirectUri).toBeTruthy();
     expect(state).toBeTruthy();
 
-    // Send the callback.
     const callbackUrl = new URL(redirectUri!);
     callbackUrl.searchParams.set("code", "notion-auth-code");
     callbackUrl.searchParams.set("state", state!);
@@ -664,7 +619,6 @@ describe("runPKCEFlow", () => {
     expect(result.accessToken).toBe("notion-flow-access");
     expect(result.refreshToken).toBe("notion-flow-refresh");
 
-    // Token exchange went to Notion's token endpoint with Basic auth + JSON body.
     expect(tokenRequest).toBeDefined();
     const authHeader = tokenRequest!.headers.get("Authorization");
     expect(authHeader).toMatch(/^Basic /);
@@ -681,7 +635,6 @@ describe("runPKCEFlow", () => {
     expect(body.code).toBe("notion-auth-code");
     expect(body.redirect_uri).toBe(redirectUri);
 
-    // Vault persistence under notion.oauth.
     const stored = await vault.get("notion.oauth");
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!) as { accessToken: string; refreshToken: string };
@@ -702,7 +655,6 @@ describe("runPKCEFlow", () => {
       runPKCEFlow({
         provider: "notion",
         clientId: "notion-client",
-        // oauthClientSecret deliberately omitted
         scopes: ["read_content"],
         vault,
         openUrl,
@@ -742,7 +694,6 @@ describe("runPKCEFlow", () => {
       fetchImpl: fakeFetch,
     });
 
-    // Wait for openUrl to fire.
     await waitForOpenUrl(capturedUrl);
     const capturedAuthUrl = capturedUrl.value;
 
@@ -763,7 +714,6 @@ describe("runPKCEFlow", () => {
     expect(result.accessToken).toBe("slack-flow-access");
     expect(result.refreshToken).toBe("slack-flow-refresh");
 
-    // Vault persistence under slack.oauth.
     const stored = await vault.get("slack.oauth");
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!) as { accessToken: string };
@@ -788,7 +738,6 @@ describe("runPKCEFlow", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
 
-    // Use a wide portRange so we don't clash with other tests; OS picks from the range.
     const flowPromise = runPKCEFlow({
       provider: "google",
       clientId: "range-client",
@@ -806,7 +755,6 @@ describe("runPKCEFlow", () => {
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
     const state = authUrlParsed.searchParams.get("state");
 
-    // Confirm the redirect_uri uses a port in the declared range (or ephemeral if all were busy).
     const boundPort = parseInt(new URL(redirectUri!).port, 10);
     expect(boundPort).toBeGreaterThan(0);
 

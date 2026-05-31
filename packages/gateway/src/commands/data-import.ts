@@ -50,7 +50,6 @@ export type RunDataImportInput = {
   recoverySeed?: string;
   vault: NimbusVault;
   index: LocalIndex;
-  /** Internal test hook: throw after vault restore to exercise rollback. */
   injectFailureAfterVault?: boolean;
 };
 

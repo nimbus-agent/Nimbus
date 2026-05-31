@@ -1,13 +1,3 @@
-/**
- * Tests for `createInlineHitlSurface` — the webview-routed HITL surface
- * extracted from extension.ts. Covers:
- *   1. Posts a `hitlInline` message to the panel with the requestId/prompt.
- *   2. Resolves with `approve` / `reject` when the matching resolver in the
- *      shared `pending` map is called (simulating the webview reply).
- *   3. Falls back to `fallback` when no panel is mounted.
- *   4. Forwards `details` only when present.
- */
-
 import { describe, expect, test, vi } from "vitest";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import { createInlineHitlSurface, type InlineHitlReq } from "../../src/extension.js";
@@ -47,17 +37,14 @@ describe("createInlineHitlSurface", () => {
 
     const promise = surface({ requestId: "r1", prompt: "Approve?" });
 
-    // Verify the panel received the right shape.
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({
       type: "hitlInline",
       requestId: "r1",
       prompt: "Approve?",
     });
-    // `details` was not provided → must not be on the payload.
     expect((posted[0] as { details?: unknown }).details).toBeUndefined();
 
-    // Simulate the webview's hitlResponse arriving.
     const resolver = pending.get("r1");
     expect(resolver).toBeDefined();
     resolver?.("approve");

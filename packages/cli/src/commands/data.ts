@@ -21,25 +21,10 @@ export async function runData(args: string[]): Promise<void> {
 }
 
 interface WithClientOptions {
-  /** Auto-approve all consent prompts (--yes). Ignored when scriptConsentSource is set. */
   readonly yes: boolean;
-  /**
-   * Path to a JSONL file of scripted consent decisions. When set, decisions are
-   * consumed sequentially from the file instead of prompting the user or auto-approving.
-   * Overrides `yes`; a stderr warning is emitted if both are supplied.
-   * Set via --script-consent-source or NIMBUS_SCRIPT_CONSENT_SOURCE.
-   */
   readonly scriptConsentSource?: string;
 }
 
-/**
- * Open an IPC connection and register the right HITL consent handler before
- * invoking the caller. Without this, `data.export|import|delete` deadlock —
- * the Gateway emits `consent.request` and waits for `consent.respond`, while
- * the CLI waits for the IPC method's response (BUG-002).
- *
- * Priority: scriptConsentSource > yes > interactive prompt.
- */
 async function withClient<T>(
   opts: WithClientOptions,
   fn: (c: IPCClient) => Promise<T>,
@@ -71,7 +56,7 @@ async function runDataExportCli(args: string[]): Promise<void> {
   const output = args[outIdx + 1];
   const passphrase = args[passIdx + 1];
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const result = await client.call<{
         outputPath: string;
@@ -105,16 +90,14 @@ async function runDataImportCli(args: string[]): Promise<void> {
     throw new Error("Provide either --passphrase or --recovery-seed");
   }
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const result = await client.call<{
         credentialsRestored: number;
         oauthEntriesFlagged: number;
       }>("data.import", { bundlePath, passphrase, recoverySeed });
-      // These are counts only — no credential values are logged. // lgtm[js/clear-text-logging-sensitive-data]
       console.log(`[ok] restored ${String(result.credentialsRestored)} credentials`);
       if (result.oauthEntriesFlagged > 0) {
-        // lgtm[js/clear-text-logging] -- count only, no credential values
         console.log(
           `[warn] ${String(result.oauthEntriesFlagged)} OAuth entries may require re-auth on next sync`, // NOSONAR — count only, no credential values
         );
@@ -131,7 +114,7 @@ async function runDataDeleteCli(args: string[]): Promise<void> {
   const yes = args.includes("--yes");
   const scriptConsentSource = parseScriptConsentSource(args);
   await withClient(
-    { yes, ...(scriptConsentSource !== undefined ? { scriptConsentSource } : {}) },
+    { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const pre = await client.call<{
         preflight: { itemsToDelete: number; vaultEntriesToDelete: number };

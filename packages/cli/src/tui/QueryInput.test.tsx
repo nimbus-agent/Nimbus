@@ -5,13 +5,6 @@ import { join } from "node:path";
 import { render } from "ink-testing-library";
 import { QueryInput } from "./QueryInput.tsx";
 
-/**
- * Polls `check` until it returns a truthy value or the timeout elapses.
- * Used in place of fixed setTimeout waits for post-action assertions, so
- * tests don't flake on busy CI hosts (notably Windows under full-suite
- * parallelism where Ink render → file load → React state update → submit →
- * persist can take much longer than a fixed 20–30ms wait).
- */
 async function waitFor<T>(
   check: () => T | null | undefined,
   opts: { timeout?: number; interval?: number } = {},
@@ -76,7 +69,7 @@ describe("QueryInput — basic", () => {
       />,
     );
     stdin.write("hello");
-    stdin.write("\r"); // Enter
+    stdin.write("\r");
     await new Promise((r) => setTimeout(r, 20));
     expect(submitted).toBe("hello");
     unmount();
@@ -184,7 +177,7 @@ describe("QueryInput — Ctrl+C dispatch", () => {
         showCancelHint={false}
       />,
     );
-    stdin.write("\x03"); // Ctrl+C
+    stdin.write("\x03");
     await new Promise((r) => setTimeout(r, 20));
     expect(fired).toBe(true);
     unmount();
@@ -209,15 +202,8 @@ describe("QueryInput — history cycling", () => {
         showCancelHint={false}
       />,
     );
-    // The component reads `historyPath` from disk inside a useEffect — there
-    // is no re-render when the read resolves, so the frame is identical
-    // before and after hydration and we cannot poll for it. The only thing
-    // we can do is wait long enough for the read to land. macOS CI runners
-    // occasionally take much longer than the original 20ms here (this test
-    // intermittently failed on the macos-15 unit-test step), so allow 250ms.
-    // The test still completes in <500ms on local hosts.
     await new Promise((r) => setTimeout(r, 250));
-    stdin.write("\x1B[A"); // Up
+    stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("three");
     stdin.write("\x1B[A");
@@ -226,7 +212,7 @@ describe("QueryInput — history cycling", () => {
     stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");
-    stdin.write("\x1B[A"); // already at top
+    stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");
     stdin.write("\r");
@@ -248,12 +234,11 @@ describe("QueryInput — history cycling", () => {
         showCancelHint={false}
       />,
     );
-    // Same hydration race as the sibling "Up cycles" test — see comment there.
     await new Promise((r) => setTimeout(r, 250));
     stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");
-    stdin.write("\x1B[B"); // Down
+    stdin.write("\x1B[B");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").not.toContain("one");
     unmount();
@@ -272,15 +257,9 @@ describe("QueryInput — history cycling", () => {
         showCancelHint={false}
       />,
     );
-    // Small grace period for the component to hydrate the existing entry from
-    // disk before we submit; without it the submit can race the load and the
-    // result becomes ["new"] only.
     await new Promise((r) => setTimeout(r, 50));
     stdin.write("new");
     stdin.write("\r");
-    // Poll the history file until the new entry has been persisted, instead
-    // of a fixed setTimeout which intermittently flaked on Windows under
-    // full-suite parallelism.
     const parsed = await waitFor(
       () => {
         const p = JSON.parse(readFileSync(historyPath, "utf-8")) as { entries: string[] };

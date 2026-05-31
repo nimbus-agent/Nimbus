@@ -75,7 +75,6 @@ export type IndexSearchQuery = {
   limit?: number;
 };
 
-/** Row shape from `SELECT i.* FROM item i` */
 type ItemRow = {
   id: string;
   service: string;
@@ -240,13 +239,8 @@ function stripRankedToNimbus(r: RankedIndexItem): NimbusItem {
 }
 
 export type SemanticSearchDeps = {
-  /** Must match `embedding_chunk.model` (e.g. `all-MiniLM-L6-v2`). */
   model: string;
   embedQuery: (text: string) => Promise<Float32Array | null>;
-  /** Hybrid-aware query embedding — runtime returns whichever vectors it can produce.
-   *  - local-only:  { vec384, null, model384, null }
-   *  - openai-only: { null, vec1536, null, model1536 }
-   *  - hybrid:      both populated */
   embedQueryDual: (text: string) => Promise<{
     vec384: Float32Array | null;
     vec1536: Float32Array | null;
@@ -256,9 +250,7 @@ export type SemanticSearchDeps = {
 };
 
 export type LocalIndexOptions = {
-  /** Queue embedding work after index upserts (non-blocking). */
   scheduleItemEmbedding?: (itemId: string) => void;
-  /** Hybrid BM25 + vector search when set. */
   semanticSearch?: SemanticSearchDeps;
 };
 
@@ -274,14 +266,8 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-/** Current indexed DB schema version — also accessible as `LocalIndex.SCHEMA_VERSION`. */
 export const CURRENT_SCHEMA_VERSION = 31;
 
-/**
- * S4-F1 — explicit allowlist for `LocalIndex.getMeta` / `setMeta`. The `_meta`
- * table is reused for these UI-facing keys; entries outside this set are
- * rejected so the IPC handlers cannot become a back-door config surface.
- */
 const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed"]);
 
 export function isAllowedMetaKey(key: string): boolean {
@@ -291,9 +277,6 @@ export function isAllowedMetaKey(key: string): boolean {
 export class LocalIndex {
   static readonly SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
-  /**
-   * Applies bundled migrations when `user_version` is below `SCHEMA_VERSION`.
-   */
   static ensureSchema(db: Database, backup?: MigrationBackupOptions): void {
     runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION, backup);
     ensureSqliteVecForConnection(db, readIndexedUserVersion(db));
@@ -309,7 +292,6 @@ export class LocalIndex {
     return this.options?.semanticSearch;
   }
 
-  /** Gateway IPC only — OAuth retention checks after connector removal. */
   getDatabase(): Database {
     return this.db;
   }
@@ -360,9 +342,6 @@ export class LocalIndex {
     };
   }
 
-  /**
-   * Sync rows persisted in `scheduler_state` (no in-process "syncing" flag — use {@link SyncScheduler#getStatus} when wired).
-   */
   persistedConnectorStatuses(serviceIdFilter?: string): SyncStatus[] {
     if (serviceIdFilter !== undefined && serviceIdFilter !== "") {
       const row = loadSchedulerState(this.db, serviceIdFilter);
@@ -379,10 +358,6 @@ export class LocalIndex {
     upsertSchedulerRegistration(this.db, serviceId, intervalMs, now, false);
   }
 
-  /**
-   * When GitHub is already registered and a PAT is present, ensure the companion `github_actions`
-   * scheduler row exists (backfill for installs that predated GHA sync).
-   */
   ensureGithubActionsSchedulerCompanionIfNeeded(params: {
     githubPatPresent: boolean;
     now: number;
@@ -400,10 +375,6 @@ export class LocalIndex {
     upsertSchedulerRegistration(this.db, "github_actions", params.intervalMs, params.now, false);
   }
 
-  /**
-   * When GitHub is registered and a CircleCI token is present, ensure the `circleci` scheduler row
-   * exists (backfill for installs that predated the CircleCI connector).
-   */
   ensureCircleciSchedulerCompanionIfNeeded(params: {
     circleciTokenPresent: boolean;
     now: number;
@@ -439,14 +410,11 @@ export class LocalIndex {
     upsertSchedulerRegistration(this.db, serviceId, intervalMs, now, true);
   }
 
-  // NOSONAR: depth type is already a type alias (ReindexDepth)
   setConnectorDepth(serviceId: string, depth: ReindexDepth): void {
-    // NOSONAR
     const rows = this.db
       .query(`UPDATE sync_state SET depth = ? WHERE connector_id = ?`)
       .run(depth, serviceId);
     if (rows.changes === 0) {
-      // Row doesn't exist yet — insert with this depth.
       dbRun(
         this.db,
         `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth) VALUES (?, NULL, NULL, ?)`,
@@ -472,10 +440,6 @@ export class LocalIndex {
     clearSchedulerCursor(this.db, serviceId);
   }
 
-  /**
-   * Deletes index + scheduler + legacy sync_state rows for one connector (SQLite transaction).
-   * Returns how many items were removed.
-   */
   removeConnectorIndexData(serviceId: string): number {
     return this.db.transaction(() => {
       const n = countItemsForService(this.db, serviceId);
@@ -487,9 +451,6 @@ export class LocalIndex {
     })();
   }
 
-  /**
-   * Items whose `author_id` matches (newest first). Used by `people.items` IPC.
-   */
   listItemsForAuthor(personId: string, limit: number): NimbusItem[] {
     const lim = Math.min(200, Math.max(1, Math.floor(limit)));
     const rows = this.db
@@ -498,10 +459,6 @@ export class LocalIndex {
     return rows.map(rowToItem);
   }
 
-  /**
-   * BFS traversal of the local relationship graph (schema v7+).
-   * `startRef` may be a `graph_entity.id` or an indexed item primary key (`item.id`).
-   */
   traverseGraph(
     startRef: string,
     options?: TraverseGraphOptions,
@@ -595,9 +552,6 @@ export class LocalIndex {
     return this.db.query(sql).all(...allParams) as ItemRow[];
   }
 
-  /**
-   * Q2 §7.2 — ranked + canonical_url dedup. FTS matches use SQLite FTS5 `ORDER BY rank` for relevance ordering.
-   */
   searchRanked(query: IndexSearchQuery, options?: SearchRankOptions): RankedIndexItem[] {
     const t0 = performance.now();
     const candidateLimit = Math.min(500, Math.max(1, Math.floor(options?.candidateLimit ?? 500)));
@@ -656,10 +610,6 @@ export class LocalIndex {
     }
   }
 
-  /**
-   * Like {@link searchRanked} but runs hybrid BM25 + vector RRF when `semantic` is true
-   * and {@link LocalIndexOptions.semanticSearch} is configured.
-   */
   async searchRankedAsync(
     query: IndexSearchQuery,
     options?: SearchRankOptions & { semantic?: boolean; contextChunks?: number },
@@ -702,7 +652,7 @@ export class LocalIndex {
         const priorities = options?.searchServicePriority ?? new Map();
 
         return hybridResults.map((h, i) => {
-          const row = h.item as ItemRow;
+          const row = h.item;
           const rec = recencyScore(row.modified_at, now);
           const sp = servicePriorityScore(row.service, priorities);
           const nr = normRrf[i] ?? 0.5;
@@ -726,9 +676,6 @@ export class LocalIndex {
     return this.searchRanked(query, options);
   }
 
-  /**
-   * Q2 §7.0 — page additional items for a service/type bucket (same ordering as ranked browse).
-   */
   fetchMoreItems(
     service: string,
     indexedType: string,
@@ -841,10 +788,6 @@ export class LocalIndex {
     );
   }
 
-  /**
-   * S4-F1 — generic key/value reader for the `_meta` table, scoped to an
-   * explicit allowlist. Returns null when the key is unknown or absent.
-   */
   getMeta(key: string): string | null {
     if (!ALLOWED_META_KEYS.has(key)) {
       throw new Error(`db.getMeta: key '${key}' is not in the whitelist`);
@@ -855,11 +798,6 @@ export class LocalIndex {
     return row?.value ?? null;
   }
 
-  /**
-   * S4-F1 — generic key/value writer for the `_meta` table, scoped to an
-   * explicit allowlist. Defends against future callers using db.setMeta as
-   * a back-door config.set surrogate.
-   */
   setMeta(key: string, value: string): void {
     if (!ALLOWED_META_KEYS.has(key)) {
       throw new Error(`db.setMeta: key '${key}' is not in the whitelist`);
@@ -884,12 +822,6 @@ export class LocalIndex {
     hostPort?: number;
     displayName?: string;
   }): void {
-    // S3-F5 — idempotent on duplicate `peer_pubkey`. Re-pairing from a known
-    // peer used to throw `UNIQUE constraint failed: lan_peers.peer_pubkey`,
-    // silently dropping the pair_ok reply. ON CONFLICT(peer_pubkey) refreshes
-    // host_ip / host_port / display_name / paired_at while preserving the
-    // existing `write_allowed` grant — re-pairing must not re-elevate
-    // permission grants the user previously revoked.
     dbRun(
       this.db,
       `INSERT INTO lan_peers (peer_id, peer_pubkey, direction, host_ip, host_port, display_name, write_allowed, paired_at)
@@ -938,9 +870,6 @@ export class LocalIndex {
       .get(Buffer.from(pubkey)) as LanPeerRow | undefined;
   }
 
-  /**
-   * Best-effort WAL checkpoint and close the DB (gateway shutdown).
-   */
   close(): void {
     try {
       dbRun(this.db, "PRAGMA wal_checkpoint(TRUNCATE)");
@@ -965,7 +894,6 @@ export class LocalIndex {
       byOutcome[r.outcome] = r.c;
       total += r.c;
     }
-    // Group by the first segment of action_type (e.g. "github.sync" → "github")
     const services = this.db
       .query("SELECT action_type, COUNT(*) AS c FROM audit_log GROUP BY action_type")
       .all() as { action_type: string; c: number }[];

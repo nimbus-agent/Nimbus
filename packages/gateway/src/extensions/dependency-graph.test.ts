@@ -70,6 +70,33 @@ describe("resolveClosure", () => {
     ]);
   });
 
+  it("topo tiebreak is deterministic locale order among simultaneously-ready leaves (S2871)", async () => {
+    const fetcher = makeFetcher({
+      "com.shared.zebra": { "1.0.0": { id: "com.shared.zebra", version: "1.0.0" } },
+      "com.shared.alpha": { "1.0.0": { id: "com.shared.alpha", version: "1.0.0" } },
+      "com.shared.mango": { "1.0.0": { id: "com.shared.mango", version: "1.0.0" } },
+    });
+    const root: ExtensionManifestForSolver = {
+      id: "com.example.app",
+      version: "1.0.0",
+      dependsOn: {
+        "com.shared.zebra": "^1.0.0",
+        "com.shared.alpha": "^1.0.0",
+        "com.shared.mango": "^1.0.0",
+      },
+    };
+    const plan = await resolveClosure(root, fetcher, {
+      installed: new Map(),
+      activeConstraints: new Map(),
+    });
+    expect(plan.nodes.map((n) => n.id)).toEqual([
+      "com.shared.alpha",
+      "com.shared.mango",
+      "com.shared.zebra",
+      "com.example.app",
+    ]);
+  });
+
   it("true cycle returns DependencyConflictError(kind=cycle) with chain", async () => {
     const fetcher = makeFetcher({
       "com.x.a": {
@@ -122,15 +149,12 @@ describe("resolveClosure", () => {
         expect(e.conflict.kind).toBe("unsatisfiable");
         expect(e.conflict.id).toBe("com.shared.utils");
         expect(e.conflict.constraints?.length).toBeGreaterThanOrEqual(2);
-        // Review-fix: error carries the registry's listed versions so CLI can print
-        // "available: 1.5.0" alongside the conflicting ranges.
         expect(e.conflict.availableVersions).toEqual(["1.5.0"]);
       }
     }
   });
 
   it("activeConstraints from outside-closure extension blocks the bump", async () => {
-    // Spec §2.3 / §6 — auto-update bump A introduces B@^2; installed C wants B@^1.
     const fetcher = makeFetcher({
       "com.shared.b": {
         "1.0.0": { id: "com.shared.b", version: "1.0.0" },
@@ -237,7 +261,6 @@ function dagArb(): fc.Arbitrary<DagFixture> {
         const registry: Record<string, Record<string, ExtensionManifestForSolver>> = {};
         for (let i = 0; i < n; i++) {
           const dependsOn: Record<string, string> = {};
-          // DAG constraint: only depend on higher-index nodes (i.e. j > i).
           for (let j = i + 1; j < n; j++) {
             const cell = flat[i * n + j];
             if ((cell ?? 0) > 70) dependsOn[ids[j] ?? "x"] = "^1.0.0";
@@ -262,14 +285,12 @@ describe("resolveClosure — fast-check corpus", () => {
             installed: new Map(),
             activeConstraints: new Map(),
           });
-          // Every dep's resolvedVersion is in the registry's published list.
           for (const node of plan.nodes) {
             for (const dep of node.deps) {
               expect(registry[dep.id]?.[dep.resolvedVersion]).toBeDefined();
             }
           }
         } catch (e) {
-          // Either DependencyConflictError or OfflineDependencyResolutionError is acceptable.
           expect(isDependencyConflictError(e) || isOfflineDependencyResolutionError(e)).toBe(true);
         }
       }),
@@ -289,7 +310,6 @@ describe("resolveClosure — fast-check corpus", () => {
             activeConstraints: new Map(),
           });
         } catch (e) {
-          // DAG fixtures only emit higher-index edges, so any cycle is the solver's fault.
           if (isDependencyConflictError(e)) {
             expect(e.conflict.kind).not.toBe("cycle");
           }

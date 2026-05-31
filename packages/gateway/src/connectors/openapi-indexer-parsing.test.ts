@@ -68,10 +68,6 @@ test("YAML that is not a spec is skipped with reason 'not_a_spec'", async () => 
 
 test("unresolvable internal $ref does not crash; broken endpoints still surface", async () => {
   const r = await parseFixture("unresolvable-ref.yaml");
-  // PR 1 extracts from the raw parsed document, NOT the dereferenced one
-  // (external/internal $ref resolution is a known limitation — see plan
-  // header). The fixture's broken $ref is on a response body, which we
-  // never read, so the doc parses and yields one endpoint.
   if (r.kind === "skipped") throw new Error(`should not skip: ${r.reason}`);
   expect(r.endpoints.length).toBe(1);
   expect(r.endpoints[0]?.path).toBe("/broken");

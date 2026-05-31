@@ -14,7 +14,6 @@ function makeSpawnMock(exitCode = 0): MockSpawnResult {
 }
 
 function makePiperSpawnMock(exitCode = 0): MockSpawnResult {
-  // PiperTtsProvider pipes `proc.stdout` into the player as stdin.
   const stdout = new ReadableStream<Uint8Array>({
     start(c) {
       c.close();
@@ -271,7 +270,6 @@ describe("PiperTtsProvider", () => {
     let spawnCalls = 0;
     Bun.spawn = mock((_cmd: string[], _opts?: unknown) => {
       spawnCalls++;
-      // First call = piper (non-zero), second = player (zero).
       return makePiperSpawnMock(spawnCalls === 1 ? 7 : 0);
     }) as unknown as typeof Bun.spawn;
 
@@ -284,7 +282,6 @@ describe("PiperTtsProvider", () => {
     let spawnCalls = 0;
     Bun.spawn = mock((_cmd: string[], _opts?: unknown) => {
       spawnCalls++;
-      // First call = piper (zero), second = player (non-zero).
       return makePiperSpawnMock(spawnCalls === 1 ? 0 : 9);
     }) as unknown as typeof Bun.spawn;
 

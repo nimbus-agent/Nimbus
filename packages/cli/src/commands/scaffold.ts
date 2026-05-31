@@ -1,10 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Canonical manifest name; gateway also accepts legacy nimbus-extension.json. */
-const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
+export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 
-export async function runScaffold(args: string[]): Promise<void> {
+export type ScaffoldArgs = { kind: "extension"; id: string };
+
+export function parseScaffoldArgs(args: string[]): ScaffoldArgs {
   const kind = args[0]?.trim() ?? "";
   if (kind !== "extension") {
     throw new Error("Usage: nimbus scaffold extension <id>");
@@ -13,10 +14,12 @@ export async function runScaffold(args: string[]): Promise<void> {
   if (id === "") {
     throw new Error("Usage: nimbus scaffold extension <id>");
   }
+  return { kind: "extension", id };
+}
 
-  const dir = join(process.cwd(), id);
-  mkdirSync(join(dir, "dist"), { recursive: true });
+export type ScaffoldFile = { readonly path: readonly string[]; readonly content: string };
 
+export function buildScaffoldFiles(id: string): readonly ScaffoldFile[] {
   const manifest = {
     id,
     displayName: id,
@@ -29,33 +32,28 @@ export async function runScaffold(args: string[]): Promise<void> {
     hitlRequired: [] as const,
     minNimbusVersion: "0.1.0",
   };
-  writeFileSync(
-    join(dir, EXTENSION_MANIFEST_FILENAME),
-    `${JSON.stringify(manifest, undefined, 2)}\n`,
-    "utf8",
-  );
-  writeFileSync(
-    join(dir, "dist", "index.js"),
-    "// Nimbus extension entry (MCP server wiring goes here)\nexport default {};\n",
-    "utf8",
-  );
-  writeFileSync(
-    join(dir, "package.json"),
-    `${JSON.stringify(
-      {
-        name: `nimbus-extension-${id.replaceAll(/[^a-z0-9-]/gi, "-")}`,
-        private: true,
-        type: "module",
-        scripts: { test: "bun test" },
-      },
-      undefined,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  writeFileSync(
-    join(dir, "smoke.test.ts"),
-    `import { describe, expect, test } from "bun:test";
+  const pkg = {
+    name: `nimbus-extension-${id.replaceAll(/[^a-z0-9-]/gi, "-")}`,
+    private: true,
+    type: "module",
+    scripts: { test: "bun test" },
+  };
+  return [
+    {
+      path: [EXTENSION_MANIFEST_FILENAME],
+      content: `${JSON.stringify(manifest, undefined, 2)}\n`,
+    },
+    {
+      path: ["dist", "index.js"],
+      content: "// Nimbus extension entry (MCP server wiring goes here)\nexport default {};\n",
+    },
+    {
+      path: ["package.json"],
+      content: `${JSON.stringify(pkg, undefined, 2)}\n`,
+    },
+    {
+      path: ["smoke.test.ts"],
+      content: `import { describe, expect, test } from "bun:test";
 
 describe("extension smoke", () => {
   test("loads", () => {
@@ -63,7 +61,18 @@ describe("extension smoke", () => {
   });
 });
 `,
-    "utf8",
-  );
+    },
+  ];
+}
+
+export async function runScaffold(args: string[]): Promise<void> {
+  const parsed = parseScaffoldArgs(args);
+  const id = parsed.id;
+  const dir = join(process.cwd(), id);
+  mkdirSync(join(dir, "dist"), { recursive: true });
+
+  for (const file of buildScaffoldFiles(id)) {
+    writeFileSync(join(dir, ...file.path), file.content, "utf8");
+  }
   console.log(`Scaffolded extension at ./${id}/ (${EXTENSION_MANIFEST_FILENAME})`);
 }

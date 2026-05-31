@@ -13,15 +13,6 @@ function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-/**
- * One-shot fixture for credential-short-circuit tests. Each call seeds its
- * own vault state; cleanup is guaranteed. No outer beforeEach.
- *
- * Both fetchMock and spawnMock are installed because aws-sync is spawn-based
- * but the harness installs fetchMock for parity with other connectors — any
- * unstubbed fetch call would fall through to MockFetch's "no stub matched"
- * error rather than to live network.
- */
 async function withIsolatedFixture(
   fn: (fixture: ConnectorSyncFixture) => Promise<void>,
 ): Promise<void> {
@@ -139,7 +130,6 @@ describe("aws-sync — with shared fixture", () => {
     fixture = createConnectorSyncFixture();
     fixture.fetchMock.install();
     fixture.spawnMock.install();
-    // Default: full IAM-keys path. Individual tests override.
     await fixture.vault.set("aws.access_key_id", "aws-stub-akid");
     await fixture.vault.set("aws.secret_access_key", "aws-stub-skey");
     await fixture.vault.set("aws.default_region", "us-east-1");

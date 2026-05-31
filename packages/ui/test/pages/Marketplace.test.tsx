@@ -82,8 +82,6 @@ describe("Marketplace page", () => {
   });
 
   it("toggling an enabled extension calls extensionDisable", async () => {
-    // T2 PR 3: PendingUpdates also calls extension.checkForUpdates — discriminate
-    // by method name to keep extension.list returns deterministic.
     extensionDisableMock.mockResolvedValue({ ok: true });
     let listCallCount = 0;
     callMock.mockImplementation(async (method: string) => {

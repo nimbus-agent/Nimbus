@@ -43,13 +43,36 @@ function parseGlobList(raw: string): readonly string[] {
     .filter((x) => x !== "");
 }
 
-/** Best-effort `[openapi]` block reader from a `nimbus.toml` source string. */
+type MutableOpenapiConfig = {
+  maxWalkDepth: number;
+  maxSpecBytes: number;
+  ignoreGlobs: readonly string[];
+};
+
+function applyOpenapiKeyValue(cfg: MutableOpenapiConfig, key: string, val: string): void {
+  if (key === "max_walk_depth") {
+    const n = parseInt32(val);
+    if (n !== undefined && n >= 1 && n <= 64) {
+      cfg.maxWalkDepth = n;
+    }
+  } else if (key === "max_spec_bytes") {
+    const n = parseInt32(val);
+    if (n !== undefined && n >= 1024 && n <= 1024 * 1024 * 1024) {
+      cfg.maxSpecBytes = n;
+    }
+  } else if (key === "ignore_globs") {
+    cfg.ignoreGlobs = parseGlobList(val);
+  }
+}
+
 export function parseOpenapiToml(source: string): OpenapiConfig {
   const lines = source.split(/\r?\n/);
   let inBlock = false;
-  let maxWalkDepth = DEFAULT_OPENAPI_CONFIG.maxWalkDepth;
-  let maxSpecBytes = DEFAULT_OPENAPI_CONFIG.maxSpecBytes;
-  let ignoreGlobs: readonly string[] = DEFAULT_OPENAPI_CONFIG.ignoreGlobs;
+  const cfg: MutableOpenapiConfig = {
+    maxWalkDepth: DEFAULT_OPENAPI_CONFIG.maxWalkDepth,
+    maxSpecBytes: DEFAULT_OPENAPI_CONFIG.maxSpecBytes,
+    ignoreGlobs: DEFAULT_OPENAPI_CONFIG.ignoreGlobs,
+  };
 
   for (const rawLine of lines) {
     const line = stripComment(rawLine).trim();
@@ -67,21 +90,11 @@ export function parseOpenapiToml(source: string): OpenapiConfig {
     if (eq <= 0) {
       continue;
     }
-    const key = line.slice(0, eq).trim();
-    const val = line.slice(eq + 1).trim();
-    if (key === "max_walk_depth") {
-      const n = parseInt32(val);
-      if (n !== undefined && n >= 1 && n <= 64) {
-        maxWalkDepth = n;
-      }
-    } else if (key === "max_spec_bytes") {
-      const n = parseInt32(val);
-      if (n !== undefined && n >= 1024 && n <= 1024 * 1024 * 1024) {
-        maxSpecBytes = n;
-      }
-    } else if (key === "ignore_globs") {
-      ignoreGlobs = parseGlobList(val);
-    }
+    applyOpenapiKeyValue(cfg, line.slice(0, eq).trim(), line.slice(eq + 1).trim());
   }
-  return { maxWalkDepth, maxSpecBytes, ignoreGlobs };
+  return {
+    maxWalkDepth: cfg.maxWalkDepth,
+    maxSpecBytes: cfg.maxSpecBytes,
+    ignoreGlobs: cfg.ignoreGlobs,
+  };
 }

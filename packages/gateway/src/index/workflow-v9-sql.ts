@@ -1,7 +1,3 @@
-/**
- * Saved workflows and run history.
- */
-
 export const WORKFLOW_V9_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS workflow (
   id          TEXT PRIMARY KEY,

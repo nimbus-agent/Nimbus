@@ -1,17 +1,3 @@
-/**
- * BUG-002 regression coverage for the auto-approve consent handler.
- *
- * The smoke run found that `nimbus data export` deadlocked: the gateway
- * emits `consent.request` for HITL-gated actions, but `withClient` in
- * `commands/data.ts` never registered a handler for it, so neither side
- * progressed. The fix is to register an auto-approving handler when the
- * caller passes `--yes`, and an interactive prompt handler otherwise.
- *
- * This test pins the auto-approve helper in isolation: when the fake
- * IPCClient surfaces a `consent.request`, the helper must respond with
- * `consent.respond { approved: true }` and emit a stderr warning.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,7 +98,6 @@ describe("registerInteractiveCliIpcHandlers env-var dispatch", () => {
     process.env[ENV_KEY] = source;
 
     const { client, fireConsent, calls } = makeFakeClient();
-    // Suppress stdout writes from the script handler so the test runner stays clean.
     const originalStdout = process.stdout.write.bind(process.stdout);
     process.stdout.write = (() => true) as typeof process.stdout.write;
     try {
@@ -130,18 +115,9 @@ describe("registerInteractiveCliIpcHandlers env-var dispatch", () => {
     process.env[ENV_KEY] = "";
 
     const { client } = makeFakeClient();
-    // Just verify no throw — falls through to registerConsentPromptHandler which
-    // registers a handler that would call clack's confirm() on fire (we don't
-    // fire it here because clack would block). Behaviour-level coverage of the
-    // prompt path is intentionally out of scope; this test only pins the
-    // env-empty-string fallback contract.
     expect(() => registerInteractiveCliIpcHandlers(client)).not.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Multi-notification fake client
-// ---------------------------------------------------------------------------
 
 function makeMultiClient(): {
   client: IPCClient;
@@ -227,9 +203,6 @@ describe("registerConsentPromptHandler — malformed payload early-return", () =
   test("ignores consent.request with no requestId (does not call consent.respond)", async () => {
     const { client, fire, calls } = makeMultiClient();
     registerConsentPromptHandler(client);
-    // We fire with no requestId — the handler returns early without calling confirm.
-    // We do NOT fire a valid request because that would invoke @clack/prompts confirm()
-    // which blocks on a real TTY. The early-return branch is the coverage target.
     await fire("consent.request", { prompt: "missing requestId" });
     expect(calls).toEqual([]);
   });
@@ -268,7 +241,6 @@ describe("selectConsentHandler", () => {
       process.stderr.write = origErr;
       process.stdout.write = origOut;
     }
-    // Script handler overrides yes; stderr warning issued
     expect(stderrCapture).toContain("overrides");
     expect(calls).toEqual([
       { method: "consent.respond", params: { requestId: "r-2", approved: false } },
@@ -277,8 +249,6 @@ describe("selectConsentHandler", () => {
 
   test("falls through to consent prompt handler when yes=false and no scriptConsentSource", () => {
     const { client } = makeMultiClient();
-    // Just verifies no throw — the clack confirm() prompt path is not exercised
-    // because it would block on a real TTY; this only covers registration.
     expect(() => selectConsentHandler(client, { yes: false })).not.toThrow();
   });
 });

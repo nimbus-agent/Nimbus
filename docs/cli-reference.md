@@ -492,7 +492,26 @@ nimbus connector auth snyk           # API token
 nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
 nimbus connector auth semgrep        # PAT
 nimbus connector auth bitrise        # PAT
+nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
+
+#### Zoom OAuth setup
+
+Zoom uses 3-legged OAuth (PKCE + Basic-header client-secret). Before running `nimbus connector auth zoom`, create a Zoom app and export the client credentials:
+
+1. Go to [marketplace.zoom.us](https://marketplace.zoom.us) → **Develop** → **Build App** → **General app** (User-managed, PKCE).
+2. Add scopes: `user:read:user`, `meeting:read:list_meetings`, `cloud_recording:read:list_user_recordings`.
+3. Copy the **Client ID** and **Client Secret** and export them:
+
+```bash
+export NIMBUS_OAUTH_ZOOM_CLIENT_ID=<client_id>
+export NIMBUS_OAUTH_ZOOM_CLIENT_SECRET=<client_secret>
+nimbus connector auth zoom
+```
+
+The access token and rotating refresh token are stored in the OS keystore under `zoom.oauth`. Token rotation is handled automatically by the Gateway's single-flight refresh lock (Zoom invalidates the entire token chain on refresh-token reuse, so only one refresh runs at a time).
+
+The connector indexes both scheduled meetings (`zoom:meeting`) and cloud-recording AI transcripts (`zoom:transcript`, prose-heavy). The `cloud_recording:read:list_user_recordings` scope above covers transcripts — no re-consent is needed beyond the initial `nimbus connector auth zoom`. New transcripts are picked up on the next sync cycle; `nimbus connector reindex zoom` forces an immediate pass.
 
 ---
 
@@ -1159,6 +1178,39 @@ Delete a saved workflow pipeline.
 ```bash
 nimbus workflow delete weekly-cleanup
 ```
+
+---
+
+## Sessions
+
+### `nimbus session list` / `clear` / `recall`
+
+Inspect, clear, and recall content from RAG sessions. Each `nimbus ask` opens a session that accumulates context across turns; these subcommands operate on those sessions over the IPC `session.*` surface.
+
+```bash
+nimbus session list                                # All active sessions (JSON)
+nimbus session clear                               # Clear every session
+nimbus session clear <sessionId>                   # Clear one session
+nimbus session recall <sessionId> <query>          # Top-K=8 recall from the session's chunks
+```
+
+Output is JSON in all forms.
+
+---
+
+## Watchers
+
+### `nimbus watch list` / `pause <id>` / `resume <id>`
+
+Inspect and toggle scheduling on watchers over the IPC `watcher.*` surface. Watcher creation and editing flow through the `nimbus workflow` family (watchers are workflow pipelines with a trigger).
+
+```bash
+nimbus watch list                # All watchers + enabled state + last-fired time
+nimbus watch pause <watcher-id>  # Stop firing without deleting
+nimbus watch resume <watcher-id> # Re-enable a paused watcher
+```
+
+Output is JSON in all forms.
 
 ---
 

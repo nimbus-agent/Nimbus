@@ -1,17 +1,3 @@
-/**
- * Coverage for `LlmRegistry` — discovery, DB sync, setDefault/getDefault, and pull/load/unload
- * fan-out to provider methods.
- *
- * Tier D — was at 0 % line coverage. Targets:
- *  - constructor + `addProvider` + `llmRouter` getter
- *  - `listAllModels`: skips unavailable providers, surfaces provider error in catch, syncs to DB
- *  - `checkAvailability`: returns per-provider booleans; throw → false
- *  - `loadModel` / `unloadModel`: dispatches when provider defines the method; no-op otherwise; throws on unknown
- *  - `pullModel`: dispatches when provider supports it; throws TypeError when not
- *  - `setDefault` / `getDefault`: UPSERT into `llm_task_defaults`; undefined when no DB
- *  - `getRouterStatus`: delegate
- */
-
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -66,8 +52,6 @@ function makeProvider(id: LlmProviderKind, opts: ProviderOpts): LlmProvider {
     }),
   };
 
-  // Conditionally attach optional capability methods (`exactOptionalPropertyTypes`
-  // forbids passing the property when undefined).
   if (opts.loadModel !== undefined) {
     (base as unknown as { loadModel: (m: string) => Promise<void> }).loadModel = opts.loadModel;
   }
@@ -84,7 +68,7 @@ function makeProvider(id: LlmProviderKind, opts: ProviderOpts): LlmProvider {
 function makeDbWithSchema(): { db: Database; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-registry-"));
   const db = new Database(join(dir, "test.db"));
-  db.exec(LLM_MODELS_V16_SQL.replace(/ALTER TABLE.*$/m, "")); // drop the unrelated ALTER on sync_state
+  db.exec(LLM_MODELS_V16_SQL.replace(/ALTER TABLE.*$/m, ""));
   db.exec(LLM_TASK_DEFAULTS_V20_SQL);
   return { db, dir };
 }
@@ -99,8 +83,6 @@ describe("LlmRegistry — construction + provider registration", () => {
   test("addProvider forwards to LlmRouter.registerProvider", () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
     reg.addProvider(makeProvider("ollama", { available: true }));
-    // We can't directly assert on the private map, but selectProvider proves
-    // registration succeeded.
     return reg.llmRouter.selectProvider("agent_step").then((p) => {
       expect(p?.providerId).toBe("ollama");
     });
@@ -179,7 +161,6 @@ describe("LlmRegistry.listAllModels", () => {
       }),
     );
     const models = await reg.listAllModels();
-    // ollama threw → 0 entries; remote contributed 1.
     expect(models.length).toBe(1);
     expect(models[0]?.modelName).toBe("good");
   });
@@ -225,7 +206,7 @@ describe("LlmRegistry.listAllModels", () => {
   });
 
   test("no-DB mode skips sync without throwing", async () => {
-    const reg = new LlmRegistry({ config: DEFAULT_CONFIG }); // no db
+    const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
     reg.addProvider(
       makeProvider("ollama", {
         available: true,
@@ -273,7 +254,7 @@ describe("LlmRegistry.loadModel / unloadModel", () => {
 
   test("loadModel is a no-op when the provider does not implement it", async () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
-    reg.addProvider(makeProvider("ollama", { available: true })); // no loadModel
+    reg.addProvider(makeProvider("ollama", { available: true }));
     await expect(reg.loadModel("ollama", "any-model")).resolves.toBeUndefined();
   });
 
@@ -323,7 +304,7 @@ describe("LlmRegistry.pullModel", () => {
 
   test("rejects with TypeError when provider lacks pullModel", async () => {
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG });
-    reg.addProvider(makeProvider("llamacpp", { available: true })); // no pullModel
+    reg.addProvider(makeProvider("llamacpp", { available: true }));
     await expect(reg.pullModel("llamacpp", "x")).rejects.toThrow(
       "Provider llamacpp does not support pullModel",
     );
@@ -377,10 +358,6 @@ describe("LlmRegistry.setDefault / getDefault", () => {
   });
 
   test("getDefault on a missing-row throws (bun:sqlite .get() returns null, not undefined)", () => {
-    // Source-bug observed: registry.ts line 128 checks `row === undefined` but
-    // bun:sqlite returns null for missing rows, so the destructure crashes.
-    // Captured here as observable behavior — fix is out of scope for the
-    // Tier-D coverage-floor commit.
     env = makeDbWithSchema();
     const reg = new LlmRegistry({ config: DEFAULT_CONFIG, db: env.db });
     expect(() => reg.getDefault("classification")).toThrow();

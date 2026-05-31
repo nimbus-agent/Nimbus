@@ -1,14 +1,3 @@
-/**
- * Phase 5 T4 PR 3b — Bearer-token auth for the HTTP write surface.
- *
- * The token is stored under vault key `http_api.deployment_token`. This
- * key is system-level (not connector-scoped) and lives outside
- * CONNECTOR_VAULT_SECRET_KEYS by design — see the design §4 note.
- *
- * Constant-time compare prevents timing-side-channel discovery of the
- * token through prefix-difference latency.
- */
-
 import { createHash } from "node:crypto";
 import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 
@@ -22,7 +11,6 @@ export function tokenFingerprint(token: string | undefined): string {
 }
 
 export interface RequireBearerContext {
-  /** Empty string => write surface disabled (vault key absent). */
   readonly expectedToken: string;
 }
 

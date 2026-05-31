@@ -9,10 +9,6 @@ const log = pino({
   level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
 });
 
-/**
- * Loads the sqlite-vec extension into this connection.
- * @returns false if the platform has no prebuilt binary or load fails (embeddings stay disabled).
- */
 export function tryLoadSqliteVec(db: Database): boolean {
   try {
     loadSqliteVec(db);
@@ -25,9 +21,6 @@ export function tryLoadSqliteVec(db: Database): boolean {
   }
 }
 
-/**
- * Loads sqlite-vec or throws with a short, actionable message (Gateway / tests).
- */
 export function loadSqliteVecOrThrow(db: Database): void {
   if (!tryLoadSqliteVec(db)) {
     throw new Error(
@@ -36,11 +29,6 @@ export function loadSqliteVecOrThrow(db: Database): void {
   }
 }
 
-/**
- * Returns true if the sqlite-vec extension is currently loaded on this connection.
- * Useful in tests to skip vec-specific assertions on platforms where the extension
- * cannot be loaded (e.g. macOS CI without a properly signed native dylib).
- */
 export function isVecLoaded(db: Database): boolean {
   try {
     db.query("SELECT vec_version()").get();
@@ -50,10 +38,6 @@ export function isVecLoaded(db: Database): boolean {
   }
 }
 
-/**
- * Ensures sqlite-vec is loaded on this connection when the schema includes vector tables (v6+).
- * Migrations load the extension once; reopening `nimbus.db` requires loading again per connection.
- */
 export function ensureSqliteVecForConnection(db: Database, indexedUserVersion: number): boolean {
   if (indexedUserVersion < 6) {
     return true;
@@ -72,9 +56,6 @@ export function sidecarFilename(platform: NodeJS.Platform): string {
   return "vec0.so";
 }
 
-// Compiled-binary fallback path: vec0.{ext} adjacent to the running executable.
-// Uses the platform-specific path module so the result is correct regardless of host OS
-// (a Linux CI runner computing a Windows path must not rely on POSIX `dirname`/`join`).
 export function sidecarPath(execPath: string, platform: NodeJS.Platform): string {
   const p = platform === "win32" ? winPath : posixPath;
   return p.join(p.dirname(execPath), sidecarFilename(platform));

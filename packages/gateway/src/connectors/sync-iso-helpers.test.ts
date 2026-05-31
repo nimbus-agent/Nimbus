@@ -28,11 +28,8 @@ describe("maxIso", () => {
   });
 
   it("handles invalid b as 0 — returns a even if a is also invalid", () => {
-    // Both invalid → both isoMs return 0 → a >= b → returns a.
     expect(maxIso("bad-a", "bad-b")).toBe("bad-a");
-    // a valid, b invalid → a wins.
     expect(maxIso("2024-01-01T00:00:00.000Z", "bad-b")).toBe("2024-01-01T00:00:00.000Z");
-    // a invalid, b valid → b wins.
     expect(maxIso("bad-a", "2024-01-01T00:00:00.000Z")).toBe("2024-01-01T00:00:00.000Z");
   });
 });

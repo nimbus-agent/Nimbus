@@ -55,7 +55,6 @@ test("parseNote detects daily-note date when filename matches YYYY-MM-DD.md", ()
 });
 
 test("resolveWikilinks resolves by exact filename (case-insensitive), then by title; preserves unresolved as raw strings", () => {
-  // index: filename -> { id, title }
   const idx = new Map<string, { id: string; title: string }>([
     ["other note.md", { id: "obsidian:abc#Other Note.md", title: "Other Note" }],
     ["page.md", { id: "obsidian:abc#Page.md", title: "Page" }],

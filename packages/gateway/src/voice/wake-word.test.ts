@@ -144,7 +144,6 @@ describe("WakeWordDetectorImpl", () => {
     await new Promise((r) => setTimeout(r, 100));
     det.stop();
     expect(events).toHaveLength(0);
-    // Loop exited naturally via maxPolls — running flips false.
     expect(det.isRunning).toBe(false);
   });
 
@@ -196,7 +195,6 @@ describe("WakeWordDetectorImpl default audio path (Bun.spawn dispatch)", () => {
       return { exited: Promise.resolve(0) };
     }) as unknown as typeof Bun.spawn;
 
-    // Provide isChunkSilent so we never reach ffmpeg silence-detect (which would need its own mock).
     const det = new WakeWordDetectorImpl({
       stt: { isAvailable: async () => true, transcribe: async () => ({ text: "", durationMs: 0 }) },
       wakeWord: "hey nimbus",
@@ -283,14 +281,10 @@ describe("WakeWordDetectorImpl default audio path (Bun.spawn dispatch)", () => {
     det.start();
     await new Promise((r) => setTimeout(r, 100));
     det.stop();
-    // ffmpeg rejected → recordAudio threw → outer catch swallowed → transcribe never called.
     expect(transcribeCalled).toBe(false);
   });
 
   test("defaultIsChunkSilent treats stderr WITH silence_end as non-silent (runs transcribe)", async () => {
-    // Source: `return !stderr.includes("silence_end");`
-    // ffmpeg's silencedetect filter emits `silence_end` markers around speech segments;
-    // their presence in stderr means the chunk contained non-silent audio, so transcribe runs.
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });
     let spawnCalls = 0;
     Bun.spawn = mock((_cmd: string[], _opts?: unknown): MockSpawnResult => {

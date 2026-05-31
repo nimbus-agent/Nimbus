@@ -41,17 +41,14 @@ function buildWorkflowRunPayload(
   return runPayload;
 }
 
-/**
- * `nimbus run <workflow-file>` — upserts workflow from file, then executes it (same as workflow save + run).
- */
-export async function runWorkflowFromFile(args: string[]): Promise<void> {
-  const file = args[0]?.trim() ?? "";
-  if (file === "") {
-    throw new Error(
-      "Usage: nimbus run <workflow.json|yaml> [--dry-run] [--no-ttv] [--agent nimbus|devops|research]",
-    );
-  }
-  const tail = args.slice(1);
+export type RunWorkflowOptions = {
+  readonly dryRun: boolean;
+  readonly noTtv: boolean;
+  readonly agent: string | undefined;
+};
+
+function parseRunFlags(args: string[]): RunWorkflowOptions {
+  const tail = args.slice();
   const dryRun = hasFlag(tail, "--dry-run");
   const noTtv = hasFlag(tail, "--no-ttv");
   const agentArg = shiftFlag(tail, "--agent");
@@ -59,6 +56,57 @@ export async function runWorkflowFromFile(args: string[]): Promise<void> {
   if (agentArg !== undefined && agentArg !== "") {
     agent = agentArg;
   }
+  return { dryRun, noTtv, agent };
+}
+
+export async function runWorkflowFromFileWithClient(
+  client: IPCClient,
+  file: string,
+  opts: RunWorkflowOptions,
+): Promise<void> {
+  const content = readFileSync(file, "utf8");
+  const parsed = parseWorkflowFileContent(content, file);
+
+  registerInteractiveCliIpcHandlers(client);
+
+  const savePayload: Record<string, unknown> = {
+    name: parsed.name,
+    stepsJson: parsed.stepsJson,
+  };
+  if (parsed.description !== null) {
+    savePayload["description"] = parsed.description;
+  }
+  await client.call("workflow.save", savePayload);
+
+  if (opts.noTtv && !opts.dryRun) {
+    const preview = await client.call(
+      "workflow.run",
+      buildWorkflowRunPayload(parsed.name, true, opts.agent),
+    );
+    const rec = preview as { stepResults?: Array<{ hitlActions?: readonly string[] }> };
+    const flagged = (rec.stepResults ?? []).filter((s) => (s.hitlActions?.length ?? 0) > 0);
+    if (flagged.length > 0) {
+      throw new Error(
+        "Workflow steps may require human approval (HITL). Omit --no-ttv to run, or use --dry-run to inspect hitlActions.",
+      );
+    }
+  }
+
+  const out = await client.call(
+    "workflow.run",
+    buildWorkflowRunPayload(parsed.name, opts.dryRun, opts.agent),
+  );
+  console.log(`\n${JSON.stringify(out, undefined, 2)}`);
+}
+
+export async function runWorkflowFromFile(args: string[]): Promise<void> {
+  const file = args[0]?.trim() ?? "";
+  if (file === "") {
+    throw new Error(
+      "Usage: nimbus run <workflow.json|yaml> [--dry-run] [--no-ttv] [--agent nimbus|devops|research]",
+    );
+  }
+  const opts = parseRunFlags(args.slice(1));
 
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
@@ -66,40 +114,10 @@ export async function runWorkflowFromFile(args: string[]): Promise<void> {
     throw new Error("Gateway is not running. Start with: nimbus start");
   }
 
-  const content = readFileSync(file, "utf8");
-  const parsed = parseWorkflowFileContent(content, file);
-
   const client = new IPCClient(state.socketPath);
   await client.connect();
-  registerInteractiveCliIpcHandlers(client);
-
   try {
-    const savePayload: Record<string, unknown> = {
-      name: parsed.name,
-      stepsJson: parsed.stepsJson,
-    };
-    if (parsed.description !== null) {
-      savePayload["description"] = parsed.description;
-    }
-    await client.call("workflow.save", savePayload);
-    if (noTtv && !dryRun) {
-      const preview = await client.call(
-        "workflow.run",
-        buildWorkflowRunPayload(parsed.name, true, agent),
-      );
-      const rec = preview as { stepResults?: Array<{ hitlActions?: readonly string[] }> };
-      const flagged = (rec.stepResults ?? []).filter((s) => (s.hitlActions?.length ?? 0) > 0);
-      if (flagged.length > 0) {
-        throw new Error(
-          "Workflow steps may require human approval (HITL). Omit --no-ttv to run, or use --dry-run to inspect hitlActions.",
-        );
-      }
-    }
-    const out = await client.call(
-      "workflow.run",
-      buildWorkflowRunPayload(parsed.name, dryRun, agent),
-    );
-    console.log(`\n${JSON.stringify(out, undefined, 2)}`);
+    await runWorkflowFromFileWithClient(client, file, opts);
   } finally {
     await client.disconnect();
   }

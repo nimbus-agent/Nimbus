@@ -1,11 +1,11 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { computeDeployPreflight } from "../../../src/preflight/preflight.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 function seedIncident(
   db: Database,
@@ -138,8 +138,7 @@ describe("computeDeployPreflight: verdict + envelope", () => {
   let db: Database;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -152,7 +151,6 @@ describe("computeDeployPreflight: verdict + envelope", () => {
 
   it("returns verdict='ok' when every check has count===0 even with gaps present", () => {
     const now = 1_715_000_000_000;
-    // No pagerduty services configured → no_pagerduty_mapping gap, but verdict still ok.
     const out = computeDeployPreflight(db, cfg({ pagerdutyServices: [] }), "main", now, 10);
     expect(out.verdict).toBe("ok");
     expect(out.checks.active_p1_incidents.count).toBe(0);
@@ -182,8 +180,7 @@ describe("computeDeployPreflight: active_p1_incidents check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-inc-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -253,7 +250,6 @@ describe("computeDeployPreflight: active_p1_incidents check", () => {
     const out = computeDeployPreflight(db, cfg(), "main", now, 5);
     expect(out.checks.active_p1_incidents.count).toBe(15);
     expect(out.checks.active_p1_incidents.findings.length).toBe(5);
-    // Most-recent first → first finding is the most recently opened (smallest age).
     expect(out.checks.active_p1_incidents.findings[0]?.id).toBe("pagerduty:inc_0");
   });
 
@@ -311,7 +307,6 @@ describe("computeDeployPreflight: active_p1_incidents check", () => {
       pagerdutyServiceId: "P12ABCD",
       openedAtMs: now - 120_000,
     });
-    // No aliases configured → only the verbatim "P1" row matches.
     const out = computeDeployPreflight(db, cfg(), "main", now, 10);
     expect(out.checks.active_p1_incidents.count).toBe(1);
     expect(out.checks.active_p1_incidents.findings[0]?.id).toBe("pagerduty:inc_p1");
@@ -378,8 +373,7 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-ci-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -420,7 +414,6 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
   });
 
   it("groups by workflow_name and keeps only the most recent failing run per workflow", () => {
-    // Three failures on the same workflow → count should be 1 (latest only).
     seedCiRun(db, "github_actions:old", {
       service: "github_actions",
       title: "Deploy production",
@@ -466,7 +459,6 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
       modifiedAtMs: now - 120_000,
     });
     const out = computeDeployPreflight(db, cfg(), "main", now, 10);
-    // Same title → grouped to one workflow → 1 failing run (the latest).
     expect(out.checks.failing_ci_runs.count).toBe(1);
   });
 
@@ -483,8 +475,7 @@ describe("computeDeployPreflight: merge_conflicts check", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-pr-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();
@@ -543,7 +534,7 @@ describe("computeDeployPreflight: merge_conflicts check", () => {
       modifiedAtMs: now - 30_000,
     });
     const out = computeDeployPreflight(db, cfg(), "main", now, 10);
-    expect(out.checks.merge_conflicts.count).toBe(1); // Only dirty counts.
+    expect(out.checks.merge_conflicts.count).toBe(1);
     expect(out.checks.merge_conflicts.gap).toBe("unknown_mergeable_state");
   });
 
@@ -567,8 +558,7 @@ describe("computeDeployPreflight: max_findings", () => {
   const now = 1_715_000_000_000;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-max-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
   });
   afterEach(() => {
     db.close();

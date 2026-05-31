@@ -1,9 +1,8 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import {
   changeFailureRate,
   computeDoraMetrics,
@@ -12,6 +11,7 @@ import {
   mttr,
 } from "../../../src/metrics/dora.ts";
 import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 type SeedCiOpts = {
   service: string;
@@ -110,16 +110,14 @@ function cfg(overrides: Partial<DoraServiceConfig> = {}): DoraServiceConfig {
 }
 
 const NOW = 1_700_000_000_000;
-const WINDOW = 7 * 86_400_000; // 7 days
-
+const WINDOW = 7 * 86_400_000;
 describe("DORA metrics calculators", () => {
   let dir: string;
   let db: Database;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-dora-"));
-    db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 28);
+    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
   });
 
   afterEach(() => {
@@ -133,7 +131,6 @@ describe("DORA metrics calculators", () => {
 
   describe("deploymentFrequency", () => {
     it("counts only successful deploys matching the regex on a matching repo", () => {
-      // 5 matching deploys → enough to avoid low_sample gap
       for (let i = 0; i < 5; i++) {
         seedCiRun(db, `gha-${i}`, {
           service: "github_actions",
@@ -144,7 +141,6 @@ describe("DORA metrics calculators", () => {
           modifiedAt: NOW - (i + 1) * 86_400_000,
         });
       }
-      // Failed deploy — should not count
       seedCiRun(db, "gha-fail", {
         service: "github_actions",
         title: "Deploy production",
@@ -152,7 +148,6 @@ describe("DORA metrics calculators", () => {
         repo: "nimbus-agent/payments",
         modifiedAt: NOW - 86_400_000,
       });
-      // Non-deploy workflow — should not count
       seedCiRun(db, "gha-ci", {
         service: "github_actions",
         title: "CI lint",
@@ -160,7 +155,6 @@ describe("DORA metrics calculators", () => {
         repo: "nimbus-agent/payments",
         modifiedAt: NOW - 86_400_000,
       });
-      // Different repo — should not count
       seedCiRun(db, "gha-other", {
         service: "github_actions",
         title: "Deploy production",
@@ -172,7 +166,6 @@ describe("DORA metrics calculators", () => {
       expect(m.sample).toBe(5);
       expect(m.unit).toBe("deploys_per_day");
       expect(m.gap).toBeNull();
-      // 5 deploys over 7 days
       expect(m.value).toBeCloseTo(5 / 7, 5);
     });
 
@@ -216,9 +209,8 @@ describe("DORA metrics calculators", () => {
 
   describe("leadTimeForChanges", () => {
     it("returns median seconds for PRs with merge_commit_sha matching a deploy headSha", () => {
-      // Seed 3 PRs + 3 deploys where merge_commit_sha === headSha
       const t0 = NOW - 3 * 86_400_000;
-      const leadTimes = [3600, 7200, 10800]; // 1h, 2h, 3h
+      const leadTimes = [3600, 7200, 10800];
       for (let i = 0; i < 3; i++) {
         const mergedAt = t0 + i * 100_000;
         const lt = leadTimes[i];
@@ -245,13 +237,12 @@ describe("DORA metrics calculators", () => {
       const m = leadTimeForChanges(db, cfg(), NOW, WINDOW);
       expect(m.unit).toBe("seconds_median");
       expect(m.sample).toBe(3);
-      expect(m.value).toBe(7200); // median of [3600, 7200, 10800]
+      expect(m.value).toBe(7200);
       expect(m.gap).toBeNull();
     });
 
     it("emits gap='approximate_lead_time' when at least one merged PR has no merge_commit_sha", () => {
       const t0 = NOW - 3 * 86_400_000;
-      // PR with merge_commit_sha + matching deploy
       seedPr(db, "pr-1", {
         service: "github",
         repo: "nimbus-agent/payments",
@@ -268,7 +259,6 @@ describe("DORA metrics calculators", () => {
         headSha: "sha-1",
         modifiedAt: t0 + 3600 * 1000,
       });
-      // PR with no merge_commit_sha (approximate)
       seedPr(db, "pr-2", {
         service: "github",
         repo: "nimbus-agent/payments",
@@ -276,7 +266,6 @@ describe("DORA metrics calculators", () => {
         mergedAt: t0 + 100_000,
         modifiedAt: t0 + 100_000,
       });
-      // Need 2 more deploys to clear no_deployment_data path, low_sample is fine
       seedCiRun(db, "gha-2", {
         service: "github_actions",
         title: "Deploy production",
@@ -295,7 +284,6 @@ describe("DORA metrics calculators", () => {
       });
       const m = leadTimeForChanges(db, cfg(), NOW, WINDOW);
       expect(m.gap).toBe("approximate_lead_time");
-      // Only PR-1 matched a deploy, so sample is 1 with approximate flag
       expect(m.sample).toBe(1);
       expect(m.value).toBe(3600);
     });
@@ -311,7 +299,6 @@ describe("DORA metrics calculators", () => {
         labels: ["revert"],
         modifiedAt: t0,
       });
-      // 3 normal PRs
       for (let i = 0; i < 3; i++) {
         const mergedAt = t0 + (i + 1) * 100_000;
         seedPr(db, `pr-${i}`, {
@@ -331,7 +318,6 @@ describe("DORA metrics calculators", () => {
           modifiedAt: mergedAt + 60_000,
         });
       }
-      // Add a deploy for the reverted PR too — to prove it's excluded by label, not absence of deploy
       seedCiRun(db, "gha-revert", {
         service: "github_actions",
         title: "Deploy production",
@@ -341,7 +327,7 @@ describe("DORA metrics calculators", () => {
         modifiedAt: t0 + 60_000,
       });
       const m = leadTimeForChanges(db, cfg(), NOW, WINDOW);
-      expect(m.sample).toBe(3); // revert excluded
+      expect(m.sample).toBe(3);
       expect(m.value).toBe(60);
       expect(m.gap).toBeNull();
     });
@@ -353,7 +339,6 @@ describe("DORA metrics calculators", () => {
     });
 
     it("returns gap='no_deployment_data' when there are no matching deploys", () => {
-      // No deploys at all
       const m = leadTimeForChanges(db, cfg(), NOW, WINDOW);
       expect(m.value).toBeNull();
       expect(m.gap).toBe("no_deployment_data");
@@ -363,7 +348,6 @@ describe("DORA metrics calculators", () => {
   describe("changeFailureRate", () => {
     it("attributes incident to most-recent-preceding deploy within window", () => {
       const t0 = NOW - 3 * 86_400_000;
-      // 3 deploys
       seedCiRun(db, "d1", {
         service: "github_actions",
         title: "Deploy",
@@ -388,7 +372,6 @@ describe("DORA metrics calculators", () => {
         headSha: "sha-3",
         modifiedAt: t0 + 2 * 86_400_000, // 2 days after d2
       });
-      // Incident opened 30 minutes after d2 — should attribute to d2, not d1 nor d3
       seedIncident(db, "inc-1", {
         status: "resolved",
         pagerdutyServiceId: "P1",
@@ -396,7 +379,6 @@ describe("DORA metrics calculators", () => {
         resolvedAt: t0 + 10 * 60_000 + 60 * 60_000,
       });
       const m = changeFailureRate(db, cfg(), NOW, WINDOW);
-      // 1 failed deploy out of 3
       expect(m.value).toBeCloseTo(1 / 3, 5);
       expect(m.sample).toBe(3);
       expect(m.gap).toBeNull();
@@ -428,8 +410,6 @@ describe("DORA metrics calculators", () => {
         headSha: "sha-3",
         modifiedAt: t0 + 86_400_000, // 1 day after d2
       });
-      // Incident 10 minutes after d2 — both d1 and d2 fall within the 60-min window,
-      // but only the most-recent-preceding (d2) is attributed
       seedIncident(db, "inc-1", {
         status: "resolved",
         pagerdutyServiceId: "P1",
@@ -437,12 +417,11 @@ describe("DORA metrics calculators", () => {
         resolvedAt: t0 + 60_000 + 20 * 60_000,
       });
       const m = changeFailureRate(db, cfg(), NOW, WINDOW);
-      expect(m.value).toBeCloseTo(1 / 3, 5); // only d2 attributed
+      expect(m.value).toBeCloseTo(1 / 3, 5);
       expect(m.sample).toBe(3);
     });
 
     it("emits gap='no_pagerduty_mapping' when pagerdutyServices is empty", () => {
-      // Deploys exist, but no PD services configured
       for (let i = 0; i < 3; i++) {
         seedCiRun(db, `d${i}`, {
           service: "github_actions",
@@ -456,12 +435,11 @@ describe("DORA metrics calculators", () => {
       const m = changeFailureRate(db, cfg({ pagerdutyServices: [] }), NOW, WINDOW);
       expect(m.value).toBeNull();
       expect(m.gap).toBe("no_pagerduty_mapping");
-      expect(m.sample).toBe(3); // sample reflects deploy count
+      expect(m.sample).toBe(3);
     });
 
     it("computes ratio correctly when some deploys have no associated incidents", () => {
       const t0 = NOW - 3 * 86_400_000;
-      // 4 deploys
       for (let i = 0; i < 4; i++) {
         seedCiRun(db, `d${i}`, {
           service: "github_actions",
@@ -472,7 +450,6 @@ describe("DORA metrics calculators", () => {
           modifiedAt: t0 + i * 86_400_000,
         });
       }
-      // Only one incident, 10 min after d0
       seedIncident(db, "inc-1", {
         status: "resolved",
         pagerdutyServiceId: "P1",
@@ -489,7 +466,6 @@ describe("DORA metrics calculators", () => {
   describe("mttr", () => {
     it("returns median resolution time in seconds", () => {
       const t0 = NOW - 3 * 86_400_000;
-      // 3 incidents with durations 60s, 120s, 180s
       seedIncident(db, "inc-1", {
         status: "resolved",
         pagerdutyServiceId: "P1",
@@ -544,7 +520,6 @@ describe("DORA metrics calculators", () => {
         resolvedAt: t0 + 1000 + 180_000,
       });
       const m = mttr(db, cfg(), NOW, WINDOW);
-      // even count → floor of average of two sorted
       expect(m.value).toBe(Math.floor((60 + 180) / 2));
       expect(m.sample).toBe(2);
       expect(m.gap).toBe("low_sample");
@@ -559,7 +534,6 @@ describe("DORA metrics calculators", () => {
 
     it("ignores incidents with no pagerduty_service_id field", () => {
       const t0 = NOW - 86_400_000;
-      // Resolved incident missing the pagerduty_service_id field entirely
       db.run(
         `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url,
                            modified_at, author_id, metadata, synced_at, pinned)
@@ -572,7 +546,6 @@ describe("DORA metrics calculators", () => {
           t0 + 60_000,
         ],
       );
-      // Plus 3 valid incidents matching cfg.pagerdutyServices[0] so we don't trip low_sample
       for (let i = 0; i < 3; i++) {
         seedIncident(db, `pagerduty:inc_${i}`, {
           status: "resolved",
@@ -582,7 +555,7 @@ describe("DORA metrics calculators", () => {
         });
       }
       const result = mttr(db, cfg(), NOW, WINDOW);
-      expect(result.sample).toBe(3); // the unfielded incident excluded
+      expect(result.sample).toBe(3);
       expect(result.gap).toBeNull();
     });
   });
@@ -603,7 +576,6 @@ describe("DORA metrics calculators", () => {
   describe("Multi-provider", () => {
     it("counts deploys across github_actions + gitlab when both providers are in cfg.repos", () => {
       const t0 = NOW - 86_400_000;
-      // GitHub Actions deploy
       seedCiRun(db, "gha-1", {
         service: "github_actions",
         title: "Deploy",
@@ -612,7 +584,6 @@ describe("DORA metrics calculators", () => {
         headSha: "sha-gha",
         modifiedAt: t0,
       });
-      // GitLab CI deploy (service = "gitlab", project metadata key)
       seedCiRun(db, "gl-1", {
         service: "gitlab",
         title: "Deploy",
@@ -621,7 +592,6 @@ describe("DORA metrics calculators", () => {
         headSha: "sha-gl",
         modifiedAt: t0 + 1000,
       });
-      // GitLab CI deploy that doesn't match either repo → not counted
       seedCiRun(db, "gl-2", {
         service: "gitlab",
         title: "Deploy",
@@ -629,7 +599,6 @@ describe("DORA metrics calculators", () => {
         project: "other/repo",
         modifiedAt: t0 + 2000,
       });
-      // A third matching deploy on github_actions for sample ≥ 3
       seedCiRun(db, "gha-2", {
         service: "github_actions",
         title: "Deploy",
@@ -645,7 +614,7 @@ describe("DORA metrics calculators", () => {
         ],
       });
       const m = deploymentFrequency(db, multi, NOW, WINDOW);
-      expect(m.sample).toBe(3); // gha-1 + gl-1 + gha-2
+      expect(m.sample).toBe(3);
       expect(m.gap).toBeNull();
     });
   });

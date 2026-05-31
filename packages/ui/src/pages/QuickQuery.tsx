@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type SyntheticEvent, useEffect, useRef, useState } from "react";
 import { createIpcClient } from "../ipc/client";
 import { useNimbusStore } from "../store";
 
@@ -49,7 +49,7 @@ export function QuickQuery() {
     [],
   );
 
-  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (e: SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!prompt.trim()) return;
     const client = createIpcClient();

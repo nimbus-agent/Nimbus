@@ -1,9 +1,3 @@
-/**
- * Pure percentile math for bench samples.
- * Matches db/metrics.ts shape so query-latency results stay directly
- * comparable to the existing in-production observability primitives.
- */
-
 export interface PercentileResult {
   p50?: number | undefined;
   p95?: number | undefined;
@@ -18,7 +12,6 @@ function pickPercentile(sorted: number[], p: number): number | undefined {
   if (sorted.length === 1) {
     return sorted[0];
   }
-  // Linear-interpolation method (R-7), matches numpy default and bun:test snapshot tooling.
   const rank = (p / 100) * (sorted.length - 1);
   const lo = Math.floor(rank);
   const hi = Math.ceil(rank);

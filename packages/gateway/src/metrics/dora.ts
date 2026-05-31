@@ -1,12 +1,3 @@
-/**
- * Phase 5 T4 PR 2 — DORA metric calculators.
- *
- * Pure functions over the unified `item` table. Each calculator reads only the
- * rows in `[nowMs - sinceMs, nowMs]` and returns `null` with a {@link DoraGap}
- * note when the data is insufficient. See `docs/dora.md` for the full
- * methodology.
- */
-
 import type { Database } from "bun:sqlite";
 import type { DoraServiceConfig, ParsedDoraRepoUrn } from "./dora-config.ts";
 import { providerServiceColumns } from "./dora-config.ts";
@@ -48,7 +39,6 @@ function gapOrNull(metric: DoraMetricValue): DoraMetricValue {
   return metric;
 }
 
-/** Median of a non-empty pre-sorted ascending array. Floor of the mean for even counts. */
 function medianOfSorted(sorted: readonly number[]): number {
   const n = sorted.length;
   if (n === 0) throw new Error("medianOfSorted: empty array");
@@ -79,10 +69,6 @@ function distinctPrServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[]
   return Array.from(out);
 }
 
-/**
- * Matches `metadata.repo` (GitHub / Bitbucket), `metadata.project` (GitLab),
- * `metadata.jobName` (Jenkins), or `external_id` fallback (CircleCI). Combined per provider.
- */
 function repoLikeMatchesUrn(
   metadata: Record<string, unknown> | null,
   externalId: string,
@@ -98,10 +84,6 @@ function repoLikeMatchesUrn(
     case "jenkins":
       return metadata["jobName"] === urn.providerId;
     case "circleci":
-      // CircleCI item externalIds embed the slug rather than expose a `repo`/`project`
-      // metadata key. Substring match is intentional but means two configs whose
-      // providerIds are prefixes of one another may both match a single deploy.
-      // Operators should pick providerIds that are not prefixes of any other.
       return externalId.includes(urn.providerId);
   }
 }
@@ -137,7 +119,7 @@ function selectDeploys(
   for (const row of rows) {
     if (!cfg.deployWorkflowPattern.test(row.title)) continue;
     const meta = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["conclusion"] !== "success") continue;
+    if (meta?.["conclusion"] !== "success") continue;
     if (!cfg.repos.some((u) => repoLikeMatchesUrn(meta, row.external_id, u))) continue;
     out.push(row);
   }
@@ -150,12 +132,6 @@ type AnnotatedDeployRow = {
   metadata: string | null;
 };
 
-/**
- * Selects post-deploy-annotated deploys from `deployment_items` for the given
- * service+environments window. Counts only `conclusion = 'success'`; non-success
- * conclusions never count as a deploy under DORA. This is the preferred
- * source — see {@link deploymentFrequency} for the regex-fallback behaviour.
- */
 function selectAnnotatedDeploys(
   db: Database,
   cfg: DoraServiceConfig,
@@ -181,19 +157,6 @@ function selectAnnotatedDeploys(
   return rows;
 }
 
-/**
- * Deployment frequency.
- *
- * Source preference: when annotated deploys exist in the window
- * (`deployment_items` rows joined to `item.type = 'deployment'`), they win.
- * Regex-matched `ci_run` rows are only used as a fallback when no annotated
- * deploys are present. If both sources exist in the same window the annotated
- * count is reported and a `mixed_source` gap is emitted so callers can prompt
- * operators to retire the legacy regex path.
- *
- * `leadTimeForChanges` and `changeFailureRate` continue to use the legacy
- * regex path for now — a follow-up PR will teach them about annotated rows.
- */
 export function deploymentFrequency(
   db: Database,
   cfg: DoraServiceConfig,
@@ -230,6 +193,45 @@ type PrRow = {
   metadata: string | null;
 };
 
+type DeployIdx = {
+  headSha: string | null;
+  modifiedAt: number;
+};
+
+function buildDeployIndex(deploys: readonly CiRunRow[]): DeployIdx[] {
+  return deploys.map((d) => {
+    const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
+    const rawHead = meta === null ? undefined : meta["headSha"];
+    const headSha = typeof rawHead === "string" ? rawHead : null;
+    return { headSha, modifiedAt: d.modified_at };
+  });
+}
+
+type PrLeadTime = { leadTime: number | null; approximate: boolean };
+
+function prLeadTime(
+  pr: PrRow,
+  deployIdx: readonly DeployIdx[],
+  excludePrLabels: readonly string[],
+): PrLeadTime {
+  const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
+  if (meta?.["merged"] !== true) return { leadTime: null, approximate: false };
+  const mergedAtRaw = meta["merged_at"];
+  const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
+  if (mergedAt === null) return { leadTime: null, approximate: false };
+  const labelsRaw = meta["labels"];
+  const labels: readonly unknown[] = Array.isArray(labelsRaw) ? labelsRaw : [];
+  if (labels.some((l) => typeof l === "string" && excludePrLabels.includes(l))) {
+    return { leadTime: null, approximate: false };
+  }
+  const mergeShaRaw = meta["merge_commit_sha"];
+  const mergeSha = typeof mergeShaRaw === "string" ? mergeShaRaw : null;
+  if (mergeSha === null) return { leadTime: null, approximate: true };
+  const match = deployIdx.find((d) => d.headSha === mergeSha && d.modifiedAt >= mergedAt);
+  if (match === undefined) return { leadTime: null, approximate: true };
+  return { leadTime: Math.floor((match.modifiedAt - mergedAt) / 1000), approximate: false };
+}
+
 export function leadTimeForChanges(
   db: Database,
   cfg: DoraServiceConfig,
@@ -258,40 +260,13 @@ export function leadTimeForChanges(
     )
     .all(...prServices, nowMs - sinceMs, nowMs) as PrRow[];
 
-  type DeployIdx = {
-    headSha: string | null;
-    modifiedAt: number;
-  };
-  const deployIdx: DeployIdx[] = deploys.map((d) => {
-    const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
-    const rawHead = meta === null ? undefined : meta["headSha"];
-    const headSha = typeof rawHead === "string" ? rawHead : null;
-    return { headSha, modifiedAt: d.modified_at };
-  });
-
+  const deployIdx = buildDeployIndex(deploys);
   const leadTimes: number[] = [];
   let anyApproximate = false;
   for (const pr of prRows) {
-    const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["merged"] !== true) continue;
-    const mergedAtRaw = meta["merged_at"];
-    const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
-    if (mergedAt === null) continue;
-    const labelsRaw = meta["labels"];
-    const labels: readonly unknown[] = Array.isArray(labelsRaw) ? labelsRaw : [];
-    if (labels.some((l) => typeof l === "string" && cfg.excludePrLabels.includes(l))) continue;
-    const mergeShaRaw = meta["merge_commit_sha"];
-    const mergeSha = typeof mergeShaRaw === "string" ? mergeShaRaw : null;
-    if (mergeSha === null) {
-      anyApproximate = true;
-      continue;
-    }
-    const match = deployIdx.find((d) => d.headSha === mergeSha && d.modifiedAt >= mergedAt);
-    if (match === undefined) {
-      anyApproximate = true;
-      continue;
-    }
-    leadTimes.push(Math.floor((match.modifiedAt - mergedAt) / 1000));
+    const { leadTime, approximate } = prLeadTime(pr, deployIdx, cfg.excludePrLabels);
+    if (approximate) anyApproximate = true;
+    if (leadTime !== null) leadTimes.push(leadTime);
   }
   if (leadTimes.length === 0) {
     return {
@@ -346,7 +321,7 @@ function selectResolvedIncidents(
   const out: ResolvedIncident[] = [];
   for (const r of rows) {
     const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
-    if (meta === null || meta["status"] !== "resolved") continue;
+    if (meta?.["status"] !== "resolved") continue;
     const openedRaw = meta["opened_at_ms"];
     const opened = typeof openedRaw === "number" ? openedRaw : r.synced_at;
     const pdRaw = meta["pagerduty_service_id"];

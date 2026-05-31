@@ -15,7 +15,6 @@ import {
 } from "./watcher-store.ts";
 
 export type WatcherEvalOptions = {
-  /** When false, `watcher.graph_predicate_json` is not evaluated. Default true. */
   graphConditionsEnabled?: boolean;
 };
 
@@ -31,9 +30,6 @@ function asRecord(json: string): Record<string, unknown> | undefined {
   }
 }
 
-/**
- * Best-effort watcher evaluation after a connector sync completes.
- */
 export function evaluateWatchersAfterSync(
   db: Database,
   syncedServiceId: string,
@@ -58,10 +54,6 @@ export function evaluateWatchersAfterSync(
   }
 }
 
-/**
- * One startup pass: evaluate enabled watchers without requiring a connector sync (catch-up).
- * Uses the same alert query as post-sync evaluation; omits the per-sync service gate.
- */
 export function evaluateWatchersStartupCatchUp(
   db: Database,
   nowMs: number,
@@ -131,8 +123,6 @@ function evaluateOneWatcher(
     return null;
   }
 
-  // Apply graph predicate if present and enabled. Invalid JSON or parse
-  // errors drop the watcher to "no match" rather than firing — fail closed.
   let predicate: GraphPredicate | null = null;
   if (graphEnabled && w.graph_predicate_json !== null && w.graph_predicate_json !== "") {
     const parsed = parseGraphPredicate(w.graph_predicate_json);

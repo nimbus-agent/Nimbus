@@ -136,10 +136,10 @@ export function Connect() {
                   style={{
                     fontSize: 11,
                     marginTop: 6,
-                    color: STATUS_COLOR[status as AuthStatus] ?? STATUS_COLOR.pending,
+                    color: STATUS_COLOR[status] ?? STATUS_COLOR.pending,
                   }}
                 >
-                  {STATUS_LABEL[status as AuthStatus] ?? STATUS_LABEL.pending}
+                  {STATUS_LABEL[status] ?? STATUS_LABEL.pending}
                 </div>
               )}
             </button>
