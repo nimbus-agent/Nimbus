@@ -174,6 +174,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/airflow-sync.ts` | Apache Airflow DAGs (per-tenant host + HTTP Basic auth, header built inline) — emits `airflow:dag`; body-based `total_entries` + offset walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/airflow-dag-mapping.ts` | Pure Airflow DAG → `IndexedItem`; surfaces paused/active/owners/schedule/tags; local `parseIsoMs` |
 | `packages/mcp-connectors/airflow/src/server.ts` | Airflow MCP — read-only `airflow_list/get/search` |
+| `packages/gateway/src/connectors/prefect-sync.ts` | Prefect deployments (per-tenant workspace API root + Bearer api_key) — emits `prefect:deployment`; `POST /deployments/filter` body offset walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/prefect-deployment-mapping.ts` | Pure Prefect deployment → `IndexedItem`; surfaces paused/work pool/queue/schedule/status/tags; local `parseIsoMs`; url always null |
+| `packages/mcp-connectors/prefect/src/server.ts` | Prefect MCP — read-only `prefect_list/get/search` (list is a POST filter) |
 | `packages/gateway/src/connectors/ramp-sync.ts` | Ramp card spend (OAuth2 client-credentials token exchange) — emits `ramp:transaction`; `page.next` cursor walk; cursor `{ pass }`; 401 re-exchange once |
 | `packages/gateway/src/connectors/ramp-transaction-mapping.ts` | Pure Ramp transaction → `IndexedItem`; safe fields only (no PAN); local `parseIsoMs` |
 | `packages/mcp-connectors/ramp/src/server.ts` | Ramp MCP — read-only `ramp_list/get/search`; bearer token cached per process |
