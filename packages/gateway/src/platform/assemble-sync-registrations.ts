@@ -35,6 +35,7 @@ import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
+import { createMiroSyncable } from "../connectors/miro-sync.ts";
 import { createMlflowSyncable } from "../connectors/mlflow-sync.ts";
 import { createNetlifySyncable } from "../connectors/netlify-sync.ts";
 import { createNewrelicSyncable } from "../connectors/newrelic-sync.ts";
@@ -351,6 +352,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createHubspotSyncable({
       ensureHubspotMcpRunning: () => connectorMesh.ensureHubspotRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMiroSyncable({
+      ensureMiroMcpRunning: () => connectorMesh.ensureMiroRunning(),
     }),
   );
   syncScheduler.register(

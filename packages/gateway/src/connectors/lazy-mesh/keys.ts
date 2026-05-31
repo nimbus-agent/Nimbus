@@ -28,6 +28,7 @@ export const LAZY_MESH = {
   obsidian: "mesh:obsidian",
   zoom: "mesh:zoom",
   hubspot: "mesh:hubspot",
+  miro: "mesh:miro",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

@@ -64,6 +64,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   ramp: ["ramp.client_id", "ramp.client_secret"],
   zoom: ["zoom.oauth"],
   hubspot: ["hubspot.oauth"],
+  miro: ["miro.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

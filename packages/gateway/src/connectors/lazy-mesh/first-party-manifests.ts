@@ -314,6 +314,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  miro: baseManifest("com.nimbus.miro", {
+    network: ["api.miro.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   obsidian: baseManifest("com.nimbus.obsidian", {
     network: [],
     filesystem: { read: [], write: [] },

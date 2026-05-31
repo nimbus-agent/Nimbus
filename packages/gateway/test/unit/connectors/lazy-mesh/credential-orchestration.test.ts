@@ -35,6 +35,7 @@ function makeRecorderSpawners(): CredentialSpawners {
     ensureSlackMcp: make("slack"),
     ensureZoomMcp: make("zoom"),
     ensureHubspotMcp: make("hubspot"),
+    ensureMiroMcp: make("miro"),
   };
 }
 
@@ -278,6 +279,22 @@ describe("single-secret connectors", () => {
       await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("hubspot");
+    });
+  });
+
+  describe("miro — miro.oauth", () => {
+    it("spawns miro when miro.oauth is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("miro.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await runOrchestration(ctx);
+      expect(spawnCalls).toContain("miro");
+    });
+
+    it("does not spawn miro when vault is empty", async () => {
+      const { ctx } = makeCtx();
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("miro");
     });
   });
 });

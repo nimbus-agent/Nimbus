@@ -63,6 +63,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "ramp",
   "zoom",
   "hubspot",
+  "miro",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -150,6 +151,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   ramp: MIN10,
   zoom: MIN10,
   hubspot: MIN10,
+  miro: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -323,6 +325,11 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       return {
         provider: "hubspot",
         defaultScopes: ["crm.objects.deals.read", "oauth"],
+      };
+    case "miro":
+      return {
+        provider: "miro",
+        defaultScopes: ["boards:read"],
       };
     default:
       return oauthUnsupported(

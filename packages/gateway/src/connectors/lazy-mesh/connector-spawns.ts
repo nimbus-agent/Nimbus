@@ -9,6 +9,7 @@ import {
 } from "../../auth/google-access-token.ts";
 import { getValidHubspotAccessToken } from "../../auth/hubspot-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.ts";
+import { getValidMiroAccessToken } from "../../auth/miro-access-token.ts";
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
@@ -820,6 +821,51 @@ export async function ensureHubspotMcp(ctx: MeshSpawnContext): Promise<void> {
             env: extensionProcessEnv({ HUBSPOT_TOKEN: accessToken }),
           },
           "hubspot",
+          ctx,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Miro MCP when `miro.oauth` is present and a valid access token can be resolved.
+ */
+export async function ensureMiroMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.miro;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "miro", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidMiroAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-miro-${randomUUID()}`,
+      servers: {
+        miro: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("miro")],
+            env: extensionProcessEnv({ MIRO_TOKEN: accessToken }),
+          },
+          "miro",
           ctx,
         ),
       },

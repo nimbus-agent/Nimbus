@@ -56,7 +56,8 @@ export type Provider =
   | "dagster"
   | "ramp"
   | "zoom"
-  | "hubspot";
+  | "hubspot"
+  | "miro";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -122,6 +123,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   ramp: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
   hubspot: { requestsPerMinute: 100, burstSize: 10 },
+  miro: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

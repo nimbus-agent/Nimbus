@@ -21,6 +21,7 @@ import {
   ensureKubernetesMcp,
   ensureLinearMcp,
   ensureMicrosoftBundleMcp,
+  ensureMiroMcp,
   ensureNotionMcp,
   ensureObsidianMcp,
   ensurePagerdutyMcp,
@@ -283,6 +284,10 @@ export class LazyConnectorMesh {
     return ensureHubspotMcp(this.spawnContext);
   }
 
+  async ensureMiroRunning(): Promise<void> {
+    return ensureMiroMcp(this.spawnContext);
+  }
+
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -308,6 +313,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.kubernetes), name: "kubernetes" },
       { map: await list(LAZY_MESH.zoom), name: "zoom" },
       { map: await list(LAZY_MESH.hubspot), name: "hubspot" },
+      { map: await list(LAZY_MESH.miro), name: "miro" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }
