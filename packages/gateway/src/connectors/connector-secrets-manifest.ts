@@ -63,6 +63,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   dagster: ["dagster.base_url", "dagster.api_token"],
   ramp: ["ramp.client_id", "ramp.client_secret"],
   zoom: ["zoom.oauth"],
+  hubspot: ["hubspot.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

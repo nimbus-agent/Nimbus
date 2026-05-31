@@ -7,6 +7,7 @@ import {
   getValidGoogleAccessToken,
   resolveGoogleOAuthVaultKey,
 } from "../../auth/google-access-token.ts";
+import { getValidHubspotAccessToken } from "../../auth/hubspot-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.ts";
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
@@ -774,6 +775,51 @@ export async function ensureZoomMcp(ctx: MeshSpawnContext): Promise<void> {
             env: extensionProcessEnv({ ZOOM_TOKEN: accessToken }),
           },
           "zoom",
+          ctx,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts HubSpot MCP when `hubspot.oauth` is present and a valid access token can be resolved.
+ */
+export async function ensureHubspotMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.hubspot;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "hubspot", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidHubspotAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-hubspot-${randomUUID()}`,
+      servers: {
+        hubspot: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("hubspot")],
+            env: extensionProcessEnv({ HUBSPOT_TOKEN: accessToken }),
+          },
+          "hubspot",
           ctx,
         ),
       },

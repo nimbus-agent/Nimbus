@@ -28,6 +28,7 @@ export type CredentialSpawners = {
   readonly ensurePhase3BundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureSlackMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureZoomMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureHubspotMcp: (ctx: MeshSpawnContext) => Promise<void>;
 };
 
 async function ensureIfConnectorSecretSet<S extends ConnectorServiceId>(
@@ -171,6 +172,7 @@ export async function ensureCredentialConnectorsRunning(
   await ensureJiraIfVaultCreds(ctx, spawners);
   await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "zoom", "oauth", () => spawners.ensureZoomMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "hubspot", "oauth", () => spawners.ensureHubspotMcp(ctx));
   await ensureConfluenceIfVaultCreds(ctx, spawners);
   await ensureDiscordIfOptIn(ctx, spawners);
   await ensureJenkinsIfVaultCreds(ctx, spawners);

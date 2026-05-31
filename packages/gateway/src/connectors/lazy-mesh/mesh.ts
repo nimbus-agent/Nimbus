@@ -15,6 +15,7 @@ import {
   ensureGithubMcp,
   ensureGitlabMcp,
   ensureGoogleDriveMcp,
+  ensureHubspotMcp,
   ensureJenkinsMcp,
   ensureJiraMcp,
   ensureKubernetesMcp,
@@ -278,6 +279,10 @@ export class LazyConnectorMesh {
     return ensureZoomMcp(this.spawnContext);
   }
 
+  async ensureHubspotRunning(): Promise<void> {
+    return ensureHubspotMcp(this.spawnContext);
+  }
+
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -302,6 +307,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.pagerduty), name: "pagerduty" },
       { map: await list(LAZY_MESH.kubernetes), name: "kubernetes" },
       { map: await list(LAZY_MESH.zoom), name: "zoom" },
+      { map: await list(LAZY_MESH.hubspot), name: "hubspot" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }

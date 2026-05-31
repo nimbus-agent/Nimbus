@@ -33,6 +33,8 @@ function makeRecorderSpawners(): CredentialSpawners {
     ensurePagerdutyMcp: make("pagerduty"),
     ensurePhase3BundleMcp: make("phase3"),
     ensureSlackMcp: make("slack"),
+    ensureZoomMcp: make("zoom"),
+    ensureHubspotMcp: make("hubspot"),
   };
 }
 
@@ -260,6 +262,22 @@ describe("single-secret connectors", () => {
       await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("notion");
+    });
+  });
+
+  describe("hubspot — hubspot.oauth", () => {
+    it("spawns hubspot when hubspot.oauth is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("hubspot.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await runOrchestration(ctx);
+      expect(spawnCalls).toContain("hubspot");
+    });
+
+    it("does not spawn hubspot when vault is empty", async () => {
+      const { ctx } = makeCtx();
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("hubspot");
     });
   });
 });
