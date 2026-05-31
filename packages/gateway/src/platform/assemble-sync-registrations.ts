@@ -50,6 +50,7 @@ import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
+import { createSalesforceSyncable } from "../connectors/salesforce-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
@@ -369,6 +370,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createFigmaSyncable({
       ensureFigmaMcpRunning: () => connectorMesh.ensureFigmaRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSalesforceSyncable({
+      ensureSalesforceMcpRunning: () => connectorMesh.ensureSalesforceRunning(),
     }),
   );
   syncScheduler.register(

@@ -28,6 +28,7 @@ import {
   ensureObsidianMcp,
   ensurePagerdutyMcp,
   ensurePhase3BundleMcp,
+  ensureSalesforceMcp,
   ensureSlackMcp,
   ensureZoomMcp,
 } from "./connector-spawns.ts";
@@ -298,6 +299,10 @@ export class LazyConnectorMesh {
     return ensureFigmaMcp(this.spawnContext);
   }
 
+  async ensureSalesforceRunning(): Promise<void> {
+    return ensureSalesforceMcp(this.spawnContext);
+  }
+
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -326,6 +331,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.miro), name: "miro" },
       { map: await list(LAZY_MESH.canva), name: "canva" },
       { map: await list(LAZY_MESH.figma), name: "figma" },
+      { map: await list(LAZY_MESH.salesforce), name: "salesforce" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }

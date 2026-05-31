@@ -14,6 +14,7 @@ import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.
 import { getValidMiroAccessToken } from "../../auth/miro-access-token.ts";
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
+import { getValidSalesforceAuth } from "../../auth/salesforce-access-token.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
 import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
@@ -961,6 +962,59 @@ export async function ensureFigmaMcp(ctx: MeshSpawnContext): Promise<void> {
           },
           "figma",
           ctx,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Salesforce MCP when `salesforce.oauth` is present and a valid access
+ * token + instance_url can be resolved. The instance_url is a per-tenant API
+ * host discovered at OAuth time, so it is added to the sandbox manifest at spawn
+ * via the Jenkins-style extra-hosts pattern (direct wrapServerSpec, not wrap()).
+ */
+export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.salesforce;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "salesforce", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  let auth: { accessToken: string; instanceUrl: string };
+  try {
+    auth = await getValidSalesforceAuth(ctx.vault);
+  } catch {
+    return;
+  }
+  if (auth.accessToken === "" || auth.instanceUrl === "") {
+    return;
+  }
+  const sfHost = hostnameFromUrl(auth.instanceUrl);
+  const manifest = manifestWithExtraNetworkHosts("salesforce", sfHost === null ? [] : [sfHost]);
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-salesforce-${randomUUID()}`,
+      servers: {
+        salesforce: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("salesforce")],
+            env: extensionProcessEnv({
+              SALESFORCE_ACCESS_TOKEN: auth.accessToken,
+              SALESFORCE_INSTANCE_URL: auth.instanceUrl,
+            }),
+          },
+          manifest,
+          ctx.sandboxCwd,
         ),
       },
     }),
