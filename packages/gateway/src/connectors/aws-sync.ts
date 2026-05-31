@@ -1,8 +1,7 @@
-import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { clampSyncTitle, syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { readConnectorSecret } from "./connector-vault.ts";
+import { awsCliJson, awsCredentialsExtra } from "./_lib/aws-cli.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -33,49 +32,6 @@ function decodeCursor(raw: string | null): AwsCursorV1 | null {
     return null;
   }
   return { nextMarker: typeof m === "string" && m !== "" ? m : null };
-}
-
-async function awsCredentialsExtra(ctx: SyncContext): Promise<Record<string, string> | null> {
-  const ak = (await readConnectorSecret(ctx.vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(ctx.vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(ctx.vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(ctx.vault, "aws", "profile"))?.trim() ?? "";
-  const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!ok) {
-    return null;
-  }
-  const extra: Record<string, string> = {};
-  if (ak !== "") {
-    extra["AWS_ACCESS_KEY_ID"] = ak;
-  }
-  if (sk !== "") {
-    extra["AWS_SECRET_ACCESS_KEY"] = sk;
-  }
-  if (reg !== "") {
-    extra["AWS_DEFAULT_REGION"] = reg;
-  }
-  if (prof !== "") {
-    extra["AWS_PROFILE"] = prof;
-  }
-  return extra;
-}
-
-async function awsCliJson(
-  ctx: SyncContext,
-  args: string[],
-): Promise<{ ok: boolean; text: string }> {
-  const extra = await awsCredentialsExtra(ctx);
-  if (extra === null) {
-    return { ok: false, text: "" };
-  }
-  const proc = Bun.spawn(["aws", ...args, "--output", "json"], {
-    env: extensionProcessEnv(extra),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  const out = await new Response(proc.stdout).text();
-  return { ok: code === 0, text: out };
 }
 
 export type AwsSyncableOptions = {
