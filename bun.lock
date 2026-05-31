@@ -659,6 +659,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/ramp": {
+      "name": "nimbus-mcp-ramp",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/readwise": {
       "name": "nimbus-mcp-readwise",
       "version": "0.1.0",
@@ -2927,6 +2939,8 @@
     "nimbus-mcp-pipedrive": ["nimbus-mcp-pipedrive@workspace:packages/mcp-connectors/pipedrive"],
 
     "nimbus-mcp-raindrop": ["nimbus-mcp-raindrop@workspace:packages/mcp-connectors/raindrop"],
+
+    "nimbus-mcp-ramp": ["nimbus-mcp-ramp@workspace:packages/mcp-connectors/ramp"],
 
     "nimbus-mcp-readwise": ["nimbus-mcp-readwise@workspace:packages/mcp-connectors/readwise"],
 
