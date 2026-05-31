@@ -217,6 +217,32 @@ export async function phase3AddCloudwatchMcp(
   );
 }
 
+export async function phase3AddCloudLoggingMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Cloud Logging (Tier-3, metadata-only) reuses the existing GCP credentials —
+  // mirror phase3AddBigqueryMcp's gcp cred gate.
+  const gcpPath = (await readConnectorSecret(vault, "gcp", "credentials_json_path"))?.trim() ?? "";
+  if (gcpPath === "") {
+    return;
+  }
+  const projectId = (await readConnectorSecret(vault, "gcp", "project_id"))?.trim() ?? "";
+  servers["cloud_logging"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("cloud-logging")],
+      env: extensionProcessEnv({
+        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        ...(projectId === "" ? {} : { GOOGLE_CLOUD_PROJECT: projectId }),
+      }),
+    },
+    "cloud_logging",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddIacMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1111,6 +1137,7 @@ export async function buildPhase3Servers(
   await phase3AddBigqueryMcp(vault, servers, sandboxCwd);
   await phase3AddAthenaMcp(vault, servers, sandboxCwd);
   await phase3AddCloudwatchMcp(vault, servers, sandboxCwd);
+  await phase3AddCloudLoggingMcp(vault, servers, sandboxCwd);
   await phase3AddIacMcp(vault, servers, sandboxCwd);
   await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
   await phase3AddSentryMcp(vault, servers, sandboxCwd);

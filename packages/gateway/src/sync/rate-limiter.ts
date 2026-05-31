@@ -63,7 +63,8 @@ export type Provider =
   | "salesforce"
   | "bigquery"
   | "athena"
-  | "cloudwatch";
+  | "cloudwatch"
+  | "cloud_logging";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -136,6 +137,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   bigquery: { requestsPerMinute: 40, burstSize: 8 },
   athena: { requestsPerMinute: 40, burstSize: 8 },
   cloudwatch: { requestsPerMinute: 40, burstSize: 8 },
+  cloud_logging: { requestsPerMinute: 40, burstSize: 8 },
 };
 
 type BucketState = {

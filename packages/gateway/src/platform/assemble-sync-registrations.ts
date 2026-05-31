@@ -8,6 +8,7 @@ import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
 import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
 import { createCanvaSyncable } from "../connectors/canva-sync.ts";
 import { createCircleciSyncable } from "../connectors/circleci-sync.ts";
+import { createCloudLoggingSyncable } from "../connectors/cloud-logging-sync.ts";
 import { createCloudwatchSyncable } from "../connectors/cloudwatch-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDagsterSyncable } from "../connectors/dagster-sync.ts";
@@ -214,6 +215,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createCloudwatchSyncable({
       ensureCloudwatchMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createCloudLoggingSyncable({
+      ensureCloudLoggingMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

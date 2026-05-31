@@ -153,6 +153,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["sts.amazonaws.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Cloud Logging (Tier-3, metadata-only). Execs the `gcloud` CLI, which talks to
+  // the Cloud Logging API to list routing SINK config metadata (NEVER log entries).
+  // Mirrors the bigquery manifest's GCP network shape (logging.googleapis.com for
+  // the API, oauth2/www.googleapis.com for credential resolution + discovery) and
+  // the empty filesystem shape (the sandbox permits exec of the wrapped command).
+  cloud_logging: baseManifest("com.nimbus.cloud-logging", {
+    network: ["logging.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
   iac: baseManifest("com.nimbus.iac", DEFAULT_DENY),
 
   grafana: baseManifest("com.nimbus.grafana", {

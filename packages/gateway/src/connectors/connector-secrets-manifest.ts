@@ -83,6 +83,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // — via the aws CLI. It has no CloudWatch-specific vault secret, so its own key
   // list is intentionally empty.
   cloudwatch: [],
+  // Cloud Logging (Tier-3 no-row-data logging) reuses the existing GCP credentials —
+  // `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud CLI. It has no
+  // Cloud-Logging-specific vault secret, so its own key list is intentionally empty.
+  cloud_logging: [],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
