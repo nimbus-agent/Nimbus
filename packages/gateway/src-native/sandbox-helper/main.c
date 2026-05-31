@@ -357,7 +357,7 @@ static int add_host_accept_rules(struct addrinfo *ai) {
         char ipstr[INET6_ADDRSTRLEN];
         char cmd[128];
         if (ai->ai_family == AF_INET) {
-            void *addr_ptr = &((struct sockaddr_in *)ai->ai_addr)->sin_addr;
+            const void *addr_ptr = &((struct sockaddr_in *)ai->ai_addr)->sin_addr;
             if (inet_ntop(AF_INET, addr_ptr, ipstr, sizeof(ipstr)) == NULL) {
                 fprintf(stderr, "inet_ntop(AF_INET) failed: %s\n", strerror(errno));
                 return 5;
@@ -372,7 +372,7 @@ static int add_host_accept_rules(struct addrinfo *ai) {
                 return 5;
             }
         } else if (ai->ai_family == AF_INET6) {
-            void *addr_ptr = &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
+            const void *addr_ptr = &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
             if (inet_ntop(AF_INET6, addr_ptr, ipstr, sizeof(ipstr)) == NULL) {
                 fprintf(stderr, "inet_ntop(AF_INET6) failed: %s\n", strerror(errno));
                 return 5;

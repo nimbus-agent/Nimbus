@@ -293,9 +293,9 @@ export class ExtensionAutoUpdater {
       signatureB64: newManifest.signature,
       entryHash: manifestResult.entryHash,
       tarballUrl: manifestResult.tarballUrl,
-      ...(manifestResult.tarballSizeBytes !== undefined
-        ? { tarballSizeBytes: manifestResult.tarballSizeBytes }
-        : {}),
+      ...(manifestResult.tarballSizeBytes === undefined
+        ? {}
+        : { tarballSizeBytes: manifestResult.tarballSizeBytes }),
       permissionDiff,
       verificationStatus,
       detectedAt: this.opts.now(),

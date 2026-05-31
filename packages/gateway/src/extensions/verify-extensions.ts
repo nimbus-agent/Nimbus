@@ -300,16 +300,16 @@ function evaluateDependencyRow(
   } catch {
     satisfies = false;
   }
-  if (!satisfies) {
-    return {
-      extensionId: r.extension_id,
-      reason: "dependency_unsatisfied",
-      missingDepId: r.depends_on_id,
-      requiredRange: r.range,
-      ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
-    };
+  if (satisfies) {
+    return null;
   }
-  return null;
+  return {
+    extensionId: r.extension_id,
+    reason: "dependency_unsatisfied",
+    missingDepId: r.depends_on_id,
+    requiredRange: r.range,
+    ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
+  };
 }
 
 function completenessGuard(

@@ -24,6 +24,17 @@ interface PendingUpdatesProps {
   readonly pollIntervalMs?: number;
 }
 
+function formatApplyResult(applyResult: {
+  readonly id: string;
+  readonly result: UpdateApplyResultUi;
+}): string {
+  if (applyResult.result.applied) {
+    return `Updated ${applyResult.id}`;
+  }
+  const hintSuffix = applyResult.result.hint === undefined ? "" : ` — ${applyResult.result.hint}`;
+  return `Update failed: ${applyResult.result.reason}${hintSuffix}`;
+}
+
 const DEFAULT_POLL_MS = 5 * 60_000;
 
 export function PendingUpdates({
@@ -83,11 +94,7 @@ export function PendingUpdates({
           className={`text-sm ${applyResult.result.applied ? "text-green-700" : "text-red-600"}`}
           data-testid={`apply-result-${applyResult.id}`}
         >
-          {applyResult.result.applied
-            ? `Updated ${applyResult.id}`
-            : `Update failed: ${applyResult.result.reason}${
-                applyResult.result.hint === undefined ? "" : ` — ${applyResult.result.hint}`
-              }`}
+          {formatApplyResult(applyResult)}
         </p>
       )}
       <ul className="flex flex-col gap-2">
