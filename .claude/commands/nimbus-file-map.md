@@ -168,6 +168,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/zotero-sync.ts` | Zotero references (API-key + non-secret library spec) — emits `zotero:reference`; offset/`start` walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/zotero-reference-mapping.ts` | Pure Zotero item → `IndexedItem`; skips attachment/note item types |
 | `packages/mcp-connectors/zotero/src/server.ts` | Zotero MCP — read-only `zotero_list/get/search` |
+| `packages/gateway/src/connectors/dependencytrack-sync.ts` | OWASP Dependency-Track SBOM/supply-chain (per-tenant host + API key) — emits `dependencytrack:project`; page-number walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/dependencytrack-project-mapping.ts` | Pure Dependency-Track project → `IndexedItem`; surfaces embedded vuln metrics |
+| `packages/mcp-connectors/dependencytrack/src/server.ts` | Dependency-Track MCP — read-only `dependencytrack_list/get/search` |
 | `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings + recordings (OAuth) — emits `zoom:meeting` + `zoom:transcript`; cursor `{ pass, lastRecordingsTo }` |
 | `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
 | `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
