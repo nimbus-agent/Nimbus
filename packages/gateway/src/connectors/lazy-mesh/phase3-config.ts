@@ -98,6 +98,31 @@ export async function phase3AddGcpMcp(
   );
 }
 
+export async function phase3AddBigqueryMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // BigQuery (Tier-3, metadata-only) reuses the existing GCP credentials.
+  const gcpPath = (await readConnectorSecret(vault, "gcp", "credentials_json_path"))?.trim() ?? "";
+  if (gcpPath === "") {
+    return;
+  }
+  const projectId = (await readConnectorSecret(vault, "gcp", "project_id"))?.trim() ?? "";
+  servers["bigquery"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("bigquery")],
+      env: extensionProcessEnv({
+        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        ...(projectId === "" ? {} : { BIGQUERY_PROJECT: projectId }),
+      }),
+    },
+    "bigquery",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddIacMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -989,6 +1014,7 @@ export async function buildPhase3Servers(
   await phase3AddAwsMcp(vault, servers, sandboxCwd);
   await phase3AddAzureMcp(vault, servers, sandboxCwd);
   await phase3AddGcpMcp(vault, servers, sandboxCwd);
+  await phase3AddBigqueryMcp(vault, servers, sandboxCwd);
   await phase3AddIacMcp(vault, servers, sandboxCwd);
   await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
   await phase3AddSentryMcp(vault, servers, sandboxCwd);

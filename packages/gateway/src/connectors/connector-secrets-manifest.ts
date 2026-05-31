@@ -69,6 +69,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   canva: ["canva.oauth"],
   figma: ["figma.oauth", "figma.team_id"],
   salesforce: ["salesforce.oauth"],
+  // BigQuery (Tier-3 no-row-data warehouse) reuses the existing GCP credentials —
+  // `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud CLI. It has no
+  // BigQuery-specific vault secret, so its own key list is intentionally empty.
+  bigquery: [],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

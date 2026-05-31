@@ -68,6 +68,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "canva",
   "figma",
   "salesforce",
+  "bigquery",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -161,6 +162,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   canva: MIN10,
   figma: MIN10,
   salesforce: MIN10,
+  bigquery: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -237,6 +239,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   prefect: "uses a Prefect API key (Bearer) + workspace API URL (connector.auth prefect)",
   dagster: "uses a Dagster Cloud API token + host base URL (connector.auth dagster)",
   ramp: "uses OAuth2 client-credentials — client id + client secret (connector.auth ramp)",
+  bigquery:
+    "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate BigQuery credential",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

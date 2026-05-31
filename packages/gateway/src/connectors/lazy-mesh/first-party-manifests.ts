@@ -124,6 +124,13 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["cloudresourcemanager.googleapis.com", "oauth2.googleapis.com"],
     filesystem: { read: [], write: [] },
   }),
+  // BigQuery (Tier-3, metadata-only). Execs `gcloud` to mint an access token, then
+  // calls the BigQuery REST metadata endpoints. Mirrors the gcp manifest's empty
+  // filesystem shape (the sandbox permits exec of the wrapped command itself).
+  bigquery: baseManifest("com.nimbus.bigquery", {
+    network: ["bigquery.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
   iac: baseManifest("com.nimbus.iac", DEFAULT_DENY),
 
   grafana: baseManifest("com.nimbus.grafana", {

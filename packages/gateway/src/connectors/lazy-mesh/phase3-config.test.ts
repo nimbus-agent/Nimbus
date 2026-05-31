@@ -1807,7 +1807,19 @@ describe("buildPhase3Servers", () => {
     await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
     expect(Object.keys(servers).sort()).toEqual(
-      ["aws", "azure", "datadog", "gcp", "grafana", "iac", "newrelic", "sentry", "snyk"].sort(),
+      // bigquery reuses gcp creds, so seeding gcp.credentials_json_path enables it too.
+      [
+        "aws",
+        "azure",
+        "bigquery",
+        "datadog",
+        "gcp",
+        "grafana",
+        "iac",
+        "newrelic",
+        "sentry",
+        "snyk",
+      ].sort(),
     );
     for (const id of Object.keys(servers)) {
       expectSandboxed(servers[id] as ServerSpec);
@@ -1821,6 +1833,7 @@ describe("buildPhase3Servers", () => {
     await vault.set("aws.default_region", "us-east-1");
     await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
-    expect(Object.keys(servers).sort()).toEqual(["aws", "gcp"]);
+    // bigquery reuses gcp creds, so it appears whenever gcp does.
+    expect(Object.keys(servers).sort()).toEqual(["aws", "bigquery", "gcp"]);
   });
 });
