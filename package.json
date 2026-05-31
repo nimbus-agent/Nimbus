@@ -85,6 +85,7 @@
     "packages/mcp-connectors/figma",
     "packages/mcp-connectors/salesforce",
     "packages/mcp-connectors/bigquery",
+    "packages/mcp-connectors/athena",
     "packages/vscode-extension"
   ],
   "scripts": {
