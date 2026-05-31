@@ -171,6 +171,64 @@ describe("zoom descriptor", () => {
   });
 });
 
+describe("hubspot descriptor", () => {
+  test("table includes hubspot with vaultKey, urls, and body-secret quirks", () => {
+    expect(OAUTH_PROVIDERS.hubspot.id).toBe("hubspot");
+    expect(OAUTH_PROVIDERS.hubspot.vaultKey).toBe("hubspot.oauth");
+    expect(OAUTH_PROVIDERS.hubspot.authorizeUrl).toBe("https://app.hubspot.com/oauth/authorize");
+    expect(OAUTH_PROVIDERS.hubspot.tokenUrl).toBe("https://api.hubapi.com/oauth/v1/token");
+    expect(OAUTH_PROVIDERS.hubspot.usesPkce).toBe(false);
+    expect(OAUTH_PROVIDERS.hubspot.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.hubspot.secretPlacement).toBe("body");
+    expect(OAUTH_PROVIDERS.hubspot.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.hubspot.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.hubspot.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params omit PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.hubspot.buildAuthorizeParams({
+      clientId: "hs-cid",
+      scopes: ["crm.objects.deals.read", "oauth"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("hs-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("crm.objects.deals.read oauth");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBeUndefined();
+    expect(p["code_challenge_method"]).toBeUndefined();
+  });
+
+  test("exchange posts form with client_secret in body; error message omits secrets", async () => {
+    let seenBody = "";
+    let seenCT = "";
+    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+      seenBody = typeof init?.body === "string" ? init.body : "";
+      seenCT = new Headers(init?.headers).get("content-type") ?? "";
+      return new Response(
+        JSON.stringify({ access_token: "hs-a", refresh_token: "hs-r", expires_in: 1800 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const r = await exchangeAuthorizationCode({
+      descriptor: OAUTH_PROVIDERS.hubspot,
+      fetchFn: fetchImpl,
+      clientId: "cid",
+      clientSecret: "HUBSPOT_SECRET",
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      authCode: "code",
+      requestedScopes: ["crm.objects.deals.read"],
+    });
+    expect(r.accessToken).toBe("hs-a");
+    expect(r.refreshToken).toBe("hs-r");
+    expect(seenCT).toContain("application/x-www-form-urlencoded");
+    expect(seenBody).toContain("client_secret=HUBSPOT_SECRET");
+    expect(seenBody).toContain("grant_type=authorization_code");
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {

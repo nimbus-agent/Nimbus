@@ -2,7 +2,7 @@ import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { parseStoredOAuthTokens } from "./oauth-vault-payload.ts";
 
-export type OAuthProvider = "google" | "microsoft" | "slack" | "notion" | "zoom";
+export type OAuthProvider = "google" | "microsoft" | "slack" | "notion" | "zoom" | "hubspot";
 
 export interface PKCEResult {
   accessToken: string;
@@ -255,6 +255,27 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       ...(a.codeChallenge === undefined
         ? {}
         : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  hubspot: {
+    id: "hubspot",
+    vaultKey: "hubspot.oauth",
+    authorizeUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    // HubSpot uses the standard authorization-code flow (NOT PKCE) with the
+    // client_id + client_secret form-encoded into the token-exchange BODY.
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
     }),
     parseTokenResponse: parseStandardTokenResponse,
   },

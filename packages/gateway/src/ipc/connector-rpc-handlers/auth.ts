@@ -1,5 +1,7 @@
 import {
   GOOGLE_OAUTH_CLIENT_ID_HELP,
+  HUBSPOT_OAUTH_CLIENT_ID_HELP,
+  HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
   MICROSOFT_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_SECRET_HELP,
@@ -565,6 +567,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: ZOOM_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthZoomClientSecret,
         clientSecretMissingHelp: ZOOM_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "hubspot":
+      return {
+        clientId: Config.oauthHubspotClientId,
+        emptyClientIdMessage: HUBSPOT_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthHubspotClientSecret,
+        clientSecretMissingHelp: HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;

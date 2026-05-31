@@ -79,3 +79,26 @@ marketplace.zoom.us → your app → App Credentials → copy the Client Secret.
 
 PowerShell example:
   $env:NIMBUS_OAUTH_ZOOM_CLIENT_SECRET = "..."`;
+
+export const HUBSPOT_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_HUBSPOT_CLIENT_ID to your HubSpot app's Client ID (OAuth 2.0 authorization-code flow).
+
+How to obtain:
+1. developers.hubspot.com → create or open an app under your developer account.
+2. Auth tab → add the scopes you need (e.g. crm.objects.deals.read, oauth).
+3. Configure a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+4. Copy the Client ID from the Auth page.
+
+You must also set NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET (HubSpot's token endpoint requires the client secret in the request body).
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_HUBSPOT_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET = "..."`;
+
+export const HUBSPOT_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET to your HubSpot app's Client Secret.
+
+HubSpot's token exchange requires the client secret form-encoded in the request body (it is not stored in the Nimbus vault).
+
+developers.hubspot.com → your app → Auth → copy the Client Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET = "..."`;

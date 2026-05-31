@@ -117,6 +117,8 @@ export const Config = {
   oauthNotionClientSecret: processEnvGet("NIMBUS_OAUTH_NOTION_CLIENT_SECRET") ?? "",
   oauthZoomClientId: processEnvGet("NIMBUS_OAUTH_ZOOM_CLIENT_ID") ?? "",
   oauthZoomClientSecret: processEnvGet("NIMBUS_OAUTH_ZOOM_CLIENT_SECRET") ?? "",
+  oauthHubspotClientId: processEnvGet("NIMBUS_OAUTH_HUBSPOT_CLIENT_ID") ?? "",
+  oauthHubspotClientSecret: processEnvGet("NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET") ?? "",
   engineContextWindowItems: parseEngineContextWindowItems(),
   searchServicePriorityMap,
   conversationalAgentMaxSteps: parseConversationalAgentMaxSteps(),
