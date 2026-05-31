@@ -70,8 +70,9 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/vault/index.ts` | `NimbusVault` interface |
 | `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
 | `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
-| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom) + `getValidVaultAccessToken` single-flight |
+| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot) + `getValidVaultAccessToken` single-flight |
 | `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
+| `packages/gateway/src/auth/hubspot-access-token.ts` | `getValidHubspotAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.hubspot` |
 
 ## Connectors + MCP Mesh
 
@@ -187,6 +188,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
 | `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
 | `packages/mcp-connectors/zoom/src/server.ts` | Zoom MCP — read-only `zoom_list/get/search/recordings_list/transcript_get` |
+| `packages/gateway/src/connectors/hubspot-sync.ts` | HubSpot CRM deals (3-legged OAuth via registry — first Tier-2 infra-prover) — emits `hubspot:deal`; `paging.next.after` cursor walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/hubspot-deal-mapping.ts` | Pure HubSpot deal → `IndexedItem`; `parseHubspotMs` (ISO + epoch-ms); url/canonical_url null |
+| `packages/mcp-connectors/hubspot/src/server.ts` | HubSpot MCP — read-only `hubspot_list/get/search` |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
