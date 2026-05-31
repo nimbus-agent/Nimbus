@@ -11,7 +11,8 @@ export type OAuthProvider =
   | "hubspot"
   | "miro"
   | "canva"
-  | "figma";
+  | "figma"
+  | "salesforce";
 
 export interface PKCEResult {
   accessToken: string;
@@ -156,6 +157,47 @@ function parseNotionTokenResponse(json: unknown, requested: string[]): PKCEResul
     refreshToken: refreshStr,
     expiresAt: Date.now() + 86_400 * 1000,
     scopes: requested,
+  };
+}
+
+// Default Salesforce access-token lifetime when the token response omits
+// `expires_in`. Salesforce does NOT return `expires_in`; its actual session
+// timeout is org-configured and frequently short. A conservative 30-minute
+// window means the registry's proactive single-flight refresh (REFRESH_MARGIN
+// 120 s) renews the access token roughly every sync cycle using the long-lived
+// refresh token — robust against short org session timeouts.
+const SALESFORCE_DEFAULT_EXPIRY_MS = 30 * 60 * 1000;
+
+function parseSalesforceTokenResponse(json: unknown, requested: string[]): PKCEResult {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("Salesforce token response invalid");
+  }
+  const o = json as Record<string, unknown>;
+  const access = o["access_token"];
+  if (typeof access !== "string" || access === "") {
+    throw new Error("Salesforce token response missing access_token");
+  }
+  const refresh = o["refresh_token"];
+  const refreshStr = typeof refresh === "string" ? refresh : "";
+  // instance_url is the per-tenant API host (e.g. https://acme.my.salesforce.com)
+  // and is REQUIRED for Salesforce — every request targets it.
+  const instance = o["instance_url"];
+  if (typeof instance !== "string" || instance === "") {
+    throw new Error("Salesforce token response missing instance_url");
+  }
+  // Salesforce omits expires_in; synthesize a conservative window if absent.
+  const expiresIn = parseExpiresInSeconds(o["expires_in"]);
+  const expiresAt =
+    Number.isFinite(expiresIn) && expiresIn > 0
+      ? Date.now() + Math.floor(expiresIn * 1000)
+      : Date.now() + SALESFORCE_DEFAULT_EXPIRY_MS;
+  const scope = typeof o["scope"] === "string" ? (o["scope"] as string) : undefined;
+  return {
+    accessToken: access,
+    refreshToken: refreshStr,
+    expiresAt,
+    scopes: scopesFromTokenResponse(scope, requested),
+    instanceUrl: instance,
   };
 }
 
@@ -360,6 +402,32 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
       state: a.state,
     }),
     parseTokenResponse: parseStandardTokenResponse,
+  },
+  salesforce: {
+    id: "salesforce",
+    vaultKey: "salesforce.oauth",
+    authorizeUrl: "https://login.salesforce.com/services/oauth2/authorize",
+    tokenUrl: "https://login.salesforce.com/services/oauth2/token",
+    // Salesforce uses the authorization-code flow WITH PKCE; the token endpoint
+    // takes the client_id + client_secret form-encoded in the request BODY.
+    // The token response returns a per-tenant `instance_url` (captured into the
+    // stored blob) and notably OMITS `expires_in` (see parseSalesforceTokenResponse).
+    usesPkce: true,
+    clientSecret: "required",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+      ...(a.codeChallenge === undefined
+        ? {}
+        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
+    }),
+    parseTokenResponse: parseSalesforceTokenResponse,
   },
 };
 

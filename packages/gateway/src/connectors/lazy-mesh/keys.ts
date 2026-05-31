@@ -31,6 +31,7 @@ export const LAZY_MESH = {
   miro: "mesh:miro",
   canva: "mesh:canva",
   figma: "mesh:figma",
+  salesforce: "mesh:salesforce",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

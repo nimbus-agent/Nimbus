@@ -66,6 +66,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "miro",
   "canva",
   "figma",
+  "salesforce",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -156,6 +157,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   miro: MIN10,
   canva: MIN10,
   figma: MIN10,
+  salesforce: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -344,6 +346,11 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       return {
         provider: "figma",
         defaultScopes: ["files:read"],
+      };
+    case "salesforce":
+      return {
+        provider: "salesforce",
+        defaultScopes: ["api", "refresh_token"],
       };
     default:
       return oauthUnsupported(

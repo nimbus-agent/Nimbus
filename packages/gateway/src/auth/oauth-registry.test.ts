@@ -411,6 +411,80 @@ describe("figma descriptor", () => {
   });
 });
 
+describe("salesforce descriptor", () => {
+  test("table includes salesforce with vaultKey, urls, and PKCE + body-secret quirks", () => {
+    expect(OAUTH_PROVIDERS.salesforce.id).toBe("salesforce");
+    expect(OAUTH_PROVIDERS.salesforce.vaultKey).toBe("salesforce.oauth");
+    expect(OAUTH_PROVIDERS.salesforce.authorizeUrl).toBe(
+      "https://login.salesforce.com/services/oauth2/authorize",
+    );
+    expect(OAUTH_PROVIDERS.salesforce.tokenUrl).toBe(
+      "https://login.salesforce.com/services/oauth2/token",
+    );
+    expect(OAUTH_PROVIDERS.salesforce.usesPkce).toBe(true);
+    expect(OAUTH_PROVIDERS.salesforce.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.salesforce.secretPlacement).toBe("body");
+    expect(OAUTH_PROVIDERS.salesforce.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.salesforce.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.salesforce.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params include PKCE challenge when codeChallenge present", () => {
+    const p = OAUTH_PROVIDERS.salesforce.buildAuthorizeParams({
+      clientId: "sf-cid",
+      scopes: ["api", "refresh_token"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("sf-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("api refresh_token");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBe("cc");
+    expect(p["code_challenge_method"]).toBe("S256");
+  });
+
+  test("parseTokenResponse captures instance_url and synthesizes a future expiry when expires_in absent", () => {
+    const before = Date.now();
+    const r = OAUTH_PROVIDERS.salesforce.parseTokenResponse(
+      {
+        access_token: "sf-a",
+        refresh_token: "sf-r",
+        instance_url: "https://acme.my.salesforce.com",
+        scope: "api refresh_token",
+        // NOTE: no expires_in — Salesforce omits it.
+      },
+      ["api", "refresh_token"],
+    );
+    expect(r.accessToken).toBe("sf-a");
+    expect(r.refreshToken).toBe("sf-r");
+    expect(r.instanceUrl).toBe("https://acme.my.salesforce.com");
+    expect(r.scopes).toEqual(["api", "refresh_token"]);
+    // 30-minute conservative window in the future.
+    expect(r.expiresAt).toBeGreaterThan(before + 20 * 60 * 1000);
+    expect(r.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 60 * 1000);
+  });
+
+  test("parseTokenResponse throws when instance_url is missing", () => {
+    expect(() =>
+      OAUTH_PROVIDERS.salesforce.parseTokenResponse(
+        { access_token: "sf-a", refresh_token: "sf-r" },
+        ["api"],
+      ),
+    ).toThrow("instance_url");
+  });
+
+  test("parseTokenResponse throws when access_token is missing", () => {
+    expect(() =>
+      OAUTH_PROVIDERS.salesforce.parseTokenResponse(
+        { instance_url: "https://acme.my.salesforce.com" },
+        ["api"],
+      ),
+    ).toThrow("access_token");
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {

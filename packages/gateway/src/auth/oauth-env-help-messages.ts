@@ -173,3 +173,27 @@ figma.com/developers/apps → your app → copy the Client Secret.
 
 PowerShell example:
   $env:NIMBUS_OAUTH_FIGMA_CLIENT_SECRET = "..."`;
+
+export const SALESFORCE_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_SALESFORCE_CLIENT_ID to your Salesforce connected app's Consumer Key (OAuth 2.0 authorization-code flow WITH PKCE).
+
+How to obtain:
+1. Salesforce Setup → App Manager → New Connected App (or open an existing one).
+2. Enable OAuth Settings; add the scopes you need (e.g. api, refresh_token) and a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+3. Copy the Consumer Key from the connected app's API (Enable OAuth Settings) section.
+
+You must also set NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET (Salesforce's token endpoint requires the client secret — the Consumer Secret — in the request body).
+
+The per-tenant API host (instance_url) is discovered automatically during the OAuth exchange and stored alongside the tokens — you do not configure it.
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_SALESFORCE_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET = "..."`;
+
+export const SALESFORCE_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET to your Salesforce connected app's Consumer Secret.
+
+Salesforce's token exchange requires the client secret form-encoded in the request body (it is not stored in the Nimbus vault).
+
+Salesforce Setup → App Manager → your connected app → Manage Consumer Details → copy the Consumer Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET = "..."`;

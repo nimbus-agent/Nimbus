@@ -67,6 +67,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   miro: ["miro.oauth"],
   canva: ["canva.oauth"],
   figma: ["figma.oauth", "figma.team_id"],
+  salesforce: ["salesforce.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

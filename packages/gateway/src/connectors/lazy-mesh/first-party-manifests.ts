@@ -329,6 +329,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  salesforce: baseManifest("com.nimbus.salesforce", {
+    // The per-tenant instance host (e.g. acme.my.salesforce.com) is discovered
+    // at OAuth time and added to this manifest at spawn via
+    // manifestWithExtraNetworkHosts. login.salesforce.com is the fixed
+    // authorize/token host base.
+    network: ["login.salesforce.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   obsidian: baseManifest("com.nimbus.obsidian", {
     network: [],
     filesystem: { read: [], write: [] },

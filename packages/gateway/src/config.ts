@@ -125,6 +125,8 @@ export const Config = {
   oauthCanvaClientSecret: processEnvGet("NIMBUS_OAUTH_CANVA_CLIENT_SECRET") ?? "",
   oauthFigmaClientId: processEnvGet("NIMBUS_OAUTH_FIGMA_CLIENT_ID") ?? "",
   oauthFigmaClientSecret: processEnvGet("NIMBUS_OAUTH_FIGMA_CLIENT_SECRET") ?? "",
+  oauthSalesforceClientId: processEnvGet("NIMBUS_OAUTH_SALESFORCE_CLIENT_ID") ?? "",
+  oauthSalesforceClientSecret: processEnvGet("NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET") ?? "",
   engineContextWindowItems: parseEngineContextWindowItems(),
   searchServicePriorityMap,
   conversationalAgentMaxSteps: parseConversationalAgentMaxSteps(),

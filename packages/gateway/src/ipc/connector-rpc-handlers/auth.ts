@@ -11,6 +11,8 @@ import {
   MIRO_OAUTH_CLIENT_SECRET_HELP,
   NOTION_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_SECRET_HELP,
+  SALESFORCE_OAUTH_CLIENT_ID_HELP,
+  SALESFORCE_OAUTH_CLIENT_SECRET_HELP,
   SLACK_OAUTH_CLIENT_ID_HELP,
   ZOOM_OAUTH_CLIENT_ID_HELP,
   ZOOM_OAUTH_CLIENT_SECRET_HELP,
@@ -601,6 +603,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: FIGMA_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthFigmaClientSecret,
         clientSecretMissingHelp: FIGMA_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "salesforce":
+      return {
+        clientId: Config.oauthSalesforceClientId,
+        emptyClientIdMessage: SALESFORCE_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthSalesforceClientSecret,
+        clientSecretMissingHelp: SALESFORCE_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;
