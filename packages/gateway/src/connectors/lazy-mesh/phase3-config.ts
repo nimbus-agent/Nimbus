@@ -901,6 +901,34 @@ export async function phase3AddDependencytrackMcp(
   );
 }
 
+export async function phase3AddAirflowMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "airflow", "base_url"))?.trim() ?? "";
+  const username = (await readConnectorSecret(vault, "airflow", "username"))?.trim() ?? "";
+  const password = (await readConnectorSecret(vault, "airflow", "password"))?.trim() ?? "";
+  if (url === "" || username === "" || password === "") {
+    return;
+  }
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host]);
+  servers["airflow"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("airflow")],
+      env: extensionProcessEnv({
+        AIRFLOW_URL: url,
+        AIRFLOW_USERNAME: username,
+        AIRFLOW_PASSWORD: password,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -942,6 +970,7 @@ export async function buildPhase3Servers(
   await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   await phase3AddZoteroMcp(vault, servers, sandboxCwd);
   await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
+  await phase3AddAirflowMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
   return servers;
 }

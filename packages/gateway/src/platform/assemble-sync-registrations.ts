@@ -1,3 +1,4 @@
+import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
 import { createAzureSyncable } from "../connectors/azure-sync.ts";
@@ -352,6 +353,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createAirflowSyncable({
+      ensureAirflowMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

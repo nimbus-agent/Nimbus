@@ -4,6 +4,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
   buildPhase3Servers,
+  phase3AddAirflowMcp,
   phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
@@ -1535,6 +1536,73 @@ describe("phase3AddDependencytrackMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["DEPENDENCYTRACK_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddAirflowMcp", () => {
+  test("no-op without airflow.base_url + airflow.username + airflow.password", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["airflow"]).toBeUndefined();
+  });
+
+  test("no-op when password is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("airflow.base_url", "https://airflow.example.com");
+    await vault.set("airflow.username", "admin");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["airflow"]).toBeUndefined();
+  });
+
+  test("no-op when username is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("airflow.base_url", "https://airflow.example.com");
+    await vault.set("airflow.password", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["airflow"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("airflow.base_url", "   ");
+    await vault.set("airflow.username", "   ");
+    await vault.set("airflow.password", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["airflow"]).toBeUndefined();
+  });
+
+  test("spawns with AIRFLOW_URL/USERNAME/PASSWORD env + parsed host in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("airflow.base_url", "https://airflow.example.com");
+    await vault.set("airflow.username", "admin");
+    await vault.set("airflow.password", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["airflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "airflow.example.com");
+    expect(spec.env?.["AIRFLOW_URL"]).toBe("https://airflow.example.com");
+    expect(spec.env?.["AIRFLOW_USERNAME"]).toBe("admin");
+    expect(spec.env?.["AIRFLOW_PASSWORD"]).toBe("secret");
+  });
+
+  test("spawns even when airflow.base_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("airflow.base_url", "not a url");
+    await vault.set("airflow.username", "admin");
+    await vault.set("airflow.password", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAirflowMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["airflow"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["AIRFLOW_URL"]).toBe("not a url");
   });
 });
 

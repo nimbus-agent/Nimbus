@@ -279,6 +279,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  airflow: baseManifest("com.nimbus.airflow", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   ramp: baseManifest("com.nimbus.ramp", {
     network: ["api.ramp.com"],
     filesystem: { read: [], write: [] },

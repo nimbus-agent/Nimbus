@@ -104,6 +104,7 @@ describe("manifestForFirstParty", () => {
       "stackoverflow",
       "zotero",
       "dependencytrack",
+      "airflow",
       "ramp",
       "zoom",
     ];
