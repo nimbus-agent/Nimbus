@@ -70,12 +70,13 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/vault/index.ts` | `NimbusVault` interface |
 | `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
 | `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
-| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot/miro/canva) + `getValidVaultAccessToken` single-flight |
+| `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot/miro/canva/figma/salesforce) + `getValidVaultAccessToken` single-flight; `StoredOAuthTokens`/`PKCEResult` carry optional `instanceUrl` (Salesforce per-tenant host, additive) |
 | `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
 | `packages/gateway/src/auth/hubspot-access-token.ts` | `getValidHubspotAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.hubspot` |
 | `packages/gateway/src/auth/miro-access-token.ts` | `getValidMiroAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.miro` |
 | `packages/gateway/src/auth/canva-access-token.ts` | `getValidCanvaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.canva` (PKCE + Basic-header, like Zoom) |
 | `packages/gateway/src/auth/figma-access-token.ts` | `getValidFigmaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.figma` (body-secret, like Miro) |
+| `packages/gateway/src/auth/salesforce-access-token.ts` | `getValidSalesforceAuth(vault)` — delegates to `OAUTH_PROVIDERS.salesforce` (PKCE + body-secret), returns `{ accessToken, instanceUrl }`; requires the per-tenant `instance_url` from the stored blob (no silent fallback) |
 
 ## Connectors + MCP Mesh
 
@@ -203,6 +204,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/figma-sync.ts` | Figma files for a single configured team (3-legged OAuth via registry — 9th provider, body-secret like Miro) — emits `figma:file`; two-level fetch (team projects → per-project files) flattened, `MAX_PROJECTS`/`MAX_FILES` capped; reads `figma.oauth` + non-secret `figma.team_id` (second-key pattern); cursor `{ pass }` |
 | `packages/gateway/src/connectors/figma-file-mapping.ts` | Pure Figma file → `IndexedItem`; `external_id` = file `key`; ISO `parseIsoMs`; url/canonical_url = `https://www.figma.com/file/<key>` (constructed from key) |
 | `packages/mcp-connectors/figma/src/server.ts` | Figma MCP — read-only `figma_list/get/search` (two-level team-projects → files fetch) |
+| `packages/gateway/src/connectors/salesforce-sync.ts` | Salesforce Opportunities (3-legged OAuth + PKCE via registry — 10th provider; per-tenant `instance_url`) — emits `salesforce:opportunity`; SOQL query API `GET <instance_url>/services/data/v60.0/query`, walks `nextRecordsUrl` cursor, `MAX_PAGES=20`; reads `salesforce.oauth` then `getValidSalesforceAuth` → `{ accessToken, instanceUrl }`; cursor `{ pass }` |
+| `packages/gateway/src/connectors/salesforce-opportunity-mapping.ts` | Pure Salesforce Opportunity → `IndexedItem`; `external_id` = SF `Id`; ISO `parseIsoMs`; url/canonical_url null (pure mapper, no instance host) |
+| `packages/mcp-connectors/salesforce/src/server.ts` | Salesforce MCP — read-only `salesforce_list/get/search`; reads `SALESFORCE_ACCESS_TOKEN` + `SALESFORCE_INSTANCE_URL` from env (per-tenant host) |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
