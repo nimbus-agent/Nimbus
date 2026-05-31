@@ -84,6 +84,7 @@
     "packages/mcp-connectors/canva",
     "packages/mcp-connectors/figma",
     "packages/mcp-connectors/salesforce",
+    "packages/mcp-connectors/bigquery",
     "packages/vscode-extension"
   ],
   "scripts": {
