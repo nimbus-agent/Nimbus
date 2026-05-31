@@ -83,6 +83,7 @@ Expected: `dev/asafgolombek/connector-launchdarkly` and no output from status.
 ## Task 1: MCP connector package scaffolding + workspace install
 
 **Files:**
+
 - Create: `packages/mcp-connectors/launchdarkly/package.json`
 - Create: `packages/mcp-connectors/launchdarkly/tsconfig.json`
 - Create: `packages/mcp-connectors/launchdarkly/nimbus.extension.json`
@@ -224,6 +225,7 @@ EOF
 ## Task 2: Search filter (pure) — TDD
 
 **Files:**
+
 - Create: `packages/mcp-connectors/launchdarkly/test/search-filter.test.ts`
 - Create: `packages/mcp-connectors/launchdarkly/src/search-filter.ts`
 
@@ -367,6 +369,7 @@ EOF
 ## Task 3: Sandbox contract test (gated)
 
 **Files:**
+
 - Create: `packages/mcp-connectors/launchdarkly/test/sandbox.test.ts`
 
 - [ ] **Step 1: Create the test**
@@ -421,6 +424,7 @@ EOF
 ## Task 4: Flag mapper (pure) — TDD
 
 **Files:**
+
 - Create: `packages/gateway/test/unit/connectors/launchdarkly-flag-mapping.test.ts`
 - Create: `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts`
 
@@ -777,6 +781,7 @@ EOF
 ## Task 5: Sync handler — TDD (integration fake-server)
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/connectors/launchdarkly-sync-fake-server.test.ts`
 - Create: `packages/gateway/src/connectors/launchdarkly-sync.ts`
 
@@ -1236,6 +1241,7 @@ EOF
 ## Task 6: MCP server
 
 **Files:**
+
 - Create: `packages/mcp-connectors/launchdarkly/src/server.ts`
 
 There is no fast unit test for the stdio server itself (the search logic is already covered by Task 2; the HTTP paths are covered live by the user-side smoke test). Typecheck is the gate here.
@@ -1374,6 +1380,7 @@ EOF
 ## Task 7: Wiring — catalog, secrets, rate-limiter
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts`
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts`
 - Modify: `packages/gateway/src/sync/rate-limiter.ts`
@@ -1458,6 +1465,7 @@ EOF
 ## Task 8: Wiring — sandbox manifest + phase3 spawn (+ their tests)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts`
 - Modify: `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.test.ts`
 - Modify: `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts`
@@ -1619,6 +1627,7 @@ EOF
 ## Task 9: Wiring — scheduler registration
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts`
 
 - [ ] **Step 1: Add the import**
@@ -1669,13 +1678,14 @@ EOF
 ## Task 10: Docs
 
 **Files:**
+
 - Modify: `CLAUDE.md`, `GEMINI.md`, `docs/roadmap.md`, `.claude/commands/nimbus-file-map.md`
 
 - [ ] **Step 1: `CLAUDE.md` + `GEMINI.md` status line**
 
-In both files, on the `**Status:**` line, insert immediately before `` · `v0.1.0` released 2026-05-09``:
+In both files, on the `**Status:**` line, insert immediately before ``· `v0.1.0` released 2026-05-09``:
 
-```
+```text
  · Tier-2 connector LaunchDarkly ✅ (2026-05-24)
 ```
 
@@ -1685,13 +1695,13 @@ In both files, on the `**Status:**` line, insert immediately before `` · `v0.1.
 
 Find the LaunchDarkly line under "Feature Flags":
 
-```
+```text
 - [ ] **LaunchDarkly** — flags, environments, targeting rules, flag evaluation history; API key; flag toggle behind HITL; `feature_flag` item type indexed with name, state, environments, last modified; critical for incident correlation ("was this flag enabled when the alert fired?")
 ```
 
 Replace it with:
 
-```
+```text
 - [x] **LaunchDarkly** (2026-05-24, Phase 5 Tier 1) — first-party MCP connector `nimbus-mcp-launchdarkly` + gateway-side syncable. Walks `GET /api/v2/projects → GET /api/v2/flags/{projectKey}` (offset-paged 100/page, 20 pages per project cap) and upserts feature flags as `launchdarkly:feature_flag` items via `mapLaunchDarklyFlagToItem`. Metadata exposed: `key`, `name`, `kind` (boolean/multivariate), `project_key`, `tags`, `temporary`, `archived`, `maintainer`, `maintainer_id`, `description`, `variation_count`, `environments`, `env_states` (per-env on/off), `created_at`, `updated_at`, `canonical_url` — critical for incident correlation ("was this flag enabled when the alert fired?"). Vault keys: `launchdarkly.token` (required API access token), `launchdarkly.base_url` (optional regional override → default `https://app.launchdarkly.com`; sandbox runtime-merge for regional/federal hosts inherits the same Task 14 follow-up as `sentry.url`), `launchdarkly.project_key` (optional single-project restriction). Three read-only MCP tools: `launchdarkly_list` / `launchdarkly_get` / `launchdarkly_search`. `hitlRequired: []` — `launchdarkly.flag.toggle` is a deferred Phase 8 follow-up.
 ```
 
@@ -1699,7 +1709,7 @@ Replace it with:
 
 In the "Connectors + MCP Mesh" table, after the `semgrep/src/server.ts` row (the last connector row before `sync/connectivity.ts`), insert:
 
-```
+```text
 | `packages/gateway/src/connectors/launchdarkly-sync.ts` | LaunchDarkly feature-flag connector (Phase 5 Tier 1, 2026-05-24); API-token auth (raw `Authorization` header), walks `GET /api/v2/projects → /api/v2/flags/{projectKey}` (offset-paged 100/page, 20 pages/project cap); emits `launchdarkly:feature_flag` items via `mapLaunchDarklyFlagToItem`. Regional override via `launchdarkly.base_url`; single-project via `launchdarkly.project_key` |
 | `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts` | Pure LaunchDarkly flag → `IndexedItem` mapper; surfaces `{ key, name, kind, project_key, tags, temporary, archived, maintainer, maintainer_id, description, variation_count, environments, env_states, created_at, updated_at, canonical_url }` in metadata; `flagUrl` builds the project flag page URL. Unit-tested independently of the REST path |
 | `packages/mcp-connectors/launchdarkly/src/server.ts` | LaunchDarkly MCP server — read-only tools `launchdarkly_list` / `launchdarkly_get` / `launchdarkly_search`. `hitlRequired: []` — `launchdarkly.flag.toggle` is a deferred Phase 8 follow-up |
@@ -1835,8 +1845,8 @@ Expected: prints the new PR URL.
 
 ## Review disposition (2026-05-24)
 
-From `2026-05-24-launchdarkly-connector-review.md`. Guiding principle: connector
-#1 stays consistent with the proven Snyk/SonarQube/Semgrep/Wiz cohort; genuinely
+From `2026-05-24-launchdarkly-connector-review.md`. Guiding principle: connector #1
+stays consistent with the proven Snyk/SonarQube/Semgrep/Wiz cohort; genuinely
 good cross-cutting ideas become cross-connector follow-ups rather than
 LaunchDarkly-specific bolt-ons.
 
