@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import type { ZodToolRegistrar } from "../../shared/run-read-only-mcp-connector.ts";
+import { assertSafeCliArg } from "../../shared/safe-cli-arg.ts";
 
 /**
  * GCP Cloud Logging (Tier-3, no-row-data) MCP tool surface. ALL tools index log
@@ -91,7 +92,12 @@ export function registerCloudLoggingTools(reg: ZodToolRegistrar): void {
       sinkName: z.string().min(1),
     }),
     async (p) => {
-      return jsonResult(await gcloudLogging(["sinks", "describe", p.sinkName]));
+      // `sinkName` is a bare positional to `gcloud logging sinks describe`; guard
+      // against argv flag smuggling (a value beginning with "-" would be parsed as
+      // a gcloud flag).
+      return jsonResult(
+        await gcloudLogging(["sinks", "describe", assertSafeCliArg(p.sinkName, "sinkName")]),
+      );
     },
   );
 

@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import type { ZodToolRegistrar } from "../../shared/run-read-only-mcp-connector.ts";
+import { isSafeCliArg } from "../../shared/safe-cli-arg.ts";
+
+/**
+ * A log-group name / prefix passed as a value to the `aws logs` CLI. Rejected at
+ * the schema boundary if it begins with `-` (argv flag smuggling) or contains
+ * control characters.
+ */
+const cliArg = z
+  .string()
+  .min(1)
+  .refine(isSafeCliArg, { message: 'must not start with "-" or contain control characters' });
 
 /**
  * Amazon CloudWatch Logs (Tier-3, no-row-data) MCP tool surface. ALL tools
@@ -74,7 +85,7 @@ export function registerCloudwatchTools(reg: ZodToolRegistrar): void {
     "cloudwatch_list",
     "List CloudWatch log GROUPS — METADATA ONLY (`aws logs describe-log-groups`). Each entry carries `logGroupName`, `arn`, `creationTime`, `retentionInDays`, `storedBytes`, and `metricFilterCount`. Optionally filter by a `prefix` on the log-group name. Never fetches log-event contents / row data.",
     z.object({
-      prefix: z.string().min(1).optional(),
+      prefix: cliArg.optional(),
     }),
     async (p) => {
       const args = ["describe-log-groups", "--limit", LIMIT];
@@ -89,7 +100,7 @@ export function registerCloudwatchTools(reg: ZodToolRegistrar): void {
     "cloudwatch_get",
     "Fetch one CloudWatch log group's METADATA plus a stream summary. Returns the matching `describe-log-groups` entry (name, ARN, retention, stored bytes, metric-filter count) and the group's `describe-log-streams` METADATA (stream names, last-event timestamps, stored bytes) ordered by last activity. No log-event contents are returned — metadata only.",
     z.object({
-      logGroupName: z.string().min(1),
+      logGroupName: cliArg,
     }),
     async (p) => {
       const group = await logsCli([

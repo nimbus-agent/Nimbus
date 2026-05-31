@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import type { ZodToolRegistrar } from "../../shared/run-read-only-mcp-connector.ts";
+import { isSafeCliArg } from "../../shared/safe-cli-arg.ts";
+
+/**
+ * A catalog / database / table name passed as a value to the `aws athena` CLI.
+ * Rejected at the schema boundary if it begins with `-` (argv flag smuggling) or
+ * contains control characters.
+ */
+const cliArg = z
+  .string()
+  .min(1)
+  .refine(isSafeCliArg, { message: 'must not start with "-" or contain control characters' });
 
 /**
  * Amazon Athena (Tier-3, metadata-only) MCP tool surface. ALL tools index
@@ -82,8 +93,8 @@ export function registerAthenaTools(reg: ZodToolRegistrar): void {
     "athena_list",
     "List Athena data catalogs, the databases in a catalog, or the tables in a database — METADATA ONLY. With no arguments, lists data catalogs (`aws athena list-data-catalogs`). With `catalog` set, lists that catalog's databases (`aws athena list-databases`). With `catalog` + `database` set, lists that database's table metadata (`aws athena list-table-metadata`) — each entry carries `Name`, `TableType`, `Columns`, and `PartitionKeys`. Never runs a query or returns row/cell data.",
     z.object({
-      catalog: z.string().min(1).optional(),
-      database: z.string().min(1).optional(),
+      catalog: cliArg.optional(),
+      database: cliArg.optional(),
     }),
     async (p) => {
       if (p.catalog === undefined) {
@@ -112,9 +123,9 @@ export function registerAthenaTools(reg: ZodToolRegistrar): void {
     "athena_get",
     "Fetch one Athena table's schema + METADATA (`aws athena get-table-metadata`). Returns the table object including `Columns` (column names + types only), `PartitionKeys`, `TableType`, `Parameters`, and timestamps. No cell values or query results are returned — schema/metadata only.",
     z.object({
-      catalog: z.string().min(1),
-      database: z.string().min(1),
-      table: z.string().min(1),
+      catalog: cliArg,
+      database: cliArg,
+      table: cliArg,
     }),
     async (p) => {
       return jsonResult(
@@ -135,8 +146,8 @@ export function registerAthenaTools(reg: ZodToolRegistrar): void {
     "athena_search",
     "Substring search over Athena catalog, database, and table NAMES (case-insensitive) — METADATA ONLY. With no `catalog`, searches data-catalog names. With `catalog` set (no `database`), searches that catalog's database names. With `catalog` + `database` set, searches that database's table names. Returns a `{ matches: [...] }` envelope of metadata entries. Never runs a query or samples row data.",
     z.object({
-      catalog: z.string().min(1).optional(),
-      database: z.string().min(1).optional(),
+      catalog: cliArg.optional(),
+      database: cliArg.optional(),
       query: z.string().min(1),
     }),
     async (p) => {
