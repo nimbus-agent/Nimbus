@@ -10,6 +10,7 @@ import {
   phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
   phase3AddDbtMcp,
+  phase3AddDependencytrackMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
@@ -1472,6 +1473,67 @@ describe("phase3AddZoteroMcp", () => {
     expectSandboxed(spec, "api.zotero.org");
     expect(spec.env?.["ZOTERO_API_KEY"]).toBe("zk_test_key");
     expect(spec.env?.["ZOTERO_LIBRARY"]).toBe("users/12345");
+  });
+});
+
+describe("phase3AddDependencytrackMcp", () => {
+  test("no-op without dependencytrack.base_url + dependencytrack.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dependencytrack"]).toBeUndefined();
+  });
+
+  test("no-op when only dependencytrack.base_url is set (api_key missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("dependencytrack.base_url", "https://dtrack.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dependencytrack"]).toBeUndefined();
+  });
+
+  test("no-op when only dependencytrack.api_key is set (base_url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("dependencytrack.api_key", "dt-key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dependencytrack"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("dependencytrack.base_url", "   ");
+    await vault.set("dependencytrack.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dependencytrack"]).toBeUndefined();
+  });
+
+  test("spawns with DEPENDENCYTRACK_URL/DEPENDENCYTRACK_API_KEY env + parsed host in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("dependencytrack.base_url", "https://dtrack.example.com");
+    await vault.set("dependencytrack.api_key", "dt-key-test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dependencytrack"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "dtrack.example.com");
+    expect(spec.env?.["DEPENDENCYTRACK_URL"]).toBe("https://dtrack.example.com");
+    expect(spec.env?.["DEPENDENCYTRACK_API_KEY"]).toBe("dt-key-test");
+  });
+
+  test("spawns even when dependencytrack.base_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("dependencytrack.base_url", "not a url");
+    await vault.set("dependencytrack.api_key", "k");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDependencytrackMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dependencytrack"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["DEPENDENCYTRACK_URL"]).toBe("not a url");
   });
 });
 

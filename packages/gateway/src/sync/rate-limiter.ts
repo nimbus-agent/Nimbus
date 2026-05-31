@@ -50,6 +50,7 @@ export type Provider =
   | "pipedrive"
   | "stackoverflow"
   | "zotero"
+  | "dependencytrack"
   | "zoom";
 
 export interface ProviderQuota {
@@ -109,6 +110,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   pipedrive: { requestsPerMinute: 60, burstSize: 10 },
   stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
   zotero: { requestsPerMinute: 60, burstSize: 10 },
+  dependencytrack: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
 

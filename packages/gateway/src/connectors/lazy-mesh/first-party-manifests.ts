@@ -274,6 +274,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  dependencytrack: baseManifest("com.nimbus.dependencytrack", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   kubernetes: baseManifest("com.nimbus.kubernetes", {
     network: [],
     filesystem: { read: [], write: [] },

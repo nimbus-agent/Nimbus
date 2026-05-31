@@ -57,6 +57,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   pipedrive: ["pipedrive.token"],
   stackoverflow: ["stackoverflow.token", "stackoverflow.team"],
   zotero: ["zotero.api_key", "zotero.library"],
+  dependencytrack: ["dependencytrack.base_url", "dependencytrack.api_key"],
   zoom: ["zoom.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];

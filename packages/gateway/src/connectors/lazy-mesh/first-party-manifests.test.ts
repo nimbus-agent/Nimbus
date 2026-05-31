@@ -103,6 +103,7 @@ describe("manifestForFirstParty", () => {
       "pipedrive",
       "stackoverflow",
       "zotero",
+      "dependencytrack",
       "zoom",
     ];
     for (const id of expected) {

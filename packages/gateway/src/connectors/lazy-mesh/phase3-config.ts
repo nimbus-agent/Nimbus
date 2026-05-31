@@ -854,6 +854,29 @@ export async function phase3AddZoteroMcp(
   );
 }
 
+export async function phase3AddDependencytrackMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "dependencytrack", "base_url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "dependencytrack", "api_key"))?.trim() ?? "";
+  if (url === "" || apiKey === "") {
+    return;
+  }
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("dependencytrack", host === null ? [] : [host]);
+  servers["dependencytrack"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("dependencytrack")],
+      env: extensionProcessEnv({ DEPENDENCYTRACK_URL: url, DEPENDENCYTRACK_API_KEY: apiKey }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -894,5 +917,6 @@ export async function buildPhase3Servers(
   await phase3AddPipedriveMcp(vault, servers, sandboxCwd);
   await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   await phase3AddZoteroMcp(vault, servers, sandboxCwd);
+  await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
   return servers;
 }
