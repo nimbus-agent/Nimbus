@@ -79,6 +79,7 @@
     "packages/mcp-connectors/ramp",
     "packages/mcp-connectors/zoom",
     "packages/mcp-connectors/hubspot",
+    "packages/mcp-connectors/miro",
     "packages/vscode-extension"
   ],
   "scripts": {
