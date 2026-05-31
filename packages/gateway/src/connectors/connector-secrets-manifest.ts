@@ -60,6 +60,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   dependencytrack: ["dependencytrack.base_url", "dependencytrack.api_key"],
   airflow: ["airflow.base_url", "airflow.username", "airflow.password"],
   prefect: ["prefect.api_url", "prefect.api_key"],
+  dagster: ["dagster.base_url", "dagster.api_token"],
   ramp: ["ramp.client_id", "ramp.client_secret"],
   zoom: ["zoom.oauth"],
 } as const satisfies {

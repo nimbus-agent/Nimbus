@@ -955,6 +955,32 @@ export async function phase3AddPrefectMcp(
   );
 }
 
+export async function phase3AddDagsterMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const baseUrl = (await readConnectorSecret(vault, "dagster", "base_url"))?.trim() ?? "";
+  const apiToken = (await readConnectorSecret(vault, "dagster", "api_token"))?.trim() ?? "";
+  if (baseUrl === "" || apiToken === "") {
+    return;
+  }
+  const host = hostnameFromUrl(baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host]);
+  servers["dagster"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("dagster")],
+      env: extensionProcessEnv({
+        DAGSTER_BASE_URL: baseUrl,
+        DAGSTER_API_TOKEN: apiToken,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -998,6 +1024,7 @@ export async function buildPhase3Servers(
   await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
   await phase3AddAirflowMcp(vault, servers, sandboxCwd);
   await phase3AddPrefectMcp(vault, servers, sandboxCwd);
+  await phase3AddDagsterMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
   return servers;
 }

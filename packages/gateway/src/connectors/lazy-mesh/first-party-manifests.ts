@@ -289,6 +289,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  dagster: baseManifest("com.nimbus.dagster", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   ramp: baseManifest("com.nimbus.ramp", {
     network: ["api.ramp.com"],
     filesystem: { read: [], write: [] },

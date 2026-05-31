@@ -75,6 +75,7 @@
     "packages/mcp-connectors/dependencytrack",
     "packages/mcp-connectors/airflow",
     "packages/mcp-connectors/prefect",
+    "packages/mcp-connectors/dagster",
     "packages/mcp-connectors/ramp",
     "packages/mcp-connectors/zoom",
     "packages/vscode-extension"

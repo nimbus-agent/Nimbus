@@ -8,6 +8,7 @@ import {
   phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
+  phase3AddDagsterMcp,
   phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
   phase3AddDbtMcp,
@@ -1667,6 +1668,67 @@ describe("phase3AddPrefectMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["PREFECT_API_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddDagsterMcp", () => {
+  test("no-op without dagster.base_url + dagster.api_token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dagster"]).toBeUndefined();
+  });
+
+  test("no-op when api_token is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("dagster.base_url", "https://my-org.dagster.cloud/prod");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dagster"]).toBeUndefined();
+  });
+
+  test("no-op when base_url is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("dagster.api_token", "tok_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dagster"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("dagster.base_url", "   ");
+    await vault.set("dagster.api_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["dagster"]).toBeUndefined();
+  });
+
+  test("spawns with DAGSTER_BASE_URL/API_TOKEN env + parsed host in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("dagster.base_url", "https://my-org.dagster.cloud/prod");
+    await vault.set("dagster.api_token", "tok_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dagster"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "my-org.dagster.cloud");
+    expect(spec.env?.["DAGSTER_BASE_URL"]).toBe("https://my-org.dagster.cloud/prod");
+    expect(spec.env?.["DAGSTER_API_TOKEN"]).toBe("tok_test");
+  });
+
+  test("spawns even when dagster.base_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("dagster.base_url", "not a url");
+    await vault.set("dagster.api_token", "tok_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDagsterMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dagster"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["DAGSTER_BASE_URL"]).toBe("not a url");
   });
 });
 

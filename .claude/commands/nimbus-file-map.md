@@ -177,6 +177,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/prefect-sync.ts` | Prefect deployments (per-tenant workspace API root + Bearer api_key) — emits `prefect:deployment`; `POST /deployments/filter` body offset walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/prefect-deployment-mapping.ts` | Pure Prefect deployment → `IndexedItem`; surfaces paused/work pool/queue/schedule/status/tags; local `parseIsoMs`; url always null |
 | `packages/mcp-connectors/prefect/src/server.ts` | Prefect MCP — read-only `prefect_list/get/search` (list is a POST filter) |
+| `packages/gateway/src/connectors/dagster-sync.ts` | Dagster jobs (per-tenant host + `Dagster-Cloud-Api-Token`) — emits `dagster:job`; single GraphQL `POST /graphql` walking `repositoriesOrError → nodes[].pipelines[]`, single-pass flatten, `MAX_JOBS` cap; cursor `{ pass }`; Wiz-style graceful GraphQL-error handling (`errors` array / `PythonError`) |
+| `packages/gateway/src/connectors/dagster-job-mapping.ts` | Pure Dagster job → `IndexedItem`; `external_id` = stable `<location>:<repository>:<jobName>` triple (NOT the opaque base64 id); best-effort `<base_url>/locations/<location>/jobs/<jobName>` url |
+| `packages/mcp-connectors/dagster/src/server.ts` | Dagster MCP — read-only `dagster_list/get/search` (GraphQL repositories catalog, flattened to jobs) |
 | `packages/gateway/src/connectors/ramp-sync.ts` | Ramp card spend (OAuth2 client-credentials token exchange) — emits `ramp:transaction`; `page.next` cursor walk; cursor `{ pass }`; 401 re-exchange once |
 | `packages/gateway/src/connectors/ramp-transaction-mapping.ts` | Pure Ramp transaction → `IndexedItem`; safe fields only (no PAN); local `parseIsoMs` |
 | `packages/mcp-connectors/ramp/src/server.ts` | Ramp MCP — read-only `ramp_list/get/search`; bearer token cached per process |

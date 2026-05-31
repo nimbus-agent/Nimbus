@@ -53,6 +53,7 @@ export type Provider =
   | "dependencytrack"
   | "airflow"
   | "prefect"
+  | "dagster"
   | "ramp"
   | "zoom";
 
@@ -116,6 +117,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   dependencytrack: { requestsPerMinute: 60, burstSize: 10 },
   airflow: { requestsPerMinute: 60, burstSize: 10 },
   prefect: { requestsPerMinute: 60, burstSize: 10 },
+  dagster: { requestsPerMinute: 60, burstSize: 10 },
   ramp: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
 };
