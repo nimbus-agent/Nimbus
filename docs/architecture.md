@@ -1169,6 +1169,15 @@ const streamReq: JSONRPCRequest = {
 // Consent gate — Gateway emits a consent request; client surfaces it to the user
 // Gateway → Client: { method: "consent.request", params: { actionId, prompt, details } }
 // Client → Gateway: { method: "consent.respond", params: { actionId, approved: true } }
+
+// Phase 5 surfaces (full signatures in the nimbus-ipc skill registry):
+// agents.expert / agents.impact / agents.catchup — read-only built-in agents; emit <agent>.briefReady
+// metrics.dora        — four DORA calculators from the local index (ipc/metrics-rpc.ts)
+// deploy.preflight    — pre-deploy index check (ipc/preflight-rpc.ts)
+// deployment.annotate — internal post-deploy annotation; NOT in the renderer allowlist (ipc/deployment-rpc.ts)
+// security.scan       — local credential-hygiene scan; CLI-only, FORBIDDEN_OVER_LAN (ipc/security-rpc.ts)
+// index.reembed / index.reembedCancel — long-running re-embed job; CLI-only (I5/I7);
+//   emits index.reembedProgress / index.reembedDone / index.reembedError (ipc/index-reembed-rpc.ts)
 ```
 
 ### AbortController scope in `engine.cancelStream`

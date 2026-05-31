@@ -471,27 +471,86 @@ Use this for scripts and headless environments; `nimbus tui` is the richer alter
 
 Authenticate a service and store credentials in the OS keystore. Never stores credentials to disk or logs.
 
+The canonical per-connector credential keys live in `CONNECTOR_VAULT_SECRET_KEYS` (`packages/gateway/src/connectors/connector-secrets-manifest.ts`); the list below is grouped by domain.
+
 ```bash
-nimbus connector auth google_drive  # OAuth PKCE — opens browser
+# Cloud storage / mail / calendar (OAuth PKCE — opens browser)
+nimbus connector auth google_drive
 nimbus connector auth gmail
 nimbus connector auth google_photos
 nimbus connector auth onedrive
 nimbus connector auth outlook
 nimbus connector auth teams
-nimbus connector auth github        # PAT prompt — stored in OS keystore
-nimbus connector auth gitlab
-nimbus connector auth linear
-nimbus connector auth jira
-nimbus connector auth slack
-nimbus connector auth pagerduty
+
+# Source control / project tracking / knowledge
+nimbus connector auth github         # PAT prompt — stored in OS keystore
+nimbus connector auth gitlab         # PAT (+ optional self-hosted api_base)
+nimbus connector auth bitbucket      # username + app password
+nimbus connector auth linear         # API key
+nimbus connector auth jira           # API token + email + base URL
+nimbus connector auth confluence     # API token + email + base URL
+nimbus connector auth notion         # OAuth
+nimbus connector auth slack          # OAuth
+nimbus connector auth discord        # bot token (opt-in)
+
+# CI/CD
+nimbus connector auth jenkins        # base URL + username + API token
+nimbus connector auth circleci       # API token
+nimbus connector auth bitrise        # PAT
+# github_actions / gitlab_ci reuse the github / gitlab credentials above
+
+# Cloud platforms / infrastructure
 nimbus connector auth aws
 nimbus connector auth azure
 nimbus connector auth gcp
 nimbus connector auth kubernetes
+nimbus connector auth iac            # IaC CLIs (enable flag)
+
+# Observability / incident
+nimbus connector auth pagerduty
+nimbus connector auth grafana        # URL + API token
+nimbus connector auth sentry         # auth token + org slug + URL
+nimbus connector auth newrelic       # API key + account id
+nimbus connector auth datadog        # API key + app key + site
+
+# Security scanning
 nimbus connector auth snyk           # API token
 nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
-nimbus connector auth semgrep        # PAT
-nimbus connector auth bitrise        # PAT
+nimbus connector auth semgrep        # PAT + deployment slug
+nimbus connector auth wiz            # client id + secret (CSPM)
+
+# Feature flags
+nimbus connector auth launchdarkly   # token + base URL + project key
+nimbus connector auth flagsmith      # token + api base
+
+# GitOps / data / BI
+nimbus connector auth argocd         # URL + token
+nimbus connector auth flux           # API URL + token
+nimbus connector auth dbt            # token + api base + account id
+nimbus connector auth metabase       # URL + API key
+nimbus connector auth superset       # URL + username + password
+nimbus connector auth databricks     # host + token
+nimbus connector auth mlflow         # host + token
+
+# Deploy platforms
+nimbus connector auth vercel         # token (+ optional team id)
+nimbus connector auth netlify        # token
+
+# Finance / productivity / support
+nimbus connector auth stripe         # secret API key
+nimbus connector auth mercury        # token
+nimbus connector auth readwise       # token
+nimbus connector auth raindrop       # token
+nimbus connector auth intercom       # token
+nimbus connector auth zendesk        # URL + email + API token
+nimbus connector auth stackoverflow  # token + team
+
+# Recruiting / CRM
+nimbus connector auth lever          # API key
+nimbus connector auth greenhouse     # API key
+nimbus connector auth pipedrive      # token
+
+# Meetings
 nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
 
@@ -1570,6 +1629,8 @@ nimbus lan remove-peer abc123
 | `NIMBUS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default: `info`) |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |
 | `NIMBUS_UPDATER_DISABLE` | Set to `true` to disable all auto-update checks |
+| `NIMBUS_EXTENSIONS_REGISTRY_URL` | Extension registry base URL; the auto-update polling daemon is only constructed when this is set |
+| `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` | Set to `1` to hard-disable the extension auto-update polling daemon at Gateway init |
 | `NIMBUS_LAN_PORT` | Override the LAN TCP listen port (default: `7475`) |
 | `NIMBUS_DEV_UPDATER_PUBLIC_KEY` | Override the embedded Ed25519 updater public key — for tests only |
 

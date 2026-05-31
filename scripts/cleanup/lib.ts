@@ -1,8 +1,11 @@
 // scripts/cleanup/lib.ts
 import { readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 
-export const REPO_ROOT = process.cwd();
+// Resolve relative to this file (scripts/cleanup/lib.ts), not the invocation cwd,
+// so the survey scripts produce identical output regardless of where they are run from.
+// Matches scripts/lib/root.ts and scripts/structure-audit/lib.ts.
+export const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 
 const SKIP_DIRS = new Set([
   "node_modules",

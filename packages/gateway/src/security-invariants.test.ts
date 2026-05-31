@@ -125,6 +125,45 @@ describe("I8 — Tauri renderer CSP is restrictive", () => {
   });
 });
 
+describe("I9 — bound SQL parameters; identifiers go through escapeIdentifier", () => {
+  test("db/repair.ts escapes identifiers by doubling quotes (no raw interpolation)", async () => {
+    const src = await read("packages/gateway/src/db/repair.ts");
+    expect(src).toMatch(/escapeIdentifier/);
+    expect(src).toMatch(/replaceAll\('"', '""'\)/);
+  });
+
+  test("db/repair.ts guards against NUL-byte / empty identifier names", async () => {
+    const src = await read("packages/gateway/src/db/repair.ts");
+    expect(src).toMatch(/String\.fromCodePoint\(0\)/);
+    expect(src).toMatch(/includes\(NUL_CHAR\)/);
+  });
+
+  test("people/person-store.ts binds caller values via dbRun placeholders, never string-built SQL", async () => {
+    const src = await read("packages/gateway/src/people/person-store.ts");
+    expect(src).toMatch(/import \{ dbRun \} from "\.\.\/db\/write\.ts"/);
+    expect(src).toMatch(/WHERE id = \?/);
+    // S5-F5: no caller-supplied value is interpolated into an UPDATE/SET clause.
+    expect(src).not.toMatch(/SET\s+\w+\s*=\s*\$\{/);
+  });
+});
+
+describe("I12 — DPAPI calls pass per-installation optional entropy (win32)", () => {
+  test("vault/win32.ts loads entropy from <configDir>/vault/.entropy", async () => {
+    const src = await read("packages/gateway/src/vault/win32.ts");
+    expect(src).toMatch(/ENTROPY_FILENAME\s*=\s*"\.entropy"/);
+    expect(src).toMatch(/function loadOrCreateEntropy\(/);
+  });
+
+  test("entropy flows into both the encrypt and decrypt DPAPI paths", async () => {
+    const src = await read("packages/gateway/src/vault/win32.ts");
+    // Encrypt path consumes the cached entropy; decrypt tries with-entropy before the legacy null fallback.
+    expect(src).toMatch(/loadOrCreateEntropy\(this\.vaultDir\)/);
+    expect(src).toMatch(/dpapiDecrypt\(encrypted, entropy\)/);
+    // The pOptionalEntropy DATA_BLOB pointer is only built when entropy is present, never dropped unconditionally.
+    expect(src).toMatch(/entropyArg = ptr\(entropyBlob\)/);
+  });
+});
+
 describe("I10 — Constant-time compare helpers live in util/timing-safe-compare.ts", () => {
   test("extensions/verify-extensions.ts imports sha256HexEqualConstantTime from util/timing-safe-compare", async () => {
     const src = await read("packages/gateway/src/extensions/verify-extensions.ts");

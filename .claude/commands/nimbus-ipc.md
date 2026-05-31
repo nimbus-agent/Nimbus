@@ -256,6 +256,47 @@ Available to LAN peers. Never mutates data.
 
 ---
 
+### `agents.*` — Built-in read-only agents (Phase 5 T3)
+
+Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief. Read-only — never fires HITL.
+
+| Method | Type | Description |
+|---|---|---|
+| `agents.expert` | request | "Who has the most context on this?" — ranked contributors + evidence |
+| `agents.impact` | request | Reverse-dependency blast radius across five categories |
+| `agents.catchup` | request | Personalized retrospective digest weighted by your involvement |
+
+---
+
+### `metrics.*` / `deploy.*` / `deployment.*` — CI/CD data layer (Phase 5 T4)
+
+| Method | Type | Description |
+|---|---|---|
+| `metrics.dora` | request | Four DORA metrics for a service from the local index |
+| `deploy.preflight` | request | Pre-deploy check: active P1 incidents, failing CI, open PR conflicts |
+| `deployment.annotate` | request | Internal post-deploy annotation. **NOT** in the Tauri allowlist; also reachable via the `POST /v1/deployments` HTTP write surface (`I13`) |
+
+---
+
+### `security.*` — Credential-hygiene scan (Phase 5)
+
+| Method | Type | Description |
+|---|---|---|
+| `security.scan` | request | Local secret scan over already-indexed content. CLI-only — `FORBIDDEN_OVER_LAN` (`I5`), NOT in the Tauri allowlist (`I7`), not on the HTTP API |
+
+---
+
+### `audit.*` — Audit log (read-only; CLI-only)
+
+| Method | Type | Description |
+|---|---|---|
+| `audit.verify` | request | Verify the BLAKE3 chain integrity of the audit log |
+| `audit.exportAll` | request | Export the full audit log as a JSON array |
+| `audit.getSummary` | request | Aggregate audit summary |
+| `audit.toolCalls` | request | Forensic `tool_call_log` read surface (V29; complement to `I11`). NOT LAN-callable, NOT in the Tauri allowlist |
+
+---
+
 ### `vault.*` ⛔ — Credential store (Gateway-internal only)
 
 **NOT in the Tauri UI `ALLOWED_METHODS` list.** Never callable from the frontend.
