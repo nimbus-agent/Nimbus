@@ -407,6 +407,21 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/google-meet": {
+      "name": "nimbus-mcp-google-meet",
+      "version": "0.1.0",
+      "bin": {
+        "nimbus-mcp-google-meet": "./dist/server.js",
+      },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/google-photos": {
       "name": "nimbus-mcp-google-photos",
       "version": "0.1.0",
@@ -2997,6 +3012,8 @@
     "nimbus-mcp-gmail": ["nimbus-mcp-gmail@workspace:packages/mcp-connectors/gmail"],
 
     "nimbus-mcp-google-drive": ["nimbus-mcp-google-drive@workspace:packages/mcp-connectors/google-drive"],
+
+    "nimbus-mcp-google-meet": ["nimbus-mcp-google-meet@workspace:packages/mcp-connectors/google-meet"],
 
     "nimbus-mcp-google-photos": ["nimbus-mcp-google-photos@workspace:packages/mcp-connectors/google-photos"],
 

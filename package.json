@@ -19,6 +19,7 @@
     "packages/mcp-connectors/onedrive",
     "packages/mcp-connectors/outlook",
     "packages/mcp-connectors/google-photos",
+    "packages/mcp-connectors/google-meet",
     "packages/mcp-connectors/google-drive",
     "packages/mcp-connectors/gmail",
     "packages/mcp-connectors/github",
