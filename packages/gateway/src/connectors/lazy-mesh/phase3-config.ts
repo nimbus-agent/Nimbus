@@ -929,6 +929,32 @@ export async function phase3AddAirflowMcp(
   );
 }
 
+export async function phase3AddPrefectMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiUrl = (await readConnectorSecret(vault, "prefect", "api_url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "prefect", "api_key"))?.trim() ?? "";
+  if (apiUrl === "" || apiKey === "") {
+    return;
+  }
+  const host = hostnameFromUrl(apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host]);
+  servers["prefect"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("prefect")],
+      env: extensionProcessEnv({
+        PREFECT_API_URL: apiUrl,
+        PREFECT_API_KEY: apiKey,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -971,6 +997,7 @@ export async function buildPhase3Servers(
   await phase3AddZoteroMcp(vault, servers, sandboxCwd);
   await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
   await phase3AddAirflowMcp(vault, servers, sandboxCwd);
+  await phase3AddPrefectMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
   return servers;
 }

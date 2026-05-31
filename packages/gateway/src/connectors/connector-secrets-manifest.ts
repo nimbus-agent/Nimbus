@@ -59,6 +59,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   zotero: ["zotero.api_key", "zotero.library"],
   dependencytrack: ["dependencytrack.base_url", "dependencytrack.api_key"],
   airflow: ["airflow.base_url", "airflow.username", "airflow.password"],
+  prefect: ["prefect.api_url", "prefect.api_key"],
   ramp: ["ramp.client_id", "ramp.client_secret"],
   zoom: ["zoom.oauth"],
 } as const satisfies {

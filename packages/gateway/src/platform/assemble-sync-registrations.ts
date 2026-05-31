@@ -41,6 +41,7 @@ import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
 import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
+import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
@@ -358,6 +359,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createAirflowSyncable({
       ensureAirflowMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createPrefectSyncable({
+      ensurePrefectMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

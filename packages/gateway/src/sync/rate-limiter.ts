@@ -52,6 +52,7 @@ export type Provider =
   | "zotero"
   | "dependencytrack"
   | "airflow"
+  | "prefect"
   | "ramp"
   | "zoom";
 
@@ -114,6 +115,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   zotero: { requestsPerMinute: 60, burstSize: 10 },
   dependencytrack: { requestsPerMinute: 60, burstSize: 10 },
   airflow: { requestsPerMinute: 60, burstSize: 10 },
+  prefect: { requestsPerMinute: 60, burstSize: 10 },
   ramp: { requestsPerMinute: 60, burstSize: 10 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
 };

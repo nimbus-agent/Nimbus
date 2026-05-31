@@ -27,6 +27,7 @@ import {
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
   phase3AddPipedriveMcp,
+  phase3AddPrefectMcp,
   phase3AddRaindropMcp,
   phase3AddRampMcp,
   phase3AddReadwiseMcp,
@@ -1603,6 +1604,69 @@ describe("phase3AddAirflowMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["AIRFLOW_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddPrefectMcp", () => {
+  test("no-op without prefect.api_url + prefect.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["prefect"]).toBeUndefined();
+  });
+
+  test("no-op when api_key is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("prefect.api_url", "https://api.prefect.cloud/api/accounts/a/workspaces/w");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["prefect"]).toBeUndefined();
+  });
+
+  test("no-op when api_url is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("prefect.api_key", "pnu_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["prefect"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("prefect.api_url", "   ");
+    await vault.set("prefect.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["prefect"]).toBeUndefined();
+  });
+
+  test("spawns with PREFECT_API_URL/API_KEY env + parsed host in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("prefect.api_url", "https://api.prefect.cloud/api/accounts/a/workspaces/w");
+    await vault.set("prefect.api_key", "pnu_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["prefect"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.prefect.cloud");
+    expect(spec.env?.["PREFECT_API_URL"]).toBe(
+      "https://api.prefect.cloud/api/accounts/a/workspaces/w",
+    );
+    expect(spec.env?.["PREFECT_API_KEY"]).toBe("pnu_test");
+  });
+
+  test("spawns even when prefect.api_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("prefect.api_url", "not a url");
+    await vault.set("prefect.api_key", "pnu_test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPrefectMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["prefect"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["PREFECT_API_URL"]).toBe("not a url");
   });
 });
 

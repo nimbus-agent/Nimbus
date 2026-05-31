@@ -58,6 +58,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "zotero",
   "dependencytrack",
   "airflow",
+  "prefect",
   "ramp",
   "zoom",
 ] as const;
@@ -142,6 +143,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   zotero: MIN10,
   dependencytrack: MIN10,
   airflow: MIN10,
+  prefect: MIN10,
   ramp: MIN10,
   zoom: MIN10,
 };
@@ -217,6 +219,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   zotero: "uses a Zotero API key + library spec (connector.auth zotero)",
   dependencytrack: "uses a Dependency-Track API key + base URL (connector.auth dependencytrack)",
   airflow: "uses HTTP Basic auth — username + password + base URL (connector.auth airflow)",
+  prefect: "uses a Prefect API key (Bearer) + workspace API URL (connector.auth prefect)",
   ramp: "uses OAuth2 client-credentials — client id + client secret (connector.auth ramp)",
 };
 

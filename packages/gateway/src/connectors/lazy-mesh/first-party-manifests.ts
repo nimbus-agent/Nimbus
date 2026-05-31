@@ -284,6 +284,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  prefect: baseManifest("com.nimbus.prefect", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   ramp: baseManifest("com.nimbus.ramp", {
     network: ["api.ramp.com"],
     filesystem: { read: [], write: [] },
