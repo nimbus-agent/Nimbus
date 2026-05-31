@@ -4,6 +4,7 @@ import { createAwsSyncable } from "../connectors/aws-sync.ts";
 import { createAzureSyncable } from "../connectors/azure-sync.ts";
 import { createBitbucketSyncable } from "../connectors/bitbucket-sync.ts";
 import { createBitriseSyncable } from "../connectors/bitrise-sync.ts";
+import { createCanvaSyncable } from "../connectors/canva-sync.ts";
 import { createCircleciSyncable } from "../connectors/circleci-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDagsterSyncable } from "../connectors/dagster-sync.ts";
@@ -357,6 +358,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMiroSyncable({
       ensureMiroMcpRunning: () => connectorMesh.ensureMiroRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createCanvaSyncable({
+      ensureCanvaMcpRunning: () => connectorMesh.ensureCanvaRunning(),
     }),
   );
   syncScheduler.register(

@@ -9,6 +9,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
   ensureBitbucketMcp,
+  ensureCanvaMcp,
   ensureCircleciMcp,
   ensureConfluenceMcp,
   ensureDiscordMcp,
@@ -288,6 +289,10 @@ export class LazyConnectorMesh {
     return ensureMiroMcp(this.spawnContext);
   }
 
+  async ensureCanvaRunning(): Promise<void> {
+    return ensureCanvaMcp(this.spawnContext);
+  }
+
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -314,6 +319,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.zoom), name: "zoom" },
       { map: await list(LAZY_MESH.hubspot), name: "hubspot" },
       { map: await list(LAZY_MESH.miro), name: "miro" },
+      { map: await list(LAZY_MESH.canva), name: "canva" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }

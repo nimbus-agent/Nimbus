@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { MCPClient } from "@mastra/mcp";
 
+import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
 import {
   type GoogleConnectorOAuthServiceId,
   getValidGoogleAccessToken,
@@ -866,6 +867,51 @@ export async function ensureMiroMcp(ctx: MeshSpawnContext): Promise<void> {
             env: extensionProcessEnv({ MIRO_TOKEN: accessToken }),
           },
           "miro",
+          ctx,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Canva MCP when `canva.oauth` is present and a valid access token can be resolved.
+ */
+export async function ensureCanvaMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.canva;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "canva", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidCanvaAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-canva-${randomUUID()}`,
+      servers: {
+        canva: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("canva")],
+            env: extensionProcessEnv({ CANVA_TOKEN: accessToken }),
+          },
+          "canva",
           ctx,
         ),
       },

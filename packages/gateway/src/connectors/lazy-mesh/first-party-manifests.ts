@@ -319,6 +319,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  canva: baseManifest("com.nimbus.canva", {
+    network: ["api.canva.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   obsidian: baseManifest("com.nimbus.obsidian", {
     network: [],
     filesystem: { read: [], write: [] },

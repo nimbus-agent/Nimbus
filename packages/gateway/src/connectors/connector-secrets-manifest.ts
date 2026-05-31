@@ -65,6 +65,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   zoom: ["zoom.oauth"],
   hubspot: ["hubspot.oauth"],
   miro: ["miro.oauth"],
+  canva: ["canva.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

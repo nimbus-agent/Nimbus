@@ -64,6 +64,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "zoom",
   "hubspot",
   "miro",
+  "canva",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -152,6 +153,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   zoom: MIN10,
   hubspot: MIN10,
   miro: MIN10,
+  canva: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -330,6 +332,11 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       return {
         provider: "miro",
         defaultScopes: ["boards:read"],
+      };
+    case "canva":
+      return {
+        provider: "canva",
+        defaultScopes: ["design:meta:read"],
       };
     default:
       return oauthUnsupported(

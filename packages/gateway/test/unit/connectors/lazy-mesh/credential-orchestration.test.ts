@@ -36,6 +36,7 @@ function makeRecorderSpawners(): CredentialSpawners {
     ensureZoomMcp: make("zoom"),
     ensureHubspotMcp: make("hubspot"),
     ensureMiroMcp: make("miro"),
+    ensureCanvaMcp: make("canva"),
   };
 }
 
@@ -295,6 +296,22 @@ describe("single-secret connectors", () => {
       await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("miro");
+    });
+  });
+
+  describe("canva — canva.oauth", () => {
+    it("spawns canva when canva.oauth is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("canva.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await runOrchestration(ctx);
+      expect(spawnCalls).toContain("canva");
+    });
+
+    it("does not spawn canva when vault is empty", async () => {
+      const { ctx } = makeCtx();
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("canva");
     });
   });
 });

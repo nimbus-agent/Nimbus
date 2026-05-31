@@ -57,7 +57,8 @@ export type Provider =
   | "ramp"
   | "zoom"
   | "hubspot"
-  | "miro";
+  | "miro"
+  | "canva";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -124,6 +125,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   zoom: { requestsPerMinute: 60, burstSize: 10 },
   hubspot: { requestsPerMinute: 100, burstSize: 10 },
   miro: { requestsPerMinute: 60, burstSize: 10 },
+  canva: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
