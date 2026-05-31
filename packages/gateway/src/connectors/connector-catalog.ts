@@ -69,6 +69,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "figma",
   "salesforce",
   "bigquery",
+  "athena",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -163,6 +164,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   figma: MIN10,
   salesforce: MIN10,
   bigquery: MIN10,
+  athena: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -241,6 +243,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   ramp: "uses OAuth2 client-credentials — client id + client secret (connector.auth ramp)",
   bigquery:
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate BigQuery credential",
+  athena:
+    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate Athena credential",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

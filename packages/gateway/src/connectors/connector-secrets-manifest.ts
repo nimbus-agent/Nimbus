@@ -73,6 +73,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud CLI. It has no
   // BigQuery-specific vault secret, so its own key list is intentionally empty.
   bigquery: [],
+  // Athena (Tier-3 no-row-data warehouse) reuses the existing AWS credentials —
+  // `aws.access_key_id` + `aws.secret_access_key` + `aws.default_region`/`aws.profile`
+  // — via the aws CLI. It has no Athena-specific vault secret, so its own key list
+  // is intentionally empty.
+  athena: [],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

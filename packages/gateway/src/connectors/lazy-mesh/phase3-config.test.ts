@@ -1807,8 +1807,10 @@ describe("buildPhase3Servers", () => {
     await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
     expect(Object.keys(servers).sort()).toEqual(
-      // bigquery reuses gcp creds, so seeding gcp.credentials_json_path enables it too.
+      // bigquery reuses gcp creds; athena reuses aws creds — both appear whenever
+      // their underlying credentials are seeded.
       [
+        "athena",
         "aws",
         "azure",
         "bigquery",
@@ -1833,7 +1835,8 @@ describe("buildPhase3Servers", () => {
     await vault.set("aws.default_region", "us-east-1");
     await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
-    // bigquery reuses gcp creds, so it appears whenever gcp does.
-    expect(Object.keys(servers).sort()).toEqual(["aws", "bigquery", "gcp"]);
+    // bigquery reuses gcp creds; athena reuses aws creds — both appear whenever
+    // their underlying credentials are seeded.
+    expect(Object.keys(servers).sort()).toEqual(["athena", "aws", "bigquery", "gcp"]);
   });
 });

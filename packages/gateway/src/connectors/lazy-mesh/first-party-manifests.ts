@@ -131,6 +131,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["bigquery.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Athena (Tier-3, metadata-only). Execs the `aws` CLI (which talks to the
+  // regional `athena.<region>.amazonaws.com` endpoint + sts.amazonaws.com for
+  // credential resolution). The Athena regional host is a concrete RFC-1123
+  // hostname added per-region at spawn via manifestWithExtraNetworkHosts (the
+  // RFC-1123 validator rejects the `athena.*.amazonaws.com` wildcard, like
+  // Salesforce's per-tenant host). Mirrors the aws manifest's empty filesystem
+  // shape (the sandbox permits exec of the wrapped `aws` command itself).
+  athena: baseManifest("com.nimbus.athena", {
+    network: ["sts.amazonaws.com"],
+    filesystem: { read: [], write: [] },
+  }),
   iac: baseManifest("com.nimbus.iac", DEFAULT_DENY),
 
   grafana: baseManifest("com.nimbus.grafana", {

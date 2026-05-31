@@ -61,7 +61,8 @@ export type Provider =
   | "canva"
   | "figma"
   | "salesforce"
-  | "bigquery";
+  | "bigquery"
+  | "athena";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -132,6 +133,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   figma: { requestsPerMinute: 60, burstSize: 10 },
   salesforce: { requestsPerMinute: 60, burstSize: 10 },
   bigquery: { requestsPerMinute: 40, burstSize: 8 },
+  athena: { requestsPerMinute: 40, burstSize: 8 },
 };
 
 type BucketState = {
