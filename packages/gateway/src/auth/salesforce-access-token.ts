@@ -23,8 +23,11 @@ export async function getValidSalesforceAuth(vault: NimbusVault): Promise<Salesf
     descriptor: OAUTH_PROVIDERS.salesforce,
     vault,
     clientId: Config.oauthSalesforceClientId,
-    clientSecret:
-      Config.oauthSalesforceClientSecret !== "" ? Config.oauthSalesforceClientSecret : undefined,
+    // exactOptionalPropertyTypes: omit the key entirely when no secret is set,
+    // rather than passing an explicit undefined to the optional clientSecret.
+    ...(Config.oauthSalesforceClientSecret !== ""
+      ? { clientSecret: Config.oauthSalesforceClientSecret }
+      : {}),
     notConfiguredError: "Salesforce OAuth not configured; run: nimbus connector auth salesforce",
     parseErrors: {
       invalidJson: "Invalid salesforce.oauth vault payload",
