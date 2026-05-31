@@ -82,6 +82,7 @@
     "packages/mcp-connectors/miro",
     "packages/mcp-connectors/canva",
     "packages/mcp-connectors/figma",
+    "packages/mcp-connectors/salesforce",
     "packages/vscode-extension"
   ],
   "scripts": {
