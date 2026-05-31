@@ -171,6 +171,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/dependencytrack-sync.ts` | OWASP Dependency-Track SBOM/supply-chain (per-tenant host + API key) — emits `dependencytrack:project`; page-number walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/dependencytrack-project-mapping.ts` | Pure Dependency-Track project → `IndexedItem`; surfaces embedded vuln metrics |
 | `packages/mcp-connectors/dependencytrack/src/server.ts` | Dependency-Track MCP — read-only `dependencytrack_list/get/search` |
+| `packages/gateway/src/connectors/ramp-sync.ts` | Ramp card spend (OAuth2 client-credentials token exchange) — emits `ramp:transaction`; `page.next` cursor walk; cursor `{ pass }`; 401 re-exchange once |
+| `packages/gateway/src/connectors/ramp-transaction-mapping.ts` | Pure Ramp transaction → `IndexedItem`; safe fields only (no PAN); local `parseIsoMs` |
+| `packages/mcp-connectors/ramp/src/server.ts` | Ramp MCP — read-only `ramp_list/get/search`; bearer token cached per process |
 | `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings + recordings (OAuth) — emits `zoom:meeting` + `zoom:transcript`; cursor `{ pass, lastRecordingsTo }` |
 | `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
 | `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
