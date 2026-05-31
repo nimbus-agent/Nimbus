@@ -62,7 +62,8 @@ export type Provider =
   | "figma"
   | "salesforce"
   | "bigquery"
-  | "athena";
+  | "athena"
+  | "cloudwatch";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -134,6 +135,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   salesforce: { requestsPerMinute: 60, burstSize: 10 },
   bigquery: { requestsPerMinute: 40, burstSize: 8 },
   athena: { requestsPerMinute: 40, burstSize: 8 },
+  cloudwatch: { requestsPerMinute: 40, burstSize: 8 },
 };
 
 type BucketState = {

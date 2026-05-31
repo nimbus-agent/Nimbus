@@ -78,6 +78,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // — via the aws CLI. It has no Athena-specific vault secret, so its own key list
   // is intentionally empty.
   athena: [],
+  // CloudWatch (Tier-3 no-row-data logging) reuses the existing AWS credentials —
+  // `aws.access_key_id` + `aws.secret_access_key` + `aws.default_region`/`aws.profile`
+  // — via the aws CLI. It has no CloudWatch-specific vault secret, so its own key
+  // list is intentionally empty.
+  cloudwatch: [],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

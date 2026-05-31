@@ -70,6 +70,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "salesforce",
   "bigquery",
   "athena",
+  "cloudwatch",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -165,6 +166,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   salesforce: MIN10,
   bigquery: MIN10,
   athena: MIN10,
+  cloudwatch: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -245,6 +247,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate BigQuery credential",
   athena:
     "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate Athena credential",
+  cloudwatch:
+    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate CloudWatch credential",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

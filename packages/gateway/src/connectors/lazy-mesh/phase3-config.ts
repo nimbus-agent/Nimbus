@@ -170,6 +170,53 @@ export async function phase3AddAthenaMcp(
   );
 }
 
+export async function phase3AddCloudwatchMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // CloudWatch (Tier-3, metadata-only) reuses the existing AWS credentials —
+  // mirror phase3AddAwsMcp's inline cred reads.
+  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
+  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
+  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
+  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
+  const awsOk =
+    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
+  if (!awsOk) {
+    return;
+  }
+  const extra: Record<string, string> = {};
+  if (ak !== "") {
+    extra["AWS_ACCESS_KEY_ID"] = ak;
+  }
+  if (sk !== "") {
+    extra["AWS_SECRET_ACCESS_KEY"] = sk;
+  }
+  if (reg !== "") {
+    extra["AWS_DEFAULT_REGION"] = reg;
+  }
+  if (prof !== "") {
+    extra["AWS_PROFILE"] = prof;
+  }
+  // Add the regional CloudWatch Logs endpoint host for the configured region —
+  // the RFC-1123 validator rejects the `logs.*.amazonaws.com` wildcard, so the
+  // concrete per-region host is added here (sts.amazonaws.com is the fixed base).
+  const cloudwatchManifest = manifestWithExtraNetworkHosts(
+    "cloudwatch",
+    reg === "" ? [] : [`logs.${reg}.amazonaws.com`],
+  );
+  servers["cloudwatch"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("cloudwatch")],
+      env: extensionProcessEnv(extra),
+    },
+    cloudwatchManifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddIacMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1063,6 +1110,7 @@ export async function buildPhase3Servers(
   await phase3AddGcpMcp(vault, servers, sandboxCwd);
   await phase3AddBigqueryMcp(vault, servers, sandboxCwd);
   await phase3AddAthenaMcp(vault, servers, sandboxCwd);
+  await phase3AddCloudwatchMcp(vault, servers, sandboxCwd);
   await phase3AddIacMcp(vault, servers, sandboxCwd);
   await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
   await phase3AddSentryMcp(vault, servers, sandboxCwd);

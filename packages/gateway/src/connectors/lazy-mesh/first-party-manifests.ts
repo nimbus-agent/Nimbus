@@ -142,6 +142,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["sts.amazonaws.com"],
     filesystem: { read: [], write: [] },
   }),
+  // CloudWatch (Tier-3, metadata-only). Execs the `aws` CLI (which talks to the
+  // regional `logs.<region>.amazonaws.com` endpoint + sts.amazonaws.com for
+  // credential resolution). The regional Logs host is a concrete RFC-1123 hostname
+  // added per-region at spawn via manifestWithExtraNetworkHosts (the validator
+  // rejects the `logs.*.amazonaws.com` wildcard, like Athena). Mirrors the aws
+  // manifest's empty filesystem shape (the sandbox permits exec of the wrapped
+  // `aws` command itself).
+  cloudwatch: baseManifest("com.nimbus.cloudwatch", {
+    network: ["sts.amazonaws.com"],
+    filesystem: { read: [], write: [] },
+  }),
   iac: baseManifest("com.nimbus.iac", DEFAULT_DENY),
 
   grafana: baseManifest("com.nimbus.grafana", {
