@@ -165,6 +165,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/stackoverflow-sync.ts` | Stack Overflow for Teams Q&A — emits `stackoverflow:question` |
 | `packages/gateway/src/connectors/stackoverflow-question-mapping.ts` | Pure SO question → `IndexedItem` |
 | `packages/mcp-connectors/stackoverflow/src/server.ts` | SO Teams MCP — read-only `stackoverflow_list/get/search` |
+| `packages/gateway/src/connectors/zotero-sync.ts` | Zotero references (API-key + non-secret library spec) — emits `zotero:reference`; offset/`start` walk; cursor `{ pass }` |
+| `packages/gateway/src/connectors/zotero-reference-mapping.ts` | Pure Zotero item → `IndexedItem`; skips attachment/note item types |
+| `packages/mcp-connectors/zotero/src/server.ts` | Zotero MCP — read-only `zotero_list/get/search` |
 | `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings + recordings (OAuth) — emits `zoom:meeting` + `zoom:transcript`; cursor `{ pass, lastRecordingsTo }` |
 | `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
 | `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
