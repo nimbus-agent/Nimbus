@@ -75,6 +75,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/auth/hubspot-access-token.ts` | `getValidHubspotAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.hubspot` |
 | `packages/gateway/src/auth/miro-access-token.ts` | `getValidMiroAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.miro` |
 | `packages/gateway/src/auth/canva-access-token.ts` | `getValidCanvaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.canva` (PKCE + Basic-header, like Zoom) |
+| `packages/gateway/src/auth/figma-access-token.ts` | `getValidFigmaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.figma` (body-secret, like Miro) |
 
 ## Connectors + MCP Mesh
 
@@ -199,6 +200,9 @@ Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/
 | `packages/gateway/src/connectors/canva-sync.ts` | Canva designs (3-legged OAuth via registry — 8th provider, PKCE + Basic-header like Zoom) — emits `canva:design`; top-level `continuation` query-param walk; cursor `{ pass }` |
 | `packages/gateway/src/connectors/canva-design-mapping.ts` | Pure Canva design → `IndexedItem`; epoch-seconds `parseCanvaTimestampMs` (ISO-tolerant); url/canonical_url = view_url (else edit_url, else null) |
 | `packages/mcp-connectors/canva/src/server.ts` | Canva MCP — read-only `canva_list/get/search` |
+| `packages/gateway/src/connectors/figma-sync.ts` | Figma files for a single configured team (3-legged OAuth via registry — 9th provider, body-secret like Miro) — emits `figma:file`; two-level fetch (team projects → per-project files) flattened, `MAX_PROJECTS`/`MAX_FILES` capped; reads `figma.oauth` + non-secret `figma.team_id` (second-key pattern); cursor `{ pass }` |
+| `packages/gateway/src/connectors/figma-file-mapping.ts` | Pure Figma file → `IndexedItem`; `external_id` = file `key`; ISO `parseIsoMs`; url/canonical_url = `https://www.figma.com/file/<key>` (constructed from key) |
+| `packages/mcp-connectors/figma/src/server.ts` | Figma MCP — read-only `figma_list/get/search` (two-level team-projects → files fetch) |
 | `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
 
 ## Local Index + Migrations + DB
