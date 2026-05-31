@@ -66,6 +66,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   hubspot: ["hubspot.oauth"],
   miro: ["miro.oauth"],
   canva: ["canva.oauth"],
+  figma: ["figma.oauth", "figma.team_id"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

@@ -13,6 +13,7 @@ import {
   ensureCircleciMcp,
   ensureConfluenceMcp,
   ensureDiscordMcp,
+  ensureFigmaMcp,
   ensureGithubMcp,
   ensureGitlabMcp,
   ensureGoogleDriveMcp,
@@ -293,6 +294,10 @@ export class LazyConnectorMesh {
     return ensureCanvaMcp(this.spawnContext);
   }
 
+  async ensureFigmaRunning(): Promise<void> {
+    return ensureFigmaMcp(this.spawnContext);
+  }
+
   private async collectBuiltInToolMaps(): Promise<
     ReadonlyArray<{ map: LazyMeshToolMap; name: string }>
   > {
@@ -320,6 +325,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.hubspot), name: "hubspot" },
       { map: await list(LAZY_MESH.miro), name: "miro" },
       { map: await list(LAZY_MESH.canva), name: "canva" },
+      { map: await list(LAZY_MESH.figma), name: "figma" },
       { map: await list(LAZY_MESH.phase3Bundle), name: "phase3-bundle" },
     ];
   }

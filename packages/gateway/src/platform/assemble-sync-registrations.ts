@@ -13,6 +13,7 @@ import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
 import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDependencytrackSyncable } from "../connectors/dependencytrack-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
+import { createFigmaSyncable } from "../connectors/figma-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
 import { createGcpSyncable } from "../connectors/gcp-sync.ts";
@@ -363,6 +364,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createCanvaSyncable({
       ensureCanvaMcpRunning: () => connectorMesh.ensureCanvaRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createFigmaSyncable({
+      ensureFigmaMcpRunning: () => connectorMesh.ensureFigmaRunning(),
     }),
   );
   syncScheduler.register(

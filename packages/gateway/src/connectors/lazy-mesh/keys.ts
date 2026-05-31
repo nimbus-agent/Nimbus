@@ -30,6 +30,7 @@ export const LAZY_MESH = {
   hubspot: "mesh:hubspot",
   miro: "mesh:miro",
   canva: "mesh:canva",
+  figma: "mesh:figma",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

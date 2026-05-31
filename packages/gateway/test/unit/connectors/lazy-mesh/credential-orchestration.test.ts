@@ -37,6 +37,7 @@ function makeRecorderSpawners(): CredentialSpawners {
     ensureHubspotMcp: make("hubspot"),
     ensureMiroMcp: make("miro"),
     ensureCanvaMcp: make("canva"),
+    ensureFigmaMcp: make("figma"),
   };
 }
 
@@ -396,6 +397,41 @@ describe("multi-secret connectors require ALL keys", () => {
       await vault.set("confluence.base_url", "https://acme.atlassian.net/wiki");
       await runOrchestration(ctx);
       expect(spawnCalls).toContain("confluence");
+    });
+  });
+
+  describe("figma — oauth + team_id (token + non-secret second key)", () => {
+    it("does not spawn when only figma.oauth is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("figma.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("figma");
+    });
+
+    it("does not spawn when only figma.team_id is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("figma.team_id", "1234567890");
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("figma");
+    });
+
+    it("does not spawn when team_id is whitespace-only", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("figma.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await vault.set("figma.team_id", "   ");
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("figma");
+    });
+
+    it("spawns when both figma.oauth and figma.team_id are set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("figma.oauth", '{"accessToken":"a","refreshToken":"r","expiresAt":1}');
+      await vault.set("figma.team_id", "1234567890");
+      await runOrchestration(ctx);
+      expect(spawnCalls).toContain("figma");
     });
   });
 

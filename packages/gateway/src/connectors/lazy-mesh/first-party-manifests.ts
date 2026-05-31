@@ -324,6 +324,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  figma: baseManifest("com.nimbus.figma", {
+    network: ["api.figma.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   obsidian: baseManifest("com.nimbus.obsidian", {
     network: [],
     filesystem: { read: [], write: [] },

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { MCPClient } from "@mastra/mcp";
 
 import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
+import { getValidFigmaAccessToken } from "../../auth/figma-access-token.ts";
 import {
   type GoogleConnectorOAuthServiceId,
   getValidGoogleAccessToken,
@@ -912,6 +913,53 @@ export async function ensureCanvaMcp(ctx: MeshSpawnContext): Promise<void> {
             env: extensionProcessEnv({ CANVA_TOKEN: accessToken }),
           },
           "canva",
+          ctx,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Figma MCP when BOTH `figma.oauth` (a resolvable access token) AND the
+ * non-secret `figma.team_id` are present in the Vault.
+ */
+export async function ensureFigmaMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.figma;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "figma", "oauth");
+  const teamId = (await readConnectorSecret(ctx.vault, "figma", "team_id"))?.trim() ?? "";
+  if (raw === null || raw === "" || teamId === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidFigmaAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-figma-${randomUUID()}`,
+      servers: {
+        figma: wrap(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("figma")],
+            env: extensionProcessEnv({ FIGMA_TOKEN: accessToken, FIGMA_TEAM_ID: teamId }),
+          },
+          "figma",
           ctx,
         ),
       },
