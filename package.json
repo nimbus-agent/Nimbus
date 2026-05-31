@@ -86,6 +86,7 @@
     "packages/mcp-connectors/salesforce",
     "packages/mcp-connectors/bigquery",
     "packages/mcp-connectors/athena",
+    "packages/mcp-connectors/cloudwatch",
     "packages/vscode-extension"
   ],
   "scripts": {
