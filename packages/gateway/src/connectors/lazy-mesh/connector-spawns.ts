@@ -69,7 +69,12 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     return;
   }
   const googleServers: Record<string, ServerSpec> = {};
-  const ids: GoogleConnectorOAuthServiceId[] = ["google_drive", "gmail", "google_photos"];
+  const ids: GoogleConnectorOAuthServiceId[] = [
+    "google_drive",
+    "gmail",
+    "google_photos",
+    "google_meet",
+  ];
   for (const id of ids) {
     const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id);
     if (resolved === null) {
@@ -96,7 +101,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
         "gmail",
         ctx,
       );
-    } else {
+    } else if (id === "google_photos") {
       googleServers["google_photos"] = wrap(
         {
           command: "bun",
@@ -104,6 +109,16 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
           env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
         },
         "google_photos",
+        ctx,
+      );
+    } else {
+      googleServers["google_meet"] = wrap(
+        {
+          command: "bun",
+          args: [mcpConnectorServerScript("google-meet")],
+          env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+        },
+        "google_meet",
         ctx,
       );
     }

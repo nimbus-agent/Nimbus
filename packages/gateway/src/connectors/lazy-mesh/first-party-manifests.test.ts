@@ -60,6 +60,7 @@ describe("manifestForFirstParty", () => {
       "google_drive",
       "gmail",
       "google_photos",
+      "google_meet",
       "onedrive",
       "outlook",
       "teams",

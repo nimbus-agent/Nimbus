@@ -35,7 +35,12 @@ mock.module("../../../../src/auth/google-access-token.ts", () => ({
   anyGoogleOAuthVaultPresent: async (vault: {
     get: (k: string) => Promise<string | null>;
   }): Promise<boolean> => {
-    for (const k of ["google_drive.oauth", "google_gmail.oauth", "google_photos.oauth"]) {
+    for (const k of [
+      "google_drive.oauth",
+      "google_gmail.oauth",
+      "google_photos.oauth",
+      "google_meet.oauth",
+    ]) {
       const v = await vault.get(k);
       if (v !== null && v !== "") return true;
     }
@@ -49,6 +54,7 @@ mock.module("../../../../src/auth/google-access-token.ts", () => ({
       google_drive: "google_drive.oauth",
       gmail: "google_gmail.oauth",
       google_photos: "google_photos.oauth",
+      google_meet: "google_meet.oauth",
     };
     const k = perService[id];
     if (k === undefined) return null;
@@ -723,14 +729,20 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     expectNoProcessEnvLeak(servers["google_drive"]?.env ?? {});
   });
 
-  test("all three Google services → drive + gmail + photos spawned with distinct tokens", async () => {
+  test("all Google services → drive + gmail + photos + meet spawned with distinct tokens", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("google_drive.oauth", '{"access_token":"d"}');
     await vault.set("google_gmail.oauth", '{"access_token":"g"}');
     await vault.set("google_photos.oauth", '{"access_token":"p"}');
+    await vault.set("google_meet.oauth", '{"access_token":"m"}');
     await ensureGoogleDriveMcp(ctx);
     const servers = capturedClients[0]?.servers ?? {};
-    expect(Object.keys(servers).sort()).toEqual(["gmail", "google_drive", "google_photos"]);
+    expect(Object.keys(servers).sort()).toEqual([
+      "gmail",
+      "google_drive",
+      "google_meet",
+      "google_photos",
+    ]);
     expect(servers["google_drive"]?.env["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe(
       "fake-google-google_drive-access-token",
     );
@@ -740,7 +752,10 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     expect(servers["google_photos"]?.env["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe(
       "fake-google-google_photos-access-token",
     );
-    for (const id of ["google_drive", "gmail", "google_photos"] as const) {
+    expect(servers["google_meet"]?.env["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe(
+      "fake-google-google_meet-access-token",
+    );
+    for (const id of ["google_drive", "gmail", "google_photos", "google_meet"] as const) {
       expectNoProcessEnvLeak(servers[id]?.env ?? {});
     }
   });

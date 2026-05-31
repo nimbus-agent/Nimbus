@@ -75,6 +75,10 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["www.googleapis.com", "photoslibrary.googleapis.com", "oauth2.googleapis.com"],
     filesystem: { read: [], write: [] },
   }),
+  google_meet: baseManifest("com.nimbus.google-meet", {
+    network: ["www.googleapis.com", "meet.googleapis.com", "oauth2.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
 
   onedrive: baseManifest("com.nimbus.onedrive", {
     network: ["graph.microsoft.com", "login.microsoftonline.com"],

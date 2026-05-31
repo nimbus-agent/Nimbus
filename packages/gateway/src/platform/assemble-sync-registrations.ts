@@ -22,6 +22,7 @@ import { createGithubSyncable } from "../connectors/github-sync.ts";
 import { createGitlabSyncable } from "../connectors/gitlab-sync.ts";
 import { createGmailSyncable } from "../connectors/gmail-sync.ts";
 import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
+import { createGoogleMeetSyncable } from "../connectors/google-meet-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
 import { createGrafanaSyncable } from "../connectors/grafana-sync.ts";
 import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
@@ -88,6 +89,11 @@ export function registerConnectorMeshSyncables(
   );
   syncScheduler.register(
     createGooglePhotosSyncable({
+      ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createGoogleMeetSyncable({
       ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning(),
     }),
   );
