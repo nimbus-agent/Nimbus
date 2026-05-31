@@ -78,6 +78,7 @@
     "packages/mcp-connectors/dagster",
     "packages/mcp-connectors/ramp",
     "packages/mcp-connectors/zoom",
+    "packages/mcp-connectors/hubspot",
     "packages/vscode-extension"
   ],
   "scripts": {
