@@ -3,6 +3,8 @@ import {
   HUBSPOT_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
   MICROSOFT_OAUTH_CLIENT_ID_HELP,
+  MIRO_OAUTH_CLIENT_ID_HELP,
+  MIRO_OAUTH_CLIENT_SECRET_HELP,
   NOTION_OAUTH_CLIENT_ID_HELP,
   NOTION_OAUTH_CLIENT_SECRET_HELP,
   SLACK_OAUTH_CLIENT_ID_HELP,
@@ -574,6 +576,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: HUBSPOT_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthHubspotClientSecret,
         clientSecretMissingHelp: HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "miro":
+      return {
+        clientId: Config.oauthMiroClientId,
+        emptyClientIdMessage: MIRO_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthMiroClientSecret,
+        clientSecretMissingHelp: MIRO_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;

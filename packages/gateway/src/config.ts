@@ -119,6 +119,8 @@ export const Config = {
   oauthZoomClientSecret: processEnvGet("NIMBUS_OAUTH_ZOOM_CLIENT_SECRET") ?? "",
   oauthHubspotClientId: processEnvGet("NIMBUS_OAUTH_HUBSPOT_CLIENT_ID") ?? "",
   oauthHubspotClientSecret: processEnvGet("NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET") ?? "",
+  oauthMiroClientId: processEnvGet("NIMBUS_OAUTH_MIRO_CLIENT_ID") ?? "",
+  oauthMiroClientSecret: processEnvGet("NIMBUS_OAUTH_MIRO_CLIENT_SECRET") ?? "",
   engineContextWindowItems: parseEngineContextWindowItems(),
   searchServicePriorityMap,
   conversationalAgentMaxSteps: parseConversationalAgentMaxSteps(),

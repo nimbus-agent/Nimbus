@@ -2,7 +2,14 @@ import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { parseStoredOAuthTokens } from "./oauth-vault-payload.ts";
 
-export type OAuthProvider = "google" | "microsoft" | "slack" | "notion" | "zoom" | "hubspot";
+export type OAuthProvider =
+  | "google"
+  | "microsoft"
+  | "slack"
+  | "notion"
+  | "zoom"
+  | "hubspot"
+  | "miro";
 
 export interface PKCEResult {
   accessToken: string;
@@ -264,6 +271,27 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     authorizeUrl: "https://app.hubspot.com/oauth/authorize",
     tokenUrl: "https://api.hubapi.com/oauth/v1/token",
     // HubSpot uses the standard authorization-code flow (NOT PKCE) with the
+    // client_id + client_secret form-encoded into the token-exchange BODY.
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "body",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  miro: {
+    id: "miro",
+    vaultKey: "miro.oauth",
+    authorizeUrl: "https://miro.com/oauth/authorize",
+    tokenUrl: "https://api.miro.com/v1/oauth/token",
+    // Miro uses the standard authorization-code flow (NOT PKCE) with the
     // client_id + client_secret form-encoded into the token-exchange BODY.
     usesPkce: false,
     clientSecret: "required",

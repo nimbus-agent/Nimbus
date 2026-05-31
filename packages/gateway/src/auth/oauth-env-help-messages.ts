@@ -102,3 +102,26 @@ developers.hubspot.com → your app → Auth → copy the Client Secret.
 
 PowerShell example:
   $env:NIMBUS_OAUTH_HUBSPOT_CLIENT_SECRET = "..."`;
+
+export const MIRO_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_MIRO_CLIENT_ID to your Miro app's Client ID (OAuth 2.0 authorization-code flow).
+
+How to obtain:
+1. miro.com/app/settings/user-profile/apps → create or open an app.
+2. Add the read scopes you need (e.g. boards:read).
+3. Configure a redirect URL for the local loopback callback (Nimbus binds a localhost port).
+4. Copy the Client ID from the app's settings page.
+
+You must also set NIMBUS_OAUTH_MIRO_CLIENT_SECRET (Miro's token endpoint requires the client secret in the request body).
+
+Before starting the gateway (PowerShell example):
+  $env:NIMBUS_OAUTH_MIRO_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_MIRO_CLIENT_SECRET = "..."`;
+
+export const MIRO_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_MIRO_CLIENT_SECRET to your Miro app's Client Secret.
+
+Miro's token exchange requires the client secret form-encoded in the request body (it is not stored in the Nimbus vault).
+
+miro.com → your app → settings → copy the Client Secret.
+
+PowerShell example:
+  $env:NIMBUS_OAUTH_MIRO_CLIENT_SECRET = "..."`;

@@ -229,6 +229,64 @@ describe("hubspot descriptor", () => {
   });
 });
 
+describe("miro descriptor", () => {
+  test("table includes miro with vaultKey, urls, and body-secret quirks", () => {
+    expect(OAUTH_PROVIDERS.miro.id).toBe("miro");
+    expect(OAUTH_PROVIDERS.miro.vaultKey).toBe("miro.oauth");
+    expect(OAUTH_PROVIDERS.miro.authorizeUrl).toBe("https://miro.com/oauth/authorize");
+    expect(OAUTH_PROVIDERS.miro.tokenUrl).toBe("https://api.miro.com/v1/oauth/token");
+    expect(OAUTH_PROVIDERS.miro.usesPkce).toBe(false);
+    expect(OAUTH_PROVIDERS.miro.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.miro.secretPlacement).toBe("body");
+    expect(OAUTH_PROVIDERS.miro.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.miro.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.miro.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params omit PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.miro.buildAuthorizeParams({
+      clientId: "miro-cid",
+      scopes: ["boards:read"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("miro-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("boards:read");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBeUndefined();
+    expect(p["code_challenge_method"]).toBeUndefined();
+  });
+
+  test("exchange posts form with client_secret in body; error message omits secrets", async () => {
+    let seenBody = "";
+    let seenCT = "";
+    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+      seenBody = typeof init?.body === "string" ? init.body : "";
+      seenCT = new Headers(init?.headers).get("content-type") ?? "";
+      return new Response(
+        JSON.stringify({ access_token: "miro-a", refresh_token: "miro-r", expires_in: 1800 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const r = await exchangeAuthorizationCode({
+      descriptor: OAUTH_PROVIDERS.miro,
+      fetchFn: fetchImpl,
+      clientId: "cid",
+      clientSecret: "MIRO_SECRET",
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      authCode: "code",
+      requestedScopes: ["boards:read"],
+    });
+    expect(r.accessToken).toBe("miro-a");
+    expect(r.refreshToken).toBe("miro-r");
+    expect(seenCT).toContain("application/x-www-form-urlencoded");
+    expect(seenBody).toContain("client_secret=MIRO_SECRET");
+    expect(seenBody).toContain("grant_type=authorization_code");
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {
