@@ -65,6 +65,13 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
 
   { kind: "pathRegex", re: /^packages\/mcp-connectors\/[^/]+\/src\/server\.ts$/ },
+  // Each MCP connector's `src/tools.ts` is the same connect-shell class as its
+  // `server.ts`: thin `reg(name, desc, schema, handler)` registrations whose
+  // handlers shell out to a CLI (`Bun.spawn`) or `fetch` a remote API. The
+  // testable logic (no-row-data stripping, arg guards, response mapping) lives in
+  // shared helpers / sibling modules that ARE covered; the I/O shell is exempt,
+  // exactly like server.ts.
+  { kind: "pathRegex", re: /^packages\/mcp-connectors\/[^/]+\/src\/tools\.ts$/ },
 ]);
 
 export function isExempt(relPath: string): boolean {

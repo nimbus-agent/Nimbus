@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
@@ -259,11 +259,13 @@ async function collectJsonFiles(root: string): Promise<string[]> {
 
 async function readArtefact(path: string): Promise<unknown | null> {
   try {
-    const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) {
+    // Read first (no check-then-use race): readFile throws on a directory or a
+    // missing file, and the buffer length bounds the size — no stat-gated read.
+    const buf = await readFile(path);
+    if (buf.byteLength > MAX_FILE_BYTES) {
       return null;
     }
-    return JSON.parse(await readFile(path, "utf8")) as unknown;
+    return JSON.parse(buf.toString("utf8")) as unknown;
   } catch {
     return null;
   }

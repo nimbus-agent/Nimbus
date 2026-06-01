@@ -35,6 +35,11 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/mcp-connectors/sonarqube/src/server.ts");
     return samples;
   }
+  if (pattern === "**/packages/mcp-connectors/*/src/tools.ts") {
+    samples.push("packages/mcp-connectors/bigquery/src/tools.ts");
+    samples.push("packages/mcp-connectors/athena/src/tools.ts");
+    return samples;
+  }
   samples.push(pattern);
   return samples;
 }
