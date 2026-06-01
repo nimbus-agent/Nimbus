@@ -35,7 +35,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
     // Only intercept Canva host; everything else falls through to the real fetch.
-    if (!urlStr.startsWith(BASE)) {
+    if (new URL(urlStr).origin !== BASE) {
       return realFetch(input as Parameters<typeof realFetch>[0], init);
     }
     const u = new URL(urlStr);
@@ -189,7 +189,7 @@ describe("canva-sync against a fake api.canva.com", () => {
     // Override with a stateful fake: first call ok, second call errors.
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
-      if (!urlStr.startsWith(BASE)) {
+      if (new URL(urlStr).origin !== BASE) {
         return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
       }
       h?.fake.requests.push({

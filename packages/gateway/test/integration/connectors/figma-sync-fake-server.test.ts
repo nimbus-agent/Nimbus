@@ -37,7 +37,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
   const requests: RecordedReq[] = [];
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
-    if (!urlStr.startsWith(BASE)) {
+    if (new URL(urlStr).origin !== BASE) {
       return realFetch(input as Parameters<typeof realFetch>[0], init);
     }
     const u = new URL(urlStr);

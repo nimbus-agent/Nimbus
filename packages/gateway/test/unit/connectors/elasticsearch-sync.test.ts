@@ -20,8 +20,12 @@ function makeOptions() {
 }
 
 const CAT_URL = /\/_cat\/indices\?/;
+/** Escape ALL regex metacharacters (incl. backslash) before embedding in a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function mappingUrl(index: string): RegExp {
-  return new RegExp(`/${index.replace(/[.]/g, "\\.")}/_mapping$`);
+  return new RegExp(`/${escapeRegExp(index)}/_mapping$`);
 }
 
 describe("elasticsearch-sync — credential short-circuits", () => {

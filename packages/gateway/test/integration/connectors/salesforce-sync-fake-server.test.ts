@@ -55,7 +55,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
     // Only intercept the Salesforce instance host; everything else falls through.
-    if (!urlStr.startsWith(INSTANCE_URL)) {
+    if (new URL(urlStr).origin !== INSTANCE_URL) {
       return realFetch(input as Parameters<typeof realFetch>[0], init);
     }
     const u = new URL(urlStr);
@@ -238,7 +238,7 @@ describe("salesforce-sync against a fake instance host", () => {
     h = startHarness({});
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
-      if (!urlStr.startsWith(INSTANCE_URL)) {
+      if (new URL(urlStr).origin !== INSTANCE_URL) {
         return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
       }
       h?.fake.requests.push({

@@ -138,16 +138,28 @@ interface ParsedArtefact {
 
 async function readArtefact(path: string): Promise<ParsedArtefact | null> {
   try {
-    const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) {
+    // Read first (no check-then-use race): readFile throws on a directory
+    // (EISDIR) or a missing/unreadable file, and the size is bounded by the
+    // returned buffer — so no `stat`-gated read window exists.
+    const buf = await readFile(path);
+    if (buf.byteLength > MAX_FILE_BYTES) {
       return null;
     }
-    const json = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const json = JSON.parse(buf.toString("utf8")) as unknown;
     const rec = asRecord(json);
     if (rec === undefined) {
       return null;
     }
-    return { parsed: rec, mtimeMs: Number.isFinite(info.mtimeMs) ? info.mtimeMs : null };
+    // mtime is non-essential metadata; fetch it best-effort and tolerate a
+    // concurrent change (it does not gate the read above).
+    let mtimeMs: number | null = null;
+    try {
+      const info = await stat(path);
+      mtimeMs = Number.isFinite(info.mtimeMs) ? info.mtimeMs : null;
+    } catch {
+      mtimeMs = null;
+    }
+    return { parsed: rec, mtimeMs };
   } catch {
     return null; // missing / oversized / unparseable — skip, never throw
   }
