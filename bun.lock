@@ -338,6 +338,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/elasticsearch": {
+      "name": "nimbus-mcp-elasticsearch",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/figma": {
       "name": "nimbus-mcp-figma",
       "version": "0.1.0",
@@ -3050,6 +3062,8 @@
     "nimbus-mcp-dependencytrack": ["nimbus-mcp-dependencytrack@workspace:packages/mcp-connectors/dependencytrack"],
 
     "nimbus-mcp-discord": ["nimbus-mcp-discord@workspace:packages/mcp-connectors/discord"],
+
+    "nimbus-mcp-elasticsearch": ["nimbus-mcp-elasticsearch@workspace:packages/mcp-connectors/elasticsearch"],
 
     "nimbus-mcp-figma": ["nimbus-mcp-figma@workspace:packages/mcp-connectors/figma"],
 

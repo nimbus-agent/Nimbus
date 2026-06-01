@@ -88,6 +88,7 @@
     "packages/mcp-connectors/athena",
     "packages/mcp-connectors/cloudwatch",
     "packages/mcp-connectors/cloud-logging",
+    "packages/mcp-connectors/elasticsearch",
     "packages/vscode-extension"
   ],
   "scripts": {
