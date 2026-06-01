@@ -1,6 +1,6 @@
 # Deferred Pass-5 SOLID lanes (not Sonar-driven)
 
-These lanes from `2026-05-28-monorepo-cleanup-pass.md` Pass 5 were NOT executed
+These lanes from the (now-removed) monorepo cleanup-pass Pass 5 were NOT executed
 in cleanup pass 2 because they had no SonarCloud finding driving them. Tracked
 here so they are not forgotten.
 

@@ -139,18 +139,22 @@ Full command catalogue + coverage thresholds + env-var overrides live in the [`n
 
 ## Skill References
 
-@.claude/commands/nimbus-agent-patterns.md
-@.claude/commands/nimbus-architecture.md
-@.claude/commands/nimbus-cicd-data-layer.md
-@.claude/commands/nimbus-commands.md
-@.claude/commands/nimbus-connector-authoring.md
-@.claude/commands/nimbus-db-migrations.md
-@.claude/commands/nimbus-embedding-routing.md
-@.claude/commands/nimbus-file-map.md
-@.claude/commands/nimbus-http-write-surface.md
-@.claude/commands/nimbus-ipc.md
-@.claude/commands/nimbus-preflight.md
-@.claude/commands/nimbus-security-invariants.md
-@.claude/commands/nimbus-tauri-allowlist.md
-@.claude/commands/nimbus-testing.md
-@.claude/commands/nimbus-tool-output-envelope.md
+Domain skills live in `.claude/commands/nimbus-*.md`. They are **loaded on demand** — invoke via the Skill tool (or `/<name>`) when working on the relevant subsystem, rather than force-loaded into every session. Each carries a `description` that drives when it triggers.
+
+| Skill | Use when… |
+| --- | --- |
+| `nimbus-architecture` | Placing new code, naming, package ownership, IPC design — read first for any Gateway-touching task |
+| `nimbus-file-map` | "Where does X live?" — pointer index to high-traffic files |
+| `nimbus-commands` | bun scripts, CLI subcommands, coverage-gate names, env-var overrides, `bun add` safety |
+| `nimbus-ipc` | Adding/designing an IPC method, notification, or streaming contract; Tauri-exposure check |
+| `nimbus-testing` | Choosing a test layer, file location, coverage gate, or mocking the Gateway |
+| `nimbus-preflight` | What to run before pushing; why `test:ci` ≠ full gate set; cross-platform/CI gates |
+| `nimbus-security-invariants` | Adding/auditing a structural defense (the wiring + docs + test triple rule) |
+| `nimbus-tauri-allowlist` | Exposing a method to the renderer (`ALLOWED_METHODS`, I7) |
+| `nimbus-http-write-surface` | Adding an HTTP `POST`/`PUT`/`DELETE` route (`WRITE_ROUTE_ALLOWLIST`, I13) |
+| `nimbus-tool-output-envelope` | Feeding tool results to the LLM (`wrapToolOutput`, I11) |
+| `nimbus-connector-authoring` | Building/modifying a first-party MCP connector |
+| `nimbus-db-migrations` | Authoring a SQLite migration or new table |
+| `nimbus-embedding-routing` | Embedding-table routing for a new item type; `nimbus index reembed` |
+| `nimbus-cicd-data-layer` | DORA metrics, preflight checks, deployment annotation (Phase 5 T4) |
+| `nimbus-agent-patterns` | Authoring a built-in read-only agent |

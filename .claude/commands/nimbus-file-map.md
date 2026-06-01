@@ -80,162 +80,32 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 
 ## Connectors + MCP Mesh
 
-Per-connector triples are `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper) + `mcp-connectors/<x>/src/server.ts` (read-only MCP tools `<x>_list/get/search`). For auth, pagination, deferred write tools — read the file.
+A **standard connector** is a triple — `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper) + `mcp-connectors/<x>/src/server.ts` (read-only `<x>_list/get/search`). ~77 connectors follow this shape: **derive the path from the connector name.** The file is the source of truth for auth, pagination, cursor shape (`{ pass }`), and `MAX_*` caps — that per-connector detail is deliberately **not** mirrored here, because it drifts. Below: shared infra, then the connectors that **deviate** from the standard shape.
+
+### Shared connector infra
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/connectors/` | MCP connector mesh (`lazy-mesh/` bundle spawns AWS/Azure/GCP/IaC/observability MCPs when vault keys exist) |
+| `packages/gateway/src/connectors/` | Connector mesh root; `lazy-mesh/` bundle spawns cloud/observability MCPs when vault keys exist |
 | `packages/gateway/src/connectors/health.ts` | Health state machine — `transitionHealth()`, `ConnectorHealthSnapshot` |
 | `packages/gateway/src/connectors/connector-vault.ts` | Per-service OAuth helpers — `perServiceOAuthVaultKey()`, `readConnectorSecret()` |
 | `packages/gateway/src/connectors/connector-secrets-manifest.ts` | `CONNECTOR_VAULT_SECRET_KEYS` — per-connector PAT/API-key manifest |
 | `packages/gateway/src/connectors/remove-intent.ts` | Connector removal — cascade vault + index cleanup via `executeRemoveIntent()` |
 | `packages/gateway/src/connectors/openapi-indexer-sync.ts` | OpenAPI/AsyncAPI spec indexer; `getLastSyncStats()` exposes skipped counters |
-| `packages/gateway/src/connectors/obsidian-sync.ts` | Obsidian vault — emits `obsidian_note` + `backlinks` edges |
-| `packages/mcp-connectors/obsidian/src/server.ts` | Obsidian MCP — reads + HITL-gated `obsidian_append_to_daily_note` |
-| `packages/gateway/src/connectors/snyk-sync.ts` | Snyk vulns — emits `snyk:vulnerability` |
-| `packages/gateway/src/connectors/snyk-issue-mapping.ts` | Pure Snyk issue → `IndexedItem` |
-| `packages/mcp-connectors/snyk/src/server.ts` | Snyk MCP — read-only `snyk_list/get/search` |
-| `packages/gateway/src/connectors/bitrise-sync.ts` | Bitrise mobile-CI — emits `bitrise:app` + `bitrise:build` |
-| `packages/gateway/src/connectors/bitrise-build-mapping.ts` | Pure Bitrise app + build → `IndexedItem` |
-| `packages/mcp-connectors/bitrise/src/server.ts` | Bitrise MCP — read-only `bitrise_list/get/search` |
-| `packages/gateway/src/connectors/sonarqube-sync.ts` | SonarQube + SonarCloud — emits `sonarqube:code_issue` |
-| `packages/gateway/src/connectors/sonarqube-issue-mapping.ts` | Pure SonarQube issue → `IndexedItem` |
-| `packages/mcp-connectors/sonarqube/src/server.ts` | SonarQube MCP — read-only `sonarqube_list/get/search` |
-| `packages/gateway/src/connectors/semgrep-sync.ts` | Semgrep SAST — emits `semgrep:finding` |
-| `packages/gateway/src/connectors/semgrep-finding-mapping.ts` | Pure Semgrep finding → `IndexedItem` |
-| `packages/mcp-connectors/semgrep/src/server.ts` | Semgrep MCP — read-only `semgrep_list/get/search` |
-| `packages/gateway/src/connectors/wiz-sync.ts` | Wiz CSPM (GraphQL) — emits `wiz:issue` |
-| `packages/gateway/src/connectors/wiz-issue-mapping.ts` | Pure Wiz issue → `IndexedItem` |
-| `packages/mcp-connectors/wiz/src/server.ts` | Wiz MCP — read-only `wiz_list/get/search` |
-| `packages/gateway/src/connectors/launchdarkly-sync.ts` | LaunchDarkly flags — emits `launchdarkly:feature_flag` |
-| `packages/gateway/src/connectors/launchdarkly-flag-mapping.ts` | Pure LaunchDarkly flag → `IndexedItem` |
-| `packages/mcp-connectors/launchdarkly/src/server.ts` | LaunchDarkly MCP — read-only `launchdarkly_list/get/search` |
-| `packages/gateway/src/connectors/flagsmith-sync.ts` | Flagsmith flags — emits `flagsmith:feature_flag` |
-| `packages/gateway/src/connectors/flagsmith-feature-mapping.ts` | Pure Flagsmith feature → `IndexedItem` |
-| `packages/mcp-connectors/flagsmith/src/server.ts` | Flagsmith MCP — read-only `flagsmith_list/get/search` |
-| `packages/gateway/src/connectors/argocd-sync.ts` | ArgoCD GitOps — emits `argocd:application` |
-| `packages/gateway/src/connectors/argocd-application-mapping.ts` | Pure ArgoCD Application → `IndexedItem` |
-| `packages/mcp-connectors/argocd/src/server.ts` | ArgoCD MCP — read-only `argocd_list/get/search` |
-| `packages/gateway/src/connectors/flux-sync.ts` | Flux GitOps Toolkit (9 CRD kinds) — emits `flux:resource` |
-| `packages/gateway/src/connectors/flux-resource-mapping.ts` | Pure Flux CR → `IndexedItem`; `kind` discriminator |
-| `packages/mcp-connectors/flux/src/server.ts` | Flux MCP — read-only `flux_list/get/search` |
-| `packages/gateway/src/connectors/dbt-sync.ts` | dbt Cloud — emits `dbt:job` |
-| `packages/gateway/src/connectors/dbt-job-mapping.ts` | Pure dbt Cloud job → `IndexedItem` |
-| `packages/mcp-connectors/dbt/src/server.ts` | dbt Cloud MCP — read-only `dbt_list/get/search` |
-| `packages/gateway/src/connectors/metabase-sync.ts` | Metabase BI — emits `metabase:dashboard` |
-| `packages/gateway/src/connectors/metabase-dashboard-mapping.ts` | Pure Metabase dashboard → `IndexedItem` |
-| `packages/mcp-connectors/metabase/src/server.ts` | Metabase MCP — read-only `metabase_list/get/search` |
-| `packages/gateway/src/connectors/superset-sync.ts` | Apache Superset BI — emits `superset:dashboard` |
-| `packages/gateway/src/connectors/superset-dashboard-mapping.ts` | Pure Superset dashboard → `IndexedItem` |
-| `packages/mcp-connectors/superset/src/server.ts` | Superset MCP — read-only `superset_list/get/search`; JWT cached per process |
-| `packages/gateway/src/connectors/databricks-sync.ts` | Databricks orchestration — emits `databricks:data_pipeline` |
-| `packages/gateway/src/connectors/databricks-job-mapping.ts` | Pure Databricks job → `IndexedItem` |
-| `packages/mcp-connectors/databricks/src/server.ts` | Databricks MCP — read-only `databricks_list/get/search` |
-| `packages/gateway/src/connectors/mlflow-sync.ts` | MLflow model registry — emits `mlflow:ml_model` |
-| `packages/gateway/src/connectors/mlflow-model-mapping.ts` | Pure MLflow `RegisteredModel` → `IndexedItem` |
-| `packages/mcp-connectors/mlflow/src/server.ts` | MLflow MCP — read-only `mlflow_list/get/search` |
-| `packages/gateway/src/connectors/vercel-sync.ts` | Vercel deployments — emits `vercel:deployment` |
-| `packages/gateway/src/connectors/vercel-deployment-mapping.ts` | Pure Vercel deployment → `IndexedItem` |
-| `packages/mcp-connectors/vercel/src/server.ts` | Vercel MCP — read-only `vercel_list/get/search` |
-| `packages/gateway/src/connectors/netlify-sync.ts` | Netlify sites — emits `netlify:site` |
-| `packages/gateway/src/connectors/netlify-site-mapping.ts` | Pure Netlify site → `IndexedItem` |
-| `packages/mcp-connectors/netlify/src/server.ts` | Netlify MCP — read-only `netlify_list/get/search` |
-| `packages/gateway/src/connectors/stripe-sync.ts` | Stripe billing — emits `stripe:invoice` |
-| `packages/gateway/src/connectors/stripe-invoice-mapping.ts` | Pure Stripe invoice → `IndexedItem` |
-| `packages/mcp-connectors/stripe/src/server.ts` | Stripe MCP — read-only `stripe_list/get/search` |
-| `packages/gateway/src/connectors/mercury-sync.ts` | Mercury banking — emits `mercury:account` |
-| `packages/gateway/src/connectors/mercury-account-mapping.ts` | Pure Mercury account → `IndexedItem`; stores `last4` only |
-| `packages/mcp-connectors/mercury/src/server.ts` | Mercury MCP — read-only `mercury_list/get/search` |
-| `packages/gateway/src/connectors/readwise-sync.ts` | Readwise — emits `readwise:highlight` |
-| `packages/gateway/src/connectors/readwise-highlight-mapping.ts` | Pure Readwise highlight → `IndexedItem` |
-| `packages/mcp-connectors/readwise/src/server.ts` | Readwise MCP — read-only `readwise_list/get/search` |
-| `packages/gateway/src/connectors/raindrop-sync.ts` | Raindrop.io bookmarks — emits `raindrop:bookmark` |
-| `packages/gateway/src/connectors/raindrop-bookmark-mapping.ts` | Pure Raindrop bookmark → `IndexedItem` |
-| `packages/mcp-connectors/raindrop/src/server.ts` | Raindrop MCP — read-only `raindrop_list/get/search` |
-| `packages/gateway/src/connectors/intercom-sync.ts` | Intercom support — emits `intercom:conversation` |
-| `packages/gateway/src/connectors/intercom-conversation-mapping.ts` | Pure Intercom conversation → `IndexedItem` |
-| `packages/mcp-connectors/intercom/src/server.ts` | Intercom MCP — read-only `intercom_list/get/search` |
-| `packages/gateway/src/connectors/zendesk-sync.ts` | Zendesk Support (per-tenant) — emits `zendesk:ticket` |
-| `packages/gateway/src/connectors/zendesk-ticket-mapping.ts` | Pure Zendesk ticket → `IndexedItem` |
-| `packages/mcp-connectors/zendesk/src/server.ts` | Zendesk MCP — read-only `zendesk_list/get/search` |
-| `packages/gateway/src/connectors/lever-sync.ts` | Lever recruiting/ATS — emits `lever:posting` (no candidate PII) |
-| `packages/gateway/src/connectors/lever-posting-mapping.ts` | Pure Lever posting → `IndexedItem` |
-| `packages/mcp-connectors/lever/src/server.ts` | Lever MCP — read-only `lever_list/get/search` |
-| `packages/gateway/src/connectors/greenhouse-sync.ts` | Greenhouse ATS (Harvest API) — emits `greenhouse:job` (no candidate PII) |
-| `packages/gateway/src/connectors/greenhouse-job-mapping.ts` | Pure Greenhouse job → `IndexedItem` |
-| `packages/mcp-connectors/greenhouse/src/server.ts` | Greenhouse MCP — read-only `greenhouse_list/get/search` |
-| `packages/gateway/src/connectors/pipedrive-sync.ts` | Pipedrive CRM — emits `pipedrive:deal`; token in query string (never logged) |
-| `packages/gateway/src/connectors/pipedrive-deal-mapping.ts` | Pure Pipedrive deal → `IndexedItem` |
-| `packages/mcp-connectors/pipedrive/src/server.ts` | Pipedrive MCP — read-only `pipedrive_list/get/search` |
-| `packages/gateway/src/connectors/stackoverflow-sync.ts` | Stack Overflow for Teams Q&A — emits `stackoverflow:question` |
-| `packages/gateway/src/connectors/stackoverflow-question-mapping.ts` | Pure SO question → `IndexedItem` |
-| `packages/mcp-connectors/stackoverflow/src/server.ts` | SO Teams MCP — read-only `stackoverflow_list/get/search` |
-| `packages/gateway/src/connectors/zotero-sync.ts` | Zotero references (API-key + non-secret library spec) — emits `zotero:reference`; offset/`start` walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/zotero-reference-mapping.ts` | Pure Zotero item → `IndexedItem`; skips attachment/note item types |
-| `packages/mcp-connectors/zotero/src/server.ts` | Zotero MCP — read-only `zotero_list/get/search` |
-| `packages/gateway/src/connectors/dependencytrack-sync.ts` | OWASP Dependency-Track SBOM/supply-chain (per-tenant host + API key) — emits `dependencytrack:project`; page-number walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/dependencytrack-project-mapping.ts` | Pure Dependency-Track project → `IndexedItem`; surfaces embedded vuln metrics |
-| `packages/mcp-connectors/dependencytrack/src/server.ts` | Dependency-Track MCP — read-only `dependencytrack_list/get/search` |
-| `packages/gateway/src/connectors/airflow-sync.ts` | Apache Airflow DAGs (per-tenant host + HTTP Basic auth, header built inline) — emits `airflow:dag`; body-based `total_entries` + offset walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/airflow-dag-mapping.ts` | Pure Airflow DAG → `IndexedItem`; surfaces paused/active/owners/schedule/tags; local `parseIsoMs` |
-| `packages/mcp-connectors/airflow/src/server.ts` | Airflow MCP — read-only `airflow_list/get/search` |
-| `packages/gateway/src/connectors/prefect-sync.ts` | Prefect deployments (per-tenant workspace API root + Bearer api_key) — emits `prefect:deployment`; `POST /deployments/filter` body offset walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/prefect-deployment-mapping.ts` | Pure Prefect deployment → `IndexedItem`; surfaces paused/work pool/queue/schedule/status/tags; local `parseIsoMs`; url always null |
-| `packages/mcp-connectors/prefect/src/server.ts` | Prefect MCP — read-only `prefect_list/get/search` (list is a POST filter) |
-| `packages/gateway/src/connectors/dagster-sync.ts` | Dagster jobs (per-tenant host + `Dagster-Cloud-Api-Token`) — emits `dagster:job`; single GraphQL `POST /graphql` walking `repositoriesOrError → nodes[].pipelines[]`, single-pass flatten, `MAX_JOBS` cap; cursor `{ pass }`; Wiz-style graceful GraphQL-error handling (`errors` array / `PythonError`) |
-| `packages/gateway/src/connectors/dagster-job-mapping.ts` | Pure Dagster job → `IndexedItem`; `external_id` = stable `<location>:<repository>:<jobName>` triple (NOT the opaque base64 id); best-effort `<base_url>/locations/<location>/jobs/<jobName>` url |
-| `packages/mcp-connectors/dagster/src/server.ts` | Dagster MCP — read-only `dagster_list/get/search` (GraphQL repositories catalog, flattened to jobs) |
-| `packages/gateway/src/connectors/ramp-sync.ts` | Ramp card spend (OAuth2 client-credentials token exchange) — emits `ramp:transaction`; `page.next` cursor walk; cursor `{ pass }`; 401 re-exchange once |
-| `packages/gateway/src/connectors/ramp-transaction-mapping.ts` | Pure Ramp transaction → `IndexedItem`; safe fields only (no PAN); local `parseIsoMs` |
-| `packages/mcp-connectors/ramp/src/server.ts` | Ramp MCP — read-only `ramp_list/get/search`; bearer token cached per process |
-| `packages/gateway/src/connectors/zoom-sync.ts` | Zoom meetings + recordings (OAuth) — emits `zoom:meeting` + `zoom:transcript`; cursor `{ pass, lastRecordingsTo }` |
-| `packages/gateway/src/connectors/zoom-meeting-mapping.ts` | Pure Zoom meeting → `IndexedItem` |
-| `packages/gateway/src/connectors/zoom-transcript-mapping.ts` | Pure Zoom transcript → `IndexedItem` + `vttToPlainText` helper |
-| `packages/mcp-connectors/zoom/src/server.ts` | Zoom MCP — read-only `zoom_list/get/search/recordings_list/transcript_get` |
-| `packages/gateway/src/connectors/hubspot-sync.ts` | HubSpot CRM deals (3-legged OAuth via registry — first Tier-2 infra-prover) — emits `hubspot:deal`; `paging.next.after` cursor walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/hubspot-deal-mapping.ts` | Pure HubSpot deal → `IndexedItem`; `parseHubspotMs` (ISO + epoch-ms); url/canonical_url null |
-| `packages/mcp-connectors/hubspot/src/server.ts` | HubSpot MCP — read-only `hubspot_list/get/search` |
-| `packages/gateway/src/connectors/miro-sync.ts` | Miro boards (3-legged OAuth via registry — 7th provider) — emits `miro:board`; top-level `cursor` query-param walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/miro-board-mapping.ts` | Pure Miro board → `IndexedItem`; ISO `parseIsoMs`; url/canonical_url = viewLink (null when absent) |
-| `packages/mcp-connectors/miro/src/server.ts` | Miro MCP — read-only `miro_list/get/search` |
-| `packages/gateway/src/connectors/canva-sync.ts` | Canva designs (3-legged OAuth via registry — 8th provider, PKCE + Basic-header like Zoom) — emits `canva:design`; top-level `continuation` query-param walk; cursor `{ pass }` |
-| `packages/gateway/src/connectors/canva-design-mapping.ts` | Pure Canva design → `IndexedItem`; epoch-seconds `parseCanvaTimestampMs` (ISO-tolerant); url/canonical_url = view_url (else edit_url, else null) |
-| `packages/mcp-connectors/canva/src/server.ts` | Canva MCP — read-only `canva_list/get/search` |
-| `packages/gateway/src/connectors/figma-sync.ts` | Figma files for a single configured team (3-legged OAuth via registry — 9th provider, body-secret like Miro) — emits `figma:file`; two-level fetch (team projects → per-project files) flattened, `MAX_PROJECTS`/`MAX_FILES` capped; reads `figma.oauth` + non-secret `figma.team_id` (second-key pattern); cursor `{ pass }` |
-| `packages/gateway/src/connectors/figma-file-mapping.ts` | Pure Figma file → `IndexedItem`; `external_id` = file `key`; ISO `parseIsoMs`; url/canonical_url = `https://www.figma.com/file/<key>` (constructed from key) |
-| `packages/mcp-connectors/figma/src/server.ts` | Figma MCP — read-only `figma_list/get/search` (two-level team-projects → files fetch) |
-| `packages/gateway/src/connectors/salesforce-sync.ts` | Salesforce Opportunities (3-legged OAuth + PKCE via registry — 10th provider; per-tenant `instance_url`) — emits `salesforce:opportunity`; SOQL query API `GET <instance_url>/services/data/v60.0/query`, walks `nextRecordsUrl` cursor, `MAX_PAGES=20`; reads `salesforce.oauth` then `getValidSalesforceAuth` → `{ accessToken, instanceUrl }`; cursor `{ pass }` |
-| `packages/gateway/src/connectors/salesforce-opportunity-mapping.ts` | Pure Salesforce Opportunity → `IndexedItem`; `external_id` = SF `Id`; ISO `parseIsoMs`; url/canonical_url null (pure mapper, no instance host) |
-| `packages/mcp-connectors/salesforce/src/server.ts` | Salesforce MCP — read-only `salesforce_list/get/search`; reads `SALESFORCE_ACCESS_TOKEN` + `SALESFORCE_INSTANCE_URL` from env (per-tenant host) |
-| `packages/gateway/src/connectors/google-meet-sync.ts` | Google Meet past conference records — **extends the existing `google` provider as a sub-service** (NOT a new `OAuthProvider`); emits `google_meet:meeting`; `GET https://meet.googleapis.com/v2/conferenceRecords?pageSize=50`, paginates via `nextPageToken`; reads `getValidGoogleAccessToken(vault, "google_meet")`; cursor `{ v:1, pageToken }` (google_photos shape); rides the shared google bundle spawn slot |
-| `packages/gateway/src/connectors/google-meet-meeting-mapping.ts` | Pure Google Meet conference record → `IndexedItem`; `external_id` = id segment of `name` (strip `conferenceRecords/`); ISO `parseIsoMs`; title `Meeting <startTime date>` (no human title); url/canonical_url null |
-| `packages/mcp-connectors/google-meet/src/server.ts` | Google Meet MCP — read-only `google_meet_list/get/search`; base `https://meet.googleapis.com/v2`; reads `GOOGLE_OAUTH_ACCESS_TOKEN` from env |
-| `packages/gateway/src/connectors/bigquery-sync.ts` | BigQuery datasets/tables METADATA (Tier-3, no-row-data) — **reuses `gcp.*` creds** (no own vault key); mints token via `gcloud auth print-access-token` (injectable `mintAccessToken`), walks BigQuery REST `datasets`→`tables`(→detail for `schema.fields`); emits `bigquery:table`; cursor `{ pass }`; `ensureBigqueryMcpRunning` → phase3 bundle |
-| `packages/gateway/src/connectors/bigquery-table-mapping.ts` | Pure BigQuery table → `IndexedItem`; `external_id` = `<project>:<datasetId>.<tableId>`; schema field names/types + row COUNTS + byte sizes only (NO row data); epoch-MILLIS timestamp parse; `extractSchemaFields` flattens RECORD fields |
-| `packages/mcp-connectors/bigquery/src/server.ts` | BigQuery MCP — read-only `bigquery_list/get/search` (METADATA only); `src/tools.ts` exports `BIGQUERY_TOOL_NAMES` + `registerBigqueryTools`; mints token via gcloud, calls BigQuery REST metadata endpoints; **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** (Tier-3 differentiator) |
-| `packages/gateway/src/connectors/_lib/aws-cli.ts` | Shared AWS-CLI helper — `awsCredentialsExtra(ctx)` (reads `aws.*` creds → scoped env or null) + `awsCliJson(ctx, args)` (spawns `aws <args> --output json` with the cred env, I1); reused by aws-sync + athena-sync (SageMaker/CloudWatch next) |
-| `packages/gateway/src/connectors/athena-sync.ts` | Athena catalogs/databases/tables METADATA (Tier-3, no-row-data) — **reuses `aws.*` creds** (no own vault key) via `_lib/aws-cli.ts`; walks `aws athena list-data-catalogs`→`list-databases`→`list-table-metadata` (injectable `runAwsCli`); emits `athena:table`; cursor `{ pass }`; `ensureAthenaMcpRunning` → phase3 bundle |
-| `packages/gateway/src/connectors/athena-table-mapping.ts` | Pure Athena table → `IndexedItem`; `external_id` = `<catalog>/<database>.<tableName>`; column names/types + partition keys + parameters + timestamps only (NO row data); defensive ISO/epoch-seconds timestamp parse |
-| `packages/mcp-connectors/athena/src/server.ts` | Athena MCP — read-only `athena_list/get/search` (METADATA only); `src/tools.ts` exports `ATHENA_TOOL_NAMES` + `registerAthenaTools`; shells `aws athena list-*`/`get-table-metadata` (reads AWS_* from env); **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** (Tier-3 differentiator) |
-| `packages/gateway/src/connectors/cloudwatch-sync.ts` | CloudWatch Logs log-GROUP METADATA (Tier-3, no-row-data) — **reuses `aws.*` creds** (no own vault key) via `_lib/aws-cli.ts`; walks `aws logs describe-log-groups` + per-group best-effort `describe-log-streams` peek (stream COUNT + last-event ts, NEVER events); injectable `runAwsCli`; emits `cloudwatch:log_group`; cursor `{ pass }`; `ensureCloudwatchMcpRunning` → phase3 bundle |
-| `packages/gateway/src/connectors/cloudwatch-log-group-mapping.ts` | Pure CloudWatch log group → `IndexedItem`; `external_id` = `arn ?? logGroupName`; retention/storedBytes/metricFilterCount/streamCount/timestamps only (NO log-event messages); epoch-MILLIS timestamp parse |
-| `packages/mcp-connectors/cloudwatch/src/server.ts` | CloudWatch MCP — read-only `cloudwatch_list/get/search` (METADATA only); `src/tools.ts` exports `CLOUDWATCH_TOOL_NAMES` + `registerCloudwatchTools`; shells `aws logs describe-*` (reads AWS_* from env); **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** (`event`/`events` segments now denylisted) |
-| `packages/gateway/src/connectors/sagemaker-sync.ts` | SageMaker model-REGISTRY METADATA (Tier-3, no-row-data) — **reuses `aws.*` creds** (no own vault key) via `_lib/aws-cli.ts`; walks `aws sagemaker list-models` + per-model page-capped best-effort `describe-model` (container image, model-data S3 URL POINTER, execution role — NEVER inference/training/artifact bytes); injectable `runAwsCli`; emits `sagemaker:model`; cursor `{ pass }` (`nimbus-sm1:`); `ensureSagemakerMcpRunning` → phase3 bundle; the `describe-model` `<name>` argv is flag-smuggle-guarded inline (a `-`-prefixed list-models name is mapped but never described) |
-| `packages/gateway/src/connectors/sagemaker-model-mapping.ts` | Pure SageMaker model → `IndexedItem`; `external_id` = `ModelArn ?? ModelName`; modelName/modelArn/containerImage/modelDataUrl (pointer URI, not bytes)/executionRoleArn/creationTime only (NO inference/training data); ISO-or-epoch-SECONDS timestamp parse |
-| `packages/mcp-connectors/sagemaker/src/server.ts` | SageMaker MCP — read-only `sagemaker_list/get/search` (METADATA only); `src/tools.ts` exports `SAGEMAKER_TOOL_NAMES` + `registerSagemakerTools` + the `cliArg` (`isSafeCliArg` refine) flag-smuggle guard; shells `aws sagemaker list-models`/`describe-model` (reads AWS_* from env); NEVER `sagemaker-runtime invoke-endpoint`; **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** + asserts `cliArg` rejects a `-`-prefixed model name |
-| `packages/gateway/src/connectors/cloud-logging-sync.ts` | GCP Cloud Logging routing-SINK config METADATA (Tier-3, no-row-data) — **reuses `gcp.*` creds** (no own vault key); shells `gcloud logging sinks list --project <p> --format json` directly (native CLI, no token-mint) via injectable `runGcloud`; single-pass over the JSON-array result (`MAX_SINKS=500`); emits `cloud_logging:sink`; cursor `{ pass }` (`nimbus-gcplog1:`); `ensureCloudLoggingMcpRunning` → phase3 bundle |
-| `packages/gateway/src/connectors/cloud-logging-sink-mapping.ts` | Pure Cloud Logging sink → `IndexedItem`; `external_id` = `<project>/<sinkName>`; name/destination/filter/description/disabled/timestamps only (NO log entries); RFC3339 ISO `parseIsoMs`; url/canonical_url null |
-| `packages/mcp-connectors/cloud-logging/src/server.ts` | Cloud Logging MCP — read-only `cloud_logging_list/get/search` (METADATA only); `src/tools.ts` exports `CLOUD_LOGGING_TOOL_NAMES` + `registerCloudLoggingTools`; shells `gcloud logging sinks list/describe` (reads GOOGLE_* from env); **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** (NEVER `gcloud logging read`/`entries list`) |
-| `packages/gateway/src/connectors/vertex-ai-sync.ts` | GCP Vertex AI model-REGISTRY METADATA (Tier-3, no-row-data) — **reuses `gcp.*` creds** (no own vault key) + OPTIONAL non-secret `gcp.region` (default `us-central1`, inline flag-guarded); shells `gcloud ai models list --region <r> --project <p> --format json` directly (native CLI, no token-mint) via injectable `runGcloud(credPath, project, region)`; single-pass over the JSON-array result (`MAX_MODELS=500`); emits `vertex_ai:model`; cursor `{ pass }` (`nimbus-vertex1:`); `ensureVertexAiMcpRunning` → phase3 bundle; NEVER `endpoints predict`/`explain`/`raw-predict` |
-| `packages/gateway/src/connectors/vertex-ai-model-mapping.ts` | Pure Vertex AI model → `IndexedItem`; `external_id` = model resource `name` (`projects/.../models/<id>`; fallback `<region>/<displayName>`); title = `displayName` (fallback id segment of `name`); modelName/displayName/versionId/region/timestamps only (NO predictions); RFC3339 ISO `parseIsoMs`; url/canonical_url null |
-| `packages/mcp-connectors/vertex-ai/src/server.ts` | Vertex AI MCP — read-only `vertex_ai_list/get/search` (METADATA only); `src/tools.ts` exports `VERTEX_AI_TOOL_NAMES` + `registerVertexAiTools` + the `cliArg` (`isSafeCliArg` refine) guard on BOTH region + modelId; shells `gcloud ai models list/describe --region <r>` (reads GOOGLE_*/`VERTEX_AI_REGION` from env); **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** + asserts `cliArg` rejects a `-`-prefixed value |
-| `packages/gateway/src/connectors/elasticsearch-sync.ts` | Elasticsearch / Kibana index METADATA (Tier-3, no-row-data) — **own per-tenant `elasticsearch.url` + `elasticsearch.api_key`** (`Authorization: ApiKey`, NOT cloud-cred-reuse, REST via `connectorFetch` — the Dependency-Track host shape); walks `_cat/indices?format=json&bytes=b` (`MAX_INDICES=500`, skips `.`-prefixed system indices) → per-index `_mapping` (`MAX_INDEX_DETAIL=200`); emits `elasticsearch:index`; cursor `{ pass }` (`nimbus-es1:`); `ensureElasticsearchMcpRunning` → phase3 bundle; NEVER `_search`/`_doc`/`_sql`/`_scroll` |
-| `packages/gateway/src/connectors/elasticsearch-index-mapping.ts` | Pure Elasticsearch index → `IndexedItem`; `external_id` = index name; index name/health/status/doc COUNT/store-size-bytes/shard+replica counts/uuid + field names/types only (NO document contents); `flattenMappingFields` flattens nested `properties` to dotted paths; `modifiedAt` = syncedAt; url/canonical_url null |
-| `packages/mcp-connectors/elasticsearch/src/server.ts` | Elasticsearch MCP — read-only `elasticsearch_list/get/search` (METADATA only; `search` is over index NAMES, NOT documents); `src/tools.ts` exports `ELASTICSEARCH_TOOL_NAMES` + `registerElasticsearchTools`; reads `ELASTICSEARCH_URL` + `ELASTICSEARCH_API_KEY` from env; `encodeURIComponent`s the index name in the `_mapping` URL path; **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** |
-| `packages/gateway/src/connectors/great-expectations-sync.ts` | Great Expectations validation-result METADATA (Tier-3, no-row-data, **no network, no live creds**) — reads `great_expectations.results_dir` (non-secret PATH; own key but filesystem-read), recursively walks `*.json` GX validation-result artefacts (`MAX_FILES`/size/depth caps; bad files skipped) and upserts one `great_expectations:data_quality_test` per `results[]` entry; cursor `{ pass }` (`nimbus-gx1:`); `ensureGreatExpectationsMcpRunning` → phase3 bundle |
-| `packages/gateway/src/connectors/great-expectations-result-mapping.ts` | Pure GX `results[]` entry → `IndexedItem`; **the no-row-data stripping site** — copies ONLY aggregate scalars (scalar `observed_value`, `element_count`, `unexpected_count`, `unexpected_percent`, `success_percent`) and NEVER reads `unexpected_list`/`partial_unexpected_list`/`partial_unexpected_index_list`/`unexpected_index_list`/`partial_unexpected_counts`; array/object `observed_value` dropped; `external_id` = `<suite>::<batch>::<expectationType>::<column ?? "_">`; ISO `parseIsoMs`; url/canonical_url null |
-| `packages/mcp-connectors/great-expectations/src/server.ts` | Great Expectations MCP — read-only `great_expectations_list/get/search` (METADATA only); `src/tools.ts` exports `GREAT_EXPECTATIONS_TOOL_NAMES`; `src/gx-parse.ts` reads JSON artefacts under `GREAT_EXPECTATIONS_RESULTS_DIR` applying the SAME no-row-data stripping + a path-traversal guard (`assertWithinResultsDir` rejects `..`/absolute escapes); **`test/no-row-data.test.ts` calls `assertNoRowDataTools`** + a parser test proving sample-list PII never leaks |
-| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards sync scheduler against offline backoff |
+| `packages/gateway/src/connectors/_lib/` | Shared sync helpers — `fetch-outcome.ts` (`connectorFetch`: rate-limit + fetch + bytes + parse), `aws-cli.ts` (`awsCliJson` cred-scoped spawn, I1), `pagination.ts`, `http.ts`, `item-builder.ts`, `auth.ts`, `rate-limit-observer.ts` |
+| `packages/gateway/src/sync/connectivity.ts` | Network connectivity probe — guards the sync scheduler against offline backoff |
+
+### Deviating connectors (by class)
+
+Everything else follows the standard triple. These break from it in a way worth knowing **before** you edit — open the named files for specifics.
+
+| Class | Connectors | What's special |
+|---|---|---|
+| **3-legged OAuth via registry** | hubspot, miro, canva, figma, salesforce, zoom | Auth flows through `OAUTH_PROVIDERS` (`auth/oauth-registry.ts`), not a static PAT. Salesforce carries a per-tenant `instance_url`; zoom also emits `zoom:transcript` (`zoom-transcript-mapping.ts` + `vttToPlainText`). |
+| **OAuth sub-service** | google-meet | Extends the existing `google` provider (NOT a new `OAuthProvider`); reads `getValidGoogleAccessToken(vault, "google_meet")`; rides the shared google bundle spawn slot. |
+| **Tier-3 metadata-only, reuses cloud creds** | bigquery · cloud-logging · vertex-ai (reuse `gcp.*`) · athena · cloudwatch · sagemaker (reuse `aws.*` via `_lib/aws-cli.ts`) | No own vault key. **METADATA only** — schema/counts/config, never row/log/inference data. Each `mcp-connectors/<x>/test/no-row-data.test.ts` calls `assertNoRowDataTools`; server `src/tools.ts` exports `<X>_TOOL_NAMES` + a `cliArg` flag-smuggle guard where it shells out. |
+| **Tier-3 metadata-only, own per-tenant key** | elasticsearch (`elasticsearch.url` + `.api_key`, REST via `connectorFetch`) · great-expectations (`great_expectations.results_dir`, filesystem-read, no network/creds) | Own key but still no-row-data (same `assertNoRowDataTools` gate). great-expectations' mapper is the strip site — copies aggregate scalars only, never the `unexpected_*` sample lists. |
+| **Read connector with a HITL write tool** | obsidian | Emits `obsidian_note` + `backlinks` edges; the MCP server also exposes the HITL-gated `obsidian_append_to_daily_note`. |
 
 ## Local Index + Migrations + DB
 

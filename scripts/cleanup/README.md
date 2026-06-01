@@ -1,8 +1,8 @@
 # `scripts/cleanup/` — on-demand code-hygiene tools
 
 One-off, developer-invoked analysis tools created for the **monorepo cleanup
-pass** initiative (see
-[`docs/superpowers/plans/2026-05-28-monorepo-cleanup-pass.md`](../../docs/superpowers/plans/2026-05-28-monorepo-cleanup-pass.md)).
+pass** initiative (shipped 2026-05; the driving plan/spec docs have since been
+removed — see `git log` under `docs/superpowers/` for the history).
 
 These are **not** wired into `package.json`, the preflight gate manifest, or CI
 — they are run by hand when doing a cleanup sweep, and most print a report to
