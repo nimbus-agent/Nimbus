@@ -2,6 +2,8 @@ import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 
 import { Config } from "../config.ts";
+import type { LlmRouter } from "../llm/router.ts";
+import type { LlmGenerateResult } from "../llm/types.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
 
@@ -11,11 +13,13 @@ const conversationalLog = pino({
 });
 
 export type RunConversationalAgentParams = {
-  agent: Agent;
+  agent?: Agent;
+  llmRouter?: LlmRouter;
   input: string;
   stream: boolean;
   sendChunk: (text: string) => void;
   priorTurns?: ReadonlyArray<{ role: "user" | "assistant" | "tool"; text: string }>;
+  localContext?: string;
 };
 
 function isTextDeltaChunk(chunk: unknown): chunk is {
@@ -37,9 +41,19 @@ function isTextDeltaChunk(chunk: unknown): chunk is {
   return typeof text === "string";
 }
 
+function shouldUseLocalRouter(p: RunConversationalAgentParams): boolean {
+  if (p.llmRouter === undefined) {
+    return false;
+  }
+  if (p.agent === undefined) {
+    return true;
+  }
+  return p.llmRouter.prefersLocal();
+}
+
 export async function runConversationalAgent(
   p: RunConversationalAgentParams,
-): Promise<{ reply: string }> {
+): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
   const maxSteps = Config.conversationalAgentMaxSteps;
   const trimmed = p.input.trim();
   if (trimmed === "") {
@@ -58,17 +72,51 @@ export async function runConversationalAgent(
   const prompt = incidentOrGraph
     ? `The user may be asking about relationships between indexed items (including incidents). If you have a concrete item id from searchLocalIndex, call traverseGraph before answering.\n\n${trimmed}`
     : trimmed;
+  const promptWithContext =
+    p.localContext === undefined || p.localContext.trim() === ""
+      ? prompt
+      : `${p.localContext.trim()}\n\nUser question:\n${prompt}`;
 
   const priorTurns = p.priorTurns ?? [];
   const promptArg: string | Array<{ role: "user" | "assistant" | "tool"; content: string }> =
     priorTurns.length > 0
       ? [
           ...priorTurns.map((t) => ({ role: t.role, content: t.text })),
-          { role: "user" as const, content: prompt },
+          { role: "user" as const, content: promptWithContext },
         ]
-      : prompt;
+      : promptWithContext;
 
   try {
+    const llmRouter = p.llmRouter;
+    if (llmRouter !== undefined && shouldUseLocalRouter(p)) {
+      const routerPrompt =
+        typeof promptArg === "string"
+          ? promptArg
+          : promptArg.map((m) => `${m.role}: ${m.content}`).join("\n\n");
+      try {
+        const result = await llmRouter.generate({
+          task: "agent_step",
+          prompt: routerPrompt,
+          systemPrompt:
+            "You are Nimbus, a local-first assistant. Answer from the provided indexed context when it is relevant. If the context is insufficient, say what is missing instead of inventing details.",
+          maxTokens: 2048,
+          temperature: 0.2,
+          stream: p.stream,
+          ...(p.stream ? { onToken: p.sendChunk } : {}),
+        });
+        return { reply: result.text, modelMeta: result };
+      } catch (e) {
+        if (p.agent === undefined) {
+          throw e;
+        }
+        conversationalLog.warn({ err: e }, "local LLM router failed; falling back to agent");
+      }
+    }
+
+    if (p.agent === undefined) {
+      throw new Error("No conversational agent or local LLM router configured");
+    }
+
     if (!p.stream) {
       const out = await p.agent.generate(promptArg, { maxSteps });
       return { reply: out.text };

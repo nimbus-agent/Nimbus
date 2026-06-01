@@ -1,6 +1,7 @@
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
+import type { LlmRegistry } from "../llm/registry.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/index.ts";
@@ -28,6 +29,7 @@ export interface PlatformServices {
   notifications: NotificationService;
   openUrl(url: string): Promise<void>;
   sessionMemoryStore?: SessionMemoryStore;
+  llmRegistry: LlmRegistry;
   sandboxRunner: SandboxRunner;
   disposeSidecars?: () => void;
 }

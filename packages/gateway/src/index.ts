@@ -72,6 +72,7 @@ async function main(): Promise<void> {
       localIndex: platform.localIndex,
       dispatcher,
       conversationalAgent: resolveEngineAgent(ctx.agent),
+      llmRouter: platform.llmRegistry.llmRouter,
       ...(platform.sessionMemoryStore === undefined
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),

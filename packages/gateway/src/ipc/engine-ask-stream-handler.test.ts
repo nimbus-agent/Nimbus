@@ -39,6 +39,7 @@ describe("createAskStreamHandler", () => {
       agentInvokeHandler: async (ctx) => {
         ctx.sendChunk?.("hello");
         ctx.sendChunk?.(" world");
+        return { reply: "hello world" };
       },
     };
     const handler = createAskStreamHandler(deps);
@@ -50,6 +51,39 @@ describe("createAskStreamHandler", () => {
     expect(tokens[0]?.params).toMatchObject({ streamId: "stream-test-1", text: "hello" });
     const done = notifications.find((n) => n.method === "engine.streamDone");
     expect(done).toBeDefined();
+  });
+
+  test("emits typed model metadata when handler returns it", async () => {
+    const registry = makeRegistry();
+    const notifications: { method: string; params: Record<string, unknown> }[] = [];
+    const deps: AskStreamHandlerDeps = {
+      registry,
+      randomId: () => "stream-meta-1",
+      sessionWriteNotification: (n) => notifications.push(n),
+      runWithRequestContext: async (_ctx, fn) => fn(),
+      agentInvokeHandler: async () => ({
+        reply: "ok",
+        modelMeta: {
+          text: "ok",
+          tokensIn: 3,
+          tokensOut: 1,
+          modelUsed: "local-test-model:latest",
+          isLocal: true,
+          provider: "ollama",
+        },
+      }),
+    };
+    const handler = createAskStreamHandler(deps);
+    await handler("client-1", { input: "say hi" });
+    await new Promise((r) => setTimeout(r, 10));
+    const done = notifications.find((n) => n.method === "engine.streamDone");
+    expect(done?.params["meta"]).toMatchObject({
+      modelUsed: "local-test-model:latest",
+      isLocal: true,
+      provider: "ollama",
+      tokensIn: 3,
+      tokensOut: 1,
+    });
   });
 
   test("emits engine.streamError when handler throws", async () => {
@@ -88,6 +122,7 @@ describe("createAskStreamHandler", () => {
           }
           await new Promise((r) => setTimeout(r, 1));
         }
+        return { reply: "done" };
       },
     };
     const handler = createAskStreamHandler(deps);
@@ -108,7 +143,7 @@ describe("createAskStreamHandler", () => {
       randomId: () => "stream-cleanup-1",
       sessionWriteNotification: () => undefined,
       runWithRequestContext: async (_c, fn) => fn(),
-      agentInvokeHandler: async () => undefined,
+      agentInvokeHandler: async () => ({ reply: "done" }),
     };
     const handler = createAskStreamHandler(deps);
     await handler("client-1", { input: "" });

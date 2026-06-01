@@ -130,6 +130,26 @@ describe("LocalIndex", () => {
     expect(ranked[0]?.duplicates?.includes("github")).toBe(true);
   });
 
+  test("getBodyPreview returns indexed preview by primary key", () => {
+    const idx = openMemoryIndex();
+    const db = idx.getDatabase();
+    const t = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "issue",
+      externalId: "zaalgol/helpdesk#issue-1",
+      title: "add a smoke test",
+      bodyPreview: "Create a basic smoke test for the helpdesk app.",
+      modifiedAt: t,
+      syncedAt: t,
+    });
+
+    expect(idx.getBodyPreview("github:zaalgol/helpdesk#issue-1")).toBe(
+      "Create a basic smoke test for the helpdesk app.",
+    );
+    expect(idx.getBodyPreview("github:missing")).toBeUndefined();
+  });
+
   test("search filters by service and itemType", () => {
     const idx = openMemoryIndex();
     idx.upsert({

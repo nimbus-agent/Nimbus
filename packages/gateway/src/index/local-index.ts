@@ -459,6 +459,17 @@ export class LocalIndex {
     return rows.map(rowToItem);
   }
 
+  getBodyPreview(indexPrimaryKey: string): string | undefined {
+    const row = this.db
+      .query("SELECT body_preview FROM item WHERE id = ?")
+      .get(indexPrimaryKey) as { body_preview: string | null } | null;
+    const preview = row?.body_preview;
+    if (typeof preview === "string" && preview.trim() !== "") {
+      return preview;
+    }
+    return undefined;
+  }
+
   traverseGraph(
     startRef: string,
     options?: TraverseGraphOptions,

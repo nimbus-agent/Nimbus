@@ -954,20 +954,21 @@ These subsystems are active development in Phase 4 (Presence). They extend the e
 
 ### Model Router (Local LLM)
 
-The Model Router sits between the IPC layer and the Engine. It selects the inference backend for each invocation based on task type and available models.
+The Model Router is assembled with the Gateway platform services and exposed to the Engine and the `llm.*` IPC namespace. It selects the inference backend for each invocation based on task type and available models.
 
 | Task | Default backend | Air-gapped mode |
 |---|---|---|
-| Intent classification | Local (Ollama/llama.cpp) if loaded; remote otherwise | Local only |
-| Task planning + multi-step reasoning | Remote (`claude-sonnet-4-6`) | Local (degraded) |
-| Response summarization | Remote | Local |
+| Intent classification | Remote classifier when an API key is available; local indexed-context fallback for open-ended `ask` when it is not | Local only |
+| Open-ended `nimbus ask` answers | Local (Ollama/llama.cpp) when `prefer_local = true`; remote Mastra agent otherwise | Local |
+| Task planning + multi-step actions | Remote (`claude-sonnet-4-6`) for Mastra tool use | Local indexed-context answer only |
+| Response summarization | Local if preferred; remote otherwise | Local |
 
 **Supported backends:**
 
 | Backend | Discovery | `nimbus.toml` key |
 |---|---|---|
-| Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model` (e.g. `"llama3.2"`); `prefer_local = true` to route to it |
-| llama.cpp (GGUF) | `llama-server` HTTP endpoint | `[llm].llamacpp_server_path` |
+| Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model` set to any pulled Ollama model name; `prefer_local = true` to route to it |
+| llama.cpp (GGUF) | `llama-server` HTTP endpoint, default `http://127.0.0.1:8080` | `[llm].llamacpp_server_path` |
 | Anthropic (remote) | `ANTHROPIC_API_KEY` in env | `[llm].remote_model = "claude-sonnet-4-6"` (provider inferred from `claude-*` prefix) |
 | OpenAI (remote) | `OPENAI_API_KEY` in env | `[llm].remote_model = "gpt-4o"` (provider inferred from `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix) |
 

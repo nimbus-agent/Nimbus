@@ -71,7 +71,7 @@ When changing a wiring site, update both the test and `SECURITY-INVARIANTS.md` i
 
 **PAL:** All OS-specific logic lives under `packages/gateway/src/platform/` and is accessed via `PlatformServices` — never import `win32` / `darwin` / `linux` from business logic.
 
-**Prerequisites:** Bun v1.2+; Rust for building the Tauri UI (`packages/ui/src-tauri`).
+**Prerequisites:** Bun v1.2+; Rust for building the Tauri UI (`packages/ui/src-tauri`). Local `nimbus ask` can run through Ollama on `http://127.0.0.1:11434` with `[llm].prefer_local = true` and `[llm].local_model` set to any pulled model name.
 
 ---
 

@@ -1,3 +1,5 @@
+import type { LlmGenerateResult } from "../llm/types.ts";
+
 export type AgentInvokeContext = {
   clientId: string;
   input: string;
@@ -7,4 +9,9 @@ export type AgentInvokeContext = {
   agent?: string;
 };
 
-export type AgentInvokeHandler = (ctx: AgentInvokeContext) => Promise<{ reply: string }>;
+export type AgentInvokeResult = {
+  reply: string;
+  modelMeta?: LlmGenerateResult;
+};
+
+export type AgentInvokeHandler = (ctx: AgentInvokeContext) => Promise<AgentInvokeResult>;

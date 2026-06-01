@@ -11,6 +11,7 @@ import {
   loadNimbusAutomationFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
+  loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
@@ -48,6 +49,9 @@ import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
+import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
+import { OllamaProvider } from "../llm/ollama-provider.ts";
+import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
@@ -305,6 +309,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  const llmToml = loadNimbusLlmFromPath(activeTomlPath);
   const llmTomlPartial = loadNimbusLlmPartialFromPath(activeTomlPath);
   const llmOverrides: { agentModel?: string; classifierModel?: string } = {};
   if (llmTomlPartial.remoteModel !== undefined) {
@@ -314,6 +319,21 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     llmOverrides.classifierModel = llmTomlPartial.classifierModel;
   }
   applyLlmTomlOverrides(llmOverrides);
+  const llmRegistry = new LlmRegistry({
+    db,
+    config: {
+      preferLocal: llmToml.preferLocal,
+      remoteModel: llmToml.remoteModel,
+      localModel: llmToml.localModel,
+      minReasoningParams: llmToml.minReasoningParams,
+      enforceAirGap: llmToml.enforceAirGap,
+    },
+  });
+  llmRegistry.addProvider(new OllamaProvider("http://127.0.0.1:11434", llmToml.localModel));
+  const llamacppBaseUrl = llmToml.llamacppServerPath.trim();
+  llmRegistry.addProvider(
+    new LlamaCppProvider(llamacppBaseUrl === "" ? undefined : llamacppBaseUrl, llmToml.localModel),
+  );
 
   const { localIndex, scheduleItemEmbedding, rt } = await createLocalIndexWithEmbeddingRuntime(
     db,
@@ -382,6 +402,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncScheduler,
     connectorMesh,
     sandboxRunner,
+    llmRegistry,
     ...(autoUpdateRuntime === undefined ? {} : { extensionsAutoUpdate: autoUpdateRuntime.deps }),
     ...(autoUpdateRuntime === undefined
       ? {}
@@ -450,6 +471,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     notifications,
     openUrl: openUrlInDefaultBrowser,
     sandboxRunner,
+    llmRegistry,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {

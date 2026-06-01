@@ -322,8 +322,8 @@ Gateway binaries built with `bun build --compile` bundle JavaScript into a singl
 
 | Feature | Requirement | How to install |
 |---|---|---|
-| **Local LLM (Ollama)** | [Ollama](https://ollama.com/download) running on `localhost:11434`, plus at least one pulled model (e.g. `ollama pull llama3.1:8b`) | Default endpoint: `http://127.0.0.1:11434`. Set the local model with `nimbus config set llm.local_model llama3.1:8b`. |
-| **Local LLM (llama.cpp)** | A `llama-server` HTTP endpoint reachable from the Gateway | `nimbus config set llm.llamacpp_server_path /usr/local/bin/llama-server` — see `docs/architecture.md`. |
+| **Local LLM (Ollama)** | [Ollama](https://ollama.com/download) running on `localhost:11434`, plus at least one pulled model (e.g. `ollama pull llama3.2`) | Default endpoint: `http://127.0.0.1:11434`. Set the local model with `nimbus config set llm.local_model <model>` and prefer it with `nimbus config set llm.prefer_local true`. |
+| **Local LLM (llama.cpp)** | A `llama-server` HTTP endpoint reachable from the Gateway | Default endpoint: `http://127.0.0.1:8080`; override with `nimbus config set llm.llamacpp_server_path http://127.0.0.1:8080`. |
 | **Cloud LLM (Anthropic)** | Anthropic API key | Export `ANTHROPIC_API_KEY=…` in the Gateway's environment, then `nimbus config set llm.remote_model claude-sonnet-4-6` (provider is inferred from the model id; `claude-*` → Anthropic). |
 | **Cloud LLM (OpenAI)** | OpenAI API key | Export `OPENAI_API_KEY=…`, then `nimbus config set llm.remote_model gpt-4o` (provider is inferred; `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI). |
 | **Voice — STT (`nimbus voice listen`)** | `whisper-cli` (whisper.cpp) on PATH, plus `ffmpeg` for audio capture | Build whisper.cpp from source or install via `brew install whisper-cpp`; `ffmpeg` via your distro/`brew`. Set `voice.whisper_path` if not on PATH. |
@@ -448,7 +448,7 @@ The first time the Gateway starts it creates a default `nimbus.toml` in the plat
 
 Override either with `NIMBUS_CONFIG_DIR` / `NIMBUS_DATA_DIR` if you need separate trees per profile or per environment. Most TOML keys also have a corresponding `NIMBUS_`-prefixed env var override that wins over the file (e.g. `NIMBUS_AGENT_MODEL`, `NIMBUS_CLASSIFIER_MODEL`, `NIMBUS_TELEMETRY_ENABLED`) — see [`cli-reference.md`](./cli-reference.md#environment-variables).
 
-Pick an LLM before running your first `nimbus ask` — without one, the agent has no reasoning surface. The provider is inferred from the model id: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI, anything else falls through to the local provider.
+Pick an LLM before running your first `nimbus ask` — without one, the agent has no reasoning surface. Remote model ids are inferred from the model id: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI. Local model ids are passed to Ollama or llama.cpp through `[llm].local_model`.
 
 ```bash
 # Cloud (default — fastest path to a working install).
@@ -459,8 +459,8 @@ nimbus config set llm.remote_model      claude-sonnet-4-6
 nimbus config set llm.classifier_model  claude-haiku-4-5-20251001
 
 # OR fully local (no network calls; requires Ollama running)
-ollama pull llama3.1:8b
-nimbus config set llm.local_model llama3.1:8b
+ollama pull llama3.2
+nimbus config set llm.local_model llama3.2
 nimbus config set llm.prefer_local true
 ```
 
@@ -595,7 +595,7 @@ nimbus extension list
 | **IPC** | JSON-RPC 2.0 over Domain Socket / Named Pipe — local-only, no TCP surface |
 | **CLI** | Bun + [@clack/prompts](https://github.com/natemoo-re/clack) |
 | **Desktop UI** | [Tauri 2.0](https://tauri.app) + React 19 (~5MB native shell) |
-| **LLM** | Anthropic Claude (default) / configurable via Mastra model abstraction |
+| **LLM** | Local Ollama / llama.cpp via the Nimbus router, or Anthropic/OpenAI via the Mastra agent path |
 | **Embeddings** | `@xenova/transformers` (local, no API key) / OpenAI (opt-in) |
 | **Extension SDK** | `@nimbus-dev/sdk` (MIT-licensed npm package) |
 | **Client Library** | `@nimbus-dev/client` (MIT-licensed npm package) — typed IPC wrapper; `MockClient` for scripts and extensions |

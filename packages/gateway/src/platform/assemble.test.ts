@@ -79,6 +79,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
         "[llm]",
         'remote_model = "claude-sonnet-4-6"',
         'classifier_model = "claude-haiku-4-5-20251001"',
+        'local_model = "local-test-model:latest"',
         "",
         "[openapi]",
         "enabled = true",
@@ -90,6 +91,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     expect(typeof services.vault.get).toBe("function");
     expect(typeof services.ipc.stop).toBe("function");
     expect(typeof services.localIndex).toBe("object");
+    expect(typeof services.llmRegistry.getRouterStatus).toBe("function");
     expect(typeof services.disposeSidecars).toBe("function");
     expect(await services.autostart.isEnabled()).toBe(false);
     await services.autostart.enable();

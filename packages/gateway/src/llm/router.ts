@@ -43,6 +43,10 @@ export class LlmRouter {
     this.providerMeta.set(provider.providerId, meta);
   }
 
+  prefersLocal(): boolean {
+    return this.config.preferLocal;
+  }
+
   async selectProvider(task: LlmTaskType): Promise<LlmProvider | undefined> {
     const orderedIds = this.providerPriority(task);
     for (const id of orderedIds) {

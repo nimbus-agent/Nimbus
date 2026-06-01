@@ -6,9 +6,11 @@ import type { Agent } from "@mastra/core/agent";
 
 import { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
+import type { LlmRouter } from "../llm/router.ts";
 import type { SessionChunk, SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
+import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { runAsk } from "./run-ask.ts";
 import type { ConnectorDispatcher } from "./types.ts";
 
@@ -55,6 +57,23 @@ function fakeConversationalAgent(reply = "agent reply"): Agent {
       text: Promise.resolve(reply),
     }),
   } as unknown as Agent;
+}
+
+function fakeLocalRouter(calls: string[], reply = "local reply"): LlmRouter {
+  return {
+    prefersLocal: () => true,
+    generate: async (opts: { prompt: string }) => {
+      calls.push(opts.prompt);
+      return {
+        text: reply,
+        tokensIn: 1,
+        tokensOut: 2,
+        modelUsed: "local-test-model:latest",
+        isLocal: true,
+        provider: "ollama" as const,
+      };
+    },
+  } as unknown as LlmRouter;
 }
 
 function spySessionMemoryStore(): {
@@ -164,6 +183,42 @@ describe("runAsk", () => {
     });
 
     expect(appended.length).toBe(0);
+    localIndex.close();
+  });
+
+  test("uses local LLM router when remote classifier has no API key", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:zaalgol/helpdesk#issue-1', 'github', 'issue', 'zaalgol/helpdesk#issue-1', 'add a smoke test', 'Create a basic smoke test for the helpdesk app.', 'https://github.com/zaalgol/helpdesk/issues/1', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const prompts: string[] = [];
+
+    const out = await runAsk({
+      input: "What should I do for the smoke test issue?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(prompts, "Use the GitHub issue context."),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(out.reply).toBe("Use the GitHub issue context.");
+    expect(out.modelMeta?.isLocal).toBe(true);
+    expect(prompts[0]).toContain("Indexed Nimbus context");
+    expect(prompts[0]).toContain('<tool_output service="nimbus" tool="localIndex.searchRanked">');
+    expect(prompts[0]).toContain('"service":"github"');
+    expect(prompts[0]).toContain('"indexedType":"issue"');
+    expect(prompts[0]).toContain('"title":"add a smoke test"');
+    expect(prompts[0]).toContain("Create a basic smoke test");
     localIndex.close();
   });
 });

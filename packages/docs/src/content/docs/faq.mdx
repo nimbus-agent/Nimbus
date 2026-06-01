@@ -13,7 +13,7 @@ Air-gap mode (`[llm] enforce_air_gap = true`) blocks all outbound HTTP for the d
 
 ### Can I run Nimbus offline?
 
-Yes — with a local LLM. Install Ollama or llama.cpp, configure the model in `nimbus.toml`, and Nimbus will route all inference locally. Connector sync pauses automatically while the machine is offline and resumes on reconnect without data loss. Queries against already-indexed data continue working in full during an outage. The Tauri desktop UI shows an offline banner so you always know the current network state.
+Yes — with a local LLM. Install Ollama or llama.cpp, configure `[llm].local_model` in `nimbus.toml` to any local model name you have pulled, and set `[llm].prefer_local = true`. Nimbus routes open-ended `ask` answers through the local router and can answer from already-indexed context even when no remote classifier key is configured. Connector sync pauses automatically while the machine is offline and resumes on reconnect without data loss. Queries against already-indexed data continue working in full during an outage. The Tauri desktop UI shows an offline banner so you always know the current network state.
 
 ### What's the difference between Nimbus and ChatGPT or Claude?
 

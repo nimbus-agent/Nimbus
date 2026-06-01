@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { Agent } from "@mastra/core/agent";
 
+import type { LlmRouter } from "../llm/router.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 
@@ -57,6 +58,81 @@ describe("runConversationalAgent", () => {
     });
     expect(chunks.join("")).toBe("ab");
     expect(r.reply).toBe("full");
+  });
+
+  test("local router path uses indexed context and returns model metadata", async () => {
+    const generate = mock(async (opts: { prompt: string }) => ({
+      text: "local answer",
+      tokensIn: 10,
+      tokensOut: 2,
+      modelUsed: "local-test-model:latest",
+      isLocal: true,
+      provider: "ollama" as const,
+      promptEcho: opts.prompt,
+    }));
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    const r = await runConversationalAgent({
+      llmRouter: router,
+      input: "what happened?",
+      stream: false,
+      sendChunk: () => undefined,
+      localContext: "Indexed Nimbus context:\n1. github/issue: add a smoke test",
+    });
+    expect(r.reply).toBe("local answer");
+    expect(r.modelMeta?.modelUsed).toBe("local-test-model:latest");
+    const firstCall = generate.mock.calls[0]?.[0] as { prompt?: string } | undefined;
+    expect(firstCall?.prompt).toContain("Indexed Nimbus context");
+    expect(firstCall?.prompt).toContain("what happened?");
+  });
+
+  test("local router streaming forwards provider tokens", async () => {
+    const chunks: string[] = [];
+    const generate = mock(async (opts: { onToken?: (token: string) => void }) => {
+      opts.onToken?.("hel");
+      opts.onToken?.("lo");
+      return {
+        text: "hello",
+        tokensIn: 1,
+        tokensOut: 1,
+        modelUsed: "local-test-model:latest",
+        isLocal: true,
+        provider: "ollama" as const,
+      };
+    });
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    const r = await runConversationalAgent({
+      llmRouter: router,
+      input: "say hello",
+      stream: true,
+      sendChunk: (text) => chunks.push(text),
+    });
+    expect(chunks.join("")).toBe("hello");
+    expect(r.reply).toBe("hello");
+  });
+
+  test("uses Mastra agent when local routing is not preferred", async () => {
+    const agent = {
+      generate: mock(async () => ({ text: "remote answer" })),
+    } as unknown as Agent;
+    const generate = mock(async () => ({
+      text: "local answer",
+      tokensIn: 1,
+      tokensOut: 1,
+      modelUsed: "local-test-model:latest",
+      isLocal: true,
+      provider: "ollama" as const,
+    }));
+    const router = { generate, prefersLocal: () => false } as unknown as LlmRouter;
+    const r = await runConversationalAgent({
+      agent,
+      llmRouter: router,
+      input: "hello",
+      stream: false,
+      sendChunk: () => undefined,
+    });
+    expect(r.reply).toBe("remote answer");
+    expect(generate).not.toHaveBeenCalled();
+    expect(agent.generate).toHaveBeenCalled();
   });
 
   test("maps API key errors to GatewayAgentUnavailableError", async () => {

@@ -1,3 +1,6 @@
+import type { LlmGenerateResult } from "../llm/types.ts";
+import type { AgentInvokeResult } from "./agent-invoke.ts";
+
 export type StreamNotification = {
   jsonrpc: "2.0";
   method: string;
@@ -28,7 +31,7 @@ export type AskStreamHandlerDeps = {
   randomId: () => string;
   sessionWriteNotification: (n: StreamNotification) => void;
   runWithRequestContext: <T>(ctx: RequestContextLike, fn: () => Promise<T>) => Promise<T>;
-  agentInvokeHandler: (ctx: AgentInvokeContextLike) => Promise<unknown>;
+  agentInvokeHandler: (ctx: AgentInvokeContextLike) => Promise<AgentInvokeResult>;
 };
 
 export type AskStreamParams = {
@@ -37,6 +40,16 @@ export type AskStreamParams = {
 };
 
 export type AskStreamResult = { streamId: string };
+
+function streamMetaFromModelMeta(meta: LlmGenerateResult): Record<string, unknown> {
+  return {
+    modelUsed: meta.modelUsed,
+    isLocal: meta.isLocal,
+    provider: meta.provider,
+    tokensIn: meta.tokensIn,
+    tokensOut: meta.tokensOut,
+  };
+}
 
 export function createAskStreamHandler(
   deps: AskStreamHandlerDeps,
@@ -57,6 +70,7 @@ export function createAskStreamHandler(
 
     void (async (): Promise<void> => {
       try {
+        let modelMeta: LlmGenerateResult | undefined;
         const ctx: RequestContextLike = {};
         if (params.sessionId !== undefined) ctx.sessionId = params.sessionId;
         await deps.runWithRequestContext(ctx, async () => {
@@ -68,7 +82,8 @@ export function createAskStreamHandler(
             signal: ac.signal,
           };
           if (params.sessionId !== undefined) payload.sessionId = params.sessionId;
-          await deps.agentInvokeHandler(payload);
+          const invokeResult = await deps.agentInvokeHandler(payload);
+          modelMeta = invokeResult.modelMeta;
         });
         if (ac.signal.aborted) {
           deps.sessionWriteNotification({
@@ -82,7 +97,10 @@ export function createAskStreamHandler(
             method: "engine.streamDone",
             params: {
               streamId,
-              meta: { modelUsed: "default", isLocal: false, provider: "remote" },
+              meta:
+                modelMeta === undefined
+                  ? { modelUsed: "default", isLocal: false, provider: "remote" }
+                  : streamMetaFromModelMeta(modelMeta),
             },
           });
         }

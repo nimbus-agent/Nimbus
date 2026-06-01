@@ -299,6 +299,7 @@ NIMBUS_DEV_UPDATER_PUBLIC_KEY=<base64> # override embedded Ed25519 public key (t
 Resolution priority: env > `[llm]` TOML > hardcoded default.
 Bare model ids work; the engine auto-prefixes for Mastra (`claude-*` → `anthropic/...`, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → `openai/...`).
 
+Local model ids are passed to the local router. With Ollama running on `http://127.0.0.1:11434`, set `[llm].local_model` to any pulled model name and `[llm].prefer_local = true`; `nimbus ask` can then answer open-ended questions from indexed context even when no remote classifier key is configured.
 ```
 NIMBUS_AGENT_MODEL=claude-sonnet-4-6                # overrides [llm].remote_model       (Mastra agent)
 NIMBUS_CLASSIFIER_MODEL=claude-haiku-4-5-20251001   # overrides [llm].classifier_model   (Anthropic intent classifier)

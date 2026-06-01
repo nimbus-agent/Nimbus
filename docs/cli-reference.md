@@ -71,6 +71,8 @@ nimbus status --json
 
 Ask the agent a natural-language question or give it a task. The agent answers from the local index; it only calls live APIs when freshness is required. Any destructive or outgoing action requires HITL consent before it executes.
 
+If `[llm].prefer_local = true` and a local provider is available, `nimbus ask` routes open-ended conversational answers through the local model. With Ollama, set `[llm].local_model` to any pulled model name; if no remote classifier API key is configured, Nimbus falls back to local indexed-context answering instead of failing before the local model can run.
+
 ```bash
 nimbus ask "Find all PDFs I received last month that I haven't opened"
 nimbus ask "Which of my open PRs mention payment-service and have failing CI?"
@@ -699,6 +701,8 @@ nimbus config set sync.intervalSeconds 300
 nimbus config set telemetry.enabled false
 nimbus config set llm.remote_model      claude-sonnet-4-6
 nimbus config set llm.classifier_model  claude-haiku-4-5-20251001
+nimbus config set llm.local_model       llama3.2
+nimbus config set llm.prefer_local      true
 ```
 
 The provider is inferred from the model id: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI. Already-prefixed forms (`anthropic/...`, `openai/...`) are accepted as-is.
@@ -757,8 +761,8 @@ remote_model       = "claude-sonnet-4-6"
 classifier_model   = "claude-haiku-4-5-20251001"
 # Local-LLM routing (Phase 4 LLM router).
 prefer_local       = true
-local_model        = "llama3.2"
-# llamacpp_server_path = "/usr/local/bin/llama-server"
+local_model        = "llama3.2" # Any pulled Ollama model name
+# llamacpp_server_path = "http://127.0.0.1:8080"
 # enforce_air_gap   = false
 # max_agent_depth   = 3              # 1–10
 # max_tool_calls_per_session = 20    # 1–200
