@@ -71,6 +71,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "bigquery",
   "athena",
   "cloudwatch",
+  "sagemaker",
   "cloud_logging",
   "elasticsearch",
 ] as const;
@@ -169,6 +170,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   bigquery: MIN10,
   athena: MIN10,
   cloudwatch: MIN10,
+  sagemaker: MIN10,
   cloud_logging: MIN10,
   elasticsearch: MIN10,
 };
@@ -253,6 +255,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate Athena credential",
   cloudwatch:
     "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate CloudWatch credential",
+  sagemaker:
+    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate SageMaker credential",
   cloud_logging:
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Cloud Logging credential",
   elasticsearch: "uses an Elasticsearch API key + cluster URL (connector.auth elasticsearch)",

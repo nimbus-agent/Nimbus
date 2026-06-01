@@ -84,6 +84,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // — via the aws CLI. It has no CloudWatch-specific vault secret, so its own key
   // list is intentionally empty.
   cloudwatch: [],
+  // SageMaker (Tier-3 no-row-data ML registry) reuses the existing AWS credentials —
+  // `aws.access_key_id` + `aws.secret_access_key` + `aws.default_region`/`aws.profile`
+  // — via the aws CLI. It has no SageMaker-specific vault secret, so its own key
+  // list is intentionally empty.
+  sagemaker: [],
   // Cloud Logging (Tier-3 no-row-data logging) reuses the existing GCP credentials —
   // `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud CLI. It has no
   // Cloud-Logging-specific vault secret, so its own key list is intentionally empty.

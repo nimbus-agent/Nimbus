@@ -56,6 +56,7 @@ import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
+import { createSagemakerSyncable } from "../connectors/sagemaker-sync.ts";
 import { createSalesforceSyncable } from "../connectors/salesforce-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
@@ -216,6 +217,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createCloudwatchSyncable({
       ensureCloudwatchMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSagemakerSyncable({
+      ensureSagemakerMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

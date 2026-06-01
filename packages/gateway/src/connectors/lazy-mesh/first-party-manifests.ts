@@ -153,6 +153,17 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["sts.amazonaws.com"],
     filesystem: { read: [], write: [] },
   }),
+  // SageMaker (Tier-3, metadata-only). Execs the `aws` CLI (which talks to the
+  // regional `api.sagemaker.<region>.amazonaws.com` endpoint + sts.amazonaws.com
+  // for credential resolution). The regional SageMaker host is a concrete RFC-1123
+  // hostname added per-region at spawn via manifestWithExtraNetworkHosts (the
+  // validator rejects the `api.sagemaker.*.amazonaws.com` wildcard, like Athena).
+  // Mirrors the aws manifest's empty filesystem shape (the sandbox permits exec of
+  // the wrapped `aws` command itself).
+  sagemaker: baseManifest("com.nimbus.sagemaker", {
+    network: ["sts.amazonaws.com"],
+    filesystem: { read: [], write: [] },
+  }),
   // Cloud Logging (Tier-3, metadata-only). Execs the `gcloud` CLI, which talks to
   // the Cloud Logging API to list routing SINK config metadata (NEVER log entries).
   // Mirrors the bigquery manifest's GCP network shape (logging.googleapis.com for

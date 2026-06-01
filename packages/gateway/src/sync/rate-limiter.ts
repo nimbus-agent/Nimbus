@@ -65,6 +65,7 @@ export type Provider =
   | "bigquery"
   | "athena"
   | "cloudwatch"
+  | "sagemaker"
   | "cloud_logging";
 
 export interface ProviderQuota {
@@ -139,6 +140,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   bigquery: { requestsPerMinute: 40, burstSize: 8 },
   athena: { requestsPerMinute: 40, burstSize: 8 },
   cloudwatch: { requestsPerMinute: 40, burstSize: 8 },
+  sagemaker: { requestsPerMinute: 40, burstSize: 8 },
   cloud_logging: { requestsPerMinute: 40, burstSize: 8 },
 };
 

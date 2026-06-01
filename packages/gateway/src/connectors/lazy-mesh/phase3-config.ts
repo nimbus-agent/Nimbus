@@ -217,6 +217,54 @@ export async function phase3AddCloudwatchMcp(
   );
 }
 
+export async function phase3AddSagemakerMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials —
+  // mirror phase3AddCloudwatchMcp's inline cred reads.
+  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
+  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
+  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
+  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
+  const awsOk =
+    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
+  if (!awsOk) {
+    return;
+  }
+  const extra: Record<string, string> = {};
+  if (ak !== "") {
+    extra["AWS_ACCESS_KEY_ID"] = ak;
+  }
+  if (sk !== "") {
+    extra["AWS_SECRET_ACCESS_KEY"] = sk;
+  }
+  if (reg !== "") {
+    extra["AWS_DEFAULT_REGION"] = reg;
+  }
+  if (prof !== "") {
+    extra["AWS_PROFILE"] = prof;
+  }
+  // Add the regional SageMaker endpoint host for the configured region — the
+  // RFC-1123 validator rejects the `api.sagemaker.*.amazonaws.com` wildcard, so
+  // the concrete per-region host is added here (sts.amazonaws.com is the fixed
+  // base).
+  const sagemakerManifest = manifestWithExtraNetworkHosts(
+    "sagemaker",
+    reg === "" ? [] : [`api.sagemaker.${reg}.amazonaws.com`],
+  );
+  servers["sagemaker"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("sagemaker")],
+      env: extensionProcessEnv(extra),
+    },
+    sagemakerManifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddCloudLoggingMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1160,6 +1208,7 @@ export async function buildPhase3Servers(
   await phase3AddBigqueryMcp(vault, servers, sandboxCwd);
   await phase3AddAthenaMcp(vault, servers, sandboxCwd);
   await phase3AddCloudwatchMcp(vault, servers, sandboxCwd);
+  await phase3AddSagemakerMcp(vault, servers, sandboxCwd);
   await phase3AddCloudLoggingMcp(vault, servers, sandboxCwd);
   await phase3AddIacMcp(vault, servers, sandboxCwd);
   await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
