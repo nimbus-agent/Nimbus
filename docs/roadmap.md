@@ -186,8 +186,8 @@ Commercial license also available now for organizations that need to embed Nimbu
 ##### Extension ecosystem
 
 - [x] **Extension Registry v1** — `nimbus.extension.json`; manifest **and** entry-point SHA-256 on startup; scaffold + install/list/enable/disable/remove; tarball / URL / local path; see `docs/contributors/extension-author-walkthrough.md`
-- [ ] **Extension sandbox hardening** — full syscall/network isolation → **Phase 5** (process + scoped env today)
-- [ ] **Extension Marketplace** — **Phase 4** (Tauri)
+- [x] **Extension sandbox hardening** — full syscall/network isolation; **shipped in Phase 5 T2 as invariant I15** (per-OS sandbox runner under `packages/gateway/src/platform/sandbox/`, wired via `wrapServerSpec`)
+- [x] **Extension Marketplace** — **shipped in Phase 4** as the WS5-D Marketplace panel (list / install-from-directory / enable / disable / remove); see the Desktop Application section under Phase 4
 
 ##### CI/CD and infrastructure MCP connectors
 
@@ -268,7 +268,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 - [x] **`nimbus query`** — structured filters, `--since` / `--until`, `--sql` read-only guard, `--json` / `--pretty` (`packages/cli/src/commands/query.ts`)
 - [x] **Read-only local HTTP API** — `nimbus serve`; `GET /v1/items`, `/v1/items/:id`, `/v1/people`, `/v1/people/:id`, `/v1/connectors`, `/v1/audit`, `/v1/health` (`packages/gateway/src/ipc/http-server.ts`); item list filters share SQL with IPC via `packages/gateway/src/index/item-list-query.ts`
 - [x] **`@nimbus-dev/client`** — typed IPC wrapper + `MockClient` (`packages/client/`); publish automation on tag `client-v*` (`.github/workflows/publish-client.yml`)
-- [x] **Dual CJS + ESM publish shape** — `dist/index.js` (tsc ESM) + `dist/index.cjs` (bundled `require`); `exports` exposes both *[ ] first npm publish — manual sign-off (`client-v*` tag + `NPM_TOKEN`)*
+- [x] **Dual CJS + ESM publish shape** — `dist/index.js` (tsc ESM) + `dist/index.cjs` (bundled `require`); `exports` exposes both; first npm publish signed off at the `client-v0.1.0` tag (`client-v*` workflow + `NPM_TOKEN`)
 
 **Configuration**
 
