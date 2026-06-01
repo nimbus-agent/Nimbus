@@ -1046,6 +1046,29 @@ export async function phase3AddDependencytrackMcp(
   );
 }
 
+export async function phase3AddElasticsearchMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "elasticsearch", "url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "elasticsearch", "api_key"))?.trim() ?? "";
+  if (url === "" || apiKey === "") {
+    return;
+  }
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("elasticsearch", host === null ? [] : [host]);
+  servers["elasticsearch"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("elasticsearch")],
+      env: extensionProcessEnv({ ELASTICSEARCH_URL: url, ELASTICSEARCH_API_KEY: apiKey }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddAirflowMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1171,6 +1194,7 @@ export async function buildPhase3Servers(
   await phase3AddStackoverflowMcp(vault, servers, sandboxCwd);
   await phase3AddZoteroMcp(vault, servers, sandboxCwd);
   await phase3AddDependencytrackMcp(vault, servers, sandboxCwd);
+  await phase3AddElasticsearchMcp(vault, servers, sandboxCwd);
   await phase3AddAirflowMcp(vault, servers, sandboxCwd);
   await phase3AddPrefectMcp(vault, servers, sandboxCwd);
   await phase3AddDagsterMcp(vault, servers, sandboxCwd);

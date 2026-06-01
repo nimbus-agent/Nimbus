@@ -321,6 +321,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  elasticsearch: baseManifest("com.nimbus.elasticsearch", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   airflow: baseManifest("com.nimbus.airflow", {
     network: [],
     filesystem: { read: [], write: [] },

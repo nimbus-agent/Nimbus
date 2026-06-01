@@ -59,6 +59,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   stackoverflow: ["stackoverflow.token", "stackoverflow.team"],
   zotero: ["zotero.api_key", "zotero.library"],
   dependencytrack: ["dependencytrack.base_url", "dependencytrack.api_key"],
+  elasticsearch: ["elasticsearch.url", "elasticsearch.api_key"],
   airflow: ["airflow.base_url", "airflow.username", "airflow.password"],
   prefect: ["prefect.api_url", "prefect.api_key"],
   dagster: ["dagster.base_url", "dagster.api_token"],

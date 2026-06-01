@@ -13,6 +13,7 @@ import {
   phase3AddDatadogMcp,
   phase3AddDbtMcp,
   phase3AddDependencytrackMcp,
+  phase3AddElasticsearchMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
@@ -1538,6 +1539,67 @@ describe("phase3AddDependencytrackMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["DEPENDENCYTRACK_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddElasticsearchMcp", () => {
+  test("no-op without elasticsearch.url + elasticsearch.api_key", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["elasticsearch"]).toBeUndefined();
+  });
+
+  test("no-op when only elasticsearch.url is set (api_key missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("elasticsearch.url", "https://es.example.com:9243");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["elasticsearch"]).toBeUndefined();
+  });
+
+  test("no-op when only elasticsearch.api_key is set (url missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("elasticsearch.api_key", "es-key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["elasticsearch"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("elasticsearch.url", "   ");
+    await vault.set("elasticsearch.api_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["elasticsearch"]).toBeUndefined();
+  });
+
+  test("spawns with ELASTICSEARCH_URL/ELASTICSEARCH_API_KEY env + parsed host in manifest network list", async () => {
+    const vault = createMockVault();
+    await vault.set("elasticsearch.url", "https://my-cluster.es.example.com:9243");
+    await vault.set("elasticsearch.api_key", "es-key-test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["elasticsearch"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "my-cluster.es.example.com");
+    expect(spec.env?.["ELASTICSEARCH_URL"]).toBe("https://my-cluster.es.example.com:9243");
+    expect(spec.env?.["ELASTICSEARCH_API_KEY"]).toBe("es-key-test");
+  });
+
+  test("spawns even when elasticsearch.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("elasticsearch.url", "not a url");
+    await vault.set("elasticsearch.api_key", "k");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddElasticsearchMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["elasticsearch"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["ELASTICSEARCH_URL"]).toBe("not a url");
   });
 });
 

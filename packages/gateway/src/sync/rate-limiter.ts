@@ -51,6 +51,7 @@ export type Provider =
   | "stackoverflow"
   | "zotero"
   | "dependencytrack"
+  | "elasticsearch"
   | "airflow"
   | "prefect"
   | "dagster"
@@ -124,6 +125,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   stackoverflow: { requestsPerMinute: 60, burstSize: 10 },
   zotero: { requestsPerMinute: 60, burstSize: 10 },
   dependencytrack: { requestsPerMinute: 60, burstSize: 10 },
+  elasticsearch: { requestsPerMinute: 60, burstSize: 10 },
   airflow: { requestsPerMinute: 60, burstSize: 10 },
   prefect: { requestsPerMinute: 60, burstSize: 10 },
   dagster: { requestsPerMinute: 60, burstSize: 10 },

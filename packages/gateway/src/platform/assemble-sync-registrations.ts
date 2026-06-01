@@ -17,6 +17,7 @@ import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
 import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDependencytrackSyncable } from "../connectors/dependencytrack-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
+import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -415,6 +416,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createDependencytrackSyncable({
       ensureDependencytrackMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createElasticsearchSyncable({
+      ensureElasticsearchMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

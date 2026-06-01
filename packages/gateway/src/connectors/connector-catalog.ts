@@ -72,6 +72,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "athena",
   "cloudwatch",
   "cloud_logging",
+  "elasticsearch",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -169,6 +170,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   athena: MIN10,
   cloudwatch: MIN10,
   cloud_logging: MIN10,
+  elasticsearch: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -253,6 +255,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate CloudWatch credential",
   cloud_logging:
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Cloud Logging credential",
+  elasticsearch: "uses an Elasticsearch API key + cluster URL (connector.auth elasticsearch)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
