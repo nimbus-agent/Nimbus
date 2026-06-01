@@ -12,8 +12,10 @@ rules, drop capabilities, and `execv` the connector inside `bwrap`.
   `cap_net_admin` is in permitted set. Otherwise print reason and exit 1.
   Used by the Gateway startup probe.
 
-- `nimbus-sandbox-helper --allow <host> [--allow <host> ...] -- <argv...>`
-  — enforce-and-exec mode (lands in Plan Task 6).
+- `nimbus-sandbox-helper --allow <host[:port]> [--allow <host[:port]> ...] -- <argv...>`
+  — enforce-and-exec mode. A bare host opens TCP/443; an explicit `host:port`
+  (e.g. `imap.example.com:993`) opens that TCP port instead — used by the email
+  (IMAP/SMTP) connector class.
 
 ## Design
 

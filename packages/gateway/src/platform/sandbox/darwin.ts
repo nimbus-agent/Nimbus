@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { parseNetworkEntry } from "../../extensions/permissions-validator.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
 interface SbplOpts {
@@ -42,7 +43,10 @@ export function generateSbplProfile(opts: SbplOpts): string {
   if (hosts.length > 0) {
     lines.push(
       "(allow network*",
-      ...hosts.map((h) => `  (remote tcp "*:443" (host "${h}"))`),
+      ...hosts.map((h) => {
+        const { host, port } = parseNetworkEntry(h);
+        return `  (remote tcp "*:${port}" (host "${host}"))`;
+      }),
       `  (remote udp "*:53")`,
       ")",
     );
