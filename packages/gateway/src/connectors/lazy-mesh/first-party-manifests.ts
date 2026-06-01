@@ -173,6 +173,18 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["logging.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Vertex AI (Tier-3, metadata-only). Execs the `gcloud` CLI, which talks to the
+  // regional `<region>-aiplatform.googleapis.com` endpoint to list Vertex AI model
+  // REGISTRY metadata (NEVER inference / predictions). The per-region host is a
+  // concrete RFC-1123 hostname added at spawn via manifestWithExtraNetworkHosts (the
+  // validator rejects a `*-aiplatform.googleapis.com` wildcard, like Athena's regional
+  // host). The base aiplatform.googleapis.com host + oauth2/www.googleapis.com cover
+  // credential resolution + discovery. Empty filesystem shape (the sandbox permits
+  // exec of the wrapped `gcloud` command itself).
+  vertex_ai: baseManifest("com.nimbus.vertex-ai", {
+    network: ["aiplatform.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
   iac: baseManifest("com.nimbus.iac", DEFAULT_DENY),
 
   grafana: baseManifest("com.nimbus.grafana", {

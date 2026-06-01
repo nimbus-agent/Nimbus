@@ -14,6 +14,29 @@ function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSp
   return wrapServerSpec(spec, manifestForFirstParty(serviceId), sandboxCwd);
 }
 
+// Vertex AI is regional; this is the default when the optional `gcp.region`
+// config key is unset.
+const VERTEX_AI_DEFAULT_REGION = "us-central1";
+
+/**
+ * Inline argv flag-smuggling guard for the optional Vertex AI region before it
+ * is interpolated into the spawned MCP's `VERTEX_AI_REGION` env and the per-region
+ * network host (the gateway package cannot import `mcp-connectors/shared`). A value
+ * that is empty, over-long, `-`-prefixed, or carries control characters is rejected
+ * so the caller falls back to the safe default.
+ */
+function isSafeRegion(value: string): boolean {
+  if (value.length === 0 || value.length > 1024 || value.startsWith("-")) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) < 0x20) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function phase3AddAwsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -287,6 +310,44 @@ export async function phase3AddCloudLoggingMcp(
       }),
     },
     "cloud_logging",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddVertexAiMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Vertex AI (Tier-3, metadata-only) reuses the existing GCP credentials —
+  // mirror phase3AddCloudLoggingMcp's gcp cred gate.
+  const gcpPath = (await readConnectorSecret(vault, "gcp", "credentials_json_path"))?.trim() ?? "";
+  if (gcpPath === "") {
+    return;
+  }
+  const projectId = (await readConnectorSecret(vault, "gcp", "project_id"))?.trim() ?? "";
+  // Region is an OPTIONAL non-secret gcp config key; default to us-central1.
+  // Vertex AI is regional — the per-region host `<region>-aiplatform.googleapis.com`
+  // is added to the manifest at spawn-time. The base aiplatform.googleapis.com host
+  // is in the static manifest; the RFC-1123 validator rejects a `*-aiplatform...`
+  // wildcard, so the concrete per-region host is merged in here.
+  const rawRegion = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
+  const region = rawRegion === "" ? VERTEX_AI_DEFAULT_REGION : rawRegion;
+  const safeRegion = isSafeRegion(region) ? region : VERTEX_AI_DEFAULT_REGION;
+  const manifest = manifestWithExtraNetworkHosts("vertex_ai", [
+    `${safeRegion}-aiplatform.googleapis.com`,
+  ]);
+  servers["vertex_ai"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("vertex-ai")],
+      env: extensionProcessEnv({
+        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        VERTEX_AI_REGION: safeRegion,
+        ...(projectId === "" ? {} : { GOOGLE_CLOUD_PROJECT: projectId }),
+      }),
+    },
+    manifest,
     sandboxCwd,
   );
 }
@@ -1210,6 +1271,7 @@ export async function buildPhase3Servers(
   await phase3AddCloudwatchMcp(vault, servers, sandboxCwd);
   await phase3AddSagemakerMcp(vault, servers, sandboxCwd);
   await phase3AddCloudLoggingMcp(vault, servers, sandboxCwd);
+  await phase3AddVertexAiMcp(vault, servers, sandboxCwd);
   await phase3AddIacMcp(vault, servers, sandboxCwd);
   await phase3AddGrafanaMcp(vault, servers, sandboxCwd);
   await phase3AddSentryMcp(vault, servers, sandboxCwd);

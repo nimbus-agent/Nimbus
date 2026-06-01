@@ -1869,8 +1869,9 @@ describe("buildPhase3Servers", () => {
     await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
     expect(Object.keys(servers).sort()).toEqual(
-      // bigquery + cloud_logging reuse gcp creds; athena + cloudwatch + sagemaker
-      // reuse aws creds — all appear whenever their underlying credentials are seeded.
+      // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
+      // sagemaker reuse aws creds — all appear whenever their underlying credentials
+      // are seeded.
       [
         "athena",
         "aws",
@@ -1886,6 +1887,7 @@ describe("buildPhase3Servers", () => {
         "sagemaker",
         "sentry",
         "snyk",
+        "vertex_ai",
       ].sort(),
     );
     for (const id of Object.keys(servers)) {
@@ -1900,8 +1902,9 @@ describe("buildPhase3Servers", () => {
     await vault.set("aws.default_region", "us-east-1");
     await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
-    // bigquery + cloud_logging reuse gcp creds; athena + cloudwatch + sagemaker
-    // reuse aws creds — all appear whenever their underlying credentials are seeded.
+    // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
+    // sagemaker reuse aws creds — all appear whenever their underlying credentials
+    // are seeded.
     expect(Object.keys(servers).sort()).toEqual([
       "athena",
       "aws",
@@ -1910,6 +1913,7 @@ describe("buildPhase3Servers", () => {
       "cloudwatch",
       "gcp",
       "sagemaker",
+      "vertex_ai",
     ]);
   });
 });

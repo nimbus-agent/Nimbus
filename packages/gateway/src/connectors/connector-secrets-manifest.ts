@@ -25,7 +25,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   kubernetes: ["kubernetes.kubeconfig", "kubernetes.context"],
   aws: ["aws.access_key_id", "aws.secret_access_key", "aws.default_region", "aws.profile"],
   azure: ["azure.tenant_id", "azure.client_id", "azure.client_secret"],
-  gcp: ["gcp.credentials_json_path", "gcp.project_id"],
+  // `gcp.region` is an OPTIONAL non-secret config key (Vertex AI is regional;
+  // default us-central1). It is listed here so it is a known/allowed gcp vault
+  // key and is cleared when the gcp connector is removed — it is never required.
+  gcp: ["gcp.credentials_json_path", "gcp.project_id", "gcp.region"],
   iac: ["iac.enabled"],
   grafana: ["grafana.url", "grafana.api_token"],
   sentry: ["sentry.auth_token", "sentry.org_slug", "sentry.url"],
@@ -93,6 +96,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud CLI. It has no
   // Cloud-Logging-specific vault secret, so its own key list is intentionally empty.
   cloud_logging: [],
+  // Vertex AI (Tier-3 no-row-data ML model registry) reuses the existing GCP
+  // credentials — `gcp.credentials_json_path` + `gcp.project_id` — via the gcloud
+  // CLI. Region is an OPTIONAL non-secret `gcp.region` config key (default
+  // us-central1), NOT a Vertex-AI-specific secret, so its own key list is empty.
+  vertex_ai: [],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

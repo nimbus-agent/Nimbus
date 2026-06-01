@@ -73,6 +73,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "cloudwatch",
   "sagemaker",
   "cloud_logging",
+  "vertex_ai",
   "elasticsearch",
 ] as const;
 
@@ -172,6 +173,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   cloudwatch: MIN10,
   sagemaker: MIN10,
   cloud_logging: MIN10,
+  vertex_ai: MIN10,
   elasticsearch: MIN10,
 };
 
@@ -259,6 +261,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate SageMaker credential",
   cloud_logging:
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Cloud Logging credential",
+  vertex_ai:
+    "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Vertex AI credential; optional gcp.region selects the region (default us-central1)",
   elasticsearch: "uses an Elasticsearch API key + cluster URL (connector.auth elasticsearch)",
 };
 

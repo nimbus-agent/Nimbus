@@ -66,7 +66,8 @@ export type Provider =
   | "athena"
   | "cloudwatch"
   | "sagemaker"
-  | "cloud_logging";
+  | "cloud_logging"
+  | "vertex_ai";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -142,6 +143,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   cloudwatch: { requestsPerMinute: 40, burstSize: 8 },
   sagemaker: { requestsPerMinute: 40, burstSize: 8 },
   cloud_logging: { requestsPerMinute: 40, burstSize: 8 },
+  vertex_ai: { requestsPerMinute: 40, burstSize: 8 },
 };
 
 type BucketState = {

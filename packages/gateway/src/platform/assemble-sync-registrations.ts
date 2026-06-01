@@ -68,6 +68,7 @@ import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
+import { createVertexAiSyncable } from "../connectors/vertex-ai-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
 import { createZendeskSyncable } from "../connectors/zendesk-sync.ts";
 import { createZoomSyncable } from "../connectors/zoom-sync.ts";
@@ -227,6 +228,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createCloudLoggingSyncable({
       ensureCloudLoggingMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createVertexAiSyncable({
+      ensureVertexAiMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(
