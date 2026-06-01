@@ -1258,6 +1258,43 @@ export async function phase3AddDagsterMcp(
   );
 }
 
+export async function phase3AddGreatExpectationsMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Great Expectations (Tier-3, no-row-data) has NO network and NO live
+  // credential — it reads GX validation-result JSON artefacts from a configured
+  // local directory. `great_expectations.results_dir` is a non-secret PATH; noop
+  // when unset.
+  const dir = (await readConnectorSecret(vault, "great_expectations", "results_dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  // Extend the connector manifest's filesystem.read with the configured results
+  // dir at spawn time, mirroring ensureObsidianMcp's inline manifest extension.
+  const base = manifestForFirstParty("great_expectations");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["great_expectations"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("great-expectations")],
+      env: extensionProcessEnv({ GREAT_EXPECTATIONS_RESULTS_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -1310,5 +1347,6 @@ export async function buildPhase3Servers(
   await phase3AddPrefectMcp(vault, servers, sandboxCwd);
   await phase3AddDagsterMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
+  await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

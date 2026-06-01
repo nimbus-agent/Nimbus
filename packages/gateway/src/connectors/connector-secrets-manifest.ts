@@ -101,6 +101,12 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // CLI. Region is an OPTIONAL non-secret `gcp.region` config key (default
   // us-central1), NOT a Vertex-AI-specific secret, so its own key list is empty.
   vertex_ai: [],
+  // Great Expectations (Tier-3 no-row-data) has NO network and NO live
+  // credential — it reads GX validation-result JSON artefacts from a configured
+  // local directory. `great_expectations.results_dir` is a non-secret PATH, not
+  // a credential, but it is listed here so it is a known/allowed vault key
+  // (D11), is cleared on connector removal, and gates the sync/spawn when unset.
+  great_expectations: ["great_expectations.results_dir"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

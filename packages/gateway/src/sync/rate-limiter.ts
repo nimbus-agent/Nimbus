@@ -67,7 +67,8 @@ export type Provider =
   | "cloudwatch"
   | "sagemaker"
   | "cloud_logging"
-  | "vertex_ai";
+  | "vertex_ai"
+  | "great_expectations";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -144,6 +145,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   sagemaker: { requestsPerMinute: 40, burstSize: 8 },
   cloud_logging: { requestsPerMinute: 40, burstSize: 8 },
   vertex_ai: { requestsPerMinute: 40, burstSize: 8 },
+  great_expectations: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

@@ -30,6 +30,7 @@ import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
 import { createGoogleMeetSyncable } from "../connectors/google-meet-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
 import { createGrafanaSyncable } from "../connectors/grafana-sync.ts";
+import { createGreatExpectationsSyncable } from "../connectors/great-expectations-sync.ts";
 import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
 import { createHubspotSyncable } from "../connectors/hubspot-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
@@ -453,6 +454,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createRampSyncable({
       ensureRampMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createGreatExpectationsSyncable({
+      ensureGreatExpectationsMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

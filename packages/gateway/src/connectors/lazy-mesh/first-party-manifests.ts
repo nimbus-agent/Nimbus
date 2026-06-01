@@ -412,6 +412,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // Great Expectations (Tier-3, no-row-data). NO network and NO live credential —
+  // reads GX validation-result JSON artefacts from a configured local directory.
+  // The results dir is added to filesystem.read at spawn time, mirroring obsidian's
+  // per-path manifest extension; the static base has empty read/write.
+  great_expectations: baseManifest("com.nimbus.great-expectations", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

@@ -75,6 +75,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "cloud_logging",
   "vertex_ai",
   "elasticsearch",
+  "great_expectations",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -175,6 +176,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   cloud_logging: MIN10,
   vertex_ai: MIN10,
   elasticsearch: MIN10,
+  great_expectations: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -264,6 +266,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   vertex_ai:
     "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Vertex AI credential; optional gcp.region selects the region (default us-central1)",
   elasticsearch: "uses an Elasticsearch API key + cluster URL (connector.auth elasticsearch)",
+  great_expectations:
+    "reads Great Expectations validation-result JSON artefacts from the configured great_expectations.results_dir — no live credentials",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
