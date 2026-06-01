@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import {
   createCloudLoggingSyncable,
@@ -182,7 +182,7 @@ describe("cloud-logging-sync — sink metadata walk", () => {
   });
 });
 
-describe("cloud-logging-sync — default gcloud spawn (no DI)", () => {
+describe("cloud-logging-sync — default gcloud runner (hermetic Bun.spawn mock)", () => {
   let fx: ConnectorSyncFixture;
   beforeEach(async () => {
     fx = createConnectorSyncFixture();
@@ -190,14 +190,37 @@ describe("cloud-logging-sync — default gcloud spawn (no DI)", () => {
   });
   afterEach(() => fx.cleanup());
 
-  // With no `runGcloud` override the syncable shells the real `gcloud logging
-  // sinks list`. In CI / dev gcloud is absent (or unauthenticated) so the spawn
-  // exits non-zero or throws; either way the default runner returns
-  // `{ ok: false }` and the sync degrades gracefully to a parse-empty pass —
-  // exercising the otherwise-uncovered real-spawn body + catch.
-  test("absent gcloud → graceful empty pass, no throw, runner default exercised", async () => {
-    const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
-    expect(res.itemsUpserted).toBe(0);
-    expect(res.cursor).toBe(PASS_1_CURSOR);
+  // Exercise the real (non-DI) `gcloudLoggingSinksList` runner body without spawning
+  // a real subprocess: mock Bun.spawn to return a fake process. `new Response(<string>)`
+  // reads the canned stdout, so the spawn → exited → parse path is covered hermetically.
+  function fakeProc(code: number, stdout: string): ReturnType<typeof Bun.spawn> {
+    return { exited: Promise.resolve(code), stdout } as unknown as ReturnType<typeof Bun.spawn>;
+  }
+
+  test("spawn exits 0 with sink JSON → sinks upserted", async () => {
+    const sinks = [
+      { name: "s1", destination: "storage.googleapis.com/b", filter: "severity>=ERROR" },
+    ];
+    const spy = spyOn(Bun, "spawn").mockReturnValue(fakeProc(0, JSON.stringify(sinks)));
+    try {
+      const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      expect(res.itemsUpserted).toBe(1);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("spawn throws (gcloud absent) → graceful empty pass, no throw", async () => {
+    const spy = spyOn(Bun, "spawn").mockImplementation(() => {
+      throw new Error("ENOENT: gcloud not found");
+    });
+    try {
+      const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
+      expect(res.itemsUpserted).toBe(0);
+      expect(res.cursor).toBe(PASS_1_CURSOR);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
