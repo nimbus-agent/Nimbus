@@ -243,7 +243,7 @@ nimbus impact --json --service payment-service src/billing/retry.ts
 
 ### `nimbus catchup`
 
-Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike `nimbus changelog` (service-scoped and uniform), `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
+Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
 
 ```bash
 nimbus catchup
@@ -518,6 +518,7 @@ nimbus connector auth snyk           # API token
 nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
 nimbus connector auth semgrep        # PAT + deployment slug
 nimbus connector auth wiz            # client id + secret (CSPM)
+nimbus connector auth dependencytrack # base URL + API key (OWASP Dependency-Track SBOM)
 
 # Feature flags
 nimbus connector auth launchdarkly   # token + base URL + project key
@@ -544,15 +545,33 @@ nimbus connector auth raindrop       # token
 nimbus connector auth intercom       # token
 nimbus connector auth zendesk        # URL + email + API token
 nimbus connector auth stackoverflow  # token + team
+nimbus connector auth ramp           # OAuth client-credentials (client id + secret)
+nimbus connector auth zotero         # API key + library id
 
-# Recruiting / CRM
+# Recruiting / CRM (OAuth where noted — opens browser)
 nimbus connector auth lever          # API key
 nimbus connector auth greenhouse     # API key
 nimbus connector auth pipedrive      # token
+nimbus connector auth hubspot        # OAuth 3-legged
+nimbus connector auth salesforce     # OAuth 3-legged + PKCE — per-tenant instance_url
+
+# Design / whiteboard (OAuth 3-legged — opens browser)
+nimbus connector auth miro           # OAuth
+nimbus connector auth canva          # OAuth + PKCE (Basic-header secret)
+nimbus connector auth figma          # OAuth (+ non-secret team id)
+
+# Data orchestration / search / quality
+nimbus connector auth airflow            # base URL + username + password
+nimbus connector auth prefect            # API URL + API key
+nimbus connector auth dagster            # base URL + API token
+nimbus connector auth elasticsearch      # URL + API key (index metadata only)
+nimbus connector auth great_expectations # results dir path (filesystem; no live creds)
 
 # Meetings
 nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
+
+**Credential reuse — no separate `connector auth` needed.** `github_actions` / `gitlab_ci` reuse the `github` / `gitlab` credentials; `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
 #### Zoom OAuth setup
 
