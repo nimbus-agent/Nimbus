@@ -69,8 +69,9 @@ function resolveRegion(explicit?: string): string {
  * smuggling). Throws on non-zero exit.
  */
 async function gcloudAi(args: string[], region: string): Promise<unknown> {
+  const regionPreview = region.slice(0, 64);
   if (!isSafeCliArg(region)) {
-    throw new Error(`Invalid region: ${region.slice(0, 64)}`);
+    throw new Error(`Invalid region: ${regionPreview}`);
   }
   const proc = Bun.spawn(
     ["gcloud", "ai", ...args, "--region", region, ...projectArgs(), "--format", "json"],
