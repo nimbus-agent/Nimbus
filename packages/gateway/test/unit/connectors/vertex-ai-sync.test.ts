@@ -182,4 +182,55 @@ describe("vertex-ai-sync — model metadata walk", () => {
     expect(fx.notifications.emitted).toHaveLength(0);
     expect(res.bytesTransferred).toBeGreaterThan(0);
   });
+
+  test("falls back to default region when gcp.region has a control char", async () => {
+    // A region with a control char (< 0x20) passes the non-empty / length / `-`
+    // checks but is rejected by the char-scan loop → loadCreds returns null → noop.
+    const regionWithControlChar = `us${String.fromCharCode(0x07)}central1`;
+    await fx.vault.set("gcp.region", regionWithControlChar);
+    const { run: run2, calls: calls2 } = makeRunner([{ body: [] }]);
+    const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run2 }).sync(
+      fx.createSyncContext(),
+      null,
+    );
+    expect(res.itemsUpserted).toBe(0);
+    expect(calls2).toHaveLength(0);
+  });
+
+  test("multiple models with mixed fields all upsert", async () => {
+    const { run } = makeRunner([
+      {
+        body: [
+          { name: "projects/p/locations/us-central1/models/1", displayName: "a", versionId: "3" },
+          { name: "projects/p/locations/us-central1/models/2" },
+          { displayName: "name-only-model" },
+        ],
+      },
+    ]);
+    const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext(),
+      null,
+    );
+    expect(res.itemsUpserted).toBe(3);
+  });
+});
+
+describe("vertex-ai-sync — default gcloud spawn (no DI)", () => {
+  let fx: ConnectorSyncFixture;
+  beforeEach(async () => {
+    fx = createConnectorSyncFixture();
+    await seedGcpCreds(fx);
+  });
+  afterEach(() => fx.cleanup());
+
+  // With no `runGcloud` override the syncable shells the real `gcloud ai models
+  // list`. In CI / dev gcloud is absent (or unauthenticated) so the spawn exits
+  // non-zero or throws; either way the default runner returns `{ ok: false }`
+  // and the sync degrades gracefully to a parse-empty pass — exercising the
+  // otherwise-uncovered real-spawn body + catch.
+  test("absent gcloud → graceful empty pass, no throw, runner default exercised", async () => {
+    const res = await createVertexAiSyncable(ENSURE).sync(fx.createSyncContext(), null);
+    expect(res.itemsUpserted).toBe(0);
+    expect(res.cursor).toBe(PASS_1_CURSOR);
+  });
 });

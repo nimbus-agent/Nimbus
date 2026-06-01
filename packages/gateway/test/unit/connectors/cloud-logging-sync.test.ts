@@ -163,4 +163,41 @@ describe("cloud-logging-sync — sink metadata walk", () => {
     expect(fx.notifications.emitted).toHaveLength(0);
     expect(res.bytesTransferred).toBeGreaterThan(0);
   });
+
+  test("multiple sinks with mixed fields all upsert", async () => {
+    const { run } = makeRunner([
+      {
+        body: [
+          { name: "full-sink", destination: "d", filter: "f", description: "x", disabled: true },
+          { name: "bare-sink" },
+          { name: "extra-fields-sink", destination: "d2", writerIdentity: "ignored", foo: 1 },
+        ],
+      },
+    ]);
+    const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext(),
+      null,
+    );
+    expect(res.itemsUpserted).toBe(3);
+  });
+});
+
+describe("cloud-logging-sync — default gcloud spawn (no DI)", () => {
+  let fx: ConnectorSyncFixture;
+  beforeEach(async () => {
+    fx = createConnectorSyncFixture();
+    await seedGcpCreds(fx);
+  });
+  afterEach(() => fx.cleanup());
+
+  // With no `runGcloud` override the syncable shells the real `gcloud logging
+  // sinks list`. In CI / dev gcloud is absent (or unauthenticated) so the spawn
+  // exits non-zero or throws; either way the default runner returns
+  // `{ ok: false }` and the sync degrades gracefully to a parse-empty pass —
+  // exercising the otherwise-uncovered real-spawn body + catch.
+  test("absent gcloud → graceful empty pass, no throw, runner default exercised", async () => {
+    const res = await createCloudLoggingSyncable(ENSURE).sync(fx.createSyncContext(), null);
+    expect(res.itemsUpserted).toBe(0);
+    expect(res.cursor).toBe(PASS_1_CURSOR);
+  });
 });

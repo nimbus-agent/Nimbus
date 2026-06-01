@@ -110,23 +110,72 @@ mock.module("../../../../src/auth/oauth-vault-tokens.ts", () => ({
   },
 }));
 
+// Tier-2 dedicated-spawn OAuth helpers. Each returns a fake token unless the
+// per-provider behaviour is flipped to "empty" (resolves to "") or "throw".
+const oauthBehaviour: Record<"hubspot" | "miro" | "canva" | "figma" | "salesforce", AuthBehaviour> =
+  {
+    hubspot: "ok",
+    miro: "ok",
+    canva: "ok",
+    figma: "ok",
+    salesforce: "ok",
+  };
+
+function resolveOauthToken(provider: keyof typeof oauthBehaviour, token: string): string {
+  if (oauthBehaviour[provider] === "throw") throw new Error("test-injected-failure");
+  if (oauthBehaviour[provider] === "empty") return "";
+  return token;
+}
+
+mock.module("../../../../src/auth/hubspot-access-token.ts", () => ({
+  getValidHubspotAccessToken: async (): Promise<string> =>
+    resolveOauthToken("hubspot", "fake-hubspot-access-token"),
+}));
+mock.module("../../../../src/auth/miro-access-token.ts", () => ({
+  getValidMiroAccessToken: async (): Promise<string> =>
+    resolveOauthToken("miro", "fake-miro-access-token"),
+}));
+mock.module("../../../../src/auth/canva-access-token.ts", () => ({
+  getValidCanvaAccessToken: async (): Promise<string> =>
+    resolveOauthToken("canva", "fake-canva-access-token"),
+}));
+mock.module("../../../../src/auth/figma-access-token.ts", () => ({
+  getValidFigmaAccessToken: async (): Promise<string> =>
+    resolveOauthToken("figma", "fake-figma-access-token"),
+}));
+mock.module("../../../../src/auth/salesforce-access-token.ts", () => ({
+  getValidSalesforceAuth: async (): Promise<{ accessToken: string; instanceUrl: string }> => {
+    if (oauthBehaviour.salesforce === "throw") throw new Error("test-injected-failure");
+    if (oauthBehaviour.salesforce === "empty") return { accessToken: "", instanceUrl: "" };
+    return {
+      accessToken: "fake-salesforce-access-token",
+      instanceUrl: "https://acme.my.salesforce.com",
+    };
+  },
+}));
+
 const {
   ensureBitbucketMcp,
+  ensureCanvaMcp,
   ensureCircleciMcp,
   ensureConfluenceMcp,
   ensureDiscordMcp,
+  ensureFigmaMcp,
   ensureGithubMcp,
   ensureGitlabMcp,
   ensureGoogleDriveMcp,
+  ensureHubspotMcp,
   ensureJenkinsMcp,
   ensureJiraMcp,
   ensureKubernetesMcp,
   ensureLinearMcp,
   ensureMicrosoftBundleMcp,
+  ensureMiroMcp,
   ensureNotionMcp,
   ensureObsidianMcp,
   ensurePagerdutyMcp,
   ensurePhase3BundleMcp,
+  ensureSalesforceMcp,
   ensureSlackMcp,
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
@@ -169,6 +218,11 @@ beforeEach(() => {
   capturedClients.length = 0;
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
+  oauthBehaviour.hubspot = "ok";
+  oauthBehaviour.miro = "ok";
+  oauthBehaviour.canva = "ok";
+  oauthBehaviour.figma = "ok";
+  oauthBehaviour.salesforce = "ok";
   process.env.NIMBUS_TEST_LEAK_CANARY = "should-not-appear";
 });
 
@@ -856,6 +910,242 @@ describe("ensurePhase3BundleMcp", () => {
     await vault.set("aws.secret_access_key", "secret_test");
     await vault.set("aws.default_region", "us-east-1");
     await ensurePhase3BundleMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureHubspotMcp (Tier-2 OAuth dedicated spawn)", () => {
+  test("missing hubspot.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureHubspotMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("oauth present + valid token → spawn hubspot with scoped env + sandbox wrap", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("hubspot.oauth", '{"access_token":"raw"}');
+    await ensureHubspotMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(1);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.hubspot);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.hubspot);
+
+    const spec = capturedClients[0]?.servers["hubspot"];
+    expect(spec?.command).toBe(process.execPath);
+    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]hubspot[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["HUBSPOT_TOKEN"]).toBe("fake-hubspot-access-token");
+    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed)", async () => {
+    oauthBehaviour.hubspot = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("hubspot.oauth", '{"access_token":"raw"}');
+    await ensureHubspotMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("auth helper returns empty string → no spawn", async () => {
+    oauthBehaviour.hubspot = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("hubspot.oauth", '{"access_token":"raw"}');
+    await ensureHubspotMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("hubspot.oauth", '{"access_token":"raw"}');
+    await ensureHubspotMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureMiroMcp (Tier-2 OAuth dedicated spawn)", () => {
+  test("missing miro.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureMiroMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth present + valid token → spawn miro with scoped env", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("miro.oauth", '{"access_token":"raw"}');
+    await ensureMiroMcp(ctx);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.miro);
+    const spec = capturedClients[0]?.servers["miro"];
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]miro[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["MIRO_TOKEN"]).toBe("fake-miro-access-token");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed)", async () => {
+    oauthBehaviour.miro = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("miro.oauth", '{"access_token":"raw"}');
+    await ensureMiroMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("empty token → no spawn", async () => {
+    oauthBehaviour.miro = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("miro.oauth", '{"access_token":"raw"}');
+    await ensureMiroMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("miro.oauth", '{"access_token":"raw"}');
+    await ensureMiroMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureCanvaMcp (Tier-2 OAuth dedicated spawn)", () => {
+  test("missing canva.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureCanvaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth present + valid token → spawn canva with scoped env", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("canva.oauth", '{"access_token":"raw"}');
+    await ensureCanvaMcp(ctx);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.canva);
+    const spec = capturedClients[0]?.servers["canva"];
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]canva[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["CANVA_TOKEN"]).toBe("fake-canva-access-token");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed)", async () => {
+    oauthBehaviour.canva = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("canva.oauth", '{"access_token":"raw"}');
+    await ensureCanvaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("empty token → no spawn", async () => {
+    oauthBehaviour.canva = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("canva.oauth", '{"access_token":"raw"}');
+    await ensureCanvaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("canva.oauth", '{"access_token":"raw"}');
+    await ensureCanvaMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureFigmaMcp (Tier-2 OAuth dedicated spawn, two-key)", () => {
+  test("missing figma.oauth → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("figma.team_id", "team-123");
+    await ensureFigmaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth present but missing figma.team_id → no spawn (two-key gate)", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("figma.oauth", '{"access_token":"raw"}');
+    await ensureFigmaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth + team_id + valid token → spawn figma with both env vars", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("figma.oauth", '{"access_token":"raw"}');
+    await vault.set("figma.team_id", "  team-123  ");
+    await ensureFigmaMcp(ctx);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.figma);
+    const spec = capturedClients[0]?.servers["figma"];
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]figma[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["FIGMA_TOKEN"]).toBe("fake-figma-access-token");
+    expect(spec?.env["FIGMA_TEAM_ID"]).toBe("team-123");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed)", async () => {
+    oauthBehaviour.figma = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("figma.oauth", '{"access_token":"raw"}');
+    await vault.set("figma.team_id", "team-123");
+    await ensureFigmaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("empty token → no spawn", async () => {
+    oauthBehaviour.figma = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("figma.oauth", '{"access_token":"raw"}');
+    await vault.set("figma.team_id", "team-123");
+    await ensureFigmaMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("figma.oauth", '{"access_token":"raw"}');
+    await vault.set("figma.team_id", "team-123");
+    await ensureFigmaMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => {
+  test("missing salesforce.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureSalesforceMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth + valid auth → spawn salesforce with token + instance_url env", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("salesforce.oauth", '{"access_token":"raw","instance_url":"x"}');
+    await ensureSalesforceMcp(ctx);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.salesforce);
+    const spec = capturedClients[0]?.servers["salesforce"];
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]salesforce[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["SALESFORCE_ACCESS_TOKEN"]).toBe("fake-salesforce-access-token");
+    expect(spec?.env["SALESFORCE_INSTANCE_URL"]).toBe("https://acme.my.salesforce.com");
+    // The per-tenant instance host is folded into the sandbox manifest.
+    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toContain("acme.my.salesforce.com");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed)", async () => {
+    oauthBehaviour.salesforce = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("salesforce.oauth", '{"access_token":"raw"}');
+    await ensureSalesforceMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("empty access token / instance url → no spawn", async () => {
+    oauthBehaviour.salesforce = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("salesforce.oauth", '{"access_token":"raw"}');
+    await ensureSalesforceMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("salesforce.oauth", '{"access_token":"raw"}');
+    await ensureSalesforceMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
 });
