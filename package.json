@@ -89,6 +89,7 @@
     "packages/mcp-connectors/cloudwatch",
     "packages/mcp-connectors/sagemaker",
     "packages/mcp-connectors/cloud-logging",
+    "packages/mcp-connectors/vertex-ai",
     "packages/mcp-connectors/elasticsearch",
     "packages/vscode-extension"
   ],
