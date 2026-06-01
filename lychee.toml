@@ -22,6 +22,7 @@ exclude = [
   # from GitHub-hosted runner egress. Verified live in browsers; the failures
   # are infrastructure noise, not broken links.
   "npmjs\\.com",           # 403 to non-browser UAs
+  "canva\\.com",           # 403 to non-browser UAs
   "opengraph\\.xyz",       # aggressive 429 rate limit
   "tauri\\.app",           # intermittent connection failures from runners
   "conventionalcommits\\.org",  # intermittent TCP RST from GH runner egress
