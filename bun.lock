@@ -842,6 +842,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/sagemaker": {
+      "name": "nimbus-mcp-sagemaker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/salesforce": {
       "name": "nimbus-mcp-salesforce",
       "version": "0.1.0",
@@ -3140,6 +3152,8 @@
     "nimbus-mcp-ramp": ["nimbus-mcp-ramp@workspace:packages/mcp-connectors/ramp"],
 
     "nimbus-mcp-readwise": ["nimbus-mcp-readwise@workspace:packages/mcp-connectors/readwise"],
+
+    "nimbus-mcp-sagemaker": ["nimbus-mcp-sagemaker@workspace:packages/mcp-connectors/sagemaker"],
 
     "nimbus-mcp-salesforce": ["nimbus-mcp-salesforce@workspace:packages/mcp-connectors/salesforce"],
 
