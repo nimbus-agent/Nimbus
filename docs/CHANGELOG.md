@@ -8,7 +8,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Phase 5 — The Extended Surface (🔵 Active)
 
-Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial).
+Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending).
 
 ### 2026-06-01
 

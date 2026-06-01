@@ -55,7 +55,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3 | Intelligence | ✅ Complete |
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
-| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 (partial) · Tier-2 (partial) |
+| Phase 5 | The Extended Surface | 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending) |
 | Phase 5.5 | Marketplace Registry | Planned |
 | Phase 6 | Team | Planned |
 | Phase 7 | Engineering Excellence | Planned |
