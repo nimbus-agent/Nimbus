@@ -30,6 +30,7 @@
       },
       "dependencies": {
         "@clack/prompts": "^1.4.0",
+        "@modelcontextprotocol/sdk": "1.29.0",
         "@nimbus-dev/client": "workspace:*",
         "@nimbus-dev/sdk": "workspace:*",
         "ink": "^7.0.3",
