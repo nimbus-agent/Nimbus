@@ -161,8 +161,14 @@ describe("projectRankedItems", () => {
   });
 });
 
-function fakeClient(call: IpcCallable["call"]): IpcCallable {
-  return { call, disconnect: async () => {} };
+// Accepts a non-generic handler and adapts it to IpcCallable's generic `call<T>` signature.
+// (A bare `async () => null` is not assignable to `<T>() => Promise<T>`, so wrap + cast here.)
+function fakeClient(handler: (method: string, params?: unknown) => Promise<unknown>): IpcCallable {
+  return {
+    call: <T>(method: string, params?: unknown): Promise<T> =>
+      handler(method, params) as Promise<T>,
+    disconnect: async () => {},
+  };
 }
 
 describe("isDisconnectError", () => {
