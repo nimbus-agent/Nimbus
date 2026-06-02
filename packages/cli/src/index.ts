@@ -18,6 +18,7 @@ import {
   runImpactCli,
   runIndexCmd,
   runLan,
+  runMcpServer,
   runMetricsCli,
   runPeople,
   runProfile,
@@ -91,6 +92,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   scaffold: runScaffold,
   lan: runLan,
   metrics: runMetricsCli,
+  "mcp-server": runMcpServer,
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);
