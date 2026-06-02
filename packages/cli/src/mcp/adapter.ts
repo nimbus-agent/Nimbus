@@ -1,3 +1,7 @@
+import { IPCClient } from "../ipc-client/index.ts";
+import { readGatewayState } from "../lib/gateway-process.ts";
+import { getCliPlatformPaths } from "../paths.ts";
+
 const MCP_LIMIT_DEFAULT = 20;
 const MCP_LIMIT_MAX = 50;
 // Whitelisted rawMeta keys, verified against real connector item mappings (e.g. github-sync.ts
@@ -96,4 +100,99 @@ export function projectRankedItems(rows: unknown): Array<Record<string, unknown>
     return [];
   }
   return rows.map(projectRankedItem);
+}
+
+export const GATEWAY_DOWN_MESSAGE = "Nimbus Gateway is not running. Start it with: nimbus start";
+
+/** Thrown when the adapter cannot reach the Gateway (no state file, or connect failed). */
+export class GatewayUnavailableError extends Error {
+  constructor() {
+    super(GATEWAY_DOWN_MESSAGE);
+    this.name = "GatewayUnavailableError";
+  }
+}
+
+/** Minimal IPC surface the adapter needs — structurally satisfied by IPCClient. */
+export interface IpcCallable {
+  call<T>(method: string, params?: unknown): Promise<T>;
+  disconnect(): Promise<void>;
+}
+
+export interface AdapterDeps {
+  /** Returns a connected client, reusing a cached connection while it is healthy. */
+  getClient(): Promise<IpcCallable>;
+}
+
+/** Injectable connection primitives so tests avoid real sockets. */
+export interface ConnectionEnv {
+  readState(): Promise<{ socketPath: string } | undefined>;
+  connect(socketPath: string): Promise<IpcCallable>;
+}
+
+/** True when an error indicates the IPC transport is dead and a reconnect is warranted. */
+export function isDisconnectError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : "";
+  return (
+    m.includes("not connected") || m.includes("connection closed") || m.includes("connection error")
+  );
+}
+
+/** Wrap a raw client so a transport-dead call invalidates the cache, forcing the next getClient to reconnect. */
+function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCallable {
+  return {
+    async call<T>(method: string, params?: unknown): Promise<T> {
+      try {
+        return await raw.call<T>(method, params);
+      } catch (e) {
+        if (isDisconnectError(e)) {
+          invalidate();
+        }
+        throw e;
+      }
+    },
+    disconnect(): Promise<void> {
+      return raw.disconnect();
+    },
+  };
+}
+
+export function createDeps(env: ConnectionEnv): AdapterDeps {
+  let cached: IpcCallable | null = null;
+  const invalidate = (): void => {
+    cached = null;
+  };
+  return {
+    async getClient(): Promise<IpcCallable> {
+      if (cached !== null) {
+        return cached;
+      }
+      const state = await env.readState();
+      if (state === undefined) {
+        throw new GatewayUnavailableError();
+      }
+      let raw: IpcCallable;
+      try {
+        raw = await env.connect(state.socketPath);
+      } catch {
+        throw new GatewayUnavailableError();
+      }
+      cached = makeReconnectingClient(raw, invalidate);
+      return cached;
+    },
+  };
+}
+
+/** Production deps: real gateway-state read + real IPCClient connect. */
+export function createProductionDeps(): AdapterDeps {
+  return createDeps({
+    readState: async () => {
+      const s = await readGatewayState(getCliPlatformPaths());
+      return s === undefined ? undefined : { socketPath: s.socketPath };
+    },
+    connect: async (socketPath: string) => {
+      const client = new IPCClient(socketPath);
+      await client.connect();
+      return client;
+    },
+  });
 }

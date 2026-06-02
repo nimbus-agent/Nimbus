@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { clampLimit, projectRankedItem, projectRankedItems } from "./adapter.ts";
+import {
+  type ConnectionEnv,
+  clampLimit,
+  createDeps,
+  GatewayUnavailableError,
+  type IpcCallable,
+  isDisconnectError,
+  projectRankedItem,
+  projectRankedItems,
+} from "./adapter.ts";
 
 describe("clampLimit", () => {
   it("defaults to 20 when undefined", () => {
@@ -146,5 +155,75 @@ describe("projectRankedItems", () => {
   });
   it("returns [] for a non-array object", () => {
     expect(projectRankedItems({})).toEqual([]);
+  });
+});
+
+function fakeClient(call: IpcCallable["call"]): IpcCallable {
+  return { call, disconnect: async () => {} };
+}
+
+describe("isDisconnectError", () => {
+  it("recognizes transport-dead messages", () => {
+    expect(isDisconnectError(new Error("IPC client is not connected"))).toBe(true);
+    expect(isDisconnectError(new Error("IPC connection closed"))).toBe(true);
+    expect(isDisconnectError(new Error("IPC connection error"))).toBe(true);
+  });
+  it("ignores unrelated errors", () => {
+    expect(isDisconnectError(new Error("Local index is not available"))).toBe(false);
+    expect(isDisconnectError("nope")).toBe(false);
+  });
+});
+
+describe("createDeps", () => {
+  it("throws GatewayUnavailableError when no gateway state", async () => {
+    const env: ConnectionEnv = {
+      readState: async () => undefined,
+      connect: async () => fakeClient(async () => null),
+    };
+    await expect(createDeps(env).getClient()).rejects.toBeInstanceOf(GatewayUnavailableError);
+  });
+
+  it("throws GatewayUnavailableError when connect fails", async () => {
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    };
+    await expect(createDeps(env).getClient()).rejects.toBeInstanceOf(GatewayUnavailableError);
+  });
+
+  it("caches the connected client across calls", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async () => "ok");
+      },
+    };
+    const deps = createDeps(env);
+    await deps.getClient();
+    await deps.getClient();
+    expect(connects).toBe(1);
+  });
+
+  it("reconnects after a dropped connection", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async () => {
+          throw new Error("IPC connection closed");
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const c1 = await deps.getClient();
+    await expect(c1.call("index.searchRanked", {})).rejects.toThrow("IPC connection closed");
+    // The failed call invalidated the cache; the next getClient reconnects.
+    await deps.getClient();
+    expect(connects).toBe(2);
   });
 });
