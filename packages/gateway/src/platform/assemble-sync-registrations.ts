@@ -70,6 +70,7 @@ import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
 import { createStackOverflowSyncable } from "../connectors/stackoverflow-sync.ts";
+import { createStorybookSyncable } from "../connectors/storybook-sync.ts";
 import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
@@ -481,6 +482,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLocaldbSyncable({
       ensureLocaldbMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createStorybookSyncable({
+      ensureStorybookMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

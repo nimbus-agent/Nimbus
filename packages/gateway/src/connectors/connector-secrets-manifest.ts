@@ -138,6 +138,9 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // scripts dir (listed so it is a known/allowed vault key (D11) + cleared on
   // removal + gates the sync/spawn when unset). No live credential.
   localdb: ["localdb.scripts_dir"],
+  // Storybook: a single non-secret PATH to the local Storybook output dir
+  // (containing index.json / stories.json). No live credential.
+  storybook: ["storybook.dir"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

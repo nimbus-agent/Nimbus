@@ -457,6 +457,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // Storybook (Tier-5 local). No network; reads the local Storybook manifest
+  // from the configured output dir, which is added to filesystem.read at spawn
+  // time by phase3AddStorybookMcp (mirroring Great Expectations / localdb).
+  storybook: baseManifest("com.nimbus.storybook", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

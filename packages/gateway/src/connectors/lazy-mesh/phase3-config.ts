@@ -1460,6 +1460,40 @@ export async function phase3AddLocaldbMcp(
   );
 }
 
+export async function phase3AddStorybookMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Storybook (Tier-5 local) has NO network and NO live credential — it reads
+  // the local Storybook manifest (index.json / stories.json) from a configured
+  // output dir. `storybook.dir` is a non-secret PATH; noop when unset.
+  const dir = (await readConnectorSecret(vault, "storybook", "dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  const base = manifestForFirstParty("storybook");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["storybook"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("storybook")],
+      env: extensionProcessEnv({ STORYBOOK_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddGreatExpectationsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1553,6 +1587,7 @@ export async function buildPhase3Servers(
   await phase3AddFastmailMcp(vault, servers, sandboxCwd);
   await phase3AddProtonmailMcp(vault, servers, sandboxCwd);
   await phase3AddLocaldbMcp(vault, servers, sandboxCwd);
+  await phase3AddStorybookMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }
