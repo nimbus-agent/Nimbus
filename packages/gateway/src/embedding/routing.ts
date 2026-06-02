@@ -30,6 +30,8 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   // IMAP email bodies are prose paragraphs — same posture as gmail:email /
   // outlook:email. MiniLM-only fallback when openai.api_key is absent.
   "imap:email",
+  // Fastmail (JMAP) email bodies are prose, like imap:email / gmail:email.
+  "fastmail:email",
 ]);
 
 export function routingKey(service: string, type: string): string {

@@ -77,6 +77,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "elasticsearch",
   "great_expectations",
   "imap",
+  "fastmail",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -179,6 +180,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   elasticsearch: MIN10,
   great_expectations: MIN10,
   imap: MIN5,
+  fastmail: MIN5,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -271,6 +273,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   great_expectations:
     "reads Great Expectations validation-result JSON artefacts from the configured great_expectations.results_dir — no live credentials",
   imap: "uses per-tenant IMAP/SMTP host + port + username + password (connector.auth imap)",
+  fastmail: "uses a Fastmail JMAP API token (connector.auth fastmail)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

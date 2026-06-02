@@ -431,6 +431,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // Fastmail (Tier-4 EMAIL via JMAP). Pure HTTPS/443 to the fixed Fastmail
+  // host — no per-tenant host, no non-443 port, so the static network list is
+  // sufficient (the JMAP session/api/upload/download URLs are all under
+  // api.fastmail.com).
+  fastmail: baseManifest("com.nimbus.fastmail", {
+    network: ["api.fastmail.com"],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

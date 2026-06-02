@@ -1333,6 +1333,36 @@ export async function phase3AddImapMcp(
   );
 }
 
+export async function phase3AddFastmailMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Fastmail (Tier-4 EMAIL via JMAP) — gate on the API token. The base URL is an
+  // optional non-secret override (default api.fastmail.com); the static manifest
+  // host covers the JMAP session/api endpoints, so no extra-host merge is needed.
+  const apiToken = (await readConnectorSecret(vault, "fastmail", "api_token"))?.trim() ?? "";
+  if (apiToken === "") {
+    return;
+  }
+  const baseUrl = (await readConnectorSecret(vault, "fastmail", "base_url"))?.trim() ?? "";
+
+  const env: Record<string, string> = { FASTMAIL_API_TOKEN: apiToken };
+  if (baseUrl !== "") {
+    env["FASTMAIL_BASE_URL"] = baseUrl;
+  }
+
+  servers["fastmail"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("fastmail")],
+      env: extensionProcessEnv(env),
+    },
+    "fastmail",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddGreatExpectationsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1423,6 +1453,7 @@ export async function buildPhase3Servers(
   await phase3AddDagsterMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
   await phase3AddImapMcp(vault, servers, sandboxCwd);
+  await phase3AddFastmailMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

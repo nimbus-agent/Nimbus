@@ -1,3 +1,4 @@
+import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
 import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAthenaSyncable } from "../connectors/athena-sync.ts";
@@ -18,6 +19,7 @@ import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDependencytrackSyncable } from "../connectors/dependencytrack-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
+import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -34,9 +36,8 @@ import { createGreatExpectationsSyncable } from "../connectors/great-expectation
 import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
 import { createHubspotSyncable } from "../connectors/hubspot-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
-import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createImapSyncable } from "../connectors/imap-sync.ts";
-import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
+import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
@@ -462,6 +463,11 @@ export function registerConnectorMeshSyncables(
     createImapSyncable({
       ensureImapMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
       fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createFastmailSyncable({
+      ensureFastmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

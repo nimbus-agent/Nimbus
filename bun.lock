@@ -351,6 +351,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/fastmail": {
+      "name": "nimbus-mcp-fastmail",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/figma": {
       "name": "nimbus-mcp-figma",
       "version": "0.1.0",
@@ -3130,6 +3142,8 @@
     "nimbus-mcp-discord": ["nimbus-mcp-discord@workspace:packages/mcp-connectors/discord"],
 
     "nimbus-mcp-elasticsearch": ["nimbus-mcp-elasticsearch@workspace:packages/mcp-connectors/elasticsearch"],
+
+    "nimbus-mcp-fastmail": ["nimbus-mcp-fastmail@workspace:packages/mcp-connectors/fastmail"],
 
     "nimbus-mcp-figma": ["nimbus-mcp-figma@workspace:packages/mcp-connectors/figma"],
 
