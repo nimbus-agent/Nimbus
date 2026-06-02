@@ -968,7 +968,7 @@ The Model Router is assembled with the Gateway platform services and exposed to 
 | Backend | Discovery | `nimbus.toml` key |
 |---|---|---|
 | Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model` set to any pulled Ollama model name; `prefer_local = true` to route to it |
-| llama.cpp (GGUF) | `llama-server` HTTP endpoint, default `http://127.0.0.1:8080` | `[llm].llamacpp_server_path` |
+| llama.cpp (GGUF) | `llama-server` HTTP endpoint, default `http://127.0.0.1:8080` | `[llm].llamacpp_server_path` stores the HTTP base URL, not the binary path |
 | Anthropic (remote) | `ANTHROPIC_API_KEY` in env | `[llm].remote_model = "claude-sonnet-4-6"` (provider inferred from `claude-*` prefix) |
 | OpenAI (remote) | `OPENAI_API_KEY` in env | `[llm].remote_model = "gpt-4o"` (provider inferred from `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix) |
 

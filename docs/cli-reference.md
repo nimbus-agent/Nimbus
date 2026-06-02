@@ -762,6 +762,7 @@ classifier_model   = "claude-haiku-4-5-20251001"
 # Local-LLM routing (Phase 4 LLM router).
 prefer_local       = true
 local_model        = "llama3.2" # Any pulled Ollama model name
+# llama.cpp HTTP base URL; not the filesystem path to the llama-server binary.
 # llamacpp_server_path = "http://127.0.0.1:8080"
 # enforce_air_gap   = false
 # max_agent_depth   = 3              # 1–10

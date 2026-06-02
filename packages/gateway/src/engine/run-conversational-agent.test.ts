@@ -110,6 +110,27 @@ describe("runConversationalAgent", () => {
     expect(r.reply).toBe("hello");
   });
 
+  test("local router streaming emits final text when provider does not stream tokens", async () => {
+    const chunks: string[] = [];
+    const generate = mock(async () => ({
+      text: "llama.cpp final text",
+      tokensIn: 1,
+      tokensOut: 3,
+      modelUsed: "local-test-model.gguf",
+      isLocal: true,
+      provider: "llamacpp" as const,
+    }));
+    const router = { generate, prefersLocal: () => true } as unknown as LlmRouter;
+    const r = await runConversationalAgent({
+      llmRouter: router,
+      input: "say hello",
+      stream: true,
+      sendChunk: (text) => chunks.push(text),
+    });
+    expect(chunks.join("")).toBe("llama.cpp final text");
+    expect(r.reply).toBe("llama.cpp final text");
+  });
+
   test("uses Mastra agent when local routing is not preferred", async () => {
     const agent = {
       generate: mock(async () => ({ text: "remote answer" })),

@@ -108,8 +108,8 @@ interface HitlAction {
 |---|---|---|
 | `llm.listModels` | request | Merged list from Ollama tags + `llm_models` SQLite table |
 | `llm.pullModel` | request | Triggers Ollama pull; streams `llm.pullProgress` notifications |
-| `llm.loadModel` | request | Spawns llama-server for a GGUF file |
-| `llm.unloadModel` | request | Terminates llama-server for a model |
+| `llm.loadModel` | request | Loads or warms a local provider model; Ollama auto-loads on first generate |
+| `llm.unloadModel` | request | Unloads a local provider model when the provider supports it |
 | `llm.setDefault` | request | Sets `is_default = 1` for a model id |
 | `llm.getRouterStatus` | request | Current routing decision per task type |
 | `llm.listLocalModels` | request | Scans model dir for GGUF files (including subdirs + symlinks) |

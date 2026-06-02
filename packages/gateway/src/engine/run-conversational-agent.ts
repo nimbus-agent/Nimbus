@@ -93,6 +93,16 @@ export async function runConversationalAgent(
         typeof promptArg === "string"
           ? promptArg
           : promptArg.map((m) => `${m.role}: ${m.content}`).join("\n\n");
+      let streamedAnyToken = false;
+      const onToken =
+        p.stream === true
+          ? (token: string): void => {
+              if (token.length > 0) {
+                streamedAnyToken = true;
+                p.sendChunk(token);
+              }
+            }
+          : undefined;
       try {
         const result = await llmRouter.generate({
           task: "agent_step",
@@ -102,8 +112,11 @@ export async function runConversationalAgent(
           maxTokens: 2048,
           temperature: 0.2,
           stream: p.stream,
-          ...(p.stream ? { onToken: p.sendChunk } : {}),
+          ...(onToken === undefined ? {} : { onToken }),
         });
+        if (p.stream && !streamedAnyToken && result.text.length > 0) {
+          p.sendChunk(result.text);
+        }
         return { reply: result.text, modelMeta: result };
       } catch (e) {
         if (p.agent === undefined) {

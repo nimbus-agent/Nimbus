@@ -116,6 +116,23 @@ function canUseConversation(p: RunAskParams): boolean {
   return p.conversationalAgent !== undefined || p.llmRouter?.prefersLocal() === true;
 }
 
+function shouldBuildLocalContext(p: RunAskParams): boolean {
+  if (p.llmRouter === undefined) {
+    return false;
+  }
+  if (p.conversationalAgent === undefined) {
+    return true;
+  }
+  return p.llmRouter.prefersLocal();
+}
+
+function shouldAnswerFromLocalIndexedContext(p: RunAskParams): boolean {
+  return (
+    p.llmRouter?.prefersLocal() === true &&
+    /\b(local indexed|indexed nimbus|nimbus github context|indexed github context)\b/i.test(p.input)
+  );
+}
+
 async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<ClassifiedIntent> {
   try {
     return await (p.classify ?? classifyIntentForAsk)(p.input);
@@ -190,8 +207,10 @@ async function dispatchPlan(p: RunAskParams, plan: PlanResult): Promise<{ reply:
 
 const LOCAL_CONTEXT_ITEM_LIMIT = 8;
 const LOCAL_CONTEXT_PREVIEW_MAX_CHARS = 900;
+const LOCAL_CONTEXT_QUOTED_QUERY_LIMIT = 4;
 
 type LocalContextItem = {
+  sourceId: string;
   rank: number;
   service: string;
   indexedType: string;
@@ -211,18 +230,47 @@ function clipContextText(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars - 3)}...`;
 }
 
+function extractQuotedSearchQueries(input: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const match of input.matchAll(/["'`]([^"'`]{3,120})["'`]/g)) {
+    const query = cleanContextText(match[1] ?? "");
+    const key = query.toLowerCase();
+    if (query !== "" && !seen.has(key)) {
+      seen.add(key);
+      out.push(query);
+    }
+    if (out.length >= LOCAL_CONTEXT_QUOTED_QUERY_LIMIT) {
+      break;
+    }
+  }
+  return out;
+}
+
+function extractGithubRepoSlugs(input: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const match of input.matchAll(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/g)) {
+    const slug = (match[1] ?? "").toLowerCase();
+    if (slug !== "" && !seen.has(slug)) {
+      seen.add(slug);
+      out.push(slug);
+    }
+  }
+  return out;
+}
+
 function formatContextItem(
   localIndex: LocalIndex,
   item: RankedIndexItem,
-  idx: number,
-): LocalContextItem {
+): Omit<LocalContextItem, "rank"> {
   const title = cleanContextText(item.name);
   const preview = cleanContextText(
     item.semanticSnippet ?? localIndex.getBodyPreview(item.indexPrimaryKey) ?? "",
   );
   const url = cleanContextText(item.canonicalUrl ?? item.url ?? "");
   return {
-    rank: idx + 1,
+    sourceId: item.indexPrimaryKey,
     service: item.service,
     indexedType: item.indexedType,
     title,
@@ -231,6 +279,49 @@ function formatContextItem(
       : { preview: clipContextText(preview, LOCAL_CONTEXT_PREVIEW_MAX_CHARS) }),
     ...(url === "" ? {} : { url }),
   };
+}
+
+type GithubIssueContextRow = {
+  id: string;
+  service: string;
+  type: string;
+  title: string;
+  body_preview: string | null;
+  url: string | null;
+};
+
+function githubIssueContextItemsForRepo(
+  localIndex: LocalIndex,
+  repoSlug: string,
+): Array<Omit<LocalContextItem, "rank">> {
+  const like = `${repoSlug}#issue-%`;
+  const urlLike = `%github.com/${repoSlug}/issues/%`;
+  const rows = localIndex
+    .getDatabase()
+    .query(
+      `SELECT id, service, type, title, body_preview, url
+       FROM item
+       WHERE service = 'github'
+         AND type = 'issue'
+         AND (lower(external_id) LIKE ? OR lower(url) LIKE ?)
+       ORDER BY modified_at DESC, synced_at DESC, title ASC
+       LIMIT ?`,
+    )
+    .all(like, urlLike, LOCAL_CONTEXT_ITEM_LIMIT) as GithubIssueContextRow[];
+  return rows.map((row) => {
+    const preview = cleanContextText(row.body_preview ?? "");
+    const url = cleanContextText(row.url ?? "");
+    return {
+      sourceId: row.id,
+      service: row.service,
+      indexedType: row.type,
+      title: cleanContextText(row.title),
+      ...(preview === ""
+        ? {}
+        : { preview: clipContextText(preview, LOCAL_CONTEXT_PREVIEW_MAX_CHARS) }),
+      ...(url === "" ? {} : { url }),
+    };
+  });
 }
 
 async function buildLocalIndexedContext(
@@ -242,17 +333,47 @@ async function buildLocalIndexedContext(
     return undefined;
   }
   try {
-    let results = await localIndex.searchRankedAsync(
-      { name: query, limit: LOCAL_CONTEXT_ITEM_LIMIT },
-      { semantic: true, contextChunks: 2 },
+    const byId = new Map<string, Omit<LocalContextItem, "rank">>();
+    const addRankedResults = (items: RankedIndexItem[]): void => {
+      for (const item of items) {
+        if (!byId.has(item.indexPrimaryKey)) {
+          byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item));
+        }
+      }
+    };
+    const addContextItems = (items: Array<Omit<LocalContextItem, "rank">>): void => {
+      for (const item of items) {
+        if (!byId.has(item.sourceId)) {
+          byId.set(item.sourceId, item);
+        }
+      }
+    };
+    addRankedResults(
+      await localIndex.searchRankedAsync(
+        { name: query, limit: LOCAL_CONTEXT_ITEM_LIMIT },
+        { semantic: true, contextChunks: 2 },
+      ),
     );
-    if (results.length === 0) {
-      results = localIndex.searchRanked({ limit: LOCAL_CONTEXT_ITEM_LIMIT });
+    for (const quotedQuery of extractQuotedSearchQueries(query)) {
+      addRankedResults(
+        localIndex.searchRanked({ name: quotedQuery, limit: LOCAL_CONTEXT_ITEM_LIMIT }),
+      );
     }
-    if (results.length === 0) {
+    for (const repoSlug of extractGithubRepoSlugs(query)) {
+      addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug));
+    }
+    if (byId.size === 0) {
+      addRankedResults(localIndex.searchRanked({ name: query, limit: LOCAL_CONTEXT_ITEM_LIMIT }));
+    }
+    if (byId.size === 0) {
+      addRankedResults(localIndex.searchRanked({ limit: LOCAL_CONTEXT_ITEM_LIMIT }));
+    }
+    if (byId.size === 0) {
       return undefined;
     }
-    const contextItems = results.map((item, idx) => formatContextItem(localIndex, item, idx));
+    const contextItems = [...byId.values()]
+      .slice(0, LOCAL_CONTEXT_ITEM_LIMIT)
+      .map((item, idx) => ({ ...item, rank: idx + 1 }));
     return `Indexed Nimbus context:\n${wrapToolOutput(
       { service: "nimbus", tool: "localIndex.searchRanked" },
       contextItems,
@@ -317,13 +438,17 @@ export async function runAsk(
 
   const classified = await classifyIntentForAskWithLocalFallback(p);
 
-  const shouldUseConversational = classified.intent === "unknown" || classified.confidence < 0.6;
+  const shouldUseConversational =
+    shouldAnswerFromLocalIndexedContext(p) ||
+    classified.intent === "unknown" ||
+    classified.confidence < 0.6;
 
   if (canUseConversation(p) && shouldUseConversational) {
     const sessionId = getAgentRequestSessionId();
     const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
-    const localContext =
-      p.llmRouter === undefined ? undefined : await buildLocalIndexedContext(p.localIndex, p.input);
+    const localContext = shouldBuildLocalContext(p)
+      ? await buildLocalIndexedContext(p.localIndex, p.input)
+      : undefined;
 
     const result = await runConversationalAgent({
       input: p.input,

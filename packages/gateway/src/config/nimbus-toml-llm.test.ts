@@ -41,10 +41,10 @@ describe("parseNimbusTomlLlmSection", () => {
     expect(parseNimbusTomlLlmSection(src)).toEqual({ localModel: "llama3.2" });
   });
 
-  test("parses llamacpp_server_path string", () => {
-    const src = `[llm]\nllamacpp_server_path = "/usr/local/bin/llama-server"\n`;
+  test("parses llamacpp_server_path endpoint string", () => {
+    const src = `[llm]\nllamacpp_server_path = "http://127.0.0.1:8080"\n`;
     expect(parseNimbusTomlLlmSection(src)).toEqual({
-      llamacppServerPath: "/usr/local/bin/llama-server",
+      llamacppServerPath: "http://127.0.0.1:8080",
     });
   });
 
