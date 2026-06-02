@@ -1,3 +1,6 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -209,4 +212,205 @@ export function createProductionDeps(): AdapterDeps {
       return client;
     },
   });
+}
+
+export interface ToolResult {
+  [key: string]: unknown;
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+function jsonResult(data: unknown): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+}
+
+function errorResult(message: string): ToolResult {
+  return { content: [{ type: "text", text: message }], isError: true };
+}
+
+function optString(o: Record<string, unknown>, k: string): string | undefined {
+  const v = o[k];
+  return typeof v === "string" ? v : undefined;
+}
+
+function optNumber(o: Record<string, unknown>, k: string): number | undefined {
+  const v = o[k];
+  return typeof v === "number" ? v : undefined;
+}
+
+function optBool(o: Record<string, unknown>, k: string): boolean | undefined {
+  const v = o[k];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/** Obtain a client and run `fn`, converting all failures into MCP error results (never a throw). */
+async function runTool(
+  deps: AdapterDeps,
+  fn: (c: IpcCallable) => Promise<ToolResult>,
+): Promise<ToolResult> {
+  let client: IpcCallable;
+  try {
+    client = await deps.getClient();
+  } catch (e) {
+    if (e instanceof GatewayUnavailableError) {
+      return errorResult(e.message);
+    }
+    return errorResult(`Nimbus: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    return await fn(client);
+  } catch (e) {
+    if (isDisconnectError(e)) {
+      return errorResult(GATEWAY_DOWN_MESSAGE);
+    }
+    return errorResult(`Nimbus: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** Build index.searchRanked params, omitting undefined optionals so they don't appear in the request. */
+function searchParams(opts: {
+  name: string;
+  itemType: string | undefined;
+  service: string | undefined;
+  limit: number;
+  semantic: boolean;
+}): Record<string, unknown> {
+  const p: Record<string, unknown> = {
+    name: opts.name,
+    limit: opts.limit,
+    semantic: opts.semantic,
+    contextChunks: 0,
+  };
+  if (opts.itemType !== undefined) {
+    p["itemType"] = opts.itemType;
+  }
+  if (opts.service !== undefined) {
+    p["service"] = opts.service;
+  }
+  return p;
+}
+
+async function searchAndProject(
+  client: IpcCallable,
+  params: Record<string, unknown>,
+): Promise<ToolResult> {
+  const rows = await client.call<unknown>("index.searchRanked", params);
+  return jsonResult(projectRankedItems(rows));
+}
+
+/** A browse tool pinned to one itemType (recent items, recency-ranked). */
+function browseTool(itemType: string) {
+  return (deps: AdapterDeps, args: Record<string, unknown>): Promise<ToolResult> =>
+    runTool(deps, (c) =>
+      searchAndProject(
+        c,
+        searchParams({
+          name: "",
+          itemType,
+          service: optString(args, "service"),
+          limit: clampLimit(optNumber(args, "limit")),
+          semantic: false,
+        }),
+      ),
+    );
+}
+
+export interface ToolSpec {
+  name: string;
+  description: string;
+  schema: Record<string, z.ZodTypeAny>;
+  run(deps: AdapterDeps, args: Record<string, unknown>): Promise<ToolResult>;
+}
+
+const limitArg = z.number().int().positive().optional();
+const serviceArg = z.string().optional();
+
+export const TOOL_SPECS: ToolSpec[] = [
+  {
+    name: "searchIndex",
+    description:
+      "Search the Nimbus local index across all connected services (Drive, GitHub, Slack, Jira, etc.). Returns ranked items. Optionally filter by service or itemType.",
+    schema: {
+      query: z.string(),
+      service: serviceArg,
+      itemType: z.string().optional(),
+      limit: limitArg,
+      semantic: z.boolean().optional(),
+    },
+    run: (deps, args) =>
+      runTool(deps, (c) =>
+        searchAndProject(
+          c,
+          searchParams({
+            name: optString(args, "query") ?? "",
+            itemType: optString(args, "itemType"),
+            service: optString(args, "service"),
+            limit: clampLimit(optNumber(args, "limit")),
+            semantic: optBool(args, "semantic") !== false,
+          }),
+        ),
+      ),
+  },
+  {
+    name: "getConnectorStatus",
+    description: "List Nimbus connector health and sync state for every configured connector.",
+    schema: {},
+    run: (deps) => runTool(deps, async (c) => jsonResult(await c.call("connector.listStatus"))),
+  },
+  {
+    name: "getRecentIncidents",
+    description:
+      "List recent incidents from the local index (most recent first). Optionally filter by service.",
+    schema: { limit: limitArg, service: serviceArg },
+    run: browseTool("incident"),
+  },
+  {
+    name: "getRecentPullRequests",
+    description:
+      "List recent pull requests from the local index (most recent first). Each item carries its state (open/closed/merged) under meta.state when the connector recorded it — filter on that; the index cannot pre-filter by PR state.",
+    schema: { limit: limitArg, service: serviceArg },
+    run: browseTool("pr"),
+  },
+  {
+    name: "getRecentDeployments",
+    description:
+      "List recent deployments from the local index (most recent first). Optionally filter by service.",
+    schema: { limit: limitArg, service: serviceArg },
+    run: browseTool("deployment"),
+  },
+  {
+    name: "getDoraMetrics",
+    description:
+      "Get DORA metrics (deployment frequency, lead time for changes, change failure rate, MTTR) for a configured service. `since` accepts values like '30d'.",
+    schema: { service: z.string(), since: z.string().optional() },
+    run: (deps, args) =>
+      runTool(deps, async (c) => {
+        // `service` is a required zod field, so the SDK guarantees a string before `run` is
+        // reached. The `?? ""` is kept only because `run` is exported and called directly in
+        // unit tests (which bypass zod); an empty string is then safely rejected by the
+        // Gateway's metrics.dora handler ("service must be a string"/length check), not crashed on.
+        const params: Record<string, unknown> = { service: optString(args, "service") ?? "" };
+        const since = optString(args, "since");
+        if (since !== undefined) {
+          params["since"] = since;
+        }
+        return jsonResult(await c.call("metrics.dora", params));
+      }),
+  },
+];
+
+/** Build the MCP server with all six read-only tools registered. */
+export function buildMcpServer(deps: AdapterDeps): McpServer {
+  const server = new McpServer({ name: "nimbus", version: "0.1.0" });
+  for (const s of TOOL_SPECS) {
+    server.tool(s.name, s.description, s.schema, (args: unknown) => s.run(deps, asRecord(args)));
+  }
+  return server;
+}
+
+/** Run the MCP server over stdio (this process is launched by the editor). */
+export async function runMcpServerStdio(deps: AdapterDeps): Promise<void> {
+  const server = buildMcpServer(deps);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 }

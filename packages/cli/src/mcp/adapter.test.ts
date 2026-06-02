@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type AdapterDeps,
+  buildMcpServer,
   type ConnectionEnv,
   clampLimit,
   createDeps,
@@ -8,6 +10,7 @@ import {
   isDisconnectError,
   projectRankedItem,
   projectRankedItems,
+  TOOL_SPECS,
 } from "./adapter.ts";
 
 describe("clampLimit", () => {
@@ -260,5 +263,130 @@ describe("createDeps", () => {
     const [a, b] = await Promise.all([deps.getClient(), deps.getClient()]);
     expect(connects).toBe(1);
     expect(a).toBe(b);
+  });
+});
+
+type RecordedCall = { method: string; params?: unknown };
+
+function recordingDeps(opts: { result?: unknown; fail?: "down" | "drop" }): {
+  deps: AdapterDeps;
+  calls: RecordedCall[];
+} {
+  const calls: RecordedCall[] = [];
+  const client: IpcCallable = {
+    async call<T>(method: string, params?: unknown): Promise<T> {
+      calls.push({ method, params });
+      if (opts.fail === "drop") {
+        throw new Error("IPC connection closed");
+      }
+      return opts.result as T;
+    },
+    disconnect: async () => {},
+  };
+  const deps: AdapterDeps = {
+    getClient: async () => {
+      if (opts.fail === "down") {
+        throw new GatewayUnavailableError();
+      }
+      return client;
+    },
+  };
+  return { deps, calls };
+}
+
+function spec(name: string) {
+  const s = TOOL_SPECS.find((t) => t.name === name);
+  if (s === undefined) {
+    throw new Error(`no tool spec ${name}`);
+  }
+  return s;
+}
+
+describe("TOOL_SPECS", () => {
+  it("exposes exactly the six read-only tools", () => {
+    expect(TOOL_SPECS.map((t) => t.name).sort()).toEqual(
+      [
+        "getConnectorStatus",
+        "getDoraMetrics",
+        "getRecentDeployments",
+        "getRecentIncidents",
+        "getRecentPullRequests",
+        "searchIndex",
+      ].sort(),
+    );
+  });
+
+  it("searchIndex maps to index.searchRanked with clamped limit and contextChunks 0", async () => {
+    const { deps, calls } = recordingDeps({
+      result: [{ name: "n", service: "github", indexedType: "pr", score: 1 }],
+    });
+    const res = await spec("searchIndex").run(deps, {
+      query: "login bug",
+      service: "github",
+      limit: 1000,
+    });
+    expect(calls[0]).toEqual({
+      method: "index.searchRanked",
+      params: { name: "login bug", limit: 50, semantic: true, contextChunks: 0, service: "github" },
+    });
+    expect(res.isError).toBeUndefined();
+    expect(res.content[0]?.text).toContain('"type": "pr"');
+  });
+
+  it("getRecentPullRequests browses itemType pr by recency", async () => {
+    const { deps, calls } = recordingDeps({ result: [] });
+    await spec("getRecentPullRequests").run(deps, {});
+    expect(calls[0]).toEqual({
+      method: "index.searchRanked",
+      params: { name: "", limit: 20, semantic: false, contextChunks: 0, itemType: "pr" },
+    });
+  });
+
+  it("getRecentIncidents and getRecentDeployments pin their itemType", async () => {
+    const inc = recordingDeps({ result: [] });
+    await spec("getRecentIncidents").run(inc.deps, { service: "pagerduty" });
+    expect(inc.calls[0]?.params).toMatchObject({ itemType: "incident", service: "pagerduty" });
+
+    const dep = recordingDeps({ result: [] });
+    await spec("getRecentDeployments").run(dep.deps, {});
+    expect(dep.calls[0]?.params).toMatchObject({ itemType: "deployment" });
+  });
+
+  it("getConnectorStatus calls connector.listStatus and passes the result through", async () => {
+    const { deps, calls } = recordingDeps({ result: [{ service: "github", health: "healthy" }] });
+    const res = await spec("getConnectorStatus").run(deps, {});
+    expect(calls[0]?.method).toBe("connector.listStatus");
+    expect(res.content[0]?.text).toContain("healthy");
+  });
+
+  it("getDoraMetrics calls metrics.dora with service and since", async () => {
+    const { deps, calls } = recordingDeps({ result: { deploymentFrequency: null } });
+    await spec("getDoraMetrics").run(deps, { service: "payments", since: "30d" });
+    expect(calls[0]).toEqual({
+      method: "metrics.dora",
+      params: { service: "payments", since: "30d" },
+    });
+  });
+
+  it("returns an isError result with guidance when the Gateway is down", async () => {
+    const { deps } = recordingDeps({ fail: "down" });
+    const res = await spec("searchIndex").run(deps, { query: "x" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0]?.text).toContain("nimbus start");
+  });
+
+  it("returns an isError result (not a throw) on a dropped connection", async () => {
+    const { deps } = recordingDeps({ result: [], fail: "drop" });
+    const res = await spec("searchIndex").run(deps, { query: "x" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0]?.text).toContain("nimbus start");
+  });
+});
+
+describe("buildMcpServer", () => {
+  it("registers all six tools without throwing", () => {
+    const { deps } = recordingDeps({ result: [] });
+    const server = buildMcpServer(deps);
+    expect(server).toBeDefined();
   });
 });
