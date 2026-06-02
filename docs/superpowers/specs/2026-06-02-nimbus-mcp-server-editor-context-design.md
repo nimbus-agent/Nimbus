@@ -139,9 +139,18 @@ payload, independent of the Gateway's own 1–500 ceiling:
   (from `indexedType`, the *real* type — note `itemType` collapses unknown types to
   `"file"`), `url` (`url ?? canonicalUrl`), `score`, `modifiedAt`, and
   `semanticSnippet` when present; it replaces `rawMeta` with a **whitelisted** slice
-  (`state`, `number`, `author`, `status`, `severity`) and drops the raw blob plus
-  rank-debug fields (`bm25Rank`, `vectorRank`, `indexPrimaryKey`). This keeps
-  payloads small and avoids leaking arbitrary connector metadata to the editor LLM.
+  of small, useful keys verified against real connector mappings — `state`, `status`,
+  `number`, `user`, `author`, `labels`, `merged`, `draft`, `priority`, `severity`,
+  `urgency`, `environment`, `conclusion`, `repo` (e.g. `github-sync.ts` stores a PR's
+  author under `user` and adds `labels`/`merged`/`draft`; PagerDuty incidents use
+  `status`/`severity`/`urgency`) — and drops the raw blob plus rank-debug fields
+  (`bm25Rank`, `vectorRank`, `indexPrimaryKey`). Any whitelisted string value is
+  truncated to 200 chars as defense-in-depth. This keeps payloads small and avoids
+  leaking arbitrary connector metadata to the editor LLM. A per-item-type whitelist
+  is deliberately **not** built yet (YAGNI) — the flat list is reviewed if a type
+  needs a field it lacks. Note there is no top-level `description`/`summary` on a
+  `RankedIndexItem` to preserve; a PR's body lives in the item's `body_preview`
+  column, which the Gateway's item mapping does not surface — out of scope here.
 
 Results are returned as a single MCP `text` content item containing the
 JSON-stringified projected array.

@@ -22,6 +22,7 @@
 | `packages/cli/src/mcp/adapter.test.ts` (create) | Unit tests for projection, clamp, connection deps/reconnect, and each tool spec's IPC mapping + error handling. |
 | `packages/cli/src/commands/mcp-server.ts` (create) | CLI command: arg parsing, config-block printing, `--stdio` runner (DI-seamed). |
 | `packages/cli/src/commands/mcp-server.test.ts` (create) | Unit tests for arg parsing, config block, and the runMcpServer dispatch. |
+| `packages/cli/src/commands/mcp-server-stdio.test.ts` (create) | Subprocess test asserting `--stdio` stdout is banner/log-free and strictly JSON-RPC. |
 | `packages/cli/src/commands/index.ts` (modify) | Re-export `runMcpServer` from the command barrel. |
 | `packages/cli/src/index.ts` (modify) | Import `runMcpServer`; register `"mcp-server"` in `COMMAND_HANDLERS`. |
 | `packages/cli/package.json` (modify) | Add `@modelcontextprotocol/sdk: 1.29.0` dependency. |
@@ -118,7 +119,7 @@ describe("projectRankedItem", () => {
     });
   });
 
-  it("drops the raw rawMeta blob but keeps the whitelisted slice as meta", () => {
+  it("drops the raw rawMeta blob but keeps the whitelisted slice as meta (real github PR keys)", () => {
     const out = projectRankedItem({
       name: "PR",
       service: "github",
@@ -127,14 +128,37 @@ describe("projectRankedItem", () => {
       rawMeta: {
         state: "open",
         number: 42,
-        author: "alice",
+        user: "alice", // github stores the PR author under `user`, not `author`
+        labels: ["bug", "p1"],
+        merged: false,
+        draft: false,
         secret_token: "should-not-leak",
         huge_blob: "x".repeat(10_000),
       },
     });
-    expect(out["meta"]).toEqual({ state: "open", number: 42, author: "alice" });
+    expect(out["meta"]).toEqual({
+      state: "open",
+      number: 42,
+      user: "alice",
+      labels: ["bug", "p1"],
+      merged: false,
+      draft: false,
+    });
     expect(JSON.stringify(out)).not.toContain("should-not-leak");
     expect(JSON.stringify(out)).not.toContain("huge_blob");
+  });
+
+  it("truncates an over-long whitelisted string value to META_STRING_MAX (200)", () => {
+    const out = projectRankedItem({
+      name: "incident",
+      service: "pagerduty",
+      indexedType: "incident",
+      score: 0.5,
+      rawMeta: { status: "y".repeat(500), severity: "high" },
+    });
+    const meta = out["meta"] as Record<string, unknown>;
+    expect((meta["status"] as string).length).toBe(200);
+    expect(meta["severity"]).toBe("high");
   });
 
   it("falls back to canonicalUrl when url is absent and keeps semanticSnippet", () => {
@@ -177,7 +201,32 @@ Create `packages/cli/src/mcp/adapter.ts`:
 ```ts
 const MCP_LIMIT_DEFAULT = 20;
 const MCP_LIMIT_MAX = 50;
-const META_WHITELIST = ["state", "number", "author", "status", "severity"] as const;
+// Whitelisted rawMeta keys, verified against real connector item mappings (e.g. github-sync.ts
+// stores a PR's author under `user`, plus `labels`/`merged`/`draft`/`repo`; pagerduty incidents
+// use `status`/`severity`/`urgency`). Keep this tight — it is the only rawMeta that reaches the
+// editor LLM (see the spec's security checklist).
+const META_WHITELIST = [
+  "state",
+  "status",
+  "number",
+  "user",
+  "author",
+  "labels",
+  "merged",
+  "draft",
+  "priority",
+  "severity",
+  "urgency",
+  "environment",
+  "conclusion",
+  "repo",
+] as const;
+const META_STRING_MAX = 200;
+
+/** Defense-in-depth: truncate any long string value so a whitelisted key can't smuggle a large blob. */
+function clampMetaValue(v: unknown): unknown {
+  return typeof v === "string" && v.length > META_STRING_MAX ? v.slice(0, META_STRING_MAX) : v;
+}
 
 /** Clamp an MCP-tool limit to [1, 50], defaulting to 20. Independent of the Gateway's own 1–500 clamp. */
 export function clampLimit(limit: number | undefined): number {
@@ -225,7 +274,7 @@ export function projectRankedItem(item: unknown): Record<string, unknown> {
     const picked: Record<string, unknown> = {};
     for (const k of META_WHITELIST) {
       if (m[k] !== undefined) {
-        picked[k] = m[k];
+        picked[k] = clampMetaValue(m[k]);
       }
     }
     if (Object.keys(picked).length > 0) {
@@ -788,6 +837,10 @@ export const TOOL_SPECS: ToolSpec[] = [
     schema: { service: z.string(), since: z.string().optional() },
     run: (deps, args) =>
       runTool(deps, async (c) => {
+        // `service` is a required zod field, so the SDK guarantees a string before `run` is
+        // reached. The `?? ""` is kept only because `run` is exported and called directly in
+        // unit tests (which bypass zod); an empty string is then safely rejected by the
+        // Gateway's metrics.dora handler ("service must be a string"/length check), not crashed on.
         const params: Record<string, unknown> = { service: optString(args, "service") ?? "" };
         const since = optString(args, "since");
         if (since !== undefined) {
@@ -1066,7 +1119,134 @@ git commit -m "feat(cli): wire mcp-server into the command dispatcher"
 
 ---
 
-## Task 7: Documentation
+## Task 7: Automated stdout-hygiene test (subprocess)
+
+Task 6 Step 4 is a *manual* check. Because stdout purity is load-bearing for the MCP transport (any banner, log line, or stray `console.log` reachable under `--stdio` corrupts the JSON-RPC stream), add an automated subprocess test that asserts it. This test needs no running Gateway — `tools/list` is answered from the registered tools regardless of Gateway state.
+
+**Files:**
+- Create: `packages/cli/src/commands/mcp-server-stdio.test.ts`
+
+- [ ] **Step 1: Write the test**
+
+Create `packages/cli/src/commands/mcp-server-stdio.test.ts`:
+
+```ts
+import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
+
+// packages/cli/src/index.ts — the real CLI entrypoint, so this exercises banner/logger paths.
+const CLI_ENTRY = join(import.meta.dir, "..", "index.ts");
+// In the SDK 1.29.0 SUPPORTED_PROTOCOL_VERSIONS list; pin a stable one to avoid handshake drift.
+const MCP_PROTOCOL_VERSION = "2024-11-05";
+
+function rpcLine(obj: unknown): string {
+  return `${JSON.stringify(obj)}\n`;
+}
+
+async function waitUntil(pred: () => boolean, ms: number): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline && !pred()) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+describe("mcp-server --stdio stdout hygiene", () => {
+  it("emits nothing on startup, then only valid JSON-RPC lines (no banner/log pollution)", async () => {
+    const proc = Bun.spawn(["bun", CLI_ENTRY, "mcp-server", "--stdio"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, NIMBUS_QUIET: "1" },
+    });
+
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    // Single background pump — never call reader.read() concurrently.
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (value !== undefined) {
+            buf += decoder.decode(value, { stream: true });
+          }
+        }
+      } catch {
+        /* reader canceled on teardown */
+      }
+    })();
+
+    try {
+      // 1) Nothing on stdout before any input: no intro banner, no logger output.
+      await new Promise((r) => setTimeout(r, 700));
+      expect(buf).toBe("");
+
+      // 2) Minimal MCP handshake, then list tools.
+      proc.stdin.write(
+        rpcLine({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            capabilities: {},
+            clientInfo: { name: "hygiene-test", version: "0" },
+          },
+        }),
+      );
+      proc.stdin.write(rpcLine({ jsonrpc: "2.0", method: "notifications/initialized" }));
+      proc.stdin.write(rpcLine({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
+      await proc.stdin.flush();
+
+      await waitUntil(() => buf.includes("searchIndex"), 5000);
+
+      // 3) Every non-empty stdout line must parse as JSON — no interleaved banner/log text.
+      const lines = buf.split("\n").filter((l) => l.trim() !== "");
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(() => JSON.parse(line)).not.toThrow();
+      }
+
+      // 4) The tools/list response is present and includes our tools.
+      expect(buf).toContain("searchIndex");
+      expect(buf).toContain("getRecentPullRequests");
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+      proc.kill();
+      await proc.exited;
+      await pump;
+    }
+  }, 20_000);
+});
+```
+
+> Note: `Date.now()` / `setTimeout` are fine in test files — the `Date.now()` ban applies only to Workflow scripts, not Bun tests.
+
+- [ ] **Step 2: Run the test to verify it passes**
+
+Run: `bun test packages/cli/src/commands/mcp-server-stdio.test.ts`
+Expected: PASS. stdout is empty for the first 700ms, and after the handshake every stdout line parses as JSON and the tool list contains `searchIndex` / `getRecentPullRequests`.
+
+If it fails on `expect(buf).toBe("")`, something is writing to stdout on startup — find the offending `console.log`/banner path reachable under `--stdio` and remove it (do **not** weaken the assertion).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add packages/cli/src/commands/mcp-server-stdio.test.ts
+git commit -m "test(cli): automated stdout-hygiene check for mcp-server --stdio"
+```
+
+---
+
+## Task 8: Documentation
 
 **Files:**
 - Modify: `docs/CHANGELOG.md`
@@ -1122,14 +1302,14 @@ git commit -m "docs: document nimbus mcp-server + tick roadmap"
 
 ---
 
-## Task 8: Full verification before pushing
+## Task 9: Full verification before pushing
 
 **Files:** none (verification only)
 
 - [ ] **Step 1: Run the new tests together**
 
-Run: `bun test packages/cli/src/mcp/ packages/cli/src/commands/mcp-server.test.ts`
-Expected: PASS, all green.
+Run: `bun test packages/cli/src/mcp/ packages/cli/src/commands/mcp-server.test.ts packages/cli/src/commands/mcp-server-stdio.test.ts`
+Expected: PASS, all green. (The stdio test spawns a real `bun … --stdio` subprocess — allow it the full ~20s timeout.)
 
 - [ ] **Step 2: Typecheck the workspace**
 
