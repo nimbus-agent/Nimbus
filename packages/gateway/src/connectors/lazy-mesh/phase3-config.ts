@@ -1333,6 +1333,67 @@ export async function phase3AddImapMcp(
   );
 }
 
+export async function phase3AddProtonmailMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // ProtonMail via Bridge (Tier-4 EMAIL). Gate on the Bridge IMAP credentials;
+  // SMTP creds are optional (send tool). Host/port default to the Bridge
+  // loopback listeners (127.0.0.1:1143 IMAP / :1025 SMTP).
+  const username = (await readConnectorSecret(vault, "protonmail", "username"))?.trim() ?? "";
+  const password = (await readConnectorSecret(vault, "protonmail", "password"))?.trim() ?? "";
+  if (username === "" || password === "") {
+    return;
+  }
+  const host = (await readConnectorSecret(vault, "protonmail", "imap_host"))?.trim() || "127.0.0.1";
+  const portRaw = (await readConnectorSecret(vault, "protonmail", "imap_port"))?.trim() ?? "";
+  const port = imapPortOrDefault(portRaw, 1143);
+  const mailbox = (await readConnectorSecret(vault, "protonmail", "mailbox"))?.trim() ?? "";
+
+  const smtpHost =
+    (await readConnectorSecret(vault, "protonmail", "smtp_host"))?.trim() || "127.0.0.1";
+  const smtpUser = (await readConnectorSecret(vault, "protonmail", "smtp_username"))?.trim() ?? "";
+  const smtpPass = (await readConnectorSecret(vault, "protonmail", "smtp_password"))?.trim() ?? "";
+  const smtpPortRaw = (await readConnectorSecret(vault, "protonmail", "smtp_port"))?.trim() ?? "";
+  const smtpPort = imapPortOrDefault(smtpPortRaw, 1025);
+
+  // Bridge IMAP/SMTP are on non-443 loopback ports — add the concrete host:port
+  // entries to the sandbox network allow-list at spawn time. SMTP host is only
+  // added when send credentials are configured.
+  const extraHosts: string[] = [`${host}:${String(port)}`];
+  if (smtpUser !== "" && smtpPass !== "") {
+    extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
+  }
+  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts);
+
+  const env: Record<string, string> = {
+    PROTONMAIL_HOST: host,
+    PROTONMAIL_PORT: String(port),
+    PROTONMAIL_USERNAME: username,
+    PROTONMAIL_PASSWORD: password,
+  };
+  if (mailbox !== "") {
+    env["PROTONMAIL_MAILBOX"] = mailbox;
+  }
+  if (smtpUser !== "" && smtpPass !== "") {
+    env["PROTONMAIL_SMTP_HOST"] = smtpHost;
+    env["PROTONMAIL_SMTP_PORT"] = String(smtpPort);
+    env["PROTONMAIL_SMTP_USERNAME"] = smtpUser;
+    env["PROTONMAIL_SMTP_PASSWORD"] = smtpPass;
+  }
+
+  servers["protonmail"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("protonmail")],
+      env: extensionProcessEnv(env),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddFastmailMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1454,6 +1515,7 @@ export async function buildPhase3Servers(
   await phase3AddRampMcp(vault, servers, sandboxCwd);
   await phase3AddImapMcp(vault, servers, sandboxCwd);
   await phase3AddFastmailMcp(vault, servers, sandboxCwd);
+  await phase3AddProtonmailMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

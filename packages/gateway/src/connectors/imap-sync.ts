@@ -24,6 +24,16 @@ export interface ImapConnectionConfig {
   readonly username: string;
   readonly password: string;
   readonly mailbox: string;
+  /**
+   * Implicit-TLS toggle. Defaults to `true` (IMAPS/993). ProtonMail Bridge
+   * exposes a STARTTLS endpoint on a local port, so it sets this to `false`.
+   */
+  readonly secure?: boolean;
+  /**
+   * When explicitly `false`, accept a self-signed server certificate (used by
+   * ProtonMail Bridge's localhost listener). Defaults to verifying.
+   */
+  readonly tlsRejectUnauthorized?: boolean;
 }
 
 /**

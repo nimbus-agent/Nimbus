@@ -158,9 +158,10 @@ export async function fetchImapMessages(
   const client = new ImapFlow({
     host: config.host,
     port: config.port,
-    secure: true,
+    secure: config.secure ?? true,
     auth: { user: config.username, pass: config.password },
     logger: false,
+    ...(config.tlsRejectUnauthorized === false ? { tls: { rejectUnauthorized: false } } : {}),
   });
 
   try {

@@ -121,6 +121,19 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // Fastmail JMAP: a secret API token + an optional non-secret base URL
   // (listed so it is a known/allowed vault key (D11) and is cleared on removal).
   fastmail: ["fastmail.api_token", "fastmail.base_url"],
+  // ProtonMail Bridge: Bridge-generated IMAP/SMTP credentials. Host/port default
+  // to the Bridge loopback listener (127.0.0.1:1143 / :1025); SMTP is optional.
+  protonmail: [
+    "protonmail.username",
+    "protonmail.password",
+    "protonmail.imap_host",
+    "protonmail.imap_port",
+    "protonmail.mailbox",
+    "protonmail.smtp_host",
+    "protonmail.smtp_port",
+    "protonmail.smtp_username",
+    "protonmail.smtp_password",
+  ],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

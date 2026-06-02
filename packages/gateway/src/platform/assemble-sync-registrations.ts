@@ -57,6 +57,7 @@ import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
 import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
+import { createProtonmailSyncable } from "../connectors/protonmail-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
@@ -468,6 +469,12 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createFastmailSyncable({
       ensureFastmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createProtonmailSyncable({
+      ensureProtonmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+      fetchMessages: fetchImapMessages,
     }),
   );
   syncScheduler.register(

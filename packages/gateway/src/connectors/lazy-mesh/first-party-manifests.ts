@@ -440,6 +440,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["api.fastmail.com"],
     filesystem: { read: [], write: [] },
   }),
+
+  // ProtonMail via ProtonMail Bridge (Tier-4 EMAIL). Bridge exposes local IMAP
+  // (127.0.0.1:1143) + SMTP (127.0.0.1:1025) listeners; the concrete loopback
+  // host:port entries are added at spawn time by phase3AddProtonmailMcp via
+  // manifestWithExtraNetworkHosts. The static network list is empty.
+  protonmail: baseManifest("com.nimbus.protonmail", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

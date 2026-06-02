@@ -78,6 +78,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "great_expectations",
   "imap",
   "fastmail",
+  "protonmail",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -181,6 +182,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   great_expectations: MIN10,
   imap: MIN5,
   fastmail: MIN5,
+  protonmail: MIN5,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -274,6 +276,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reads Great Expectations validation-result JSON artefacts from the configured great_expectations.results_dir — no live credentials",
   imap: "uses per-tenant IMAP/SMTP host + port + username + password (connector.auth imap)",
   fastmail: "uses a Fastmail JMAP API token (connector.auth fastmail)",
+  protonmail:
+    "uses ProtonMail Bridge's local IMAP/SMTP credentials (connector.auth protonmail; Bridge must be running)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

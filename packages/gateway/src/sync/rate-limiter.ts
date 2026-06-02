@@ -70,6 +70,7 @@ export type Provider =
   | "vertex_ai"
   | "imap"
   | "fastmail"
+  | "protonmail"
   | "great_expectations";
 
 export interface ProviderQuota {
@@ -150,6 +151,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   great_expectations: { requestsPerMinute: 60, burstSize: 10 },
   imap: { requestsPerMinute: 60, burstSize: 10 },
   fastmail: { requestsPerMinute: 60, burstSize: 10 },
+  protonmail: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

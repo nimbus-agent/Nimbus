@@ -846,6 +846,21 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/protonmail": {
+      "name": "nimbus-mcp-protonmail",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "imapflow": "^1.3.5",
+        "nodemailer": "^8.0.10",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/nodemailer": "^8.0.0",
+      },
+    },
     "packages/mcp-connectors/raindrop": {
       "name": "nimbus-mcp-raindrop",
       "version": "0.1.0",
@@ -3218,6 +3233,8 @@
     "nimbus-mcp-pipedrive": ["nimbus-mcp-pipedrive@workspace:packages/mcp-connectors/pipedrive"],
 
     "nimbus-mcp-prefect": ["nimbus-mcp-prefect@workspace:packages/mcp-connectors/prefect"],
+
+    "nimbus-mcp-protonmail": ["nimbus-mcp-protonmail@workspace:packages/mcp-connectors/protonmail"],
 
     "nimbus-mcp-raindrop": ["nimbus-mcp-raindrop@workspace:packages/mcp-connectors/raindrop"],
 

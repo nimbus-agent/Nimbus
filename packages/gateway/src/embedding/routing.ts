@@ -32,6 +32,8 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "imap:email",
   // Fastmail (JMAP) email bodies are prose, like imap:email / gmail:email.
   "fastmail:email",
+  // ProtonMail (via Bridge) email bodies are prose, like imap:email.
+  "protonmail:email",
 ]);
 
 export function routingKey(service: string, type: string): string {
