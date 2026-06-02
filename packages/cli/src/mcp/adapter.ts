@@ -129,12 +129,15 @@ export interface ConnectionEnv {
   connect(socketPath: string): Promise<IpcCallable>;
 }
 
-/** True when an error indicates the IPC transport is dead and a reconnect is warranted. */
+const DISCONNECT_MESSAGES: ReadonlySet<string> = new Set([
+  "IPC client is not connected",
+  "IPC connection closed",
+  "IPC connection error",
+]);
+
+/** True when an error is one of IPCClient's transport-dead messages and a reconnect is warranted. */
 export function isDisconnectError(e: unknown): boolean {
-  const m = e instanceof Error ? e.message : "";
-  return (
-    m.includes("not connected") || m.includes("connection closed") || m.includes("connection error")
-  );
+  return e instanceof Error && DISCONNECT_MESSAGES.has(e.message);
 }
 
 /** Wrap a raw client so a transport-dead call invalidates the cache, forcing the next getClient to reconnect. */
@@ -146,6 +149,7 @@ function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCa
       } catch (e) {
         if (isDisconnectError(e)) {
           invalidate();
+          void raw.disconnect().catch(() => {});
         }
         throw e;
       }
@@ -158,26 +162,36 @@ function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCa
 
 export function createDeps(env: ConnectionEnv): AdapterDeps {
   let cached: IpcCallable | null = null;
+  let connecting: Promise<IpcCallable> | null = null;
   const invalidate = (): void => {
     cached = null;
+  };
+  const openConnection = async (): Promise<IpcCallable> => {
+    const state = await env.readState();
+    if (state === undefined) {
+      throw new GatewayUnavailableError();
+    }
+    let raw: IpcCallable;
+    try {
+      raw = await env.connect(state.socketPath);
+    } catch {
+      throw new GatewayUnavailableError();
+    }
+    const client = makeReconnectingClient(raw, invalidate);
+    cached = client;
+    return client;
   };
   return {
     async getClient(): Promise<IpcCallable> {
       if (cached !== null) {
         return cached;
       }
-      const state = await env.readState();
-      if (state === undefined) {
-        throw new GatewayUnavailableError();
+      if (connecting === null) {
+        connecting = openConnection().finally(() => {
+          connecting = null;
+        });
       }
-      let raw: IpcCallable;
-      try {
-        raw = await env.connect(state.socketPath);
-      } catch {
-        throw new GatewayUnavailableError();
-      }
-      cached = makeReconnectingClient(raw, invalidate);
-      return cached;
+      return connecting;
     },
   };
 }

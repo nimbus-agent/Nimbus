@@ -226,4 +226,39 @@ describe("createDeps", () => {
     await deps.getClient();
     expect(connects).toBe(2);
   });
+
+  it("does NOT invalidate the cache on a non-disconnect application error", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async () => {
+          throw new Error("Method not found");
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const c1 = await deps.getClient();
+    await expect(c1.call("no.such.method", {})).rejects.toThrow("Method not found");
+    const c2 = await deps.getClient();
+    expect(connects).toBe(1);
+    expect(c2).toBe(c1);
+  });
+
+  it("does not double-connect under concurrent getClient calls", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        await new Promise((r) => setTimeout(r, 10));
+        return fakeClient(async () => "ok");
+      },
+    };
+    const deps = createDeps(env);
+    const [a, b] = await Promise.all([deps.getClient(), deps.getClient()]);
+    expect(connects).toBe(1);
+    expect(a).toBe(b);
+  });
 });
