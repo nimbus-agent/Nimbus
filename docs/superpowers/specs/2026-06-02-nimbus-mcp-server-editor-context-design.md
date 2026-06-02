@@ -132,12 +132,16 @@ payload, independent of the Gateway's own 1–500 ceiling:
 - **`contextChunks: 0`** for every tool — the adapter does not pull surrounding chunk
   text. The editor LLM can issue a follow-up `searchIndex` if it wants more on a
   specific hit; we do not pre-bloat every result.
-- **Compact projection:** each item is projected to a stable, small shape —
-  `title`, `service`, `itemType`, `url`/`canonicalUrl`, `score`, `modifiedAt`, a
-  truncated `body_preview` (first ~280 chars), and a **whitelisted** slice of
-  `rawMeta` (e.g. `state`, `number`, `author` for PRs) rather than the whole blob.
-  This keeps payloads small and avoids leaking arbitrary connector metadata to the
-  editor LLM.
+- **Compact projection:** each ranked item is projected to a stable, small shape.
+  The heavy field on a `RankedIndexItem` is `rawMeta` (the full parsed metadata
+  blob); the item has **no** `body_preview` field, and a keyword `searchIndex` adds
+  only a short `semanticSnippet`. The projection keeps `name`, `service`, `type`
+  (from `indexedType`, the *real* type — note `itemType` collapses unknown types to
+  `"file"`), `url` (`url ?? canonicalUrl`), `score`, `modifiedAt`, and
+  `semanticSnippet` when present; it replaces `rawMeta` with a **whitelisted** slice
+  (`state`, `number`, `author`, `status`, `severity`) and drops the raw blob plus
+  rank-debug fields (`bm25Rank`, `vectorRank`, `indexPrimaryKey`). This keeps
+  payloads small and avoids leaking arbitrary connector metadata to the editor LLM.
 
 Results are returned as a single MCP `text` content item containing the
 JSON-stringified projected array.
