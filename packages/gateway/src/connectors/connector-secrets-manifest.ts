@@ -134,6 +134,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
     "protonmail.smtp_username",
     "protonmail.smtp_password",
   ],
+  // Local DB Schema Indexing: a single non-secret PATH to the local DB-tool
+  // scripts dir (listed so it is a known/allowed vault key (D11) + cleared on
+  // removal + gates the sync/spawn when unset). No live credential.
+  localdb: ["localdb.scripts_dir"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

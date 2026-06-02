@@ -1424,6 +1424,42 @@ export async function phase3AddFastmailMcp(
   );
 }
 
+export async function phase3AddLocaldbMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Local DB Schema Indexing (Tier-5 local) has NO network and NO live
+  // credential — it reads saved `.sql` files from a configured local directory.
+  // `localdb.scripts_dir` is a non-secret PATH; noop when unset.
+  const dir = (await readConnectorSecret(vault, "localdb", "scripts_dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  // Extend the connector manifest's filesystem.read with the configured scripts
+  // dir at spawn time, mirroring phase3AddGreatExpectationsMcp / ensureObsidianMcp.
+  const base = manifestForFirstParty("localdb");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["localdb"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("localdb")],
+      env: extensionProcessEnv({ LOCALDB_SCRIPTS_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddGreatExpectationsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1516,6 +1552,7 @@ export async function buildPhase3Servers(
   await phase3AddImapMcp(vault, servers, sandboxCwd);
   await phase3AddFastmailMcp(vault, servers, sandboxCwd);
   await phase3AddProtonmailMcp(vault, servers, sandboxCwd);
+  await phase3AddLocaldbMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

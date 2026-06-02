@@ -45,6 +45,7 @@ import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
+import { createLocaldbSyncable } from "../connectors/localdb-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMiroSyncable } from "../connectors/miro-sync.ts";
@@ -475,6 +476,11 @@ export function registerConnectorMeshSyncables(
     createProtonmailSyncable({
       ensureProtonmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
       fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createLocaldbSyncable({
+      ensureLocaldbMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

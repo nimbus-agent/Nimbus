@@ -678,6 +678,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/localdb": {
+      "name": "nimbus-mcp-localdb",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/mercury": {
       "name": "nimbus-mcp-mercury",
       "version": "0.1.0",
@@ -3207,6 +3219,8 @@
     "nimbus-mcp-lever": ["nimbus-mcp-lever@workspace:packages/mcp-connectors/lever"],
 
     "nimbus-mcp-linear": ["nimbus-mcp-linear@workspace:packages/mcp-connectors/linear"],
+
+    "nimbus-mcp-localdb": ["nimbus-mcp-localdb@workspace:packages/mcp-connectors/localdb"],
 
     "nimbus-mcp-mercury": ["nimbus-mcp-mercury@workspace:packages/mcp-connectors/mercury"],
 

@@ -449,6 +449,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // Local DB Schema Indexing (Tier-5 local). No network; reads saved `.sql`
+  // files from the configured scripts dir, which is added to filesystem.read at
+  // spawn time by phase3AddLocaldbMcp (mirroring Great Expectations / Obsidian).
+  localdb: baseManifest("com.nimbus.localdb", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

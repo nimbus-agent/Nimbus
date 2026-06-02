@@ -79,6 +79,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "imap",
   "fastmail",
   "protonmail",
+  "localdb",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -183,6 +184,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   imap: MIN5,
   fastmail: MIN5,
   protonmail: MIN5,
+  localdb: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -278,6 +280,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   fastmail: "uses a Fastmail JMAP API token (connector.auth fastmail)",
   protonmail:
     "uses ProtonMail Bridge's local IMAP/SMTP credentials (connector.auth protonmail; Bridge must be running)",
+  localdb:
+    "reads saved SQL script files from a configured local DB-tool scripts dir (connector.auth localdb) — no live credentials",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
