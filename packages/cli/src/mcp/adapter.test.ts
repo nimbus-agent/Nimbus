@@ -17,6 +17,9 @@ describe("clampLimit", () => {
   it("defaults on non-finite", () => {
     expect(clampLimit(Number.NaN)).toBe(20);
   });
+  it("floors a negative value to 1", () => {
+    expect(clampLimit(-5)).toBe(1);
+  });
 });
 
 describe("projectRankedItem", () => {
@@ -105,14 +108,43 @@ describe("projectRankedItem", () => {
     });
     expect(out["meta"]).toBeUndefined();
   });
+
+  it("truncates over-long strings inside a whitelisted array value (labels)", () => {
+    const out = projectRankedItem({
+      name: "PR",
+      service: "github",
+      indexedType: "pr",
+      score: 0.5,
+      rawMeta: { labels: ["bug", "z".repeat(500)] },
+    });
+    const meta = out["meta"] as Record<string, unknown>;
+    const labels = meta["labels"] as string[];
+    expect(labels[0]).toBe("bug");
+    expect(labels[1]?.length).toBe(200);
+  });
+
+  it("drops null-valued whitelisted keys but keeps false/zero", () => {
+    const out = projectRankedItem({
+      name: "PR",
+      service: "github",
+      indexedType: "pr",
+      score: 0.5,
+      rawMeta: { state: null, merged: false, number: 0 },
+    });
+    expect(out["meta"]).toEqual({ merged: false, number: 0 });
+  });
 });
 
 describe("projectRankedItems", () => {
-  it("maps an array and tolerates a non-array input", () => {
+  it("maps a valid array", () => {
     expect(
       projectRankedItems([{ name: "a", service: "s", indexedType: "pr", score: 1 }]),
     ).toHaveLength(1);
+  });
+  it("returns [] for undefined", () => {
     expect(projectRankedItems(undefined)).toEqual([]);
+  });
+  it("returns [] for a non-array object", () => {
     expect(projectRankedItems({})).toEqual([]);
   });
 });

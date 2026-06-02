@@ -22,9 +22,15 @@ const META_WHITELIST = [
 ] as const;
 const META_STRING_MAX = 200;
 
-/** Defense-in-depth: truncate any long string value so a whitelisted key can't smuggle a large blob. */
+/** Defense-in-depth: truncate long string values (including inside arrays) so a whitelisted key can't smuggle a large blob. */
 function clampMetaValue(v: unknown): unknown {
-  return typeof v === "string" && v.length > META_STRING_MAX ? v.slice(0, META_STRING_MAX) : v;
+  if (typeof v === "string") {
+    return v.length > META_STRING_MAX ? v.slice(0, META_STRING_MAX) : v;
+  }
+  if (Array.isArray(v)) {
+    return v.map(clampMetaValue);
+  }
+  return v;
 }
 
 /** Clamp an MCP-tool limit to [1, 50], defaulting to 20. Independent of the Gateway's own 1–500 clamp. */
@@ -72,8 +78,9 @@ export function projectRankedItem(item: unknown): Record<string, unknown> {
     const m = meta as Record<string, unknown>;
     const picked: Record<string, unknown> = {};
     for (const k of META_WHITELIST) {
-      if (m[k] !== undefined) {
-        picked[k] = clampMetaValue(m[k]);
+      const val = m[k];
+      if (val !== undefined && val !== null) {
+        picked[k] = clampMetaValue(val);
       }
     }
     if (Object.keys(picked).length > 0) {
