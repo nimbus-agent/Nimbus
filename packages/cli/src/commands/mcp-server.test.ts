@@ -41,7 +41,10 @@ describe("formatConfigBlock / MCP_SERVER_CONFIG", () => {
 function fakeRunDeps(): { deps: RunMcpServerDeps; ran: { count: number } } {
   const ran = { count: 0 };
   const adapterDeps: AdapterDeps = {
-    getClient: async () => ({ call: async () => null, disconnect: async () => {} }),
+    getClient: async () => ({
+      call: <T>(): Promise<T> => Promise.resolve(null as T),
+      disconnect: async () => {},
+    }),
   };
   return {
     ran,
