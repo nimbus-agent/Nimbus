@@ -94,6 +94,11 @@
     "packages/mcp-connectors/vertex-ai",
     "packages/mcp-connectors/elasticsearch",
     "packages/mcp-connectors/great-expectations",
+    "packages/mcp-connectors/imap",
+    "packages/mcp-connectors/fastmail",
+    "packages/mcp-connectors/protonmail",
+    "packages/mcp-connectors/localdb",
+    "packages/mcp-connectors/storybook",
     "packages/vscode-extension"
   ],
   "scripts": {

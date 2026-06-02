@@ -421,6 +421,50 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // IMAP/SMTP (Tier-4 EMAIL). The IMAP/SMTP hosts are per-tenant and on non-443
+  // ports (IMAP 993, SMTP 465/587). The static network list is empty; the
+  // concrete <imap.host>:993 + <smtp.host>:<port> host:port entries are added at
+  // spawn time by phase3AddImapMcp via manifestWithExtraNetworkHosts (host:port
+  // syntax landed in the permissions validator for this connector class).
+  imap: baseManifest("com.nimbus.imap", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // Fastmail (Tier-4 EMAIL via JMAP). Pure HTTPS/443 to the fixed Fastmail
+  // host — no per-tenant host, no non-443 port, so the static network list is
+  // sufficient (the JMAP session/api/upload/download URLs are all under
+  // api.fastmail.com).
+  fastmail: baseManifest("com.nimbus.fastmail", {
+    network: ["api.fastmail.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // ProtonMail via ProtonMail Bridge (Tier-4 EMAIL). Bridge exposes local IMAP
+  // (127.0.0.1:1143) + SMTP (127.0.0.1:1025) listeners; the concrete loopback
+  // host:port entries are added at spawn time by phase3AddProtonmailMcp via
+  // manifestWithExtraNetworkHosts. The static network list is empty.
+  protonmail: baseManifest("com.nimbus.protonmail", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // Local DB Schema Indexing (Tier-5 local). No network; reads saved `.sql`
+  // files from the configured scripts dir, which is added to filesystem.read at
+  // spawn time by phase3AddLocaldbMcp (mirroring Great Expectations / Obsidian).
+  localdb: baseManifest("com.nimbus.localdb", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
+  // Storybook (Tier-5 local). No network; reads the local Storybook manifest
+  // from the configured output dir, which is added to filesystem.read at spawn
+  // time by phase3AddStorybookMcp (mirroring Great Expectations / localdb).
+  storybook: baseManifest("com.nimbus.storybook", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

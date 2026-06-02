@@ -5,11 +5,14 @@
  *   --check-caps           — verify CAP_NET_ADMIN is in the permitted set
  *                            (used at install-time by `nimbus doctor` and in CI).
  *
- *   --allow <host> [...]   -- <argv...>
+ *   --allow <host[:port]> [...]  -- <argv...>
  *                          — resolve each <host>, unshare(CLONE_NEWNET), install
  *                            an iptables/ip6tables OUTPUT-default-DROP ruleset
- *                            that only permits TCP/443 to the resolved IPs (plus
- *                            DNS UDP/TCP 53 and ESTABLISHED,RELATED), drop all
+ *                            that only permits the resolved IPs on each host's
+ *                            declared TCP port (a bare host defaults to 443; an
+ *                            explicit `host:port` such as imap.example.com:993
+ *                            opens that port instead) plus DNS UDP/TCP 53 and
+ *                            ESTABLISHED,RELATED, drop all
  *                            capabilities, install a post-unshare seccomp BPF
  *                            filter that forbids setns + unshare (so the helper
  *                            cannot itself escape the netns it just created),
@@ -129,6 +132,33 @@ static int valid_hostname(const char *host) {
         }
     }
     return 1;
+}
+
+/*
+ * Parse a decimal TCP port (1..65535) from `s`. Accepts 1..5 ASCII digits with
+ * no sign, whitespace, or other characters. Returns the port on success, or -1
+ * on any malformed input. Mirrors the TypeScript `permissions.network` port
+ * check (/^\d{1,5}$/ + 1..65535) in permissions-validator.ts so both ends of
+ * the pipeline (TOML loader + helper argv) enforce the same contract.
+ */
+static int parse_port(const char *s) {
+    if (s == NULL || s[0] == '\0') {
+        return -1;
+    }
+    long val = 0;
+    for (const char *p = s; *p != '\0'; p++) {
+        if (*p < '0' || *p > '9') {
+            return -1;
+        }
+        val = val * 10 + (*p - '0');
+        if (val > 65535) {
+            return -1;
+        }
+    }
+    if (val < 1) {
+        return -1;
+    }
+    return (int)val;
 }
 
 /*
@@ -275,13 +305,17 @@ static int run_cmd(const char *cmd) {
 }
 
 /*
- * Parse the `--allow <host> ... -- <argv...>` portion of argv. On success
- * returns 0 with allowed[] / *n_allowed_out populated and *child_argv_out
- * pointing at the post-`--` child argv. On any parse error prints the same
- * diagnostic the original inline parser did and returns 2.
+ * Parse the `--allow <host[:port]> ... -- <argv...>` portion of argv. On success
+ * returns 0 with allowed[] (host only) + ports[] (parsed TCP port, default 443)
+ * / *n_allowed_out populated and *child_argv_out pointing at the post-`--` child
+ * argv. On any parse error prints a diagnostic and returns 2.
+ *
+ * A `host:port` value is split in place: the colon in the writable argv string
+ * is overwritten with a NUL so allowed[k] becomes the bare host, and the port
+ * substring is validated via parse_port. A bare host gets the default port 443.
  */
 static int parse_allowed_hosts(int argc, char **argv, const char **allowed,
-                               int *n_allowed_out, char ***child_argv_out) {
+                               int *ports, int *n_allowed_out, char ***child_argv_out) {
     int n_allowed = 0;
     int i = 1;
     while (i < argc && strcmp(argv[i], "--") != 0) {
@@ -293,16 +327,29 @@ static int parse_allowed_hosts(int argc, char **argv, const char **allowed,
             fprintf(stderr, "--allow requires a value\n");
             return 2;
         }
-        const char *host = argv[i + 1];
-        if (!valid_hostname(host)) {
-            fprintf(stderr, "invalid hostname: %s\n", host);
+        char *value = argv[i + 1];
+        int port = 443;
+        /* Hostnames never contain a colon, so the last colon (if any) separates
+         * host from port. Split in place: argv strings are writable. */
+        char *colon = strrchr(value, ':');
+        if (colon != NULL) {
+            port = parse_port(colon + 1);
+            if (port < 0) {
+                fprintf(stderr, "invalid port: %s\n", value);
+                return 2;
+            }
+            *colon = '\0';
+        }
+        if (!valid_hostname(value)) {
+            fprintf(stderr, "invalid hostname: %s\n", value);
             return 2;
         }
         if (n_allowed >= MAX_HOSTS) {
             fprintf(stderr, "too many --allow flags (max %d)\n", MAX_HOSTS);
             return 2;
         }
-        allowed[n_allowed++] = host;
+        ports[n_allowed] = port;
+        allowed[n_allowed++] = value;
         i += 2;
     }
     if (i >= argc || strcmp(argv[i], "--") != 0) {
@@ -347,12 +394,14 @@ static int resolve_allowed_hosts(const char **allowed, int n_allowed,
 }
 
 /*
- * Install the per-resolved-IP TCP/443 ACCEPT rules for one host's addrinfo
- * chain. Returns 0, or 5 on an inet_ntop / run_cmd failure. Does not free
- * `ai` — ownership stays with the caller. Families other than AF_INET /
- * AF_INET6 are silently skipped (the default-DROP policy still covers them).
+ * Install the per-resolved-IP TCP ACCEPT rules for one host's addrinfo chain on
+ * the host's declared `port`. Returns 0, or 5 on an inet_ntop / run_cmd failure.
+ * Does not free `ai` — ownership stays with the caller. Families other than
+ * AF_INET / AF_INET6 are silently skipped (the default-DROP policy still covers
+ * them). `port` is a validated 1..65535 value (see parse_port), so it is safe to
+ * interpolate into the iptables command.
  */
-static int add_host_accept_rules(struct addrinfo *ai) {
+static int add_host_accept_rules(struct addrinfo *ai, int port) {
     for (; ai != NULL; ai = ai->ai_next) {
         char ipstr[INET6_ADDRSTRLEN];
         char cmd[128];
@@ -363,7 +412,7 @@ static int add_host_accept_rules(struct addrinfo *ai) {
                 return 5;
             }
             int n = snprintf(cmd, sizeof(cmd),
-                             "iptables -A OUTPUT -d %s -p tcp --dport 443 -j ACCEPT", ipstr);
+                             "iptables -A OUTPUT -d %s -p tcp --dport %d -j ACCEPT", ipstr, port);
             if (n < 0 || (size_t)n >= sizeof(cmd)) {
                 fprintf(stderr, "add_host_accept_rules: command truncated\n");
                 return 5;
@@ -378,7 +427,7 @@ static int add_host_accept_rules(struct addrinfo *ai) {
                 return 5;
             }
             int n = snprintf(cmd, sizeof(cmd),
-                             "ip6tables -A OUTPUT -d %s -p tcp --dport 443 -j ACCEPT", ipstr);
+                             "ip6tables -A OUTPUT -d %s -p tcp --dport %d -j ACCEPT", ipstr, port);
             if (n < 0 || (size_t)n >= sizeof(cmd)) {
                 fprintf(stderr, "add_host_accept_rules: command truncated\n");
                 return 5;
@@ -395,11 +444,12 @@ static int add_host_accept_rules(struct addrinfo *ai) {
 
 /*
  * Bring loopback up and install the default-DROP OUTPUT ruleset (v4+v6) plus
- * ESTABLISHED,RELATED, DNS/53, and the per-resolved-IP TCP/443 ACCEPT rules.
- * Returns 0, or 5 on the first failure. Does not free resolved[] — the caller
- * owns it and frees it unconditionally afterwards.
+ * ESTABLISHED,RELATED, DNS/53, and the per-resolved-IP per-host-port TCP ACCEPT
+ * rules. Returns 0, or 5 on the first failure. Does not free resolved[] — the
+ * caller owns it and frees it unconditionally afterwards.
  */
-static int install_firewall_rules(struct addrinfo **resolved, int n_allowed) {
+static int install_firewall_rules(struct addrinfo **resolved, const int *ports,
+                                  int n_allowed) {
     if (run_cmd("ip link set lo up") != 0) return 5;
 
     /* Default-DROP OUTPUT on both v4 and v6 — nothing leaves the netns unless
@@ -419,9 +469,10 @@ static int install_firewall_rules(struct addrinfo **resolved, int n_allowed) {
     if (run_cmd("ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT") != 0) return 5;
     if (run_cmd("ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT") != 0) return 5;
 
-    /* Per-host TCP/443 ACCEPT rules — one per resolved A / AAAA record. */
+    /* Per-host TCP ACCEPT rules on each host's declared port — one per resolved
+     * A / AAAA record. */
     for (int k = 0; k < n_allowed; k++) {
-        int rc = add_host_accept_rules(resolved[k]);
+        int rc = add_host_accept_rules(resolved[k], ports[k]);
         if (rc != 0) {
             return rc;
         }
@@ -452,8 +503,8 @@ static int drop_all_caps(void) {
 /*
  * --allow ... -- <argv...>
  *
- * Parse hostnames, resolve them, unshare(CLONE_NEWNET), install iptables
- * default-DROP OUTPUT chain plus per-resolved-IP TCP/443 ACCEPT rules,
+ * Parse hostnames + ports, resolve them, unshare(CLONE_NEWNET), install iptables
+ * default-DROP OUTPUT chain plus per-resolved-IP per-host-port TCP ACCEPT rules,
  * drop all capabilities, install post-unshare seccomp, then execv() the
  * remainder of argv (typically `bwrap --share-net ... connector-entry`).
  *
@@ -473,11 +524,12 @@ static int drop_all_caps(void) {
  *     by the host's netns.
  */
 static int mode_enforce_and_exec(int argc, char **argv) {
-    /* Step 0: parse `--allow <host> ... -- <argv...>`. */
+    /* Step 0: parse `--allow <host[:port]> ... -- <argv...>`. */
     const char *allowed[MAX_HOSTS];
+    int ports[MAX_HOSTS];
     int n_allowed = 0;
     char **child_argv = NULL;
-    int rc = parse_allowed_hosts(argc, argv, allowed, &n_allowed, &child_argv);
+    int rc = parse_allowed_hosts(argc, argv, allowed, ports, &n_allowed, &child_argv);
     if (rc != 0) {
         return rc;
     }
@@ -505,7 +557,7 @@ static int mode_enforce_and_exec(int argc, char **argv) {
      * paths release it, preserving the original "free on every branch"
      * guarantee by construction. The helper still holds CAP_NET_ADMIN in this
      * netns; it is dropped immediately after the rules are installed. */
-    rc = install_firewall_rules(resolved, n_allowed);
+    rc = install_firewall_rules(resolved, ports, n_allowed);
     free_all_resolved(resolved, n_allowed);
     if (rc != 0) {
         return rc;
@@ -540,7 +592,7 @@ int main(int argc, char **argv) {
         fprintf(stderr,
             "usage:\n"
             "  %s --check-caps\n"
-            "  %s --allow <host> [--allow <host> ...] -- <argv...>\n",
+            "  %s --allow <host[:port]> [--allow <host[:port]> ...] -- <argv...>\n",
             argv[0], argv[0]);
         return 2;
     }

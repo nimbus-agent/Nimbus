@@ -107,6 +107,40 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // a credential, but it is listed here so it is a known/allowed vault key
   // (D11), is cleared on connector removal, and gates the sync/spawn when unset.
   great_expectations: ["great_expectations.results_dir"],
+  imap: [
+    "imap.host",
+    "imap.port",
+    "imap.username",
+    "imap.password",
+    "imap.mailbox",
+    "imap.smtp_host",
+    "imap.smtp_port",
+    "imap.smtp_username",
+    "imap.smtp_password",
+  ],
+  // Fastmail JMAP: a secret API token + an optional non-secret base URL
+  // (listed so it is a known/allowed vault key (D11) and is cleared on removal).
+  fastmail: ["fastmail.api_token", "fastmail.base_url"],
+  // ProtonMail Bridge: Bridge-generated IMAP/SMTP credentials. Host/port default
+  // to the Bridge loopback listener (127.0.0.1:1143 / :1025); SMTP is optional.
+  protonmail: [
+    "protonmail.username",
+    "protonmail.password",
+    "protonmail.imap_host",
+    "protonmail.imap_port",
+    "protonmail.mailbox",
+    "protonmail.smtp_host",
+    "protonmail.smtp_port",
+    "protonmail.smtp_username",
+    "protonmail.smtp_password",
+  ],
+  // Local DB Schema Indexing: a single non-secret PATH to the local DB-tool
+  // scripts dir (listed so it is a known/allowed vault key (D11) + cleared on
+  // removal + gates the sync/spawn when unset). No live credential.
+  localdb: ["localdb.scripts_dir"],
+  // Storybook: a single non-secret PATH to the local Storybook output dir
+  // (containing index.json / stories.json). No live credential.
+  storybook: ["storybook.dir"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

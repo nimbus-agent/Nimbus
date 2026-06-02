@@ -11,6 +11,29 @@ export interface SandboxPermissions {
 const HOSTNAME_RE =
   /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
+/** Default TCP port for a bare-host `permissions.network` entry (HTTPS). */
+export const DEFAULT_NETWORK_PORT = 443;
+
+export interface NetworkEntry {
+  host: string;
+  port: number;
+}
+
+/**
+ * Split a (validated) `permissions.network` entry into its host and TCP port.
+ * A bare host defaults to {@link DEFAULT_NETWORK_PORT}; `host:port` carries an
+ * explicit port. Hostnames never contain a colon (RFC 1123), so the last colon
+ * unambiguously separates host from port. Used by the macOS SBPL generator and
+ * the Linux helper-argv builder to emit per-host, per-port firewall rules.
+ */
+export function parseNetworkEntry(entry: string): NetworkEntry {
+  const idx = entry.lastIndexOf(":");
+  if (idx === -1) {
+    return { host: entry, port: DEFAULT_NETWORK_PORT };
+  }
+  return { host: entry.slice(0, idx), port: Number(entry.slice(idx + 1)) };
+}
+
 export function validateAndNormalizePermissions(input: unknown): SandboxPermissions {
   if (Array.isArray(input)) {
     return { network: [], filesystem: { read: [], write: [] } };
@@ -40,8 +63,23 @@ function validateNetwork(input: unknown): string[] {
     if (typeof entry !== "string") {
       throw new TypeError("permissions.network entries must be strings");
     }
-    if (!HOSTNAME_RE.test(entry)) {
+    // Entries are either a bare host (→ port 443) or `host:port` (explicit TCP
+    // port, e.g. IMAP 993 / SMTP 465). Hostnames never contain a colon, so the
+    // last colon separates host from port.
+    const colon = entry.lastIndexOf(":");
+    const host = colon === -1 ? entry : entry.slice(0, colon);
+    if (!HOSTNAME_RE.test(host)) {
       throw new Error(`permissions.network: ${entry} is not a valid RFC 1123 hostname`);
+    }
+    if (colon !== -1) {
+      const portStr = entry.slice(colon + 1);
+      if (!/^\d{1,5}$/.test(portStr)) {
+        throw new Error(`permissions.network: ${entry} has a non-numeric port`);
+      }
+      const port = Number(portStr);
+      if (port < 1 || port > 65535) {
+        throw new Error(`permissions.network: ${entry} port must be in 1..65535`);
+      }
     }
     out.push(entry);
   }

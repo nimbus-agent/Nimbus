@@ -34,6 +34,18 @@ describe("generateSbplProfile", () => {
     expect(profile).toMatch(/\(remote tcp "\*:443" \(host "api\.github\.com"\)\)/);
   });
 
+  it("emits the explicit TCP port for a host:port entry (IMAP/SMTP)", () => {
+    const profile = generateSbplProfile({
+      cwd: "/tmp/cwd",
+      tmpdir: "/tmp/cwd-tmp",
+      manifest: manifest({ network: ["imap.fastmail.com:993", "smtp.fastmail.com:465"] }),
+    });
+    expect(profile).toMatch(/\(remote tcp "\*:993" \(host "imap\.fastmail\.com"\)\)/);
+    expect(profile).toMatch(/\(remote tcp "\*:465" \(host "smtp\.fastmail\.com"\)\)/);
+    // the port must not leak into the (host ...) clause
+    expect(profile).not.toContain('host "imap.fastmail.com:993"');
+  });
+
   it("emits no (allow network*) when permissions.network is empty", () => {
     const profile = generateSbplProfile({
       cwd: "/tmp/cwd",

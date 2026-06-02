@@ -17,7 +17,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (16 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (19 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -35,6 +35,9 @@ describe("embedding/routing", () => {
       "bitbucket:issue",
       "snyk:vulnerability",
       "zoom:transcript",
+      "imap:email",
+      "fastmail:email",
+      "protonmail:email",
     ]);
     expect(PROSE_HEAVY_TYPES.size).toBe(expected.size);
     for (const key of expected) {
@@ -51,6 +54,10 @@ describe("embedding/routing", () => {
 
   test("isProseHeavy returns true for zoom:transcript", () => {
     expect(isProseHeavy("zoom", "transcript")).toBe(true);
+  });
+
+  test("isProseHeavy returns true for imap:email", () => {
+    expect(isProseHeavy("imap", "email")).toBe(true);
   });
 
   test("routingKey formats correctly", () => {
