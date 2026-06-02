@@ -107,6 +107,17 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // a credential, but it is listed here so it is a known/allowed vault key
   // (D11), is cleared on connector removal, and gates the sync/spawn when unset.
   great_expectations: ["great_expectations.results_dir"],
+  imap: [
+    "imap.host",
+    "imap.port",
+    "imap.username",
+    "imap.password",
+    "imap.mailbox",
+    "imap.smtp_host",
+    "imap.smtp_port",
+    "imap.smtp_username",
+    "imap.smtp_password",
+  ],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

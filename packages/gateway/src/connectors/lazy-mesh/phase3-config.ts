@@ -37,6 +37,19 @@ function isSafeRegion(value: string): boolean {
   return true;
 }
 
+/**
+ * Parse a per-tenant IMAP/SMTP port string into a valid TCP port, falling back
+ * to `fallback` when empty or out of range. Mirrors the validator's 1..65535
+ * bound so the spawned host:port network entry is always well-formed.
+ */
+function imapPortOrDefault(raw: string, fallback: number): number {
+  if (raw === "") {
+    return fallback;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 65535 ? Math.trunc(n) : fallback;
+}
+
 export async function phase3AddAwsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1258,6 +1271,68 @@ export async function phase3AddDagsterMcp(
   );
 }
 
+export async function phase3AddImapMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // IMAP/SMTP (Tier-4 EMAIL) is per-tenant. Gate on the IMAP read credentials
+  // (host + username + password); SMTP creds are optional (send tool).
+  const host = (await readConnectorSecret(vault, "imap", "host"))?.trim() ?? "";
+  const username = (await readConnectorSecret(vault, "imap", "username"))?.trim() ?? "";
+  const password = (await readConnectorSecret(vault, "imap", "password"))?.trim() ?? "";
+  if (host === "" || username === "" || password === "") {
+    return;
+  }
+  const portRaw = (await readConnectorSecret(vault, "imap", "port"))?.trim() ?? "";
+  const port = imapPortOrDefault(portRaw, 993);
+  const mailbox = (await readConnectorSecret(vault, "imap", "mailbox"))?.trim() ?? "";
+
+  const smtpHost = (await readConnectorSecret(vault, "imap", "smtp_host"))?.trim() ?? "";
+  const smtpUser = (await readConnectorSecret(vault, "imap", "smtp_username"))?.trim() ?? "";
+  const smtpPass = (await readConnectorSecret(vault, "imap", "smtp_password"))?.trim() ?? "";
+  const smtpPortRaw = (await readConnectorSecret(vault, "imap", "smtp_port"))?.trim() ?? "";
+  const smtpPort = imapPortOrDefault(smtpPortRaw, 465);
+
+  // The IMAP host (and SMTP host, if configured) are on non-443 ports — add the
+  // concrete host:port entries to the sandbox network allow-list at spawn time.
+  const extraHosts: string[] = [`${host}:${String(port)}`];
+  if (smtpHost !== "") {
+    extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
+  }
+  const manifest = manifestWithExtraNetworkHosts("imap", extraHosts);
+
+  const env: Record<string, string> = {
+    IMAP_HOST: host,
+    IMAP_PORT: String(port),
+    IMAP_USERNAME: username,
+    IMAP_PASSWORD: password,
+  };
+  if (mailbox !== "") {
+    env["IMAP_MAILBOX"] = mailbox;
+  }
+  if (smtpHost !== "") {
+    env["IMAP_SMTP_HOST"] = smtpHost;
+    env["IMAP_SMTP_PORT"] = String(smtpPort);
+  }
+  if (smtpUser !== "") {
+    env["IMAP_SMTP_USERNAME"] = smtpUser;
+  }
+  if (smtpPass !== "") {
+    env["IMAP_SMTP_PASSWORD"] = smtpPass;
+  }
+
+  servers["imap"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("imap")],
+      env: extensionProcessEnv(env),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddGreatExpectationsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1347,6 +1422,7 @@ export async function buildPhase3Servers(
   await phase3AddPrefectMcp(vault, servers, sandboxCwd);
   await phase3AddDagsterMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
+  await phase3AddImapMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

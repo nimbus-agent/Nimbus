@@ -35,6 +35,8 @@ import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
 import { createHubspotSyncable } from "../connectors/hubspot-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
 import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
+import { createImapSyncable } from "../connectors/imap-sync.ts";
+import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
@@ -454,6 +456,12 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createRampSyncable({
       ensureRampMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createImapSyncable({
+      ensureImapMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+      fetchMessages: fetchImapMessages,
     }),
   );
   syncScheduler.register(

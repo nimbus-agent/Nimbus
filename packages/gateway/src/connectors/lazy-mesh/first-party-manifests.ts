@@ -421,6 +421,16 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // IMAP/SMTP (Tier-4 EMAIL). The IMAP/SMTP hosts are per-tenant and on non-443
+  // ports (IMAP 993, SMTP 465/587). The static network list is empty; the
+  // concrete <imap.host>:993 + <smtp.host>:<port> host:port entries are added at
+  // spawn time by phase3AddImapMcp via manifestWithExtraNetworkHosts (host:port
+  // syntax landed in the permissions validator for this connector class).
+  imap: baseManifest("com.nimbus.imap", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {
