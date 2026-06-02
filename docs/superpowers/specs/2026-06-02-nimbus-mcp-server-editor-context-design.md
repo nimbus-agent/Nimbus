@@ -13,8 +13,8 @@ translates inbound MCP tool calls into the Gateway's existing JSON-RPC **read**
 IPC methods and streams the results back. This does not introduce a new protocol —
 Nimbus is already MCP-native as a *client* of connectors; this inverts the
 client/server relationship for the local index so an editor's LLM can query
-incident history, deployment state, open PRs, DORA metrics, and connector health
-without the user switching context.
+incident history, deployment state, recent pull requests, DORA metrics, and connector
+health without the user switching context.
 
 ## Goals
 
@@ -76,8 +76,9 @@ across the combined CLI test run — see the known-issue memory). Shape:
 
 ```ts
 interface AdapterDeps {
-  // Returns a connected IPC client, or throws a typed "gateway down" error.
-  connect(): Promise<IpcCallable>;
+  // Returns a connected IPC client, reusing a cached connection when healthy.
+  // Throws a typed "gateway down" error if it cannot connect.
+  getClient(): Promise<IpcCallable>;
 }
 interface IpcCallable {
   call<T>(method: string, params?: unknown): Promise<T>;
@@ -85,28 +86,77 @@ interface IpcCallable {
 }
 ```
 
-Production `connect()` reads gateway state via `readGatewayState(getCliPlatformPaths())`
-and `new IPCClient(state.socketPath)` — mirroring `commands/search.ts`. Tests pass a
-stub.
+Production `getClient()` reads gateway state via `readGatewayState(getCliPlatformPaths())`,
+`new IPCClient(state.socketPath)`, and `connect()` — mirroring `commands/search.ts`. Tests
+pass a stub.
+
+**Connection lifecycle (revised — persistent with lazy reconnect).** The
+`nimbus mcp-server --stdio` process is **long-lived**, unlike one-shot CLI commands,
+so a single IPC connection is opened on the first tool call and **reused** for the
+process lifetime. The original per-call connect→call→disconnect approach was rejected
+on review: not for latency (a local domain-socket / named-pipe `connect()` is a bare
+socket open with no handshake — sub-millisecond), but because a persistent connection
+is the cleaner lifecycle for a daemon-style process and avoids churning the socket on
+every call. `getClient()` caches the connected client; if a call fails because the
+connection dropped (Gateway restarted, socket closed — the transport surfaces this via
+its `close`/`error` handlers and `connected` flips false), the cached client is
+discarded and the next call re-reads the Gateway state file and reconnects. Re-reading
+the state file on reconnect is what transparently picks up a **restarted Gateway whose
+socket path changed** — the property the per-call design got for free and that this
+revision preserves.
 
 ## Tool surface (6 read-only tools)
 
-Each tool is a thin proxy. `searchIndex` is the primitive; the `getRecent*` /
-`getOpen*` tools are convenience wrappers that pin `itemType` so the editor's LLM
-gets discoverable, well-named entry points.
+Each tool is a thin proxy. `searchIndex` is the primitive; the `getRecent*` tools
+are convenience wrappers that pin `itemType` so the editor's LLM gets discoverable,
+well-named entry points.
 
 | MCP tool | Args (zod) | Backing IPC method | Mapping notes |
 |---|---|---|---|
-| `searchIndex` | `query: string`, `service?: string`, `itemType?: string`, `limit?: number (1–500)`, `semantic?: boolean` | `index.searchRanked` | `query` → `name`; `contextChunks: 2` default |
+| `searchIndex` | `query: string`, `service?: string`, `itemType?: string`, `limit?: number (1–50)`, `semantic?: boolean` | `index.searchRanked` | `query` → `name`; `contextChunks: 0` (see Payload shaping) |
 | `getConnectorStatus` | *(none)* | `connector.listStatus` | Returns connector health + sync state |
 | `getRecentIncidents` | `limit?: number`, `service?: string` | `index.searchRanked` | `itemType: "incident"`, empty `name` |
-| `getOpenPRs` | `limit?: number`, `service?: string` | `index.searchRanked` | `itemType: "pr"`; results filtered to open where the item exposes a state field, else recent PRs (documented in the tool description) |
+| `getRecentPullRequests` | `limit?: number`, `service?: string` | `index.searchRanked` | `itemType: "pr"`; see PR-state note below |
 | `getRecentDeployments` | `limit?: number`, `service?: string` | `index.searchRanked` | `itemType: "deployment"` |
 | `getDoraMetrics` | `service: string`, `since?: string` | `metrics.dora` | `since` passes through to the existing parser |
 
-`limit` default 20, clamped to the Gateway's own 1–500 ceiling. Results are
-returned as a single MCP `text` content item containing the JSON-stringified
-Gateway response.
+### Payload shaping (review fix — bound the response for editor LLMs)
+
+Returning up to 500 raw ranked items — each carrying a full `rawMeta` metadata blob,
+a `body_preview`, and (in the async path) `contextChunks` of surrounding text — would
+overrun an editor LLM's context window. The MCP tools therefore bound and slim the
+payload, independent of the Gateway's own 1–500 ceiling:
+
+- **`limit`:** default **20**, hard-capped at **50** at the tool layer (the Gateway
+  still clamps to 1–500, but the MCP tool never asks for more than 50).
+- **`contextChunks: 0`** for every tool — the adapter does not pull surrounding chunk
+  text. The editor LLM can issue a follow-up `searchIndex` if it wants more on a
+  specific hit; we do not pre-bloat every result.
+- **Compact projection:** each item is projected to a stable, small shape —
+  `title`, `service`, `itemType`, `url`/`canonicalUrl`, `score`, `modifiedAt`, a
+  truncated `body_preview` (first ~280 chars), and a **whitelisted** slice of
+  `rawMeta` (e.g. `state`, `number`, `author` for PRs) rather than the whole blob.
+  This keeps payloads small and avoids leaking arbitrary connector metadata to the
+  editor LLM.
+
+Results are returned as a single MCP `text` content item containing the
+JSON-stringified projected array.
+
+### PR-state note (review fix — `getOpenPRs` → `getRecentPullRequests`)
+
+The roadmap names this tool `getOpenPRs`, but the index **cannot honestly filter on
+PR state**: there is no `state` column on the item row, and `index.searchRanked`
+filters only on `service` / `itemType` / FTS title. PR open/closed/merged lives only
+inside `rawMeta` *if* the connector stored it. The two reviewer-suggested remedies are
+both rejected: over-fetching then post-filtering (e.g. fetch 20, return the 2 that are
+open) is a silent, misleading truncation; and extending `searchRanked` with a generic
+`state` attribute filter is a new Gateway API, which this design explicitly excludes.
+
+Resolution: the tool is renamed **`getRecentPullRequests`** and returns recent PRs
+ranked by recency, surfacing each PR's `state` (from the whitelisted `rawMeta` slice)
+so the **editor LLM** can see and filter on it directly. This is honest about the
+capability — the name no longer promises a filter the index can't guarantee — and
+needs no Gateway change.
 
 ## Data flow
 
@@ -114,15 +164,17 @@ Gateway response.
 editor LLM
   → (stdio / MCP)        adapter.ts
   → (JSON-RPC IPC,       IPCClient.call(method, params)
-     lazy per call)
+     persistent, lazy
+     reconnect)
   → Gateway read handler (index.searchRanked | connector.listStatus | metrics.dora)
   → back up the same path as MCP text content
 ```
 
-The IPC connection is established **lazily per tool call** (connect → call →
-disconnect in a `finally`), mirroring the existing CLI commands. This keeps the
-server stateless and means it starts and advertises its tool list even when the
-Gateway is down.
+The IPC connection is opened on the **first** tool call and reused for the process
+lifetime; a dropped connection triggers a transparent reconnect on the next call (see
+*Connection lifecycle*). The MCP server itself starts and advertises its tool list
+regardless of Gateway state, so the editor can always list tools even when the Gateway
+is down — the first call then surfaces the "Gateway is not running" guidance.
 
 ## Error handling — Gateway not running
 
@@ -158,10 +210,13 @@ Per `nimbus-testing`; all CLI-layer, honoring the CLI coverage floor.
 
 - **Adapter unit tests** (`packages/cli/src/mcp/adapter.test.ts`): inject a mock
   `IpcCallable` via the `AdapterDeps` seam (no `mock.module`). Assert, per tool:
-  the correct IPC method name and params are sent (e.g. `getOpenPRs` →
-  `index.searchRanked` with `itemType: "pr"`), and that the JSON result round-trips
-  into MCP `text` content. Assert a `connect()` rejection yields the
-  "Gateway is not running" MCP error result, not a thrown error.
+  the correct IPC method name and params are sent (e.g. `getRecentPullRequests` →
+  `index.searchRanked` with `itemType: "pr"`, `limit ≤ 50`, `contextChunks: 0`), that
+  results are projected to the compact whitelisted shape (no raw `rawMeta` blob), and
+  that the JSON result round-trips into MCP `text` content. Assert a reconnect: a call
+  that fails on a dropped connection discards the cached client and the next call
+  re-connects. Assert a `getClient()` rejection yields the "Gateway is not running"
+  MCP error result, not a thrown error.
 - **Command test** (`packages/cli/src/commands/mcp-server.test.ts`): the no-flag
   branch prints a config block that parses as JSON and contains
   `mcpServers.nimbus.args == ["mcp-server", "--stdio"]`; the `--stdio` branch
@@ -176,10 +231,22 @@ Per `nimbus-testing`; all CLI-layer, honoring the CLI coverage floor.
 - [ ] No credentials cross the boundary — tools return only indexed item data and
       connector status, never vault contents.
 - [ ] No new Gateway IPC method; no Tauri allowlist change.
+- [ ] Item projection emits only the **whitelisted** `rawMeta` keys, never the raw
+      metadata blob — bounds payload size and avoids leaking arbitrary connector
+      metadata to the editor LLM (see *Payload shaping*).
 
-## Open detail (decided)
+## Review resolutions (2026-06-02)
 
-`getOpenPRs`: `index.searchRanked` filters by `itemType` only, not PR state. The
-tool post-filters results to "open" when the indexed item exposes a recognizable
-state field, and otherwise returns recent PRs. The tool description documents this
-so the editor LLM does not over-trust the "open" qualifier.
+Three points from `…-design-review.md` were evaluated against the code and folded in:
+
+1. **Lazy IPC connection → persistent with lazy reconnect.** Adopted, but the
+   reviewer's *latency* motivation was found weak (`connect()` is a bare local-socket
+   open, no handshake, sub-ms). The real benefit is a cleaner lifecycle for the
+   long-lived `--stdio` process; reconnect re-reads Gateway state so a restarted
+   Gateway is picked up. See *Connection lifecycle*.
+2. **Large JSON payloads.** Adopted in full — see *Payload shaping*: MCP `limit`
+   capped at 50, `contextChunks: 0`, and a compact whitelisted projection.
+3. **`getOpenPRs` post-filter incompleteness.** Both suggested remedies rejected
+   (over-fetch = silent misleading truncation; generic `state` filter = a new Gateway
+   API this design excludes). Resolved instead by renaming to `getRecentPullRequests`
+   and surfacing each PR's `state` for the editor LLM to filter. See *PR-state note*.
