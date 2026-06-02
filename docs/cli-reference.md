@@ -362,6 +362,23 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ---
 
+## Editor Integration
+
+### `nimbus mcp-server`
+
+Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as a read-only MCP stdio server.
+
+```bash
+nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
+nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
+```
+
+The Gateway must be running (`nimbus start`). Tools are read-only:
+`searchIndex`, `getConnectorStatus`, `getRecentIncidents`, `getRecentPullRequests`,
+`getRecentDeployments`, `getDoraMetrics`. No write or HITL surface is exposed.
+
+---
+
 ## Security
 
 ### `nimbus security scan`
