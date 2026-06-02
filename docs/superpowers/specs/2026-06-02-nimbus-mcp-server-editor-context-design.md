@@ -62,6 +62,7 @@ Two new files in `packages/cli`:
    Connects a `StdioServerTransport`.
 
 Wiring:
+
 - Register `mcp-server` in the `COMMAND_HANDLERS` map (`packages/cli/src/index.ts`)
   and export the handler from the `commands/index.ts` barrel.
 - Add `@modelcontextprotocol/sdk: 1.29.0` to `packages/cli/package.json`
@@ -173,7 +174,7 @@ needs no Gateway change.
 
 ## Data flow
 
-```
+```text
 editor LLM
   → (stdio / MCP)        adapter.ts
   → (JSON-RPC IPC,       IPCClient.call(method, params)

@@ -35,6 +35,7 @@
 ## Task 1: Add the MCP SDK dependency to the CLI
 
 **Files:**
+
 - Modify: `packages/cli/package.json`
 
 - [ ] **Step 1: Add the dependency, pinned to match the connectors**
@@ -69,6 +70,7 @@ git commit -m "build(cli): add @modelcontextprotocol/sdk for the mcp-server comm
 These are pure functions — TDD them first. The heavy field on a `RankedIndexItem` is `rawMeta`; the projection drops it (keeping only a whitelisted slice) and maps `indexedType` → `type`.
 
 **Files:**
+
 - Create: `packages/cli/src/mcp/adapter.ts`
 - Test: `packages/cli/src/mcp/adapter.test.ts`
 
@@ -312,6 +314,7 @@ git commit -m "feat(cli): mcp adapter projection + limit-clamp helpers"
 `createDeps(env)` returns an `AdapterDeps` that caches a connected client and re-creates it after a dropped connection. `env` is injectable so tests use fakes instead of real sockets. `createProductionDeps()` wires the real `IPCClient` + `readGatewayState`.
 
 **Files:**
+
 - Modify: `packages/cli/src/mcp/adapter.ts`
 - Test: `packages/cli/src/mcp/adapter.test.ts`
 
@@ -530,6 +533,7 @@ git commit -m "feat(cli): mcp adapter connection deps with lazy reconnect"
 The six tools are defined as data (`TOOL_SPECS`) so the IPC mapping is unit-testable without a transport. `buildMcpServer` registers each into an `McpServer`; `runMcpServerStdio` connects a stdio transport.
 
 **Files:**
+
 - Modify: `packages/cli/src/mcp/adapter.ts`
 - Test: `packages/cli/src/mcp/adapter.test.ts`
 
@@ -891,6 +895,7 @@ git commit -m "feat(cli): six read-only mcp tools + stdio server builder"
 Parses args into help / config / stdio; prints the paste-ready config block; runs the stdio server via injectable deps.
 
 **Files:**
+
 - Create: `packages/cli/src/commands/mcp-server.ts`
 - Test: `packages/cli/src/commands/mcp-server.test.ts`
 
@@ -1075,6 +1080,7 @@ git commit -m "feat(cli): nimbus mcp-server command (config print + --stdio runn
 ## Task 6: Register the command in the CLI dispatcher
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/index.ts`
 - Modify: `packages/cli/src/index.ts`
 
@@ -1124,6 +1130,7 @@ git commit -m "feat(cli): wire mcp-server into the command dispatcher"
 Task 6 Step 4 is a *manual* check. Because stdout purity is load-bearing for the MCP transport (any banner, log line, or stray `console.log` reachable under `--stdio` corrupts the JSON-RPC stream), add an automated subprocess test that asserts it. This test needs no running Gateway — `tools/list` is answered from the registered tools regardless of Gateway state.
 
 **Files:**
+
 - Create: `packages/cli/src/commands/mcp-server-stdio.test.ts`
 
 - [ ] **Step 1: Write the test**
@@ -1249,6 +1256,7 @@ git commit -m "test(cli): automated stdout-hygiene check for mcp-server --stdio"
 ## Task 8: Documentation
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/cli-reference.md`
 - Modify: `docs/roadmap.md`
@@ -1265,12 +1273,12 @@ Open `docs/CHANGELOG.md`, find the most recent dated heading at the top, and add
 
 Open `docs/cli-reference.md` and add a section for `mcp-server`, matching the formatting of the surrounding subcommand entries:
 
-```markdown
+````markdown
 ## `nimbus mcp-server`
 
 Expose the Nimbus local index to MCP-compatible editor AIs as a read-only MCP stdio server.
 
-```
+```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
 nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
 ```
@@ -1278,7 +1286,7 @@ nimbus mcp-server --stdio    # run the server over stdio (your editor launches t
 The Gateway must be running (`nimbus start`). Tools are read-only:
 `searchIndex`, `getConnectorStatus`, `getRecentIncidents`, `getRecentPullRequests`,
 `getRecentDeployments`, `getDoraMetrics`. No write or HITL surface is exposed.
-```
+````
 
 - [ ] **Step 3: Tick the roadmap checkbox**
 
@@ -1342,4 +1350,3 @@ git commit -m "chore(cli): lint/format fixups for mcp-server"
 - **Why `getClient()` not `connect()`:** the persistent-with-reconnect lifecycle lives entirely in `createDeps`; tool code only ever asks for "a usable client", so the reconnect concern is in exactly one place.
 - **No Gateway API change:** every tool proxies an existing read method. If you find yourself wanting to add a Gateway IPC method, stop — that is out of scope for this plan (see the spec's Non-Goals).
 - **Security invariants:** I11 (`wrapToolOutput`) does not apply — output goes to the editor's LLM, not the Nimbus engine. No HITL action type is reachable. No Tauri allowlist change. The `META_WHITELIST` is load-bearing: it prevents arbitrary connector metadata leaking to the editor LLM — keep it tight.
-```
