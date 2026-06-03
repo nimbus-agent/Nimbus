@@ -23,6 +23,29 @@ The Gateway's `SandboxRunner` enforces these at the OS level — kernel
 namespaces / sandbox profiles / AppContainer — so that even a fully
 compromised extension cannot reach hosts or paths outside the declaration.
 
+### Per-host ports {#per-host-ports}
+
+A `permissions.network` entry is either a bare host (which opens **TCP/443**,
+the default) or an explicit `host:port` such as `imap.fastmail.com:993`. The
+port must be an integer in `1..65535`. This lets the email (IMAP/SMTP)
+connector class reach non-443 ports — e.g. IMAP `993`, SMTP submission `465`
+or `587` — while everything else keeps the HTTPS-only default:
+
+    {
+      "permissions": {
+        "network": [
+          "api.fastmail.com",
+          "imap.fastmail.com:993",
+          "smtp.fastmail.com:465"
+        ]
+      }
+    }
+
+Enforcement is per-host **and** per-port on Linux (helper) and macOS; the
+bare-host form is identical to the pre-Tier-4 behaviour (TCP/443). On Windows
+the port is not enforced (all-or-nothing `internetClient`, as for hosts — see
+[#platform-asymmetry](#platform-asymmetry)).
+
 ## Per-OS implementation
 
 ### Linux {#linux}
@@ -79,12 +102,12 @@ Linux and macOS connectors are unaffected.
 
 ## Platform asymmetry {#platform-asymmetry}
 
-| OS | Network policy when `permissions.network: ["a.com"]` |
+| OS | Network policy when `permissions.network: ["a.com", "b.com:993"]` |
 | -- | ----------------------------------------------------- |
-| Linux (helper available) | Per-host: only `a.com` reachable |
+| Linux (helper available) | Per-host + per-port: only `a.com:443` and `b.com:993` reachable |
 | Linux (helper missing) | All-or-nothing: full network |
-| macOS | Per-host (SBPL host matching) |
-| Windows | All-or-nothing (AppContainer `internetClient`) |
+| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching) |
+| Windows | All-or-nothing (AppContainer `internetClient`; port not enforced) |
 
 Windows per-host filtering would require Windows Filtering Platform
 (WFP) callout drivers (kernel-mode signing, Windows hardware program

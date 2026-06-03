@@ -27,6 +27,13 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   // is absent. Added in PR-3 of the Zoom connector workstream alongside
   // mapZoomTranscriptToItem.
   "zoom:transcript",
+  // IMAP email bodies are prose paragraphs — same posture as gmail:email /
+  // outlook:email. MiniLM-only fallback when openai.api_key is absent.
+  "imap:email",
+  // Fastmail (JMAP) email bodies are prose, like imap:email / gmail:email.
+  "fastmail:email",
+  // ProtonMail (via Bridge) email bodies are prose, like imap:email.
+  "protonmail:email",
 ]);
 
 export function routingKey(service: string, type: string): string {

@@ -1,3 +1,4 @@
+import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
 import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAthenaSyncable } from "../connectors/athena-sync.ts";
@@ -18,6 +19,7 @@ import { createDbtSyncable } from "../connectors/dbt-sync.ts";
 import { createDependencytrackSyncable } from "../connectors/dependencytrack-sync.ts";
 import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
+import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -34,6 +36,7 @@ import { createGreatExpectationsSyncable } from "../connectors/great-expectation
 import { createGreenhouseSyncable } from "../connectors/greenhouse-sync.ts";
 import { createHubspotSyncable } from "../connectors/hubspot-sync.ts";
 import { createIacSyncable } from "../connectors/iac-sync.ts";
+import { createImapSyncable } from "../connectors/imap-sync.ts";
 import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
@@ -42,6 +45,7 @@ import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
+import { createLocaldbSyncable } from "../connectors/localdb-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMiroSyncable } from "../connectors/miro-sync.ts";
@@ -54,6 +58,7 @@ import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
 import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
+import { createProtonmailSyncable } from "../connectors/protonmail-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
 import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
@@ -65,6 +70,7 @@ import { createSlackSyncable } from "../connectors/slack-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
 import { createStackOverflowSyncable } from "../connectors/stackoverflow-sync.ts";
+import { createStorybookSyncable } from "../connectors/storybook-sync.ts";
 import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
@@ -454,6 +460,33 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createRampSyncable({
       ensureRampMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createImapSyncable({
+      ensureImapMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+      fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createFastmailSyncable({
+      ensureFastmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createProtonmailSyncable({
+      ensureProtonmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+      fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createLocaldbSyncable({
+      ensureLocaldbMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createStorybookSyncable({
+      ensureStorybookMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

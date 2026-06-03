@@ -37,6 +37,19 @@ function isSafeRegion(value: string): boolean {
   return true;
 }
 
+/**
+ * Parse a per-tenant IMAP/SMTP port string into a valid TCP port, falling back
+ * to `fallback` when empty or out of range. Mirrors the validator's 1..65535
+ * bound so the spawned host:port network entry is always well-formed.
+ */
+function imapPortOrDefault(raw: string, fallback: number): number {
+  if (raw === "") {
+    return fallback;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 65535 ? Math.trunc(n) : fallback;
+}
+
 export async function phase3AddAwsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1258,6 +1271,229 @@ export async function phase3AddDagsterMcp(
   );
 }
 
+export async function phase3AddImapMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // IMAP/SMTP (Tier-4 EMAIL) is per-tenant. Gate on the IMAP read credentials
+  // (host + username + password); SMTP creds are optional (send tool).
+  const host = (await readConnectorSecret(vault, "imap", "host"))?.trim() ?? "";
+  const username = (await readConnectorSecret(vault, "imap", "username"))?.trim() ?? "";
+  const password = (await readConnectorSecret(vault, "imap", "password"))?.trim() ?? "";
+  if (host === "" || username === "" || password === "") {
+    return;
+  }
+  const portRaw = (await readConnectorSecret(vault, "imap", "port"))?.trim() ?? "";
+  const port = imapPortOrDefault(portRaw, 993);
+  const mailbox = (await readConnectorSecret(vault, "imap", "mailbox"))?.trim() ?? "";
+
+  const smtpHost = (await readConnectorSecret(vault, "imap", "smtp_host"))?.trim() ?? "";
+  const smtpUser = (await readConnectorSecret(vault, "imap", "smtp_username"))?.trim() ?? "";
+  const smtpPass = (await readConnectorSecret(vault, "imap", "smtp_password"))?.trim() ?? "";
+  const smtpPortRaw = (await readConnectorSecret(vault, "imap", "smtp_port"))?.trim() ?? "";
+  const smtpPort = imapPortOrDefault(smtpPortRaw, 465);
+
+  // The IMAP host (and SMTP host, if configured) are on non-443 ports — add the
+  // concrete host:port entries to the sandbox network allow-list at spawn time.
+  const extraHosts: string[] = [`${host}:${String(port)}`];
+  if (smtpHost !== "") {
+    extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
+  }
+  const manifest = manifestWithExtraNetworkHosts("imap", extraHosts);
+
+  const env: Record<string, string> = {
+    IMAP_HOST: host,
+    IMAP_PORT: String(port),
+    IMAP_USERNAME: username,
+    IMAP_PASSWORD: password,
+  };
+  if (mailbox !== "") {
+    env["IMAP_MAILBOX"] = mailbox;
+  }
+  if (smtpHost !== "") {
+    env["IMAP_SMTP_HOST"] = smtpHost;
+    env["IMAP_SMTP_PORT"] = String(smtpPort);
+  }
+  if (smtpUser !== "") {
+    env["IMAP_SMTP_USERNAME"] = smtpUser;
+  }
+  if (smtpPass !== "") {
+    env["IMAP_SMTP_PASSWORD"] = smtpPass;
+  }
+
+  servers["imap"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("imap")],
+      env: extensionProcessEnv(env),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddProtonmailMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // ProtonMail via Bridge (Tier-4 EMAIL). Gate on the Bridge IMAP credentials;
+  // SMTP creds are optional (send tool). Host/port default to the Bridge
+  // loopback listeners (127.0.0.1:1143 IMAP / :1025 SMTP).
+  const username = (await readConnectorSecret(vault, "protonmail", "username"))?.trim() ?? "";
+  const password = (await readConnectorSecret(vault, "protonmail", "password"))?.trim() ?? "";
+  if (username === "" || password === "") {
+    return;
+  }
+  const host = (await readConnectorSecret(vault, "protonmail", "imap_host"))?.trim() || "127.0.0.1";
+  const portRaw = (await readConnectorSecret(vault, "protonmail", "imap_port"))?.trim() ?? "";
+  const port = imapPortOrDefault(portRaw, 1143);
+  const mailbox = (await readConnectorSecret(vault, "protonmail", "mailbox"))?.trim() ?? "";
+
+  const smtpHost =
+    (await readConnectorSecret(vault, "protonmail", "smtp_host"))?.trim() || "127.0.0.1";
+  const smtpUser = (await readConnectorSecret(vault, "protonmail", "smtp_username"))?.trim() ?? "";
+  const smtpPass = (await readConnectorSecret(vault, "protonmail", "smtp_password"))?.trim() ?? "";
+  const smtpPortRaw = (await readConnectorSecret(vault, "protonmail", "smtp_port"))?.trim() ?? "";
+  const smtpPort = imapPortOrDefault(smtpPortRaw, 1025);
+
+  // Bridge IMAP/SMTP are on non-443 loopback ports — add the concrete host:port
+  // entries to the sandbox network allow-list at spawn time. SMTP host is only
+  // added when send credentials are configured.
+  const extraHosts: string[] = [`${host}:${String(port)}`];
+  if (smtpUser !== "" && smtpPass !== "") {
+    extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
+  }
+  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts);
+
+  const env: Record<string, string> = {
+    PROTONMAIL_HOST: host,
+    PROTONMAIL_PORT: String(port),
+    PROTONMAIL_USERNAME: username,
+    PROTONMAIL_PASSWORD: password,
+  };
+  if (mailbox !== "") {
+    env["PROTONMAIL_MAILBOX"] = mailbox;
+  }
+  if (smtpUser !== "" && smtpPass !== "") {
+    env["PROTONMAIL_SMTP_HOST"] = smtpHost;
+    env["PROTONMAIL_SMTP_PORT"] = String(smtpPort);
+    env["PROTONMAIL_SMTP_USERNAME"] = smtpUser;
+    env["PROTONMAIL_SMTP_PASSWORD"] = smtpPass;
+  }
+
+  servers["protonmail"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("protonmail")],
+      env: extensionProcessEnv(env),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddFastmailMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Fastmail (Tier-4 EMAIL via JMAP) — gate on the API token. The base URL is an
+  // optional non-secret override (default api.fastmail.com); the static manifest
+  // host covers the JMAP session/api endpoints, so no extra-host merge is needed.
+  const apiToken = (await readConnectorSecret(vault, "fastmail", "api_token"))?.trim() ?? "";
+  if (apiToken === "") {
+    return;
+  }
+  const baseUrl = (await readConnectorSecret(vault, "fastmail", "base_url"))?.trim() ?? "";
+
+  const env: Record<string, string> = { FASTMAIL_API_TOKEN: apiToken };
+  if (baseUrl !== "") {
+    env["FASTMAIL_BASE_URL"] = baseUrl;
+  }
+
+  servers["fastmail"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("fastmail")],
+      env: extensionProcessEnv(env),
+    },
+    "fastmail",
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddLocaldbMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Local DB Schema Indexing (Tier-5 local) has NO network and NO live
+  // credential — it reads saved `.sql` files from a configured local directory.
+  // `localdb.scripts_dir` is a non-secret PATH; noop when unset.
+  const dir = (await readConnectorSecret(vault, "localdb", "scripts_dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  // Extend the connector manifest's filesystem.read with the configured scripts
+  // dir at spawn time, mirroring phase3AddGreatExpectationsMcp / ensureObsidianMcp.
+  const base = manifestForFirstParty("localdb");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["localdb"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("localdb")],
+      env: extensionProcessEnv({ LOCALDB_SCRIPTS_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+export async function phase3AddStorybookMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Storybook (Tier-5 local) has NO network and NO live credential — it reads
+  // the local Storybook manifest (index.json / stories.json) from a configured
+  // output dir. `storybook.dir` is a non-secret PATH; noop when unset.
+  const dir = (await readConnectorSecret(vault, "storybook", "dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  const base = manifestForFirstParty("storybook");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["storybook"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("storybook")],
+      env: extensionProcessEnv({ STORYBOOK_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddGreatExpectationsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1347,6 +1583,11 @@ export async function buildPhase3Servers(
   await phase3AddPrefectMcp(vault, servers, sandboxCwd);
   await phase3AddDagsterMcp(vault, servers, sandboxCwd);
   await phase3AddRampMcp(vault, servers, sandboxCwd);
+  await phase3AddImapMcp(vault, servers, sandboxCwd);
+  await phase3AddFastmailMcp(vault, servers, sandboxCwd);
+  await phase3AddProtonmailMcp(vault, servers, sandboxCwd);
+  await phase3AddLocaldbMcp(vault, servers, sandboxCwd);
+  await phase3AddStorybookMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }
