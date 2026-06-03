@@ -219,6 +219,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  testflight: baseManifest("com.nimbus.testflight", {
+    network: ["api.appstoreconnect.apple.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   sonarqube: baseManifest("com.nimbus.sonarqube", {
     network: ["sonarcloud.io"],
     filesystem: { read: [], write: [] },

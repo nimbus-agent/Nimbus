@@ -549,6 +549,32 @@ export async function phase3AddCodemagicMcp(
   );
 }
 
+export async function phase3AddTestflightMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const issuerId = (await readConnectorSecret(vault, "testflight", "issuer_id"))?.trim() ?? "";
+  const keyId = (await readConnectorSecret(vault, "testflight", "key_id"))?.trim() ?? "";
+  const privateKey = (await readConnectorSecret(vault, "testflight", "private_key")) ?? "";
+  if (issuerId === "" || keyId === "" || privateKey.trim() === "") {
+    return;
+  }
+  servers["testflight"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("testflight")],
+      env: extensionProcessEnv({
+        TESTFLIGHT_ISSUER_ID: issuerId,
+        TESTFLIGHT_KEY_ID: keyId,
+        TESTFLIGHT_PRIVATE_KEY: privateKey,
+      }),
+    },
+    "testflight",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSonarqubeMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1607,6 +1633,7 @@ export async function buildPhase3Servers(
   await phase3AddSnykMcp(vault, servers, sandboxCwd);
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
   await phase3AddCodemagicMcp(vault, servers, sandboxCwd);
+  await phase3AddTestflightMcp(vault, servers, sandboxCwd);
   await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
   await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
   await phase3AddWizMcp(vault, servers, sandboxCwd);

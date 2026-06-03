@@ -37,6 +37,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   snyk: ["snyk.token"],
   bitrise: ["bitrise.token"],
   codemagic: ["codemagic.token"],
+  testflight: ["testflight.issuer_id", "testflight.key_id", "testflight.private_key"],
   sonarqube: ["sonarqube.token", "sonarqube.url", "sonarqube.organization"],
   semgrep: ["semgrep.token", "semgrep.deployment_slug"],
   wiz: ["wiz.client_id", "wiz.client_secret", "wiz.api_url", "wiz.auth_url"],

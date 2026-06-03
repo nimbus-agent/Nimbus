@@ -80,6 +80,7 @@ describe("manifestForFirstParty", () => {
       "obsidian",
       "bitrise",
       "codemagic",
+      "testflight",
       "sonarqube",
       "semgrep",
       "wiz",
