@@ -669,7 +669,7 @@ Items deferred from the Phase 4 internal security audit (B1, 2026-04-25) that fi
 Connector breadth for mobile and frontend engineering disciplines that didn't fit the original Phase 5 categories. Each is read-only in Phase 5; write tools (releasing a build, dismissing a Web-Vitals regression) land in Phase 8 (Security Engineering) or Phase 12 (Enterprise) depending on shape. Does not gate Phase 5 completion.
 
 - [x] **Bitrise** — mobile CI builds, workflows, releases, certificates state, app dashboards; read-only (2026-05-21, Phase 5 Wave B; `bitrise:app` + `bitrise:build` items via `/v0.1/me/apps` → `/v0.1/apps/<slug>/builds`; mandatory read-tool surface; vault key `bitrise.token`; `permissions.network = ["api.bitrise.io"]`)
-- [ ] **Codemagic** — Flutter/RN/native mobile CI; build pipelines, distribution targets, code-signing status; read-only
+- [x] **Codemagic** (2026-06-03, Phase 5 Wave B) — Flutter/RN/native mobile CI; read-only. `codemagic:app` + `codemagic:build` items via `GET /apps` → `GET /builds?appId=<id>`; mandatory read-tool surface (`codemagic_list`/`codemagic_get`/`codemagic_search`); vault key `codemagic.token` (sent in the `x-auth-token` header); `permissions.network = ["api.codemagic.io"]`
 - [ ] **Microsoft App Center** (or successor where deprecated) — mobile build pipelines, distribution groups, crash analytics, in-app analytics; read-only
 - [ ] **Firebase App Distribution** — release tracks, tester groups, distribution events; read-only
 - [ ] **TestFlight** (read-only via App Store Connect API) — build groups, tester sessions, feedback; read-only

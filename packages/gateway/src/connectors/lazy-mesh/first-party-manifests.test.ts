@@ -79,6 +79,7 @@ describe("manifestForFirstParty", () => {
       "kubernetes",
       "obsidian",
       "bitrise",
+      "codemagic",
       "sonarqube",
       "semgrep",
       "wiz",

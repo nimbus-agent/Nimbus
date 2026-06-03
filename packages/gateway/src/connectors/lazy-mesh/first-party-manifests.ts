@@ -214,6 +214,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  codemagic: baseManifest("com.nimbus.codemagic", {
+    network: ["api.codemagic.io"],
+    filesystem: { read: [], write: [] },
+  }),
+
   sonarqube: baseManifest("com.nimbus.sonarqube", {
     network: ["sonarcloud.io"],
     filesystem: { read: [], write: [] },

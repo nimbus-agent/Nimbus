@@ -36,6 +36,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   datadog: ["datadog.api_key", "datadog.app_key", "datadog.site"],
   snyk: ["snyk.token"],
   bitrise: ["bitrise.token"],
+  codemagic: ["codemagic.token"],
   sonarqube: ["sonarqube.token", "sonarqube.url", "sonarqube.organization"],
   semgrep: ["semgrep.token", "semgrep.deployment_slug"],
   wiz: ["wiz.client_id", "wiz.client_secret", "wiz.api_url", "wiz.auth_url"],
