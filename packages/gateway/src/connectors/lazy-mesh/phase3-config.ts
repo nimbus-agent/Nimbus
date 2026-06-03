@@ -529,6 +529,26 @@ export async function phase3AddBitriseMcp(
   );
 }
 
+export async function phase3AddCodemagicMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tok = (await readConnectorSecret(vault, "codemagic", "token"))?.trim() ?? "";
+  if (tok === "") {
+    return;
+  }
+  servers["codemagic"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("codemagic")],
+      env: extensionProcessEnv({ CODEMAGIC_TOKEN: tok }),
+    },
+    "codemagic",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSonarqubeMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1586,6 +1606,7 @@ export async function buildPhase3Servers(
   await phase3AddDatadogMcp(vault, servers, sandboxCwd);
   await phase3AddSnykMcp(vault, servers, sandboxCwd);
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
+  await phase3AddCodemagicMcp(vault, servers, sandboxCwd);
   await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
   await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
   await phase3AddWizMcp(vault, servers, sandboxCwd);

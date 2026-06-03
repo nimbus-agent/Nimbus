@@ -25,6 +25,7 @@ export type Provider =
   | "datadog"
   | "snyk"
   | "bitrise"
+  | "codemagic"
   | "sonarqube"
   | "semgrep"
   | "wiz"
@@ -105,6 +106,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   datadog: { requestsPerMinute: 60, burstSize: 10 },
   snyk: { requestsPerMinute: 60, burstSize: 10 },
   bitrise: { requestsPerMinute: 60, burstSize: 10 },
+  codemagic: { requestsPerMinute: 60, burstSize: 10 },
   sonarqube: { requestsPerMinute: 60, burstSize: 10 },
   semgrep: { requestsPerMinute: 60, burstSize: 10 },
   wiz: { requestsPerMinute: 60, burstSize: 10 },

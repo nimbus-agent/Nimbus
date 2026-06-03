@@ -50,6 +50,7 @@
     "packages/mcp-connectors/obsidian",
     "packages/mcp-connectors/snyk",
     "packages/mcp-connectors/bitrise",
+    "packages/mcp-connectors/codemagic",
     "packages/mcp-connectors/sonarqube",
     "packages/mcp-connectors/semgrep",
     "packages/mcp-connectors/wiz",
