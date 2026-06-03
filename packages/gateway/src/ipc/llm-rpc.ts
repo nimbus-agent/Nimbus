@@ -121,6 +121,7 @@ export async function dispatchLlmRpc(
   return dispatchByMethod<LlmRpcContext>(method, params, ctx, {
     "llm.listModels": async (_p, c) => ({ models: await c.registry.listAllModels() }),
     "llm.getStatus": async (_p, c) => ({ available: await c.registry.checkAvailability() }),
+    "llm.status": async (_p, c) => ({ decisions: await c.registry.getRouterStatus() }),
     "llm.pullModel": handlePullModel,
     "llm.cancelPull": (p) => handleCancelPull(p),
     "llm.loadModel": (p, c) => handleLoadOrUnload("load", p, c),

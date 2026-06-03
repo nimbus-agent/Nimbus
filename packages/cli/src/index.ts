@@ -18,6 +18,7 @@ import {
   runImpactCli,
   runIndexCmd,
   runLan,
+  runLlm,
   runMcpServer,
   runMetricsCli,
   runPeople,
@@ -91,6 +92,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   run: runWorkflowFromFile,
   scaffold: runScaffold,
   lan: runLan,
+  llm: runLlm,
   metrics: runMetricsCli,
   "mcp-server": runMcpServer,
 };

@@ -157,6 +157,47 @@ describe("llm.getRouterStatus", () => {
   });
 });
 
+describe("llm.status", () => {
+  test("returns per-task decisions with modelName, isAvailable, and reason", async () => {
+    const getRouterStatus = mock(async () => ({
+      classification: {
+        providerId: "ollama",
+        modelName: "llama3.2",
+        isAvailable: true,
+        reason: "prefer-local",
+      },
+      reasoning: {
+        providerId: "ollama",
+        modelName: "llama3.2",
+        isAvailable: true,
+        reason: "prefer-local",
+      },
+      summarisation: {
+        providerId: "ollama",
+        modelName: "llama3.2",
+        isAvailable: true,
+        reason: "prefer-local",
+      },
+      agent_step: {
+        providerId: "ollama",
+        modelName: "llama3.2",
+        isAvailable: true,
+        reason: "prefer-local",
+      },
+    }));
+    const registry = { getRouterStatus } as unknown as LlmRegistry;
+    const r = await dispatchLlmRpc("llm.status", null, { registry, notify: () => {} });
+    expect(r.kind).toBe("hit");
+    const val = (r as { kind: "hit"; value: { decisions: Record<string, unknown> } }).value;
+    expect(val.decisions["classification"]).toMatchObject({
+      modelName: "llama3.2",
+      isAvailable: true,
+      reason: "prefer-local",
+    });
+    expect(getRouterStatus).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("llm.setDefault", () => {
   test("persists default per task type and echoes back", async () => {
     const setDefault = mock(async () => {});

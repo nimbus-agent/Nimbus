@@ -16,6 +16,7 @@ export const COMMAND_NAMES = [
   "impact",
   "index",
   "lan",
+  "llm",
   "metrics",
   "people",
   "profile",

@@ -138,12 +138,32 @@ export class LlmRouter {
     return meta.parameterCount >= this.config.minReasoningParams;
   }
 
+  private modelNameFor(providerId: LlmProviderKind): string {
+    return LOCAL_PROVIDER_IDS.has(providerId) ? this.config.localModel : this.config.remoteModel;
+  }
+
+  private reasonFor(providerId: LlmProviderKind): string {
+    const isLocal = LOCAL_PROVIDER_IDS.has(providerId);
+    if (this.config.enforceAirGap && isLocal) return "air-gap";
+    if (this.config.preferLocal && isLocal) return "prefer-local";
+    if (!this.config.preferLocal && !isLocal) return "prefer-remote";
+    return "default";
+  }
+
   async getStatus(): Promise<
-    Record<LlmTaskType, { providerId: string; modelName: string; reason: string } | undefined>
+    Record<
+      LlmTaskType,
+      | { providerId: LlmProviderKind; modelName: string; isAvailable: boolean; reason: string }
+      | undefined
+    >
   > {
     const tasks: LlmTaskType[] = ["classification", "reasoning", "summarisation", "agent_step"];
     const out: Partial<
-      Record<LlmTaskType, { providerId: string; modelName: string; reason: string } | undefined>
+      Record<
+        LlmTaskType,
+        | { providerId: LlmProviderKind; modelName: string; isAvailable: boolean; reason: string }
+        | undefined
+      >
     > = {};
     for (const t of tasks) {
       const provider = await this.selectProvider(t);
@@ -151,13 +171,17 @@ export class LlmRouter {
         out[t] = undefined;
         continue;
       }
-      const isLocal = LOCAL_PROVIDER_IDS.has(provider.providerId);
-      const reason = !isLocal && this.config.enforceAirGap ? "air-gap bypassed" : "default";
-      out[t] = { providerId: provider.providerId, modelName: "", reason };
+      out[t] = {
+        providerId: provider.providerId,
+        modelName: this.modelNameFor(provider.providerId),
+        isAvailable: true,
+        reason: this.reasonFor(provider.providerId),
+      };
     }
     return out as Record<
       LlmTaskType,
-      { providerId: string; modelName: string; reason: string } | undefined
+      | { providerId: LlmProviderKind; modelName: string; isAvailable: boolean; reason: string }
+      | undefined
     >;
   }
 
