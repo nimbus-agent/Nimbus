@@ -2,9 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { type FetchMessageObject, type FetchQueryObject, ImapFlow } from "imapflow";
 import { createTransport, type Transporter } from "nodemailer";
-
+import {
+  type BodyStructureNode,
+  extractAttachments,
+  findTextPlainPart,
+} from "../../shared/imap-bodystructure.ts";
 import { requireProcessEnv } from "../../shared/mcp-tool-kit.ts";
-import { type BodyStructureNode, extractAttachments, findTextPlainPart } from "./bodystructure.ts";
 import {
   capPreview,
   clampLimit,

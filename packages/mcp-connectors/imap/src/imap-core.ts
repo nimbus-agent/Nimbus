@@ -13,16 +13,19 @@
  * The IMAP client and SMTP mailer are injected so tests never open real sockets.
  */
 
-/** Max characters of the plain-text body preview that is ever indexed/returned. */
-export const PREVIEW_MAX_CHARS = 2000;
-/** Max bytes of the text/plain body part fetched for the preview (~2 KB). */
-export const PREVIEW_FETCH_BYTES = 2048;
+import {
+  capPreview,
+  clampLimit,
+  formatAddress,
+  type MailAddress,
+  PREVIEW_FETCH_BYTES,
+  PREVIEW_MAX_CHARS,
+} from "../../shared/imap-mail-core.ts";
+
+export { capPreview, clampLimit, formatAddress, PREVIEW_FETCH_BYTES, PREVIEW_MAX_CHARS };
 
 /** One parsed address (name optional). */
-export interface ImapAddress {
-  readonly name?: string;
-  readonly address?: string;
-}
+export type ImapAddress = MailAddress;
 
 /** Message ENVELOPE — RFC 2822 header fields only. */
 export interface ImapEnvelope {
@@ -105,43 +108,4 @@ export interface SendMailResult {
 /** Minimal SMTP mailer surface; implemented for real over nodemailer. */
 export interface SmtpMailer {
   send(input: SendMailInput): Promise<SendMailResult>;
-}
-
-const DEFAULT_LIST_LIMIT = 50;
-const MAX_LIST_LIMIT = 200;
-
-export function clampLimit(limit: number | undefined, fallback = DEFAULT_LIST_LIMIT): number {
-  if (limit === undefined || !Number.isFinite(limit)) {
-    return fallback;
-  }
-  const n = Math.trunc(limit);
-  if (n < 1) {
-    return 1;
-  }
-  return Math.min(n, MAX_LIST_LIMIT);
-}
-
-/**
- * Cap a body preview to {@link PREVIEW_MAX_CHARS}. Normalizes CRLF and collapses
- * whitespace/blank-line runs so the preview stays compact; never lengthens the
- * input.
- */
-export function capPreview(text: string): string {
-  const normalized = text
-    .replaceAll("\r\n", "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-  return normalized.length > PREVIEW_MAX_CHARS
-    ? normalized.slice(0, PREVIEW_MAX_CHARS)
-    : normalized;
-}
-
-/** Format one address as `Name <addr>` / `<addr>` for envelope display. */
-export function formatAddress(a: ImapAddress): string {
-  const addr = a.address ?? "";
-  if (a.name !== undefined && a.name !== "") {
-    return addr === "" ? a.name : `${a.name} <${addr}>`;
-  }
-  return addr;
 }

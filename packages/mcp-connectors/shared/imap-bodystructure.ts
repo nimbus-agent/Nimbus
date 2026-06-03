@@ -1,13 +1,13 @@
 /**
- * Pure BODYSTRUCTURE walkers — extract attachment METADATA (filename, size,
+ * Pure BODYSTRUCTURE walkers shared by the IMAP-based mail connectors (imap,
+ * protonmail-via-Bridge) — extract attachment METADATA (filename, size,
  * mimetype) and locate the first text/plain part for the preview. NEVER touches
  * attachment bytes; operates only on the structure tree imapflow returns.
  */
-import type { ImapAttachmentMeta } from "./imap-core.ts";
 
 /**
- * imapflow's parsed BODYSTRUCTURE node. Multipart nodes carry `childNodes`;
- * leaf nodes carry `type` (mimetype), `size`, and `disposition`/`dispositionParameters`
+ * imapflow's parsed BODYSTRUCTURE node. Multipart nodes carry `childNodes`; leaf
+ * nodes carry `type` (mimetype), `size`, and `disposition`/`dispositionParameters`
  * for attachments. We type the fields we read; the rest is `unknown`.
  */
 export interface BodyStructureNode {
@@ -18,6 +18,13 @@ export interface BodyStructureNode {
   readonly dispositionParameters?: Record<string, unknown> | null;
   readonly parameters?: Record<string, unknown> | null;
   readonly childNodes?: readonly BodyStructureNode[] | null;
+}
+
+/** Attachment METADATA only — filename, size, mimetype. NEVER the bytes. */
+export interface AttachmentMeta {
+  readonly filename: string | null;
+  readonly sizeBytes: number | null;
+  readonly mimeType: string | null;
 }
 
 function asString(v: unknown): string | null {
@@ -46,10 +53,8 @@ function isAttachment(node: BodyStructureNode): boolean {
  * Walk the BODYSTRUCTURE tree and collect attachment METADATA only — filename,
  * size, mimetype. Never reads or requests the part body.
  */
-export function extractAttachments(
-  root: BodyStructureNode | null | undefined,
-): ImapAttachmentMeta[] {
-  const out: ImapAttachmentMeta[] = [];
+export function extractAttachments(root: BodyStructureNode | null | undefined): AttachmentMeta[] {
+  const out: AttachmentMeta[] = [];
   const stack: BodyStructureNode[] = root ? [root] : [];
   while (stack.length > 0) {
     const node = stack.pop();

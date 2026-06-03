@@ -4,7 +4,7 @@ import {
   type BodyStructureNode,
   extractAttachments,
   findTextPlainPart,
-} from "../src/bodystructure.ts";
+} from "./imap-bodystructure.ts";
 
 describe("extractAttachments", () => {
   test("collects filename/size/mimetype from an attachment leaf (content-disposition)", () => {
