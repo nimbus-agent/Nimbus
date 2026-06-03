@@ -1,6 +1,7 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { readConnectorSecret } from "../connector-vault.ts";
+import type { ConnectorServiceId } from "../connector-catalog.ts";
+import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connector-vault.ts";
 import {
   hostnameFromUrl,
   manifestForFirstParty,
@@ -50,38 +51,140 @@ function imapPortOrDefault(raw: string, fallback: number): number {
   return Number.isFinite(n) && n >= 1 && n <= 65535 ? Math.trunc(n) : fallback;
 }
 
+/** Read + trim an optional connector secret, defaulting to "" when unset. */
+async function readSecret<S extends ConnectorServiceId>(
+  vault: NimbusVault,
+  serviceId: S,
+  key: ConnectorSecretKeyOf<S>,
+): Promise<string> {
+  return (await readConnectorSecret(vault, serviceId, key))?.trim() ?? "";
+}
+
+interface SimpleTokenSpec<S extends ConnectorServiceId> {
+  /** Service id, used as the `servers` key, the manifest id, and the secret namespace. */
+  readonly serviceId: S;
+  /** MCP server script name passed to {@link mcpConnectorServerScript}. */
+  readonly script: string;
+  /** Vault secret suffix (e.g. `"token"`, `"api_key"`) — validated against the service. */
+  readonly secretKey: ConnectorSecretKeyOf<S>;
+  /** Environment variable name the spawned connector reads the secret from. */
+  readonly envKey: string;
+}
+
+/**
+ * Register a single-secret connector: read one token/key, noop when unset, then
+ * wrap + register the spawn. Collapses the ~12 token-only connector bodies that
+ * differ only in their service id / script / secret key / env var name.
+ */
+async function addSimpleTokenServer<S extends ConnectorServiceId>(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+  spec: SimpleTokenSpec<S>,
+): Promise<void> {
+  const value = await readSecret(vault, spec.serviceId, spec.secretKey);
+  if (value === "") {
+    return;
+  }
+  servers[spec.serviceId] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript(spec.script)],
+      env: extensionProcessEnv({ [spec.envKey]: value }),
+    },
+    spec.serviceId,
+    sandboxCwd,
+  );
+}
+
+/**
+ * Register a local, no-network connector that reads files from a configured
+ * directory: extend the first-party manifest's `filesystem.read` with the dir at
+ * spawn time, noop when the dir is unset. Shared by the Tier-5 local connectors
+ * (localdb, dataprofile, storybook) and great_expectations.
+ */
+async function addDirManifestServer<S extends ConnectorServiceId>(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+  spec: SimpleTokenSpec<S>,
+): Promise<void> {
+  const dir = await readSecret(vault, spec.serviceId, spec.secretKey);
+  if (dir === "") {
+    return;
+  }
+  const base = manifestForFirstParty(spec.serviceId);
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers[spec.serviceId] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript(spec.script)],
+      env: extensionProcessEnv({ [spec.envKey]: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+interface AwsCreds {
+  /** Whether enough of the AWS credential set is present to spawn. */
+  readonly ok: boolean;
+  /** The configured default region ("" when unset) — needed for regional hosts. */
+  readonly region: string;
+  /** The connector env subset (only the keys that were actually configured). */
+  readonly env: Record<string, string>;
+}
+
+/**
+ * Read the shared AWS credential set (key / secret / region / profile) once and
+ * build the connector env subset. Reused by the AWS-family connectors (aws,
+ * athena, cloudwatch, sagemaker) that all authenticate the same way.
+ */
+async function loadAwsCreds(vault: NimbusVault): Promise<AwsCreds> {
+  const ak = await readSecret(vault, "aws", "access_key_id");
+  const sk = await readSecret(vault, "aws", "secret_access_key");
+  const reg = await readSecret(vault, "aws", "default_region");
+  const prof = await readSecret(vault, "aws", "profile");
+  const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
+  const env: Record<string, string> = {};
+  if (ak !== "") {
+    env["AWS_ACCESS_KEY_ID"] = ak;
+  }
+  if (sk !== "") {
+    env["AWS_SECRET_ACCESS_KEY"] = sk;
+  }
+  if (reg !== "") {
+    env["AWS_DEFAULT_REGION"] = reg;
+  }
+  if (prof !== "") {
+    env["AWS_PROFILE"] = prof;
+  }
+  return { ok, region: reg, env };
+}
+
 export async function phase3AddAwsMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
-  const awsOk =
-    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!awsOk) {
+  const creds = await loadAwsCreds(vault);
+  if (!creds.ok) {
     return;
-  }
-  const extra: Record<string, string> = {};
-  if (ak !== "") {
-    extra["AWS_ACCESS_KEY_ID"] = ak;
-  }
-  if (sk !== "") {
-    extra["AWS_SECRET_ACCESS_KEY"] = sk;
-  }
-  if (reg !== "") {
-    extra["AWS_DEFAULT_REGION"] = reg;
-  }
-  if (prof !== "") {
-    extra["AWS_PROFILE"] = prof;
   }
   servers["aws"] = wrap(
     {
       command: "bun",
       args: [mcpConnectorServerScript("aws")],
-      env: extensionProcessEnv(extra),
+      env: extensionProcessEnv(creds.env),
     },
     "aws",
     sandboxCwd,
@@ -164,42 +267,23 @@ export async function phase3AddAthenaMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  // Athena (Tier-3, metadata-only) reuses the existing AWS credentials — mirror
-  // phase3AddAwsMcp's inline cred reads.
-  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
-  const awsOk =
-    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!awsOk) {
+  // Athena (Tier-3, metadata-only) reuses the existing AWS credentials.
+  const creds = await loadAwsCreds(vault);
+  if (!creds.ok) {
     return;
-  }
-  const extra: Record<string, string> = {};
-  if (ak !== "") {
-    extra["AWS_ACCESS_KEY_ID"] = ak;
-  }
-  if (sk !== "") {
-    extra["AWS_SECRET_ACCESS_KEY"] = sk;
-  }
-  if (reg !== "") {
-    extra["AWS_DEFAULT_REGION"] = reg;
-  }
-  if (prof !== "") {
-    extra["AWS_PROFILE"] = prof;
   }
   // Add the regional Athena endpoint host for the configured region — the
   // RFC-1123 validator rejects the `athena.*.amazonaws.com` wildcard, so the
   // concrete per-region host is added here (sts.amazonaws.com is the fixed base).
   const athenaManifest = manifestWithExtraNetworkHosts(
     "athena",
-    reg === "" ? [] : [`athena.${reg}.amazonaws.com`],
+    creds.region === "" ? [] : [`athena.${creds.region}.amazonaws.com`],
   );
   servers["athena"] = wrapServerSpec(
     {
       command: "bun",
       args: [mcpConnectorServerScript("athena")],
-      env: extensionProcessEnv(extra),
+      env: extensionProcessEnv(creds.env),
     },
     athenaManifest,
     sandboxCwd,
@@ -211,42 +295,23 @@ export async function phase3AddCloudwatchMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  // CloudWatch (Tier-3, metadata-only) reuses the existing AWS credentials —
-  // mirror phase3AddAwsMcp's inline cred reads.
-  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
-  const awsOk =
-    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!awsOk) {
+  // CloudWatch (Tier-3, metadata-only) reuses the existing AWS credentials.
+  const creds = await loadAwsCreds(vault);
+  if (!creds.ok) {
     return;
-  }
-  const extra: Record<string, string> = {};
-  if (ak !== "") {
-    extra["AWS_ACCESS_KEY_ID"] = ak;
-  }
-  if (sk !== "") {
-    extra["AWS_SECRET_ACCESS_KEY"] = sk;
-  }
-  if (reg !== "") {
-    extra["AWS_DEFAULT_REGION"] = reg;
-  }
-  if (prof !== "") {
-    extra["AWS_PROFILE"] = prof;
   }
   // Add the regional CloudWatch Logs endpoint host for the configured region —
   // the RFC-1123 validator rejects the `logs.*.amazonaws.com` wildcard, so the
   // concrete per-region host is added here (sts.amazonaws.com is the fixed base).
   const cloudwatchManifest = manifestWithExtraNetworkHosts(
     "cloudwatch",
-    reg === "" ? [] : [`logs.${reg}.amazonaws.com`],
+    creds.region === "" ? [] : [`logs.${creds.region}.amazonaws.com`],
   );
   servers["cloudwatch"] = wrapServerSpec(
     {
       command: "bun",
       args: [mcpConnectorServerScript("cloudwatch")],
-      env: extensionProcessEnv(extra),
+      env: extensionProcessEnv(creds.env),
     },
     cloudwatchManifest,
     sandboxCwd,
@@ -258,29 +323,10 @@ export async function phase3AddSagemakerMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials —
-  // mirror phase3AddCloudwatchMcp's inline cred reads.
-  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
-  const awsOk =
-    (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!awsOk) {
+  // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials.
+  const creds = await loadAwsCreds(vault);
+  if (!creds.ok) {
     return;
-  }
-  const extra: Record<string, string> = {};
-  if (ak !== "") {
-    extra["AWS_ACCESS_KEY_ID"] = ak;
-  }
-  if (sk !== "") {
-    extra["AWS_SECRET_ACCESS_KEY"] = sk;
-  }
-  if (reg !== "") {
-    extra["AWS_DEFAULT_REGION"] = reg;
-  }
-  if (prof !== "") {
-    extra["AWS_PROFILE"] = prof;
   }
   // Add the regional SageMaker endpoint host for the configured region — the
   // RFC-1123 validator rejects the `api.sagemaker.*.amazonaws.com` wildcard, so
@@ -288,13 +334,13 @@ export async function phase3AddSagemakerMcp(
   // base).
   const sagemakerManifest = manifestWithExtraNetworkHosts(
     "sagemaker",
-    reg === "" ? [] : [`api.sagemaker.${reg}.amazonaws.com`],
+    creds.region === "" ? [] : [`api.sagemaker.${creds.region}.amazonaws.com`],
   );
   servers["sagemaker"] = wrapServerSpec(
     {
       command: "bun",
       args: [mcpConnectorServerScript("sagemaker")],
-      env: extensionProcessEnv(extra),
+      env: extensionProcessEnv(creds.env),
     },
     sagemakerManifest,
     sandboxCwd,
@@ -445,19 +491,12 @@ export async function phase3AddNewrelicMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const nrKey = (await readConnectorSecret(vault, "newrelic", "api_key"))?.trim() ?? "";
-  if (nrKey === "") {
-    return;
-  }
-  servers["newrelic"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("newrelic")],
-      env: extensionProcessEnv({ NEW_RELIC_API_KEY: nrKey }),
-    },
-    "newrelic",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "newrelic",
+    script: "newrelic",
+    secretKey: "api_key",
+    envKey: "NEW_RELIC_API_KEY",
+  });
 }
 
 export async function phase3AddDatadogMcp(
@@ -494,19 +533,12 @@ export async function phase3AddSnykMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const tok = (await readConnectorSecret(vault, "snyk", "token"))?.trim() ?? "";
-  if (tok === "") {
-    return;
-  }
-  servers["snyk"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("snyk")],
-      env: extensionProcessEnv({ SNYK_TOKEN: tok }),
-    },
-    "snyk",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "snyk",
+    script: "snyk",
+    secretKey: "token",
+    envKey: "SNYK_TOKEN",
+  });
 }
 
 export async function phase3AddBitriseMcp(
@@ -514,19 +546,12 @@ export async function phase3AddBitriseMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const tok = (await readConnectorSecret(vault, "bitrise", "token"))?.trim() ?? "";
-  if (tok === "") {
-    return;
-  }
-  servers["bitrise"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("bitrise")],
-      env: extensionProcessEnv({ BITRISE_TOKEN: tok }),
-    },
-    "bitrise",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "bitrise",
+    script: "bitrise",
+    secretKey: "token",
+    envKey: "BITRISE_TOKEN",
+  });
 }
 
 export async function phase3AddCodemagicMcp(
@@ -872,21 +897,12 @@ export async function phase3AddNetlifyMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const tok = (await readConnectorSecret(vault, "netlify", "token"))?.trim() ?? "";
-  if (tok === "") {
-    return;
-  }
-  servers["netlify"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("netlify")],
-      env: extensionProcessEnv({
-        NETLIFY_TOKEN: tok,
-      }),
-    },
-    "netlify",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "netlify",
+    script: "netlify",
+    secretKey: "token",
+    envKey: "NETLIFY_TOKEN",
+  });
 }
 
 export async function phase3AddStripeMcp(
@@ -894,21 +910,12 @@ export async function phase3AddStripeMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "stripe", "api_key"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["stripe"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("stripe")],
-      env: extensionProcessEnv({
-        STRIPE_API_KEY: key,
-      }),
-    },
-    "stripe",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "stripe",
+    script: "stripe",
+    secretKey: "api_key",
+    envKey: "STRIPE_API_KEY",
+  });
 }
 
 export async function phase3AddMercuryMcp(
@@ -916,21 +923,12 @@ export async function phase3AddMercuryMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "mercury", "token"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["mercury"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("mercury")],
-      env: extensionProcessEnv({
-        MERCURY_TOKEN: key,
-      }),
-    },
-    "mercury",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "mercury",
+    script: "mercury",
+    secretKey: "token",
+    envKey: "MERCURY_TOKEN",
+  });
 }
 
 export async function phase3AddReadwiseMcp(
@@ -938,21 +936,12 @@ export async function phase3AddReadwiseMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "readwise", "token"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["readwise"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("readwise")],
-      env: extensionProcessEnv({
-        READWISE_TOKEN: key,
-      }),
-    },
-    "readwise",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "readwise",
+    script: "readwise",
+    secretKey: "token",
+    envKey: "READWISE_TOKEN",
+  });
 }
 
 export async function phase3AddRaindropMcp(
@@ -960,21 +949,12 @@ export async function phase3AddRaindropMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "raindrop", "token"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["raindrop"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("raindrop")],
-      env: extensionProcessEnv({
-        RAINDROP_TOKEN: key,
-      }),
-    },
-    "raindrop",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "raindrop",
+    script: "raindrop",
+    secretKey: "token",
+    envKey: "RAINDROP_TOKEN",
+  });
 }
 
 export async function phase3AddIntercomMcp(
@@ -982,21 +962,12 @@ export async function phase3AddIntercomMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "intercom", "token"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["intercom"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("intercom")],
-      env: extensionProcessEnv({
-        INTERCOM_TOKEN: key,
-      }),
-    },
-    "intercom",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "intercom",
+    script: "intercom",
+    secretKey: "token",
+    envKey: "INTERCOM_TOKEN",
+  });
 }
 
 export async function phase3AddZendeskMcp(
@@ -1032,21 +1003,12 @@ export async function phase3AddLeverMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "lever", "api_key"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["lever"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("lever")],
-      env: extensionProcessEnv({
-        LEVER_API_KEY: key,
-      }),
-    },
-    "lever",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "lever",
+    script: "lever",
+    secretKey: "api_key",
+    envKey: "LEVER_API_KEY",
+  });
 }
 
 export async function phase3AddGreenhouseMcp(
@@ -1054,21 +1016,12 @@ export async function phase3AddGreenhouseMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "greenhouse", "api_key"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["greenhouse"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("greenhouse")],
-      env: extensionProcessEnv({
-        GREENHOUSE_API_KEY: key,
-      }),
-    },
-    "greenhouse",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "greenhouse",
+    script: "greenhouse",
+    secretKey: "api_key",
+    envKey: "GREENHOUSE_API_KEY",
+  });
 }
 
 export async function phase3AddPipedriveMcp(
@@ -1076,21 +1029,12 @@ export async function phase3AddPipedriveMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const key = (await readConnectorSecret(vault, "pipedrive", "token"))?.trim() ?? "";
-  if (key === "") {
-    return;
-  }
-  servers["pipedrive"] = wrap(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("pipedrive")],
-      env: extensionProcessEnv({
-        PIPEDRIVE_TOKEN: key,
-      }),
-    },
-    "pipedrive",
-    sandboxCwd,
-  );
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "pipedrive",
+    script: "pipedrive",
+    secretKey: "token",
+    envKey: "PIPEDRIVE_TOKEN",
+  });
 }
 
 export async function phase3AddStackoverflowMcp(
@@ -1452,32 +1396,12 @@ export async function phase3AddLocaldbMcp(
   // Local DB Schema Indexing (Tier-5 local) has NO network and NO live
   // credential — it reads saved `.sql` files from a configured local directory.
   // `localdb.scripts_dir` is a non-secret PATH; noop when unset.
-  const dir = (await readConnectorSecret(vault, "localdb", "scripts_dir"))?.trim() ?? "";
-  if (dir === "") {
-    return;
-  }
-  // Extend the connector manifest's filesystem.read with the configured scripts
-  // dir at spawn time, mirroring phase3AddGreatExpectationsMcp / ensureObsidianMcp.
-  const base = manifestForFirstParty("localdb");
-  const manifest = {
-    ...base,
-    permissions: {
-      ...base.permissions,
-      filesystem: {
-        read: [...base.permissions.filesystem.read, dir],
-        write: [...base.permissions.filesystem.write],
-      },
-    },
-  };
-  servers["localdb"] = wrapServerSpec(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("localdb")],
-      env: extensionProcessEnv({ LOCALDB_SCRIPTS_DIR: dir }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addDirManifestServer(vault, servers, sandboxCwd, {
+    serviceId: "localdb",
+    script: "localdb",
+    secretKey: "scripts_dir",
+    envKey: "LOCALDB_SCRIPTS_DIR",
+  });
 }
 
 export async function phase3AddDataprofileMcp(
@@ -1488,30 +1412,12 @@ export async function phase3AddDataprofileMcp(
   // Local data profiling (Tier-5 local, no-row-data) has NO network and NO live
   // credential — it schema-profiles local data files from a configured dir.
   // `dataprofile.dir` is a non-secret PATH; noop when unset.
-  const dir = (await readConnectorSecret(vault, "dataprofile", "dir"))?.trim() ?? "";
-  if (dir === "") {
-    return;
-  }
-  const base = manifestForFirstParty("dataprofile");
-  const manifest = {
-    ...base,
-    permissions: {
-      ...base.permissions,
-      filesystem: {
-        read: [...base.permissions.filesystem.read, dir],
-        write: [...base.permissions.filesystem.write],
-      },
-    },
-  };
-  servers["dataprofile"] = wrapServerSpec(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("dataprofile")],
-      env: extensionProcessEnv({ DATAPROFILE_DIR: dir }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addDirManifestServer(vault, servers, sandboxCwd, {
+    serviceId: "dataprofile",
+    script: "dataprofile",
+    secretKey: "dir",
+    envKey: "DATAPROFILE_DIR",
+  });
 }
 
 export async function phase3AddStorybookMcp(
@@ -1522,30 +1428,12 @@ export async function phase3AddStorybookMcp(
   // Storybook (Tier-5 local) has NO network and NO live credential — it reads
   // the local Storybook manifest (index.json / stories.json) from a configured
   // output dir. `storybook.dir` is a non-secret PATH; noop when unset.
-  const dir = (await readConnectorSecret(vault, "storybook", "dir"))?.trim() ?? "";
-  if (dir === "") {
-    return;
-  }
-  const base = manifestForFirstParty("storybook");
-  const manifest = {
-    ...base,
-    permissions: {
-      ...base.permissions,
-      filesystem: {
-        read: [...base.permissions.filesystem.read, dir],
-        write: [...base.permissions.filesystem.write],
-      },
-    },
-  };
-  servers["storybook"] = wrapServerSpec(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("storybook")],
-      env: extensionProcessEnv({ STORYBOOK_DIR: dir }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addDirManifestServer(vault, servers, sandboxCwd, {
+    serviceId: "storybook",
+    script: "storybook",
+    secretKey: "dir",
+    envKey: "STORYBOOK_DIR",
+  });
 }
 
 export async function phase3AddGreatExpectationsMcp(
@@ -1557,32 +1445,12 @@ export async function phase3AddGreatExpectationsMcp(
   // credential — it reads GX validation-result JSON artefacts from a configured
   // local directory. `great_expectations.results_dir` is a non-secret PATH; noop
   // when unset.
-  const dir = (await readConnectorSecret(vault, "great_expectations", "results_dir"))?.trim() ?? "";
-  if (dir === "") {
-    return;
-  }
-  // Extend the connector manifest's filesystem.read with the configured results
-  // dir at spawn time, mirroring ensureObsidianMcp's inline manifest extension.
-  const base = manifestForFirstParty("great_expectations");
-  const manifest = {
-    ...base,
-    permissions: {
-      ...base.permissions,
-      filesystem: {
-        read: [...base.permissions.filesystem.read, dir],
-        write: [...base.permissions.filesystem.write],
-      },
-    },
-  };
-  servers["great_expectations"] = wrapServerSpec(
-    {
-      command: "bun",
-      args: [mcpConnectorServerScript("great-expectations")],
-      env: extensionProcessEnv({ GREAT_EXPECTATIONS_RESULTS_DIR: dir }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addDirManifestServer(vault, servers, sandboxCwd, {
+    serviceId: "great_expectations",
+    script: "great-expectations",
+    secretKey: "results_dir",
+    envKey: "GREAT_EXPECTATIONS_RESULTS_DIR",
+  });
 }
 
 export async function buildPhase3Servers(

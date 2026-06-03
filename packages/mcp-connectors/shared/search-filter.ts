@@ -88,6 +88,24 @@ export function fieldsFromKeys(
 }
 
 /**
+ * Read a nested string field by key path off an objectish row, returning `""`
+ * when any path segment is missing or the leaf is not a string. Shared by the
+ * Kubernetes-style connectors (argocd, flux) whose resources nest fields under
+ * `metadata` / `spec` / `status`.
+ */
+export function nestedString(root: Record<string, unknown>, path: readonly string[]): string {
+  let cur: Record<string, unknown> | undefined = root;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    cur = asRecord(cur?.[path[i] ?? ""]);
+    if (cur === undefined) {
+      return "";
+    }
+  }
+  const leaf = cur?.[path.at(-1) ?? ""];
+  return typeof leaf === "string" ? leaf : "";
+}
+
+/**
  * Build a `filter<Thing>(items, options)` search function from a field
  * extractor. Connectors with bespoke extraction pass their own `fieldsOf`;
  * simple ones pair this with {@link fieldsFromKeys}.
