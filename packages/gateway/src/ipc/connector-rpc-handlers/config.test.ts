@@ -132,14 +132,6 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("serviceId conflicting with built-in -> -32602", async () => {
-    const { stub: scheduler } = makeStubScheduler();
-    const { stub: mesh } = makeStubMesh();
-    expect(true).toBe(true);
-    void scheduler;
-    void mesh;
-  });
-
   test("happy path inserts row, registers syncable, returns ok", async () => {
     const { stub: scheduler, calls: schedCalls } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();

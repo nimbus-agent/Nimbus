@@ -142,8 +142,8 @@ repos = ["gitlab:org/ci-version"]
   });
 });
 
-describe("DoraServiceConfig type alias for back-compat", () => {
-  it("parses dora blocks through the renamed ServiceConfig shape", () => {
+describe("ServiceConfig shape parsed from dora blocks", () => {
+  it("parses dora blocks through the ServiceConfig shape", () => {
     const raw = `
 [metrics.dora.svc-c]
 repos = ["github:org/c"]

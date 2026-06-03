@@ -50,7 +50,11 @@ function parseIsoMs(v: unknown): number | null {
  * "the `<div>` tag" — the transcribed `<div>` must NOT be stripped). Review
  * point 1.1 narrowed the original `/<[^>]+>/g` greedy form to this allowlist.
  */
-const VTT_TAG_REGEX = /<\/?(?:v|c|b|i|u|lang|ruby|rt)(?:[. ][^>]*)?>|<\d{2}:\d{2}:\d{2}\.\d{3}>/g;
+// Split into two simpler patterns (each well under the regex-complexity limit);
+// applied in sequence they strip exactly the same set the single combined pattern
+// did. The single-char names `v c b i u` collapse to the `[bcivu]` class.
+const VTT_INLINE_TAG_REGEX = /<\/?(?:[bcivu]|lang|ruby|rt)(?:[. ][^>]*)?>/g;
+const VTT_TIMESTAMP_TAG_REGEX = /<\d{2}:\d{2}:\d{2}\.\d{3}>/g;
 
 /**
  * VTT → plaintext. Strips:
@@ -59,7 +63,8 @@ const VTT_TAG_REGEX = /<\/?(?:v|c|b|i|u|lang|ruby|rt)(?:[. ][^>]*)?>|<\d{2}:\d{2
  * - Pure-numeric cue-index lines.
  * - Timestamp lines (containing `-->`, with optional position attributes).
  * - Blank lines.
- * - VTT inline tags via {@link VTT_TAG_REGEX} (voice `<v Speaker>` incl.
+ * - VTT inline tags via {@link VTT_INLINE_TAG_REGEX} + {@link VTT_TIMESTAMP_TAG_REGEX}
+ *   (voice `<v Speaker>` incl.
  *   multi-word names, styling `<b>`/`<i>`/`<u>`/`<c.foo>`, language `<lang>`,
  *   ruby `<ruby>`/`<rt>`, karaoke timestamps `<00:00:01.000>`).
  *
@@ -115,7 +120,9 @@ export function vttToPlainText(vtt: string): string {
     }
     // A cue-text line. Strip VTT-only inline tags (literal `<like this>` in
     // speech is preserved) and accumulate.
-    const stripped = line.replaceAll(VTT_TAG_REGEX, "");
+    const stripped = line
+      .replaceAll(VTT_INLINE_TAG_REGEX, "")
+      .replaceAll(VTT_TIMESTAMP_TAG_REGEX, "");
     buffer.push(stripped);
   }
   flushBuffer();

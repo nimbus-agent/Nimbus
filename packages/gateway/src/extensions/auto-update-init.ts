@@ -85,7 +85,7 @@ async function listInstalledRows(db: Database): Promise<InstalledExtensionRow[]>
 }
 
 async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");

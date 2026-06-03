@@ -4,11 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
-import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
+import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { seedPaymentServiceFixture } from "../../fixtures/deployments/payment-service/seed.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
-function cfg(): DoraServiceConfig {
+function cfg(): ServiceConfig {
   return {
     serviceId: "payment-service",
     repos: [{ provider: "github", providerId: "acme/payments" }],

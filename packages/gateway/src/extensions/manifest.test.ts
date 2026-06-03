@@ -165,8 +165,10 @@ describe("parseExtensionManifestJson — updateChannel + changelog (T2 PR 3)", (
   });
 
   test("normalizes changelog to NFC", () => {
-    const decomposed = "café";
-    const composed = "café";
+    // Build the two Unicode forms explicitly so the inequality is a real
+    // runtime check (not two source literals an analyzer treats as identical).
+    const decomposed = "café".normalize("NFD"); // e + combining acute accent
+    const composed = "café".normalize("NFC"); // precomposed e-acute
     expect(decomposed).not.toBe(composed);
     const m = parseExtensionManifestJson(minimalWithExtras({ changelog: decomposed }));
     expect(m.changelog).toBe(composed);

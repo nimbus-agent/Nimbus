@@ -646,9 +646,9 @@ async function installDependencyNode(
 }
 
 function rollbackCreatedDirs(createdDirs: readonly string[]): void {
-  for (let i = createdDirs.length - 1; i >= 0; i--) {
+  for (const dir of [...createdDirs].reverse()) {
     try {
-      rmSync(createdDirs[i] as string, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
     } catch {
       /* best-effort rollback */
     }

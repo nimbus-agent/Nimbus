@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { DoraServiceConfig, ParsedDoraRepoUrn } from "./dora-config.ts";
+import type { ParsedDoraRepoUrn, ServiceConfig } from "./dora-config.ts";
 import { providerServiceColumns } from "./dora-config.ts";
 
 export type DoraGap =
@@ -98,7 +98,7 @@ type CiRunRow = {
 
 function selectDeploys(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): CiRunRow[] {
@@ -134,7 +134,7 @@ type AnnotatedDeployRow = {
 
 function selectAnnotatedDeploys(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): AnnotatedDeployRow[] {
@@ -159,7 +159,7 @@ function selectAnnotatedDeploys(
 
 export function deploymentFrequency(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): DoraMetricValue {
@@ -234,7 +234,7 @@ function prLeadTime(
 
 export function leadTimeForChanges(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): DoraMetricValue {
@@ -301,7 +301,7 @@ type ResolvedIncident = {
 
 function selectResolvedIncidents(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): ResolvedIncident[] {
@@ -333,7 +333,7 @@ function selectResolvedIncidents(
 
 export function changeFailureRate(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): DoraMetricValue {
@@ -367,7 +367,7 @@ export function changeFailureRate(
 
 export function mttr(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): DoraMetricValue {
@@ -387,7 +387,7 @@ export function mttr(
 
 export function computeDoraMetrics(
   db: Database,
-  cfg: DoraServiceConfig,
+  cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
 ): DoraMetricsResult {
