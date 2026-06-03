@@ -30,7 +30,7 @@ Coverage is fed in from two sources, both produced earlier in the same job:
 - `coverage/lcov.info` — written by `bun test --coverage --coverage-reporter=lcov` for `gateway`, `cli`, `sdk`, `client`, `mcp-connectors`, and `scripts`.
 - `packages/ui/coverage/lcov.info` — written by `bunx vitest run --coverage`. The job rewrites `SF:src/` → `SF:packages/ui/src/` so SonarCloud resolves paths from the repo root rather than the UI sub-project root.
 
-`sonar.qualitygate.wait=true` in [`sonar-project.properties`](../sonar-project.properties) forces the scanner to wait for the Compute Engine task and gate verdict to be computed before the job moves on. The scan-upload step itself is `continue-on-error: true` (a scanner network/infra failure should be a rerun, not a hard block); the **`SonarQube quality gate (enforced)`** step that follows is what actually fails the build. It reads the analysis the scan produced, queries the [`project_status`](https://docs.sonarsource.com/sonarqube-cloud/api/) API, and:
+`sonar.qualitygate.wait=true` in [`sonar-project.properties`](../sonar-project.properties) forces the scanner to wait for the Compute Engine task and gate verdict to be computed before the job moves on. The scan-upload step itself is `continue-on-error: true` (a scanner network/infra failure should be a rerun, not a hard block); the **`SonarQube quality gate (enforced)`** step that follows is what actually fails the build. It reads the analysis the scan produced, queries the `api/qualitygates/project_status` Web API, and:
 
 - **fails the job** (`exit 1`) on a definitive gate verdict of `ERROR` — this is what blocks a PR that introduces a new bug / vulnerability / unreviewed security hotspot / sub-80%-coverage new code;
 - **passes** on `OK`;
