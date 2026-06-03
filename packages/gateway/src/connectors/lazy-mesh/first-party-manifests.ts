@@ -465,6 +465,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: [],
     filesystem: { read: [], write: [] },
   }),
+
+  // Local data profiling (Tier-5 local, no-row-data). No network; reads local
+  // data-file SCHEMAS (parquet footer / csv header / jsonl-json keys) from the
+  // configured dir, added to filesystem.read at spawn by phase3AddDataprofileMcp.
+  dataprofile: baseManifest("com.nimbus.dataprofile", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
 };
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {

@@ -141,6 +141,9 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // Storybook: a single non-secret PATH to the local Storybook output dir
   // (containing index.json / stories.json). No live credential.
   storybook: ["storybook.dir"],
+  // Local data profiling: a single non-secret PATH to the dir holding local data
+  // files (.parquet/.csv/.jsonl/.json) to schema-profile. No live credential.
+  dataprofile: ["dataprofile.dir"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

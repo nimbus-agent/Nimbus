@@ -99,6 +99,7 @@
     "packages/mcp-connectors/protonmail",
     "packages/mcp-connectors/localdb",
     "packages/mcp-connectors/storybook",
+    "packages/mcp-connectors/dataprofile",
     "packages/vscode-extension"
   ],
   "scripts": {

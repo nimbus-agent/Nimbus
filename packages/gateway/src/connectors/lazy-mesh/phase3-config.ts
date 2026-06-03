@@ -1460,6 +1460,40 @@ export async function phase3AddLocaldbMcp(
   );
 }
 
+export async function phase3AddDataprofileMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  // Local data profiling (Tier-5 local, no-row-data) has NO network and NO live
+  // credential — it schema-profiles local data files from a configured dir.
+  // `dataprofile.dir` is a non-secret PATH; noop when unset.
+  const dir = (await readConnectorSecret(vault, "dataprofile", "dir"))?.trim() ?? "";
+  if (dir === "") {
+    return;
+  }
+  const base = manifestForFirstParty("dataprofile");
+  const manifest = {
+    ...base,
+    permissions: {
+      ...base.permissions,
+      filesystem: {
+        read: [...base.permissions.filesystem.read, dir],
+        write: [...base.permissions.filesystem.write],
+      },
+    },
+  };
+  servers["dataprofile"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("dataprofile")],
+      env: extensionProcessEnv({ DATAPROFILE_DIR: dir }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddStorybookMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1588,6 +1622,7 @@ export async function buildPhase3Servers(
   await phase3AddProtonmailMcp(vault, servers, sandboxCwd);
   await phase3AddLocaldbMcp(vault, servers, sandboxCwd);
   await phase3AddStorybookMcp(vault, servers, sandboxCwd);
+  await phase3AddDataprofileMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   return servers;
 }

@@ -13,6 +13,7 @@ import { createCloudLoggingSyncable } from "../connectors/cloud-logging-sync.ts"
 import { createCloudwatchSyncable } from "../connectors/cloudwatch-sync.ts";
 import { createConfluenceSyncable } from "../connectors/confluence-sync.ts";
 import { createDagsterSyncable } from "../connectors/dagster-sync.ts";
+import { createDataProfileSyncable } from "../connectors/data-profile-sync.ts";
 import { createDatabricksSyncable } from "../connectors/databricks-sync.ts";
 import { createDatadogSyncable } from "../connectors/datadog-sync.ts";
 import { createDbtSyncable } from "../connectors/dbt-sync.ts";
@@ -487,6 +488,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createStorybookSyncable({
       ensureStorybookMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createDataProfileSyncable({
+      ensureDataprofileMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(
