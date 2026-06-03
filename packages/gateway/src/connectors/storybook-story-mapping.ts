@@ -112,14 +112,9 @@ export function mapStorybookStoryToItem(
 
   const titlePart = input.title ?? "";
   const namePart = input.name ?? "";
-  const display =
-    titlePart !== "" && namePart !== ""
-      ? `${titlePart} / ${namePart}`
-      : titlePart !== ""
-        ? titlePart
-        : namePart !== ""
-          ? namePart
-          : id;
+  const singlePart = titlePart === "" ? namePart : titlePart;
+  const eitherOrId = singlePart === "" ? id : singlePart;
+  const display = titlePart !== "" && namePart !== "" ? `${titlePart} / ${namePart}` : eitherOrId;
   const title = clamp(display, TITLE_MAX);
 
   const previewParts = [display, input.importPath ?? "", input.tags.join(" ")].filter(

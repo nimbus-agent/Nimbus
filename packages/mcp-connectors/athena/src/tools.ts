@@ -70,19 +70,16 @@ function catalogMatches(entry: unknown, q: string): boolean {
   return strField(entry, "CatalogName").toLowerCase().includes(q.toLowerCase());
 }
 
-function databaseMatches(entry: unknown, q: string): boolean {
+function nameMatches(entry: unknown, q: string): boolean {
   if (!isRecord(entry)) {
     return false;
   }
   return strField(entry, "Name").toLowerCase().includes(q.toLowerCase());
 }
 
-function tableMatches(entry: unknown, q: string): boolean {
-  if (!isRecord(entry)) {
-    return false;
-  }
-  return strField(entry, "Name").toLowerCase().includes(q.toLowerCase());
-}
+// Databases and tables are both matched on their `Name` field.
+const databaseMatches = nameMatches;
+const tableMatches = nameMatches;
 
 /**
  * Register the read-only, metadata-only Athena tools onto the given registrar.

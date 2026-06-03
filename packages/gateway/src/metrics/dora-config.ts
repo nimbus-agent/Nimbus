@@ -16,8 +16,6 @@ export type ServiceConfig = {
   readonly severityP1Aliases: readonly string[];
 };
 
-export type DoraServiceConfig = ServiceConfig;
-
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";
 export const DEFAULT_INCIDENT_WINDOW_MINUTES = 60;
 export const DEFAULT_EXCLUDE_PR_LABELS: readonly string[] = ["revert"];

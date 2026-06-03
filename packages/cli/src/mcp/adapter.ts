@@ -52,6 +52,22 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+/** Pick the whitelisted `rawMeta` fields into a compact object, or undefined if none survive. */
+function pickMeta(meta: unknown): Record<string, unknown> | undefined {
+  if (typeof meta !== "object" || meta === null) {
+    return undefined;
+  }
+  const m = meta as Record<string, unknown>;
+  const picked: Record<string, unknown> = {};
+  for (const k of META_WHITELIST) {
+    const val = m[k];
+    if (val !== undefined && val !== null) {
+      picked[k] = clampMetaValue(val);
+    }
+  }
+  return Object.keys(picked).length > 0 ? picked : undefined;
+}
+
 /** Project one ranked index item to a compact, whitelisted shape for an editor LLM. */
 export function projectRankedItem(item: unknown): Record<string, unknown> {
   const r = asRecord(item);
@@ -80,19 +96,9 @@ export function projectRankedItem(item: unknown): Record<string, unknown> {
   if (typeof r["semanticSnippet"] === "string") {
     out["semanticSnippet"] = r["semanticSnippet"];
   }
-  const meta = r["rawMeta"];
-  if (typeof meta === "object" && meta !== null) {
-    const m = meta as Record<string, unknown>;
-    const picked: Record<string, unknown> = {};
-    for (const k of META_WHITELIST) {
-      const val = m[k];
-      if (val !== undefined && val !== null) {
-        picked[k] = clampMetaValue(val);
-      }
-    }
-    if (Object.keys(picked).length > 0) {
-      out["meta"] = picked;
-    }
+  const picked = pickMeta(r["rawMeta"]);
+  if (picked !== undefined) {
+    out["meta"] = picked;
   }
   return out;
 }
@@ -189,11 +195,9 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
       if (cached !== null) {
         return cached;
       }
-      if (connecting === null) {
-        connecting = openConnection().finally(() => {
-          connecting = null;
-        });
-      }
+      connecting ??= openConnection().finally(() => {
+        connecting = null;
+      });
       return connecting;
     },
   };
@@ -403,7 +407,11 @@ export const TOOL_SPECS: ToolSpec[] = [
 export function buildMcpServer(deps: AdapterDeps): McpServer {
   const server = new McpServer({ name: "nimbus", version: "0.1.0" });
   for (const s of TOOL_SPECS) {
-    server.tool(s.name, s.description, s.schema, (args: unknown) => s.run(deps, asRecord(args)));
+    server.registerTool(
+      s.name,
+      { description: s.description, inputSchema: s.schema },
+      (args: unknown) => s.run(deps, asRecord(args)),
+    );
   }
   return server;
 }

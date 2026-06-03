@@ -80,12 +80,12 @@ export function mapCloudLoggingSinkToItem(
   const metadata: Record<string, unknown> = {
     project: ctx.project,
     sinkName,
-    ...(destination !== null ? { destination } : {}),
-    ...(filter !== null ? { filter } : {}),
-    ...(description !== null ? { description } : {}),
-    ...(disabled !== undefined ? { disabled } : {}),
-    ...(createTime !== null ? { createTime } : {}),
-    ...(updateTime !== null ? { updateTime } : {}),
+    ...(destination === null ? {} : { destination }),
+    ...(filter === null ? {} : { filter }),
+    ...(description === null ? {} : { description }),
+    ...(disabled === undefined ? {} : { disabled }),
+    ...(createTime === null ? {} : { createTime }),
+    ...(updateTime === null ? {} : { updateTime }),
   };
 
   return {

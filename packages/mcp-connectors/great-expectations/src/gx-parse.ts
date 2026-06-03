@@ -138,7 +138,7 @@ function clampId(id: string): string {
   }
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = (h * 31 + id.charCodeAt(i)) | 0;
+    h = (h * 31 + (id.codePointAt(i) ?? 0)) | 0;
   }
   return `${id.slice(0, 240)}#${(h >>> 0).toString(16)}`;
 }
@@ -257,7 +257,7 @@ async function collectJsonFiles(root: string): Promise<string[]> {
   return found;
 }
 
-async function readArtefact(path: string): Promise<unknown | null> {
+async function readArtefact(path: string): Promise<unknown> {
   try {
     // Read first (no check-then-use race): readFile throws on a directory or a
     // missing file, and the buffer length bounds the size — no stat-gated read.

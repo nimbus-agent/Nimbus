@@ -55,35 +55,38 @@ export function validateAndNormalizePermissions(input: unknown): SandboxPermissi
   return { network, filesystem };
 }
 
+function validateNetworkPort(portStr: string, entry: string): void {
+  if (!/^\d{1,5}$/.test(portStr)) {
+    throw new Error(`permissions.network: ${entry} has a non-numeric port`);
+  }
+  const port = Number(portStr);
+  if (port < 1 || port > 65535) {
+    throw new Error(`permissions.network: ${entry} port must be in 1..65535`);
+  }
+}
+
+function validateNetworkEntry(entry: unknown): string {
+  if (typeof entry !== "string") {
+    throw new TypeError("permissions.network entries must be strings");
+  }
+  // Entries are either a bare host (→ port 443) or `host:port` (explicit TCP
+  // port, e.g. IMAP 993 / SMTP 465). Hostnames never contain a colon, so the
+  // last colon separates host from port.
+  const colon = entry.lastIndexOf(":");
+  const host = colon === -1 ? entry : entry.slice(0, colon);
+  if (!HOSTNAME_RE.test(host)) {
+    throw new Error(`permissions.network: ${entry} is not a valid RFC 1123 hostname`);
+  }
+  if (colon !== -1) {
+    validateNetworkPort(entry.slice(colon + 1), entry);
+  }
+  return entry;
+}
+
 function validateNetwork(input: unknown): string[] {
   if (input === undefined) return [];
   if (!Array.isArray(input)) throw new TypeError("permissions.network must be an array");
-  const out: string[] = [];
-  for (const entry of input) {
-    if (typeof entry !== "string") {
-      throw new TypeError("permissions.network entries must be strings");
-    }
-    // Entries are either a bare host (→ port 443) or `host:port` (explicit TCP
-    // port, e.g. IMAP 993 / SMTP 465). Hostnames never contain a colon, so the
-    // last colon separates host from port.
-    const colon = entry.lastIndexOf(":");
-    const host = colon === -1 ? entry : entry.slice(0, colon);
-    if (!HOSTNAME_RE.test(host)) {
-      throw new Error(`permissions.network: ${entry} is not a valid RFC 1123 hostname`);
-    }
-    if (colon !== -1) {
-      const portStr = entry.slice(colon + 1);
-      if (!/^\d{1,5}$/.test(portStr)) {
-        throw new Error(`permissions.network: ${entry} has a non-numeric port`);
-      }
-      const port = Number(portStr);
-      if (port < 1 || port > 65535) {
-        throw new Error(`permissions.network: ${entry} port must be in 1..65535`);
-      }
-    }
-    out.push(entry);
-  }
-  return out;
+  return input.map(validateNetworkEntry);
 }
 
 function validateFilesystem(input: unknown): FilesystemPermissions {

@@ -97,10 +97,12 @@ function streamReembed(
   });
 }
 
-function printReembedSummary(summary: ReembedSummary, isJson: boolean): void {
-  if (isJson) {
-    console.log(JSON.stringify(summary));
-  } else if (summary.dryRun === true) {
+function printReembedSummaryJson(summary: ReembedSummary): void {
+  console.log(JSON.stringify(summary));
+}
+
+function printReembedSummaryText(summary: ReembedSummary): void {
+  if (summary.dryRun === true) {
     console.log(`Dry run: ${String(summary.planned ?? 0)} item(s) would be reembedded.`);
   } else {
     console.log(
@@ -128,7 +130,11 @@ async function runReembed(args: string[]): Promise<void> {
   if (opts.batchSize !== undefined) params["batchSize"] = opts.batchSize;
 
   const summary = await withGatewayIpc((c) => streamReembed(c, params, isJson));
-  printReembedSummary(summary, isJson);
+  if (isJson) {
+    printReembedSummaryJson(summary);
+  } else {
+    printReembedSummaryText(summary);
+  }
 }
 
 function printIndexHelp(): void {

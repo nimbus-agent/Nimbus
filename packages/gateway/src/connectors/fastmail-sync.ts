@@ -118,9 +118,9 @@ function extractAttachments(v: unknown): FastmailAttachmentMeta[] {
 
 function capPreview(text: string): string {
   const normalized = text
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{2,}/g, "\n")
+    .replaceAll("\r\n", "\n")
+    .replaceAll(/[ \t]+/g, " ")
+    .replaceAll(/\n{2,}/g, "\n")
     .trim();
   return normalized.length > PREVIEW_MAX_CHARS
     ? normalized.slice(0, PREVIEW_MAX_CHARS)

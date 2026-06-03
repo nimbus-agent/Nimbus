@@ -57,7 +57,7 @@ describe("readConnectorSecret", () => {
     );
   });
 
-  test("compile-time: rejects non-manifested keys", () => {
+  test("compile-time: rejects non-manifested keys", async () => {
     const vault = createMemoryVault();
     // @ts-expect-error — manifest is ["github.pat"]; "oauth" is not a github key.
     void readConnectorSecret(vault, "github", "oauth");
@@ -65,8 +65,10 @@ describe("readConnectorSecret", () => {
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
     void readConnectorSecret(vault, "google_drive", "oauth");
 
-    // is that the file typechecks only with the @ts-expect-error directives.
-    expect(true).toBe(true);
+    // The @ts-expect-error directives above are the real (compile-time)
+    // assertions; confirm a manifested read still resolves at runtime.
+    await vault.set("github.pat", "ok");
+    expect(await readConnectorSecret(vault, "github", "pat")).toBe("ok");
   });
 });
 
@@ -105,7 +107,8 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<Parameters<typeof deleteConnectorSecret<"github">>[2], "pat">(true);
     assertEq<ReturnType<typeof deleteConnectorSecret>, Promise<void>>(true);
 
-    expect(true).toBe(true);
+    // The assertEq calls above are compile-time; exercise one symbol at runtime.
+    expect(sharedOAuthKey("microsoft")).toBe("microsoft.oauth");
   });
 });
 
@@ -121,7 +124,7 @@ describe("sharedOAuthKey", () => {
   test("compile-time: rejects non-provider strings", () => {
     // @ts-expect-error — SharedOAuthProvider is "google" | "microsoft" only.
     assertEq<Parameters<typeof sharedOAuthKey>[0], "github">(true);
-    expect(true).toBe(true);
+    expect(sharedOAuthKey("google")).toBe("google.oauth");
   });
 });
 
@@ -161,7 +164,10 @@ describe("writeConnectorSecret", () => {
     await writeConnectorSecret(vault, "github", "oauth", "x");
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
     await writeConnectorSecret(vault, "google_drive", "oauth", "x");
-    expect(true).toBe(true);
+    // The calls above are type-rejected (compile-time) but still execute at
+    // runtime, writing under the constructed `<service>.<key>` vault key.
+    expect(await vault.get("github.oauth")).toBe("x");
+    expect(await vault.get("google_drive.oauth")).toBe("x");
   });
 });
 
@@ -203,7 +209,9 @@ describe("deleteConnectorSecret", () => {
     await deleteConnectorSecret(vault, "github", "oauth");
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
     await deleteConnectorSecret(vault, "google_drive", "oauth");
-    expect(true).toBe(true);
+    // Type-rejected at compile time; at runtime they delete absent keys (no-op).
+    expect(await vault.get("github.oauth")).toBeNull();
+    expect(await vault.get("google_drive.oauth")).toBeNull();
   });
 });
 

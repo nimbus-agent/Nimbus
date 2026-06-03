@@ -13,15 +13,11 @@ import {
   TEAMS_SERVICE_ID,
   upsertChannelMessage,
 } from "./_lib/teams/api.ts";
-import {
-  decodeTeamsSyncCursor,
-  encodeTeamsSyncCursor,
-  parseCursor,
-  type TeamsSyncCursorV1,
-} from "./_lib/teams/cursor.ts";
+import { encodeTeamsSyncCursor, parseCursor, type TeamsSyncCursorV1 } from "./_lib/teams/cursor.ts";
 import { fetchMicrosoftGraphJson, parseODataDeltaPage } from "./microsoft-graph-sync-shared.ts";
 
-export { decodeTeamsSyncCursor, encodeTeamsSyncCursor, type TeamsSyncCursorV1 };
+export { decodeTeamsSyncCursor } from "./_lib/teams/cursor.ts";
+export { encodeTeamsSyncCursor, type TeamsSyncCursorV1 };
 
 export type TeamsSyncableOptions = {
   ensureMicrosoftMcpRunning: () => Promise<void>;

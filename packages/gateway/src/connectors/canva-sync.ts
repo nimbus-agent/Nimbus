@@ -33,7 +33,8 @@ function designsPath(continuation: string): string {
     params.set("continuation", continuation);
   }
   const qs = params.toString();
-  return `/rest/v1/designs${qs === "" ? "" : `?${qs}`}`;
+  const query = qs === "" ? "" : `?${qs}`;
+  return `/rest/v1/designs${query}`;
 }
 
 function canvaGet(ctx: SyncContext, token: string, path: string): Promise<FetchOutcome> {

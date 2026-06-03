@@ -83,8 +83,8 @@ export function mapRampTransactionToItem(
 
   const title = deriveTitle(merchant, amount, currency);
 
-  const bodyPreview =
-    memo !== null && memo !== "" ? memo : merchant !== null && merchant !== "" ? merchant : title;
+  const merchantOrTitle = merchant !== null && merchant !== "" ? merchant : title;
+  const bodyPreview = memo !== null && memo !== "" ? memo : merchantOrTitle;
 
   const modifiedAt = userTxnTime ?? ctx.syncedAt;
 

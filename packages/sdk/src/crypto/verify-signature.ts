@@ -117,7 +117,7 @@ export async function signManifest(
  * fixture (no committed crypto material — see spec §6.3).
  */
 export function generateEd25519Keypair(): { privkey: Uint8Array; pubkey: Uint8Array } {
-  const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
+  const nodeCrypto: typeof import("node:crypto") = require("node:crypto");
   const { privateKey, publicKey } = nodeCrypto.generateKeyPairSync("ed25519");
   const privJwk = privateKey.export({ format: "jwk" }) as { d: string };
   const pubJwk = publicKey.export({ format: "jwk" }) as { x: string };

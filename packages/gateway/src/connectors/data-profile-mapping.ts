@@ -54,7 +54,7 @@ function clamp(s: string, max: number): string {
 
 function baseName(relativePath: string): string {
   const segments = relativePath.split(/[/\\]/);
-  return segments[segments.length - 1] ?? relativePath;
+  return segments.at(-1) ?? relativePath;
 }
 
 /** The JS "kind" of a value — name only, never the value itself. */
@@ -169,8 +169,8 @@ export function parquetColumnsFromMetadata(meta: ParquetMetadataLike): {
     }
   }
   const nr = meta.num_rows;
-  const rowCountEstimate =
-    typeof nr === "bigint" ? Number(nr) : typeof nr === "number" && Number.isFinite(nr) ? nr : null;
+  const finiteRowCount = typeof nr === "number" && Number.isFinite(nr) ? nr : null;
+  const rowCountEstimate = typeof nr === "bigint" ? Number(nr) : finiteRowCount;
   return { columns, rowCountEstimate };
 }
 
@@ -191,12 +191,12 @@ export function mapDataModelToItem(
   const title = clamp(baseName(relativePath) || relativePath, TITLE_MAX);
   const columns = profile.columns.slice(0, MAX_COLUMNS);
   const colSummary = columns
-    .map((c) => (c.type !== null ? `${c.name}:${c.type}` : c.name))
+    .map((c) => (c.type === null ? c.name : `${c.name}:${c.type}`))
     .join(", ");
   const rowText =
-    profile.rowCountEstimate !== null
-      ? `~${String(profile.rowCountEstimate)} rows`
-      : "rows unknown";
+    profile.rowCountEstimate === null
+      ? "rows unknown"
+      : `~${String(profile.rowCountEstimate)} rows`;
   const bodyPreview = clamp(
     `${profile.format} · ${String(columns.length)} columns · ${rowText}\n${colSummary}`,
     PREVIEW_MAX,

@@ -65,7 +65,7 @@ function clampExternalId(id: string): string {
   }
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = (h * 31 + id.charCodeAt(i)) | 0;
+    h = Math.trunc(h * 31 + (id.codePointAt(i) ?? 0));
   }
   return `${id.slice(0, ID_MAX - 16)}#${(h >>> 0).toString(16)}`;
 }
@@ -108,7 +108,7 @@ export function mapGreatExpectationsResultToItem(
     `${ctx.suiteName}::${ctx.batchId}::${expectationType}::${column ?? "_"}`,
   );
 
-  const columnSuffix = column === null ? "" : column;
+  const columnSuffix = column ?? "";
   const title = clampSyncTitle(`${ctx.suiteName} · ${expectationType}(${columnSuffix})`);
 
   const outcome = success ? "passed" : "failed";

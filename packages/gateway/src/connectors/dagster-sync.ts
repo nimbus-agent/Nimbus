@@ -95,6 +95,39 @@ async function dagsterGraphql(ctx: SyncContext, creds: DagsterCreds): Promise<Fe
  * each carrying its repository + location. A `PythonError` typename (or a
  * missing connection) yields an empty list so the caller degrades gracefully.
  */
+/**
+ * Flatten one repository node's `pipelines[]` into `out`, returning `true` once
+ * the `MAX_JOBS` cap is reached so the caller can stop walking repositories.
+ */
+function flattenRepoPipelines(node: unknown, out: DagsterFlatJob[]): boolean {
+  const repo = asRecord(node);
+  if (repo === undefined) {
+    return false;
+  }
+  const repository = stringField(repo, "name") ?? "";
+  const locationRow = asRecord(repo["location"]);
+  const location = locationRow === undefined ? null : (stringField(locationRow, "name") ?? null);
+  const pipelines = repo["pipelines"];
+  if (!Array.isArray(pipelines)) {
+    return false;
+  }
+  for (const p of pipelines) {
+    const raw = asRecord(p);
+    if (raw === undefined) {
+      continue;
+    }
+    const name = stringField(raw, "name");
+    if (name === undefined || name === "") {
+      continue;
+    }
+    out.push({ name, repository, location, raw });
+    if (out.length >= MAX_JOBS) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function flattenJobs(parsed: unknown): DagsterFlatJob[] {
   const root = asRecord(parsed) ?? {};
   const repos = asRecord(root["repositoriesOrError"]) ?? {};
@@ -107,30 +140,8 @@ export function flattenJobs(parsed: unknown): DagsterFlatJob[] {
   }
   const out: DagsterFlatJob[] = [];
   for (const node of nodes) {
-    const repo = asRecord(node);
-    if (repo === undefined) {
-      continue;
-    }
-    const repository = stringField(repo, "name") ?? "";
-    const locationRow = asRecord(repo["location"]);
-    const location = locationRow !== undefined ? (stringField(locationRow, "name") ?? null) : null;
-    const pipelines = repo["pipelines"];
-    if (!Array.isArray(pipelines)) {
-      continue;
-    }
-    for (const p of pipelines) {
-      const raw = asRecord(p);
-      if (raw === undefined) {
-        continue;
-      }
-      const name = stringField(raw, "name");
-      if (name === undefined || name === "") {
-        continue;
-      }
-      out.push({ name, repository, location, raw });
-      if (out.length >= MAX_JOBS) {
-        return out;
-      }
+    if (flattenRepoPipelines(node, out)) {
+      break;
     }
   }
   return out;

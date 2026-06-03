@@ -308,7 +308,7 @@ function evaluateDependencyRow(
     reason: "dependency_unsatisfied",
     missingDepId: r.depends_on_id,
     requiredRange: r.range,
-    ...(depVersion !== undefined ? { observedVersion: depVersion } : {}),
+    ...(depVersion === undefined ? {} : { observedVersion: depVersion }),
   };
 }
 

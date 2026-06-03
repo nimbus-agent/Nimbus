@@ -211,9 +211,8 @@ function warningFor(result: Exclude<PostResult, PostOk>, gatewayUrl: string): st
   }
   if (result.status === "surface_disabled") {
     const hint =
-      result.hint === undefined
-        ? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'"
-        : result.hint;
+      result.hint ??
+      "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
     return `Nimbus deployment write surface is disabled (503): ${hint}`;
   }
   const detail = result.body === undefined ? "" : `: ${result.body.slice(0, 200)}`;

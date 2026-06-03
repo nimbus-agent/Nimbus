@@ -20,17 +20,20 @@ const BODY_MAX = 512;
  * null. A bare number < 1e12 is treated as seconds (defensive); larger numbers
  * are assumed to already be millis.
  */
+/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
+function epochToMs(n: number): number {
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+}
+
 function parseTimestampMs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) {
-    return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    return epochToMs(v);
   }
   if (typeof v === "string" && v.trim() !== "") {
     const trimmed = v.trim();
     if (/^\d+(\.\d+)?$/.test(trimmed)) {
       const n = Number(trimmed);
-      if (Number.isFinite(n)) {
-        return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-      }
+      return Number.isFinite(n) ? epochToMs(n) : null;
     }
     const parsed = Date.parse(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
@@ -91,13 +94,13 @@ export function mapCloudwatchLogGroupToItem(
 
   const metadata: Record<string, unknown> = {
     logGroupName,
-    ...(arn !== null ? { arn } : {}),
-    ...(retentionInDays !== undefined ? { retentionInDays } : {}),
-    ...(storedBytes !== undefined ? { storedBytes } : {}),
-    ...(metricFilterCount !== undefined ? { metricFilterCount } : {}),
-    ...(ctx.streamCount !== undefined ? { streamCount: ctx.streamCount } : {}),
-    ...(lastEventTimestamp !== null ? { lastEventTimestamp } : {}),
-    ...(creationTime !== null ? { creationTime } : {}),
+    ...(arn === null ? {} : { arn }),
+    ...(retentionInDays === undefined ? {} : { retentionInDays }),
+    ...(storedBytes === undefined ? {} : { storedBytes }),
+    ...(metricFilterCount === undefined ? {} : { metricFilterCount }),
+    ...(ctx.streamCount === undefined ? {} : { streamCount: ctx.streamCount }),
+    ...(lastEventTimestamp === null ? {} : { lastEventTimestamp }),
+    ...(creationTime === null ? {} : { creationTime }),
   };
 
   return {

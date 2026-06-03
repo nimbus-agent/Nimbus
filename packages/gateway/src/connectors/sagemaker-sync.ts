@@ -37,7 +37,7 @@ export type SagemakerSyncableOptions = {
   runAwsCli?: RunAwsCli;
 };
 
-function parseJson(text: string): unknown | undefined {
+function parseJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -76,7 +76,8 @@ function isSafeCliArg(value: string): boolean {
     return false;
   }
   for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) < 0x20) {
+    const cp = value.codePointAt(i);
+    if (cp !== undefined && cp < 0x20) {
       return false;
     }
   }
@@ -114,15 +115,63 @@ async function describeModel(
     return { enrichment: {}, bytes };
   }
   const container = asRecord(rec["PrimaryContainer"]);
-  const containerImage = container !== undefined ? stringField(container, "Image") : undefined;
-  const modelDataUrl = container !== undefined ? stringField(container, "ModelDataUrl") : undefined;
+  const containerImage = container === undefined ? undefined : stringField(container, "Image");
+  const modelDataUrl = container === undefined ? undefined : stringField(container, "ModelDataUrl");
   const executionRoleArn = stringField(rec, "ExecutionRoleArn");
   const enrichment: DescribeEnrichment = {
-    ...(containerImage !== undefined ? { containerImage } : {}),
-    ...(modelDataUrl !== undefined ? { modelDataUrl } : {}),
-    ...(executionRoleArn !== undefined ? { executionRoleArn } : {}),
+    ...(containerImage === undefined ? {} : { containerImage }),
+    ...(modelDataUrl === undefined ? {} : { modelDataUrl }),
+    ...(executionRoleArn === undefined ? {} : { executionRoleArn }),
   };
   return { enrichment, bytes };
+}
+
+interface ModelWalkState {
+  upserted: number;
+  bytes: number;
+  seen: number;
+  described: number;
+}
+
+/** Map + upsert one `Models` entry, optionally enriching it via `describe-model`. */
+async function processModel(
+  run: RunAwsCli,
+  ctx: SyncContext,
+  entry: unknown,
+  now: number,
+  state: ModelWalkState,
+): Promise<void> {
+  const rec = asRecord(entry);
+  const modelName = rec === undefined ? undefined : stringField(rec, "ModelName");
+  let enrichment: DescribeEnrichment = {};
+  if (modelName !== undefined && modelName !== "" && state.described < MAX_DESCRIBE) {
+    state.described += 1;
+    const d = await describeModel(run, ctx, modelName);
+    state.bytes += d.bytes;
+    enrichment = d.enrichment;
+  }
+  const mapped = mapSagemakerModelToItem(entry, { syncedAt: now, ...enrichment });
+  if (mapped !== null) {
+    upsertIndexedItemForSync(ctx, mapped);
+    state.upserted += 1;
+  }
+}
+
+/** Process a single `list-models` page, threading counters through `state`. */
+async function processModelPage(
+  run: RunAwsCli,
+  ctx: SyncContext,
+  parsed: unknown,
+  now: number,
+  state: ModelWalkState,
+): Promise<void> {
+  for (const entry of extractArray(parsed, "Models")) {
+    if (state.seen >= MAX_MODELS) {
+      break;
+    }
+    state.seen += 1;
+    await processModel(run, ctx, entry, now, state);
+  }
 }
 
 export function createSagemakerSyncable(options: SagemakerSyncableOptions): Syncable {
@@ -142,48 +191,26 @@ export function createSagemakerSyncable(options: SagemakerSyncableOptions): Sync
       }
 
       const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
+      const state: ModelWalkState = { upserted: 0, bytes: 0, seen: 0, described: 0 };
       let token: string | null = null;
-      let seen = 0;
-      let described = 0;
       let page = 0;
 
-      while (seen < MAX_MODELS) {
+      while (state.seen < MAX_MODELS) {
         const args = ["sagemaker", "list-models", "--max-results", String(PAGE_SIZE)];
         if (token !== null && token !== "") {
           args.push("--next-token", token);
         }
         const res = await run(ctx, args);
-        totalBytes += res.text.length;
+        state.bytes += res.text.length;
         if (!res.ok) {
           if (page === 0) {
             // Graceful empty pass — no throw past the Syncable boundary.
-            return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
+            return syncPassCursorParseEmpty(t0, state.bytes, pass1Cursor());
           }
           break;
         }
         const parsed = parseJson(res.text);
-        for (const entry of extractArray(parsed, "Models")) {
-          if (seen >= MAX_MODELS) {
-            break;
-          }
-          seen += 1;
-          const rec = asRecord(entry);
-          const modelName = rec === undefined ? undefined : stringField(rec, "ModelName");
-          let enrichment: DescribeEnrichment = {};
-          if (modelName !== undefined && modelName !== "" && described < MAX_DESCRIBE) {
-            described += 1;
-            const d = await describeModel(run, ctx, modelName);
-            totalBytes += d.bytes;
-            enrichment = d.enrichment;
-          }
-          const mapped = mapSagemakerModelToItem(entry, { syncedAt: now, ...enrichment });
-          if (mapped !== null) {
-            upsertIndexedItemForSync(ctx, mapped);
-            totalUpserted += 1;
-          }
-        }
+        await processModelPage(run, ctx, parsed, now, state);
         token = nextToken(parsed);
         page += 1;
         if (token === null) {
@@ -191,7 +218,7 @@ export function createSagemakerSyncable(options: SagemakerSyncableOptions): Sync
         }
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      return syncPassCursorSuccess(t0, state.bytes, pass1Cursor(), state.upserted);
     },
   };
 }

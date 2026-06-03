@@ -13,6 +13,7 @@ import {
   methodResponseArgs,
   parseSession,
   previewFor,
+  validateApiUrl,
   viewEmail,
 } from "../src/jmap-core.ts";
 
@@ -31,6 +32,30 @@ describe("parseSession", () => {
     expect(parseSession({ apiUrl: "x", primaryAccounts: {} })).toBeNull();
     expect(parseSession(null)).toBeNull();
     expect(parseSession("nope")).toBeNull();
+  });
+});
+
+describe("validateApiUrl (SSRF guard)", () => {
+  const base = "https://api.fastmail.com";
+
+  test("accepts a same-host https apiUrl", () => {
+    expect(validateApiUrl("https://api.fastmail.com/jmap/api/", base)).toBe(
+      "https://api.fastmail.com/jmap/api/",
+    );
+  });
+
+  test("rejects a different host (SSRF redirect)", () => {
+    expect(() => validateApiUrl("https://evil.example.com/jmap/api/", base)).toThrow(
+      /does not match configured/,
+    );
+  });
+
+  test("rejects non-https schemes", () => {
+    expect(() => validateApiUrl("http://api.fastmail.com/jmap/api/", base)).toThrow(/https/);
+  });
+
+  test("rejects a non-absolute / malformed url", () => {
+    expect(() => validateApiUrl("/jmap/api/", base)).toThrow(/not a valid absolute URL/);
   });
 });
 

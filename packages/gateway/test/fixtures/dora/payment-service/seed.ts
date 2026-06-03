@@ -4,7 +4,7 @@ import {
   silentSyncContextExtras,
 } from "../../../../src/connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../../../../src/connectors/pagerduty-sync.ts";
-import type { DoraServiceConfig } from "../../../../src/metrics/dora-config.ts";
+import type { ServiceConfig } from "../../../../src/metrics/dora-config.ts";
 import { buildPagerdutyIncident } from "../../pagerduty/build-incident.ts";
 
 export const FIXTURE_NOW_MS = 1_715_000_000_000;
@@ -39,9 +39,7 @@ function ins(db: Database, row: ItemRow): void {
   );
 }
 
-export async function seedPaymentServiceFixture(
-  db: Database,
-): Promise<{ config: DoraServiceConfig }> {
+export async function seedPaymentServiceFixture(db: Database): Promise<{ config: ServiceConfig }> {
   let t = FIXTURE_NOW_MS - 5 * DAY;
   for (let i = 0; i < 8; i++) {
     ins(db, {
@@ -208,7 +206,7 @@ export async function seedPaymentServiceFixture(
     FIXTURE_NOW_MS,
   );
 
-  const config: DoraServiceConfig = {
+  const config: ServiceConfig = {
     serviceId: "payment-service",
     repos: [
       { provider: "github", providerId: "nimbus-agent/payments" },

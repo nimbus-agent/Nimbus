@@ -157,6 +157,19 @@ interface DatasetIdsResult {
   readonly firstOutcomeFailed: "http" | "parse" | null;
 }
 
+/** Append dataset ids on a single `datasets` page into `ids`, capped at `MAX_DATASETS`. */
+function collectDatasetPage(parsed: unknown, ids: string[]): void {
+  for (const entry of extractArray(parsed, "datasets")) {
+    if (ids.length >= MAX_DATASETS) {
+      return;
+    }
+    const id = datasetIdOf(entry);
+    if (id !== null) {
+      ids.push(id);
+    }
+  }
+}
+
 async function collectDatasetIds(
   ctx: SyncContext,
   token: string,
@@ -175,15 +188,7 @@ async function collectDatasetIds(
       }
       break;
     }
-    for (const entry of extractArray(outcome.parsed, "datasets")) {
-      const id = datasetIdOf(entry);
-      if (id !== null) {
-        ids.push(id);
-        if (ids.length >= MAX_DATASETS) {
-          break;
-        }
-      }
-    }
+    collectDatasetPage(outcome.parsed, ids);
     pageToken = nextPageToken(outcome.parsed);
     page += 1;
     if (pageToken === null) {
@@ -198,6 +203,60 @@ interface DatasetWalkResult {
   readonly bytes: number;
 }
 
+interface DatasetWalkState {
+  upserted: number;
+  bytes: number;
+  seen: number;
+  detailsFetched: number;
+}
+
+/**
+ * Resolve the table source row — optionally enriched with full schema fields via
+ * a per-table `describe`, page-capped by `MAX_TABLE_DETAIL`. Mutates the byte +
+ * detail counters on `state`.
+ */
+async function resolveTableSource(
+  ctx: SyncContext,
+  token: string,
+  project: string,
+  datasetId: string,
+  entry: unknown,
+  state: DatasetWalkState,
+): Promise<unknown> {
+  const tableId = tableIdOf(entry);
+  if (tableId === null || state.detailsFetched >= MAX_TABLE_DETAIL) {
+    return entry;
+  }
+  state.detailsFetched += 1;
+  const detail = await bqGet(ctx, token, tableDetailPath(project, datasetId, tableId));
+  state.bytes += detail.bytes;
+  return detail.kind === "ok" ? detail.parsed : entry;
+}
+
+/** Upsert one `tables` page, threading the running counters through `state`. */
+async function upsertTablesPage(
+  ctx: SyncContext,
+  token: string,
+  project: string,
+  datasetId: string,
+  now: number,
+  parsed: unknown,
+  state: DatasetWalkState,
+): Promise<void> {
+  for (const entry of extractArray(parsed, "tables")) {
+    if (state.seen >= MAX_TABLES_PER_DATASET) {
+      break;
+    }
+    state.seen += 1;
+    const source = await resolveTableSource(ctx, token, project, datasetId, entry, state);
+    const mapped = mapBigqueryTableToItem(source, { project, syncedAt: now });
+    if (mapped !== null) {
+      upsertIndexedItemForSync(ctx, mapped);
+      state.upserted += 1;
+    }
+  }
+}
+
 async function walkDataset(
   ctx: SyncContext,
   token: string,
@@ -205,47 +264,22 @@ async function walkDataset(
   datasetId: string,
   now: number,
 ): Promise<DatasetWalkResult> {
-  let upserted = 0;
-  let bytes = 0;
+  const state: DatasetWalkState = { upserted: 0, bytes: 0, seen: 0, detailsFetched: 0 };
   let pageToken: string | null = null;
-  let seen = 0;
-  let detailsFetched = 0;
 
-  while (seen < MAX_TABLES_PER_DATASET) {
+  while (state.seen < MAX_TABLES_PER_DATASET) {
     const outcome = await bqGet(ctx, token, tablesPath(project, datasetId, pageToken));
-    bytes += outcome.bytes;
+    state.bytes += outcome.bytes;
     if (outcome.kind !== "ok") {
       break;
     }
-    const tables = extractArray(outcome.parsed, "tables");
-    for (const entry of tables) {
-      if (seen >= MAX_TABLES_PER_DATASET) {
-        break;
-      }
-      seen += 1;
-      const tableId = tableIdOf(entry);
-      // Optionally enrich the first N tables per dataset with full schema fields.
-      let source: unknown = entry;
-      if (tableId !== null && detailsFetched < MAX_TABLE_DETAIL) {
-        detailsFetched += 1;
-        const detail = await bqGet(ctx, token, tableDetailPath(project, datasetId, tableId));
-        bytes += detail.bytes;
-        if (detail.kind === "ok") {
-          source = detail.parsed;
-        }
-      }
-      const mapped = mapBigqueryTableToItem(source, { project, syncedAt: now });
-      if (mapped !== null) {
-        upsertIndexedItemForSync(ctx, mapped);
-        upserted += 1;
-      }
-    }
+    await upsertTablesPage(ctx, token, project, datasetId, now, outcome.parsed, state);
     pageToken = nextPageToken(outcome.parsed);
     if (pageToken === null) {
       break;
     }
   }
-  return { upserted, bytes };
+  return { upserted: state.upserted, bytes: state.bytes };
 }
 
 export function createBigquerySyncable(options: BigquerySyncableOptions): Syncable {

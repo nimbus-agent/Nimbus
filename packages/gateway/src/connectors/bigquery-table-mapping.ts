@@ -125,12 +125,9 @@ export function mapBigqueryTableToItem(
   const descriptionRaw = stringField(row, "description") ?? null;
   const fieldSummary =
     schemaFields.length > 0 ? schemaFields.map((f) => `${f.name}:${f.type}`).join(", ") : "";
+  const summaryOrQualified = fieldSummary === "" ? qualified : fieldSummary;
   const bodyPreview =
-    descriptionRaw !== null && descriptionRaw !== ""
-      ? descriptionRaw
-      : fieldSummary !== ""
-        ? fieldSummary
-        : qualified;
+    descriptionRaw === null || descriptionRaw === "" ? summaryOrQualified : descriptionRaw;
 
   const modifiedAt = lastModifiedTime ?? creationTime ?? ctx.syncedAt;
 

@@ -137,8 +137,8 @@ export function parquetColumnsFromMetadata(meta: ParquetMetadataLike): {
     }
   }
   const nr = meta.num_rows;
-  const rowCountEstimate =
-    typeof nr === "bigint" ? Number(nr) : typeof nr === "number" && Number.isFinite(nr) ? nr : null;
+  const finiteRowCount = typeof nr === "number" && Number.isFinite(nr) ? nr : null;
+  const rowCountEstimate = typeof nr === "bigint" ? Number(nr) : finiteRowCount;
   return { columns, rowCountEstimate };
 }
 
@@ -172,7 +172,7 @@ async function readParquetMetadata(path: string): Promise<ParquetMetadataLike | 
   const { asyncBufferFromFile, parquetMetadataAsync } = await import("hyparquet");
   try {
     const buf = await asyncBufferFromFile(path);
-    return (await parquetMetadataAsync(buf)) as ParquetMetadataLike;
+    return await parquetMetadataAsync(buf);
   } catch {
     return null;
   }
@@ -248,6 +248,50 @@ function firstLineAndRows(
   return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
 }
 
+/** Profile fields extracted from a file's content (path/format applied by the caller). */
+interface ProfileFields {
+  columns: DataColumn[];
+  rowCountEstimate: number | null;
+  sizeBytes: number;
+}
+
+async function profileParquet(
+  path: string,
+  readParquet: ParquetMetadataReader,
+): Promise<ProfileFields | null> {
+  const meta = await readParquet(path);
+  if (meta === null) {
+    return null;
+  }
+  const { columns, rowCountEstimate } = parquetColumnsFromMetadata(meta);
+  const size = await sizeViaHandle(path);
+  if (size === null) {
+    return null;
+  }
+  return { columns, rowCountEstimate, sizeBytes: size };
+}
+
+async function profileTextFile(
+  path: string,
+  format: Exclude<DataFileFormat, "parquet">,
+): Promise<ProfileFields | null> {
+  const slurp = await slurpFile(path);
+  if (slurp === null) {
+    return null;
+  }
+  if (format === "json") {
+    if (slurp.truncated) {
+      return null;
+    }
+    const { columns, rowCountEstimate } = parseJsonColumns(JSON.parse(slurp.text) as unknown);
+    return { columns, rowCountEstimate, sizeBytes: slurp.sizeBytes };
+  }
+  const { firstLine, rowCountEstimate: rows } = firstLineAndRows(slurp.text, slurp.truncated);
+  const columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
+  const rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
+  return { columns, rowCountEstimate, sizeBytes: slurp.sizeBytes };
+}
+
 async function profileFile(
   path: string,
   root: string,
@@ -255,48 +299,25 @@ async function profileFile(
   readParquet: ParquetMetadataReader,
 ): Promise<DataModel | null> {
   const relativePath = relative(root, path);
-  let columns: DataColumn[] = [];
-  let rowCountEstimate: number | null = null;
-  let sizeBytes = 0;
+  let fields: ProfileFields | null;
   try {
-    if (format === "parquet") {
-      const meta = await readParquet(path);
-      if (meta === null) {
-        return null;
-      }
-      ({ columns, rowCountEstimate } = parquetColumnsFromMetadata(meta));
-      const size = await sizeViaHandle(path);
-      if (size === null) {
-        return null;
-      }
-      sizeBytes = size;
-    } else {
-      const slurp = await slurpFile(path);
-      if (slurp === null) {
-        return null;
-      }
-      sizeBytes = slurp.sizeBytes;
-      if (format === "json") {
-        if (slurp.truncated) {
-          return null;
-        }
-        ({ columns, rowCountEstimate } = parseJsonColumns(JSON.parse(slurp.text) as unknown));
-      } else {
-        const { firstLine, rowCountEstimate: rows } = firstLineAndRows(slurp.text, slurp.truncated);
-        columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
-        rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
-      }
-    }
+    fields =
+      format === "parquet"
+        ? await profileParquet(path, readParquet)
+        : await profileTextFile(path, format);
   } catch {
+    return null;
+  }
+  if (fields === null) {
     return null;
   }
   return {
     relativePath,
     format,
-    columns,
-    columnCount: columns.length,
-    rowCountEstimate,
-    sizeBytes,
+    columns: fields.columns,
+    columnCount: fields.columns.length,
+    rowCountEstimate: fields.rowCountEstimate,
+    sizeBytes: fields.sizeBytes,
   };
 }
 

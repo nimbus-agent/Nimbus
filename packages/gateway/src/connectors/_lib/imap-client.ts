@@ -21,9 +21,9 @@ const PREVIEW_MAX_CHARS = 2000;
 
 function capPreview(text: string): string {
   const normalized = text
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{2,}/g, "\n")
+    .replaceAll("\r\n", "\n")
+    .replaceAll(/[ \t]+/g, " ")
+    .replaceAll(/\n{2,}/g, "\n")
     .trim();
   return normalized.length > PREVIEW_MAX_CHARS
     ? normalized.slice(0, PREVIEW_MAX_CHARS)
@@ -43,51 +43,54 @@ function isAttachment(node: MessageStructureObject): boolean {
   return filenameOf(node) !== null;
 }
 
-function extractAttachments(root: MessageStructureObject | undefined): ImapAttachmentMeta[] {
-  const out: ImapAttachmentMeta[] = [];
-  const stack: MessageStructureObject[] = root ? [root] : [];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (node === undefined) {
-      continue;
+/** Return a node's child structure parts, or `null` if it is a leaf part. */
+function childPartsOf(node: MessageStructureObject): MessageStructureObject[] | null {
+  return node.childNodes && node.childNodes.length > 0 ? node.childNodes : null;
+}
+
+/** Collect every leaf part of the structure tree in document (pre-)order. */
+function leafParts(root: MessageStructureObject | undefined): MessageStructureObject[] {
+  const leaves: MessageStructureObject[] = [];
+  const walk = (node: MessageStructureObject): void => {
+    const children = childPartsOf(node);
+    if (children === null) {
+      leaves.push(node);
+      return;
     }
-    if (node.childNodes && node.childNodes.length > 0) {
-      for (const c of node.childNodes) {
-        stack.push(c);
-      }
-      continue;
+    for (const c of children) {
+      walk(c);
     }
-    if (isAttachment(node)) {
-      out.push({
-        filename: filenameOf(node),
-        sizeBytes: typeof node.size === "number" ? node.size : null,
-        mimeType: typeof node.type === "string" && node.type !== "" ? node.type : null,
-      });
-    }
+  };
+  if (root !== undefined) {
+    walk(root);
   }
-  return out;
+  return leaves;
+}
+
+function attachmentMetaOf(node: MessageStructureObject): ImapAttachmentMeta {
+  return {
+    filename: filenameOf(node),
+    sizeBytes: typeof node.size === "number" ? node.size : null,
+    mimeType: typeof node.type === "string" && node.type !== "" ? node.type : null,
+  };
+}
+
+function extractAttachments(root: MessageStructureObject | undefined): ImapAttachmentMeta[] {
+  return leafParts(root).filter(isAttachment).map(attachmentMetaOf);
 }
 
 function findTextPlainPart(root: MessageStructureObject | undefined): string {
-  const queue: MessageStructureObject[] = root ? [root] : [];
   let firstText: string | null = null;
-  while (queue.length > 0) {
-    const node = queue.shift();
-    if (node === undefined) {
-      continue;
-    }
-    if (node.childNodes && node.childNodes.length > 0) {
-      for (const c of node.childNodes) {
-        queue.push(c);
-      }
+  for (const node of leafParts(root)) {
+    if (isAttachment(node)) {
       continue;
     }
     const type = (node.type ?? "").toLowerCase();
     const part = node.part ?? "1";
-    if (type === "text/plain" && !isAttachment(node)) {
+    if (type === "text/plain") {
       return part;
     }
-    if (type.startsWith("text/") && firstText === null && !isAttachment(node)) {
+    if (firstText === null && type.startsWith("text/")) {
       firstText = part;
     }
   }

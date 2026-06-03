@@ -191,7 +191,8 @@ function parseSalesforceTokenResponse(json: unknown, requested: string[]): PKCER
     Number.isFinite(expiresIn) && expiresIn > 0
       ? Date.now() + Math.floor(expiresIn * 1000)
       : Date.now() + SALESFORCE_DEFAULT_EXPIRY_MS;
-  const scope = typeof o["scope"] === "string" ? (o["scope"] as string) : undefined;
+  const scopeRaw = o["scope"];
+  const scope = typeof scopeRaw === "string" ? scopeRaw : undefined;
   return {
     accessToken: access,
     refreshToken: refreshStr,

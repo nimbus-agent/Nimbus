@@ -282,21 +282,19 @@ async function subPrAuthored(db: Database, input: string): Promise<SubAgentResul
   return winner === undefined ? {} : { stream: winner };
 }
 
-async function subPrReviewed(db: Database, input: string): Promise<SubAgentResult> {
+async function subPrReviewed(db: Database, _input: string): Promise<SubAgentResult> {
   const gap = detectMissingRelationEmit(
     db,
     "reviewed",
     "Tracked as a graph-populator follow-up; not gated on a specific Phase 5 wave.",
   );
   if (gap !== null) return { gap };
-  void input;
   return {};
 }
 
-async function subIncidentResolved(db: Database, input: string): Promise<SubAgentResult> {
+async function subIncidentResolved(db: Database, _input: string): Promise<SubAgentResult> {
   const gap = detectMissingEntityType(db, "incident");
   if (gap !== null) return { gap };
-  void input;
   return {};
 }
 

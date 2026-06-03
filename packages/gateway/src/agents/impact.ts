@@ -23,9 +23,6 @@ export type ImpactContext = {
   sessionId: string;
 };
 
-const DEFAULT_DEPTH = 2;
-const MAX_DEPTH = 5;
-
 type ResolvedStart = {
   entityId: string;
   entityType: string;
@@ -55,8 +52,6 @@ function makeSubAgent(
 
 export async function runImpact(input: ImpactInput, ctx: ImpactContext): Promise<ImpactBrief> {
   const start = performance.now();
-  const depth = Math.min(input.depth ?? DEFAULT_DEPTH, MAX_DEPTH);
-  void depth;
 
   const preflightGaps: GapNote[] = [];
   const empty = detectEmptyIndex(ctx.db);

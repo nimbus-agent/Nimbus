@@ -73,7 +73,7 @@ async function listTeamFiles(): Promise<unknown[]> {
     for (const f of filesFrom(filesRoot)) {
       const rec = f as Record<string, unknown> | null;
       out.push({
-        ...(rec ?? {}),
+        ...rec,
         project_id: project.id,
         project_name: project.name,
       });

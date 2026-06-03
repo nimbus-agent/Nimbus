@@ -65,6 +65,10 @@ function spawnChild(opts: SpawnAndTimeOptions): ProcSubset {
     stdout: stdio,
     stderr: stdio,
     ...(opts.env !== undefined && { env: { ...process.env, ...opts.env } }),
+    // Bun's Subprocess types stdout/stderr as `ReadableStream | undefined` (the
+    // "ignore" case); ProcSubset narrows them. The shapes are runtime-compatible
+    // for what the bench reads, so bridge through unknown. (Sonar S4325 here is a
+    // false positive under Bun's lib types — the cast IS required to typecheck.)
   }) as unknown as ProcSubset;
 }
 

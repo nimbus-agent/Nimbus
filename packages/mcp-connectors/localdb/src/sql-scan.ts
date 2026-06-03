@@ -32,7 +32,7 @@ function clamp(s: string, max: number): string {
 
 export function baseTitle(relativePath: string): string {
   const segments = relativePath.split(/[/\\]/);
-  const last = segments[segments.length - 1] ?? relativePath;
+  const last = segments.at(-1) ?? relativePath;
   return last.replace(/\.sql$/i, "");
 }
 

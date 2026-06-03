@@ -16,11 +16,15 @@ function accessToken(): string {
 }
 
 function instanceUrl(): string {
-  const raw = process.env["SALESFORCE_INSTANCE_URL"]?.trim();
+  let raw = process.env["SALESFORCE_INSTANCE_URL"]?.trim();
   if (raw === undefined || raw === "") {
     throw new Error("SALESFORCE_INSTANCE_URL is not set");
   }
-  return raw.replace(/\/+$/, "");
+  // Strip trailing slashes without a backtracking regex.
+  while (raw.endsWith("/")) {
+    raw = raw.slice(0, -1);
+  }
+  return raw;
 }
 
 function authHeader(): Record<string, string> {

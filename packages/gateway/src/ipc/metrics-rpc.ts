@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { computeDoraMetrics, type DoraMetricsResult } from "../metrics/dora.ts";
-import type { DoraServiceConfig } from "../metrics/dora-config.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 
 export class MetricsRpcError extends Error {
   readonly rpcCode: number;
@@ -13,7 +13,7 @@ export class MetricsRpcError extends Error {
 
 export type MetricsRpcContext = {
   db: Database;
-  loadConfig: () => Map<string, DoraServiceConfig>;
+  loadConfig: () => Map<string, ServiceConfig>;
   nowMs?: () => number;
 };
 

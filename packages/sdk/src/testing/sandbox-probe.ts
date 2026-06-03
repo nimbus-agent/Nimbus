@@ -78,6 +78,10 @@ async function main(): Promise<void> {
   process.exit(2);
 }
 
+// This standalone probe has no imports/exports of its own, but the top-level
+// `await main()` below requires the file to be a module. `export {}` is the
+// canonical module marker for that. (Sonar S7787 flags the specifier-less
+// export, but removing it makes the top-level await a compile error — TS1375.)
 export {};
 
 await main();

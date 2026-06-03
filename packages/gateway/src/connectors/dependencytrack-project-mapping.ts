@@ -76,7 +76,8 @@ export function mapDependencyTrackProjectToItem(
 
   const canonicalUrl = projectUrl(ctx.baseUrl, uuid);
   const title = clampTitle(version !== null && version !== "" ? `${name} ${version}` : name);
-  const bodyPreview = `${classifier ?? "PROJECT"}: ${name}${version !== null ? ` ${version}` : ""}`;
+  const versionSuffix = version === null ? "" : ` ${version}`;
+  const bodyPreview = `${classifier ?? "PROJECT"}: ${name}${versionSuffix}`;
   const modifiedAt = lastBomImport ?? ctx.syncedAt;
 
   const metadata: Record<string, unknown> = {

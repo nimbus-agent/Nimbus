@@ -107,7 +107,7 @@ export function clampLimit(limit: number | undefined, fallback = DEFAULT_LIST_LI
   if (n < 1) {
     return 1;
   }
-  return n > MAX_LIST_LIMIT ? MAX_LIST_LIMIT : n;
+  return Math.min(n, MAX_LIST_LIMIT);
 }
 
 export function asRecord(v: unknown): Record<string, unknown> | null {
@@ -133,6 +133,33 @@ export function parseSession(parsed: unknown): JmapSession | null {
     return null;
   }
   return { apiUrl, accountId };
+}
+
+/**
+ * Validate a JMAP `apiUrl` discovered from the (server-controlled) session
+ * resource before it is used as a `fetch` target. The session JSON is
+ * attacker-influenced data; without this check a spoofed/compromised session
+ * response could redirect the authenticated POSTs that carry the bearer token
+ * to an arbitrary host (SSRF). The apiUrl must be an absolute `https` URL on
+ * the same host as the configured API base. Returns the re-serialized URL, or
+ * throws.
+ */
+export function validateApiUrl(candidate: string, allowedBase: string): string {
+  let parsed: URL;
+  let base: URL;
+  try {
+    parsed = new URL(candidate);
+    base = new URL(allowedBase);
+  } catch {
+    throw new Error("JMAP apiUrl is not a valid absolute URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("JMAP apiUrl must use https");
+  }
+  if (parsed.host !== base.host) {
+    throw new Error(`JMAP apiUrl host '${parsed.host}' does not match configured '${base.host}'`);
+  }
+  return parsed.toString();
 }
 
 /** Format one JMAP EmailAddress (`{ name?, email }`) as `Name <email>` / `email`. */
@@ -170,7 +197,7 @@ export function extractAttachments(v: unknown): JmapAttachmentMeta[] {
 
 export function capPreview(text: string): string {
   const normalized = text
-    .replace(/\r\n/g, "\n")
+    .replaceAll("\r\n", "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{2,}/g, "\n")
     .trim();

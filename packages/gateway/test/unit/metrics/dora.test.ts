@@ -10,7 +10,7 @@ import {
   leadTimeForChanges,
   mttr,
 } from "../../../src/metrics/dora.ts";
-import type { DoraServiceConfig } from "../../../src/metrics/dora-config.ts";
+import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 type SeedCiOpts = {
@@ -95,7 +95,7 @@ function seedIncident(db: Database, id: string, opts: SeedIncidentOpts): void {
   );
 }
 
-function cfg(overrides: Partial<DoraServiceConfig> = {}): DoraServiceConfig {
+function cfg(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     serviceId: "payment-service",
     repos: [{ provider: "github", providerId: "nimbus-agent/payments" }],

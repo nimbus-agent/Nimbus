@@ -38,6 +38,22 @@ function lastNameSegment(name: string): string {
   return idx >= 0 ? name.slice(idx + 1) : name;
 }
 
+/** external_id: prefer the resource name; fall back to `<region>/<displayName>`; else "". */
+function deriveExternalId(modelName: string, displayName: string, region: string): string {
+  if (modelName !== "") {
+    return modelName;
+  }
+  return displayName === "" ? "" : `${region}/${displayName}`;
+}
+
+/** title source: prefer displayName; fall back to the id segment of the resource name. */
+function deriveTitleSource(modelName: string, displayName: string, externalId: string): string {
+  if (displayName !== "") {
+    return displayName;
+  }
+  return modelName === "" ? externalId : lastNameSegment(modelName);
+}
+
 /**
  * Pure mapper: a Vertex AI model REGISTRY entry (one element from
  * `gcloud ai models list --format json`) → IndexedItem. Stores model-REGISTRY
@@ -61,16 +77,12 @@ export function mapVertexAiModelToItem(
   const createTime = parseIsoMs(row["createTime"]);
   const updateTime = parseIsoMs(row["updateTime"]);
 
-  // external_id: prefer the resource name; fall back to `<region>/<displayName>`.
-  const externalId =
-    modelName !== "" ? modelName : displayName !== "" ? `${ctx.region}/${displayName}` : "";
+  const externalId = deriveExternalId(modelName, displayName, ctx.region);
   if (externalId === "") {
     return null;
   }
 
-  // title: prefer displayName; fall back to the id segment of the resource name.
-  const titleSource =
-    displayName !== "" ? displayName : modelName !== "" ? lastNameSegment(modelName) : externalId;
+  const titleSource = deriveTitleSource(modelName, displayName, externalId);
   const title = clamp(titleSource, TITLE_MAX);
 
   const bodyParts: string[] = [`region:${ctx.region}`];
@@ -87,11 +99,11 @@ export function mapVertexAiModelToItem(
   const metadata: Record<string, unknown> = {
     project: ctx.project,
     region: ctx.region,
-    ...(modelName !== "" ? { modelName } : {}),
-    ...(displayName !== "" ? { displayName } : {}),
+    ...(modelName === "" ? {} : { modelName }),
+    ...(displayName === "" ? {} : { displayName }),
     ...(versionId !== undefined && versionId !== "" ? { versionId } : {}),
-    ...(createTime !== null ? { createTime } : {}),
-    ...(updateTime !== null ? { updateTime } : {}),
+    ...(createTime === null ? {} : { createTime }),
+    ...(updateTime === null ? {} : { updateTime }),
   };
 
   return {
