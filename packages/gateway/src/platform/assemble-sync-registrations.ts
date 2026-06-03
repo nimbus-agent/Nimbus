@@ -23,6 +23,7 @@ import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
 import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
+import { createFirebaseSyncable } from "../connectors/firebase-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
 import { createGcpSyncable } from "../connectors/gcp-sync.ts";
@@ -288,6 +289,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createTestflightSyncable({
       ensureTestflightMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createFirebaseSyncable({
+      ensureFirebaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

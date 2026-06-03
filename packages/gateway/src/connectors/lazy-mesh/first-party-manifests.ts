@@ -224,6 +224,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  firebase: baseManifest("com.nimbus.firebase", {
+    network: ["firebaseappdistribution.googleapis.com", "oauth2.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   sonarqube: baseManifest("com.nimbus.sonarqube", {
     network: ["sonarcloud.io"],
     filesystem: { read: [], write: [] },

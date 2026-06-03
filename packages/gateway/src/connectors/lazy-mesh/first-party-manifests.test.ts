@@ -81,6 +81,7 @@ describe("manifestForFirstParty", () => {
       "bitrise",
       "codemagic",
       "testflight",
+      "firebase",
       "sonarqube",
       "semgrep",
       "wiz",

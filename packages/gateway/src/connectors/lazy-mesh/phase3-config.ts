@@ -575,6 +575,31 @@ export async function phase3AddTestflightMcp(
   );
 }
 
+export async function phase3AddFirebaseMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const serviceAccountJson =
+    (await readConnectorSecret(vault, "firebase", "service_account_json")) ?? "";
+  const appIds = (await readConnectorSecret(vault, "firebase", "app_ids"))?.trim() ?? "";
+  if (serviceAccountJson.trim() === "" || appIds === "") {
+    return;
+  }
+  servers["firebase"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("firebase")],
+      env: extensionProcessEnv({
+        FIREBASE_SERVICE_ACCOUNT_JSON: serviceAccountJson,
+        FIREBASE_APP_IDS: appIds,
+      }),
+    },
+    "firebase",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSonarqubeMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1634,6 +1659,7 @@ export async function buildPhase3Servers(
   await phase3AddBitriseMcp(vault, servers, sandboxCwd);
   await phase3AddCodemagicMcp(vault, servers, sandboxCwd);
   await phase3AddTestflightMcp(vault, servers, sandboxCwd);
+  await phase3AddFirebaseMcp(vault, servers, sandboxCwd);
   await phase3AddSonarqubeMcp(vault, servers, sandboxCwd);
   await phase3AddSemgrepMcp(vault, servers, sandboxCwd);
   await phase3AddWizMcp(vault, servers, sandboxCwd);
