@@ -1,4 +1,5 @@
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
@@ -177,31 +178,74 @@ async function readParquetMetadata(path: string): Promise<ParquetMetadataLike | 
   }
 }
 
-async function readTextHeadAndRows(
-  path: string,
-  sizeBytes: number,
-): Promise<{ firstLine: string; rowCountEstimate: number | null }> {
-  if (sizeBytes <= MAX_TEXT_BYTES) {
-    const text = (await readFile(path)).toString("utf8");
-    const nl = (text.match(/\n/g) ?? []).length;
-    const idx = text.indexOf("\n");
-    const firstLine = idx === -1 ? text : text.slice(0, idx);
-    return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
-  }
-  const fh = await open(path, "r");
+interface FileSlurp {
+  readonly text: string;
+  readonly sizeBytes: number;
+  readonly truncated: boolean;
+}
+
+/**
+ * Open the file ONCE and read its content + size from that single handle
+ * (`fh.stat()` + `fh.readFile()`/`fh.read()`). Operating on one open descriptor
+ * avoids a check-then-use (TOCTOU) race — there is no window where the path is
+ * stat-ed and then re-opened. Whole content for files ≤ cap; a header-only peek
+ * (no row-count estimate) for larger files.
+ */
+async function slurpFile(path: string): Promise<FileSlurp | null> {
+  let fh: FileHandle;
   try {
+    fh = await open(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const st = await fh.stat();
+    const sizeBytes = Number.isFinite(st.size) ? st.size : 0;
+    if (sizeBytes <= MAX_TEXT_BYTES) {
+      const buf = await fh.readFile();
+      return { text: buf.toString("utf8"), sizeBytes, truncated: false };
+    }
     const { buffer, bytesRead } = await fh.read(
       Buffer.alloc(HEADER_PEEK_BYTES),
       0,
       HEADER_PEEK_BYTES,
       0,
     );
-    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const idx = chunk.indexOf("\n");
-    return { firstLine: idx === -1 ? chunk : chunk.slice(0, idx), rowCountEstimate: null };
+    return { text: buffer.subarray(0, bytesRead).toString("utf8"), sizeBytes, truncated: true };
+  } catch {
+    return null;
   } finally {
     await fh.close();
   }
+}
+
+/** fstat-only via an open handle (race-free) — for parquet, whose content hyparquet reads itself. */
+async function sizeViaHandle(path: string): Promise<number | null> {
+  let fh: FileHandle;
+  try {
+    fh = await open(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const st = await fh.stat();
+    return Number.isFinite(st.size) ? st.size : 0;
+  } finally {
+    await fh.close();
+  }
+}
+
+function firstLineAndRows(
+  text: string,
+  truncated: boolean,
+): { firstLine: string; rowCountEstimate: number | null } {
+  const idx = text.indexOf("\n");
+  const firstLine = idx === -1 ? text : text.slice(0, idx);
+  if (truncated) {
+    return { firstLine, rowCountEstimate: null };
+  }
+  const nl = (text.match(/\n/g) ?? []).length;
+  return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
 }
 
 async function profileFile(
@@ -210,16 +254,10 @@ async function profileFile(
   format: DataFileFormat,
   readParquet: ParquetMetadataReader,
 ): Promise<DataModel | null> {
-  let sizeBytes = 0;
-  try {
-    const info = await stat(path);
-    sizeBytes = Number.isFinite(info.size) ? info.size : 0;
-  } catch {
-    return null;
-  }
   const relativePath = relative(root, path);
   let columns: DataColumn[] = [];
   let rowCountEstimate: number | null = null;
+  let sizeBytes = 0;
   try {
     if (format === "parquet") {
       const meta = await readParquet(path);
@@ -227,17 +265,27 @@ async function profileFile(
         return null;
       }
       ({ columns, rowCountEstimate } = parquetColumnsFromMetadata(meta));
-    } else if (format === "json") {
-      if (sizeBytes > MAX_TEXT_BYTES) {
+      const size = await sizeViaHandle(path);
+      if (size === null) {
         return null;
       }
-      ({ columns, rowCountEstimate } = parseJsonColumns(
-        JSON.parse((await readFile(path)).toString("utf8")) as unknown,
-      ));
+      sizeBytes = size;
     } else {
-      const { firstLine, rowCountEstimate: rows } = await readTextHeadAndRows(path, sizeBytes);
-      columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
-      rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
+      const slurp = await slurpFile(path);
+      if (slurp === null) {
+        return null;
+      }
+      sizeBytes = slurp.sizeBytes;
+      if (format === "json") {
+        if (slurp.truncated) {
+          return null;
+        }
+        ({ columns, rowCountEstimate } = parseJsonColumns(JSON.parse(slurp.text) as unknown));
+      } else {
+        const { firstLine, rowCountEstimate: rows } = firstLineAndRows(slurp.text, slurp.truncated);
+        columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
+        rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
+      }
     }
   } catch {
     return null;

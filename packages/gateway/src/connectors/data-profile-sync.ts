@@ -1,4 +1,5 @@
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
@@ -101,34 +102,87 @@ async function collectDataFiles(root: string): Promise<string[]> {
   return found;
 }
 
-/** Read the first line + count newlines for a text file (≤ cap); larger files → header peek, rowCount null. */
-async function readTextHeadAndRows(
-  path: string,
-  sizeBytes: number,
-): Promise<{ firstLine: string; rowCountEstimate: number | null }> {
-  if (sizeBytes <= MAX_TEXT_BYTES) {
-    const text = (await readFile(path)).toString("utf8");
-    const nl = (text.match(/\n/g) ?? []).length;
-    const firstLine = text.slice(0, text.indexOf("\n") === -1 ? text.length : text.indexOf("\n"));
-    // Row estimate: newline count, minus a trailing-newline adjustment; never the data.
-    const rows = text.endsWith("\n") ? nl : nl + 1;
-    return { firstLine, rowCountEstimate: Math.max(0, rows) };
-  }
-  // Oversized: peek only the header, no row-count estimate.
-  const fh = await open(path, "r");
+interface FileSlurp {
+  readonly text: string;
+  readonly sizeBytes: number;
+  readonly modifiedAtMs: number | null;
+  readonly truncated: boolean;
+}
+
+/**
+ * Open the file ONCE and read its content + size + mtime from that single handle
+ * (`fh.stat()` + `fh.readFile()`/`fh.read()`). Operating on one open descriptor
+ * avoids a check-then-use (TOCTOU) race — there is no window where the path is
+ * stat-ed and then re-opened. Whole content for files ≤ cap; a header-only peek
+ * (no row-count estimate) for larger files.
+ */
+async function slurpFile(path: string): Promise<FileSlurp | null> {
+  let fh: FileHandle;
   try {
+    fh = await open(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const st = await fh.stat();
+    const sizeBytes = Number.isFinite(st.size) ? st.size : 0;
+    const modifiedAtMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs : null;
+    if (sizeBytes <= MAX_TEXT_BYTES) {
+      const buf = await fh.readFile();
+      return { text: buf.toString("utf8"), sizeBytes, modifiedAtMs, truncated: false };
+    }
     const { buffer, bytesRead } = await fh.read(
       Buffer.alloc(HEADER_PEEK_BYTES),
       0,
       HEADER_PEEK_BYTES,
       0,
     );
-    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    const idx = chunk.indexOf("\n");
-    return { firstLine: idx === -1 ? chunk : chunk.slice(0, idx), rowCountEstimate: null };
+    return {
+      text: buffer.subarray(0, bytesRead).toString("utf8"),
+      sizeBytes,
+      modifiedAtMs,
+      truncated: true,
+    };
+  } catch {
+    return null;
   } finally {
     await fh.close();
   }
+}
+
+/** fstat-only via an open handle (race-free) — for parquet, whose content hyparquet reads itself. */
+async function statViaHandle(
+  path: string,
+): Promise<{ sizeBytes: number; modifiedAtMs: number | null } | null> {
+  let fh: FileHandle;
+  try {
+    fh = await open(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const st = await fh.stat();
+    return {
+      sizeBytes: Number.isFinite(st.size) ? st.size : 0,
+      modifiedAtMs: Number.isFinite(st.mtimeMs) ? st.mtimeMs : null,
+    };
+  } finally {
+    await fh.close();
+  }
+}
+
+/** First line + a newline-based row estimate from already-read text (no row data). */
+function firstLineAndRows(
+  text: string,
+  truncated: boolean,
+): { firstLine: string; rowCountEstimate: number | null } {
+  const idx = text.indexOf("\n");
+  const firstLine = idx === -1 ? text : text.slice(0, idx);
+  if (truncated) {
+    return { firstLine, rowCountEstimate: null };
+  }
+  const nl = (text.match(/\n/g) ?? []).length;
+  return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
 }
 
 async function profileFile(
@@ -137,19 +191,11 @@ async function profileFile(
   format: DataFileFormat,
   readParquet: ParquetMetadataReader,
 ): Promise<DataModelProfile | null> {
-  let sizeBytes = 0;
-  let modifiedAtMs: number | null = null;
-  try {
-    const info = await stat(path);
-    sizeBytes = Number.isFinite(info.size) ? info.size : 0;
-    modifiedAtMs = Number.isFinite(info.mtimeMs) ? info.mtimeMs : null;
-  } catch {
-    return null;
-  }
-
   const relativePath = relative(root, path);
   let columns: DataColumn[] = [];
   let rowCountEstimate: number | null = null;
+  let sizeBytes = 0;
+  let modifiedAtMs: number | null = null;
 
   try {
     if (format === "parquet") {
@@ -157,23 +203,32 @@ async function profileFile(
       if (meta === null) {
         return null;
       }
-      const extracted = parquetColumnsFromMetadata(meta);
-      columns = extracted.columns;
-      rowCountEstimate = extracted.rowCountEstimate;
-    } else if (format === "json") {
-      if (sizeBytes > MAX_TEXT_BYTES) {
-        return null; // too large to parse safely; skip
+      ({ columns, rowCountEstimate } = parquetColumnsFromMetadata(meta));
+      const st = await statViaHandle(path);
+      if (st === null) {
+        return null;
       }
-      const parsed = JSON.parse((await readFile(path)).toString("utf8")) as unknown;
-      const extracted = parseJsonColumns(parsed);
-      columns = extracted.columns;
-      rowCountEstimate = extracted.rowCountEstimate;
+      sizeBytes = st.sizeBytes;
+      modifiedAtMs = st.modifiedAtMs;
     } else {
-      // csv / jsonl: header line + newline-based row estimate
-      const { firstLine, rowCountEstimate: rows } = await readTextHeadAndRows(path, sizeBytes);
-      columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
-      // CSV's first line is the header (not a data row); jsonl's first line IS a record.
-      rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
+      const slurp = await slurpFile(path);
+      if (slurp === null) {
+        return null;
+      }
+      sizeBytes = slurp.sizeBytes;
+      modifiedAtMs = slurp.modifiedAtMs;
+      if (format === "json") {
+        if (slurp.truncated) {
+          return null; // too large to parse safely; skip
+        }
+        ({ columns, rowCountEstimate } = parseJsonColumns(JSON.parse(slurp.text) as unknown));
+      } else {
+        // csv / jsonl: header line + newline-based row estimate from the read text.
+        const { firstLine, rowCountEstimate: rows } = firstLineAndRows(slurp.text, slurp.truncated);
+        columns = format === "csv" ? parseCsvHeader(firstLine) : parseJsonlColumns(firstLine);
+        // CSV's first line is the header (not a data row); jsonl's first line IS a record.
+        rowCountEstimate = format === "csv" && rows !== null ? Math.max(0, rows - 1) : rows;
+      }
     }
   } catch {
     return null; // unparseable / unreadable — skip, never throw
