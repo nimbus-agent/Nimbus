@@ -381,13 +381,72 @@ jobs:
         # action directly so its SHA pin is visible (the repo enforces
         # sha_pinning_required=true, which blocks transitively-unpinned actions).
         if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
-        # Advisory, not a gate: an external sonar-scanner failure (e.g. exit 3) must
-        # not fail the build. Analysis still uploads to the SonarCloud dashboard.
+        # The scan UPLOAD is advisory: a scanner infra failure (network blip, the
+        # autoscan-conflict exit 3) must not fail the build here. The actual gate
+        # is enforced by the dedicated step below, which reads the resulting
+        # analysis and fails only on a *definitive* gate verdict of ERROR.
         continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube quality gate (enforced)
+        # THIS is the gate that prevents a PR introducing a new bug / vulnerability
+        # / unreviewed security hotspot / sub-80%-coverage new code from merging
+        # (the "Sonar way" On-New-Code conditions). It reads the analysis the scan
+        # step produced (.scannerwork/report-task.txt), waits for the Compute
+        # Engine task, then queries the project_status API.
+        #   - gate ERROR            -> fail the job (blocks the PR / push check)
+        #   - gate OK               -> pass
+        #   - no report / CE failed -> warn + pass (fail-OPEN on scanner infra so a
+        #                              network blip is a rerun, not a hard block)
+        # Kept as our own curl step (matching the autoscan step's style) rather
+        # than a new pinned action, so the fail-open/fail-closed policy is explicit.
+        if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          report=".scannerwork/report-task.txt"
+          if [[ ! -f "$report" ]]; then
+            echo "::warning::No Sonar report-task.txt — the scan did not upload (infra failure or token absent). Skipping gate (fail-open)."
+            exit 0
+          fi
+          ce_task_url=$(grep '^ceTaskUrl=' "$report" | cut -d= -f2-)
+          if [[ -z "${ce_task_url:-}" ]]; then
+            echo "::warning::report-task.txt has no ceTaskUrl. Skipping gate (fail-open)."
+            exit 0
+          fi
+          auth=(-sS -H "Authorization: Bearer ${SONAR_TOKEN}")
+          analysis_id=""
+          for _ in $(seq 1 40); do
+            task_json=$(curl "${auth[@]}" "$ce_task_url" || true)
+            status=$(printf '%s' "$task_json" | jq -r '.task.status // empty')
+            case "$status" in
+              SUCCESS) analysis_id=$(printf '%s' "$task_json" | jq -r '.task.analysisId // empty'); break;;
+              FAILED|CANCELED) echo "::warning::Sonar CE task $status. Skipping gate (fail-open)."; exit 0;;
+              *) sleep 3;;
+            esac
+          done
+          if [[ -z "$analysis_id" ]]; then
+            echo "::warning::Sonar CE task did not finish in time. Skipping gate (fail-open)."
+            exit 0
+          fi
+          gate_json=$(curl "${auth[@]}" "https://sonarcloud.io/api/qualitygates/project_status?analysisId=${analysis_id}" || true)
+          gate=$(printf '%s' "$gate_json" | jq -r '.projectStatus.status // empty')
+          echo "SonarQube quality gate: ${gate:-unknown}"
+          if [[ "$gate" == "ERROR" ]]; then
+            printf '%s' "$gate_json" | jq -r '.projectStatus.conditions[]? | select(.status=="ERROR") | "  FAILED: \(.metricKey) actual=\(.actualValue) \(.comparator) \(.errorThreshold)"'
+            echo "::error::SonarQube quality gate FAILED — see the failing conditions above and the SonarCloud dashboard."
+            exit 1
+          fi
+          if [[ "$gate" != "OK" ]]; then
+            echo "::warning::Sonar gate status '${gate:-unknown}' is not a definitive verdict. Skipping gate (fail-open)."
+            exit 0
+          fi
+          echo "::notice::SonarQube quality gate passed."
 
       - name: JUnit test report
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
