@@ -151,6 +151,24 @@ async function fetchTransactionsPage(
   return { outcome, reExchangeFailed: false };
 }
 
+/**
+ * Map a first-page failure to its terminal sync result: a transport/HTTP failure
+ * (including a failed mid-cycle token re-exchange) preserves the cursor; a parse
+ * failure resets it. Only the first page short-circuits the cycle this way —
+ * later-page failures simply stop the walk and commit what was already upserted.
+ */
+function pageZeroFailureResult(
+  fetchResult: PageFetchResult,
+  t0: number,
+  bytes: number,
+  cursor: string | null,
+): SyncResult {
+  if (fetchResult.reExchangeFailed || fetchResult.outcome.kind === "http_error") {
+    return syncPassCursorHttpEmpty(t0, bytes, cursor, pass1Cursor());
+  }
+  return syncPassCursorParseEmpty(t0, bytes, pass1Cursor());
+}
+
 export function createRampSyncable(options: RampSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -176,26 +194,17 @@ export function createRampSyncable(options: RampSyncableOptions): Syncable {
       // at the end). Walk a single forward pass per cycle, page-capped.
       let url: string | null = `${BASE}${TRANSACTIONS_PATH}`;
       for (let page = 0; page < MAX_PAGES && url !== null; page += 1) {
-        const { outcome, reExchangeFailed } = await fetchTransactionsPage(ctx, creds, url, state);
-        if (reExchangeFailed) {
+        const fetchResult = await fetchTransactionsPage(ctx, creds, url, state);
+        if (fetchResult.reExchangeFailed || fetchResult.outcome.kind !== "ok") {
           if (page === 0) {
-            return syncPassCursorHttpEmpty(t0, state.bytes, cursor, pass1Cursor());
+            return pageZeroFailureResult(fetchResult, t0, state.bytes, cursor);
           }
           break;
         }
 
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, state.bytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, state.bytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const transactions = extractTransactions(outcome.parsed);
+        const transactions = extractTransactions(fetchResult.outcome.parsed);
         totalUpserted += upsertTransactions(ctx, transactions, now);
-        url = nextPageUrl(outcome.parsed);
+        url = nextPageUrl(fetchResult.outcome.parsed);
       }
 
       return syncPassCursorSuccess(t0, state.bytes, pass1Cursor(), totalUpserted);

@@ -30,7 +30,7 @@ function isSafeRegion(value: string): boolean {
     return false;
   }
   for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) < 0x20) {
+    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
       return false;
     }
   }

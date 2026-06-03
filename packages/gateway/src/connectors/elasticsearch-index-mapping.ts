@@ -84,14 +84,14 @@ function flattenProperties(
     const fr = asRecord(raw);
     const path = prefix === "" ? fieldName : `${prefix}.${fieldName}`;
     const type = fr === undefined ? "" : (stringField(fr, "type") ?? "");
-    if (fr?.["properties"] !== undefined) {
+    if (fr?.["properties"] === undefined) {
+      out.push({ name: path, type });
+    } else {
       // An object/nested field — has children but typically no own `type`.
       out.push(
         { name: path, type: type === "" ? "object" : type },
         ...flattenProperties(fr["properties"], path),
       );
-    } else {
-      out.push({ name: path, type });
     }
   }
   return out;
