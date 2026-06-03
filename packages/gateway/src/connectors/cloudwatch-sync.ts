@@ -37,7 +37,7 @@ export type CloudwatchSyncableOptions = {
   runAwsCli?: RunAwsCli;
 };
 
-function parseJson(text: string): unknown | undefined {
+function parseJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -110,9 +110,63 @@ async function peekStreams(
   }
   return {
     streamCount: streams.length,
-    ...(lastEventTimestamp !== undefined ? { lastEventTimestamp } : {}),
+    ...(lastEventTimestamp === undefined ? {} : { lastEventTimestamp }),
     bytes,
   };
+}
+
+interface LogGroupWalkState {
+  upserted: number;
+  bytes: number;
+  seen: number;
+}
+
+/**
+ * Map + upsert a single `logGroups` entry, peeking its stream metadata for a
+ * COUNT + last-activity timestamp. Mutates the byte/upsert counters on `state`.
+ */
+async function processLogGroup(
+  run: RunAwsCli,
+  ctx: SyncContext,
+  entry: unknown,
+  now: number,
+  state: LogGroupWalkState,
+): Promise<void> {
+  const rec = asRecord(entry);
+  const groupName = rec === undefined ? undefined : stringField(rec, "logGroupName");
+  let summary: StreamSummary | undefined;
+  if (groupName !== undefined && groupName !== "") {
+    summary = await peekStreams(run, ctx, groupName);
+    state.bytes += summary.bytes;
+  }
+  const streamCount = summary?.streamCount;
+  const lastEventTimestamp = summary?.lastEventTimestamp;
+  const mapped = mapCloudwatchLogGroupToItem(entry, {
+    syncedAt: now,
+    ...(streamCount === undefined ? {} : { streamCount }),
+    ...(lastEventTimestamp === undefined ? {} : { lastEventTimestamp }),
+  });
+  if (mapped !== null) {
+    upsertIndexedItemForSync(ctx, mapped);
+    state.upserted += 1;
+  }
+}
+
+/** Process a single `describe-log-groups` page, threading counters through `state`. */
+async function processLogGroupPage(
+  run: RunAwsCli,
+  ctx: SyncContext,
+  parsed: unknown,
+  now: number,
+  state: LogGroupWalkState,
+): Promise<void> {
+  for (const entry of extractArray(parsed, "logGroups")) {
+    if (state.seen >= MAX_LOG_GROUPS) {
+      break;
+    }
+    state.seen += 1;
+    await processLogGroup(run, ctx, entry, now, state);
+  }
 }
 
 export function createCloudwatchSyncable(options: CloudwatchSyncableOptions): Syncable {
@@ -132,52 +186,26 @@ export function createCloudwatchSyncable(options: CloudwatchSyncableOptions): Sy
       }
 
       const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
+      const state: LogGroupWalkState = { upserted: 0, bytes: 0, seen: 0 };
       let token: string | null = null;
-      let seen = 0;
       let page = 0;
 
-      while (seen < MAX_LOG_GROUPS) {
+      while (state.seen < MAX_LOG_GROUPS) {
         const args = ["logs", "describe-log-groups", "--limit", String(PAGE_SIZE)];
         if (token !== null && token !== "") {
           args.push("--next-token", token);
         }
         const res = await run(ctx, args);
-        totalBytes += res.text.length;
+        state.bytes += res.text.length;
         if (!res.ok) {
           if (page === 0) {
             // Graceful empty pass — no throw past the Syncable boundary.
-            return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
+            return syncPassCursorParseEmpty(t0, state.bytes, pass1Cursor());
           }
           break;
         }
         const parsed = parseJson(res.text);
-        for (const entry of extractArray(parsed, "logGroups")) {
-          if (seen >= MAX_LOG_GROUPS) {
-            break;
-          }
-          seen += 1;
-          const rec = asRecord(entry);
-          const groupName = rec === undefined ? undefined : stringField(rec, "logGroupName");
-          let streamCount: number | undefined;
-          let lastEventTimestamp: number | undefined;
-          if (groupName !== undefined && groupName !== "") {
-            const peek = await peekStreams(run, ctx, groupName);
-            totalBytes += peek.bytes;
-            streamCount = peek.streamCount;
-            lastEventTimestamp = peek.lastEventTimestamp;
-          }
-          const mapped = mapCloudwatchLogGroupToItem(entry, {
-            syncedAt: now,
-            ...(streamCount !== undefined ? { streamCount } : {}),
-            ...(lastEventTimestamp !== undefined ? { lastEventTimestamp } : {}),
-          });
-          if (mapped !== null) {
-            upsertIndexedItemForSync(ctx, mapped);
-            totalUpserted += 1;
-          }
-        }
+        await processLogGroupPage(run, ctx, parsed, now, state);
         token = nextToken(parsed);
         page += 1;
         if (token === null) {
@@ -185,7 +213,7 @@ export function createCloudwatchSyncable(options: CloudwatchSyncableOptions): Sy
         }
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      return syncPassCursorSuccess(t0, state.bytes, pass1Cursor(), state.upserted);
     },
   };
 }

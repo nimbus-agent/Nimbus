@@ -106,13 +106,13 @@ export function clampLimit(limit: number | undefined, fallback = DEFAULT_LIST_LI
   if (n < 1) {
     return 1;
   }
-  return n > MAX_LIST_LIMIT ? MAX_LIST_LIMIT : n;
+  return Math.min(n, MAX_LIST_LIMIT);
 }
 
 /** Cap a body preview to {@link PREVIEW_MAX_CHARS}, normalizing whitespace. */
 export function capPreview(text: string): string {
   const normalized = text
-    .replace(/\r\n/g, "\n")
+    .replaceAll("\r\n", "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{2,}/g, "\n")
     .trim();

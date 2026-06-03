@@ -30,7 +30,7 @@ export function assertSafeCliArg(value: string, label = "argument"): string {
     );
   }
   for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) < 0x20) {
+    if ((value.codePointAt(i) ?? 0) < 0x20) {
       throw new Error(`Invalid ${label}: must not contain control characters`);
     }
   }

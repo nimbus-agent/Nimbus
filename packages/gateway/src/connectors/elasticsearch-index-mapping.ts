@@ -84,10 +84,12 @@ function flattenProperties(
     const fr = asRecord(raw);
     const path = prefix === "" ? fieldName : `${prefix}.${fieldName}`;
     const type = fr === undefined ? "" : (stringField(fr, "type") ?? "");
-    if (fr !== undefined && fr["properties"] !== undefined) {
+    if (fr?.["properties"] !== undefined) {
       // An object/nested field — has children but typically no own `type`.
-      out.push({ name: path, type: type !== "" ? type : "object" });
-      out.push(...flattenProperties(fr["properties"], path));
+      out.push(
+        { name: path, type: type === "" ? "object" : type },
+        ...flattenProperties(fr["properties"], path),
+      );
     } else {
       out.push({ name: path, type });
     }
@@ -137,10 +139,9 @@ export function mapElasticsearchIndexToItem(
   const statusLabel = status ?? "unknown";
   const countLabel = docsCount === null ? "?" : String(docsCount);
   const fieldSummary = fields.length > 0 ? fields.map((f) => `${f.name}:${f.type}`).join(", ") : "";
+  const summary = `${index} [${healthLabel}/${statusLabel}, ${countLabel} docs]`;
   const bodyPreview = clamp(
-    fieldSummary !== ""
-      ? `${index} [${healthLabel}/${statusLabel}, ${countLabel} docs] — ${fieldSummary}`
-      : `${index} [${healthLabel}/${statusLabel}, ${countLabel} docs]`,
+    fieldSummary === "" ? summary : `${summary} — ${fieldSummary}`,
     BODY_MAX,
   );
 

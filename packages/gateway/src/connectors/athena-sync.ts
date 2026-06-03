@@ -36,7 +36,7 @@ export type AthenaSyncableOptions = {
   runAwsCli?: RunAwsCli;
 };
 
-function parseJson(text: string): unknown | undefined {
+function parseJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -86,6 +86,25 @@ interface ListResult {
   readonly firstPageFailed: boolean;
 }
 
+/** Append the ids on a single result page into `items`, respecting `cap`. */
+function collectPageIds(
+  parsed: unknown,
+  resultKey: string,
+  idOf: (entry: unknown) => string | null,
+  cap: number,
+  items: string[],
+): void {
+  for (const entry of extractArray(parsed, resultKey)) {
+    if (items.length >= cap) {
+      return;
+    }
+    const id = idOf(entry);
+    if (id !== null) {
+      items.push(id);
+    }
+  }
+}
+
 /** Walk a paginated `aws athena list-*` command, collecting one string id per entry. */
 async function collectPaged(
   run: RunAwsCli,
@@ -113,15 +132,7 @@ async function collectPaged(
       break;
     }
     const parsed = parseJson(res.text);
-    for (const entry of extractArray(parsed, resultKey)) {
-      const id = idOf(entry);
-      if (id !== null) {
-        items.push(id);
-        if (items.length >= cap) {
-          break;
-        }
-      }
-    }
+    collectPageIds(parsed, resultKey, idOf, cap, items);
     token = nextToken(parsed);
     page += 1;
     if (token === null) {
@@ -134,6 +145,36 @@ async function collectPaged(
 interface WalkResult {
   readonly upserted: number;
   readonly bytes: number;
+}
+
+interface PageUpsert {
+  readonly upserted: number;
+  readonly seen: number;
+}
+
+/** Upsert a single `TableMetadataList` page, capped at `MAX_TABLES_PER_DATABASE`. */
+function upsertTablePage(
+  ctx: SyncContext,
+  parsed: unknown,
+  catalog: string,
+  database: string,
+  now: number,
+  seenSoFar: number,
+): PageUpsert {
+  let upserted = 0;
+  let seen = seenSoFar;
+  for (const entry of extractArray(parsed, "TableMetadataList")) {
+    if (seen >= MAX_TABLES_PER_DATABASE) {
+      break;
+    }
+    seen += 1;
+    const mapped = mapAthenaTableToItem(entry, { catalog, database, syncedAt: now });
+    if (mapped !== null) {
+      upsertIndexedItemForSync(ctx, mapped);
+      upserted += 1;
+    }
+  }
+  return { upserted, seen };
 }
 
 async function walkDatabaseTables(
@@ -168,17 +209,9 @@ async function walkDatabaseTables(
       break;
     }
     const parsed = parseJson(res.text);
-    for (const entry of extractArray(parsed, "TableMetadataList")) {
-      if (seen >= MAX_TABLES_PER_DATABASE) {
-        break;
-      }
-      seen += 1;
-      const mapped = mapAthenaTableToItem(entry, { catalog, database, syncedAt: now });
-      if (mapped !== null) {
-        upsertIndexedItemForSync(ctx, mapped);
-        upserted += 1;
-      }
-    }
+    const page = upsertTablePage(ctx, parsed, catalog, database, now, seen);
+    upserted += page.upserted;
+    seen = page.seen;
     token = nextToken(parsed);
     if (token === null) {
       break;

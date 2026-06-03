@@ -91,8 +91,8 @@ export function mapPrefectDeploymentToItem(
   const updated = parseIsoMs(row["updated"]);
 
   const label = name ?? id;
-  const title = clampTitle(description !== null ? `${label} — ${description}` : label);
-  const bodyPreview = description !== null ? `${label}: ${description}` : `Deployment: ${label}`;
+  const title = clampTitle(description === null ? label : `${label} — ${description}`);
+  const bodyPreview = description === null ? `Deployment: ${label}` : `${label}: ${description}`;
   const modifiedAt = updated ?? created ?? ctx.syncedAt;
 
   const metadata: Record<string, unknown> = {

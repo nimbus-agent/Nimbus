@@ -104,8 +104,8 @@ export function mapDagsterJobToItem(
   const tags = tagPairs(row["tags"]);
 
   const label = name;
-  const title = clampTitle(description !== null ? `${label} — ${description}` : label);
-  const bodyPreview = description !== null ? `${label}: ${description}` : `Dagster job: ${label}`;
+  const title = clampTitle(description === null ? label : `${label} — ${description}`);
+  const bodyPreview = description === null ? `Dagster job: ${label}` : `${label}: ${description}`;
 
   const canonicalUrl = jobUrl(ctx.baseUrl, location, name);
 

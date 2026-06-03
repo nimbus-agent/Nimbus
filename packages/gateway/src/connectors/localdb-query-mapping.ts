@@ -36,7 +36,7 @@ function clamp(s: string, max: number): string {
 /** Best-effort base name (no extension) of a relative path, for the title. */
 export function baseTitle(relativePath: string): string {
   const segments = relativePath.split(/[/\\]/);
-  const last = segments[segments.length - 1] ?? relativePath;
+  const last = segments.at(-1) ?? relativePath;
   return last.replace(/\.sql$/i, "");
 }
 
@@ -56,7 +56,7 @@ export function extractTableNames(sql: string): string[] {
   // Remove double-quote / backtick / square-bracket identifier wrappers so a
   // quoted, schema-qualified name becomes a plain dotted identifier. Single
   // quotes (string literals) are intentionally left untouched.
-  const cleaned = stripSqlComments(sql).replace(/["`\][]/g, "");
+  const cleaned = stripSqlComments(sql).replace(/[\]["`]/g, "");
   const re = /\b(?:from|join|into|update)\s+([a-zA-Z_][\w.$]*)/gi;
   const seen = new Set<string>();
   const out: string[] = [];

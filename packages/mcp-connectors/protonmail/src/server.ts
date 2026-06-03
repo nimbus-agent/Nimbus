@@ -226,13 +226,13 @@ class BridgeMailer implements SmtpMailer {
       to: input.to,
       subject: input.subject,
       text: input.body,
-      ...(input.cc !== undefined ? { cc: input.cc } : {}),
-      ...(input.bcc !== undefined ? { bcc: input.bcc } : {}),
+      ...(input.cc === undefined ? {} : { cc: input.cc }),
+      ...(input.bcc === undefined ? {} : { bcc: input.bcc }),
     });
     return {
       messageId: info.messageId ?? null,
-      accepted: (info.accepted ?? []).map((a: unknown) => String(a)),
-      rejected: (info.rejected ?? []).map((a: unknown) => String(a)),
+      accepted: (info.accepted ?? []).map(String),
+      rejected: (info.rejected ?? []).map(String),
     };
   }
 }

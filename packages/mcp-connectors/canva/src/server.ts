@@ -44,7 +44,8 @@ await runReadOnlyMcpConnector("nimbus-canva", (reg) => {
         params.set("continuation", p.continuation);
       }
       const qs = params.toString();
-      return jsonResult(await canvaGet(`/rest/v1/designs${qs === "" ? "" : `?${qs}`}`));
+      const query = qs === "" ? "" : `?${qs}`;
+      return jsonResult(await canvaGet(`/rest/v1/designs${query}`));
     },
   );
 

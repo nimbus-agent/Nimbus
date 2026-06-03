@@ -32,7 +32,7 @@ export function createAskStream(
     unsubscribers = [];
     while (waiters.length > 0) {
       const w = waiters.shift() as Pending;
-      w.resolve({ value: undefined as unknown as StreamEvent, done: true });
+      w.resolve({ value: undefined, done: true });
     }
   };
 

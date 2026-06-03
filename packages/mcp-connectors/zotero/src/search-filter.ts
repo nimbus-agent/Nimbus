@@ -7,6 +7,25 @@ import {
 
 export type ZoteroSearchMatchOptions = SearchMatchOptions;
 
+function nonEmptyString(v: unknown): string | null {
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+function creatorName(c: unknown): string | null {
+  if (c === null || typeof c !== "object") {
+    return null;
+  }
+  const row = c as Record<string, unknown>;
+  const name = nonEmptyString(row["name"]);
+  if (name !== null) {
+    return name;
+  }
+  const parts = [nonEmptyString(row["firstName"]), nonEmptyString(row["lastName"])].filter(
+    (p): p is string => p !== null,
+  );
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 function creatorNames(data: Record<string, unknown>): string {
   const creators = data["creators"];
   if (!Array.isArray(creators)) {
@@ -14,25 +33,9 @@ function creatorNames(data: Record<string, unknown>): string {
   }
   const names: string[] = [];
   for (const c of creators) {
-    if (c !== null && typeof c === "object") {
-      const row = c as Record<string, unknown>;
-      const last = row["lastName"];
-      const first = row["firstName"];
-      const name = row["name"];
-      if (typeof name === "string" && name !== "") {
-        names.push(name);
-      } else {
-        const parts: string[] = [];
-        if (typeof first === "string" && first !== "") {
-          parts.push(first);
-        }
-        if (typeof last === "string" && last !== "") {
-          parts.push(last);
-        }
-        if (parts.length > 0) {
-          names.push(parts.join(" "));
-        }
-      }
+    const name = creatorName(c);
+    if (name !== null) {
+      names.push(name);
     }
   }
   return names.join(" ");

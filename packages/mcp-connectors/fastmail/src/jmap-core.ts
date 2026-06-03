@@ -107,7 +107,7 @@ export function clampLimit(limit: number | undefined, fallback = DEFAULT_LIST_LI
   if (n < 1) {
     return 1;
   }
-  return n > MAX_LIST_LIMIT ? MAX_LIST_LIMIT : n;
+  return Math.min(n, MAX_LIST_LIMIT);
 }
 
 export function asRecord(v: unknown): Record<string, unknown> | null {
@@ -197,7 +197,7 @@ export function extractAttachments(v: unknown): JmapAttachmentMeta[] {
 
 export function capPreview(text: string): string {
   const normalized = text
-    .replace(/\r\n/g, "\n")
+    .replaceAll("\r\n", "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{2,}/g, "\n")
     .trim();

@@ -111,6 +111,46 @@ function upsertTransactions(
   return upserted;
 }
 
+interface PageWalkState {
+  token: string;
+  bytes: number;
+  reExchanged: boolean;
+}
+
+interface PageFetchResult {
+  readonly outcome: FetchOutcome;
+  /** Set when a mid-cycle re-exchange failed to mint a fresh token. */
+  readonly reExchangeFailed: boolean;
+}
+
+/**
+ * Fetch one transactions page, re-exchanging the access token ONCE on a 401
+ * (the token may have expired mid-cycle) and retrying the same page. Mutates the
+ * byte/token/re-exchange counters on `state`.
+ */
+async function fetchTransactionsPage(
+  ctx: SyncContext,
+  creds: RampCreds,
+  url: string,
+  state: PageWalkState,
+): Promise<PageFetchResult> {
+  let outcome = await rampGet(ctx, state.token, url);
+  state.bytes += outcome.bytes;
+
+  if (outcome.kind === "http_error" && outcome.status === 401 && !state.reExchanged) {
+    state.reExchanged = true;
+    const refreshed = await exchangeToken(ctx, creds);
+    state.bytes += refreshed.bytes;
+    if (refreshed.token === null) {
+      return { outcome, reExchangeFailed: true };
+    }
+    state.token = refreshed.token;
+    outcome = await rampGet(ctx, state.token, url);
+    state.bytes += outcome.bytes;
+  }
+  return { outcome, reExchangeFailed: false };
+}
+
 export function createRampSyncable(options: RampSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -125,44 +165,30 @@ export function createRampSyncable(options: RampSyncableOptions): Syncable {
       }
 
       const auth = await exchangeToken(ctx, creds);
-      let totalBytes = auth.bytes;
-      let token = auth.token;
-      if (token === null) {
-        return syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor());
+      if (auth.token === null) {
+        return syncPassCursorHttpEmpty(t0, auth.bytes, cursor, pass1Cursor());
       }
 
       const now = Date.now();
       let totalUpserted = 0;
-      let reExchanged = false;
+      const state: PageWalkState = { token: auth.token, bytes: auth.bytes, reExchanged: false };
       // Cursor pagination: `page.next` is a full URL to the next page (or null
       // at the end). Walk a single forward pass per cycle, page-capped.
       let url: string | null = `${BASE}${TRANSACTIONS_PATH}`;
       for (let page = 0; page < MAX_PAGES && url !== null; page += 1) {
-        let outcome = await rampGet(ctx, token, url);
-        totalBytes += outcome.bytes;
-
-        // On a 401 the access token may have expired mid-cycle — re-exchange
-        // once, then retry the same page.
-        if (outcome.kind === "http_error" && outcome.status === 401 && !reExchanged) {
-          reExchanged = true;
-          const refreshed = await exchangeToken(ctx, creds);
-          totalBytes += refreshed.bytes;
-          if (refreshed.token === null) {
-            if (page === 0) {
-              return syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor());
-            }
-            break;
+        const { outcome, reExchangeFailed } = await fetchTransactionsPage(ctx, creds, url, state);
+        if (reExchangeFailed) {
+          if (page === 0) {
+            return syncPassCursorHttpEmpty(t0, state.bytes, cursor, pass1Cursor());
           }
-          token = refreshed.token;
-          outcome = await rampGet(ctx, token, url);
-          totalBytes += outcome.bytes;
+          break;
         }
 
         if (outcome.kind !== "ok") {
           if (page === 0) {
             return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
+              ? syncPassCursorHttpEmpty(t0, state.bytes, cursor, pass1Cursor())
+              : syncPassCursorParseEmpty(t0, state.bytes, pass1Cursor());
           }
           break;
         }
@@ -172,7 +198,7 @@ export function createRampSyncable(options: RampSyncableOptions): Syncable {
         url = nextPageUrl(outcome.parsed);
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      return syncPassCursorSuccess(t0, state.bytes, pass1Cursor(), totalUpserted);
     },
   };
 }

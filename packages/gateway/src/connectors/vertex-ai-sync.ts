@@ -37,7 +37,8 @@ function isSafeCliArg(value: string): boolean {
     return false;
   }
   for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) < 0x20) {
+    const cp = value.codePointAt(i);
+    if (cp !== undefined && cp < 0x20) {
       return false;
     }
   }

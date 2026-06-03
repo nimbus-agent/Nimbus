@@ -91,7 +91,7 @@ export function storybookDir(): string {
   return resolve(dir);
 }
 
-async function readManifest(root: string): Promise<unknown | null> {
+async function readManifest(root: string): Promise<unknown> {
   for (const name of MANIFEST_NAMES) {
     try {
       const buf = await readFile(join(root, name));

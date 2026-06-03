@@ -22,17 +22,20 @@ const BODY_MAX = 512;
  * MILLIS, else null. A bare number < 1e12 is treated as seconds; a larger number
  * is assumed to already be millis.
  */
+/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
+function epochToMs(n: number): number {
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+}
+
 function parseTimestampMs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) {
-    return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    return epochToMs(v);
   }
   if (typeof v === "string" && v.trim() !== "") {
     const trimmed = v.trim();
     if (/^\d+(\.\d+)?$/.test(trimmed)) {
       const n = Number(trimmed);
-      if (Number.isFinite(n)) {
-        return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-      }
+      return Number.isFinite(n) ? epochToMs(n) : null;
     }
     const parsed = Date.parse(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
@@ -84,7 +87,7 @@ export function mapSagemakerModelToItem(
 
   const metadata: Record<string, unknown> = {
     modelName,
-    ...(modelArn !== null ? { modelArn } : {}),
+    ...(modelArn === null ? {} : { modelArn }),
     ...(ctx.containerImage !== undefined && ctx.containerImage !== ""
       ? { containerImage: ctx.containerImage }
       : {}),
@@ -94,7 +97,7 @@ export function mapSagemakerModelToItem(
     ...(ctx.executionRoleArn !== undefined && ctx.executionRoleArn !== ""
       ? { executionRoleArn: ctx.executionRoleArn }
       : {}),
-    ...(creationTime !== null ? { creationTime } : {}),
+    ...(creationTime === null ? {} : { creationTime }),
   };
 
   return {

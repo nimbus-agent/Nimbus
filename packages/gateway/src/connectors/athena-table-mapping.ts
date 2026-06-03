@@ -18,17 +18,20 @@ const BODY_MAX = 512;
  * Parse defensively to unix MILLIS, else null. A bare number < 1e12 is treated
  * as seconds; a larger number is assumed to already be millis.
  */
+/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
+function epochToMs(n: number): number {
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+}
+
 function parseTimestampMs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) {
-    return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    return epochToMs(v);
   }
   if (typeof v === "string" && v.trim() !== "") {
     const trimmed = v.trim();
     if (/^\d+(\.\d+)?$/.test(trimmed)) {
       const n = Number(trimmed);
-      if (Number.isFinite(n)) {
-        return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-      }
+      return Number.isFinite(n) ? epochToMs(n) : null;
     }
     const parsed = Date.parse(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
@@ -100,7 +103,7 @@ export function mapAthenaTableToItem(
 
   const columnSummary =
     columns.length > 0 ? columns.map((c) => `${c.name}:${c.type}`).join(", ") : "";
-  const bodyPreview = clamp(columnSummary !== "" ? columnSummary : qualified, BODY_MAX);
+  const bodyPreview = clamp(columnSummary === "" ? qualified : columnSummary, BODY_MAX);
 
   const modifiedAt = lastAccessTime ?? createTime ?? ctx.syncedAt;
 
@@ -111,9 +114,9 @@ export function mapAthenaTableToItem(
     tableType,
     columns,
     ...(partitionKeys.length > 0 ? { partitionKeys } : {}),
-    ...(parameters !== null ? { parameters } : {}),
-    ...(createTime !== null ? { createTime } : {}),
-    ...(lastAccessTime !== null ? { lastAccessTime } : {}),
+    ...(parameters === null ? {} : { parameters }),
+    ...(createTime === null ? {} : { createTime }),
+    ...(lastAccessTime === null ? {} : { lastAccessTime }),
   };
 
   return {

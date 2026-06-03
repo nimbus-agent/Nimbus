@@ -42,6 +42,14 @@ function figmaGet(ctx: SyncContext, token: string, path: string): Promise<FetchO
   });
 }
 
+/** Coerce a Figma project id (string or number) to a string; `""` when neither. */
+function projectIdOf(idRaw: unknown): string {
+  if (typeof idRaw === "string") {
+    return idRaw;
+  }
+  return typeof idRaw === "number" ? String(idRaw) : "";
+}
+
 function extractProjects(parsed: unknown): FigmaProject[] {
   const projects = asRecord(parsed)?.["projects"];
   if (!Array.isArray(projects)) {
@@ -53,8 +61,7 @@ function extractProjects(parsed: unknown): FigmaProject[] {
     if (rec === undefined) {
       continue;
     }
-    const idRaw = rec["id"];
-    const id = typeof idRaw === "string" ? idRaw : typeof idRaw === "number" ? String(idRaw) : "";
+    const id = projectIdOf(rec["id"]);
     if (id === "") {
       continue;
     }

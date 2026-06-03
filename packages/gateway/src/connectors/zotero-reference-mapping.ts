@@ -128,12 +128,8 @@ export function mapZoteroReferenceToItem(
       ? `${abstractRaw.slice(0, ABSTRACT_MAX)}…`
       : abstractRaw;
 
-  const bodyPreview =
-    abstract !== null && abstract !== ""
-      ? abstract
-      : creators.length > 0
-        ? creators.join(", ")
-        : title;
+  const creatorsOrTitle = creators.length > 0 ? creators.join(", ") : title;
+  const bodyPreview = abstract !== null && abstract !== "" ? abstract : creatorsOrTitle;
 
   const canonicalUrl = url !== null && url !== "" ? url : null;
 

@@ -105,6 +105,44 @@ function tagPairs(raw: unknown): Array<{ key: string; value: string }> {
   return out;
 }
 
+function pipelinesOf(node: unknown): {
+  repository: string;
+  location: string | null;
+  rows: unknown[];
+} {
+  const repo = asRecord(node);
+  if (repo === undefined) {
+    return { repository: "", location: null, rows: [] };
+  }
+  const locationRow = asRecord(repo["location"]);
+  const pipelines = repo["pipelines"];
+  return {
+    repository: str(repo, "name") ?? "",
+    location: locationRow === undefined ? null : str(locationRow, "name"),
+    rows: Array.isArray(pipelines) ? pipelines : [],
+  };
+}
+
+function pipelineToJob(p: unknown, repository: string, location: string | null): FlatJob | null {
+  const pr = asRecord(p);
+  if (pr === undefined) {
+    return null;
+  }
+  const name = str(pr, "name");
+  if (name === null) {
+    return null;
+  }
+  return {
+    name,
+    repository,
+    location,
+    id: str(pr, "id"),
+    description: str(pr, "description"),
+    isJob: pr["isJob"] === true,
+    tags: tagPairs(pr["tags"]),
+  };
+}
+
 function flattenJobs(data: unknown): FlatJob[] {
   const root = asRecord(data) ?? {};
   const repos = asRecord(root["repositoriesOrError"]) ?? {};
@@ -118,35 +156,12 @@ function flattenJobs(data: unknown): FlatJob[] {
   }
   const out: FlatJob[] = [];
   for (const node of nodes) {
-    const repo = asRecord(node);
-    if (repo === undefined) {
-      continue;
-    }
-    const repository = str(repo, "name") ?? "";
-    const locationRow = asRecord(repo["location"]);
-    const location = locationRow !== undefined ? str(locationRow, "name") : null;
-    const pipelines = repo["pipelines"];
-    if (!Array.isArray(pipelines)) {
-      continue;
-    }
-    for (const p of pipelines) {
-      const pr = asRecord(p);
-      if (pr === undefined) {
-        continue;
+    const { repository, location, rows } = pipelinesOf(node);
+    for (const p of rows) {
+      const job = pipelineToJob(p, repository, location);
+      if (job !== null) {
+        out.push(job);
       }
-      const name = str(pr, "name");
-      if (name === null) {
-        continue;
-      }
-      out.push({
-        name,
-        repository,
-        location,
-        id: str(pr, "id"),
-        description: str(pr, "description"),
-        isJob: pr["isJob"] === true,
-        tags: tagPairs(pr["tags"]),
-      });
     }
   }
   return out;
@@ -165,7 +180,7 @@ await runReadOnlyMcpConnector("nimbus-dagster", (reg) => {
     }),
     async (p) => {
       const jobs = await listJobs();
-      const limited = p.limit !== undefined ? jobs.slice(0, p.limit) : jobs;
+      const limited = p.limit === undefined ? jobs : jobs.slice(0, p.limit);
       return jsonResult({ items: limited });
     },
   );
