@@ -19,6 +19,7 @@ import {
   type SendMailInput,
   type SendMailResult,
   SUBMISSION_CAPABILITY,
+  validateApiUrl,
   viewEmail,
 } from "./jmap-core.ts";
 import { registerFastmailTools } from "./tools.ts";
@@ -30,9 +31,11 @@ function parseAddressList(raw: string): Array<{ email: string }> {
   return raw
     .split(",")
     .map((part) => {
-      const angle = /<([^>]+)>/.exec(part);
-      const email = (angle?.[1] ?? part).trim();
-      return email;
+      // Extract the address inside `<...>` without a backtracking regex.
+      const open = part.indexOf("<");
+      const close = open === -1 ? -1 : part.indexOf(">", open + 1);
+      const inner = open !== -1 && close !== -1 ? part.slice(open + 1, close) : part;
+      return inner.trim();
     })
     .filter((email) => email !== "")
     .map((email) => ({ email }));
@@ -70,8 +73,14 @@ class FetchJmapClient implements JmapClient {
     if (session === null) {
       throw new Error("JMAP session response missing apiUrl / mail account");
     }
-    this.session = session;
-    return session;
+    // The apiUrl is server-controlled; pin it to the configured host before any
+    // authenticated POST is sent there (SSRF guard).
+    const validated: JmapSession = {
+      ...session,
+      apiUrl: validateApiUrl(session.apiUrl, this.baseUrl),
+    };
+    this.session = validated;
+    return validated;
   }
 
   private async api(body: unknown): Promise<unknown> {
