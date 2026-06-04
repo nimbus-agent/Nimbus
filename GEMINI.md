@@ -5,7 +5,7 @@ Nimbus is a **local-first AI agent framework** — a headless Bun Gateway proces
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict  
 **Linter:** Biome  
 **License:** AGPL-3.0 (gateway/cli/mcp-connectors) + MIT (sdk)  
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Workstream-level status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) ✅ Complete (2026-06-04) — T1–T6 ✅ · Wave A ✅ · Wave B ✅ · Tiers 1–5 ✅ (remaining connectors are documented non-gating deferrals; see [`docs/roadmap.md`](./docs/roadmap.md)). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Workstream-level status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 Companion context for other agents: [`CLAUDE.md`](./CLAUDE.md) (same project facts; keep both files aligned when changing commands, roadmap rows, or non-negotiables).
 

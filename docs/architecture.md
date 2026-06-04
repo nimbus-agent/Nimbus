@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 6.x (strict)
-**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) 🔵 Active — T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`CHANGELOG.md`](./CHANGELOG.md). Workstream-level status is in [`roadmap.md`](./roadmap.md).
+**Status:** Phase 4 ✅ Complete · Phase 5 (Extended Surface) ✅ Complete (2026-06-04) — T1–T6 ✅ · Wave A ✅ · Wave B ✅ · Tiers 1–5 ✅ (remaining connectors are documented non-gating deferrals; see [`roadmap.md`](./roadmap.md)). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; `desktop-v0.1.0` Tauri release deferred to Phase 13). Dated delivery log: [`CHANGELOG.md`](./CHANGELOG.md). Workstream-level status is in [`roadmap.md`](./roadmap.md).
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1176,7 +1176,8 @@ const streamReq: JSONRPCRequest = {
 // metrics.dora        — four DORA calculators from the local index (ipc/metrics-rpc.ts)
 // deploy.preflight    — pre-deploy index check (ipc/preflight-rpc.ts)
 // deployment.annotate — internal post-deploy annotation; NOT in the renderer allowlist (ipc/deployment-rpc.ts)
-// security.scan       — local credential-hygiene scan; CLI-only, FORBIDDEN_OVER_LAN (ipc/security-rpc.ts)
+// security.scan / security.scanCancel — long-running credential-hygiene scan job (returns {jobId});
+//   emits security.scanProgress / security.scanDone / security.scanError; CLI-only, FORBIDDEN_OVER_LAN (ipc/security-rpc.ts)
 // index.reembed / index.reembedCancel — long-running re-embed job; CLI-only (I5/I7);
 //   emits index.reembedProgress / index.reembedDone / index.reembedError (ipc/index-reembed-rpc.ts)
 ```
@@ -1191,14 +1192,14 @@ The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed int
 
 ## Local Database Schema
 
-The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, and `extensions` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
+The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, `git_blame_line`, and `extensions` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
 
 **What you need to know here:**
 
 - The unified index is keyed `<service>:<native_id>`; `item_type` is an open enum (`file` / `email` / `pr` / `issue` / `pipeline_run` / `deployment` / `alert` / `incident` / `api_endpoint` / `obsidian_note` / …), extended by new connectors.
 - Hybrid search rides two vec tables: `vec_items_384` (local MiniLM) and `vec_items_1536` (OpenAI), routed per `(service, type)` — see [§ Memory Layer](#memory-layer).
-- `audit_log` is the BLAKE3-chained tamper-evident trail (V18 `row_hash`/`prev_hash`); `tool_call_log` (V29) is the forensic complement to invariant `I11`.
-- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V31.** Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
+- `audit_log` is the BLAKE3-chained tamper-evident trail (V18 `row_hash`/`prev_hash`); `tool_call_log` (V29) is the forensic complement to invariant `I11`, bounded by a daily retention prune (`[audit].tool_call_log_retention_days`) that only **appends** a `tool_call_log.pruned` entry to the chain (never rewrites it). `git_blame_line` (V32) backs `nimbus security scan` v2's line-level "who introduced the secret" attribution — populated during git-aware filesystem sync, read at scan time as a pure indexed lookup (no `git` subprocess in the scan path).
+- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V32** (`git_blame_line`; `CURRENT_SCHEMA_VERSION` in `index/local-index.ts`). Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
 - **SQLite write boundary:** every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `db/write.ts` (invariant `I14`, static gate `D12`).
 
 Planned Phase 6+ tables (`service` / `scorecard` / `security_finding` / `llm_trace` / …) are tracked in [`roadmap.md` § Planned](./roadmap.md#planned).

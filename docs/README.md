@@ -13,7 +13,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows_%7C_macOS_%7C_Linux-blue)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](../LICENSE)
 [![Release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.1.0)
-![Status: Phase 5 Active](https://img.shields.io/badge/status-Phase_5_Active-blue)
+![Status: Phase 5 Complete](https://img.shields.io/badge/status-Phase_5_Complete-brightgreen)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-cast-dark.svg">
@@ -236,7 +236,7 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 *B1 hardening + semantic layer prep (T6, 2026-05-14 → 2026-05-16):*
 
 - **Invariant `I10` consolidation** — `util/timing-safe-compare.ts` is now the canonical constant-time compare; LAN pairing, HTTP bearer auth, extension verify, and updater all consume it. T6 PR 1.
-- **`tool_call_log` (V29) + `audit.toolCalls` IPC** — forensic complement to invariant `I11`: every `<tool_output>` envelope is recorded for after-the-fact reconstruction. Read surface is IPC-only — not LAN-callable, not in the Tauri allowlist, not on the HTTP API. T6 PR 2.
+- **`tool_call_log` (V29) + `audit.toolCalls` IPC** — forensic complement to invariant `I11`: every `<tool_output>` envelope is recorded for after-the-fact reconstruction. Read surface is IPC-only — not LAN-callable, not in the Tauri allowlist, not on the HTTP API. T6 PR 2. Bounded by a daily retention prune (`[audit].tool_call_log_retention_days`, default 90; `0` disables) that appends one `tool_call_log.pruned` entry to the append-only `audit_log` chain.
 - **Hybrid embeddings (`vec_items_1536`, V30) + `nimbus index reembed`** — per-`(service, type)` routing sends prose-heavy items to OpenAI `text-embedding-3-small` (1536-dim) while keeping sparse / structured items on local MiniLM (384-dim). Missing `openai.api_key` falls back to MiniLM-only — the gateway never refuses to start. Selective backfill via the CLI; long-running with cancellable progress notifications. T6 PR 3.
 - **Typed `dbRun` / `dbExec` migration — invariant `I14`** — 163 direct `db.run` / `db.exec` / `stmt.run` sites migrated to the central wrappers; `SQLITE_FULL` now surfaces as a typed `DiskFullError` instead of being swallowed. Static-audit rule `D12` blocks regressions at CI time. T6 PR 4.
 
