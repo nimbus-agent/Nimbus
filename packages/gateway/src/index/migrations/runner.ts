@@ -31,6 +31,7 @@ import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
+import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
@@ -366,6 +367,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "git_blame_line table (security scan v2 blame attribution)",
     V32_GIT_BLAME_LINE_SQL,
   ),
+  simpleStep(
+    32,
+    33,
+    "federation namespaces/filters/grants + audit_log.federation_json (federation v33)",
+    V33_FEDERATION_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -400,6 +407,8 @@ const BACKFILL_LABELS: readonly string[] = [
   "tool_call_log audit table (T6 PR 2) (backfilled)",
   "vec_items_1536 + dim-aware delete triggers (T6 PR 3) (backfilled)",
   "extension_dependency table + reverse-dep index (T2 PR 4) (backfilled)",
+  "git_blame_line table (security scan v2 blame attribution) (backfilled)",
+  "federation namespaces/filters/grants + audit_log.federation_json (federation v33) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
