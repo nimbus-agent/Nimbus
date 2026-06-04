@@ -6,6 +6,7 @@ import { join, relative } from "node:path";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { type BlameRow, parseBlamePorcelain, upsertBlameLines } from "../security/blame-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -255,15 +256,16 @@ function syncFilesystemPackageDeps(
   return { upserted, bytes };
 }
 
-function syncFilesystemCodeSymbolsForRoot(
+async function syncFilesystemCodeSymbolsForRoot(
   ctx: SyncContext,
   root: string,
   exclude: readonly string[],
   rk: string,
   now: number,
-): { upserted: number; bytes: number } {
+): Promise<{ upserted: number; bytes: number }> {
   let upserted = 0;
   let bytes = 0;
+  const gitAware = isGitRepo(root);
   const files = listCodeFiles(root, exclude, 120);
   for (const fp of files) {
     let src: string;
@@ -274,6 +276,7 @@ function syncFilesystemCodeSymbolsForRoot(
     }
     bytes += src.length;
     const rel = relative(root, fp);
+    const relNorm = rel.replaceAll("\\", "/");
     const symbols = extractExportedSymbols(src, fp);
     let mtime = now;
     try {
@@ -281,11 +284,21 @@ function syncFilesystemCodeSymbolsForRoot(
     } catch {
       /* keep now */
     }
+    const blameRanges: BlameRange[] = [];
     for (const sym of symbols) {
-      const extId = `sym:${rk}:${rel.replaceAll("\\", "/")}:${sym.name}:${sym.kind}`;
-      const relNorm = rel.replaceAll("\\", "/");
-      const excerpt = excerptAroundExportedSymbol(src, sym.name, 380);
+      const extId = `sym:${rk}:${relNorm}:${sym.name}:${sym.kind}`;
+      const { text: excerpt, startLine } = excerptWithStartLine(src, sym.name, 380);
       const bodyPreview = excerpt === "" ? relNorm : `${relNorm}\n${excerpt}`;
+      const metadata: Record<string, unknown> = {
+        name: sym.name,
+        kind: sym.kind,
+        file: relNorm,
+        repoRoot: root,
+      };
+      if (startLine !== null) {
+        metadata["excerptStartLine"] = startLine;
+        blameRanges.push({ from: startLine, to: startLine + excerpt.split("\n").length - 1 });
+      }
       upsertIndexedItemForSync(ctx, {
         service: SERVICE_ID,
         type: "code_symbol",
@@ -296,16 +309,21 @@ function syncFilesystemCodeSymbolsForRoot(
         canonicalUrl: null,
         modifiedAt: mtime,
         authorId: null,
-        metadata: {
-          name: sym.name,
-          kind: sym.kind,
-          file: rel.replaceAll("\\", "/"),
-          repoRoot: root,
-        },
+        metadata,
         pinned: false,
         syncedAt: now,
       });
       upserted += 1;
+    }
+    // Blame the indexed excerpt ranges so a security-scan finding can be attributed
+    // to the commit that introduced the line. Git-only; bounded by MAX_BLAME_LINES.
+    if (gitAware && blameRanges.length > 0) {
+      const merged = mergeRanges(blameRanges);
+      const covered = merged.reduce((n, r) => n + (r.to - r.from + 1), 0);
+      if (covered <= MAX_BLAME_LINES) {
+        const rows = await gitBlameLinePorcelain(root, relNorm, merged);
+        if (rows.length > 0) upsertBlameLines(ctx.db, root, relNorm, rows);
+      }
     }
   }
   return { upserted, bytes };
@@ -372,25 +390,99 @@ function listCodeFiles(root: string, exclude: readonly string[], maxFiles: numbe
   return found;
 }
 
-function excerptAroundExportedSymbol(source: string, symbolName: string, maxChars: number): string {
+const BLAME_TIMEOUT_MS = 20_000;
+const MAX_BLAME_LINES = 5000;
+// Windows CreateProcess caps the command line at 32_767 chars; each "-L a,b" pair
+// is ~20 chars. Past this many disjoint ranges, fall back to one full-file blame
+// instead of emitting hundreds of -L args. Coalescing usually keeps us far under it.
+const MAX_BLAME_RANGES = 64;
+
+export type BlameRange = { from: number; to: number };
+type SpawnFn = typeof Bun.spawn;
+
+/** Sort by start and coalesce overlapping/adjacent ranges. */
+export function mergeRanges(ranges: readonly BlameRange[]): BlameRange[] {
+  const sorted = [...ranges].filter((r) => r.to >= r.from).sort((a, b) => a.from - b.from);
+  const out: BlameRange[] = [];
+  for (const r of sorted) {
+    const last = out.at(-1);
+    if (last !== undefined && r.from <= last.to + 1) {
+      if (r.to > last.to) last.to = r.to;
+    } else {
+      out.push({ from: r.from, to: r.to });
+    }
+  }
+  return out;
+}
+
+/**
+ * Blame the given line ranges of one file. Coalesces ranges and, past
+ * MAX_BLAME_RANGES disjoint ranges, falls back to one full-file blame so the arg
+ * list never approaches the Windows CreateProcess command-line limit. A non-zero
+ * exit, spawn failure, or the BLAME_TIMEOUT_MS abort yields no rows (no blame).
+ */
+export async function gitBlameLinePorcelain(
+  root: string,
+  relFile: string,
+  ranges: readonly BlameRange[],
+  spawn: SpawnFn = Bun.spawn,
+): Promise<BlameRow[]> {
+  if (ranges.length === 0) return [];
+  const merged = mergeRanges(ranges);
+  const lArgs =
+    merged.length > MAX_BLAME_RANGES
+      ? []
+      : merged.flatMap((r) => ["-L", `${String(r.from)},${String(r.to)}`]);
+  const args = ["git", "-C", root, "blame", "--line-porcelain", ...lArgs, "--", relFile];
+  try {
+    const proc = spawn(args, {
+      env: extensionProcessEnv({}),
+      stdout: "pipe",
+      stderr: "pipe",
+      signal: AbortSignal.timeout(BLAME_TIMEOUT_MS),
+    });
+    const code = await proc.exited;
+    if (code !== 0) return [];
+    const out = await new Response(proc.stdout).text();
+    return parseBlamePorcelain(out);
+  } catch {
+    return []; // AbortError (timeout) or spawn failure → no blame for this file
+  }
+}
+
+/**
+ * Like `excerptAroundExportedSymbol` but also returns the 1-based absolute line
+ * of the excerpt's first content line (accounting for the leading-whitespace trim),
+ * so a scanner can map a body-preview offset back to a real file line. `startLine`
+ * is null when the export line is not found (the whole-file flat fallback).
+ */
+export function excerptWithStartLine(
+  source: string,
+  symbolName: string,
+  maxChars: number,
+): { text: string; startLine: number | null } {
   const lines = source.split(/\r?\n/);
   let hit = -1;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (!line.includes(symbolName) || !/\bexport\b/.test(line)) {
-      continue;
-    }
+    if (!line.includes(symbolName) || !/\bexport\b/.test(line)) continue;
     hit = i;
     break;
   }
   if (hit < 0) {
     const flat = source.replaceAll(/\s+/g, " ").trim();
-    return flat.length <= maxChars ? flat : flat.slice(0, maxChars);
+    return { text: flat.length <= maxChars ? flat : flat.slice(0, maxChars), startLine: null };
   }
   const from = Math.max(0, hit - 6);
   const to = Math.min(lines.length, hit + 10);
-  const text = lines.slice(from, to).join("\n").trim();
-  return text.length <= maxChars ? text : text.slice(0, maxChars);
+  const sliceLines = lines.slice(from, to);
+  let firstContent = 0;
+  while (firstContent < sliceLines.length && (sliceLines[firstContent] ?? "").trim() === "") {
+    firstContent += 1;
+  }
+  const text = sliceLines.join("\n").trim();
+  const startLine = from + firstContent + 1; // 1-based absolute
+  return { text: text.length <= maxChars ? text : text.slice(0, maxChars), startLine };
 }
 
 function extractExportedSymbols(
@@ -471,7 +563,7 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         }
 
         if (rootCfg.codeIndex) {
-          const c = syncFilesystemCodeSymbolsForRoot(ctx, root, rootCfg.exclude, rk, now);
+          const c = await syncFilesystemCodeSymbolsForRoot(ctx, root, rootCfg.exclude, rk, now);
           upserted += c.upserted;
           bytes += c.bytes;
         }
