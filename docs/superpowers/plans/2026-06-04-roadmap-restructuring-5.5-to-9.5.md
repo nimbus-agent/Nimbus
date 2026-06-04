@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Correct the Phase 5.5 sequencing error by relocating + renumbering it to Phase 9.5 (after its real blocker, Phase 9 Wave 5), defer the consumer-oriented personal/family/friend federation out of Phase 6 to Phase 19, and record the Phase 6 delivery-slice decomposition — all in `docs/roadmap.md` plus one `docs/CHANGELOG.md` note.
+**Goal:** Correct the Phase 5.5 sequencing error by relocating + renumbering it to Phase 9.5 (after its real blocker, Phase 9 Wave 5), move the consumer-oriented personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation), and record the Phase 6 delivery-slice decomposition — all in `docs/roadmap.md` plus one `docs/CHANGELOG.md` note.
 
 **Architecture:** Pure documentation edits. There is no code and there are no unit tests; each task's "verification" is a `grep` (via the Grep tool or `git grep`) with an expected result, plus a Markdown link-integrity check. Edits are grouped into logically-coherent tasks, each ending in a commit, so the history is reviewable.
 
@@ -403,12 +403,12 @@ git commit -m "docs(roadmap): repoint Phase 18 + Standards-track references to P
 
 ---
 
-### Task 7: Defer Phase 6 sub-project #8 (personal/family/friend federation) to Phase 19
+### Task 7: Defer Phase 6 sub-project #8 to a new Phase 20 — Personal & Household Federation
 
 **Files:**
-- Modify: `docs/roadmap.md` (cut the `#### Personal Federation (beyond the engineering team)` subsection out of Phase 6; paste into Phase 19 with a deferral note)
+- Modify: `docs/roadmap.md` (cut the `#### Personal Federation (beyond the engineering team)` subsection out of Phase 6; create a new `### Phase 20 — Personal & Household Federation` section after Phase 19; add the Status-table row + Contents bump)
 
-Per spec §2.2 and the guiding-principle-#7 ("built for professionals") resolution.
+Per spec §2.2 and review note #2: a **dedicated Phase 20** (not a Phase 19 subsection) — because personal/family/friend federation is *not* ambient computing and would mix Phase 19's wearable/voice/XR theme.
 
 - [ ] **Step 1: Cut the subsection from Phase 6**
 
@@ -426,34 +426,77 @@ The Phase 6 federation primitive is intentionally general — once two Gateways 
 #### Share & Virality Primitives
 ```
 
-Use the Edit tool to remove the `#### Personal Federation (beyond the engineering team)` heading, its intro paragraph, and its 5 bullets — i.e. everything from `#### Personal Federation (beyond the engineering team)` up to (but **not** including) `#### Share & Virality Primitives`. After the edit, `#### Share & Virality Primitives` follows the subsection that preceded Personal Federation, with no gap damage. **Save the cut text to a scratch buffer for Step 2.**
+Use the Edit tool to remove the `#### Personal Federation (beyond the engineering team)` heading, its intro paragraph, and its 5 bullets — i.e. everything from `#### Personal Federation (beyond the engineering team)` up to (but **not** including) `#### Share & Virality Primitives`. After the edit, `#### Share & Virality Primitives` follows the subsection that preceded Personal Federation, with no gap damage. (You do not need to preserve the cut text — Step 2 supplies the rewritten Phase 20 body verbatim.)
 
-- [ ] **Step 2: Paste into Phase 19 as a deferred subsection**
+- [ ] **Step 2: Create the new Phase 20 section after Phase 19**
 
-In the `### Phase 19 — Ambient Surfaces` section, add a new subsection as the **last** subsection of Phase 19 — locate the `---` that closes Phase 19 (the separator immediately before the next `### ` heading or the `## ` section after Phase 19) and insert the block **before** that `---`. The inserted block is:
-
+Phase 19 is the last numbered phase; the cross-phase tracks (`### North-Star Capabilities (cross-phase)`, etc.) follow it. Insert the new Phase 20 section **immediately before** `### North-Star Capabilities (cross-phase)` so all numbered phases stay grouped. Find:
+```
+### North-Star Capabilities (cross-phase)
+```
+and replace it with (the new section, its closing `---`, then the original heading):
 ```markdown
-#### Personal & Household Federation (deferred from Phase 6)
+### Phase 20 — Personal & Household Federation
 
-> Relocated from Phase 6 per guiding-principle #7 (built for professionals; consumer-oriented affordances are out of scope). These modes build **for free** on the Phase 6 Slice 1 federation core — no new infrastructure, only narrower namespace shapes and a relocated audience. The *professional* form of the narrowest-export-shape proof remains in Phase 6 Slice 1; the family-namespace variant lives here.
+**Goal:** Extend the Phase 6 federation primitive to consumer/household use cases that have **no cloud-vendor equivalent** — a personal CRM no third party ever sees, family/couples shared agents for joint logistics, and friend-group coordination — without compromising the local-first, no-relay, HITL-gated architecture.
 
-The federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that have **no cloud-vendor equivalent** because cloud agents cannot legally or commercially handle the data: a personal CRM no third party ever sees, family/couples shared agents for joint logistics, and a friend-group mode for the long tail of "I want an agent but trust no one with this data."
+> **Relocated from Phase 6** per guiding-principle #7 (Nimbus is built for professionals; consumer-oriented affordances are out of scope for the professional phases). These modes build **for free** on the Phase 6 Slice 1 federation core — no new infrastructure, only narrower namespace shapes and a different audience. Sequenced this late deliberately: the professional team-federation surface (Phase 6) must prove out first. A *professional* form of the narrowest-export-shape privacy proof stays in Phase 6 Slice 1; the family-namespace variant lives here.
+
+#### Dependencies
+
+- Phase 6 Slice 1 — Federation Core (E2EE peer pairing, scoped namespaces, the consent-scoped federated query primitive, audit integration)
+- Phase 6 federation protocol-layer RBAC + the narrowest-export-shape privacy contract (professional form)
+
+#### Personal & Household Federation
+
+The federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that cloud agents cannot legally or commercially handle.
 
 - [ ] **Personal CRM** — a `person` table extension + `interaction` item type that indexes a user's relational history from already-indexed connectors: email threads (Gmail / Outlook), calendar attendees, Slack DMs + tagged channels, LinkedIn export (manual import), GitHub mentions. New built-in agent `nimbus contacts` answers "tell me about the last time I talked to Sara before our call," "who at Acme did I meet at the conference last year," "draft a follow-up to the people I had coffee with this week." Read-only; data never leaves the machine.
 - [ ] **Family / couples mode** — a `family` namespace shape with two-to-six paired Gateways; shared item types limited to a conservative set (`event` from Calendar, structured `shopping_list` items, joint `expense` rows, custody/handover scheduling). HITL on every cross-device write. A contract test asserts no `email`, `pull_request`, `incident`, or work-item types are exposable through the family shape.
 - [ ] **Friend-group mode** — same federation primitive as family mode, scoped to long-tail use cases with no cohesive home today: D&D campaign trackers, fantasy-league rosters, "who's free this weekend" coordination without surrendering full calendar visibility, group-photo sharing without a cloud upload.
 - [ ] **Group-namespace policy fragments** — `[group.<name>].include_types = [...]` + `[group.<name>].exclude_services = [...]` enforced at the federation protocol layer; per-namespace HITL policy fragments live alongside `nimbus.policy.toml` so a family namespace can carry stricter rules than a work namespace on the same Gateway.
 - [ ] **Privacy contract — narrowest-export-shape proof (household variant)** — for every group/family namespace shape, the test asserts the federation protocol cannot expose any item type or `raw_meta` field not declared in the namespace shape. Verified by attempting a federated query for a non-included type and asserting empty result + audit log entry recording the rejected query.
+
+#### Acceptance Criteria
+
+- Two paired personal Gateways share a `family` namespace; a contract test asserts no `email`, `pull_request`, `incident`, or work-item type is exposable through the family shape.
+- `nimbus contacts` answers a relational-history query entirely from the local index with no outbound call.
+- A federated query for a non-included type against a group namespace returns an empty result plus an audit-log entry recording the rejected query.
+
+---
+
+### North-Star Capabilities (cross-phase)
 ```
 
-- [ ] **Step 3: Verify the move**
+- [ ] **Step 3: Add the Status-table row and bump the Contents range**
+
+Add the Phase 20 row after the Phase 19 row in the `## Status Overview` table. Change:
+```markdown
+| Phase 19 | Ambient Surfaces | Planned |
+```
+to:
+```markdown
+| Phase 19 | Ambient Surfaces | Planned |
+| Phase 20 | Personal & Household Federation | Planned |
+```
+
+Then bump the Contents "Planned" line (which Task 2 left reading "Phases 6 through 19 … 19 Ambient Surfaces)"). Change:
+```
+- [Planned](#planned) — Phases 6 through 19 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+```
+to:
+```
+- [Planned](#planned) — Phases 6 through 20 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+```
+
+- [ ] **Step 4: Verify the move**
 
 Run (Grep tool, `output_mode: content`, `-n: true`):
 ```
-pattern: ^#### Personal Federation \(beyond the engineering team\)|^#### Personal & Household Federation
+pattern: ^#### Personal Federation \(beyond the engineering team\)|^### Phase 20 — Personal & Household Federation|^\| Phase 20 \|
 path: docs/roadmap.md
 ```
-Expected: the old `#### Personal Federation (beyond the engineering team)` heading is **gone**; exactly one `#### Personal & Household Federation (deferred from Phase 6)` heading exists, and its line number falls **after** `### Phase 19 — Ambient Surfaces`.
+Expected: the old `#### Personal Federation (beyond the engineering team)` heading is **gone**; exactly one `### Phase 20 — Personal & Household Federation` section heading exists, located **after** `### Phase 19 — Ambient Surfaces` and **before** `### North-Star Capabilities (cross-phase)`; and the `| Phase 20 | Personal & Household Federation | Planned |` status row exists.
 
 Also confirm Phase 6 integrity:
 ```
@@ -462,11 +505,11 @@ path: docs/roadmap.md
 ```
 Expected: both still present in the Phase 6 body, in order, undamaged.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add docs/roadmap.md
-git commit -m "docs(roadmap): defer personal/family/friend federation from Phase 6 to Phase 19"
+git commit -m "docs(roadmap): move personal/family/friend federation to a new Phase 20"
 ```
 
 ---
@@ -492,7 +535,7 @@ Replace with (the blockquote unchanged, the new subsection inserted before `####
 
 #### Delivery Slices
 
-Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was deferred to Phase 19). **Slice 1 — Federation Core** is the substrate every other slice depends on; its full design lives in [`docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`](superpowers/specs/2026-06-04-phase6-federation-core-design.md). Each slice gets its own spec → plan → implementation cycle.
+Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on; its full design lives in [`docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`](superpowers/specs/2026-06-04-phase6-federation-core-design.md). Each slice gets its own spec → plan → implementation cycle.
 
 | # | Slice | Depends on |
 |---|-------|-----------|
@@ -506,7 +549,17 @@ Phase 6 bundles several independent subsystems; it ships as **9 sequenced delive
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing |
 | 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent |
 
-Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3. The mapping of these slices to the feature subsections below: Slice 1 ↔ "Federated Query Consent" + "Shared Infrastructure" (federation/namespace/discovery parts); Slice 2 ↔ Team Vault + Quorum HITL; Slice 3 ↔ "Identity & Access"; Slice 7 ↔ "Data Warehouses & BI"; etc.
+Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; Slice 9 is independent. Each slice maps to the feature subsections below as follows:
+
+- **Slice 1** ↔ "Federated Query Consent (foundational)" + the federation/namespace/discovery/conflict-detection parts of "Shared Infrastructure"
+- **Slice 2** ↔ "Shared Infrastructure" (Team Vault, Quorum HITL) + "Identity & Access" (Multi-user HITL)
+- **Slice 3** ↔ "Identity & Access" (SSO/OIDC/SAML, SCIM, role-based access control)
+- **Slice 4** ↔ "Shared Workflows & Policy" (org-level policy engine + enforcement) + "Admin & Observability"
+- **Slice 5** ↔ "ChatOps"
+- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight)
+- **Slice 7** ↔ "Data Warehouses & BI (SSO-gated)"
+- **Slice 8** ↔ "Share & Virality Primitives"
+- **Slice 9** ↔ "Deferred from Phase 5"
 
 #### Dependencies
 ```
@@ -549,7 +602,7 @@ The line begins:
 ```
 Insert a new dated clause at the **front** of the change-log sentence (immediately after `> **Last updated:** `), so it reads:
 ```
-> **Last updated:** 2026-06-04 — **renumbered Phase 5.5 (Marketplace Registry) → Phase 9.5** and relocated it after Phase 9 (its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **deferred personal/family/friend federation from Phase 6 to Phase 19** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** …
+> **Last updated:** 2026-06-04 — **renumbered Phase 5.5 (Marketplace Registry) → Phase 9.5** and relocated it after Phase 9 (its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** …
 ```
 (Keep the entire pre-existing sentence intact after the new clause; only the `2026-06-04 — …` text and the trailing ` 2026-05-28 (second pass) —` join are added.)
 
@@ -642,4 +695,6 @@ Expected: a clean, reviewable series of doc-only commits; the diff shows the sec
 - **This plan is doc-only.** There are no unit tests; the `grep`-with-expected-output steps *are* the tests. Treat a non-empty result on a "zero matches" verification as a failing test — stop and fix before committing.
 - **Branch:** you are already on `worktree-dev+asafgolombek+phase6-planning` (a worktree). Do not switch to `main`.
 - **Line numbers drift** as you edit; always re-locate by the unique strings shown, never by the line numbers in this plan.
+- **Exact-string matches are brittle if `roadmap.md` drifted before execution.** This plan was authored against spec commit `200dc16d`; if the file has since changed (a typo fix, a whitespace tweak, another roadmap edit), a verbatim `old_string` may not match. **Before each edit, Grep for the shortest unique anchor phrase** in the target (e.g. `tracked in \*\*Phase 5\.5\*\*`, `Phase 5\.5 marketplace registry`, `#### Personal Federation`) to confirm the surrounding text still matches, and **adapt the `old_string` to the file's current wording** — the *intent* of each change (which phrase to renumber, which block to move) is what's authoritative, not the literal bytes. If an `old_string` fails to match, do not force it; re-read the region and re-derive the match. The per-task verification greps catch a missed or mis-applied edit before you commit.
+- **The large Task 1 move** is the most drift-sensitive step: rather than matching the whole ~65-line block, anchor on the two unique boundary lines (`### Phase 5.5 — Marketplace Registry` and the `### Phase 6 — Team` that follows the section) to find the cut, and on `### Phase 10 — The Autonomous Agent` to find the paste target.
 - **Out of scope (separate future plan):** the Slice 1 Federation Core *code* build (pairing, namespaces, `query-gate.ts`, expertise, discovery, `federation.*` RPC, the migration, CLI, invariant I17, audit integration). See spec §4–§8.

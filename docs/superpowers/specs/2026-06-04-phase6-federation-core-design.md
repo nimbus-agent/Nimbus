@@ -49,13 +49,13 @@ These are concrete edits to `docs/roadmap.md` (and one to `docs/CHANGELOG.md`), 
 
 **Acceptance for this edit:** after the change, `grep -n "Phase 5\.5" docs/` and `grep -n "phase-55" docs/` return **zero** prose/link hits (asset-file coordinate matches excepted), the Status table reads in ascending phase order, and every link to the Marketplace Registry section resolves.
 
-### 2.2 Defer Phase 6 sub-project #8 (personal/family/friend federation) → Phase 19
+### 2.2 Defer Phase 6 sub-project #8 (personal/family/friend federation) → new Phase 20
 
 The Phase 6 sections **"Personal Federation (beyond the engineering team)"** (Personal CRM, Family/couples mode, Friend-group mode, Group-namespace policy fragments, Privacy-contract narrowest-export-shape proof) conflict with guiding-principle #7 ("built for professionals; consumer-oriented affordances are out of scope").
 
-- **Move** those bullets from Phase 6 to **Phase 19 — Ambient Surfaces** (the natural home for consumer/ambient use cases), under a new sub-heading "Personal & Household Federation".
-- **Keep** the underlying *primitive* in Phase 6: the deferral note in Phase 19 should state these modes build for free on Slice 1's federation core — no new infrastructure, only narrower namespace shapes + a relocated audience.
-- The **"narrowest-export-shape" privacy-contract proof** is a genuinely general safety property; a *professional* form of it (the leak-proof contract test) stays in Slice 1 (§5). The *family-namespace* variant moves to Phase 19 with the rest.
+- **Move** those bullets out of Phase 6 into a **new dedicated phase: Phase 20 — Personal & Household Federation**, appended after Phase 19 (the last numbered phase). A dedicated phase — rather than a subsection of Phase 19 "Ambient Surfaces" — avoids mixing the consumer-federation theme into Phase 19's wearable/voice/XR scope (review note #2).
+- **Keep** the underlying *primitive* in Phase 6: Phase 20's framing note states these modes build for free on Slice 1's federation core — no new infrastructure, only narrower namespace shapes + a different audience — and that the phase is sequenced last so the professional team-federation surface proves out first.
+- The **"narrowest-export-shape" privacy-contract proof** is a genuinely general safety property; a *professional* form of it (the leak-proof contract test) stays in Slice 1 (§5). The *family-namespace* variant moves to Phase 20 with the rest.
 
 ### 2.3 Record the Phase 6 delivery-slice decomposition in the roadmap
 
@@ -76,7 +76,7 @@ Add a short **"Phase 6 — Delivery Slices"** subsection at the top of the Phase
 | 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) | 2, 3 | SSO-gated; standard connector work. |
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing | Was sub-project #9; renumbered after #8 deferral. |
 | 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent | Workday pairs with SSO (Slice 3). |
-| — | ~~Personal/Family/Friend federation~~ | — | **Deferred to Phase 19** (§2.2). |
+| — | ~~Personal/Family/Friend federation~~ | — | **Deferred to a new Phase 20 — Personal & Household Federation** (§2.2). |
 
 **Build order rationale:** Slice 1 is a hard prerequisite for 2–8. Slices 2, 3, 4, 6, 8 can proceed in parallel once 1 lands. Slice 7 waits on 2+3. Slice 9 is independent connector work that can slot in anywhere. Each slice gets its own spec → plan → implementation cycle; this document specs only Slice 1.
 
@@ -207,7 +207,7 @@ Per the project's testing philosophy:
 - SSO/OIDC/SAML, SCIM, RBAC beyond per-namespace owner/editor/viewer (Slice 3).
 - Org policy engine, admin console, merged team audit view (Slice 4).
 - ChatOps, BI connectors, share primitives, deferred Phase 5 items (Slices 5–9).
-- Personal/family/friend federation — **deferred to Phase 19** (§2.2).
+- Personal/family/friend federation — **deferred to a new Phase 20 — Personal & Household Federation** (§2.2).
 - A relay/broker server — never; federation is strictly peer-to-peer over the LAN E2EE channel.
 
 ---
