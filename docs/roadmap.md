@@ -711,6 +711,34 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 > **Composes with Phase 7 (Engineering Excellence):** the federation primitives, Team Vault, ChatOps, admin console, and org-level policy engine in this phase are the multipliers for Phase 7's service catalog, DORA metrics, feature-flag, and shared knowledge graph features. Phase 6 ships independently of Phase 7 — but when both are present, the `@nimbus excellence` ChatOps shortcut, embedded DORA panels in the admin console, and federated synchronisation of the Phase 7 knowledge graph + automation library all light up.
 
+#### Delivery Slices
+
+Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on; its full design lives in [`docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`](superpowers/specs/2026-06-04-phase6-federation-core-design.md). Each slice gets its own spec → plan → implementation cycle.
+
+| # | Slice | Depends on |
+|---|-------|-----------|
+| 1 | **Federation Core** — E2EE peer pairing, mDNS discovery, consent-scoped federated query primitive, shared scoped namespaces, expertise routing, protocol-layer RBAC, audit integration, invariant I17 | Phase 4 E2EE LAN + audit chain |
+| 2 | Team Vault + Multi-user/Quorum HITL | 1 |
+| 3 | Identity — SSO/OIDC/SAML + SCIM | 1 |
+| 4 | Org Policy Engine + Admin Console + Observability | 1 |
+| 5 | ChatOps (Slack/Teams bot, HITL-via-chat) | 1, 2 |
+| 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) | 1 |
+| 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) | 2, 3 |
+| 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing |
+| 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent |
+
+Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; Slice 9 is independent. Each slice maps to the feature subsections below as follows:
+
+- **Slice 1** ↔ "Federated Query Consent (foundational)" + the federation/namespace/discovery/conflict-detection parts of "Shared Infrastructure"
+- **Slice 2** ↔ "Shared Infrastructure" (Team Vault, Quorum HITL) + "Identity & Access" (Multi-user HITL)
+- **Slice 3** ↔ "Identity & Access" (SSO/OIDC/SAML, SCIM, role-based access control)
+- **Slice 4** ↔ "Shared Workflows & Policy" (org-level policy engine + enforcement) + "Admin & Observability"
+- **Slice 5** ↔ "ChatOps"
+- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight)
+- **Slice 7** ↔ "Data Warehouses & BI (SSO-gated)"
+- **Slice 8** ↔ "Share & Virality Primitives"
+- **Slice 9** ↔ "Deferred from Phase 5"
+
 #### Dependencies
 
 - Phase 4 encrypted LAN remote access (E2EE channel foundation for Nimbus-to-Nimbus)
