@@ -16,7 +16,7 @@
     "test:coverage:lan": "bun test --coverage src/ipc/lan-crypto.test.ts src/ipc/lan-pairing.test.ts src/ipc/lan-rate-limit.test.ts src/ipc/lan-rpc.test.ts src/ipc/lan-server.test.ts"
   },
   "dependencies": {
-    "@mastra/core": "^1.32.1",
+    "@mastra/core": "^1.40.0",
     "@mastra/mcp": "^1.8.0",
     "@nimbus-dev/sdk": "workspace:*",
     "@noble/hashes": "^2.2.0",

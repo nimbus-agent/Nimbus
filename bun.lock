@@ -73,7 +73,7 @@
       "name": "@nimbus/gateway",
       "version": "0.1.0",
       "dependencies": {
-        "@mastra/core": "^1.32.1",
+        "@mastra/core": "^1.40.0",
         "@mastra/mcp": "^1.8.0",
         "@nimbus-dev/sdk": "workspace:*",
         "@noble/hashes": "^2.2.0",
