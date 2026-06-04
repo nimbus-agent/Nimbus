@@ -113,7 +113,7 @@ Genuinely greenfield: **mDNS discovery** and **scoped index namespaces**.
 - **`packages/gateway/src/federation/expertise.ts`** — relevance scoring that returns a coarse **rank** only (`high|medium|low|none`); asserts zero item content in the response shape.
 - **`packages/gateway/src/federation/discovery.ts`** — defines a `DiscoveryProvider` interface (so tests inject a mock; §8) with an mDNS implementation advertising/browsing `_nimbus._tcp`. Degrades to manual peer-address entry when mDNS is unavailable. Discovery never implies trust — pairing still requires mutual approval.
 - **`packages/gateway/src/ipc/federation-rpc.ts`** — the `federation.*` JSON-RPC dispatcher (mirrors `agents-rpc.ts`).
-- **`packages/gateway/src/index/federation-vNN-sql.ts`** — migration adding namespace/grant tables + audit federation-context column (§6). `NN` = next free migration number at implementation time (V31+; confirm against `index/` runner).
+- **`packages/gateway/src/index/federation-v33-sql.ts`** — migration adding namespace/grant tables + audit federation-context column (§6). **V33** is the next free migration number (highest existing is `git-blame-line-v32`; confirmed against `index/` runner 2026-06-04).
 - **CLI** (`packages/cli`): `nimbus team discover`, `nimbus team pair <peer>`, `nimbus team namespace publish|grant|revoke`, `nimbus team query <namespace> "<q>"`, `nimbus team who-knows "<q>"`.
 
 ### 4.4 Key architectural decision: read-only answering
@@ -161,7 +161,7 @@ When a query targets a namespace where the asking peer's grant has `standing_con
 
 ---
 
-## 6. Data Model (migration `federation-vNN-sql.ts`)
+## 6. Data Model (migration `federation-v33-sql.ts`)
 
 Append-only, per the migration rules. New tables:
 
@@ -216,9 +216,12 @@ Per the project's testing philosophy:
 
 Resolved in this revision (post-review): **revocation** is now *live-checked per query* (immediate; §5 criterion 4), **consent timeout/granularity** is defined (§4.6), the **audit field** is a dedicated `federation_json` column (§6), and **discovery testing** is DI-based with real mDNS isolated to one skippable E2E (§8).
 
-Remaining:
+Resolved during planning kickoff (2026-06-04):
 
-1. **mDNS dependency** — does the `DiscoveryProvider` mDNS implementation need a third-party lib (and the SDK/`shared/` dep constraints that implies), or is a minimal first-party responder viable? Affects the dep-safety pre-flight. (The DI interface in §4.3/§8 makes this swappable, so it doesn't block the rest of the slice.)
-2. **Migration number** — confirm the next free `V<N>` against the `index/` runner at implementation time.
-3. **`consent_timeout_seconds` default** — 30 s is the proposed default; confirm against real LAN round-trip + human-response latency during implementation.
-4. **Scope of "this session"** — this spec + the §2 roadmap edits are the immediate deliverable. Building Slice 1's code is a separate future plan unless explicitly kicked off.
+1. **mDNS dependency** — **Resolved: use a maintained third-party mDNS/DNS-SD library** (candidate `bonjour-service` or `multicast-dns`) added to the **gateway** package for `_nimbus._tcp` advertise/browse, kept behind the `DiscoveryProvider` interface (§4.3/§8). The gateway is not under the SDK/`shared/` dep-free constraint, so a runtime dep is acceptable; it must pass the dep-safety pre-flight (`nimbus-commands`). Real broadcast stays isolated to the single skippable mDNS E2E (§8).
+2. **Migration number** — **Resolved: V33** (highest existing is `git-blame-line-v32`; confirmed against `index/` runner).
+3. **Scope of "this session"** — **Building Slice 1 is now kicked off.** Scope decision: a **single implementation plan covering all of Slice 1** (vs. sub-slicing), executed in phased steps. This spec is the design of record for that plan.
+
+Remaining (confirm during implementation):
+
+4. **`consent_timeout_seconds` default** — 30 s is the proposed default; confirm against real LAN round-trip + human-response latency during implementation.
