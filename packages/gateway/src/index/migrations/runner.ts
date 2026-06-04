@@ -31,6 +31,7 @@ import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
+import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
@@ -358,6 +359,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     31,
     "extension_dependency table + reverse-dep index (T2 PR 4)",
     V31_EXTENSION_DEPENDENCY_SQL,
+  ),
+  simpleStep(
+    31,
+    32,
+    "git_blame_line table (security scan v2 blame attribution)",
+    V32_GIT_BLAME_LINE_SQL,
   ),
 ];
 
