@@ -178,7 +178,7 @@ function helpText(): string {
     "Options:",
     "  --json                Emit the raw JSON result",
     "  --service <name>      Scan only the named connector's items",
-    "  --fail-on-finding     Exit 1 when any non-muted finding remains (for CI)",
+    "  --fail-on-finding     Exit 1 if a non-muted finding remains (for CI)",
     "  --extended            Also run the low-confidence pattern tier",
     "                        WARNING: --extended with --fail-on-finding in CI needs a",
     "                        well-maintained [security.allowlist] to avoid flaky builds.",
