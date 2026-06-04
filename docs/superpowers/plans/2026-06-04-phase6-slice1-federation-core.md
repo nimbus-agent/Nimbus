@@ -610,6 +610,10 @@ export class NamespaceStore {
   publish(name: string, filters: readonly NamespaceFilter[], nowMs = Date.now()): NamespaceDefinition {
     const id = namespaceIdFor(name);
     this.db.transaction(() => {
+      // UPSERT: re-publishing the same name must NOT abort on the unique constraint — it should
+      // refresh the filter set below. `namespace_id` is derived from `name`, so the conflicting
+      // row's name already equals excluded.name; the SET is an intentional no-op that merely
+      // turns the INSERT into an idempotent upsert so the filter DELETE+INSERT can proceed.
       dbRun(
         this.db,
         `INSERT INTO federation_namespaces (namespace_id, name, owner_self, created_at)
@@ -783,31 +787,33 @@ test("invalidateNamespace clears every peer's decision for a namespace", () => {
 Create `packages/gateway/src/federation/consent-cache.ts`:
 
 ```typescript
-function key(peerId: string, namespace: string): string {
-  return `${peerId} ${namespace}`;
-}
-
-/** In-memory, process-lifetime consent decisions for non-standing grants. Never persisted. */
+/**
+ * In-memory, process-lifetime consent decisions for non-standing grants. Never persisted.
+ * Nested map (namespace -> peerId -> decision): no string delimiter, so zero collision risk
+ * between a peerId and a namespace (review #2), and invalidateNamespace is O(1).
+ */
 export class SessionConsentCache {
-  private readonly decisions = new Map<string, boolean>();
+  private readonly byNamespace = new Map<string, Map<string, boolean>>();
 
   get(peerId: string, namespace: string): boolean | undefined {
-    return this.decisions.get(key(peerId, namespace));
+    return this.byNamespace.get(namespace)?.get(peerId);
   }
 
   set(peerId: string, namespace: string, approved: boolean): void {
-    this.decisions.set(key(peerId, namespace), approved);
+    let inner = this.byNamespace.get(namespace);
+    if (inner === undefined) {
+      inner = new Map<string, boolean>();
+      this.byNamespace.set(namespace, inner);
+    }
+    inner.set(peerId, approved);
   }
 
   invalidate(peerId: string, namespace: string): void {
-    this.decisions.delete(key(peerId, namespace));
+    this.byNamespace.get(namespace)?.delete(peerId);
   }
 
   invalidateNamespace(namespace: string): void {
-    const suffix = ` ${namespace}`;
-    for (const k of this.decisions.keys()) {
-      if (k.endsWith(suffix)) this.decisions.delete(k);
-    }
+    this.byNamespace.delete(namespace);
   }
 }
 ```
@@ -949,7 +955,9 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
 }
 ```
 
-> The mDNS record parsing/serialization is the only fiddly part — implement it test-first against the chosen lib's record shapes in a follow-up commit, behind the real-broadcast E2E (Task 14). The interface + in-memory provider are what the rest of Slice 1 binds to, so they unblock everything.
+> **The skeleton must compile and behave safely now (review #5).** `start`/`advertise` resolve to no-ops and `list()` returns `[...this.seen.values(), ...this.manual]` (i.e. an empty array until records arrive) — never `undefined`, never a reject. The mDNS record parsing/serialization is the only fiddly part — implement it test-first against the chosen lib's record shapes in a follow-up commit, behind the real-broadcast E2E (Task 15). The interface + in-memory provider are what the rest of Slice 1 binds to, so they unblock everything.
+>
+> **No-`any` constraint (non-negotiable #7).** If the chosen lib ships no types (or `any`-typed ones), do NOT let `any` leak: declare a minimal local interface for the slice of the lib you use (e.g. `interface MdnsSocket { on(ev: "response", cb: (p: unknown) => void): void; query(q: unknown): void; destroy(): void }`) and type the import through it, narrowing every record field from `unknown`. Add a one-line `// @ts-expect-error untyped dep` only if the import itself is untyped, with the typed wrapper immediately below.
 
 - [ ] **Step 5: Run unit tests — PASS, typecheck, commit**
 
@@ -1024,6 +1032,22 @@ test("listPeers reflects persisted peers", () => {
   pairing.approveInboundPair(req);
   expect(pairing.listPeers().length).toBe(1);
 });
+
+test("initiatePair persists an outbound peer using the injected handshake", async () => {
+  const peerKey = generateBoxKeypair().publicKey;
+  const fakeHandshake = async () => peerKey; // stand-in for the real LAN handshake
+  const pairing = new PeerPairing(index, fakeHandshake);
+  const peerId = await pairing.initiatePair("192.168.1.20", 7475, "PAIRCODE000000000000");
+  const row = index.getLanPeerByPubkey(peerKey);
+  expect(row?.peer_id).toBe(peerId);
+  expect(row?.direction).toBe("outbound");
+  expect(row?.write_allowed).toBe(0);
+});
+
+test("initiatePair throws when no handshake is wired", async () => {
+  const pairing = new PeerPairing(index); // no handshake injected
+  await expect(pairing.initiatePair("1.2.3.4", 7475, "x")).rejects.toThrow("not wired");
+});
 ```
 
 - [ ] **Step 2: Run — expect FAIL.** `bun test packages/gateway/src/federation/peer-pairing.test.ts`
@@ -1042,6 +1066,19 @@ export interface InboundPairRequest {
   readonly displayName?: string;
 }
 
+/**
+ * Performs the outbound LAN pair handshake against a responder and returns the responder's box
+ * public key on accept. Injected (DI) so `initiatePair` is unit-testable with a fake, and the
+ * real socket body is implemented once against the wire protocol proven in
+ * `ipc/lan-server-handshake.test.ts` (send a framed JSON `{ kind: "pair", client_pubkey:
+ * <base64>, pairing_code }`, read the accept frame, return the peer pubkey). See review #1.
+ */
+export type OutboundPairHandshake = (
+  host: string,
+  port: number,
+  code: string,
+) => Promise<Uint8Array>;
+
 /** Deterministic peer id from the pubkey (first 16 hex of the key). */
 function peerIdFor(pubkey: Uint8Array): string {
   let hex = "";
@@ -1055,7 +1092,33 @@ function peerIdFor(pubkey: Uint8Array): string {
  * (`write_allowed = 0`) — Slice 1 answering never needs write.
  */
 export class PeerPairing {
-  constructor(private readonly index: LocalIndex) {}
+  constructor(
+    private readonly index: LocalIndex,
+    /** Outbound handshake. Defaults to the real LAN-client implementation in production;
+     *  injected with a fake in unit tests. The default is wired in Task 15's E2E. */
+    private readonly handshake?: OutboundPairHandshake,
+  ) {}
+
+  /**
+   * Outbound (initiator) pairing: connect to a discovered peer, run the pair handshake, and on
+   * accept persist the peer row as direction 'outbound' (read-only — `write_allowed = 0`).
+   * Returns the new peerId. Throws if no handshake implementation is wired.
+   */
+  async initiatePair(host: string, port: number, code: string): Promise<string> {
+    if (this.handshake === undefined) {
+      throw new Error("federation: outbound pair handshake not wired");
+    }
+    const peerPubkey = await this.handshake(host, port, code);
+    const peerId = peerIdFor(peerPubkey);
+    this.index.addLanPeer({
+      peerId,
+      peerPubkey,
+      direction: "outbound",
+      hostIp: host,
+      hostPort: port,
+    });
+    return peerId;
+  }
 
   beginInboundPair(req: InboundPairRequest): InboundPairRequest {
     // Staging is intentionally a no-op holder; approval is the structural gate.
@@ -1493,8 +1556,10 @@ git commit -m "feat(federation): query gate — scoped, consented, audited answe
 - Create: `packages/gateway/src/ipc/federation-rpc.test.ts`
 - Modify: `packages/gateway/src/ipc/lan-rpc.ts`
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts`
+- Modify: `packages/gateway/src/ipc/server/options.ts` (flat federation option fields)
+- Modify: the gateway boot path that builds `CreateIpcServerOptions` (construct + start the `DiscoveryProvider` + `PeerPairing`, load `[federation]` config)
 
-This wires the module into JSON-RPC. **Critical security point:** `checkLanMethodAllowed` is a *blocklist* — by default `federation.namespace.publish` etc. would be answerable over the wire. We must explicitly forbid every management method over LAN and admit ONLY `federation.query` + `federation.expertise`.
+This wires the module into JSON-RPC. It also serves the local management methods (`federation.discover`, `federation.pair`, `federation.peers`) the CLI (Task 13) and Tauri allowlist (Task 14) call — without these handlers those commands would return "method not found" (review #1). **Critical security point:** `checkLanMethodAllowed` is a *blocklist* — by default `federation.namespace.publish` etc. would be answerable over the wire. We must explicitly forbid every management method over LAN and admit ONLY `federation.query` + `federation.expertise`.
 
 - [ ] **Step 1: Forbid federation management methods over LAN (failing test first)**
 
@@ -1572,25 +1637,44 @@ Create `packages/gateway/src/ipc/federation-rpc.test.ts`:
 ```typescript
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
+import { PeerPairing } from "../federation/peer-pairing.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { dispatchFederationRpc } from "./federation-rpc.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
 
 let db: Database;
+let index: LocalIndex;
 let notes: Array<{ method: string; params: unknown }>;
 function ctx(): FederationRpcContext {
   return {
     db,
     consentTimeoutMs: 1000,
     notify: (method, params) => notes.push({ method, params }),
+    discovery: new InMemoryDiscoveryProvider([
+      { instanceName: "bob", host: "10.0.0.2", port: 7475 },
+    ]),
+    pairing: new PeerPairing(index),
   };
 }
 beforeEach(() => {
   db = new Database(":memory:");
   runIndexedSchemaMigrations(db);
+  index = new LocalIndex(db); // adapt to the real constructor
   notes = [];
 });
 afterEach(() => db.close());
+
+test("federation.discover lists provider peers; federation.peers lists paired peers", async () => {
+  const disc = await dispatchFederationRpc("federation.discover", {}, ctx());
+  expect(disc.kind).toBe("hit");
+  if (disc.kind === "hit") {
+    expect((disc.value as { peers: unknown[] }).peers.length).toBe(1);
+  }
+  const peers = await dispatchFederationRpc("federation.peers", {}, ctx());
+  expect(peers.kind).toBe("hit");
+});
 
 test("namespace.publish then peers/query round-trip", async () => {
   const pub = await dispatchFederationRpc(
@@ -1628,8 +1712,10 @@ Create `packages/gateway/src/ipc/federation-rpc.ts` (mirrors `agents-rpc.ts`):
 ```typescript
 import type { Database } from "bun:sqlite";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
+import type { DiscoveryProvider } from "../federation/discovery.ts";
 import { scoreExpertise } from "../federation/expertise.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
+import type { PeerPairing } from "../federation/peer-pairing.ts";
 import { answerFederatedQuery } from "../federation/query-gate.ts";
 import type { ConsentDecision, ConsentPrompter } from "../federation/query-gate.ts";
 import type {
@@ -1653,6 +1739,10 @@ export interface FederationRpcContext {
   readonly db: Database;
   readonly consentTimeoutMs: number;
   readonly notify: (method: string, params: unknown) => void;
+  /** Long-lived discovery provider (mDNS in prod, in-memory in tests). Backs federation.discover. */
+  readonly discovery: DiscoveryProvider;
+  /** Long-lived pairing service (wraps LocalIndex + outbound handshake). Backs pair/peers. */
+  readonly pairing: PeerPairing;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -1702,6 +1792,21 @@ export async function dispatchFederationRpc(
 ): Promise<RpcMissOrHit> {
   const store = new NamespaceStore(ctx.db);
   return dispatchByMethod<FederationRpcContext>(method, params, ctx, {
+    "federation.discover": async () => {
+      const peers = await ctx.discovery.list();
+      return { peers };
+    },
+    "federation.peers": () => {
+      return { peers: ctx.pairing.listPeers() };
+    },
+    "federation.pair": async (p) => {
+      const rec = asRecord(p);
+      const host = requireString(rec, "host");
+      const code = requireString(rec, "code");
+      const port = typeof rec["port"] === "number" ? rec["port"] : 7475;
+      const peerId = await ctx.pairing.initiatePair(host, port, code);
+      return { peerId };
+    },
     "federation.namespace.publish": (p) => {
       const rec = asRecord(p);
       const name = requireString(rec, "name");
@@ -1769,16 +1874,36 @@ import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts"
 
 Add a `tryDispatchFederationRpc(ctx, method, params)` wrapper mirroring the sibling `tryDispatch*Rpc` functions (use the existing `phase4RpcSkipped` sentinel + the `ctx.options.localIndex.getDatabase()` / `ctx.broadcastNotification` wiring seen in `tryDispatchAgentsRpc`):
 
+First add three **flat** optional fields to `CreateIpcServerOptions` in `packages/gateway/src/ipc/server/options.ts` (the type is a flat option bag — there is **no** nested config object, so do NOT introduce `options.federation.*`; review #4):
+
+```typescript
+  // ... existing optional fields ...
+  federationConsentTimeoutSeconds?: number;   // from loadNimbusFederationFromConfigDir(configDir).consentTimeoutSeconds
+  federationDiscovery?: DiscoveryProvider;     // started once at gateway boot
+  federationPairing?: PeerPairing;             // constructed once from localIndex (+ outbound handshake)
+```
+
+At gateway startup (the boot path that constructs `CreateIpcServerOptions`), load `loadNimbusFederationFromConfigDir(configDir)` and set `federationConsentTimeoutSeconds` to its `consentTimeoutSeconds`; construct the `DiscoveryProvider` (mDNS or in-memory per `mdnsEnabled`) and a `PeerPairing(localIndex, outboundHandshake)` and assign them. Then the wrapper:
+
 ```typescript
 async function tryDispatchFederationRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
 ): Promise<unknown> {
+  const index = ctx.options.localIndex;
+  const discovery = ctx.options.federationDiscovery;
+  const pairing = ctx.options.federationPairing;
+  // Federation requires the index + its long-lived services; skip cleanly if not configured.
+  if (index === undefined || discovery === undefined || pairing === undefined) {
+    return phase4RpcSkipped;
+  }
   const out = await dispatchFederationRpc(method, params, {
-    db: ctx.options.localIndex.getDatabase(),
+    db: index.getDatabase(),
     consentTimeoutMs: (ctx.options.federationConsentTimeoutSeconds ?? 30) * 1000,
     notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    discovery,
+    pairing,
   });
   if (out.kind === "miss") return phase4RpcSkipped;
   // mirror the sibling error→JSON-RPC mapping used for FederationRpcError
@@ -1793,7 +1918,7 @@ Then chain it inside `tryDispatchPhase4Rpc`, after `tryDispatchSecurityRpc` and 
   if (federationOutcome !== phase4RpcSkipped) return federationOutcome;
 ```
 
-Plumb `federationConsentTimeoutSeconds` from the loaded `[federation]` config (Task 11) into `CreateIpcServerOptions` (follow how `configDir` / LAN options are threaded). If that plumbing is large, default to 30s at the dispatcher for this slice and wire the config override in the same commit as Task 11.
+> **Config plumbing (review #4):** `federationConsentTimeoutSeconds` is a **flat** field on `CreateIpcServerOptions` (added above), set at boot from `loadNimbusFederationFromConfigDir(configDir).consentTimeoutSeconds` (Task 11). It is **not** `ctx.options.federation?.consentTimeoutSeconds` — `CreateIpcServerOptions` has no nested config objects (see `options.ts`). The `?? 30` keeps the dispatcher correct even before the boot wiring lands.
 
 - [ ] **Step 8: Run all the IPC tests — PASS, typecheck, commit**
 
@@ -1802,7 +1927,7 @@ bun test packages/gateway/src/ipc/federation-rpc.test.ts packages/gateway/src/ip
 bun run typecheck
 git add packages/gateway/src/ipc/federation-rpc.ts packages/gateway/src/ipc/federation-rpc.test.ts \
         packages/gateway/src/ipc/lan-rpc.ts packages/gateway/src/ipc/lan-rpc.test.ts \
-        packages/gateway/src/ipc/server/dispatchers.ts
+        packages/gateway/src/ipc/server/dispatchers.ts packages/gateway/src/ipc/server/options.ts
 git commit -m "feat(gateway): federation IPC dispatcher + LAN allowlist (admit query/expertise only)"
 ```
 
@@ -2443,7 +2568,26 @@ gh pr create --title "feat: Phase 6 Slice 1 — Federation Core" --body "<summar
 **Open items deferred to implementation (flagged, not placeholders):**
 - The full owner-consent UI round-trip (notification → approve → unblock) — `makePrompter` seam in Task 10; structural gate already complete + tested. Consult `nimbus-tauri-allowlist`.
 - mDNS record parse/serialize detail — Task 6 skeleton; real broadcast behind the Task 15 skippable E2E.
+- The outbound pair-handshake socket body (`OutboundPairHandshake` in Task 7) — DI seam; `initiatePair` is unit-tested with a fake, and the real body is implemented once against the wire protocol proven in `ipc/lan-server-handshake.test.ts` (no production outbound LAN client exists yet).
 - Exact integration-test harness path — confirm via `nimbus-testing` (Task 15).
 - A handful of "confirm the real exported name" notes (runner entry point, `LocalIndex` constructor, `verifyAuditChain` return shape, `IPCClient` teardown) — verify against the file before writing the import; each is named precisely.
+
+---
+
+## Review Responses (2026-06-04)
+
+Disposition of the five points in `2026-06-04-phase6-slice1-federation-core-review.md`. Each was verified against the codebase, not taken on faith.
+
+1. **Missing `federation.discover` / `federation.pair` / `federation.peers` handlers — FIXED (real gap).** The CLI + Tauri allowlist call these but the dispatcher only had 5 of 8 methods → "method not found". Added all three handlers (Task 10): `discover`→`DiscoveryProvider.list()`, `peers`→`PeerPairing.listPeers()`, `pair`→`PeerPairing.initiatePair()`. Extended `FederationRpcContext` with `discovery` + `pairing`, threaded both through flat `CreateIpcServerOptions` fields, and added `initiatePair` to `PeerPairing` (Task 7) behind an injectable `OutboundPairHandshake` seam (the outbound socket body is the one genuinely net-new piece — no production outbound LAN client exists today; verified via grep — so its wire body is deferred against the test-proven handshake, with `initiatePair` itself unit-tested using a fake).
+
+2. **`SessionConsentCache` delimiter collision — FIXED.** Switched from a `peerId + " " + namespace` string key to a nested `Map<namespace, Map<peerId, boolean>>` (Task 5). Eliminates any delimiter-collision risk entirely and makes `invalidateNamespace` O(1). Public API unchanged, so the Step 1 tests pass verbatim.
+
+3. **`publish` no-op UPSERT clarity — FIXED.** Added a comment (Task 4) explaining the `ON CONFLICT … DO UPDATE SET name = excluded.name` is an intentional no-op that turns the INSERT into an idempotent upsert so the in-transaction filter DELETE+INSERT can proceed on re-publish.
+
+4. **`consentTimeoutMs` config plumbing — FIXED, with a correction to the suggestion.** The reviewer correctly flagged the inconsistency but suggested `ctx.options.federation?.consentTimeoutSeconds` (nested). I verified `CreateIpcServerOptions` (`ipc/server/options.ts`) is a **flat** option bag with no nested config objects — every existing option (`configDir`, `lanServer`, …) is flat. So the correct fix is a flat `federationConsentTimeoutSeconds?: number`, set at boot from `loadNimbusFederationFromConfigDir(configDir).consentTimeoutSeconds`. Task 10 Step 7 now spells out the flat fields + boot wiring and notes explicitly why it is not nested.
+
+5. **mDNS skeleton must build/typecheck safely — FIXED.** Strengthened the Task 6 note: `start`/`advertise` are no-ops, `list()` returns an empty array (never `undefined`/reject) until records arrive, and — because of non-negotiable #7 (no `any`) — if the chosen lib is untyped, declare a minimal local interface for the slice used and narrow every record field from `unknown`, rather than letting `any` leak.
+
+**Net effect:** Tasks 4, 5, 6, 7, 10 changed; no acceptance criterion moved; one new deferred seam (outbound pair handshake) added to the flagged list above.
 
 **Type consistency check:** `FederatedItem` keys are identical in `types.ts`, the `query-gate.ts` mapper, and the Task 9 leak-proof assertion (`id, modifiedAt, service, snippet, title, type`). `FederationDecision` values match between `types.ts`, `federation-audit.ts`, and the `query-gate.ts` `audit()` calls. `ConsentPrompter`/`ConsentDecision` names match between `query-gate.ts` and `federation-rpc.ts`.
