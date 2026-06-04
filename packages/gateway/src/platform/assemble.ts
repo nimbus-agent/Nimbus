@@ -8,6 +8,7 @@ import {
 } from "../automation/watcher-engine.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
+  loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
@@ -35,6 +36,7 @@ import {
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
+import { startToolCallLogRetention } from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
@@ -354,6 +356,12 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     : syncBase;
 
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
+
+  const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
+  const toolCallLogRetention = startToolCallLogRetention(db, {
+    retentionDays: auditCfg.toolCallLogRetentionDays,
+  });
+  sidecarStops.push(() => toolCallLogRetention.stop());
 
   const { syncScheduler, connectorMesh } = await createSchedulerWithMesh(
     paths,
