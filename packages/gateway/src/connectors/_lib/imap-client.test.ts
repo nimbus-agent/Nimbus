@@ -283,4 +283,21 @@ describe("fetchImapMessages", () => {
     expect(out).toEqual({ ok: false, error: "boom" });
     expect(loggedOut).toBe(true);
   });
+
+  test("without a factory, the default ImapFlow client is used and a refused connection → { ok: false }", async () => {
+    // Exercises `defaultImapClientFactory` (the real ImapFlow construction) and
+    // the connect-failure path. Port 1 on loopback refuses immediately.
+    const out = await fetchImapMessages(
+      {
+        host: "127.0.0.1",
+        port: 1,
+        username: "u",
+        password: "p",
+        mailbox: "INBOX",
+        secure: false,
+      } as unknown as ImapConnectionConfig,
+      1,
+    );
+    expect(out.ok).toBe(false);
+  });
 });

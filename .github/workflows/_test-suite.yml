@@ -222,6 +222,13 @@ jobs:
             fi
           done
 
+          # `mcp-connectors/shared` is a relative-import folder (no package.json)
+          # so the loop above skips it, yet it has its own *.test.ts. Collect its
+          # coverage explicitly — `bun test --coverage` emits an lcov from a
+          # package.json-less dir too — so shared utilities (bodystructure,
+          # mail-core, mcp-tool-kit, run-cli-json, search-filter) are measured.
+          run_pkg "packages/mcp-connectors/shared"
+
           # `scripts/` is not a workspace package (no package.json). Its tests
           # ran without coverage attribution before this fix and still do —
           # the structure-audit/regen-slo helpers covered there don't appear

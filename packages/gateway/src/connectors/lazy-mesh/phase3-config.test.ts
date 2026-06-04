@@ -11,6 +11,7 @@ import {
   phase3AddDagsterMcp,
   phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
+  phase3AddDataprofileMcp,
   phase3AddDbtMcp,
   phase3AddDependencytrackMcp,
   phase3AddElasticsearchMcp,
@@ -18,11 +19,13 @@ import {
   phase3AddFluxMcp,
   phase3AddGcpMcp,
   phase3AddGrafanaMcp,
+  phase3AddGreatExpectationsMcp,
   phase3AddGreenhouseMcp,
   phase3AddIacMcp,
   phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLeverMcp,
+  phase3AddLocaldbMcp,
   phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
@@ -38,6 +41,7 @@ import {
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
   phase3AddStackoverflowMcp,
+  phase3AddStorybookMcp,
   phase3AddStripeMcp,
   phase3AddSupersetMcp,
   phase3AddVercelMcp,
@@ -1915,5 +1919,64 @@ describe("buildPhase3Servers", () => {
       "sagemaker",
       "vertex_ai",
     ]);
+  });
+});
+
+describe("dir-manifest connectors (addDirManifestServer)", () => {
+  test("phase3AddLocaldbMcp noops when scripts_dir is unset", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLocaldbMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["localdb"]).toBeUndefined();
+  });
+
+  test("phase3AddLocaldbMcp spawns sandboxed with the dir added to filesystem.read", async () => {
+    const vault = createMockVault();
+    await vault.set("localdb.scripts_dir", "/data/sql");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLocaldbMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["localdb"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["LOCALDB_SCRIPTS_DIR"]).toBe("/data/sql");
+    expect(readManifest(spec).permissions.filesystem.read).toContain("/data/sql");
+  });
+
+  test("phase3AddDataprofileMcp spawns with the configured dir", async () => {
+    const vault = createMockVault();
+    await vault.set("dataprofile.dir", "/data/profiles");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddDataprofileMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["dataprofile"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["DATAPROFILE_DIR"]).toBe("/data/profiles");
+    expect(readManifest(spec).permissions.filesystem.read).toContain("/data/profiles");
+  });
+
+  test("phase3AddStorybookMcp spawns with the configured dir", async () => {
+    const vault = createMockVault();
+    await vault.set("storybook.dir", "/app/storybook-static");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddStorybookMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["storybook"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["STORYBOOK_DIR"]).toBe("/app/storybook-static");
+  });
+
+  test("phase3AddGreatExpectationsMcp uses the hyphenated script + results_dir", async () => {
+    const vault = createMockVault();
+    await vault.set("great_expectations.results_dir", "/gx/uncommitted");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddGreatExpectationsMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["great_expectations"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["GREAT_EXPECTATIONS_RESULTS_DIR"]).toBe("/gx/uncommitted");
   });
 });
