@@ -1,5 +1,15 @@
 # Chromatic connector + close out Wave B — design
 
+> **⚠️ SUPERSEDED — NOT BUILT (2026-06-04).** During plan-out, the repo's own roadmap
+> (`docs/roadmap.md`) was found to already document, dated 2026-06-03, that Chromatic's
+> token-auth public GraphQL API exposes only `Project.lastBuild` (a single build) with **no
+> paginated builds-list field** reachable from a stable headless token — which invalidates
+> this design's per-project `builds(first: N)` walk. The decision was to **drop Chromatic and
+> close Wave B docs-only** (App Center cancelled — upstream retired; Chromatic deferred). No
+> connector code was written. This document is retained as design-decision history only; the
+> App Center cancellation reasoning below still stands. See the 2026-06-04 entry in
+> `docs/CHANGELOG.md`.
+
 **Date:** 2026-06-04
 **Phase:** 5 (Extended Surface), Wave B
 **Branch:** `dev/asafgolombek/chromatic-connector`
