@@ -881,7 +881,7 @@ nimbus profile delete personal
 Show which LLM provider and model is selected for each task type, whether the provider
 is reachable, and why it was chosen.
 
-```
+```text
 nimbus llm status [--json]
 ```
 
@@ -893,7 +893,7 @@ nimbus llm status [--json]
 | Provider  | `ollama`, `llamacpp`, or `remote` |
 | Model     | Model name from config (`llm.local_model` or `llm.remote_model`) |
 | Available | Whether the provider responded to an availability check |
-| Reason    | `prefer-local`, `prefer-remote`, `air-gap`, or `default` |
+| Reason    | `prefer-local`, `prefer-remote`, `air-gap`, `no-local-provider`, or `no-remote-provider` |
 
 **Flags:**
 
@@ -902,7 +902,8 @@ nimbus llm status [--json]
 | `--json` | Emit machine-readable JSON instead of the table |
 
 **Example — table:**
-```
+
+```text
 Task type      Provider   Model                    Available  Reason
 -------------------------------------------------------------------------------
 classification ollama     llama3.2                 yes        prefer-local
@@ -912,6 +913,7 @@ agent_step     —          —                        no         unavailable
 ```
 
 **Example — JSON:**
+
 ```json
 {
   "classification": {
