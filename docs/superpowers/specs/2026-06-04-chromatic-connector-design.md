@@ -32,6 +32,20 @@ synthetic fixtures (no live cloud calls in CI); the real schema is confirmed man
 token during implementation. The query constants in `src/graphql.ts` are the single place to
 adjust if a field name differs from the assumed schema below.
 
+The mapping layer degrades gracefully on a field rename by construction: every field is read
+through `asRecord` / `stringField` (the codemagic template pattern), so a renamed field
+becomes `null` / absent in the item metadata rather than throwing a `TypeError`, and a row
+that loses its `id` returns `null` from the mapper and is skipped by the sync loop. No
+additional per-field validation is needed beyond this pattern.
+
+**GraphQL-specific error handling (a real REST→GraphQL difference):** GraphQL returns query
+errors in a `{ data, errors: [...] }` envelope with **HTTP 200**, so `connectorFetch` (which
+branches only on `res.ok`) would classify an errored response as `kind: "ok"` with
+`data: null`. To avoid silently treating a schema/permission error as "zero results", the
+extract step in `chromatic-sync.ts` checks for a top-level `errors` array and, when present,
+logs a warning (`ctx.logger.warn`) and treats the pass as empty (cursor unchanged, retried
+next interval). The MCP `src/graphql.ts` helper does the same on the tool path.
+
 ## Scope
 
 ### Two indexed item types
@@ -79,10 +93,14 @@ adjust if a field name differs from the assumed schema below.
 #### Mapping
 
 - **Project:** `external_id` = project id; title = project name; URL = project `webUrl` if present.
-- **Build:** `external_id` = build id; title = `<project name?> #<number> (<status>)`;
+- **Build:** `external_id` = `<projectId>/<buildId>`; title = `<project name?> #<number> (<status>)`;
   canonical URL = build `webUrl`; metadata
-  `{ project_id, number, branch, commit, status, started_at (epoch-ms) }`.
-  `startedAt` (ISO-8601) parsed to epoch-ms via a defensive helper.
+  `{ project_id, number, branch, commit, status, started_at (epoch-ms | null) }`.
+  `startedAt` (ISO-8601) parsed to epoch-ms via the defensive `parseIsoMs` helper, which
+  returns `null` for a missing / empty / unparseable value. A `PENDING` build with no
+  `startedAt` therefore stores `started_at: null` and falls back to `modifiedAt = startedAt ??
+  syncedAt` (Chromatic builds have no `finishedAt` in the assumed schema). No mapping error
+  for queued builds.
 
 ### Wiring landed in the same change (wiring/typecheck coupling)
 
@@ -90,6 +108,14 @@ adjust if a field name differs from the assumed schema below.
   (`"uses a personal access token sent as a Bearer header (connector.auth chromatic)"`).
 - `connector-secrets-manifest.ts` — `chromatic: ["chromatic.token"]`.
 - `sync/rate-limiter.ts` — add `"chromatic"` to the union + `chromatic: { requestsPerMinute: 30, burstSize: 10 }`.
+  30 RPM is sufficient because the sync issues **O(projects)** requests, not O(builds): one
+  `viewer { projects }` query plus one recent-builds page (≤ 50 builds, newest first) per
+  project. There is **no deep 30-day pagination** — `initialSyncDepthDays: 30` is the
+  freshness intent of the single page, not a multi-page walk. A 429 surfaces as
+  `connectorFetch` → `http_error` → empty-this-pass (cursor unchanged), recovered on the next
+  10-min interval; no custom backoff is added (matching every other connector). The 30/10
+  ceiling is deliberately conservative against Chromatic's undocumented real limit; it is not
+  raised speculatively.
 - `lazy-mesh/first-party-manifests.ts` — `chromatic: baseManifest("com.nimbus.chromatic", { network: ["index.chromatic.com"], ... })`, and bump the count list in `first-party-manifests.test.ts`.
 - `assemble-sync-registrations.ts` — register `createChromaticSyncable`.
 - `lazy-mesh/phase3-config.ts` — connector spawn entry.
@@ -143,6 +169,29 @@ interpret it.
 - No live Chromatic API calls in CI — fixtures only.
 - Pre-flight: `bun run preflight` (full gate set, incl. `audit:package-readmes` and the
   first-party-manifest count assertion, neither of which is in `test:ci`).
+
+### Manual validation checklist (one-time, with a real `CHROMATIC_TOKEN`)
+
+Done once during implementation since the API is undocumented and unmocked in CI:
+
+1. Confirm the GraphQL field names in the assumed schema (esp. `viewer { projects }` vs
+   `viewer { accounts { projects } }`, and the `builds` connection shape). Adjust
+   `src/graphql.ts` only.
+2. Confirm `index.chromatic.com` is the live host and the GraphQL endpoint does **not**
+   redirect to another subdomain — the sandbox network allowlist (`network:
+   ["index.chromatic.com"]`) would block a cross-host redirect, surfacing as a fetch failure.
+   If a redirect/tenant host exists, widen the allowlist accordingly.
+3. Confirm Bearer auth works with a personal access token and what scope it needs to read
+   projects + builds.
+
+## Review dispositions (`…-design-review.md`, 2026-06-04)
+
+| # | Review point | Disposition |
+| --- | --- | --- |
+| 1 | Defensive GraphQL parsing vs field renames | **Fixed in spec.** Affirmed the `asRecord`/`stringField` template already degrades renames to `null` (no `TypeError`); **added** GraphQL `{ errors[] }`-with-HTTP-200 handling, which is the real REST→GraphQL gap. |
+| 2 | 30 RPM sufficiency / 429 backoff / pagination | **Deferred (clarified).** Requests are O(projects) with one recent page each — not a 30-day multi-page walk — so 30 RPM is ample; 429 degrades gracefully (empty pass, retried next interval), matching all connectors. RPM not raised speculatively. |
+| 3 | `startedAt` nullability for `PENDING` builds | **Fixed in spec.** Made the `parseIsoMs` → `null` fallback and `modifiedAt = startedAt ?? syncedAt` explicit in the mapping section. |
+| 4 | Allowlist redirects / tenant subdomains | **Deferred to manual validation.** Added as checklist item 2; `index.chromatic.com` is correct for the documented endpoint, confirmed live during implementation. |
 
 ## Out of scope (YAGNI)
 
