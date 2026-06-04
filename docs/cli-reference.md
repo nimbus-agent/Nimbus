@@ -388,9 +388,26 @@ The Gateway must be running (`nimbus start`). Tools are read-only:
 Local credential-hygiene scan over already-indexed content.
 
 ```bash
-nimbus security scan         # pretty table
-nimbus security scan --json  # frozen JSON envelope (machine-readable)
+nimbus security scan                       # pretty table
+nimbus security scan --json                # frozen JSON envelope (machine-readable)
+nimbus security scan --service filesystem  # scope to one connector
+nimbus security scan --fail-on-finding     # exit 1 if any non-muted finding remains (CI)
+nimbus security scan --extended            # also run the low-confidence pattern tier
 ```
+
+**Flags.** `--service <name>` scopes the scan to one connector. `--fail-on-finding`
+makes the command exit `1` when any non-muted finding remains (for CI gates).
+`--extended` additionally runs the low-confidence pattern tier
+(`[security].extended_patterns`) — combine it with `--fail-on-finding` only with a
+well-maintained `[[security.allowlist]]`, or CI will flag false positives.
+
+**Muting false positives.** Each finding prints a `fingerprint`; add it under
+`[[security.allowlist]]` in `nimbus.toml` to mute it on future scans.
+
+**Blame attribution.** For findings in git-tracked source files, the scan reports
+the commit, author, and date that introduced the line — read from the local index
+(no `git` call at scan time). If a finding shows no attribution, run
+`nimbus connector sync filesystem` to populate the blame data, then re-scan.
 
 **What it does.** Iterates every `item` row from connectors at `summary` or
 `full` depth, applies a curated set of high-precision regex patterns
