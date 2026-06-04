@@ -586,6 +586,52 @@ export function loadNimbusExtensionsFromConfigDir(configDir: string): NimbusExte
   return loadNimbusExtensionsFromPath(join(configDir, "nimbus.toml"));
 }
 
+export type NimbusAuditToml = {
+  // 0 disables pruning (rows kept forever). > 0 = delete tool_call_log rows
+  // older than N days on the daily retention job.
+  toolCallLogRetentionDays: number;
+};
+
+export const DEFAULT_NIMBUS_AUDIT_TOML: NimbusAuditToml = {
+  toolCallLogRetentionDays: 90,
+};
+
+function parseToolCallLogRetentionDays(valRaw: string): number {
+  const n = Number(valRaw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new TypeError(`[audit].tool_call_log_retention_days must be an integer (got: ${valRaw})`);
+  }
+  if (n < 0 || n > 36_500) {
+    throw new Error(`[audit].tool_call_log_retention_days must be in [0, 36500] (got: ${n})`);
+  }
+  return n;
+}
+
+function parseNimbusTomlAuditSection(source: string): Partial<NimbusAuditToml> {
+  const out: Partial<NimbusAuditToml> = {};
+  forEachSectionEntry(source, "[audit]", (key, valRaw) => {
+    if (key === "tool_call_log_retention_days") {
+      out.toolCallLogRetentionDays = parseToolCallLogRetentionDays(valRaw);
+    }
+  });
+  return out;
+}
+
+export function parseNimbusAuditToml(
+  raw: string,
+  defaults: NimbusAuditToml = DEFAULT_NIMBUS_AUDIT_TOML,
+): NimbusAuditToml {
+  return { ...defaults, ...parseNimbusTomlAuditSection(raw) };
+}
+
+export function loadNimbusAuditFromPath(tomlPath: string): NimbusAuditToml {
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_AUDIT_TOML, parseNimbusAuditToml);
+}
+
+export function loadNimbusAuditFromConfigDir(configDir: string): NimbusAuditToml {
+  return loadNimbusAuditFromPath(join(configDir, "nimbus.toml"));
+}
+
 export type NimbusUserToml = {
   mePersonId?: string;
 };
