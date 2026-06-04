@@ -11,14 +11,17 @@ export type AuditRowHashInput = {
   hitlStatus: string;
   actionJson: string;
   timestamp: number;
+  federationJson?: string | null;
 };
 
 export function computeAuditRowHash(input: AuditRowHashInput): string {
   const encoder = new TextEncoder();
-  const payload = encoder.encode(
-    `${input.prevHash}|${input.actionType}|${input.hitlStatus}|${input.actionJson}|${String(input.timestamp)}`,
-  );
-  return bytesToHex(blake3(payload));
+  const base = `${input.prevHash}|${input.actionType}|${input.hitlStatus}|${input.actionJson}|${String(input.timestamp)}`;
+  const withFed =
+    typeof input.federationJson === "string" && input.federationJson.length > 0
+      ? `${base}|${input.federationJson}`
+      : base;
+  return bytesToHex(blake3(encoder.encode(withFed)));
 }
 
 export interface AppendAuditEntryFields {
@@ -27,6 +30,7 @@ export interface AppendAuditEntryFields {
   readonly actionJson: string;
   readonly timestamp: number;
   readonly sessionId?: string;
+  readonly federationJson?: string | null;
 }
 
 export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): void {
@@ -41,11 +45,12 @@ export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): 
     hitlStatus: fields.hitlStatus,
     actionJson: fields.actionJson,
     timestamp: fields.timestamp,
+    federationJson: fields.federationJson ?? null,
   });
   dbRun(
     db,
-    `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, session_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, session_id, federation_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       fields.actionType,
       fields.hitlStatus,
@@ -54,6 +59,7 @@ export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): 
       rowHash,
       prevHash,
       fields.sessionId ?? null,
+      fields.federationJson ?? null,
     ],
   );
 }

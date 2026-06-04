@@ -16,7 +16,7 @@ export type AuditVerifyResult = {
 export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): AuditVerifyResult {
   const rows = idx.rawDb
     .query(
-      `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash
+      `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, federation_json
        FROM audit_log WHERE id > ? ORDER BY id ASC`,
     )
     .all(Math.max(0, Math.floor(opts.fromId))) as Array<{
@@ -27,6 +27,7 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
     timestamp: number;
     row_hash: string;
     prev_hash: string;
+    federation_json: string | null;
   }>;
 
   let prev =
@@ -57,6 +58,7 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
       hitlStatus: r.hitl_status,
       actionJson: r.action_json,
       timestamp: r.timestamp,
+      federationJson: r.federation_json ?? null,
     });
     if (expected !== r.row_hash) {
       return {
