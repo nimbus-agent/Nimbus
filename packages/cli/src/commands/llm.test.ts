@@ -58,6 +58,25 @@ describe("runLlmStatusImpl", () => {
     expect(out.stdout).toContain("unavailable");
   });
 
+  it("notes the fallback provider when the preferred provider is unavailable", async () => {
+    const ipc = createMockIpcClient([
+      {
+        decisions: {
+          ...MOCK_DECISIONS,
+          classification: {
+            providerId: "ollama",
+            modelName: "llama3.2",
+            isAvailable: false,
+            reason: "prefer-local",
+            fallback: { providerId: "remote", modelName: "claude-sonnet-4-6" },
+          },
+        },
+      },
+    ]);
+    await runLlmStatusImpl(ipc.client, { json: false });
+    expect(out.stdout).toContain("falls back to remote/claude-sonnet-4-6");
+  });
+
   it("emits JSON when --json flag is set", async () => {
     const ipc = createMockIpcClient([{ decisions: MOCK_DECISIONS }]);
     await runLlmStatusImpl(ipc.client, { json: true });
@@ -105,9 +124,8 @@ describe("runLlm (dispatcher)", () => {
     expect(out.stdout).toContain("nimbus llm");
   });
 
-  it("prints error for unknown subcommand", async () => {
-    await runLlm(["bogus"]);
-    expect(out.stderr).toContain("Unknown llm subcommand: bogus");
+  it("throws for unknown subcommand", async () => {
+    await expect(runLlm(["bogus"])).rejects.toThrow("Unknown llm subcommand: bogus");
   });
 
   it("runs status when gateway is running", async () => {
@@ -121,10 +139,9 @@ describe("runLlm (dispatcher)", () => {
     expect(out.stdout).toContain("classification");
   });
 
-  it("prints error when gateway is not running", async () => {
+  it("throws when gateway is not running", async () => {
     setFixture({});
-    await runLlm(["status"]);
-    expect(out.stderr).toContain("Gateway: not running");
+    await expect(runLlm(["status"])).rejects.toThrow("Gateway is not running");
   });
 
   it("passes --json to status", async () => {

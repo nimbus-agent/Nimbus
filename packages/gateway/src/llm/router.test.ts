@@ -284,6 +284,64 @@ describe("LlmRouter.getStatus", () => {
       "summarisation",
     ]);
   });
+
+  test("reports the fallback generate() would use when the preferred provider is down", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", false));
+    router.registerProvider(makeFakeProvider("remote", true));
+    const status = await router.getStatus();
+    expect(status.classification?.providerId).toBe("ollama");
+    expect(status.classification?.isAvailable).toBe(false);
+    expect(status.classification?.fallback).toEqual({
+      providerId: "remote",
+      modelName: DEFAULT_CONFIG.remoteModel,
+    });
+  });
+
+  test("no fallback when the preferred provider is available", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    router.registerProvider(makeFakeProvider("remote", true));
+    const status = await router.getStatus();
+    expect(status.classification?.isAvailable).toBe(true);
+    expect(status.classification?.fallback).toBeUndefined();
+  });
+
+  test("no fallback when the preferred is down and nothing else is available", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", false));
+    const status = await router.getStatus();
+    expect(status.classification?.isAvailable).toBe(false);
+    expect(status.classification?.fallback).toBeUndefined();
+  });
+
+  test("reason is local-below-reasoning-floor when local exists but misses the floor", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("ollama", true), { parameterCount: 1 });
+    router.registerProvider(makeFakeProvider("remote", true));
+    const status = await router.getStatus();
+    // reasoning carries a capability floor; ollama (1B < minReasoningParams) is skipped → remote.
+    expect(status.reasoning?.providerId).toBe("remote");
+    expect(status.reasoning?.reason).toBe("local-below-reasoning-floor");
+    // classification has no floor, so ollama is still the local pick there.
+    expect(status.classification?.providerId).toBe("ollama");
+    expect(status.classification?.reason).toBe("prefer-local");
+  });
+
+  test("probes each provider's availability at most once across all four tasks", async () => {
+    let ollamaProbes = 0;
+    const ollama: LlmProvider = {
+      ...makeFakeProvider("ollama", true),
+      isAvailable: async () => {
+        ollamaProbes += 1;
+        return true;
+      },
+    };
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(ollama);
+    await router.getStatus();
+    expect(ollamaProbes).toBe(1);
+  });
 });
 
 describe("midTruncate", () => {

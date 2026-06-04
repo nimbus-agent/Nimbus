@@ -1,6 +1,5 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 type LlmTaskType = "classification" | "reasoning" | "summarisation" | "agent_step";
 
@@ -9,6 +8,7 @@ type TaskDecision = {
   modelName: string;
   isAvailable: boolean;
   reason: string;
+  fallback?: { providerId: string; modelName: string };
 };
 
 type RouterStatusResponse = {
@@ -50,12 +50,15 @@ function printStatusTable(decisions: Record<LlmTaskType, TaskDecision | undefine
           "unavailable",
       );
     } else {
+      const reason = d.fallback
+        ? `${d.reason} (falls back to ${d.fallback.providerId}/${d.fallback.modelName})`
+        : d.reason;
       console.log(
         pad(task, COL_WIDTHS.task) +
           pad(d.providerId, COL_WIDTHS.provider) +
           pad(d.modelName || "—", COL_WIDTHS.model) +
           pad(d.isAvailable ? "yes" : "no", COL_WIDTHS.available) +
-          d.reason,
+          reason,
       );
     }
   }
@@ -92,23 +95,9 @@ export async function runLlm(args: string[]): Promise<void> {
 
   if (subcommand === "status") {
     const json = rest.includes("--json");
-    const paths = getCliPlatformPaths();
-    const state = await readGatewayState(paths);
-    if (state === undefined) {
-      console.error("Gateway: not running (no state file)");
-      process.exitCode = 1;
-      return;
-    }
-    const client = new IPCClient(state.socketPath);
-    try {
-      await client.connect();
-      await runLlmStatusImpl(client, { json });
-    } finally {
-      await client.disconnect().catch(() => {});
-    }
+    await withGatewayIpc((c) => runLlmStatusImpl(c, { json }));
     return;
   }
 
-  console.error(`Unknown llm subcommand: ${subcommand}`);
-  process.exitCode = 1;
+  throw new Error(`Unknown llm subcommand: ${subcommand}`);
 }

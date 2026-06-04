@@ -893,7 +893,11 @@ nimbus llm status [--json]
 | Provider  | `ollama`, `llamacpp`, or `remote` |
 | Model     | Model name from config (`llm.local_model` or `llm.remote_model`) |
 | Available | Whether the provider responded to an availability check |
-| Reason    | `prefer-local`, `prefer-remote`, `air-gap`, `no-local-provider`, or `no-remote-provider` |
+| Reason    | `prefer-local`, `prefer-remote`, `air-gap`, `no-local-provider`, `no-remote-provider`, or `local-below-reasoning-floor` |
+
+The Provider/Model/Reason columns describe the **preferred** provider for each task (the
+configured intent). When that provider is unavailable, the Reason cell also names the provider
+the router would actually fall back to at generation time — `… (falls back to remote/<model>)`.
 
 **Flags:**
 
@@ -907,7 +911,7 @@ nimbus llm status [--json]
 Task type      Provider   Model                    Available  Reason
 -------------------------------------------------------------------------------
 classification ollama     llama3.2                 yes        prefer-local
-reasoning      ollama     llama3.2                 yes        prefer-local
+reasoning      ollama     llama3.2                 no         prefer-local (falls back to remote/claude-sonnet-4-6)
 summarisation  ollama     llama3.2                 yes        prefer-local
 agent_step     —          —                        no         unavailable
 ```
@@ -921,9 +925,19 @@ agent_step     —          —                        no         unavailable
     "modelName": "llama3.2",
     "isAvailable": true,
     "reason": "prefer-local"
+  },
+  "reasoning": {
+    "providerId": "ollama",
+    "modelName": "llama3.2",
+    "isAvailable": false,
+    "reason": "prefer-local",
+    "fallback": { "providerId": "remote", "modelName": "claude-sonnet-4-6" }
   }
 }
 ```
+
+The `fallback` field is present only when the preferred provider is unavailable but another
+provider can serve the task.
 
 ---
 
