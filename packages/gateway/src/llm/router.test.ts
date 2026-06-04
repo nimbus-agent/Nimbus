@@ -210,16 +210,23 @@ describe("LlmRouter.getStatus", () => {
     expect(status.classification?.modelName).toBe(DEFAULT_CONFIG.remoteModel);
   });
 
-  test("isAvailable is true when provider is selected", async () => {
+  test("isAvailable is true when provider is reachable", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerProvider(makeFakeProvider("ollama", true));
     const status = await router.getStatus();
     expect(status.agent_step?.isAvailable).toBe(true);
   });
 
-  test("returns undefined for task when no provider available", async () => {
+  test("isAvailable is false when preferred provider is registered but unreachable", async () => {
     const router = new LlmRouter(DEFAULT_CONFIG);
     router.registerProvider(makeFakeProvider("ollama", false));
+    const status = await router.getStatus();
+    expect(status.classification?.isAvailable).toBe(false);
+    expect(status.classification?.providerId).toBe("ollama");
+  });
+
+  test("returns undefined for task when no provider is registered at all", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
     const status = await router.getStatus();
     expect(status.classification).toBeUndefined();
   });
@@ -249,6 +256,21 @@ describe("LlmRouter.getStatus", () => {
     router.registerProvider(makeFakeProvider("ollama", true));
     const status = await router.getStatus();
     expect(status.classification?.reason).toBe("air-gap");
+  });
+
+  test("reason is no-local-provider when preferLocal=true but only remote is registered", async () => {
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    router.registerProvider(makeFakeProvider("remote", true));
+    const status = await router.getStatus();
+    expect(status.classification?.reason).toBe("no-local-provider");
+  });
+
+  test("reason is no-remote-provider when preferLocal=false but only local is registered", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    const status = await router.getStatus();
+    expect(status.classification?.reason).toBe("no-remote-provider");
   });
 
   test("returns all four task types", async () => {

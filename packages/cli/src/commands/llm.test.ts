@@ -87,11 +87,11 @@ describe("runLlmStatusImpl", () => {
 describe("runLlm (dispatcher)", () => {
   beforeEach(() => {
     out.reset();
-    process.exitCode = undefined;
+    process.exitCode = 0;
   });
   afterEach(() => {
     clearFixture();
-    process.exitCode = undefined;
+    process.exitCode = 0;
   });
 
   it("prints help when no subcommand is given", async () => {
