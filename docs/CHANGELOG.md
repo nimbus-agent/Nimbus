@@ -8,7 +8,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Phase 5 — The Extended Surface (🔵 Active)
 
-Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B (partial) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending).
+Core sequencing: T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. Status: T3 ✅ · Wave A ✅ · T4 ✅ · T6 ✅ · T2 ✅ · Wave B ✅ (closed 2026-06-04 — App Center cancelled, Chromatic deferred) · Tier-1 ✅ · Tier-2 ✅ · Tier-3 ✅ (Tier-4 email + Tier-5 local pending).
+
+### 2026-06-04
+
+- **Phase 5 Wave B closed** ✅ — Wave B (mobile + frontend engineering connector breadth) is complete with **four** read-only connectors shipped: **Bitrise**, **Codemagic**, **TestFlight**, and **Firebase App Distribution**. The two remaining candidates are not built, after evaluating each against its live API:
+  - **Microsoft App Center — cancelled.** Visual Studio App Center was retired by Microsoft on **2025-03-31**: sign-in and API calls (`api.appcenter.ms`) stopped that day, and the residual Analytics & Diagnostics surface expires **2026-06-30**. A read connector would be dead code; no drop-in successor exposes the same token-auth read API. Revisit only if a successor with a clean token-auth read API emerges. (<https://learn.microsoft.com/en-us/appcenter/retirement>)
+  - **Chromatic — deferred (unchanged).** Chromatic's token-auth public GraphQL API (`index.chromatic.com/graphql`, `createAppToken` → bearer) exposes only `Project.lastBuild` (a single build); there is **no paginated builds-list field** reachable from a stable headless token. Enumerating build history needs undocumented internal `app.*` roots or an OAuth-session JWT (not a headless token), so a meaningful build-observability connector is not feasible today. Revisit if Chromatic publishes a listable builds API.
+
+  Neither gates Phase 5. Docs-only change — no connector code, no manifest/secret/rate-limiter entries.
 
 ### 2026-06-03
 

@@ -51,7 +51,15 @@ function shouldUseLocalRouter(p: RunConversationalAgentParams): boolean {
   return p.llmRouter.prefersLocal();
 }
 
-type PromptArg = string | Array<{ role: "user" | "assistant" | "tool"; content: string }>;
+// @mastra/core ≥1.40 types agent.generate/stream via MessageListInput, which only
+// accepts properly-discriminated model messages (a `tool` role can no longer carry
+// plain string content). Prior turns are only ever persisted as user/assistant
+// (see persistConversationTurn), so we narrow to those two roles here.
+type ConversationMessage =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string };
+
+type PromptArg = string | ConversationMessage[];
 
 /** Build the prompt text, optionally prefixed with a relational-traversal nudge and local context. */
 function buildPromptText(trimmed: string, localContext: string | undefined): string {
@@ -82,7 +90,12 @@ function buildPromptArg(
     return promptWithContext;
   }
   return [
-    ...priorTurns.map((t) => ({ role: t.role, content: t.text })),
+    ...priorTurns.map(
+      (t): ConversationMessage =>
+        t.role === "assistant"
+          ? { role: "assistant", content: t.text }
+          : { role: "user", content: t.text },
+    ),
     { role: "user" as const, content: promptWithContext },
   ];
 }
