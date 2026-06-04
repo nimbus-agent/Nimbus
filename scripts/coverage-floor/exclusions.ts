@@ -71,6 +71,13 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // `imap-email-mapping.ts`, which ARE covered.
   { kind: "exact", path: "packages/gateway/src/connectors/_lib/imap-client.ts" },
 
+  // MdnsDiscoveryProvider is a thin bonjour-service socket shell (advertise/browse
+  // _nimbus._tcp) with no injection seam — real multicast can't run on CI, so it's
+  // exercised only by the skippable Task 15 mDNS E2E. The testable discovery logic
+  // (DiscoveryProvider interface + InMemoryDiscoveryProvider) lives in discovery.ts,
+  // which IS covered.
+  { kind: "exact", path: "packages/gateway/src/federation/mdns-discovery-provider.ts" },
+
   { kind: "pathRegex", re: /^packages\/mcp-connectors\/[^/]+\/src\/server\.ts$/ },
   // Each MCP connector's `src/tools.ts` is the same connect-shell class as its
   // `server.ts`: thin `reg(name, desc, schema, handler)` registrations whose
