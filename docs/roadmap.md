@@ -704,74 +704,6 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 ## Planned
 
-### Phase 5.5 — Marketplace Registry
-
-**Goal:** Turn the connector + extension ecosystem into a discoverable, trustworthy, quality-scored economy without yet operating a payment processor. The v0.1.1 trigger "5 seed community extensions in the registry" is elevated to a full phase because the marketplace is the **ecosystem flywheel** that compounds every other piece of work — once authors are publishing, every new SaaS the world produces becomes a Nimbus connector within days. Payments wait until install base is large enough to support author rent (post-Phase 12); this phase ships the **registry, the quality layer, and the trust layer** only.
-
-> **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Phase 9 ships Wave 5 *before* Phase 5.5 closes, so the marketplace UI has real quality data from day one.
->
-> **Composes with the S — Standards track:** registry-published extensions carry a Signed Connector Manifest produced by the same `I16` Ed25519 chain the Gateway already enforces at install + startup. The published manifest schema is the reference implementation for the SCM artifact in the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track.
-
-#### Dependencies
-
-- Phase 3 Extension Registry v1 (manifest + sandbox + signing infra)
-- Phase 4 Plugin API v1 frozen + `@nimbus-dev/sdk` v1.0.0 published
-- Phase 4 `I16` extension-signature verification (publisher Ed25519 chain)
-- Phase 9 Wave 5 — `nimbus eval` framework + quality-score persistence (gating the marketplace UI's quality column)
-- Phase 4 auto-update daemon (`extension.checkForUpdates` / `extension.update` IPC; CLI-only)
-
-#### Hosted Registry
-
-- [ ] **`registry.nimbus-agent.dev`** — public read-only HTTP registry serving signed extension manifests + tarball URLs + version metadata. **No user accounts on the registry itself.** Authors publish via a one-shot signed POST whose payload is verified against a public-key chain rooted in the publisher Ed25519 key — the same chain `I16` already enforces at install. Registry is stateless against authorship: the keys are the identity. Static-hosting-friendly (S3 / R2 / GCS + CDN); no relational database; manifest index materialized from the on-disk tarball tree on each publish.
-- [ ] **Author publishing flow** — `nimbus extension publish` CLI: signs the manifest with the publisher key, uploads the tarball + manifest to the registry, returns a registry URL. Idempotent against a `<id>@<version>` tuple; refuses to overwrite an existing version (`I16` chain integrity). Pre-publish runs `nimbus eval` against the extension's declared eval suite (see Phase 9 Wave 5) and persists the score into the manifest.
-- [ ] **`nimbus extension search <query>` + `nimbus extension info <id>`** — CLI surfaces over the registry's manifest index. Output includes install count, quality score, last-published date, publisher verification status, declared `permissions`, and the cryptographic fingerprint of the signing key.
-- [ ] **Manifest browser at `nimbus-agent.dev/extensions`** — static-site catalog with search + filter by category / connector kind / quality threshold / verified-publisher only. Renders per-extension pages with the README, sandbox manifest, eval-suite summary, and the install command. No JavaScript on the read path; static HTML so it's archivable + auditable.
-
-#### Private & Composable Registries
-
-- [ ] **"Bring your own registry"** — `nimbus config set registry.url https://internal.acme.corp/nimbus` points the CLI + Tauri UI at a private registry (queried instead of, or alongside, the public `registry.nimbus-agent.dev`). Each private registry carries its **own publisher trust root**: a per-registry baked pubkey set so an enterprise's internal extensions verify against the `I16` chain without trusting public keys. A static S3 / R2 / GCS bucket is a valid registry — no relational DB required. The on-ramp for enterprises whose internal connectors (bespoke deploy engines, internal HR systems) can never be published to the public internet; bridges the gap before the Phase 12 enterprise features.
-- [ ] **Extension dependencies** — extensions declare dependencies on other extensions in `nimbus.extension.json` (e.g. `"dependencies": {"github-connector": ">=1.2.0"}`); `nimbus extension install` resolves and installs the tree. **Scoped conservatively for v1:** exact-pin + explicit-trust only — every transitive dependency is surfaced and must be trusted by the user before install; no naive semver auto-resolution, because a silently-pulled transitive dependency would expand the sandbox/signature trust surface past what the user chose. Lets a community "Code Review Agent" depend on the official GitHub connector instead of reinventing auth + indexing.
-- [ ] **Starter packs (curated collections)** — publish + install named bundles: `nimbus extension install @nimbus/frontend-pack` pulls Vercel + Figma + Sentry + a React-expert agent in one step. A pack is a thin meta-manifest listing member extensions; install reuses the dependency resolver above. Turns first-run from a scavenger hunt into a one-click persona setup (DevSecOps / Frontend / PM).
-
-#### Quality Layer
-
-- [ ] **Quality score surfaced in marketplace UI** — both the CLI (`nimbus extension info`) and the Tauri Marketplace panel (already shipped in Phase 4 WS5-D) read the per-extension quality score persisted at publish time via Phase 9 Wave 5. Score is a numeric 0–100 plus a per-rubric breakdown (mandatory tool surface, HITL declaration correctness, item id format compliance, contract-test pass rate, eval-suite pass rate against the author's own evals).
-- [ ] **Cross-author eval cross-check** — the registry-side publish hook re-runs the contract tests in a fresh Bun sandbox before accepting the publish, so an author cannot ship a passing score they couldn't reproduce. The contract-test suite from `@nimbus-dev/sdk` is the canonical source.
-- [ ] **Quality regression watcher** — when an installed extension publishes a new version with a quality score lower than the installed version's score by more than a configurable threshold (default 10 points), the auto-update daemon **does not** apply the update; it queues an HITL prompt with the regression breakdown. Composes with the Phase 4 auto-update daemon.
-- [ ] **Permission transparency at install** — surface the exact sandbox permissions an extension declares (network hosts, filesystem read/write scope), read from the `I15` `ServerSpec` the sandbox already enforces, prominently on the registry page, in `nimbus extension info`, and in the interactive install confirmation. The Quality Score **auto-penalizes over-requesting**: an extension that declares `*` network or full-filesystem-write but is categorically a formatter is marked down, nudging authors toward least privilege. Composes with the Phase 9 Wave 5 eval framework that computes the score.
-- [ ] **`nimbus extension audit`** — observes what an installed extension *actually* calls at runtime (outbound hosts hit, filesystem paths touched) versus what its manifest *declared*, and flags drift (declared `*`, only ever contacted `api.github.com`). Feeds observed evidence back into the permission-transparency penalty so the Quality Score reflects real behaviour, not self-reported manifests. Built on the `I15` sandbox + the egress-ledger primitive (Phase 8 Wave 4).
-- [ ] **Connector liveness + golden-transcript replay** — connectors rot when the upstream SaaS API changes. The publish hook records a connector's MCP responses against a fixture once (the "golden transcript"); a periodic registry-side probe replays them to detect API drift **with no live call against any user's data**, and surfaces a "works as of `<date>`" freshness badge in the catalog. A connector whose golden transcript no longer reproduces is flagged stale.
-
-#### Trust Layer (Verified Publishers)
-
-- [ ] **Verified Publisher tier** — annual subscription ($X/yr; pricing decided when the tier opens, not on this commit) that funds the signing + verification operation. Subscribers get: (a) a checkmark next to their publisher name in CLI + marketplace, (b) their publisher key pre-shipped in the gateway's trust store so end users do not have to fetch it on first install, (c) KYC + abuse-monitoring SLA. Verification is on the **publisher**, not on individual extension quality.
-- [ ] **Pre-shipped trust store + first-install offline path** — gateway ships with a baked-in JSON manifest of verified-publisher pubkeys. Installing a verified-publisher extension from a tarball with no network call still verifies against this baked store. Refreshed on each gateway release; an out-of-band update mechanism is **explicitly out of scope** for this phase (the gateway release cadence is the rotation cadence; emergency publisher-key revocation is a Phase 12 enterprise concern).
-- [ ] **Publisher key rotation procedure** — documented one-time rotation flow: publisher signs a "next pubkey" announcement with the *current* key; the next gateway release picks it up; subsequent installs verify against the new key. No automated revocation list (CRL) — too much infra for this phase.
-- [ ] **Abuse reporting + takedown** — `nimbus extension report <id>` posts a structured complaint to a maintainer inbox. Takedowns are a manual moderation action that removes the manifest from the registry index (the tarball is left in place under its content-addressed URL — anyone who explicitly trusts the content hash can still install). Logged in a public moderation ledger so takedowns are themselves auditable.
-- [ ] **Reproducible-build / source-provenance attestation** — the registry verifies that a published tarball was built from the claimed source commit (SLSA-style build provenance) and records the attestation alongside the `I16` Ed25519 signature. The signature proves *who* published; the attestation proves *what source* it was built from. Surfaced as a "provenance verified" badge; verifiable offline against the baked trust store like the signature chain itself.
-
-#### Author Onboarding
-
-- [ ] **`nimbus connector init --from-openapi <url-or-path>`** — pre-M6 author tool that scaffolds a connector skeleton from an OpenAPI / AsyncAPI spec. Generates the manifest, the sync handler, the mapping function, and a contract test against the spec. Authors customize from there. Does **not** make the agent self-extending (that's still M6); it makes a human author 10× faster.
-- [ ] **20-extension grant program** — $1k/connector marketing spend to seed the registry with 20 community-authored extensions targeting categories the first-party set under-serves (e.g., niche vertical SaaS, regional SaaS, OSS tooling). Treated as marketing budget, not marketplace seed — authors keep the code AGPL or MIT under SDK terms; no Nimbus equity, no royalties.
-- [ ] **Extension Author Hub** — `nimbus-agent.dev/authors` static page consolidating: the SDK reference, the contract-test guide, the signing-keypair quickstart, the publishing workflow, the eval-suite authoring guide, the Verified Publisher application form, and the grant-program details.
-- [ ] **Author sponsorship** — a `funding` array in the extension manifest (GitHub Sponsors / Patreon / BuyMeACoffee / Stripe Payment Link); `nimbus extension sponsor <id>` opens the configured link and a "Sponsor Author" button appears on the registry page + Tauri Marketplace tile. Kickstarts the creator economy *before* the Marketplace v2 monetization (deferred to Phase 6) ships — zero payment infra on Nimbus's side, no tax, refund, or routing liability.
-- [ ] **`nimbus extension clone <id>`** — for any extension published under an open-source license, downloads the tarball, unpacks it locally, and registers it as a local development extension ready to edit. Reuses the existing dev-extension path (unsigned local code runs in the sandbox; signature verification is bypassed for local dev only). Makes "fork the community Code-Reviewer agent and tweak its system prompt for our C++ style guide" a one-command operation; leans into the open-source ethos.
-
-#### Acceptance Criteria
-
-- `registry.nimbus-agent.dev` is live and serves at least 30 distinct extensions (the 15 first-party Phase 5 connectors that migrate plus the 15 first-completed grant-program submissions) with valid signed manifests verifiable against the Phase 4 `I16` chain.
-- `nimbus extension publish` round-trips against the live registry: a new version of a test connector is published, becomes searchable, installs cleanly on a fresh gateway, and verifies the signature offline against the baked trust store.
-- At least 5 Verified Publishers (counted by distinct pubkeys, not extensions) are active and their keys are baked into the current gateway release's trust store; an installer of one of their extensions never sees a "publisher unknown" warning.
-- Phase 9 Wave 5 quality scores appear on every published extension's registry page and Tauri Marketplace tile; the score is reproducible by running `nimbus eval --extension <id>` locally and matches within rounding.
-- The quality-regression watcher fires on a controlled test: a v1.0.1 published with a deliberately worse eval-suite score does not auto-update an installed v1.0.0, and surfaces a structured HITL prompt with the per-rubric delta.
-- The abuse-reporting + takedown flow is exercised once against a deliberately-misbehaving test extension submitted by a maintainer; the takedown appears in the public moderation ledger within the agreed SLA.
-- Installing an extension that declares `*` network access surfaces an interactive over-request warning in both the CLI and Tauri install flow, and its registry Quality Score shows the least-privilege penalty.
-- `nimbus extension clone <id>` on an MIT/AGPL-licensed published extension round-trips to an editable local development extension that spawns in the sandbox without a signature error.
-- An extension installed from a configured private registry verifies its signature against that registry's own publisher trust root with no call to `registry.nimbus-agent.dev`.
-
----
-
 ### Phase 6 — Team
 
 **Goal:** Make Nimbus a collaborative layer for engineering teams — shared intelligence without surrendering local sovereignty.
@@ -1239,6 +1171,74 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 - Wave 6: `nimbus audit calibration` against a seeded session history (100 user corrections across 5 agents) produces a per-agent Brier score and renders a 2-D calibration scatter in the Tauri dashboard
 - Wave 6: the bias-detector diagnostic against a controlled fixture (seeded reviewer-recommendation history with a known skew) correctly identifies the gender / recency / seniority / coverage axis the skew is on, with no false positive on a balanced fixture
 - Wave 6: `nimbus audit refusals` lists every refusal of the seeded session with reason code and originating query; contesting a refusal (`--contest <refusal-id>`) opens the would-be tool call for the user to inspect
+
+---
+
+### Phase 9.5 — Marketplace Registry
+
+**Goal:** Turn the connector + extension ecosystem into a discoverable, trustworthy, quality-scored economy without yet operating a payment processor. The v0.1.1 trigger "5 seed community extensions in the registry" is elevated to a full phase because the marketplace is the **ecosystem flywheel** that compounds every other piece of work — once authors are publishing, every new SaaS the world produces becomes a Nimbus connector within days. Payments wait until install base is large enough to support author rent (post-Phase 12); this phase ships the **registry, the quality layer, and the trust layer** only.
+
+> **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Phase 9 ships Wave 5 *before* Phase 5.5 closes, so the marketplace UI has real quality data from day one.
+>
+> **Composes with the S — Standards track:** registry-published extensions carry a Signed Connector Manifest produced by the same `I16` Ed25519 chain the Gateway already enforces at install + startup. The published manifest schema is the reference implementation for the SCM artifact in the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track.
+
+#### Dependencies
+
+- Phase 3 Extension Registry v1 (manifest + sandbox + signing infra)
+- Phase 4 Plugin API v1 frozen + `@nimbus-dev/sdk` v1.0.0 published
+- Phase 4 `I16` extension-signature verification (publisher Ed25519 chain)
+- Phase 9 Wave 5 — `nimbus eval` framework + quality-score persistence (gating the marketplace UI's quality column)
+- Phase 4 auto-update daemon (`extension.checkForUpdates` / `extension.update` IPC; CLI-only)
+
+#### Hosted Registry
+
+- [ ] **`registry.nimbus-agent.dev`** — public read-only HTTP registry serving signed extension manifests + tarball URLs + version metadata. **No user accounts on the registry itself.** Authors publish via a one-shot signed POST whose payload is verified against a public-key chain rooted in the publisher Ed25519 key — the same chain `I16` already enforces at install. Registry is stateless against authorship: the keys are the identity. Static-hosting-friendly (S3 / R2 / GCS + CDN); no relational database; manifest index materialized from the on-disk tarball tree on each publish.
+- [ ] **Author publishing flow** — `nimbus extension publish` CLI: signs the manifest with the publisher key, uploads the tarball + manifest to the registry, returns a registry URL. Idempotent against a `<id>@<version>` tuple; refuses to overwrite an existing version (`I16` chain integrity). Pre-publish runs `nimbus eval` against the extension's declared eval suite (see Phase 9 Wave 5) and persists the score into the manifest.
+- [ ] **`nimbus extension search <query>` + `nimbus extension info <id>`** — CLI surfaces over the registry's manifest index. Output includes install count, quality score, last-published date, publisher verification status, declared `permissions`, and the cryptographic fingerprint of the signing key.
+- [ ] **Manifest browser at `nimbus-agent.dev/extensions`** — static-site catalog with search + filter by category / connector kind / quality threshold / verified-publisher only. Renders per-extension pages with the README, sandbox manifest, eval-suite summary, and the install command. No JavaScript on the read path; static HTML so it's archivable + auditable.
+
+#### Private & Composable Registries
+
+- [ ] **"Bring your own registry"** — `nimbus config set registry.url https://internal.acme.corp/nimbus` points the CLI + Tauri UI at a private registry (queried instead of, or alongside, the public `registry.nimbus-agent.dev`). Each private registry carries its **own publisher trust root**: a per-registry baked pubkey set so an enterprise's internal extensions verify against the `I16` chain without trusting public keys. A static S3 / R2 / GCS bucket is a valid registry — no relational DB required. The on-ramp for enterprises whose internal connectors (bespoke deploy engines, internal HR systems) can never be published to the public internet; bridges the gap before the Phase 12 enterprise features.
+- [ ] **Extension dependencies** — extensions declare dependencies on other extensions in `nimbus.extension.json` (e.g. `"dependencies": {"github-connector": ">=1.2.0"}`); `nimbus extension install` resolves and installs the tree. **Scoped conservatively for v1:** exact-pin + explicit-trust only — every transitive dependency is surfaced and must be trusted by the user before install; no naive semver auto-resolution, because a silently-pulled transitive dependency would expand the sandbox/signature trust surface past what the user chose. Lets a community "Code Review Agent" depend on the official GitHub connector instead of reinventing auth + indexing.
+- [ ] **Starter packs (curated collections)** — publish + install named bundles: `nimbus extension install @nimbus/frontend-pack` pulls Vercel + Figma + Sentry + a React-expert agent in one step. A pack is a thin meta-manifest listing member extensions; install reuses the dependency resolver above. Turns first-run from a scavenger hunt into a one-click persona setup (DevSecOps / Frontend / PM).
+
+#### Quality Layer
+
+- [ ] **Quality score surfaced in marketplace UI** — both the CLI (`nimbus extension info`) and the Tauri Marketplace panel (already shipped in Phase 4 WS5-D) read the per-extension quality score persisted at publish time via Phase 9 Wave 5. Score is a numeric 0–100 plus a per-rubric breakdown (mandatory tool surface, HITL declaration correctness, item id format compliance, contract-test pass rate, eval-suite pass rate against the author's own evals).
+- [ ] **Cross-author eval cross-check** — the registry-side publish hook re-runs the contract tests in a fresh Bun sandbox before accepting the publish, so an author cannot ship a passing score they couldn't reproduce. The contract-test suite from `@nimbus-dev/sdk` is the canonical source.
+- [ ] **Quality regression watcher** — when an installed extension publishes a new version with a quality score lower than the installed version's score by more than a configurable threshold (default 10 points), the auto-update daemon **does not** apply the update; it queues an HITL prompt with the regression breakdown. Composes with the Phase 4 auto-update daemon.
+- [ ] **Permission transparency at install** — surface the exact sandbox permissions an extension declares (network hosts, filesystem read/write scope), read from the `I15` `ServerSpec` the sandbox already enforces, prominently on the registry page, in `nimbus extension info`, and in the interactive install confirmation. The Quality Score **auto-penalizes over-requesting**: an extension that declares `*` network or full-filesystem-write but is categorically a formatter is marked down, nudging authors toward least privilege. Composes with the Phase 9 Wave 5 eval framework that computes the score.
+- [ ] **`nimbus extension audit`** — observes what an installed extension *actually* calls at runtime (outbound hosts hit, filesystem paths touched) versus what its manifest *declared*, and flags drift (declared `*`, only ever contacted `api.github.com`). Feeds observed evidence back into the permission-transparency penalty so the Quality Score reflects real behaviour, not self-reported manifests. Built on the `I15` sandbox + the egress-ledger primitive (Phase 8 Wave 4).
+- [ ] **Connector liveness + golden-transcript replay** — connectors rot when the upstream SaaS API changes. The publish hook records a connector's MCP responses against a fixture once (the "golden transcript"); a periodic registry-side probe replays them to detect API drift **with no live call against any user's data**, and surfaces a "works as of `<date>`" freshness badge in the catalog. A connector whose golden transcript no longer reproduces is flagged stale.
+
+#### Trust Layer (Verified Publishers)
+
+- [ ] **Verified Publisher tier** — annual subscription ($X/yr; pricing decided when the tier opens, not on this commit) that funds the signing + verification operation. Subscribers get: (a) a checkmark next to their publisher name in CLI + marketplace, (b) their publisher key pre-shipped in the gateway's trust store so end users do not have to fetch it on first install, (c) KYC + abuse-monitoring SLA. Verification is on the **publisher**, not on individual extension quality.
+- [ ] **Pre-shipped trust store + first-install offline path** — gateway ships with a baked-in JSON manifest of verified-publisher pubkeys. Installing a verified-publisher extension from a tarball with no network call still verifies against this baked store. Refreshed on each gateway release; an out-of-band update mechanism is **explicitly out of scope** for this phase (the gateway release cadence is the rotation cadence; emergency publisher-key revocation is a Phase 12 enterprise concern).
+- [ ] **Publisher key rotation procedure** — documented one-time rotation flow: publisher signs a "next pubkey" announcement with the *current* key; the next gateway release picks it up; subsequent installs verify against the new key. No automated revocation list (CRL) — too much infra for this phase.
+- [ ] **Abuse reporting + takedown** — `nimbus extension report <id>` posts a structured complaint to a maintainer inbox. Takedowns are a manual moderation action that removes the manifest from the registry index (the tarball is left in place under its content-addressed URL — anyone who explicitly trusts the content hash can still install). Logged in a public moderation ledger so takedowns are themselves auditable.
+- [ ] **Reproducible-build / source-provenance attestation** — the registry verifies that a published tarball was built from the claimed source commit (SLSA-style build provenance) and records the attestation alongside the `I16` Ed25519 signature. The signature proves *who* published; the attestation proves *what source* it was built from. Surfaced as a "provenance verified" badge; verifiable offline against the baked trust store like the signature chain itself.
+
+#### Author Onboarding
+
+- [ ] **`nimbus connector init --from-openapi <url-or-path>`** — pre-M6 author tool that scaffolds a connector skeleton from an OpenAPI / AsyncAPI spec. Generates the manifest, the sync handler, the mapping function, and a contract test against the spec. Authors customize from there. Does **not** make the agent self-extending (that's still M6); it makes a human author 10× faster.
+- [ ] **20-extension grant program** — $1k/connector marketing spend to seed the registry with 20 community-authored extensions targeting categories the first-party set under-serves (e.g., niche vertical SaaS, regional SaaS, OSS tooling). Treated as marketing budget, not marketplace seed — authors keep the code AGPL or MIT under SDK terms; no Nimbus equity, no royalties.
+- [ ] **Extension Author Hub** — `nimbus-agent.dev/authors` static page consolidating: the SDK reference, the contract-test guide, the signing-keypair quickstart, the publishing workflow, the eval-suite authoring guide, the Verified Publisher application form, and the grant-program details.
+- [ ] **Author sponsorship** — a `funding` array in the extension manifest (GitHub Sponsors / Patreon / BuyMeACoffee / Stripe Payment Link); `nimbus extension sponsor <id>` opens the configured link and a "Sponsor Author" button appears on the registry page + Tauri Marketplace tile. Kickstarts the creator economy *before* the Marketplace v2 monetization (deferred to Phase 6) ships — zero payment infra on Nimbus's side, no tax, refund, or routing liability.
+- [ ] **`nimbus extension clone <id>`** — for any extension published under an open-source license, downloads the tarball, unpacks it locally, and registers it as a local development extension ready to edit. Reuses the existing dev-extension path (unsigned local code runs in the sandbox; signature verification is bypassed for local dev only). Makes "fork the community Code-Reviewer agent and tweak its system prompt for our C++ style guide" a one-command operation; leans into the open-source ethos.
+
+#### Acceptance Criteria
+
+- `registry.nimbus-agent.dev` is live and serves at least 30 distinct extensions (the 15 first-party Phase 5 connectors that migrate plus the 15 first-completed grant-program submissions) with valid signed manifests verifiable against the Phase 4 `I16` chain.
+- `nimbus extension publish` round-trips against the live registry: a new version of a test connector is published, becomes searchable, installs cleanly on a fresh gateway, and verifies the signature offline against the baked trust store.
+- At least 5 Verified Publishers (counted by distinct pubkeys, not extensions) are active and their keys are baked into the current gateway release's trust store; an installer of one of their extensions never sees a "publisher unknown" warning.
+- Phase 9 Wave 5 quality scores appear on every published extension's registry page and Tauri Marketplace tile; the score is reproducible by running `nimbus eval --extension <id>` locally and matches within rounding.
+- The quality-regression watcher fires on a controlled test: a v1.0.1 published with a deliberately worse eval-suite score does not auto-update an installed v1.0.0, and surfaces a structured HITL prompt with the per-rubric delta.
+- The abuse-reporting + takedown flow is exercised once against a deliberately-misbehaving test extension submitted by a maintainer; the takedown appears in the public moderation ledger within the agreed SLA.
+- Installing an extension that declares `*` network access surfaces an interactive over-request warning in both the CLI and Tauri install flow, and its registry Quality Score shows the least-privilege penalty.
+- `nimbus extension clone <id>` on an MIT/AGPL-licensed published extension round-trips to an editable local development extension that spawns in the sandbox without a signature error.
+- An extension installed from a configured private registry verifies its signature against that registry's own publisher trust root with no call to `registry.nimbus-agent.dev`.
 
 ---
 
