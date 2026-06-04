@@ -174,12 +174,17 @@ export async function tryDispatchSecurityRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (method !== "security.scan" || ctx.options.localIndex === undefined) {
+  if (
+    (method !== "security.scan" && method !== "security.scanCancel") ||
+    ctx.options.localIndex === undefined
+  ) {
     return phase4RpcSkipped;
   }
   try {
     const out = await dispatchSecurityRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

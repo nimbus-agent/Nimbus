@@ -1,7 +1,18 @@
 import type { Database } from "bun:sqlite";
+import {
+  DEFAULT_NIMBUS_SECURITY_TOML,
+  loadNimbusSecurityFromConfigDir,
+} from "../config/nimbus-toml.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
-import { type ScanItem, type SecurityFinding, scanItemsForSecrets } from "../security/scan.ts";
-import { SECRET_PATTERNS } from "../security/secret-patterns.ts";
+import { lookupBlame } from "../security/blame-store.ts";
+import {
+  type BlameResolution,
+  type ScanItem,
+  type SecurityFinding,
+  scanItemsForSecrets,
+} from "../security/scan.ts";
+import { effectivePatterns } from "../security/secret-patterns.ts";
+import { LongRunningJobRegistry } from "./_lib/long-running.ts";
 
 export class SecurityRpcError extends Error {
   readonly rpcCode: number;
@@ -15,6 +26,13 @@ export class SecurityRpcError extends Error {
 export interface SecurityRpcContext {
   readonly db: Database;
   readonly nowMs?: () => number;
+  readonly notify?: (method: string, payload: Record<string, unknown>) => void;
+  readonly configDir?: string;
+}
+
+export interface SecurityScanParams {
+  readonly service?: string;
+  readonly extended?: boolean;
 }
 
 export interface SkippedConnector {
@@ -27,6 +45,7 @@ export interface SecurityScanResult {
   readonly items_scanned: number;
   readonly items_skipped_depth: number;
   readonly findings_count: number;
+  readonly muted_count: number;
   readonly findings: readonly SecurityFinding[];
   readonly skipped_connectors: readonly SkippedConnector[];
 }
@@ -40,18 +59,25 @@ interface ItemRow {
   metadata: string | null;
   modified_at: number;
   url: string | null;
+  external_id: string;
 }
 
-function* iterateScannableItems(db: Database): Generator<ScanItem> {
+function* iterateScannableItems(db: Database, service?: string): Generator<ScanItem> {
+  const where = ["COALESCE(s.depth, 'summary') != 'metadata_only'"];
+  const args: string[] = [];
+  if (service !== undefined && service !== "") {
+    where.push("i.service = ?");
+    args.push(service);
+  }
   const rows = db
     .query(
       `SELECT i.id, i.service, i.type, i.title, i.body_preview, i.metadata,
-              i.modified_at, i.url
+              i.modified_at, i.url, i.external_id
          FROM item AS i
          LEFT JOIN sync_state AS s ON s.connector_id = i.service
-        WHERE COALESCE(s.depth, 'summary') != 'metadata_only'`,
+        WHERE ${where.join(" AND ")}`,
     )
-    .iterate() as IterableIterator<ItemRow>;
+    .iterate(...args) as IterableIterator<ItemRow>;
   for (const row of rows) {
     yield {
       id: row.id,
@@ -62,8 +88,44 @@ function* iterateScannableItems(db: Database): Generator<ScanItem> {
       metadata: row.metadata,
       modified_at: row.modified_at,
       url: row.url,
+      external_id: row.external_id,
     };
   }
+}
+
+function countScannableItems(db: Database, service?: string): number {
+  const where = ["COALESCE(s.depth, 'summary') != 'metadata_only'"];
+  const args: string[] = [];
+  if (service !== undefined && service !== "") {
+    where.push("i.service = ?");
+    args.push(service);
+  }
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM item AS i
+         LEFT JOIN sync_state AS s ON s.connector_id = i.service
+        WHERE ${where.join(" AND ")}`,
+    )
+    .get(...args) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+function blameResolverFor(
+  db: Database,
+): (item: ScanItem, absLine: number) => BlameResolution | null {
+  return (item, absLine) => {
+    if (item.metadata === null) return null;
+    let meta: Record<string, unknown>;
+    try {
+      meta = JSON.parse(item.metadata) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const repoRoot = meta["repoRoot"];
+    const file = meta["file"];
+    if (typeof repoRoot !== "string" || typeof file !== "string") return null;
+    return lookupBlame(db, repoRoot, file, absLine);
+  };
 }
 
 function loadSkippedDepth(db: Database): {
@@ -90,27 +152,65 @@ function loadSkippedDepth(db: Database): {
   return { skipped_connectors, items_skipped_depth: row?.n ?? 0 };
 }
 
-export async function dispatchSecurityRpc(
-  method: string,
-  _params: unknown,
-  ctx: SecurityRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: SecurityScanResult }> {
-  if (method !== "security.scan") return { kind: "miss" };
-  const nowMs = (ctx.nowMs ?? (() => Date.now()))();
+export interface RunSecurityScanOptions {
+  readonly nowMs: number;
+  readonly configDir?: string;
+  readonly service?: string;
+  readonly extended?: boolean;
+}
 
-  const { skipped_connectors, items_skipped_depth } = loadSkippedDepth(ctx.db);
-  const pure = scanItemsForSecrets(iterateScannableItems(ctx.db), SECRET_PATTERNS, nowMs);
+const PROGRESS_EVERY = 200;
+
+/**
+ * The scan core. Streams scannable items (optionally filtered by service),
+ * applies the configured pattern tier + allowlist mute, attaches indexed blame,
+ * emits progress, honors cancellation, writes the audit row, and returns the
+ * full result. Used directly by tests and wrapped as a long-running job by
+ * `dispatchSecurityRpc`.
+ */
+export async function runSecurityScan(
+  db: Database,
+  opts: RunSecurityScanOptions,
+  progress?: (payload: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+): Promise<SecurityScanResult> {
+  const sec =
+    opts.configDir !== undefined
+      ? loadNimbusSecurityFromConfigDir(opts.configDir)
+      : DEFAULT_NIMBUS_SECURITY_TOML;
+  const allowlist = new Set(sec.allowlistFingerprints);
+  const extended = opts.extended ?? sec.extendedPatterns;
+  const patterns = effectivePatterns(extended);
+  const resolveBlame = blameResolverFor(db);
+
+  const { skipped_connectors, items_skipped_depth } = loadSkippedDepth(db);
+  const total = countScannableItems(db, opts.service);
+
+  const findings: SecurityFinding[] = [];
+  let items_scanned = 0;
+  let muted_count = 0;
+  for (const item of iterateScannableItems(db, opts.service)) {
+    if (signal?.aborted === true) break;
+    const r = scanItemsForSecrets([item], patterns, opts.nowMs, { allowlist, resolveBlame });
+    findings.push(...r.findings);
+    muted_count += r.muted_count;
+    items_scanned += r.items_scanned;
+    if (progress !== undefined && items_scanned % PROGRESS_EVERY === 0) {
+      progress({ scanned: items_scanned, total });
+    }
+  }
 
   const value: SecurityScanResult = {
-    scanned_at_ms: pure.scanned_at_ms,
-    items_scanned: pure.items_scanned,
+    scanned_at_ms: opts.nowMs,
+    items_scanned,
     items_skipped_depth,
-    findings_count: pure.findings_count,
-    findings: pure.findings,
+    findings_count: findings.length,
+    muted_count,
+    findings,
     skipped_connectors,
   };
 
-  appendAuditEntry(ctx.db, {
+  appendAuditEntry(db, {
     actionType: "security.scan_completed",
     hitlStatus: "not_required",
     actionJson: JSON.stringify({
@@ -118,10 +218,63 @@ export async function dispatchSecurityRpc(
       items_scanned: value.items_scanned,
       items_skipped_depth: value.items_skipped_depth,
       findings_count: value.findings_count,
+      muted_count: value.muted_count,
       skipped_connectors_count: skipped_connectors.length,
     }),
-    timestamp: nowMs,
+    timestamp: opts.nowMs,
   });
 
-  return { kind: "hit", value };
+  if (progress !== undefined) progress({ scanned: items_scanned, total });
+  return value;
+}
+
+const securityScanRegistry = new LongRunningJobRegistry();
+
+/** Test seam: await a running scan job's completion. */
+export function awaitSecurityScanJob(jobId: string): Promise<void> {
+  return securityScanRegistry.awaitJob(jobId);
+}
+
+function parseScanParams(params: unknown): SecurityScanParams {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) return {};
+  const rec = params as Record<string, unknown>;
+  const out: { service?: string; extended?: boolean } = {};
+  if (typeof rec["service"] === "string" && rec["service"] !== "") out.service = rec["service"];
+  if (rec["extended"] === true) out.extended = true;
+  return out;
+}
+
+export async function dispatchSecurityRpc(
+  method: string,
+  params: unknown,
+  ctx: SecurityRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: unknown }> {
+  if (method === "security.scanCancel") {
+    const rec =
+      params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
+    const jobId = rec["jobId"];
+    if (typeof jobId !== "string") {
+      throw new SecurityRpcError(-32602, "params.jobId is required");
+    }
+    return { kind: "hit", value: { cancelled: securityScanRegistry.cancel(jobId) } };
+  }
+  if (method !== "security.scan") return { kind: "miss" };
+
+  const nowMs = (ctx.nowMs ?? (() => Date.now()))();
+  const p = parseScanParams(params);
+  const opts: RunSecurityScanOptions = {
+    nowMs,
+    ...(ctx.configDir === undefined ? {} : { configDir: ctx.configDir }),
+    ...(p.service === undefined ? {} : { service: p.service }),
+    ...(p.extended === undefined ? {} : { extended: p.extended }),
+  };
+  const handle = securityScanRegistry.start({
+    jobIdPrefix: "secscan",
+    progressMethod: "security.scanProgress",
+    doneMethod: "security.scanDone",
+    errorMethod: "security.scanError",
+    emit: (m, payload) => ctx.notify?.(m, payload),
+    run: (progress, signal) => runSecurityScan(ctx.db, opts, progress, signal),
+  });
+  return { kind: "hit", value: { jobId: handle.jobId } };
 }
