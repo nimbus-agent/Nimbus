@@ -633,7 +633,7 @@ git commit -m "feat(security): git_blame_line store — porcelain parse, upsert,
 
 - `excerptAroundExportedSymbol` (L~376) computes a `from` line index — change it (or add a sibling) to also return the 1-based `startLine`, and store it in `code_symbol` metadata as `excerptStartLine`.
 - Add `gitBlameLinePorcelain(root, relFile, ranges, spawn?)` mirroring `gitLogRecords` — it spawns `git -C <root> blame --line-porcelain -L <from>,<to> [...] -- <relFile>` with `env: extensionProcessEnv({})`, `stdout/stderr: "pipe"`, and `signal: AbortSignal.timeout(BLAME_TIMEOUT_MS)` (full call shown in Task 6 Step 3). The `spawn` param is injectable for tests (default `Bun.spawn`). On non-zero exit / throw (incl. AbortError) → return an empty array.
-- After indexing a file's symbols, compute the union of excerpt ranges for that file, skip if total covered lines > `MAX_BLAME_LINES` (5000), else blame and `upsertBlameLines`.
+- After indexing a file's symbols, compute the excerpt ranges for that file, skip if total covered lines > `MAX_BLAME_LINES` (5000), else blame and `upsertBlameLines`. `gitBlameLinePorcelain` internally `mergeRanges`-coalesces and, past `MAX_BLAME_RANGES` (64) disjoint ranges, falls back to a single full-file blame so the arg list never approaches the Windows `CreateProcess` 32 767-char command-line limit (review #1).
 
 - [ ] **Step 1: Write the failing test** (injected fake spawn; no real git)
 
@@ -659,7 +659,24 @@ describe("gitBlameLinePorcelain", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("mergeRanges", () => {
+  test("coalesces overlapping and adjacent ranges, sorted", () => {
+    const merged = mergeRanges([
+      { from: 10, to: 12 },
+      { from: 1, to: 3 },
+      { from: 13, to: 15 }, // adjacent to 10-12 → merges
+      { from: 11, to: 11 }, // inside 10-15
+    ]);
+    expect(merged).toEqual([
+      { from: 1, to: 3 },
+      { from: 10, to: 15 },
+    ]);
+  });
+});
 ```
+
+> Import `mergeRanges` alongside `gitBlameLinePorcelain` at the top of the test file.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -675,9 +692,28 @@ import { type BlameRow, parseBlamePorcelain, upsertBlameLines } from "../securit
 
 const BLAME_TIMEOUT_MS = 20_000;
 const MAX_BLAME_LINES = 5000;
+// Windows CreateProcess caps the command line at 32_767 chars; each "-L a,b" pair
+// is ~20 chars. Past this many pairs, fall back to one full-file blame instead of
+// emitting hundreds of -L args (review #1). Coalescing usually keeps us well under it.
+const MAX_BLAME_RANGES = 64;
 
 export type BlameRange = { from: number; to: number };
 type SpawnFn = typeof Bun.spawn;
+
+/** Sort by start and coalesce overlapping/adjacent ranges (review #1). */
+export function mergeRanges(ranges: readonly BlameRange[]): BlameRange[] {
+  const sorted = [...ranges].filter((r) => r.to >= r.from).sort((a, b) => a.from - b.from);
+  const out: BlameRange[] = [];
+  for (const r of sorted) {
+    const last = out.at(-1);
+    if (last !== undefined && r.from <= last.to + 1) {
+      if (r.to > last.to) last.to = r.to;
+    } else {
+      out.push({ from: r.from, to: r.to });
+    }
+  }
+  return out;
+}
 
 export async function gitBlameLinePorcelain(
   root: string,
@@ -686,7 +722,13 @@ export async function gitBlameLinePorcelain(
   spawn: SpawnFn = Bun.spawn,
 ): Promise<BlameRow[]> {
   if (ranges.length === 0) return [];
-  const lArgs = ranges.flatMap((r) => ["-L", `${String(r.from)},${String(r.to)}`]);
+  const merged = mergeRanges(ranges);
+  // Too many disjoint ranges → a single full-file blame keeps the arg list short
+  // (Windows cmdline limit). The per-file MAX_BLAME_LINES skip already bounds size.
+  const lArgs =
+    merged.length > MAX_BLAME_RANGES
+      ? []
+      : merged.flatMap((r) => ["-L", `${String(r.from)},${String(r.to)}`]);
   const args = ["git", "-C", root, "blame", "--line-porcelain", ...lArgs, "--", relFile];
   try {
     const proc = spawn(args, {
@@ -817,7 +859,12 @@ function absoluteLineFor(item: ScanItem, body: string, offset: number): number |
   const start = meta["excerptStartLine"];
   if (typeof start !== "number") return null;
   // body is "<relPath>\n<excerpt>"; the first line is the path header.
-  const linesBefore = body.slice(0, offset).split("\n").length - 1; // 0-based line within body
+  // Count newlines up to offset (allocation-free; review #2) → 0-based line within body.
+  let linesBefore = 0;
+  const end = Math.min(offset, body.length);
+  for (let i = 0; i < end; i++) {
+    if (body.charCodeAt(i) === 10) linesBefore++;
+  }
   if (linesBefore < 1) return null; // offset in the path header line — not a code line
   return start + (linesBefore - 1); // subtract the header line
 }
@@ -954,4 +1001,15 @@ git commit -m "test(e2e): security scan v2 fingerprint + blame + mute"
 
 **Placeholder scan:** Tasks 8 and 9 reference "the project's existing helper / harness" rather than inlined code because the IPC-test and CLI-subscription harnesses are project-specific — the implementer must read the sibling `index-reembed` test + an existing CLI command test. These are pointers, not logic placeholders; the registry wiring and run-loop logic are fully specified. Acceptable, but the implementer should open those two files first.
 
-**Type consistency:** `BlameLookup` (camelCase `commitSha`/`authorTimeMs`) is the store's return; `SecurityFinding.blame` uses snake_case (`commit_sha`/`author_time_ms`) to match the IPC/JSON convention — the mapping happens in `scan.ts` Task 7. `resolveBlame` returns the camelCase shape; `scan.ts` converts. `excerptStartLine` (metadata key, camelCase) is written in Task 6 and read in Task 7 — names match. `effectivePatterns(extended)` defined Task 3, consumed Task 8. `muted_count` added to `PureScanResult` (Task 7) and surfaced in the audit + scanDone (Task 8).
+**Type consistency:** `BlameLookup` (camelCase `commitSha`/`authorTimeMs`) is the store's return; `SecurityFinding.blame` uses snake_case (`commit_sha`/`author_time_ms`) to match the IPC/JSON convention — the mapping happens in `scan.ts` Task 7. `resolveBlame` returns the camelCase shape; `scan.ts` converts. `excerptStartLine` (metadata key, camelCase) is written in Task 6 and read in Task 7 — names match. `effectivePatterns(extended)` defined Task 3, consumed Task 8. `muted_count` added to `PureScanResult` (Task 7) and surfaced in the audit + scanDone (Task 8). `mergeRanges`/`MAX_BLAME_RANGES` defined and consumed in Task 6.
+
+---
+
+## Plan-review disposition (2026-06-04)
+
+Responses to `2026-06-04-security-scan-v2-review.md`:
+
+1. **Windows command-line length limit for `git blame -L` args** — *Fixed.* Task 6 now `mergeRanges`-coalesces overlapping/adjacent ranges and falls back to a single full-file blame past `MAX_BLAME_RANGES` (64) disjoint ranges, so the arg list never approaches the 32 767-char `CreateProcess` limit. The per-file `MAX_BLAME_LINES` skip bounds the full-file fallback's storage. Added a `mergeRanges` unit test. (Honors Platform-equality non-negotiable #5.)
+2. **Allocation in `absoluteLineFor` line mapping** — *Fixed (taken now).* Reviewer framed it as a profile-later micro-opt; since it's an equal-effort change, Task 7 now counts `\n` via a `charCodeAt` loop (allocation-free) instead of `slice().split()`.
+3. **Legacy-data fallback + CLI hint** — *No change* (reviewer confirmed both behave correctly).
+4. **Design-review fixes integrated** — *No change* (reviewer confirmed Tasks 2/6/9 carry them).
