@@ -4,9 +4,10 @@ export interface SecretPattern {
   readonly name: string;
   readonly category: SecretCategory;
   readonly regex: RegExp;
+  readonly confidence: "high" | "extended";
 }
 
-export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze([
+const HIGH_CONFIDENCE_PATTERNS: ReadonlyArray<Omit<SecretPattern, "confidence">> = [
   { name: "aws_access_key", category: "api_key", regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { name: "github_pat_classic", category: "token", regex: /\bghp_[A-Za-z0-9]{36,}\b/g },
   {
@@ -60,7 +61,37 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze([
     regex: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g,
   },
   { name: "mailgun_api_key", category: "api_key", regex: /\bkey-[a-f0-9]{32}\b/g },
+];
+
+export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
+  HIGH_CONFIDENCE_PATTERNS.map((p) => ({ ...p, confidence: "high" as const })),
+);
+
+/**
+ * Opt-in low-confidence tier (`[security].extended_patterns` / `--extended`).
+ * Generic heuristics that catch more but false-positive more — never on by default.
+ */
+export const EXTENDED_SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze([
+  {
+    name: "generic_secret_assignment",
+    category: "api_key",
+    confidence: "extended",
+    // an identifier containing secret/token/api[-_]key/passwd/password assigned a
+    // 32+ char base64-ish literal, e.g. `apiSecret = "…"`, `API_KEY: '…'`
+    regex:
+      /\b[A-Za-z0-9_]*(?:secret|token|api[_-]?key|passwd|password)\s*[:=]\s*["'`][A-Za-z0-9+/_-]{32,}["'`]/gi,
+  },
+  {
+    name: "generic_bearer_like",
+    category: "token",
+    confidence: "extended",
+    regex: /\bbearer\s+[A-Za-z0-9._-]{24,}\b/gi,
+  },
 ]);
+
+export function effectivePatterns(extended: boolean): readonly SecretPattern[] {
+  return extended ? [...SECRET_PATTERNS, ...EXTENDED_SECRET_PATTERNS] : SECRET_PATTERNS;
+}
 
 export function redactSecret(raw: string): string {
   if (raw.length < 8) return "****";

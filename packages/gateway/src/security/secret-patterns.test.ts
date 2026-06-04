@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildContextSnippet,
+  EXTENDED_SECRET_PATTERNS,
+  effectivePatterns,
   redactSecret,
   SECRET_PATTERNS,
   type SecretPattern,
@@ -192,6 +194,42 @@ describe("individual pattern matches", () => {
 
   test("mailgun_api_key matches key- + 32 hex", () => {
     expect(hasMatch("mailgun_api_key", `t='key-${"a".repeat(32)}'`)).toBe(true);
+  });
+});
+
+describe("pattern tiers", () => {
+  test("base patterns carry confidence 'high'", () => {
+    expect(SECRET_PATTERNS.every((p) => p.confidence === "high")).toBe(true);
+  });
+
+  test("extended patterns carry confidence 'extended'", () => {
+    expect(EXTENDED_SECRET_PATTERNS.length).toBeGreaterThan(0);
+    expect(EXTENDED_SECRET_PATTERNS.every((p) => p.confidence === "extended")).toBe(true);
+  });
+
+  test("extended regexes are global-flagged for matchAll", () => {
+    for (const p of EXTENDED_SECRET_PATTERNS) {
+      expect(p.regex.global).toBe(true);
+    }
+  });
+
+  test("effectivePatterns(false) is the base set only", () => {
+    expect(effectivePatterns(false)).toEqual(SECRET_PATTERNS);
+  });
+
+  test("effectivePatterns(true) is base + extended", () => {
+    expect(effectivePatterns(true).length).toBe(
+      SECRET_PATTERNS.length + EXTENDED_SECRET_PATTERNS.length,
+    );
+  });
+
+  test("an extended generic-assignment pattern matches a high-entropy secret assignment", () => {
+    const body = `const apiSecret = "a8Fk2Lm9Qr4Tz7Wx1Yb3Nc6Vd0Ee5Gg8Hh"`;
+    const hit = effectivePatterns(true).some((p) => {
+      p.regex.lastIndex = 0;
+      return p.regex.test(body);
+    });
+    expect(hit).toBe(true);
   });
 });
 
