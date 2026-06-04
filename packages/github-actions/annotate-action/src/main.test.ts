@@ -4,6 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "bun";
 
+import {
+  getBooleanInput,
+  getInput,
+  getIntInput,
+  safeAnnotateEnvelope,
+  safeBool,
+  safeInt,
+  safeString,
+} from "./main.ts";
+
 interface MockResponse {
   status: number;
   body: unknown;
@@ -385,5 +395,79 @@ describe("annotate-action main()", () => {
     expect(body.run_id).toBeUndefined();
     expect(body.job_id).toBeUndefined();
     expect(body.finished_at_ms).toBeUndefined();
+  });
+});
+
+describe("safe* sanitizers", () => {
+  test("safeString strips denied control chars and truncates", () => {
+    expect(safeString("a\x00b\x1fc", 10)).toBe("abc");
+    expect(safeString("abcdef", 3)).toBe("abc");
+    expect(safeString(123, 10)).toBe("");
+  });
+
+  test("safeInt truncates finite numbers and zeroes the rest", () => {
+    expect(safeInt(3.9)).toBe(3);
+    expect(safeInt("42")).toBe(42);
+    expect(safeInt("nope")).toBe(0);
+    expect(safeInt(undefined)).toBe(0);
+  });
+
+  test("safeBool is true only for a literal true", () => {
+    expect(safeBool(true)).toBe(true);
+    expect(safeBool("true")).toBe(false);
+    expect(safeBool(1)).toBe(false);
+  });
+
+  test("safeAnnotateEnvelope sanitizes every field with defaults", () => {
+    expect(
+      safeAnnotateEnvelope({
+        external_id: "dep\x00-1",
+        service: "checkout",
+        stored_at_ms: "1700",
+        is_new: true,
+        dora_eligible: false,
+      }),
+    ).toEqual({
+      external_id: "dep-1",
+      service: "checkout",
+      stored_at_ms: 1700,
+      is_new: true,
+      dora_eligible: false,
+    });
+    expect(safeAnnotateEnvelope(null)).toEqual({
+      external_id: "",
+      service: "",
+      stored_at_ms: 0,
+      is_new: false,
+      dora_eligible: false,
+    });
+  });
+});
+
+describe("getInput family (annotate)", () => {
+  const touched: string[] = [];
+  function setInput(name: string, value: string): void {
+    const key = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
+    process.env[key] = value;
+    touched.push(key);
+  }
+  afterEach(() => {
+    for (const key of touched.splice(0)) {
+      delete process.env[key];
+    }
+  });
+
+  test("reads INPUT_<NAME>, booleans, and ints with fallbacks", () => {
+    setInput("service", "checkout");
+    setInput("flag", "yes");
+    setInput("count", "9");
+    setInput("bad", "x");
+    expect(getInput("service")).toBe("checkout");
+    expect(getInput("unset")).toBe("");
+    expect(getBooleanInput("flag")).toBe(true);
+    expect(getBooleanInput("unset")).toBe(false);
+    expect(getIntInput("count", 1)).toBe(9);
+    expect(getIntInput("bad", 1)).toBe(1);
+    expect(getIntInput("unset", 5)).toBe(5);
   });
 });

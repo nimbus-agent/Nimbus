@@ -5,17 +5,17 @@ import { type AnnotateResult, renderSummary } from "./render.ts";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit byte ranges define the sanitizer barrier
 const DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
-function safeString(raw: unknown, maxLen: number): string {
+export function safeString(raw: unknown, maxLen: number): string {
   const s = typeof raw === "string" ? raw : "";
   return s.replace(DENY_CHARS, "").slice(0, maxLen);
 }
 
-function safeInt(raw: unknown): number {
+export function safeInt(raw: unknown): number {
   const n = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
-function safeBool(raw: unknown): boolean {
+export function safeBool(raw: unknown): boolean {
   return raw === true;
 }
 
@@ -27,7 +27,7 @@ type SanitizedAnnotateEnvelope = {
   dora_eligible: boolean;
 };
 
-function safeAnnotateEnvelope(raw: unknown): SanitizedAnnotateEnvelope {
+export function safeAnnotateEnvelope(raw: unknown): SanitizedAnnotateEnvelope {
   const o = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
     external_id: safeString(o.external_id, 512),
@@ -38,17 +38,17 @@ function safeAnnotateEnvelope(raw: unknown): SanitizedAnnotateEnvelope {
   };
 }
 
-function getInput(name: string): string {
+export function getInput(name: string): string {
   const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
   return process.env[envName] ?? "";
 }
 
-function getBooleanInput(name: string): boolean {
+export function getBooleanInput(name: string): boolean {
   const raw = getInput(name).toLowerCase();
   return raw === "true" || raw === "1" || raw === "yes";
 }
 
-function getIntInput(name: string, fallback: number): number {
+export function getIntInput(name: string, fallback: number): number {
   const raw = getInput(name);
   if (raw === "") return fallback;
   const n = Number.parseInt(raw, 10);
@@ -258,4 +258,8 @@ export async function main(): Promise<void> {
   process.exit(1);
 }
 
-await main();
+// Run only as the action entrypoint, so unit tests can import the pure helpers
+// above without triggering a real gateway POST + process.exit.
+if (import.meta.main) {
+  await main();
+}

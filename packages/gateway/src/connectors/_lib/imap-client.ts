@@ -19,7 +19,7 @@ import type { ImapConnectionConfig, ImapFetchOutcome } from "../imap-sync.ts";
 const PREVIEW_FETCH_BYTES = 2048;
 const PREVIEW_MAX_CHARS = 2000;
 
-function capPreview(text: string): string {
+export function capPreview(text: string): string {
   const normalized = text
     .replaceAll("\r\n", "\n")
     .replaceAll(/[ \t]+/g, " ")
@@ -75,11 +75,11 @@ function attachmentMetaOf(node: MessageStructureObject): ImapAttachmentMeta {
   };
 }
 
-function extractAttachments(root: MessageStructureObject | undefined): ImapAttachmentMeta[] {
+export function extractAttachments(root: MessageStructureObject | undefined): ImapAttachmentMeta[] {
   return leafParts(root).filter(isAttachment).map(attachmentMetaOf);
 }
 
-function findTextPlainPart(root: MessageStructureObject | undefined): string {
+export function findTextPlainPart(root: MessageStructureObject | undefined): string {
   let firstText: string | null = null;
   for (const node of leafParts(root)) {
     if (isAttachment(node)) {
@@ -97,7 +97,7 @@ function findTextPlainPart(root: MessageStructureObject | undefined): string {
   return firstText ?? "1";
 }
 
-function previewFromParts(parts: Map<string, Buffer> | undefined, partKey: string): string {
+export function previewFromParts(parts: Map<string, Buffer> | undefined, partKey: string): string {
   if (parts === undefined) {
     return "";
   }
@@ -105,7 +105,7 @@ function previewFromParts(parts: Map<string, Buffer> | undefined, partKey: strin
   return buf === undefined ? "" : capPreview(buf.toString("utf8"));
 }
 
-function addresses(list: { name?: string; address?: string }[] | undefined): string[] {
+export function addresses(list: { name?: string; address?: string }[] | undefined): string[] {
   return (list ?? []).map((a) => {
     const addr = a.address ?? "";
     if (a.name !== undefined && a.name !== "") {
@@ -115,7 +115,7 @@ function addresses(list: { name?: string; address?: string }[] | undefined): str
   });
 }
 
-function toInput(
+export function toInput(
   msg: FetchMessageObject,
   mailbox: string,
   uidValidity: string | null,
@@ -150,15 +150,23 @@ const PREVIEW_QUERY: FetchQueryObject = {
 };
 
 /**
- * Production IMAP fetcher: connect, lock the mailbox, fetch the most-recent
- * `limit` messages (headers + attachment metadata + truncated preview), then
- * log out. Returns `{ ok: false }` on any failure instead of throwing.
+ * The slice of {@link ImapFlow} the fetcher actually drives. Declared
+ * structurally so tests can inject a fake without opening a socket; the real
+ * `ImapFlow` instance satisfies it.
  */
-export async function fetchImapMessages(
-  config: ImapConnectionConfig,
-  limit: number,
-): Promise<ImapFetchOutcome> {
-  const client = new ImapFlow({
+export interface ImapClientLike {
+  connect(): Promise<void>;
+  getMailboxLock(mailbox: string): Promise<{ release(): void }>;
+  readonly mailbox: { readonly uidValidity: number | bigint; readonly exists: number } | false;
+  fetch(range: string, query: FetchQueryObject): AsyncIterable<FetchMessageObject>;
+  logout(): Promise<void>;
+}
+
+/** Constructs the IMAP client for a connection config (injectable for tests). */
+export type ImapClientFactory = (config: ImapConnectionConfig) => ImapClientLike;
+
+const defaultImapClientFactory: ImapClientFactory = (config) =>
+  new ImapFlow({
     host: config.host,
     port: config.port,
     secure: config.secure ?? true,
@@ -166,6 +174,20 @@ export async function fetchImapMessages(
     logger: false,
     ...(config.tlsRejectUnauthorized === false ? { tls: { rejectUnauthorized: false } } : {}),
   });
+
+/**
+ * Production IMAP fetcher: connect, lock the mailbox, fetch the most-recent
+ * `limit` messages (headers + attachment metadata + truncated preview), then
+ * log out. Returns `{ ok: false }` on any failure instead of throwing. The
+ * client factory is injectable so the connect/fetch/error paths are testable
+ * without a real socket.
+ */
+export async function fetchImapMessages(
+  config: ImapConnectionConfig,
+  limit: number,
+  makeClient: ImapClientFactory = defaultImapClientFactory,
+): Promise<ImapFetchOutcome> {
+  const client = makeClient(config);
 
   try {
     await client.connect();

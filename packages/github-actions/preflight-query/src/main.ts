@@ -11,7 +11,7 @@ import {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit byte ranges define the sanitizer barrier
 const DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
-function safeString(raw: unknown, maxLen: number): string {
+export function safeString(raw: unknown, maxLen: number): string {
   const s = typeof raw === "string" ? raw : "";
   return s.replace(DENY_CHARS, "").slice(0, maxLen);
 }
@@ -42,7 +42,7 @@ function safeFindings(
   }));
 }
 
-function sanitizeEnvelope(raw: Envelope): Envelope {
+export function sanitizeEnvelope(raw: Envelope): Envelope {
   return {
     service: safeString(raw.service, 128),
     target_ref: safeString(raw.target_ref, 256),
@@ -77,17 +77,17 @@ function sanitizeEnvelope(raw: Envelope): Envelope {
   };
 }
 
-function getInput(name: string): string {
+export function getInput(name: string): string {
   const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
   return process.env[envName] ?? "";
 }
 
-function getBooleanInput(name: string): boolean {
+export function getBooleanInput(name: string): boolean {
   const raw = getInput(name).toLowerCase();
   return raw === "true" || raw === "1" || raw === "yes";
 }
 
-function getIntInput(name: string, fallback: number): number {
+export function getIntInput(name: string, fallback: number): number {
   const raw = getInput(name);
   if (raw === "") return fallback;
   const n = Number.parseInt(raw, 10);
@@ -107,7 +107,7 @@ function emitAnnotation(level: "warning" | "error", message: string): void {
   process.stdout.write(`::${level}::${message}\n`);
 }
 
-function parseMode(raw: string): PreflightMode {
+export function parseMode(raw: string): PreflightMode {
   if (raw === "block" || raw === "off") return raw;
   return "warn";
 }
@@ -202,4 +202,8 @@ export async function main(): Promise<void> {
   process.exit(code);
 }
 
-await main();
+// Run only as the action entrypoint, so unit tests can import the pure helpers
+// above without triggering a real gateway fetch + process.exit.
+if (import.meta.main) {
+  await main();
+}
