@@ -199,7 +199,9 @@ describe.skipIf(!VEC_AVAILABLE)(
       } finally {
         h.cleanup();
       }
-    });
+      // First test in this block pays the one-time sqlite-vec extension cold-start;
+      // on slow CI (Windows) that can exceed the 5 s default. Give it headroom.
+    }, 30_000);
 
     test("embedQueryDual with 384-dim pipeline returns vec384 populated, vec1536 null", async () => {
       const h = makeHarness({ migrateTo: 30 });
