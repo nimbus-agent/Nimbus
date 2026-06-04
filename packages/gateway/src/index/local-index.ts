@@ -876,9 +876,10 @@ export class LocalIndex {
   }
 
   public getLanPeerByPubkey(pubkey: Uint8Array): LanPeerRow | undefined {
-    return this.db
+    const row = this.db
       .query(`SELECT * FROM lan_peers WHERE peer_pubkey = ?`)
-      .get(Buffer.from(pubkey)) as LanPeerRow | undefined;
+      .get(Buffer.from(pubkey)) as LanPeerRow | null;
+    return row ?? undefined;
   }
 
   close(): void {
