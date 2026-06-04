@@ -15,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
 - [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 6 through 19 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+- [Planned](#planned) — Phases 6 through 20 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -73,6 +73,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 17 | The On-Call Copilot | Planned |
 | Phase 18 | Vertical Personas | Planned |
 | Phase 19 | Ambient Surfaces | Planned |
+| Phase 20 | Personal & Household Federation | Planned |
 
 ---
 
@@ -774,16 +775,6 @@ Depends on Team Vault (above) so service-account / SSO credentials can be shared
 - [ ] **Admin console** — web UI served locally by the Gateway: user list, namespace health, connector status across the team, audit log viewer, policy editor
 - [ ] **Team audit log** — federation events appended to each member's local audit log; owner can request a merged view
 - [ ] **GDPR/compliance at org level** — `nimbus team purge --user <id>` removes a user's contributions from all shared namespaces; writes a signed deletion record
-
-#### Personal Federation (beyond the engineering team)
-
-The Phase 6 federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that have **no cloud-vendor equivalent** because cloud agents cannot legally or commercially handle the data. This section calls out three: a personal CRM that no third party ever sees, family/couples shared agents for joint logistics that wouldn't otherwise survive a vendor's TOS, and a friend-group mode for the long tail of "I want an agent but trust no one with this data." Each builds on the federation channel + scoped namespaces + audit log without inventing new infrastructure.
-
-- [ ] **Personal CRM** — a `person` table extension + `interaction` item type that indexes a user's relational history from already-indexed connectors: email threads (Gmail / Outlook), calendar attendees (Google Calendar / Outlook), Slack DMs + tagged channels, LinkedIn export (manual import — no live connector), GitHub mentions. New built-in agent `nimbus contacts` answers "tell me about the last time I talked to Sara before our call," "who at Acme did I meet at the conference last year," "draft a follow-up to the people I had coffee with this week." Read-only; the data never leaves the machine. Cloud agents structurally cannot offer this because the data — joint communications, candid notes, social-graph inferences — is not data any third party can lawfully hold under most jurisdictions' privacy law for a multi-party relationship graph.
-- [ ] **Family / couples mode** — a `family` namespace shape with two-to-six paired Gateways federated via the mesh; shared item types limited to a conservative set (`event` from Calendar, structured `shopping_list` items, joint `expense` rows from Mercury / personal Stripe, custody/handover scheduling). HITL on every cross-device write. The shared namespace is **scoped narrower** than a team namespace — a contract test asserts no `email`, `pull_request`, `incident`, or work-item types are exposable through the family shape. Joint medical, joint financial, and joint legal data fall in the long tail of "no vendor can serve this" categories; family mode is the principled local answer.
-- [ ] **Friend-group mode** — same federation primitive as family mode, scoped to long-tail use cases that today have no cohesive home: D&D campaign trackers (initiative + party state + DM notes), fantasy-league rosters, "who's free this weekend" coordination across calendars without surrendering full calendar visibility, group-photo sharing without a cloud upload. The differentiating value is not the apps these replace — it's that there is no app combining them today *because* no cloud vendor wants the liability surface.
-- [ ] **Group-namespace policy fragments** — `[group.<name>].include_types = [...]` + `[group.<name>].exclude_services = [...]` enforced at the federation protocol layer; per-namespace HITL policy fragments live alongside the existing `nimbus.policy.toml` so a family namespace can carry stricter rules than a work namespace on the same Gateway.
-- [ ] **Privacy contract — narrowest-export-shape proof** — extends the existing privacy contract test: for every group/family namespace shape, the test asserts the federation protocol cannot expose any item type or `raw_meta` field not declared in the namespace shape. Verified by attempting a federated query for a non-included type and asserting empty result + audit log entry recording the rejected query.
 
 #### Share & Virality Primitives
 
@@ -1929,6 +1920,35 @@ The flagship ambient surface. Promoted from Phase 13.5 stretch to Phase 19 core 
 - The always-listening mode's mute toggle suspends the wake-word loop within 1 second on both ends; the audit log records every mute / unmute event.
 - An XR-companion brief renders in visionOS within 5 seconds of being pushed from the Gateway; HITL approval via Optic ID round-trips back to the Gateway within 3 seconds.
 - A Home Assistant scene change triggered via `nimbus ask` always gates on HITL with a structured before/after preview; locks never bypass HITL regardless of session-level standing approvals.
+
+---
+
+### Phase 20 — Personal & Household Federation
+
+**Goal:** Extend the Phase 6 federation primitive to consumer/household use cases that have **no cloud-vendor equivalent** — a personal CRM no third party ever sees, family/couples shared agents for joint logistics, and friend-group coordination — without compromising the local-first, no-relay, HITL-gated architecture.
+
+> **Relocated from Phase 6** per guiding-principle #7 (Nimbus is built for professionals; consumer-oriented affordances are out of scope for the professional phases). These modes build **for free** on the Phase 6 Slice 1 federation core — no new infrastructure, only narrower namespace shapes and a different audience. Sequenced this late deliberately: the professional team-federation surface (Phase 6) must prove out first. A *professional* form of the narrowest-export-shape privacy proof stays in Phase 6 Slice 1; the family-namespace variant lives here.
+
+#### Dependencies
+
+- Phase 6 Slice 1 — Federation Core (E2EE peer pairing, scoped namespaces, the consent-scoped federated query primitive, audit integration)
+- Phase 6 federation protocol-layer RBAC + the narrowest-export-shape privacy contract (professional form)
+
+#### Personal & Household Federation
+
+The federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that cloud agents cannot legally or commercially handle.
+
+- [ ] **Personal CRM** — a `person` table extension + `interaction` item type that indexes a user's relational history from already-indexed connectors: email threads (Gmail / Outlook), calendar attendees, Slack DMs + tagged channels, LinkedIn export (manual import), GitHub mentions. New built-in agent `nimbus contacts` answers "tell me about the last time I talked to Sara before our call," "who at Acme did I meet at the conference last year," "draft a follow-up to the people I had coffee with this week." Read-only; data never leaves the machine.
+- [ ] **Family / couples mode** — a `family` namespace shape with two-to-six paired Gateways; shared item types limited to a conservative set (`event` from Calendar, structured `shopping_list` items, joint `expense` rows, custody/handover scheduling). HITL on every cross-device write. A contract test asserts no `email`, `pull_request`, `incident`, or work-item types are exposable through the family shape.
+- [ ] **Friend-group mode** — same federation primitive as family mode, scoped to long-tail use cases with no cohesive home today: D&D campaign trackers, fantasy-league rosters, "who's free this weekend" coordination without surrendering full calendar visibility, group-photo sharing without a cloud upload.
+- [ ] **Group-namespace policy fragments** — `[group.<name>].include_types = [...]` + `[group.<name>].exclude_services = [...]` enforced at the federation protocol layer; per-namespace HITL policy fragments live alongside `nimbus.policy.toml` so a family namespace can carry stricter rules than a work namespace on the same Gateway.
+- [ ] **Privacy contract — narrowest-export-shape proof (household variant)** — for every group/family namespace shape, the test asserts the federation protocol cannot expose any item type or `raw_meta` field not declared in the namespace shape. Verified by attempting a federated query for a non-included type and asserting empty result + audit log entry recording the rejected query.
+
+#### Acceptance Criteria
+
+- Two paired personal Gateways share a `family` namespace; a contract test asserts no `email`, `pull_request`, `incident`, or work-item type is exposable through the family shape.
+- `nimbus contacts` answers a relational-history query entirely from the local index with no outbound call.
+- A federated query for a non-included type against a group namespace returns an empty result plus an audit-log entry recording the rejected query.
 
 ---
 
