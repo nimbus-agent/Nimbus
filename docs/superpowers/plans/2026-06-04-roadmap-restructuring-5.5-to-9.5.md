@@ -602,9 +602,27 @@ The line begins:
 ```
 Insert a new dated clause at the **front** of the change-log sentence (immediately after `> **Last updated:** `), so it reads:
 ```
-> **Last updated:** 2026-06-04 — **renumbered Phase 5.5 (Marketplace Registry) → Phase 9.5** and relocated it after Phase 9 (its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** …
+> **Last updated:** 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** …
 ```
-(Keep the entire pre-existing sentence intact after the new clause; only the `2026-06-04 — …` text and the trailing ` 2026-05-28 (second pass) —` join are added.)
+(Keep the entire pre-existing sentence intact after the new clause; only the `2026-06-04 — …` text and the trailing ` 2026-05-28 (second pass) —` join are added. **Note:** the new clause is deliberately worded to avoid the literal token "Phase 5.5" so the Task 10 zero-match check holds.)
+
+**Then, in the SAME "Last updated" line, renumber the two *historical* "Phase 5.5" mentions** (in the `2026-05-28 (first pass)` portion) so no dangling reference to the old number survives. Change:
+```
+added **Phase 5.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**
+```
+to:
+```
+added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**
+```
+and change:
+```
+promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 5.5 prerequisite
+```
+to:
+```
+promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite
+```
+(The roadmap's "Last updated" line is an editorial summary, not the immutable delivery log — that's `docs/CHANGELOG.md` — so renumbering its historical mentions to the current number is correct; the new 2026-06-04 clause records that the renumber happened.)
 
 - [ ] **Step 2: Fix the CHANGELOG entry**
 
@@ -634,6 +652,13 @@ path: docs/CHANGELOG.md
 ```
 Expected: zero matches.
 
+Then run the same over the roadmap — this is the task that clears the last (line-7) mentions, so the roadmap should now be fully clean:
+```
+pattern: Phase 5\.5|5\.5
+path: docs/roadmap.md
+```
+Expected: zero matches. (If `5\.5` still hits, inspect — the only legitimate near-miss would be an unrelated number like a coverage figure; there are none in `roadmap.md`, so any hit is a missed renumber to fix before committing.)
+
 - [ ] **Step 4: Commit**
 
 ```bash
@@ -648,17 +673,26 @@ git commit -m "docs: record 5.5->9.5 renumber + Phase 6 decomposition in roadmap
 **Files:**
 - Read-only verification across `docs/`
 
-- [ ] **Step 1: Confirm no stray "Phase 5.5" / old anchor remains in prose**
+- [ ] **Step 1: Confirm no stray "Phase 5.5" / old anchor remains in the forward-looking docs**
 
-Run (Grep tool, `output_mode: content`, `-n: true`):
+The authoritative check is the two living forward-looking docs only:
 ```
 pattern: Phase 5\.5|phase-55--marketplace
-path: docs
-glob: *.md
+path: docs/roadmap.md
 ```
-Expected: **zero matches** in Markdown files. (If `docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md` matches, inspect it: a coincidental `5.5` such as a coverage number is fine and must be left alone; a genuine "Phase 5.5" reference there should also be repointed to 9.5. Historical spec/plan docs are otherwise not edited.)
+and
+```
+pattern: Phase 5\.5|phase-55--marketplace
+path: docs/CHANGELOG.md
+```
+Expected: **zero matches** in both.
 
-> **Do NOT touch** `docs/assets/connectors/*.svg` or `docs/structure-audit/jscpd-report.json` — their `5.5` matches are SVG coordinates / duplication-report numbers, not phase references.
+> **Files that legitimately still contain "Phase 5.5" — do NOT edit them:**
+> - `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`, `docs/superpowers/plans/2026-06-04-roadmap-restructuring-5.5-to-9.5.md` (this plan), and any `*-review*.md` in `docs/superpowers/` — these **describe** the 5.5→9.5 renumber, so naming the old number is correct and required.
+> - `docs/superpowers/plans/2026-05-29-deferred-pass-5-lanes.md` — a historical plan; its `5.5` matches are coincidental (e.g. a coverage figure), leave them.
+> - `docs/assets/connectors/*.svg`, `docs/structure-audit/jscpd-report.json` — `5.5` is an SVG coordinate / duplication-report number, not a phase reference.
+>
+> A broad `grep -rn "Phase 5\.5" docs/*.md` is fine as a *sanity scan*, but only matches in `roadmap.md` / `CHANGELOG.md` are defects; matches in the `superpowers/` artifacts above are expected.
 
 - [ ] **Step 2: Confirm the new anchor resolves and ordering is correct**
 
