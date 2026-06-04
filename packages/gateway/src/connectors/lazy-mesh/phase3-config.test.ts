@@ -53,10 +53,14 @@ import type { ServerSpec } from "./slot.ts";
 
 const SANDBOX_CWD = "/tmp/phase3-test-cwd";
 
-function readManifest(spec: ServerSpec): { permissions: { network: string[] } } {
+function readManifest(spec: ServerSpec): {
+  permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
+} {
   const raw = spec.env?.["NIMBUS_SANDBOX_MANIFEST_JSON"];
   expect(typeof raw).toBe("string");
-  return JSON.parse(raw ?? "{}") as { permissions: { network: string[] } };
+  return JSON.parse(raw ?? "{}") as {
+    permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
+  };
 }
 
 function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
