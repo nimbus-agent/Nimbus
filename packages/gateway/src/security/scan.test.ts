@@ -122,3 +122,75 @@ describe("scanItemsForSecrets — match_offset is reported correctly", () => {
     expect(r.findings[0]!.match_offset).toBe(expected);
   });
 });
+
+describe("scanItemsForSecrets v2 — fingerprint / mute / blame", () => {
+  const AWS = "AKIAIOSFODNN7EXAMPLE";
+  function codeItem(): ScanItem {
+    return makeItem({
+      id: "filesystem:sym:r:src/x.ts:foo:function",
+      external_id: "sym:r:src/x.ts:foo:function",
+      type: "code_symbol",
+      body_preview: `src/x.ts\nconst k = "${AWS}"`,
+      metadata: JSON.stringify({ file: "src/x.ts", repoRoot: "/repo", excerptStartLine: 10 }),
+    });
+  }
+
+  test("attaches a 64-hex fingerprint and external_id", () => {
+    const r = scanItemsForSecrets([codeItem()], SECRET_PATTERNS, NOW, { allowlist: new Set() });
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.findings[0]?.external_id).toBe("sym:r:src/x.ts:foo:function");
+    expect(r.muted_count).toBe(0);
+  });
+
+  test("mutes a finding whose fingerprint is in the allowlist", () => {
+    const open = scanItemsForSecrets([codeItem()], SECRET_PATTERNS, NOW, { allowlist: new Set() });
+    const fp = open.findings[0]!.fingerprint;
+    const muted = scanItemsForSecrets([codeItem()], SECRET_PATTERNS, NOW, {
+      allowlist: new Set([fp]),
+    });
+    expect(muted.findings).toHaveLength(0);
+    expect(muted.muted_count).toBe(1);
+  });
+
+  test("resolves blame for a code_symbol finding via the injected resolver", () => {
+    // The const line is the FIRST excerpt line → maps to excerptStartLine (10).
+    const resolveBlame = (_i: ScanItem, absLine: number) =>
+      absLine === 10
+        ? { commitSha: "deadbeef", authorName: "Ada", authorEmail: "ada@x.dev", authorTimeMs: 1 }
+        : null;
+    const r = scanItemsForSecrets([codeItem()], SECRET_PATTERNS, NOW, {
+      allowlist: new Set(),
+      resolveBlame,
+    });
+    expect(r.findings[0]?.blame?.commit_sha).toBe("deadbeef");
+    expect(r.findings[0]?.blame?.author_email).toBe("ada@x.dev");
+  });
+
+  test("non-code_symbol item gets blame: null", () => {
+    const slack = makeItem({
+      id: "slack:msg:1",
+      external_id: "msg:1",
+      service: "slack",
+      type: "message",
+      body_preview: `here is a key AKIAIOSFODNN7EXAMPLE`,
+      metadata: null,
+    });
+    const r = scanItemsForSecrets([slack], SECRET_PATTERNS, NOW, {
+      allowlist: new Set(),
+      resolveBlame: () => ({
+        commitSha: "x",
+        authorName: null,
+        authorEmail: null,
+        authorTimeMs: null,
+      }),
+    });
+    expect(r.findings[0]?.blame).toBeNull();
+  });
+
+  test("default options (3-arg) still work and add fingerprints", () => {
+    const r = scanItemsForSecrets([codeItem()], SECRET_PATTERNS, NOW);
+    expect(r.findings[0]?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.findings[0]?.blame).toBeNull();
+  });
+});

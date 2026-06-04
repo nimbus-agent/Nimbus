@@ -1,3 +1,4 @@
+import { computeFindingFingerprint } from "./finding-fingerprint.ts";
 import { buildContextSnippet, redactSecret, type SecretPattern } from "./secret-patterns.ts";
 
 export interface ScanItem {
@@ -9,6 +10,15 @@ export interface ScanItem {
   readonly metadata: string | null;
   readonly modified_at: number;
   readonly url: string | null;
+  /** The item's connector-stable external id (falls back to `id` when absent). */
+  readonly external_id?: string;
+}
+
+export interface FindingBlame {
+  readonly commit_sha: string;
+  readonly author_name: string | null;
+  readonly author_email: string | null;
+  readonly author_time_ms: number | null;
 }
 
 export interface SecurityFinding {
@@ -23,6 +33,9 @@ export interface SecurityFinding {
   readonly context_snippet: string;
   readonly modified_at_ms: number;
   readonly url: string | null;
+  readonly fingerprint: string;
+  readonly external_id: string;
+  readonly blame: FindingBlame | null;
 }
 
 export interface PureScanResult {
@@ -30,26 +43,99 @@ export interface PureScanResult {
   readonly items_scanned: number;
   readonly items_skipped_depth: 0;
   readonly findings_count: number;
+  readonly muted_count: number;
   readonly findings: readonly SecurityFinding[];
 }
+
+export interface BlameResolution {
+  readonly commitSha: string;
+  readonly authorName: string | null;
+  readonly authorEmail: string | null;
+  readonly authorTimeMs: number | null;
+}
+
+export interface ScanOptions {
+  /** Finding fingerprints to mute (known false positives). */
+  readonly allowlist: ReadonlySet<string>;
+  /** Resolve indexed blame for a `code_symbol` finding at an absolute file line. */
+  readonly resolveBlame?: (item: ScanItem, absLine: number) => BlameResolution | null;
+}
+
+/**
+ * Map a `body_preview` match offset to its absolute file line for a `code_symbol`
+ * item. body_preview is "<relPath>\n<excerpt>"; the first line is the path header,
+ * so the real file line = excerptStartLine + (bodyLine - 1). Returns null unless
+ * the item carries an `excerptStartLine` and the offset is past the header line.
+ */
+function absoluteLineFor(item: ScanItem, body: string, offset: number): number | null {
+  if (item.type !== "code_symbol" || item.metadata === null) return null;
+  let meta: Record<string, unknown>;
+  try {
+    meta = JSON.parse(item.metadata) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const start = meta["excerptStartLine"];
+  if (typeof start !== "number") return null;
+  // Count newlines up to offset (allocation-free) → 0-based body line.
+  let linesBefore = 0;
+  const end = Math.min(offset, body.length);
+  for (let i = 0; i < end; i++) {
+    if (body.charCodeAt(i) === 10) linesBefore++;
+  }
+  if (linesBefore < 1) return null; // offset is in the path header line
+  return start + (linesBefore - 1); // subtract the header line
+}
+
+const NO_OPTIONS: ScanOptions = { allowlist: new Set<string>() };
 
 export function scanItemsForSecrets(
   rows: Iterable<ScanItem>,
   patterns: readonly SecretPattern[],
   nowMs: number,
+  options: ScanOptions = NO_OPTIONS,
 ): PureScanResult {
   const findings: SecurityFinding[] = [];
   let items_scanned = 0;
+  let muted_count = 0;
 
   for (const row of rows) {
     items_scanned += 1;
     const body = row.body_preview;
     if (body === null || body.length === 0) continue;
+    const externalId = row.external_id ?? row.id;
     for (const pattern of patterns) {
       pattern.regex.lastIndex = 0;
       for (const match of body.matchAll(pattern.regex)) {
         const offset = match.index ?? 0;
         const raw = match[0];
+        const matchRedacted = redactSecret(raw);
+        const contextSnippet = buildContextSnippet(body, offset, raw.length);
+        const fingerprint = computeFindingFingerprint({
+          service: row.service,
+          externalId,
+          patternName: pattern.name,
+          matchRedacted,
+          contextSnippet,
+        });
+        if (options.allowlist.has(fingerprint)) {
+          muted_count += 1;
+          continue;
+        }
+        const absLine = absoluteLineFor(row, body, offset);
+        const b =
+          absLine !== null && options.resolveBlame !== undefined
+            ? options.resolveBlame(row, absLine)
+            : null;
+        const blame: FindingBlame | null =
+          b === null
+            ? null
+            : {
+                commit_sha: b.commitSha,
+                author_name: b.authorName,
+                author_email: b.authorEmail,
+                author_time_ms: b.authorTimeMs,
+              };
         findings.push({
           item_id: row.id,
           service: row.service,
@@ -57,11 +143,14 @@ export function scanItemsForSecrets(
           title: row.title,
           pattern_name: pattern.name,
           pattern_category: pattern.category,
-          match_redacted: redactSecret(raw),
+          match_redacted: matchRedacted,
           match_offset: offset,
-          context_snippet: buildContextSnippet(body, offset, raw.length),
+          context_snippet: contextSnippet,
           modified_at_ms: row.modified_at,
           url: row.url,
+          fingerprint,
+          external_id: externalId,
+          blame,
         });
       }
     }
@@ -72,6 +161,7 @@ export function scanItemsForSecrets(
     items_scanned,
     items_skipped_depth: 0,
     findings_count: findings.length,
+    muted_count,
     findings,
   };
 }
