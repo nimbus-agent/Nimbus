@@ -109,9 +109,9 @@ Genuinely greenfield: **mDNS discovery** and **scoped index namespaces**.
 
 - **`packages/gateway/src/federation/peer-pairing.ts`** — outbound/mutual pairing on top of `lan-pairing.ts` + `lan-crypto.ts`. Interface: `initiatePair(peerAddr, code)`, `approveInboundPair(req)` (requires owner approval), `listPeers()`. Persists to `lan_peers`.
 - **`packages/gateway/src/federation/namespace-store.ts`** — CRUD for namespace definitions, their declared filters, and per-peer grants/roles. SQLite-backed (§6). The **single source of truth** for "what is shareable, with whom, at what role".
-- **`packages/gateway/src/federation/query-gate.ts`** — *the structural gate*. Every inbound `federation.query` / `federation.expertise` passes through `answerFederatedQuery(peerCtx, req)`, which: (1) resolves the peer's grant+role for the named namespace, (2) honors a standing grant or raises an interactive consent prompt, (3) compiles the namespace's declared filter into the index read, (4) executes a **scoped** `local-index` read returning **only declared item types**, (5) appends an audit entry (answered or rejected). Returns empty + audits on any failure (unpaired / no grant / undeclared type / revoked).
+- **`packages/gateway/src/federation/query-gate.ts`** — *the structural gate*. Every inbound `federation.query` / `federation.expertise` passes through `answerFederatedQuery(peerCtx, req)`, which: (1) resolves the peer's grant+role for the named namespace, (2) honors a standing grant or raises an interactive consent prompt (timeout + granularity semantics in §4.6), (3) compiles the namespace's declared filter into the index read, (4) executes a **scoped** `local-index` read returning **only declared item types**, (5) appends an audit entry (answered or rejected). Returns empty + audits on any failure (unpaired / no grant / undeclared type / revoked / consent timeout).
 - **`packages/gateway/src/federation/expertise.ts`** — relevance scoring that returns a coarse **rank** only (`high|medium|low|none`); asserts zero item content in the response shape.
-- **`packages/gateway/src/federation/discovery.ts`** — mDNS advertise/browse (`_nimbus._tcp`). Degrades to manual peer-address entry when mDNS is unavailable. Discovery never implies trust — pairing still requires mutual approval.
+- **`packages/gateway/src/federation/discovery.ts`** — defines a `DiscoveryProvider` interface (so tests inject a mock; §8) with an mDNS implementation advertising/browsing `_nimbus._tcp`. Degrades to manual peer-address entry when mDNS is unavailable. Discovery never implies trust — pairing still requires mutual approval.
 - **`packages/gateway/src/ipc/federation-rpc.ts`** — the `federation.*` JSON-RPC dispatcher (mirrors `agents-rpc.ts`).
 - **`packages/gateway/src/index/federation-vNN-sql.ts`** — migration adding namespace/grant tables + audit federation-context column (§6). `NN` = next free migration number at implementation time (V31+; confirm against `index/` runner).
 - **CLI** (`packages/cli`): `nimbus team discover`, `nimbus team pair <peer>`, `nimbus team namespace publish|grant|revoke`, `nimbus team query <namespace> "<q>"`, `nimbus team who-knows "<q>"`.
@@ -134,6 +134,16 @@ Federated query *answering* is **read-only** and routes through `query-gate.ts`,
 
 The two over-the-wire methods are the only ones added to the I5 LAN allowlist. Renderer exposure for local management methods follows the Tauri allowlist process (I7); the over-the-wire answering methods are **never** renderer-callable.
 
+### 4.6 Consent semantics, timeout & UI
+
+When a query targets a namespace where the asking peer's grant has `standing_consent = false`, `query-gate.ts` raises an interactive consent prompt on the **answering** Gateway's owner UI. The semantics:
+
+- **Timeout (review #1).** The query **blocks up to a configurable timeout — default 30 s** (`[federation].consent_timeout_seconds`). On expiry the answering Gateway resolves the prompt as a rejection, audits it (decision `timeout`), and returns the over-the-wire error **`timeout_waiting_for_consent`** to the requester. A standing grant never blocks; an absent grant is rejected immediately without prompting (no point asking the owner to approve a peer they never granted).
+- **Granularity (review #2).** A non-standing consent prompt fires **once per `(peer, namespace)` per session** on the answering Gateway, and the decision is cached for that session — not per query (alert fatigue) and not persisted across restarts (that's what `standing_consent = true` is for). The session consent cache is **invalidated immediately** on grant revocation or role change, so revocation can never be out-lived by a cached approval (ties to acceptance criterion 4).
+- **UI reuse (review #3).** The prompt **reuses the existing HITL approval-UI *patterns*** (the renderer's approval-card component + decision flow), surfaced via a **new notification kind `federation.consentRequest`** carrying peer display-name, namespace, stated purpose, and the role being exercised. It is a *notification to the owner's UI*, **not** a renderer-callable method, so it does **not** widen the I7 `ALLOWED_METHODS` allowlist. The backend gate stays `query-gate.ts`, distinct from `ToolExecutor.gate()` (I2). Exact Tauri component wiring + the notification's global-rebroadcast classification are deferred to implementation (consult `nimbus-tauri-allowlist` then).
+
+**Over-the-wire error model** (returned to the requesting peer): `not_paired`, `no_grant` (empty result, audited), `namespace_unknown`, `timeout_waiting_for_consent`, `consent_denied`. None leak whether undeclared item types exist — a query outside the declared shape returns the same empty/`no_grant`-shaped result as an unmatched in-scope query.
+
 ---
 
 ## 5. Acceptance Criteria (foundation-first)
@@ -141,12 +151,13 @@ The two over-the-wire methods are the only ones added to the I5 LAN allowlist. R
 1. **Mutual pairing**: two Gateways on a LAN discover each other (mDNS) and pair only after **both** owners approve; an unpaired peer's `federation.query` is rejected and audited.
 2. **Scoped answering**: owner publishes namespace `project:zurich` (declared item types + services); a peer granted `viewer` receives only matching items; a peer with no grant receives an empty result **and** an audit entry recording the rejected query.
 3. **Audit completeness**: every inbound federated query — answered **or** rejected — appears in the answering Gateway's Blake3 audit chain with peer-id, stated purpose, and scope; the chain still verifies (`audit.verify`) afterward.
-4. **Revocation latency**: revoking a peer's grant takes effect within one sync cycle — a subsequent query returns empty + audited.
+4. **Revocation latency**: grants are **live-checked per query**, so revoking a peer's grant takes effect immediately and **invalidates any cached session consent** (§4.6) — a subsequent query returns empty + audited, even within the same session a prior approval covered.
 5. **Leak-proof contract test**: a federated query for an item type **not declared** in the namespace shape returns empty and is audited; the protocol exposes no undeclared item type and no `raw_meta` field. (Extends the existing privacy-contract test.)
 6. **Expertise privacy**: `federation.expertise` returns only a rank; an assertion proves the response payload carries zero item content.
 7. **Channel allowlist (I5)**: `vault.*`, `data.*`, and `extension.*` remain forbidden over the federation channel; only the two over-the-wire `federation.*` methods are admitted.
 8. **I17 enforcement test** exists and fails if `query-gate.ts` is bypassed (the triple-rule test, §7).
 9. **Platform equality**: the integration suite passes on Windows, macOS, and Linux; mDNS-absent environments fall back to manual peer entry without failing the suite.
+10. **Consent timeout**: a query against a non-standing grant whose owner does not respond resolves as a rejection after `consent_timeout_seconds`, returns `timeout_waiting_for_consent` to the requester, and is audited with decision `timeout`.
 
 ---
 
@@ -158,7 +169,7 @@ Append-only, per the migration rules. New tables:
 - **`federation_namespace_filters`** — `(namespace_id TEXT, filter_kind TEXT, filter_value TEXT)` — the declared item types / services / tag filters that *define the export shape*. The leak-proof property derives from compiling **only** these into the read.
 - **`federation_grants`** — `(namespace_id TEXT, peer_id TEXT, role TEXT CHECK(role IN ('owner','editor','viewer')), standing_consent INTEGER, granted_at INTEGER, revoked_at INTEGER NULL)`.
 
-Audit extension: add a nullable `federation_json TEXT` column to `audit_log` (peer-id, namespace, stated purpose, decision) via the same migration. Reuses `appendAuditEntry` — the new field is folded into the hashed payload so federation events are tamper-evident like every other entry. (Confirm whether to extend the hashed-field set or carry it inside the existing `action_json`; default to a dedicated nullable column folded into the hash.)
+Audit extension: add a **dedicated nullable `federation_json TEXT` column** to `audit_log` (peer-id, namespace, stated purpose, decision ∈ `answered|no_grant|not_paired|timeout|consent_denied`) via the same migration — **not** folded into `action_json` (review #5). `action_json` is tightly coupled to local execution contexts (tool calls); a dedicated column keeps the schemas unmixed and lets federation-specific audit queries filter in SQL (`WHERE federation_json IS NOT NULL`) without JSON parsing at the DB layer. The new field **is** folded into the Blake3 hashed payload via `appendAuditEntry`, so federation events are tamper-evident like every other entry.
 
 All SQL uses bound parameters; identifiers via `escapeIdentifier` (I9). All writes route through `dbRun`/`dbExec`/`dbStmtRun` (I14).
 
@@ -183,7 +194,9 @@ Per the project's testing philosophy:
 - **I5 allowlist test** extended to cover the new `federation.*` methods (admit the two over-the-wire, forbid `vault.*`/`data.*`/`extension.*`).
 - **I17 enforcement test** in `security-invariants.test.ts`.
 - **Audit-chain continuity test** asserting federation events keep the Blake3 chain verifiable.
-- **Cross-platform**: build paths with `path.join`; mDNS-absent fallback path exercised so CI-Linux without an mDNS responder still passes.
+- **Discovery is behind a `DiscoveryProvider` interface (DI), not mocked at module level (review #4).** mDNS multicast is notoriously flaky in shared/containerized CI (not just Linux), so **all** unit + integration tests inject an in-memory mock `DiscoveryProvider` (deterministic peer list) — never a real broadcast. This also follows the project's "DI over `mock.module`" learning. The pairing/namespace/query/audit scenarios depend only on the mock provider, so they're stable on every OS.
+- **Real mDNS broadcast is isolated to a single tagged E2E** (e.g. `discovery.mdns.e2e.test.ts`) that is **allowed to skip** when no multicast responder is present (guarded by an env flag), so it never causes intermittent CI reds while still exercising the real responder on a capable runner.
+- **Cross-platform**: build paths with `path.join`; the mDNS-absent → manual-peer-entry fallback path is exercised explicitly.
 - Coverage: the new `federation/` module should meet the Engine ≥85% gate territory; confirm the exact gate mapping with `nimbus-testing` when implementing.
 
 ---
@@ -201,8 +214,11 @@ Per the project's testing philosophy:
 
 ## 10. Open Questions (resolve during writing-plans / implementation)
 
-1. **Sync-cycle semantics for revocation** — "within one sync cycle" needs a concrete definition: is there a federation heartbeat, or is the grant checked live on every query (making revocation immediate)? Live-check is simpler and stricter; prefer it unless there's a caching reason not to.
-2. **Audit hash field** — extend the hashed-field set with a dedicated `federation_json` column, or fold federation context into the existing `action_json`? Default: dedicated nullable column folded into the hash.
-3. **mDNS dependency** — does discovery need a third-party mDNS lib (and the SDK/`shared/` dep constraints that implies), or is a minimal first-party responder viable? Affects the dep-safety pre-flight.
-4. **Migration number** — confirm the next free `V<N>` against the `index/` runner at implementation time.
-5. **Scope of "this session"** — this spec + the §2 roadmap edits are the immediate deliverable. Building Slice 1's code is a separate future plan unless explicitly kicked off.
+Resolved in this revision (post-review): **revocation** is now *live-checked per query* (immediate; §5 criterion 4), **consent timeout/granularity** is defined (§4.6), the **audit field** is a dedicated `federation_json` column (§6), and **discovery testing** is DI-based with real mDNS isolated to one skippable E2E (§8).
+
+Remaining:
+
+1. **mDNS dependency** — does the `DiscoveryProvider` mDNS implementation need a third-party lib (and the SDK/`shared/` dep constraints that implies), or is a minimal first-party responder viable? Affects the dep-safety pre-flight. (The DI interface in §4.3/§8 makes this swappable, so it doesn't block the rest of the slice.)
+2. **Migration number** — confirm the next free `V<N>` against the `index/` runner at implementation time.
+3. **`consent_timeout_seconds` default** — 30 s is the proposed default; confirm against real LAN round-trip + human-response latency during implementation.
+4. **Scope of "this session"** — this spec + the §2 roadmap edits are the immediate deliverable. Building Slice 1's code is a separate future plan unless explicitly kicked off.
