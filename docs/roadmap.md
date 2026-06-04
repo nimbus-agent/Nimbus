@@ -1178,7 +1178,7 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 
 **Goal:** Turn the connector + extension ecosystem into a discoverable, trustworthy, quality-scored economy without yet operating a payment processor. The v0.1.1 trigger "5 seed community extensions in the registry" is elevated to a full phase because the marketplace is the **ecosystem flywheel** that compounds every other piece of work — once authors are publishing, every new SaaS the world produces becomes a Nimbus connector within days. Payments wait until install base is large enough to support author rent (post-Phase 12); this phase ships the **registry, the quality layer, and the trust layer** only.
 
-> **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Phase 9 ships Wave 5 *before* Phase 5.5 closes, so the marketplace UI has real quality data from day one.
+> **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 Wave 5 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Wave 5 is a hard prerequisite delivered in the immediately preceding phase, so the marketplace UI consumes its quality scores from day one.
 >
 > **Composes with the S — Standards track:** registry-published extensions carry a Signed Connector Manifest produced by the same `I16` Ed25519 chain the Gateway already enforces at install + startup. The published manifest schema is the reference implementation for the SCM artifact in the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track.
 
