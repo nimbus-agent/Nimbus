@@ -632,6 +632,60 @@ export function loadNimbusAuditFromConfigDir(configDir: string): NimbusAuditToml
   return loadNimbusAuditFromPath(join(configDir, "nimbus.toml"));
 }
 
+export type NimbusSecurityToml = {
+  extendedPatterns: boolean;
+  allowlistFingerprints: string[];
+};
+
+export const DEFAULT_NIMBUS_SECURITY_TOML: NimbusSecurityToml = {
+  extendedPatterns: false,
+  allowlistFingerprints: [],
+};
+
+function parseNimbusTomlSecuritySection(source: string): Partial<NimbusSecurityToml> {
+  const out: Partial<NimbusSecurityToml> = {};
+  forEachSectionEntry(source, "[security]", (key, valRaw) => {
+    if (key === "extended_patterns") {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.extendedPatterns = b;
+    }
+  });
+  // [[security.allowlist]] is an array-of-tables; collect each entry's fingerprint.
+  const fps: string[] = [];
+  let inAllow = false;
+  for (const line of source.split(/\r?\n/)) {
+    const t = stripComment(line).trim();
+    if (t === "") continue;
+    if (isTableHeader(t)) {
+      inAllow = t === "[[security.allowlist]]";
+      continue;
+    }
+    if (!inAllow) continue;
+    const kv = splitKeyValue(t);
+    if (kv !== undefined && kv.key === "fingerprint") {
+      const v = parseString(kv.valRaw);
+      if (v.length > 0) fps.push(v);
+    }
+  }
+  if (fps.length > 0) out.allowlistFingerprints = fps;
+  return out;
+}
+
+export function parseNimbusSecurityToml(
+  raw: string,
+  defaults: NimbusSecurityToml = DEFAULT_NIMBUS_SECURITY_TOML,
+): NimbusSecurityToml {
+  return { ...defaults, ...parseNimbusTomlSecuritySection(raw) };
+}
+
+export function loadNimbusSecurityFromPath(tomlPath: string): NimbusSecurityToml {
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_SECURITY_TOML, parseNimbusSecurityToml);
+}
+
+export function loadNimbusSecurityFromConfigDir(configDir: string): NimbusSecurityToml {
+  return loadNimbusSecurityFromPath(join(configDir, "nimbus.toml"));
+}
+
 export type NimbusUserToml = {
   mePersonId?: string;
 };
