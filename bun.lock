@@ -402,6 +402,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/firebase": {
+      "name": "nimbus-mcp-firebase",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/flagsmith": {
       "name": "nimbus-mcp-flagsmith",
       "version": "0.1.0",
@@ -1077,6 +1089,18 @@
       "bin": {
         "nimbus-mcp-teams": "./dist/server.js",
       },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/testflight": {
+      "name": "nimbus-mcp-testflight",
+      "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
         "@nimbus-dev/sdk": "workspace:*",
@@ -3219,6 +3243,8 @@
 
     "nimbus-mcp-figma": ["nimbus-mcp-figma@workspace:packages/mcp-connectors/figma"],
 
+    "nimbus-mcp-firebase": ["nimbus-mcp-firebase@workspace:packages/mcp-connectors/firebase"],
+
     "nimbus-mcp-flagsmith": ["nimbus-mcp-flagsmith@workspace:packages/mcp-connectors/flagsmith"],
 
     "nimbus-mcp-flux": ["nimbus-mcp-flux@workspace:packages/mcp-connectors/flux"],
@@ -3324,6 +3350,8 @@
     "nimbus-mcp-superset": ["nimbus-mcp-superset@workspace:packages/mcp-connectors/superset"],
 
     "nimbus-mcp-teams": ["nimbus-mcp-teams@workspace:packages/mcp-connectors/teams"],
+
+    "nimbus-mcp-testflight": ["nimbus-mcp-testflight@workspace:packages/mcp-connectors/testflight"],
 
     "nimbus-mcp-vercel": ["nimbus-mcp-vercel@workspace:packages/mcp-connectors/vercel"],
 

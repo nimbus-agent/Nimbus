@@ -26,6 +26,8 @@ export type Provider =
   | "snyk"
   | "bitrise"
   | "codemagic"
+  | "testflight"
+  | "firebase"
   | "sonarqube"
   | "semgrep"
   | "wiz"
@@ -107,6 +109,8 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   snyk: { requestsPerMinute: 60, burstSize: 10 },
   bitrise: { requestsPerMinute: 60, burstSize: 10 },
   codemagic: { requestsPerMinute: 60, burstSize: 10 },
+  testflight: { requestsPerMinute: 50, burstSize: 10 },
+  firebase: { requestsPerMinute: 40, burstSize: 8 },
   sonarqube: { requestsPerMinute: 60, burstSize: 10 },
   semgrep: { requestsPerMinute: 60, burstSize: 10 },
   wiz: { requestsPerMinute: 60, burstSize: 10 },

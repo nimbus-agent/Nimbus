@@ -33,6 +33,8 @@ export const CONNECTOR_SERVICE_IDS = [
   "snyk",
   "bitrise",
   "codemagic",
+  "testflight",
+  "firebase",
   "sonarqube",
   "semgrep",
   "wiz",
@@ -141,6 +143,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   snyk: MIN10,
   bitrise: MIN10,
   codemagic: MIN10,
+  testflight: MIN10,
+  firebase: MIN10,
   sonarqube: MIN10,
   semgrep: MIN10,
   wiz: MIN10,
@@ -238,6 +242,10 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   snyk: "uses a REST API token (connector.auth snyk)",
   bitrise: "uses a personal access token (connector.auth bitrise)",
   codemagic: "uses an API token sent in the x-auth-token header (connector.auth codemagic)",
+  testflight:
+    "uses an App Store Connect ES256 JWT minted from issuer id + key id + .p8 private key (connector.auth testflight)",
+  firebase:
+    "uses a Google service-account key JSON + comma-separated app ids (connector.auth firebase)",
   sonarqube: "uses an API token (connector.auth sonarqube)",
   semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
   wiz: "uses OAuth client_credentials (connector.auth wiz)",
