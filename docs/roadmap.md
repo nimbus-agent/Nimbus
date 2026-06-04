@@ -15,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
 - [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 5.5 through 19 (including 5.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+- [Planned](#planned) — Phases 6 through 19 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -56,11 +56,11 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
 | Phase 5 | The Extended Surface | ✅ Complete |
-| Phase 5.5 | Marketplace Registry | Planned |
 | Phase 6 | Team | Planned |
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
 | Phase 9 | AI Engineering Loop | Planned |
+| Phase 9.5 | Marketplace Registry | Planned |
 | Phase 10 | The Autonomous Agent | Planned |
 | Phase 11 | Sovereign Mesh | Planned |
 | Phase 12 | Enterprise | Planned |
