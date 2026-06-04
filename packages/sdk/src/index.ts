@@ -16,12 +16,24 @@ export {
   runContractTests,
 } from "./contract-tests";
 export {
+  type AppStoreConnectJwtParams,
+  signAppStoreConnectJwt,
+} from "./crypto/app-store-connect-jwt";
+export {
   canonicalize,
   canonicalizeManifest,
   ManifestNestedTooDeep,
   NonIntegerNumberInManifest,
   UnsupportedManifestValueType,
 } from "./crypto/canonical-json";
+export { base64UrlJson, type SignJwtOptions, signJwt } from "./crypto/jwt";
+export {
+  type FetchLike,
+  type GoogleServiceAccount,
+  mintGoogleAccessToken,
+  parseServiceAccountJson,
+  signServiceAccountAssertion,
+} from "./crypto/service-account-token";
 export type { SignatureDisableReason } from "./crypto/verify-signature";
 export {
   decodeBase64,

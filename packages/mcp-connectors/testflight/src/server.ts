@@ -1,14 +1,15 @@
+import { signAppStoreConnectJwt } from "@nimbus-dev/sdk";
 import { z } from "zod";
 
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
-import { jwtParamsFromEnv, signTestflightJwt } from "./jwt.ts";
+import { jwtParamsFromEnv } from "./jwt.ts";
 import { filterTestflightBuilds } from "./search-filter.ts";
 
 const APPSTORECONNECT_API = "https://api.appstoreconnect.apple.com";
 
 function authHeader(): Record<string, string> {
-  const token = signTestflightJwt(jwtParamsFromEnv());
+  const token = signAppStoreConnectJwt(jwtParamsFromEnv());
   return { Authorization: `Bearer ${token}`, Accept: "application/json" };
 }
 

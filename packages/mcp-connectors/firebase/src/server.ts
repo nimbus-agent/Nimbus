@@ -1,14 +1,10 @@
+import { mintGoogleAccessToken } from "@nimbus-dev/sdk";
 import { z } from "zod";
 
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFirebaseReleases } from "./search-filter.ts";
-import {
-  configuredAppIds,
-  mintFirebaseAccessToken,
-  projectNumberFromAppId,
-  serviceAccountFromEnv,
-} from "./token.ts";
+import { configuredAppIds, projectNumberFromAppId, serviceAccountFromEnv } from "./token.ts";
 
 const APP_DISTRIBUTION_API = "https://firebaseappdistribution.googleapis.com";
 
@@ -20,7 +16,7 @@ async function accessToken(): Promise<string> {
   if (cachedToken !== null && cachedToken.expiresAt > now + 60_000) {
     return cachedToken.token;
   }
-  const token = await mintFirebaseAccessToken(serviceAccountFromEnv());
+  const token = await mintGoogleAccessToken(serviceAccountFromEnv());
   if (token === null) {
     throw new Error("failed to mint a Firebase access token");
   }

@@ -1,3 +1,5 @@
+import { type AppStoreConnectJwtParams, signAppStoreConnectJwt } from "@nimbus-dev/sdk";
+
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import {
   syncPassCursorHttpEmpty,
@@ -13,8 +15,12 @@ import {
   mapTestflightBuildToItem,
   type TestflightMappedRow,
 } from "./testflight-build-mapping.ts";
-import { type TestflightJwtParams, testflightAuthHeaders } from "./testflight-jwt.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
+
+/** App Store Connect Bearer auth headers — a fresh ES256 JWT per sync pass. */
+function testflightAuthHeaders(params: AppStoreConnectJwtParams): Record<string, string> {
+  return { Authorization: `Bearer ${signAppStoreConnectJwt(params)}`, Accept: "application/json" };
+}
 
 const SERVICE_ID = "testflight";
 const CURSOR_PREFIX = "nimbus-testflight1:";
@@ -57,7 +63,7 @@ function resourceId(row: Record<string, unknown>): string | undefined {
   return id === undefined || id === "" ? undefined : id;
 }
 
-async function readJwtParams(ctx: SyncContext): Promise<TestflightJwtParams | null> {
+async function readJwtParams(ctx: SyncContext): Promise<AppStoreConnectJwtParams | null> {
   const issuerId = (await readConnectorSecret(ctx.vault, "testflight", "issuer_id"))?.trim() ?? "";
   const keyId = (await readConnectorSecret(ctx.vault, "testflight", "key_id"))?.trim() ?? "";
   const privateKeyPem = (await readConnectorSecret(ctx.vault, "testflight", "private_key")) ?? "";

@@ -1,14 +1,15 @@
+import {
+  type GoogleServiceAccount,
+  mintGoogleAccessToken,
+  parseServiceAccountJson,
+} from "@nimbus-dev/sdk";
+
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { type FirebaseMappedRow, mapFirebaseReleaseToItem } from "./firebase-release-mapping.ts";
-import {
-  type FirebaseServiceAccount,
-  mintFirebaseAccessToken,
-  parseServiceAccountJson,
-} from "./firebase-token.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
 
@@ -28,7 +29,7 @@ function pass1Cursor(): string {
  * Token minter, injected so tests can supply a deterministic token without a
  * real network round-trip to the Google token endpoint.
  */
-export type FirebaseTokenMinter = (sa: FirebaseServiceAccount) => Promise<string | null>;
+export type FirebaseTokenMinter = (sa: GoogleServiceAccount) => Promise<string | null>;
 
 export interface FirebaseSyncableOptions {
   readonly ensureFirebaseMcpRunning: () => Promise<void>;
@@ -37,7 +38,7 @@ export interface FirebaseSyncableOptions {
 }
 
 interface FirebaseConfig {
-  readonly serviceAccount: FirebaseServiceAccount;
+  readonly serviceAccount: GoogleServiceAccount;
   readonly appIds: string[];
 }
 
@@ -92,7 +93,7 @@ function extractReleases(parsed: unknown): Record<string, unknown>[] {
 }
 
 export function createFirebaseSyncable(options: FirebaseSyncableOptions): Syncable {
-  const mintToken: FirebaseTokenMinter = options.mintToken ?? ((sa) => mintFirebaseAccessToken(sa));
+  const mintToken: FirebaseTokenMinter = options.mintToken ?? ((sa) => mintGoogleAccessToken(sa));
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
