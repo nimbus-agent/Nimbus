@@ -27,6 +27,7 @@
 ## Task 1: `[audit]` config section
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (add after the `[extensions]` section, ~line 587)
 - Test: `packages/gateway/src/config/nimbus-toml.audit.test.ts`
 
@@ -155,6 +156,7 @@ git commit -m "feat(config): add [audit].tool_call_log_retention_days (default 9
 ## Task 2: Pure `pruneToolCallLog` + audit append
 
 **Files:**
+
 - Create: `packages/gateway/src/db/tool-call-log-retention.ts`
 - Test: `packages/gateway/src/db/tool-call-log-retention.test.ts`
 
@@ -362,6 +364,7 @@ git commit -m "feat(db): prune tool_call_log + append tool_call_log.pruned audit
 ## Task 3: Scheduler `startToolCallLogRetention`
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/tool-call-log-retention.ts`
 - Test: `packages/gateway/src/db/tool-call-log-retention.test.ts` (append a `describe`)
 
@@ -481,6 +484,7 @@ git commit -m "feat(db): daily startToolCallLogRetention scheduler with injected
 ## Task 4: Wire the scheduler into platform assembly
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts` (import block ~line 11-20; registration after line 356)
 
 - [ ] **Step 1: Add the import**
@@ -536,7 +540,8 @@ git commit -m "feat(gateway): start tool_call_log retention scheduler on assembl
 > The Phase 5 ✅ flip and the roadmap-row status line are handled in the separate docs-reconciliation PR (PR B). This PR only flips its own roadmap checkbox and logs the delivery, per the CHANGELOG convention (memory: connector-docs-changelog-convention — log deliveries in `docs/CHANGELOG.md`, do NOT append to the CLAUDE.md/GEMINI.md status line).
 
 **Files:**
-- Modify: `docs/roadmap.md` (the `- [ ] **`tool_call_log` retention policy**` line)
+
+- Modify: `docs/roadmap.md` (the `tool_call_log` retention-policy checkbox line)
 - Modify: `docs/CHANGELOG.md` (new dated entry under Phase 5)
 
 - [ ] **Step 1: Flip the roadmap checkbox**
@@ -575,6 +580,7 @@ gh pr create --base main --title "feat: tool_call_log retention policy ([audit].
 ## Self-Review
 
 **Spec coverage:**
+
 - `[audit].tool_call_log_retention_days` (default 90) → Task 1 ✅
 - Daily prune of rows older than threshold → Tasks 2 (delete) + 3 (daily scheduler) ✅
 - ONE `tool_call_log.pruned` audit row with deleted count → Task 2 (asserted exactly-one, count in `deleted_count`) ✅
