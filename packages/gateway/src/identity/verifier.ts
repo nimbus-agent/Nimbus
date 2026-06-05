@@ -121,5 +121,5 @@ export function isOperatorValid(
   const s = store.getSession(issuer);
   if (s === undefined) return false;
   if (s.status !== "active") return false;
-  return nowMs <= s.expiresAt + graceSeconds;
+  return nowMs <= s.expiresAt + graceSeconds * 1000;
 }

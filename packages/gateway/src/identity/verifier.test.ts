@@ -126,10 +126,10 @@ describe("isOperatorValid", () => {
       expiresAt: 1000,
       status: "active",
     });
-    expect(isOperatorValid(store, "https://acme", 1500, 1000)).toBe(true); // exp=1000, grace=1000 → ok until 2000
-    expect(isOperatorValid(store, "https://acme", 2500, 1000)).toBe(false); // past grace
+    expect(isOperatorValid(store, "https://acme", 1500, 1)).toBe(true); // exp=1000ms, grace=1s → boundary 2000ms
+    expect(isOperatorValid(store, "https://acme", 2500, 1)).toBe(false); // past grace
     store.setSessionStatus("https://acme", "deprovisioned");
-    expect(isOperatorValid(store, "https://acme", 1500, 1000)).toBe(false);
+    expect(isOperatorValid(store, "https://acme", 1500, 1)).toBe(false);
   });
   test("false when there is no session at all", () => {
     const db = freshDb();
