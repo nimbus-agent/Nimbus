@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { dbRun } from "../db/write.ts";
+import { NamespaceStore } from "../federation/namespace-store.ts";
+import { IdentityStore } from "../identity/identity-store.ts";
+import { dispatchScimRoute, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
@@ -14,6 +17,7 @@ export type ReadOnlyHttpServerOptions = {
   readonly configDir?: string;
   readonly nowMs?: () => number;
   readonly resolveDeploymentToken?: () => Promise<string>;
+  readonly resolveScimToken?: () => Promise<string>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -331,6 +335,21 @@ export function startReadOnlyHttpServer(
     port,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      if (
+        writeDb !== null &&
+        opts.resolveScimToken !== undefined &&
+        isScimPath(url) &&
+        req.method !== "GET"
+      ) {
+        const scimToken = await opts.resolveScimToken();
+        return dispatchScimRoute(req, {
+          writeDb,
+          store: new NamespaceStore(writeDb),
+          identity: new IdentityStore(writeDb),
+          scimToken,
+          nowMs: opts.nowMs ?? ((): number => Date.now()),
+        });
+      }
       if (req.method === "POST") {
         return handlePost(req, writeDb, rateLimiter, opts);
       }
