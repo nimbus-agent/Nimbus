@@ -49,6 +49,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
 
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
+  // `assemble.ts` is the boot-assembly I/O orchestrator (opens SQLite, spawns sidecars,
+  // wires every runtime together) — same untestable shell class as `gateway/src/index.ts`
+  // and `ipc/server/options.ts`. The new federation glue block is inert by default
+  // (federation.enabled = false); testing it requires a full subprocess boot.
+  { kind: "exact", path: "packages/gateway/src/platform/assemble.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
   { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },

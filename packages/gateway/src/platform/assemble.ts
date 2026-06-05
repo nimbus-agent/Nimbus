@@ -12,6 +12,7 @@ import {
   loadNimbusAutomationFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
+  loadNimbusFederationFromConfigDir,
   loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
@@ -41,6 +42,7 @@ import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
+import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -433,6 +435,16 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   }
 
   collectSidecarsFromEnv(db, paths, sidecarStops);
+
+  const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
+  const federationRuntime = buildFederationRuntime(federationCfg, localIndex);
+  if (federationRuntime !== undefined) {
+    void federationRuntime.discovery.start();
+    sidecarStops.push(() => void federationRuntime.discovery.stop());
+    ipcOpts.federationDiscovery = federationRuntime.discovery;
+    ipcOpts.federationPairing = federationRuntime.pairing;
+    ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+  }
 
   const ipc = createIpcServer(ipcOpts);
 
