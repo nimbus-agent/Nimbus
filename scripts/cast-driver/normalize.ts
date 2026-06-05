@@ -11,7 +11,7 @@ export interface Rule {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI CSI parsing requires the literal ESC (\x1b) byte
 const ANSI_CSI = /\x1b\[[?]?[0-9;]*[A-Za-z]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI OSC parsing requires the literal ESC (\x1b) and BEL (\x07) bytes
-const ANSI_OSC = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g;
+const ANSI_OSC = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g; // NOSONAR S6324: ANSI OSC parsing requires literal ESC/BEL control bytes
 const ISO_8601 = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
 const EPOCH_MS = /\b\d{13}\b/g;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
