@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { TCPSocketListener } from "bun";
-import { outboundPairHandshake } from "./lan-client.ts";
+import { outboundPairHandshake, sendFederatedOverWire } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
 import { generatePairingCode, PairingWindow } from "./lan-pairing.ts";
 import { LanRateLimiter } from "./lan-rate-limit.ts";
@@ -71,4 +71,40 @@ test("outboundPairHandshake rejects on timeout when peer never replies", async (
   } finally {
     silent.stop(true);
   }
+});
+
+test("sendFederatedOverWire performs hello + encrypted RPC against a known peer", async () => {
+  const hostKp = generateBoxKeypair();
+  const selfKp = generateBoxKeypair();
+  server = new LanServer({
+    bind: "127.0.0.1",
+    port: 0,
+    hostKeypair: hostKp,
+    pairing: {
+      isOpen: () => false,
+      consume: () => false,
+      open: () => {},
+      close: () => {},
+      getExpiresAt: () => undefined,
+    },
+    rateLimit: new LanRateLimiter({ maxFailures: 3, windowMs: 2000, lockoutMs: 2000 }),
+    isKnownPeer: (pub) =>
+      Buffer.compare(Buffer.from(pub), Buffer.from(selfKp.publicKey)) === 0
+        ? { peerId: "peer-known", writeAllowed: false }
+        : null,
+    registerPeer: () => "peer-known",
+    onMessage: async (method, params, peer) => ({ method, params, peerId: peer.peerId }),
+  });
+  await server.start();
+  const port = server.listenAddr()?.port as number;
+  const res = (await sendFederatedOverWire(
+    "127.0.0.1",
+    port,
+    selfKp,
+    hostKp.publicKey,
+    "federation.query",
+    { namespace: "n", purpose: "p" },
+  )) as { method: string; peerId: string };
+  expect(res.method).toBe("federation.query");
+  expect(res.peerId).toBe("peer-known"); // server authenticated us, not our body
 });

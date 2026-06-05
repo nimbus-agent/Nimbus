@@ -1,6 +1,7 @@
 import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
+import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
 export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
@@ -111,6 +112,137 @@ export function exchangeOneFrame(
 
 export function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void {
   socket.write(buildFrame(payload));
+}
+
+/** Two-frame exchange: send req frame A (hello), read reply A, send req frame B (from reply A), read reply B. */
+function exchangeHelloThenRpc(
+  host: string,
+  port: number,
+  hello: Uint8Array,
+  buildRpc: (helloReply: { host_pubkey?: string; kind?: string }) => Uint8Array,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<Uint8Array> {
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const reader = makeFrameReader(MAX_ENCRYPTED_FRAME);
+    let phase: "hello" | "rpc" = "hello";
+    let settled = false;
+    const timer = setTimeout(
+      () => finish(undefined, new Error("lan-client: rpc timeout")),
+      timeoutMs,
+    );
+    function finish(body: Uint8Array | undefined, err?: Error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err);
+      else if (body) resolve(body);
+      else reject(new Error("lan-client: connection closed mid-exchange"));
+    }
+    void Bun.connect<undefined>({
+      hostname: host,
+      port,
+      socket: {
+        open(socket) {
+          writeFrame(socket, hello);
+        },
+        data(socket, chunk) {
+          reader.push(chunk);
+          let body: Uint8Array | undefined;
+          try {
+            body = reader.next();
+          } catch (e) {
+            socket.end();
+            finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            return;
+          }
+          if (body === undefined) return;
+          if (phase === "hello") {
+            let reply: { host_pubkey?: string; kind?: string };
+            try {
+              reply = JSON.parse(new TextDecoder().decode(body)) as typeof reply;
+            } catch {
+              socket.end();
+              finish(undefined, new Error("lan-client: bad hello reply"));
+              return;
+            }
+            if (reply.kind !== "hello_ok") {
+              socket.end();
+              finish(
+                undefined,
+                new Error(`lan-client: hello rejected (${reply.kind ?? "unknown"})`),
+              );
+              return;
+            }
+            phase = "rpc";
+            try {
+              writeFrame(socket, buildRpc(reply));
+            } catch (e) {
+              socket.end();
+              finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            }
+            return;
+          }
+          // phase === "rpc": resolve before socket.end() — Bun fires close() synchronously
+          // inside socket.end(), so settling first prevents the close handler
+          // from winning the race with an "undefined body" rejection.
+          finish(body);
+          socket.end();
+        },
+        close() {
+          finish(undefined);
+        },
+        error(_s, e) {
+          finish(undefined, e instanceof Error ? e : new Error(String(e)));
+        },
+      },
+    }).catch((e: unknown) => finish(undefined, e instanceof Error ? e : new Error(String(e))));
+  });
+}
+
+/** Send one authenticated, encrypted federation RPC to a paired peer and return its result. */
+export async function sendFederatedOverWire(
+  host: string,
+  port: number,
+  selfKp: BoxKeypair,
+  peerPubkey: Uint8Array,
+  method: string,
+  params: unknown,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<unknown> {
+  const hello = new TextEncoder().encode(
+    JSON.stringify({
+      kind: "hello",
+      client_pubkey: Buffer.from(selfKp.publicKey).toString("base64"),
+    }),
+  );
+  const replyFrame = await exchangeHelloThenRpc(
+    host,
+    port,
+    hello,
+    (reply) => {
+      const hostPub = new Uint8Array(Buffer.from(reply.host_pubkey ?? "", "base64"));
+      if (Buffer.compare(Buffer.from(hostPub), Buffer.from(peerPubkey)) !== 0) {
+        throw new Error("lan-client: responder pubkey does not match pinned peer key");
+      }
+      return sealBoxFrame(
+        new TextEncoder().encode(JSON.stringify({ id: 1, method, params })),
+        peerPubkey,
+        selfKp.secretKey,
+      );
+    },
+    timeoutMs,
+  );
+  const plain = openBoxFrame(replyFrame, peerPubkey, selfKp.secretKey);
+  const resp = JSON.parse(new TextDecoder().decode(plain)) as {
+    result?: unknown;
+    error?: { code?: string; message?: string };
+  };
+  if (resp.error !== undefined) {
+    throw new Error(
+      `lan-client: peer error ${resp.error.code ?? ""} ${resp.error.message ?? ""}`.trim(),
+    );
+  }
+  return resp.result;
 }
 
 /** The production outbound pair handshake (PeerPairing DI default). Returns the responder's box pubkey. */
