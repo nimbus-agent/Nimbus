@@ -13,6 +13,7 @@ import {
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusFederationFromConfigDir,
+  loadNimbusLanFromConfigDir,
   loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
@@ -42,8 +43,10 @@ import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
+import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
+import { buildFederationLanServer } from "../federation/federation-server.ts";
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -447,10 +450,45 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       ipcOpts.federationDiscovery = federationRuntime.discovery;
       ipcOpts.federationPairing = federationRuntime.pairing;
       ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+
+      const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+      const built = buildFederationLanServer({
+        db,
+        index: localIndex,
+        identity,
+        lan: {
+          bind: lanCfg.bind,
+          port: lanCfg.port,
+          pairingWindowSeconds: lanCfg.pairingWindowSeconds,
+          maxFailedAttempts: lanCfg.maxFailedAttempts,
+          lockoutSeconds: lanCfg.lockoutSeconds,
+        },
+        consentTimeoutMs: federationRuntime.consentTimeoutSeconds * 1000,
+        notify: () => {},
+        discovery: federationRuntime.discovery,
+        pairing: federationRuntime.pairing,
+      });
+      await built.lanServer.start();
+      const addr = built.lanServer.listenAddr();
+      if (addr !== undefined && federationCfg.mdnsEnabled) {
+        void federationRuntime.discovery.advertise(`nimbus-${GATEWAY_VERSION}`, addr.port);
+      }
+      ipcOpts.lanServer = built.lanServer;
+      ipcOpts.lanPairingWindow = built.pairingWindow;
+      sidecarStops.push(() => void built.lanServer.stop());
     }
   }
 
   const ipc = createIpcServer(ipcOpts);
+
+  if (federationCfg.enabled) {
+    federationConsent.setBroadcast((method, params) =>
+      ipc.broadcast(
+        method,
+        typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {},
+      ),
+    );
+  }
 
   const updaterCfg = loadNimbusUpdaterFromConfigDir(paths.configDir);
   const updater = createUpdaterFromConfig({
