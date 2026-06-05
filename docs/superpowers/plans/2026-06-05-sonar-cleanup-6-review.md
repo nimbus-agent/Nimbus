@@ -8,6 +8,7 @@
 1. **Execution Scope and Lifecycle of `mkdtempSync` (PR 3)**
    *Observation:* Defining `const tmpRoot = mkdtempSync(...)` at the module/file scope executes immediately when the file is imported. If tests are filtered or skipped, the directories are still created, polluting the OS temp folder. Additionally, if the test runner executes files in parallel or imports shared test modules, module-level state execution can sometimes lead to unexpected behavior.
    *Suggestion:* Declare `let tmpRoot: string;` at the file/describe scope and perform the initialization inside the `beforeAll` hook:
+
    ```typescript
    let tmpRoot: string;
    beforeAll(() => {

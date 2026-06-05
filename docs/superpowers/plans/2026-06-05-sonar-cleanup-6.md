@@ -11,12 +11,15 @@
 **Policy (decided 2026-06-05):** **Fix, don't exclude.** No `sonar.issue.ignore` rule exclusions are added. Test files are remediated to the same standard as production. `// NOSONAR` / mark-safe is reserved ONLY for genuinely unfixable cases with a written justification (currently just S6324 on the ANSI-escape regex), recorded in `docs/structure-audit/sonarqube-rule-tuning.md`. See memory `sonar-prefer-fix-over-exclude`.
 
 **Live enumeration query (re-run per rule):**
-```
+
+```text
 https://sonarcloud.io/api/issues/search?componentKeys=nimbus-agent_Nimbus&resolved=false&rules=<RULE>&ps=200&p=1
 ```
+
 Parse `.issues[].component` (strip the `nimbus-agent_Nimbus:` prefix to get the repo-relative path) and `.issues[].line`.
 
 **Non-negotiables that constrain fixes:**
+
 - No `any` (use `unknown`). TypeScript strict stays on.
 - Never weaken a security invariant (I1–I17) to satisfy a smell. If a Sonar fix conflicts with an invariant, suppress the Sonar issue (justified) instead.
 - Cross-platform: build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators (CLAUDE.md non-negotiable #5).
@@ -52,6 +55,7 @@ Parse `.issues[].component` (strip the `nimbus-agent_Nimbus:` prefix to get the 
 **Root-cause context (load-bearing):** The `asafgolombek_Nimbus` project 404s — the live project is `nimbus-agent_Nimbus` under org `nimbus-agent`. Strong evidence the live project is on **Automatic Analysis**, not our CI scanner: (a) the `coverage` measure is **empty** (autoscan cannot ingest `lcov`), and (b) files in our `sonar.cpd.exclusions` (e.g. `mcp-connectors/*/src/tools.ts`) still report high duplication. The CI step that disables autoscan targets the **dead key**, so it never applied. Fixing the key + pointing the disable call at the live key switches analysis to the scanner, which **re-applies our `cpd.exclusions` + `coverage.exclusions` + lcov coverage** — this alone deflates part of the 5.8% duplication and populates coverage before any code change.
 
 **Files:**
+
 - Modify: `sonar-project.properties`
 - Modify: `.github/workflows/_test-suite.yml` (autoscan `projectKey`)
 - Modify: `docs/structure-audit/sonarqube-rule-tuning.md`
@@ -70,7 +74,7 @@ sonar.projectKey=nimbus-agent_Nimbus
 
 In `.github/workflows/_test-suite.yml`, change the autoscan-disable curl target:
 
-```
+```text
 'https://sonarcloud.io/api/autoscan/activation?projectKey=nimbus-agent_Nimbus&enable=false'
 ```
 
@@ -142,6 +146,7 @@ git commit -m "fix(sonar): provide explicit sort comparators (S2871, 59 sites)"
 - [ ] **Step 1: Determine whether `liveProcs` is ever populated**
 
 Read the whole file. Search for `liveProcs.add(`.
+
 - If **nothing adds** to it: the cleanup loops are dead code — remove the `liveProcs` Set + both hooks, OR wire the missing `.add()` if a spawned proc was meant to be tracked (check whether tests spawn real subprocesses that leak).
 - If something **does add** conditionally below the analyzed region: Sonar FP — add `// NOSONAR S4158: populated by the spawn helper below` on each flagged line and note why in the commit.
 
@@ -229,6 +234,7 @@ afterAll(() => {
 ```
 
 Notes:
+
 - Works for **pure-mock fixtures** (never written to disk) too — it just creates an empty real temp dir, which is honest and clears S5443 without suppression.
 - Where a module-level `const FAKE_PATHS` was consumed by other module-level constants, those consumers must also move into the hook / lazy accessor — a small per-file restructure. If a file's fixture is referenced only inside test bodies, the `let` + `beforeAll` swap is mechanical.
 - Sonar flags the temp-dir *reference literal*; once paths derive from a `mkdtempSync` variable, only the compliant `mkdtempSync(join(tmpdir(), …))` call remains.
@@ -263,6 +269,7 @@ Run the live query for `typescript:S1313`. Confirm every site is a test `127.0.0
 - [ ] **Step 2: Per site — prefer `"localhost"`; classify the few that need the IP literal**
 
 For each site, decide:
+
 - **Behavior-equivalent → use `"localhost"`** (a hostname, not an IP — clears S1313 entirely, zero suppression). Applies where the test connects to a loopback server it also started, and the resolver choice doesn't matter.
 - **IPv4-loopback strictly required → keep the literal** (e.g. a server explicitly bound to `127.0.0.1` won't accept a `::1` connection, or the test asserts on IP *parsing*/formatting). `"localhost"` is NOT a safe swap here — it can resolve to `::1`.
 
@@ -308,6 +315,7 @@ import { makeMockGateway } from "./cli-mocks.ts";
 import { fakeProc } from "./cli-mocks.ts";
 // → import { fakeProc, makeMockGateway } from "./cli-mocks.ts";
 ```
+
 Keep `import type` separate only if merging changes emit; else `import { type B, a }`.
 
 - [ ] **Step 3: Verify** — `bun run typecheck` + `bun test packages/cli/src/commands/` → PASS.
@@ -318,6 +326,7 @@ Keep `import type` separate only if merging changes emit; else `import { type B,
 - [ ] **Step 1: For each of S6582, S6571, S4138, S1186, S6594, S4323, S4043, S2933 — enumerate, apply the canonical fix, verify, commit.**
 
 Canonical fixes:
+
 - **S6582** prefer optional chaining: `a && a.b` → `a?.b`.
 - **S6571** redundant union member: drop the member already subsumed (e.g. keep `unknown`).
 - **S4138** use `for...of` over index loop on a plain array.
