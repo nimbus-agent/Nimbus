@@ -31,6 +31,7 @@ export const COMMAND_NAMES = [
   "status",
   "stop",
   "sync",
+  "team",
   "telemetry",
   "test",
   "tui",
