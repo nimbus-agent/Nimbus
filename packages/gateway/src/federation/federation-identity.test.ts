@@ -11,8 +11,6 @@ function fakeVault() {
     store,
     get: async (k: string) => store.get(k) ?? null,
     set: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
-    listKeys: async () => [...store.keys()],
   };
 }
 
@@ -30,6 +28,7 @@ test("returns the SAME keypair on a second call (load path)", async () => {
   const a = await loadOrCreateFederationIdentity(v);
   const b = await loadOrCreateFederationIdentity(v);
   expect(Buffer.from(b.publicKey).toString("hex")).toBe(Buffer.from(a.publicKey).toString("hex"));
+  expect(Buffer.from(b.secretKey).toString("hex")).toBe(Buffer.from(a.secretKey).toString("hex"));
 });
 
 test("regenerates if the stored secret is corrupt (wrong length)", async () => {
