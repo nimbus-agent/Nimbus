@@ -36,6 +36,7 @@ export class FederationConsentBroker {
         this.pending.delete(requestId);
         resolve("denied");
       }, ttlMs);
+      timer.unref?.(); // don't hold the event loop open while a consent request is pending
       this.pending.set(requestId, { resolve, timer });
       this.broadcast("federation.consentRequest", { requestId, ...input });
     });
