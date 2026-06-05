@@ -1,12 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
+import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
 import { dispatchFederationRpc } from "./federation-rpc.ts";
+import { generateBoxKeypair } from "./lan-crypto.ts";
 
 let db: Database;
 let index: LocalIndex;
@@ -220,5 +223,103 @@ test("federation.query blocks then unblocks on consent approve via the broker", 
   if (out.kind === "hit") {
     const v = out.value as { kind: string };
     expect(v.kind).toBe("ok");
+  }
+});
+
+test("federation.ask sends the query over the wire to a paired peer and returns its answer", async () => {
+  const peerIdFor = (pub: Uint8Array) => `peer:${bytesToHex(pub.subarray(0, 8))}`;
+
+  // Build a local FederationRpcContext for a given (db, index), optionally asker-wired.
+  const makeCtx = (
+    ctxDb: Database,
+    ctxIndex: LocalIndex,
+    asker?: { index: LocalIndex; selfIdentity: ReturnType<typeof generateBoxKeypair> },
+  ): FederationRpcContext => ({
+    db: ctxDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(ctxIndex),
+    ...(asker !== undefined ? { index: asker.index, selfIdentity: asker.selfIdentity } : {}),
+  });
+
+  // --- Responder B ---
+  const bDb = new Database(":memory:");
+  runIndexedSchemaMigrations(bDb, 33);
+  const bIndex = new LocalIndex(bDb);
+  bDb.run(`INSERT INTO item (id,service,type,external_id,title,body_preview,modified_at,synced_at,metadata)
+           VALUES ('github:pr1','github','pull_request','pr1','Fix auth','body1',10,1,'{}')`);
+  const bIdentity = generateBoxKeypair();
+  const askerKp = generateBoxKeypair();
+  // B knows the asker as an inbound peer (so the hello handshake authenticates A):
+  bIndex.addLanPeer({
+    peerId: peerIdFor(askerKp.publicKey),
+    peerPubkey: askerKp.publicKey,
+    direction: "inbound",
+    hostIp: "127.0.0.1",
+  });
+  const bBuilt = buildFederationLanServer({
+    db: bDb,
+    index: bIndex,
+    identity: bIdentity,
+    lan: {
+      bind: "127.0.0.1",
+      port: 0,
+      pairingWindowSeconds: 60,
+      maxFailedAttempts: 3,
+      lockoutSeconds: 60,
+    },
+    consentTimeoutMs: 1000,
+    notify: () => {},
+  });
+  await bBuilt.lanServer.start();
+  const bPort = bBuilt.lanServer.listenAddr()?.port as number;
+
+  // On B: publish a namespace and grant the AUTHENTICATED asker peerId a STANDING viewer grant.
+  const bCtx = makeCtx(bDb, bIndex);
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-ask", filters: [{ kind: "type", value: "pull_request" }] },
+    bCtx,
+  );
+  await dispatchFederationRpc(
+    "federation.namespace.grant",
+    {
+      namespace: "ns-ask",
+      peerId: peerIdFor(askerKp.publicKey),
+      role: "viewer",
+      standingConsent: true,
+    },
+    bCtx,
+  );
+
+  // --- Asker A ---
+  const aDb = new Database(":memory:");
+  runIndexedSchemaMigrations(aDb, 33);
+  const aIndex = new LocalIndex(aDb);
+  // A knows B as an outbound peer (host/port/pubkey):
+  aIndex.addLanPeer({
+    peerId: peerIdFor(bIdentity.publicKey),
+    peerPubkey: bIdentity.publicKey,
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: bPort,
+  });
+  const aCtx = makeCtx(aDb, aIndex, { index: aIndex, selfIdentity: askerKp });
+
+  try {
+    const res = await dispatchFederationRpc(
+      "federation.ask",
+      { peerId: peerIdFor(bIdentity.publicKey), namespace: "ns-ask", purpose: "review" },
+      aCtx,
+    );
+    expect(res.kind).toBe("hit");
+    const answer = (res as { value: { kind: string; response?: { items: unknown[] } } }).value;
+    expect(answer.kind).toBe("ok");
+    expect((answer.response?.items.length ?? 0) >= 1).toBe(true);
+  } finally {
+    await bBuilt.lanServer.stop();
+    bIndex.close();
+    aIndex.close();
   }
 });

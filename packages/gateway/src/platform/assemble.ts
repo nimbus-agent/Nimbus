@@ -450,6 +450,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       ipcOpts.federationDiscovery = federationRuntime.discovery;
       ipcOpts.federationPairing = federationRuntime.pairing;
       ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+      ipcOpts.federationIdentity = identity;
 
       const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
       const built = buildFederationLanServer({

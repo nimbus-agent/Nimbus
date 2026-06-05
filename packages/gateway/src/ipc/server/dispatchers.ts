@@ -214,6 +214,10 @@ export async function tryDispatchFederationRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
       discovery,
       pairing,
+      index,
+      ...(ctx.options.federationIdentity === undefined
+        ? {}
+        : { selfIdentity: ctx.options.federationIdentity }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

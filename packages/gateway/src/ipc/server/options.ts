@@ -13,6 +13,7 @@ import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
+import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { ClientSession } from "../session.ts";
@@ -57,4 +58,5 @@ export type CreateIpcServerOptions = {
   federationConsentTimeoutSeconds?: number;
   federationDiscovery?: DiscoveryProvider;
   federationPairing?: PeerPairing;
+  federationIdentity?: BoxKeypair;
 };

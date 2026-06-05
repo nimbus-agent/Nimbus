@@ -13,7 +13,10 @@ import type {
   FederationRole,
   NamespaceFilter,
 } from "../federation/types.ts";
+import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { sendFederatedOverWire } from "./lan-client.ts";
+import type { BoxKeypair } from "./lan-crypto.ts";
 
 export class FederationRpcError extends Error {
   readonly rpcCode: number;
@@ -30,6 +33,9 @@ export interface FederationRpcContext {
   readonly notify: (method: string, params: unknown) => void;
   readonly discovery: DiscoveryProvider;
   readonly pairing: PeerPairing;
+  // Asker-side over-the-wire client deps (present only on the local dispatch path):
+  readonly index?: LocalIndex;
+  readonly selfIdentity?: BoxKeypair;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -70,6 +76,26 @@ function parseFilters(raw: unknown): NamespaceFilter[] {
  *  suspenders cleanup, never the primary timer. */
 function makePrompter(ctx: FederationRpcContext): ConsentPrompter {
   return (input) => federationConsent.request(input, ctx.consentTimeoutMs + 5000);
+}
+
+/** Locate the paired peer (host/port/pubkey) the asker should send to, asserting the
+ *  asker-side deps (index + identity) are wired. Used by federation.ask / askExpertise. */
+function requireAskTarget(
+  ctx: FederationRpcContext,
+  rec: Record<string, unknown>,
+): { row: LanPeerRow; selfIdentity: BoxKeypair } {
+  if (ctx.index === undefined || ctx.selfIdentity === undefined) {
+    throw new FederationRpcError(
+      -32603,
+      "ERR_FEDERATION_ASKER_UNAVAILABLE: index/identity not wired",
+    );
+  }
+  const peerId = requireString(rec, "peerId");
+  const row = ctx.index.listLanPeers().find((r) => r.peer_id === peerId);
+  if (row === undefined || row.host_ip === null || row.host_port === null) {
+    throw new FederationRpcError(-32602, `ERR_UNKNOWN_PEER: ${peerId}`);
+  }
+  return { row, selfIdentity: ctx.selfIdentity };
 }
 
 export async function dispatchFederationRpc(
@@ -159,6 +185,39 @@ export async function dispatchFederationRpc(
         purpose: requireString(rec, "purpose"),
       };
       return scoreExpertise(ctx.db, req);
+    },
+    // Asker-side: look up the paired peer and send the federated query OVER THE WIRE.
+    "federation.ask": async (p) => {
+      const rec = asRecord(p);
+      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      const body: Record<string, unknown> = {
+        namespace: requireString(rec, "namespace"),
+        purpose: requireString(rec, "purpose"),
+        ...(Array.isArray(rec["types"])
+          ? { types: rec["types"].filter((t): t is string => typeof t === "string") }
+          : {}),
+      };
+      return sendFederatedOverWire(
+        row.host_ip as string,
+        row.host_port as number,
+        selfIdentity,
+        row.peer_pubkey,
+        "federation.query",
+        body,
+      );
+    },
+    // Asker-side: send the content-free expertise probe OVER THE WIRE.
+    "federation.askExpertise": async (p) => {
+      const rec = asRecord(p);
+      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      return sendFederatedOverWire(
+        row.host_ip as string,
+        row.host_port as number,
+        selfIdentity,
+        row.peer_pubkey,
+        "federation.expertise",
+        { query: requireString(rec, "query"), purpose: requireString(rec, "purpose") },
+      );
     },
   });
 }
