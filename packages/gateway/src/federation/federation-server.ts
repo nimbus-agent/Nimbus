@@ -44,7 +44,7 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
   const pairingWindow = new PairingWindow(deps.lan.pairingWindowSeconds * 1000);
   const rateLimit = new LanRateLimiter({
     maxFailures: deps.lan.maxFailedAttempts,
-    windowMs: deps.lan.pairingWindowSeconds * 1000,
+    windowMs: deps.lan.lockoutSeconds * 1000,
     lockoutMs: deps.lan.lockoutSeconds * 1000,
   });
 
@@ -80,14 +80,8 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         db: deps.db,
         consentTimeoutMs: deps.consentTimeoutMs,
         notify: deps.notify,
-        discovery:
-          deps.discovery ??
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ({ list: async () => [] } as unknown as DiscoveryProvider),
-        pairing:
-          deps.pairing ??
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ({ listPeers: () => [] } as unknown as PeerPairing),
+        discovery: deps.discovery ?? ({ list: async () => [] } as unknown as DiscoveryProvider),
+        pairing: deps.pairing ?? ({ listPeers: () => [] } as unknown as PeerPairing),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;
