@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { generateBoxKeypair, openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import {
+  boxKeypairFromSecretKey,
+  generateBoxKeypair,
+  openBoxFrame,
+  sealBoxFrame,
+} from "./lan-crypto.ts";
 
 describe("LAN crypto — NaCl box round-trip", () => {
   test("seal + open recovers the plaintext", () => {
@@ -42,4 +47,19 @@ describe("LAN crypto — NaCl box round-trip", () => {
     }
     expect(nonces.size).toBe(1000);
   });
+});
+
+test("boxKeypairFromSecretKey recovers the same keypair from its secret", () => {
+  const kp = generateBoxKeypair();
+  const recovered = boxKeypairFromSecretKey(kp.secretKey);
+  expect(Buffer.from(recovered.publicKey).toString("hex")).toBe(
+    Buffer.from(kp.publicKey).toString("hex"),
+  );
+  expect(Buffer.from(recovered.secretKey).toString("hex")).toBe(
+    Buffer.from(kp.secretKey).toString("hex"),
+  );
+});
+
+test("boxKeypairFromSecretKey rejects a wrong-length secret", () => {
+  expect(() => boxKeypairFromSecretKey(new Uint8Array(31))).toThrow();
 });

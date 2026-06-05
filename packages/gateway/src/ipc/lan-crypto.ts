@@ -40,3 +40,11 @@ export function openBoxFrame(
   }
   return plain;
 }
+
+export function boxKeypairFromSecretKey(secretKey: Uint8Array): BoxKeypair {
+  if (secretKey.length !== 32) {
+    throw new Error(`box secret key must be 32 bytes, got ${secretKey.length}`);
+  }
+  const kp = nacl.box.keyPair.fromSecretKey(secretKey);
+  return { publicKey: kp.publicKey, secretKey: kp.secretKey };
+}
