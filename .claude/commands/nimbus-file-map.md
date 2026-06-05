@@ -245,7 +245,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 
 | File | Purpose |
 |---|---|
-| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (62), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
+| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (67), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
 | `packages/ui/src-tauri/src/tray.rs` | System tray icon, menu, state forwarding |
 | `packages/ui/src-tauri/src/quick_query.rs` | Quick Query window lifecycle |
 | `packages/ui/src-tauri/src/hitl_popup.rs` | HITL popup window lifecycle |

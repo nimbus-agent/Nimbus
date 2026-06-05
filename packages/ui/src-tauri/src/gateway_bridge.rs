@@ -85,6 +85,11 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "extension.list",
     "extension.remove",
     "extension.update",
+    "federation.discover",
+    "federation.namespace.grant",
+    "federation.namespace.publish",
+    "federation.namespace.revoke",
+    "federation.peers",
     "index.metrics",
     "llm.cancelPull",
     "llm.getRouterStatus",
@@ -426,7 +431,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 62);
+        assert_eq!(ALLOWED_METHODS.len(), 67);
     }
 
     #[test]

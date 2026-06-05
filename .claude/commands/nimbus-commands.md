@@ -255,7 +255,7 @@ nimbus extension update [<id>] [--check] [--to <version>] [--json]
 # --check: force registry poll + list. <id>: apply cached bump via HITL.
 # --to <v>: override target (forward or backward; backward fires extension.downgrade).
 # Exit 0 on success, 1 on apply failure (stderr hint when reason has one).
-# IPC: extension.checkForUpdates / extension.update — CLI + Tauri allowed (ALLOWED_METHODS 62),
+# IPC: extension.checkForUpdates / extension.update — CLI + Tauri allowed (ALLOWED_METHODS 67),
 # FORBIDDEN_OVER_LAN (I5).
 
 nimbus extension downgrade <id> --to <version> [--json]
