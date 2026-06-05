@@ -863,6 +863,119 @@ export function loadNimbusPagerdutyFromConfigDir(configDir: string): NimbusPager
   return loadNimbusPagerdutyFromPath(join(configDir, "nimbus.toml"));
 }
 
+export type NimbusIdentityToml = {
+  enabled: boolean;
+  issuer: string;
+  clientId: string;
+  flow: "device_code";
+  scopes: string[];
+  sessionGraceSeconds: number;
+  revalidateIntervalSeconds: number;
+  tokenRefreshSkewSeconds: number;
+  jwksMaxAgeSeconds: number;
+};
+
+export const DEFAULT_NIMBUS_IDENTITY_TOML: NimbusIdentityToml = {
+  enabled: false,
+  issuer: "",
+  clientId: "",
+  flow: "device_code",
+  scopes: ["openid", "email", "profile"],
+  sessionGraceSeconds: 86400,
+  revalidateIntervalSeconds: 3600,
+  tokenRefreshSkewSeconds: 300,
+  jwksMaxAgeSeconds: 86400,
+};
+
+function applyNimbusIdentityKey(
+  out: Partial<NimbusIdentityToml>,
+  key: string,
+  valRaw: string,
+): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      break;
+    }
+    case "issuer":
+      out.issuer = parseString(valRaw);
+      break;
+    case "client_id":
+      out.clientId = parseString(valRaw);
+      break;
+    case "scopes": {
+      const arr = parseStringArray(valRaw).filter((s) => s.length > 0);
+      if (arr.length > 0) out.scopes = arr;
+      break;
+    }
+    case "session_grace_seconds": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n >= 0) out.sessionGraceSeconds = n;
+      break;
+    }
+    case "revalidate_interval_seconds": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.revalidateIntervalSeconds = n;
+      break;
+    }
+    case "token_refresh_skew_seconds": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n >= 0) out.tokenRefreshSkewSeconds = n;
+      break;
+    }
+    case "jwks_max_age_seconds": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.jwksMaxAgeSeconds = n;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function parseNimbusIdentityToml(
+  raw: string,
+  defaults: NimbusIdentityToml = DEFAULT_NIMBUS_IDENTITY_TOML,
+): NimbusIdentityToml {
+  const out: Partial<NimbusIdentityToml> = {};
+  forEachSectionEntry(raw, "[identity]", (key, valRaw) => applyNimbusIdentityKey(out, key, valRaw));
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusIdentityFromConfigDir(configDir: string): NimbusIdentityToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_IDENTITY_TOML,
+    parseNimbusIdentityToml,
+  );
+}
+
+export type NimbusScimToml = { enabled: boolean };
+export const DEFAULT_NIMBUS_SCIM_TOML: NimbusScimToml = { enabled: false };
+
+export function parseNimbusScimToml(
+  raw: string,
+  defaults: NimbusScimToml = DEFAULT_NIMBUS_SCIM_TOML,
+): NimbusScimToml {
+  const out: Partial<NimbusScimToml> = {};
+  forEachSectionEntry(raw, "[scim]", (key, valRaw) => {
+    if (key === "enabled") {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+    }
+  });
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusScimFromConfigDir(configDir: string): NimbusScimToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_SCIM_TOML,
+    parseNimbusScimToml,
+  );
+}
+
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
 // `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`
