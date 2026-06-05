@@ -7,7 +7,7 @@ describe("V32 migration — git_blame_line table", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, 32);
     const cols = db.query("PRAGMA table_info(git_blame_line)").all() as Array<{ name: string }>;
-    expect(cols.map((c) => c.name).sort()).toEqual(
+    expect(cols.map((c) => c.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "author_email",
         "author_name",
@@ -16,7 +16,7 @@ describe("V32 migration — git_blame_line table", () => {
         "file_path",
         "line_no",
         "repo_root",
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 

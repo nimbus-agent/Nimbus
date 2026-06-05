@@ -65,7 +65,7 @@ describe("localdb-sync", () => {
     expect(rows).toHaveLength(2);
     const tables = rows
       .flatMap((r) => (JSON.parse(r.metadata) as { tables: string[] }).tables)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
     expect(tables).toEqual(["customers", "orders"]);
   });
 

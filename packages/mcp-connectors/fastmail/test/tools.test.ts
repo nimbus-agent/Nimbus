@@ -65,7 +65,9 @@ function wire() {
 describe("registerFastmailTools", () => {
   test("registers exactly the documented tool surface", () => {
     const { handlers } = wire();
-    expect([...handlers.keys()].sort()).toEqual([...FASTMAIL_TOOL_NAMES].sort());
+    expect([...handlers.keys()].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...FASTMAIL_TOOL_NAMES].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   test("fastmail_list returns the header/metadata/preview view — never attachment bytes", async () => {
@@ -78,7 +80,11 @@ describe("registerFastmailTools", () => {
     expect(m.from).toEqual(["Ada <ada@x.com>"]);
     expect(m.preview).toBe("the body preview");
     const att = (m.attachments as Array<Record<string, unknown>>)[0]!;
-    expect(Object.keys(att).sort()).toEqual(["filename", "mimeType", "sizeBytes"]);
+    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+      "filename",
+      "mimeType",
+      "sizeBytes",
+    ]);
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain("blobId");
     expect(serialized).not.toContain("base64");

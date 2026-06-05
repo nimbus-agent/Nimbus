@@ -58,7 +58,7 @@ describe("scanItemsForSecrets — multiple matches in one body", () => {
     });
     const r = scanItemsForSecrets([item], SECRET_PATTERNS, NOW);
     expect(r.findings_count).toBe(2);
-    const names = r.findings.map((f) => f.pattern_name).sort();
+    const names = r.findings.map((f) => f.pattern_name).sort((a, b) => a.localeCompare(b));
     expect(names).toEqual(["aws_access_key", "github_pat_classic"]);
   });
 

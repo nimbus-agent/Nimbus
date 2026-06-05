@@ -102,7 +102,7 @@ describe("listDataModels / getDataModel (real fs, no parquet)", () => {
     await writeFile(join(dir, "rows.json"), JSON.stringify([{ k: "v" }, { k: "w" }]), "utf8");
 
     const models = await listDataModels();
-    expect(models.map((m) => m.relativePath).sort()).toEqual([
+    expect(models.map((m) => m.relativePath).sort((a, b) => a.localeCompare(b))).toEqual([
       "log.jsonl",
       "people.csv",
       "rows.json",

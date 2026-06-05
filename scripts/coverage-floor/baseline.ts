@@ -49,7 +49,7 @@ export function parseBaseline(text: string): Baseline {
 }
 
 export function serializeBaseline(b: Baseline): string {
-  const sortedKeys = Array.from(b.files.keys()).sort();
+  const sortedKeys = Array.from(b.files.keys()).sort((a, b) => (a > b ? 1 : -1));
   const files: Record<string, { min_coverage_pct: number }> = {};
   for (const k of sortedKeys) {
     const v = b.files.get(k);

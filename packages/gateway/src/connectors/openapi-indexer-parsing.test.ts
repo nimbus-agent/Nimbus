@@ -45,7 +45,7 @@ test("Swagger 2.0 fixture parses", async () => {
 test("AsyncAPI 2.6 — exposes PUBLISH and SUBSCRIBE methods on a channel", async () => {
   const r = await parseFixture("asyncapi-2.6.yaml");
   if (r.kind === "skipped") throw new Error(r.reason);
-  const methods = r.endpoints.map((e) => e.method).sort();
+  const methods = r.endpoints.map((e) => e.method).sort((a, b) => a.localeCompare(b));
   expect(methods).toEqual(["PUBLISH", "SUBSCRIBE"]);
   expect(r.specVersion).toBe("asyncapi-2.6.0");
 });

@@ -27,7 +27,10 @@ describe("dependency-store", () => {
     );
     const fwd = forwardDeps(db, "com.example.foo");
     expect(fwd).toHaveLength(2);
-    expect(fwd.map((d) => d.id).sort()).toEqual(["com.shared.crypto", "com.shared.utils"]);
+    expect(fwd.map((d) => d.id).sort((a, b) => a.localeCompare(b))).toEqual([
+      "com.shared.crypto",
+      "com.shared.utils",
+    ]);
     expect(fwd.find((d) => d.id === "com.shared.utils")?.range).toBe("^1.0.0");
   });
 
@@ -47,7 +50,10 @@ describe("dependency-store", () => {
       2,
     );
     const rev = reverseDeps(db, "com.shared.utils");
-    expect(rev.map((r) => r.extensionId).sort()).toEqual(["com.example.bar", "com.example.foo"]);
+    expect(rev.map((r) => r.extensionId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "com.example.bar",
+      "com.example.foo",
+    ]);
     expect(rev.find((r) => r.extensionId === "com.example.bar")?.range).toBe("^1.2.0");
   });
 

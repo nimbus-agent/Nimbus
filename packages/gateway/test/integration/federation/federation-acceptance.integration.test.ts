@@ -129,9 +129,12 @@ test("acceptance: discover → pair → publish → grant → scoped leak-proof 
     };
     expect(r.kind).toBe("ok");
     const items = r.response?.items ?? [];
-    expect(items.map((i) => i["id"]).sort()).toEqual(["github:pr1", "github:pr2"]);
+    expect(items.map((i) => i["id"]).sort((a, b) => String(a).localeCompare(String(b)))).toEqual([
+      "github:pr1",
+      "github:pr2",
+    ]);
     for (const it of items) {
-      expect(Object.keys(it).sort()).toEqual([
+      expect(Object.keys(it).sort((a, b) => a.localeCompare(b))).toEqual([
         "id",
         "modifiedAt",
         "service",

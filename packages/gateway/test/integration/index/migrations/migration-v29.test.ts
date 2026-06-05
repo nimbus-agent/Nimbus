@@ -73,7 +73,7 @@ describe("V29 — tool_call_log audit table migration", () => {
         "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tool_call_log' AND name NOT LIKE 'sqlite_%'",
       )
       .all() as Array<{ name: string }>;
-    const names = indexes.map((i) => i.name).sort();
+    const names = indexes.map((i) => i.name).sort((a, b) => a.localeCompare(b));
     expect(names).toEqual([
       "idx_tool_call_log_called_at",
       "idx_tool_call_log_session",

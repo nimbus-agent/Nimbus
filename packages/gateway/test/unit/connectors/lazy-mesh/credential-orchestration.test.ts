@@ -556,7 +556,7 @@ describe("multi-connector composite — multiple creds spawn all matching connec
     await vault.set("linear.api_key", "lin_key");
     await vault.set("pagerduty.api_token", "pd_token");
     await runOrchestration(ctx);
-    const sorted = [...spawnCalls].sort();
+    const sorted = [...spawnCalls].sort((a, b) => a.localeCompare(b));
     expect(sorted).toContain("github");
     expect(sorted).toContain("linear");
     expect(sorted).toContain("pagerduty");

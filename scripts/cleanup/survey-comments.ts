@@ -64,7 +64,7 @@ async function main() {
   }
   const out: string[] = ["# Punch list — section 1: Load-bearing comments", ""];
   out.push(`Total hits: ${allHits.length}`, "");
-  for (const [marker, hits] of [...byMarker.entries()].sort()) {
+  for (const [marker, hits] of [...byMarker.entries()].sort(([a], [b]) => (a > b ? 1 : -1))) {
     out.push(`## ${marker} (${hits.length})`, "");
     for (const h of hits) {
       const cleaned = h.text.replaceAll("`", "'").replaceAll("|", "\\|").trim().slice(0, 200);

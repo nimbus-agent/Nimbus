@@ -46,7 +46,10 @@ test("declaredTypes returns only the 'type' filters", () => {
     { kind: "type", value: "pull_request" },
     { kind: "type", value: "issue" },
   ]);
-  expect(store.declaredTypes("p").sort()).toEqual(["issue", "pull_request"]);
+  expect(store.declaredTypes("p").sort((a, b) => a.localeCompare(b))).toEqual([
+    "issue",
+    "pull_request",
+  ]);
   expect(store.declaredServices("p")).toEqual(["github"]);
 });
 

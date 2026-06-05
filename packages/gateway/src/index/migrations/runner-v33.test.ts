@@ -12,7 +12,7 @@ describe("V33 migration — federation tables", () => {
       )
       .all()
       .map((r) => r.name)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
     expect(tables).toEqual([
       "federation_grants",
       "federation_namespace_filters",

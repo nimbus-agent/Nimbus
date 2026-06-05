@@ -77,11 +77,11 @@ describe("wrapServerSpec", () => {
     const spec = makeSpec();
     const originalCommand = spec.command;
     const originalArgs = [...spec.args];
-    const originalEnvKeys = Object.keys(spec.env).sort();
+    const originalEnvKeys = Object.keys(spec.env).sort((a, b) => a.localeCompare(b));
     wrapServerSpec(spec, makeManifest(), "/tmp/cwd");
     expect(spec.command).toBe(originalCommand);
     expect(spec.args).toEqual(originalArgs);
-    expect(Object.keys(spec.env).sort()).toEqual(originalEnvKeys);
+    expect(Object.keys(spec.env).sort((a, b) => a.localeCompare(b))).toEqual(originalEnvKeys);
   });
 
   test("the env-control keys overlay (not replace) when the spec already has them", () => {

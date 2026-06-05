@@ -114,7 +114,7 @@ export async function discoverSourceFiles(): Promise<string[]> {
       out.push(rel);
     }
   }
-  return out.sort();
+  return out.sort((a, b) => (a > b ? 1 : -1));
 }
 
 function lcovToPctMap(map: ReturnType<typeof parseLcov>): Map<string, number> {

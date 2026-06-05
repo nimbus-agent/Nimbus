@@ -776,7 +776,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     await vault.set("google_drive.oauth", '{"access_token":"x"}');
     await ensureGoogleDriveMcp(ctx);
     const servers = capturedClients[0]?.servers ?? {};
-    expect(Object.keys(servers).sort()).toEqual(["google_drive"]);
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual(["google_drive"]);
     expect(servers["google_drive"]?.env["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe(
       "fake-google-google_drive-access-token",
     );
@@ -791,7 +791,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     await vault.set("google_meet.oauth", '{"access_token":"m"}');
     await ensureGoogleDriveMcp(ctx);
     const servers = capturedClients[0]?.servers ?? {};
-    expect(Object.keys(servers).sort()).toEqual([
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual([
       "gmail",
       "google_drive",
       "google_meet",

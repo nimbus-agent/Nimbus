@@ -10,8 +10,8 @@ describe("V31 migration — extension_dependency table", () => {
       name: string;
       type: string;
     }>;
-    expect(tableInfo.map((c) => c.name).sort()).toEqual(
-      ["created_at", "depends_on_id", "extension_id", "range"].sort(),
+    expect(tableInfo.map((c) => c.name).sort((a, b) => a.localeCompare(b))).toEqual(
+      ["created_at", "depends_on_id", "extension_id", "range"].sort((a, b) => a.localeCompare(b)),
     );
 
     const indexInfo = db.query("PRAGMA index_list(extension_dependency)").all() as Array<{

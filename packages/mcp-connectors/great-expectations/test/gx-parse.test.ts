@@ -363,7 +363,7 @@ describe("listAllExpectations — filesystem walk", () => {
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toContain(PII);
 
-    const suites = rows.map((r) => r.suiteName).sort();
+    const suites = rows.map((r) => r.suiteName).sort((a, b) => a.localeCompare(b));
     expect(suites).toEqual(["suiteA", "suiteA", "suiteB"]);
   });
 

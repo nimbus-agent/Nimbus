@@ -31,7 +31,7 @@ describe("nimbus metrics dora (e2e, in-process)", () => {
 
     expect(result.service).toBe("payment-service");
     expect(result.since_ms).toBe(30 * 86_400_000);
-    expect(Object.keys(result.metrics).sort()).toEqual([
+    expect(Object.keys(result.metrics).sort((a, b) => a.localeCompare(b))).toEqual([
       "change_failure_rate",
       "deployment_frequency",
       "lead_time_for_changes",

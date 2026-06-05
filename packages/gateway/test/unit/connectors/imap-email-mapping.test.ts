@@ -131,6 +131,10 @@ describe("mapImapMessageToItem", () => {
     expect(serialized).not.toContain("base64");
     // The attachment metadata fields ARE present.
     const att = (row?.metadata.attachments as Array<Record<string, unknown>>)[0];
-    expect(Object.keys(att).sort()).toEqual(["filename", "mimeType", "sizeBytes"]);
+    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+      "filename",
+      "mimeType",
+      "sizeBytes",
+    ]);
   });
 });

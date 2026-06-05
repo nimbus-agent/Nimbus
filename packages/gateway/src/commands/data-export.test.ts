@@ -58,7 +58,10 @@ describe("data export", () => {
     });
     expect(second.recoverySeedGenerated).toBe(false);
     expect(second.recoverySeed).toBe("");
-    expect(readdirSync(outDir).sort()).toEqual(["a.tar.gz", "b.tar.gz"]);
+    expect(readdirSync(outDir).sort((a, b) => a.localeCompare(b))).toEqual([
+      "a.tar.gz",
+      "b.tar.gz",
+    ]);
   });
 
   test("first export still returns the freshly-generated seed (S2-F5)", async () => {

@@ -10,7 +10,7 @@ describe("mergeToolMapsOrThrow", () => {
       { map: a, name: "server_a" },
       { map: b, name: "server_b" },
     ]);
-    expect(Object.keys(merged).sort()).toEqual(["tool_a", "tool_b"]);
+    expect(Object.keys(merged).sort((a, b) => a.localeCompare(b))).toEqual(["tool_a", "tool_b"]);
   });
 
   it("throws with owner names on a collision", () => {

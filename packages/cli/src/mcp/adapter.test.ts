@@ -310,7 +310,7 @@ function spec(name: string) {
 
 describe("TOOL_SPECS", () => {
   it("exposes exactly the six read-only tools", () => {
-    expect(TOOL_SPECS.map((t) => t.name).sort()).toEqual(
+    expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "getConnectorStatus",
         "getDoraMetrics",
@@ -318,7 +318,7 @@ describe("TOOL_SPECS", () => {
         "getRecentIncidents",
         "getRecentPullRequests",
         "searchIndex",
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 

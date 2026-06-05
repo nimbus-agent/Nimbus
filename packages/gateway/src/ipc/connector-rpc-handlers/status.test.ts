@@ -59,7 +59,10 @@ describe("handleConnectorListStatus", () => {
     const r = handleConnectorListStatus(buildCtx({}));
     expect(r.kind).toBe("hit");
     const list = r.value as Array<{ serviceId: string }>;
-    expect(list.map((x) => x.serviceId).sort()).toEqual(["github", "slack"]);
+    expect(list.map((x) => x.serviceId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "github",
+      "slack",
+    ]);
   });
 
   test("undefined rec returns all rows", () => {

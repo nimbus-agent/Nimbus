@@ -85,7 +85,9 @@ function wire() {
 describe("registerProtonmailTools", () => {
   test("registers exactly the documented tool surface", () => {
     const { handlers } = wire();
-    expect([...handlers.keys()].sort()).toEqual([...PROTONMAIL_TOOL_NAMES].sort());
+    expect([...handlers.keys()].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...PROTONMAIL_TOOL_NAMES].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   test("protonmail_list returns the header/metadata/preview view — never attachment bytes", async () => {
@@ -97,7 +99,11 @@ describe("registerProtonmailTools", () => {
     expect(m.subject).toBe("Hello");
     expect(m.from).toEqual(["Ada <ada@proton.me>"]);
     const att = (m.attachments as Array<Record<string, unknown>>)[0]!;
-    expect(Object.keys(att).sort()).toEqual(["filename", "mimeType", "sizeBytes"]);
+    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+      "filename",
+      "mimeType",
+      "sizeBytes",
+    ]);
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain('"content"');
     expect(serialized).not.toContain("base64");

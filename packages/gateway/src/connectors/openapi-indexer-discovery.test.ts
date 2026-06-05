@@ -88,7 +88,7 @@ test("ignoreGlobs excludes both files and directories", () => {
   });
   const rels = files
     .map((f) => f.replace(`${root}/`, "").replace(`${root}\\`, "").replaceAll("\\", "/"))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   expect(rels).toEqual(["current/active/openapi.yaml", "openapi.yaml"]);
 });
 
@@ -102,6 +102,6 @@ test("ignoreGlobs supports `?` single-char and literal special chars", () => {
   });
   const rels = files
     .map((f) => f.replace(`${root}/`, "").replace(`${root}\\`, "").replaceAll("\\", "/"))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   expect(rels).toEqual(["openapi.yaml"]);
 });

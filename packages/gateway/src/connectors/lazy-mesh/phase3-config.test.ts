@@ -1876,7 +1876,7 @@ describe("buildPhase3Servers", () => {
     await vault.set("datadog.app_key", "appk");
     await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
-    expect(Object.keys(servers).sort()).toEqual(
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual(
       // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
       // sagemaker reuse aws creds — all appear whenever their underlying credentials
       // are seeded.
@@ -1896,7 +1896,7 @@ describe("buildPhase3Servers", () => {
         "sentry",
         "snyk",
         "vertex_ai",
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
     for (const id of Object.keys(servers)) {
       expectSandboxed(servers[id] as ServerSpec);
@@ -1913,7 +1913,7 @@ describe("buildPhase3Servers", () => {
     // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
     // sagemaker reuse aws creds — all appear whenever their underlying credentials
     // are seeded.
-    expect(Object.keys(servers).sort()).toEqual([
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual([
       "athena",
       "aws",
       "bigquery",

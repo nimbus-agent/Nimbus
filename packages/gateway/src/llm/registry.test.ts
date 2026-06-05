@@ -127,7 +127,11 @@ describe("LlmRegistry.listAllModels", () => {
     );
     const models = await reg.listAllModels();
     expect(models.length).toBe(3);
-    expect(models.map((m) => m.provider).sort()).toEqual(["llamacpp", "ollama", "remote"]);
+    expect(models.map((m) => m.provider).sort((a, b) => a.localeCompare(b))).toEqual([
+      "llamacpp",
+      "ollama",
+      "remote",
+    ]);
   });
 
   test("skips a provider when isAvailable returns false", async () => {

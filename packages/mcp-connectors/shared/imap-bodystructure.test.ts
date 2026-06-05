@@ -64,7 +64,7 @@ describe("extractAttachments", () => {
     };
     const names = extractAttachments(root)
       .map((a) => a.filename)
-      .sort();
+      .sort((a, b) => (a ?? "").localeCompare(b ?? ""));
     expect(names).toEqual(["a.zip", "b.bin"]);
   });
 

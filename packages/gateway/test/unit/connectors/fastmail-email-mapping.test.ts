@@ -109,6 +109,10 @@ describe("mapFastmailEmailToItem", () => {
     expect(serialized).not.toContain("base64");
     expect(serialized).not.toContain("blobId");
     const att = (row?.metadata.attachments as Array<Record<string, unknown>>)[0];
-    expect(Object.keys(att).sort()).toEqual(["filename", "mimeType", "sizeBytes"]);
+    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+      "filename",
+      "mimeType",
+      "sizeBytes",
+    ]);
   });
 });

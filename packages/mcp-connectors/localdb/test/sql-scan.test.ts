@@ -92,7 +92,7 @@ describe("scanSavedQueries / getSavedQuery (real fs)", () => {
     await writeFile(join(dir, "empty.sql"), "  ", "utf8");
 
     const scanned = await scanSavedQueries();
-    expect(scanned.map((q) => q.title).sort()).toEqual(["a", "b"]);
+    expect(scanned.map((q) => q.title).sort((a, b) => a.localeCompare(b))).toEqual(["a", "b"]);
     const a = scanned.find((q) => q.title === "a")!;
     expect(a.lineCount).toBe(2);
     expect(a.preview).toContain("SELECT 1;");
