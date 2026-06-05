@@ -1346,8 +1346,12 @@ describe("pollDeviceToken", () => {
     expect(tok.refreshToken).toBe("rt");
   });
 
-  test("throws on access_denied", async () => {
-    const fetchLike = async () => new Response(JSON.stringify({ error: "access_denied" }), { status: 400 });
+  test("throws on access_denied and surfaces error_description (review S1)", async () => {
+    const fetchLike = async () =>
+      new Response(
+        JSON.stringify({ error: "access_denied", error_description: "user rejected the request", error_uri: "https://acme/help" }),
+        { status: 400 },
+      );
     await expect(
       pollDeviceToken(DISCOVERY, "client-1", "dc", {
         fetchLike,
@@ -1357,7 +1361,7 @@ describe("pollDeviceToken", () => {
         now: () => 0,
         onPoll: () => {},
       }),
-    ).rejects.toThrow(/access_denied/);
+    ).rejects.toThrow(/access_denied — user rejected the request \(https:\/\/acme\/help\)/);
   });
 });
 ```
@@ -1434,7 +1438,12 @@ export async function pollDeviceToken(
       await opts.sleep(intervalMs);
       continue;
     }
-    throw new Error(`identity: device token error: ${typeof err === "string" ? err : "unknown"}`);
+    // Surface the IdP's rich error fields (review S1) so operators can debug bad client_id / scopes.
+    const rec = body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const code = typeof err === "string" ? err : "unknown";
+    const desc = typeof rec["error_description"] === "string" ? ` — ${rec["error_description"] as string}` : "";
+    const uri = typeof rec["error_uri"] === "string" ? ` (${rec["error_uri"] as string})` : "";
+    throw new Error(`identity: device token error: ${code}${desc}${uri}`);
   }
 }
 ```
@@ -1474,6 +1483,7 @@ import { describe, expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityStore } from "./identity-store.ts";
 import { IdentityRuntime } from "./identity-runtime.ts";
+import { isOperatorValid } from "./verifier.ts";
 import type { NimbusIdentityToml } from "../config/nimbus-toml.ts";
 
 function fakeVault() {
@@ -1547,14 +1557,15 @@ describe("IdentityRuntime.revalidateSession", () => {
     expect(store.getSession("https://acme")?.expiresAt).toBeGreaterThan(1000);
   });
 
-  test("refresh failure does NOT throw and leaves the session intact (grace fallback)", async () => {
+  test("refresh failure: no throw, expires_at unchanged, status still active, warn logged (review P2)", async () => {
     const db = freshDb();
     const store = new IdentityStore(db);
     store.upsertSession({ issuer: "https://acme", externalId: "s", email: null, validatedAt: 0, expiresAt: 1000, status: "active" });
     const { vault } = fakeVault();
     await vault.set("identity.oidc.refresh_token", "rt");
+    const warnings: string[] = [];
     const rt = new IdentityRuntime({
-      cfg: CFG, store, vault, now: () => 5000,
+      cfg: CFG, store, vault, now: () => 5000, log: (m) => warnings.push(m),
       deps: {
         discover: async () => ({ issuer: "https://acme", deviceAuthorizationEndpoint: "d", tokenEndpoint: "t", jwksUri: "j" }),
         requestDeviceCode: async () => { throw new Error("n/a"); },
@@ -1564,7 +1575,14 @@ describe("IdentityRuntime.revalidateSession", () => {
       },
     });
     await rt.revalidateSession(); // must not throw
-    expect(store.getSession("https://acme")?.expiresAt).toBe(1000);
+    const s = store.getSession("https://acme");
+    expect(s?.expiresAt).toBe(1000); // NOT advanced
+    expect(s?.status).toBe("active"); // NOT forced to expired — grace governs validity
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("relying on grace window");
+    // Grace semantics (isOperatorValid): with grace=1s, valid until expires_at(1000ms)+1000ms=2000ms.
+    expect(isOperatorValid(store, "https://acme", 1500, 1)).toBe(true);
+    expect(isOperatorValid(store, "https://acme", 3000, 1)).toBe(false);
   });
 });
 ```
@@ -1635,6 +1653,9 @@ export class IdentityRuntime {
       vault: NimbusVault;
       now: () => number;
       deps: IdentityRuntimeDeps;
+      /** Warn sink for non-fatal refresh failures (review P2). Production wiring passes the structured
+       *  logger's warn; defaults to a no-op so tests can assert it without a logger dependency. */
+      log?: (msg: string) => void;
     },
   ) {}
 
@@ -1680,8 +1701,10 @@ export class IdentityRuntime {
       const d = await deps.discover(cfg.issuer);
       const tokens = await deps.refreshTokens(d, cfg.clientId, refresh);
       await this.persist(tokens);
-    } catch {
-      // offline / revoked → leave session as-is; grace window governs isOperatorValid().
+    } catch (e) {
+      // offline / revoked → leave session as-is (expires_at NOT advanced, status NOT forced to
+      // expired); the grace window governs isOperatorValid() until now > expires_at + grace.
+      this.o.log?.(`identity: token refresh failed, relying on grace window: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
@@ -1933,6 +1956,33 @@ describe("deprovisionUser", () => {
     if (after.kind === "error") expect(after.error).toBe("no_grant");
     expect(ids.getScimUser("u-alice")?.active).toBe(false);
   });
+
+  test("rolls back atomically — a mid-cascade failure leaves NO grant revoked (review P1)", () => {
+    const db = freshDb();
+    const ids = new IdentityStore(db);
+    // A store whose revoke throws on the 2nd namespace, simulating a mid-loop write failure.
+    let calls = 0;
+    const failingStore = Object.assign(new NamespaceStore(db), {
+      revoke(name: string, peerId: string, nowMs?: number): void {
+        calls += 1;
+        if (calls === 2) throw new Error("simulated write failure");
+        NamespaceStore.prototype.revoke.call(this, name, peerId, nowMs);
+      },
+    });
+    failingStore.publish("ns:a", [{ kind: "service", value: "github" }]);
+    failingStore.publish("ns:b", [{ kind: "service", value: "github" }]);
+    failingStore.grant("ns:a", "peer:alice", "viewer", true);
+    failingStore.grant("ns:b", "peer:alice", "viewer", true);
+    ids.upsertScimUser({ externalId: "u-alice", userName: "alice", email: "a@acme.com", active: true, attrs: {} }, 1);
+    ids.bind("u-alice", "peer:alice", "admin", 1);
+
+    expect(() => deprovisionUser({ db, store: failingStore, identity: ids, nowMs: 2 }, "u-alice")).toThrow();
+    // Transaction rolled back: BOTH grants remain, scim_user still active, binding intact.
+    expect(failingStore.getActiveGrant("ns:a", "peer:alice")).toBeDefined();
+    expect(failingStore.getActiveGrant("ns:b", "peer:alice")).toBeDefined();
+    expect(ids.getScimUser("u-alice")?.active).toBe(true);
+    expect(ids.activePeerIdsFor("u-alice")).toEqual(["peer:alice"]);
+  });
 });
 ```
 
@@ -1964,27 +2014,34 @@ export interface DeprovisionCtx {
 /**
  * Mark the SCIM user inactive, then revoke every active federation grant for every peer bound to
  * that identity. Returns the peer ids whose grants were revoked. Audited per (namespace, peer).
+ *
+ * ATOMIC (review P1): the whole cascade — scim_user.active, every NamespaceStore.revoke, each audit
+ * append, and identity_binding.revoked_at — runs inside a single `db.transaction(...)`. If any write
+ * throws mid-cascade the transaction rolls back, so a deprovision is all-or-nothing (never a partial
+ * state where some grants are revoked and others survive). `db.transaction` is allowed by D12 (it
+ * matches neither `db.run(` nor `db.exec(`); the inner mutations still route through `dbRun` (I14).
  */
 export function deprovisionUser(ctx: DeprovisionCtx, externalId: string): string[] {
-  ctx.identity.setScimActive(externalId, false, ctx.nowMs);
   const peerIds = ctx.identity.activePeerIdsFor(externalId);
-  if (peerIds.length === 0) return [];
   const namespaces = ctx.db.query<NsNameRow, []>(`SELECT name FROM federation_namespaces`).all().map((r) => r.name);
-  for (const peerId of peerIds) {
-    for (const ns of namespaces) {
-      if (ctx.store.getActiveGrant(ns, peerId) === undefined) continue;
-      ctx.store.revoke(ns, peerId, ctx.nowMs);
-      appendFederationAudit(ctx.db, {
-        peerId,
-        namespace: ns,
-        purpose: `scim-deprovision:${externalId}`,
-        decision: "no_grant",
-        method: "federation.query",
-        timestamp: ctx.nowMs,
-      });
+  ctx.db.transaction(() => {
+    ctx.identity.setScimActive(externalId, false, ctx.nowMs);
+    for (const peerId of peerIds) {
+      for (const ns of namespaces) {
+        if (ctx.store.getActiveGrant(ns, peerId) === undefined) continue;
+        ctx.store.revoke(ns, peerId, ctx.nowMs);
+        appendFederationAudit(ctx.db, {
+          peerId,
+          namespace: ns,
+          purpose: `scim-deprovision:${externalId}`,
+          decision: "no_grant",
+          method: "federation.query",
+          timestamp: ctx.nowMs,
+        });
+      }
+      ctx.identity.revokeBinding(peerId, ctx.nowMs);
     }
-    ctx.identity.revokeBinding(peerId, ctx.nowMs);
-  }
+  })();
   return peerIds;
 }
 ```
@@ -2705,7 +2762,7 @@ Expected: PASS already if Tasks 10–12 are correct (this is an acceptance guard
 `identity-boot.ts` exports `buildIdentityBoot(cfg, scimCfg, index, vault)` returning `{ store, issuer, graceSeconds, startLogin, resolveScimToken, enabled }` where:
 
 - `store = new IdentityStore(index.getDatabase())`
-- `startLogin` uses `LongRunningJobRegistry` (`jobIdPrefix: "identity-login"`, methods `identity.loginProgress`/`identity.loginDone`/`identity.loginError`) whose `run` calls `IdentityRuntime.login`, with production `IdentityRuntimeDeps` closing over real `fetch`, the `IdTokenVerifier` (built from a `JwksCache`), and a real `sleep`.
+- `startLogin` uses `LongRunningJobRegistry` (`jobIdPrefix: "identity-login"`, methods `identity.loginProgress`/`identity.loginDone`/`identity.loginError`) whose `run` calls `IdentityRuntime.login`, with production `IdentityRuntimeDeps` closing over real `fetch`, the `IdTokenVerifier` (built from a `JwksCache`), and a real `sleep`. Construct the `IdentityRuntime` with `log:` set to the gateway's structured-logger `warn` (review P2) so a failed background refresh is observable. The same runtime's `revalidateSession()` is invoked at boot and is safe to call before each federated op.
 - `resolveScimToken = async () => (await readScimBearer(vault)) ?? ""` (returns "" when unset → SCIM route replies 503).
 
 In `assemble.ts`, near the federation block (~line 439), add:
