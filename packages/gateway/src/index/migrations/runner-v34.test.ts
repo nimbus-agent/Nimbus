@@ -42,4 +42,41 @@ describe("V34 migration — identity tables", () => {
     } | null;
     expect(row?.description).toContain("identity");
   });
+
+  test("identity_session has the expected columns", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 34);
+    const cols = db
+      .query<{ name: string }, []>(`PRAGMA table_info(identity_session)`)
+      .all()
+      .map((r) => r.name)
+      .sort();
+    expect(cols).toEqual(
+      [
+        "claims_json",
+        "email",
+        "expires_at",
+        "external_id",
+        "issuer",
+        "status",
+        "validated_at",
+      ].sort(),
+    );
+  });
+
+  test("identity_binding.bound_by CHECK rejects an invalid source", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 34);
+    expect(() =>
+      db.run(
+        `INSERT INTO identity_binding (external_id, peer_id, bound_at, bound_by) VALUES ('u1','peer:a',1,'bogus')`,
+      ),
+    ).toThrow();
+    // a valid source is accepted
+    db.run(
+      `INSERT INTO identity_binding (external_id, peer_id, bound_at, bound_by) VALUES ('u1','peer:a',1,'admin')`,
+    );
+    const n = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM identity_binding`).get();
+    expect(n?.c).toBe(1);
+  });
 });
