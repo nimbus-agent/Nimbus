@@ -11,7 +11,7 @@ export type TeamCommand =
   | { kind: "namespaceGrant"; namespace: string; peerId: string; role: string; standing: boolean }
   | { kind: "namespaceRevoke"; namespace: string; peerId: string }
   | { kind: "query"; namespace: string; peerId: string; purpose: string }
-  | { kind: "whoKnows"; query: string }
+  | { kind: "whoKnows"; peerId: string; query: string }
   | { kind: "consent"; requestId: string; approved: boolean }
   | { kind: "listen" };
 
@@ -80,9 +80,11 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
       return { kind: "query", namespace, peerId, purpose: purposeParts.join(" ") };
     }
     case "who-knows": {
-      const q = rest.join(" ");
-      if (q.length === 0) throw new Error('Usage: nimbus team who-knows "<query>"');
-      return { kind: "whoKnows", query: q };
+      const [peerId, ...queryParts] = rest;
+      const q = queryParts.join(" ");
+      if (!peerId || q.length === 0)
+        throw new Error('Usage: nimbus team who-knows <peerId> "<query>"');
+      return { kind: "whoKnows", peerId, query: q };
     }
     case "consent": {
       const requestId = rest[0];
@@ -151,7 +153,7 @@ export async function runTeam(argv: string[]): Promise<void> {
         break;
       }
       case "query": {
-        const r = await client.call<unknown>("federation.query", {
+        const r = await client.call<unknown>("federation.ask", {
           peerId: cmd.peerId,
           namespace: cmd.namespace,
           purpose: cmd.purpose,
@@ -160,11 +162,12 @@ export async function runTeam(argv: string[]): Promise<void> {
         break;
       }
       case "whoKnows": {
-        const r = await client.call<{ rank: string }>("federation.expertise", {
+        const r = await client.call<unknown>("federation.askExpertise", {
+          peerId: cmd.peerId,
           query: cmd.query,
           purpose: "who-knows",
         });
-        process.stdout.write(`rank: ${r.rank}\n`);
+        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
         break;
       }
       case "pair": {
