@@ -738,8 +738,8 @@ test("respond(false) resolves denied; unknown id is a no-op", async () => {
   broker.setBroadcast(() => {});
   const p = broker.request({ peerId: "p", namespace: "n", purpose: "x", role: "viewer" }, 1000);
   const rid = broker.pendingIds()[0] as string;
-  broker.respond("nope", true); // no-op
-  broker.respond(rid, false);
+  expect(broker.respond("nope", true)).toBe(false); // unknown id → not matched
+  expect(broker.respond(rid, false)).toBe(true); // matched
   expect(await p).toBe("denied");
 });
 
@@ -803,12 +803,14 @@ export class FederationConsentBroker {
     });
   }
 
-  respond(requestId: string, approved: boolean): void {
+  /** Returns true if a pending request matched (and was resolved); false for unknown/expired/settled. */
+  respond(requestId: string, approved: boolean): boolean {
     const entry = this.pending.get(requestId);
-    if (entry === undefined) return; // unknown / already settled / expired
+    if (entry === undefined) return false; // unknown / already settled / expired
     this.pending.delete(requestId);
     clearTimeout(entry.timer);
     entry.resolve(approved ? "approved" : "denied");
+    return true;
   }
 
   pendingIds(): string[] {
@@ -865,7 +867,8 @@ test("federation.consentRespond resolves a pending request", async () => {
   const c = makeFederationCtx();
   const out = await dispatchFederationRpc("federation.consentRespond", { requestId: "x", approved: true }, c);
   expect(out.kind).toBe("hit");
-  expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
+  // unknown id → ok:true (well-formed call) but matched:false (nothing was pending)
+  expect((out as { value: { ok: boolean; matched: boolean } }).value.matched).toBe(false);
 });
 ```
 
@@ -897,8 +900,8 @@ Add a case inside the `dispatchByMethod` map (alongside the others):
       if (typeof rec["approved"] !== "boolean") {
         throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
       }
-      federationConsent.respond(requestId, rec["approved"]);
-      return { ok: true };
+      const matched = federationConsent.respond(requestId, rec["approved"]);
+      return { ok: true, matched };
     },
 ```
 
@@ -1025,6 +1028,8 @@ test("buildFederationLanServer registers an inbound peer on valid pair, then ans
 });
 ```
 
+**P2 — socket teardown (applies to this test and Task 16).** Every test that starts a `LanServer` MUST `await server.stop()` in `afterEach` (already shown via the `stop` holder). `LanServer.stop()` calls `instance.stop(true)`, which **force-closes** active connections, releasing file descriptors — important under CI so tests don't hang or leak FDs. The `lan-client` helpers (`exchangeOneFrame`/`exchangeHelloThenRpc`) always `socket.end()` after the reply (and on `close`/`error`), so the client side never leaks either. Do not start a server without a matching awaited stop.
+
 - [ ] **Step 2: Run it; verify it fails**
 
 Run: `bun test packages/gateway/src/federation/federation-server.test.ts`
@@ -1150,10 +1155,14 @@ git commit -m "feat(federation): testable LanServer builder (isKnownPeer/registe
 
 No new unit test (covered by Task 9 + Task 16 integration); verify via typecheck + a smoke boot. Load `[lan]` config and the identity; build+start the server only when federation is enabled; advertise; late-bind the broker broadcast.
 
+**P1 — boot-gating is `[federation].enabled` ONLY.** The federation `LanServer` is the *only* production `LanServer` construction (verified: `grep -rn "new LanServer" packages/gateway/src` → tests only). It gates **solely** on `[federation].enabled`. `[lan].enabled` is **not consulted** — `[lan]` contributes only transport *parameters* (`bind`/`port`/`pairingWindowSeconds`/`maxFailedAttempts`/`lockoutSeconds`). So `[federation].enabled = true` + `[lan].enabled = false` **starts** the server (using `[lan]`'s bind/port/etc.); `[federation].enabled = false` never starts it regardless of `[lan].enabled`. Add a one-line code comment to that effect at the gate. (Matches the prompt's "Only start it when `[federation].enabled`.")
+
 - [ ] **Step 1: Implement** — replace the federation block (currently lines ~439–447):
 
 ```typescript
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
+  // The federation LanServer is gated SOLELY on [federation].enabled. [lan].enabled is NOT
+  // consulted; [lan] only supplies transport params (bind/port/pairing/rate-limit) below.
   if (federationCfg.enabled) {
     const identity = await loadOrCreateFederationIdentity(vault);
     const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
@@ -1310,8 +1319,21 @@ Expected: FAIL — `consent` kind not handled.
 
 // runner switch:
   case "consent": {
-    await client.call("federation.consentRespond", { requestId: cmd.requestId, approved: cmd.approved });
-    process.stdout.write(`consent ${cmd.approved ? "approved" : "denied"} for ${cmd.requestId}\n`);
+    try {
+      const r = (await client.call("federation.consentRespond", {
+        requestId: cmd.requestId,
+        approved: cmd.approved,
+      })) as { matched?: boolean };
+      if (r.matched === false) {
+        process.stderr.write(`No pending consent request for ${cmd.requestId} (already answered or timed out).\n`);
+        process.exitCode = 1;
+      } else {
+        process.stdout.write(`consent ${cmd.approved ? "approved" : "denied"} for ${cmd.requestId}\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`Error responding to consent request: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.exitCode = 1;
+    }
     break;
   }
 ```
@@ -1364,8 +1386,17 @@ Expected: FAIL.
         const ok = await confirm({
           message: `Peer ${p.peerId ?? "?"} requests "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
         });
-        const approved = !isCancel(ok) && ok === true;
-        await client.call("federation.consentRespond", { requestId: p.requestId, approved });
+        if (isCancel(ok)) {
+          // Prompt cancelled (Esc): do NOT submit a deny — leave the query to time out on the
+          // answerer per consent_timeout_seconds. Avoids an accidental denial from a stray Esc.
+          process.stdout.write(`consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`);
+          return;
+        }
+        try {
+          await client.call("federation.consentRespond", { requestId: p.requestId, approved: ok === true });
+        } catch (e) {
+          process.stderr.write(`Error sending consent decision: ${e instanceof Error ? e.message : String(e)}\n`);
+        }
       })();
     });
     await new Promise<void>(() => {}); // run until interrupted
