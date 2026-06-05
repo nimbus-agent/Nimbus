@@ -4,6 +4,7 @@ import { asRecord } from "../../connectors/unknown-record.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { writeScimBearer } from "../../identity/identity-vault.ts";
+import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -209,6 +210,9 @@ export async function tryDispatchFederationRpc(
   if (index === undefined || discovery === undefined || pairing === undefined) {
     return phase4RpcSkipped;
   }
+  const idStore = ctx.options.identityStore;
+  const idIssuer = ctx.options.identityIssuer;
+  const idGrace = ctx.options.identityGraceSeconds ?? 0;
   try {
     const out = await dispatchFederationRpc(method, params, {
       db: index.getDatabase(),
@@ -220,6 +224,14 @@ export async function tryDispatchFederationRpc(
       ...(ctx.options.federationIdentity === undefined
         ? {}
         : { selfIdentity: ctx.options.federationIdentity }),
+      ...(idStore !== undefined && idIssuer !== undefined
+        ? {
+            identityGuard: {
+              enabled: true,
+              isOperatorValid: () => isOperatorValid(idStore, idIssuer, Date.now(), idGrace),
+            },
+          }
+        : {}),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

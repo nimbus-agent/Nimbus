@@ -36,6 +36,8 @@ export interface FederationRpcContext {
   // Asker-side over-the-wire client deps (present only on the local dispatch path):
   readonly index?: LocalIndex;
   readonly selfIdentity?: BoxKeypair;
+  // I18: when identity is enabled, the answerer's own operator identity must be valid to federate.
+  readonly identityGuard?: { enabled: boolean; isOperatorValid: () => boolean };
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -168,6 +170,7 @@ export async function dispatchFederationRpc(
           consentCache: sessionConsent,
           prompt: makePrompter(ctx),
           consentTimeoutMs: ctx.consentTimeoutMs,
+          ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
         { peerId: requireString(rec, "peerId"), request },
       );

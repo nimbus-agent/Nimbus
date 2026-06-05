@@ -55,7 +55,8 @@ export type FederationDecision =
   | "not_paired"
   | "namespace_unknown"
   | "timeout"
-  | "consent_denied";
+  | "consent_denied"
+  | "identity_invalid";
 
 export type ExpertiseRank = "high" | "medium" | "low" | "none";
 
