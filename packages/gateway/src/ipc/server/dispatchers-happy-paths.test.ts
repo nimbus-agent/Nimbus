@@ -3,15 +3,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
+import { PeerPairing } from "../../federation/peer-pairing.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
-import type { ServerCtx } from "./context.ts";
+import { phase4RpcSkipped, type ServerCtx } from "./context.ts";
 import {
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
   tryDispatchDiagnosticsRpc,
+  tryDispatchFederationRpc,
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
 import { RpcMethodError } from "./rpc-error.ts";
@@ -147,6 +150,39 @@ describe("tryDispatchAgentsRpc — body coverage with localIndex", () => {
     } catch (e) {
       expect(e).toBeInstanceOf(RpcMethodError);
     }
+  });
+});
+
+describe("tryDispatchFederationRpc — body coverage with wired providers", () => {
+  function fedCtx(): ServerCtx {
+    const db = trackDb();
+    const localIndex = new LocalIndex(db);
+    return makeCtx({
+      localIndex,
+      federationDiscovery: new InMemoryDiscoveryProvider([
+        { instanceName: "peer-x", host: "10.0.0.9", port: 7475 },
+      ]),
+      federationPairing: new PeerPairing(localIndex),
+    });
+  }
+
+  test("federation.discover hits and returns the provider's peers (covers the hit path)", async () => {
+    const out = await tryDispatchFederationRpc(fedCtx(), "federation.discover", {});
+    expect((out as { peers: unknown[] }).peers.length).toBe(1);
+  });
+
+  test("invalid params remap FederationRpcError → RpcMethodError (covers the catch)", async () => {
+    try {
+      await tryDispatchFederationRpc(fedCtx(), "federation.namespace.publish", { filters: [] });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(RpcMethodError);
+    }
+  });
+
+  test("unknown federation.* method returns phase4RpcSkipped (covers the final miss return)", async () => {
+    const out = await tryDispatchFederationRpc(fedCtx(), "federation.bogus", {});
+    expect(out).toBe(phase4RpcSkipped);
   });
 });
 
