@@ -33,7 +33,7 @@ let notes: Array<{ method: string; params: unknown }>;
 function ctx(): FederationRpcContext {
   return {
     db,
-    consentTimeoutMs: 1000,
+    consentTimeoutMs: 50,
     notify: (method, params) => notes.push({ method, params }),
     discovery: new InMemoryDiscoveryProvider([
       { instanceName: "gateway-b", host: "10.0.0.2", port: 7475 },
@@ -206,6 +206,7 @@ test("criterion 7 / I5: only federation.query + federation.expertise are admitte
     "federation.namespace.publish",
     "federation.namespace.grant",
     "federation.namespace.revoke",
+    "federation.consentRespond",
     "vault.get",
     "data.export",
     "extension.install",

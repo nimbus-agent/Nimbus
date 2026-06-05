@@ -36,6 +36,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   "federation.namespace.publish",
   "federation.namespace.grant",
   "federation.namespace.revoke",
+  "federation.consentRespond", // local/Tauri-only owner action — never answerable over the wire
+  "federation.ask", // local-only asker entrypoint (sends over the wire to a peer); not answerable
+  "federation.askExpertise", // local-only asker entrypoint; not answerable
 ]);
 
 const WRITE_METHODS = new Set([
