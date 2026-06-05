@@ -42,57 +42,60 @@ function normalizedKey(method: string, url: URL): string | undefined {
   return undefined;
 }
 
+const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+
+/** Parses + validates a JSON request body; throws ScimError(400) on a non-object body. */
+async function readScimBody(req: Request): Promise<Record<string, unknown>> {
+  const body: unknown = await req.json();
+  if (body === null || typeof body !== "object") throw new ScimError("invalid body", 400);
+  return body as Record<string, unknown>;
+}
+
+function deprovision(ctx: ScimRouteContext, id: string): void {
+  deprovisionUser(
+    { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
+    id,
+  );
+}
+
+async function handleScimCreate(req: Request, ctx: ScimRouteContext): Promise<Response> {
+  const u = applyScimCreate(ctx.identity, await readScimBody(req), ctx.nowMs());
+  return json(
+    { schemas: [SCIM_USER_SCHEMA], id: u.externalId, userName: u.userName, active: u.active },
+    201,
+  );
+}
+
+async function handleScimPatch(req: Request, ctx: ScimRouteContext, id: string): Promise<Response> {
+  const active = parseScimPatchActive(await readScimBody(req));
+  if (active === false) deprovision(ctx, id);
+  else if (active === true) ctx.identity.setScimActive(id, true, ctx.nowMs());
+  const u = ctx.identity.getScimUser(id);
+  return json({ schemas: [SCIM_USER_SCHEMA], id, active: u?.active ?? false }, 200);
+}
+
+async function routeScim(key: string, req: Request, ctx: ScimRouteContext): Promise<Response> {
+  if (key === "POST /scim/v2/Users") return handleScimCreate(req, ctx);
+  const id = ITEM_RE.exec(new URL(req.url).pathname)?.[1];
+  if (id === undefined) throw new ScimError("missing id", 400);
+  if (key === "DELETE /scim/v2/Users/{id}") {
+    deprovision(ctx, id);
+    return new Response(null, { status: 204 });
+  }
+  return handleScimPatch(req, ctx, id);
+}
+
 export async function dispatchScimRoute(req: Request, ctx: ScimRouteContext): Promise<Response> {
-  const url = new URL(req.url);
-  const key = normalizedKey(req.method, url);
+  const key = normalizedKey(req.method, new URL(req.url));
   if (key === undefined || !SCIM_WRITE_ROUTES.includes(key)) {
     return json({ detail: "not_found", status: 404 }, 404);
   }
   if (ctx.scimToken === "") return json({ detail: "scim_disabled", status: 503 }, 503);
-  const auth = requireBearer(req, { expectedToken: ctx.scimToken });
-  if (!auth.ok) return json({ detail: "unauthorized", status: 401 }, 401);
-
+  if (!requireBearer(req, { expectedToken: ctx.scimToken }).ok) {
+    return json({ detail: "unauthorized", status: 401 }, 401);
+  }
   try {
-    if (key === "POST /scim/v2/Users") {
-      const body: unknown = await req.json();
-      if (body === null || typeof body !== "object") throw new ScimError("invalid body", 400);
-      const u = applyScimCreate(ctx.identity, body as Record<string, unknown>, ctx.nowMs());
-      return json(
-        {
-          schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
-          id: u.externalId,
-          userName: u.userName,
-          active: u.active,
-        },
-        201,
-      );
-    }
-    const id = ITEM_RE.exec(url.pathname)?.[1];
-    if (id === undefined) throw new ScimError("missing id", 400);
-    if (key === "DELETE /scim/v2/Users/{id}") {
-      deprovisionUser(
-        { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
-        id,
-      );
-      return new Response(null, { status: 204 });
-    }
-    // PATCH
-    const body: unknown = await req.json();
-    if (body === null || typeof body !== "object") throw new ScimError("invalid body", 400);
-    const active = parseScimPatchActive(body as Record<string, unknown>);
-    if (active === false) {
-      deprovisionUser(
-        { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
-        id,
-      );
-    } else if (active === true) {
-      ctx.identity.setScimActive(id, true, ctx.nowMs());
-    }
-    const u = ctx.identity.getScimUser(id);
-    return json(
-      { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], id, active: u?.active ?? false },
-      200,
-    );
+    return await routeScim(key, req, ctx);
   } catch (e) {
     if (e instanceof ScimError) return json({ detail: e.message, status: e.status }, e.status);
     return json({ detail: "internal_error", status: 500 }, 500);

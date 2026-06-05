@@ -54,33 +54,44 @@ export class JwksCache {
     }
   }
 
-  private async refetch(issuer: string, jwksUri: string, nowMs: number): Promise<boolean> {
+  /** Fetches + validates the JWKS response, returning the keys array, or undefined on any failure. */
+  private async fetchKeys(jwksUri: string): Promise<unknown[] | undefined> {
     let res: Response;
     try {
       res = await this.fetchLike(jwksUri);
     } catch {
-      return false; // offline
+      return undefined; // offline
     }
-    if (!res.ok) return false;
+    if (!res.ok) return undefined;
     let body: unknown;
     try {
       body = await res.json();
     } catch {
-      return false;
+      return undefined;
     }
-    if (body === null || typeof body !== "object") return false;
+    if (body === null || typeof body !== "object") return undefined;
     const keys = (body as Record<string, unknown>)["keys"];
-    if (!Array.isArray(keys)) return false;
+    return Array.isArray(keys) ? keys : undefined;
+  }
+
+  /** Upserts one JWK (when it carries a string `kid`) into the cache. */
+  private persistJwk(issuer: string, k: unknown, nowMs: number): void {
+    if (k === null || typeof k !== "object") return;
+    const kid = (k as Record<string, unknown>)["kid"];
+    if (typeof kid !== "string") return;
+    dbRun(
+      this.db,
+      `INSERT INTO oidc_jwks_cache (issuer, kid, key_json, fetched_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(issuer, kid) DO UPDATE SET key_json = excluded.key_json, fetched_at = excluded.fetched_at`,
+      [issuer, kid, JSON.stringify(k), nowMs],
+    );
+  }
+
+  private async refetch(issuer: string, jwksUri: string, nowMs: number): Promise<boolean> {
+    const keys = await this.fetchKeys(jwksUri);
+    if (keys === undefined) return false;
     for (const k of keys) {
-      if (k === null || typeof k !== "object") continue;
-      const kid = (k as Record<string, unknown>)["kid"];
-      if (typeof kid !== "string") continue;
-      dbRun(
-        this.db,
-        `INSERT INTO oidc_jwks_cache (issuer, kid, key_json, fetched_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(issuer, kid) DO UPDATE SET key_json = excluded.key_json, fetched_at = excluded.fetched_at`,
-        [issuer, kid, JSON.stringify(k), nowMs],
-      );
+      this.persistJwk(issuer, k, nowMs);
     }
     return true;
   }

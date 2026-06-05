@@ -887,6 +887,31 @@ export const DEFAULT_NIMBUS_IDENTITY_TOML: NimbusIdentityToml = {
   jwksMaxAgeSeconds: 86400,
 };
 
+/** Maps a `[identity]` numeric key to its target field + minimum-accepted value. */
+const NIMBUS_IDENTITY_NUMERIC_KEYS: Readonly<
+  Record<string, { field: keyof NimbusIdentityToml; min: number }>
+> = {
+  session_grace_seconds: { field: "sessionGraceSeconds", min: 0 },
+  revalidate_interval_seconds: { field: "revalidateIntervalSeconds", min: 1 },
+  token_refresh_skew_seconds: { field: "tokenRefreshSkewSeconds", min: 0 },
+  jwks_max_age_seconds: { field: "jwksMaxAgeSeconds", min: 1 },
+};
+
+/** Applies a numeric `[identity]` key. Returns true if `key` was a recognized numeric key. */
+function applyNimbusIdentityNumericKey(
+  out: Partial<NimbusIdentityToml>,
+  key: string,
+  valRaw: string,
+): boolean {
+  const spec = NIMBUS_IDENTITY_NUMERIC_KEYS[key];
+  if (spec === undefined) return false;
+  const n = parseIntDec(valRaw);
+  if (n !== undefined && n >= spec.min) {
+    (out[spec.field] as number) = n;
+  }
+  return true;
+}
+
 function applyNimbusIdentityKey(
   out: Partial<NimbusIdentityToml>,
   key: string,
@@ -909,27 +934,8 @@ function applyNimbusIdentityKey(
       if (arr.length > 0) out.scopes = arr;
       break;
     }
-    case "session_grace_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 0) out.sessionGraceSeconds = n;
-      break;
-    }
-    case "revalidate_interval_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.revalidateIntervalSeconds = n;
-      break;
-    }
-    case "token_refresh_skew_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 0) out.tokenRefreshSkewSeconds = n;
-      break;
-    }
-    case "jwks_max_age_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.jwksMaxAgeSeconds = n;
-      break;
-    }
     default:
+      applyNimbusIdentityNumericKey(out, key, valRaw);
       break;
   }
 }

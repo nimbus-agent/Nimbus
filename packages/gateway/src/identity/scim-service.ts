@@ -63,21 +63,26 @@ export function applyScimCreate(
   return u;
 }
 
-/** Returns the new `active` value if a PatchOp sets it, else undefined. */
+/** Returns the `active` value a single replace/add PatchOp sets, or undefined if it sets none. */
+function patchOpActive(op: unknown): boolean | undefined {
+  const o = rec(op);
+  if (o === undefined) return undefined;
+  const opName = typeof o["op"] === "string" ? o["op"].toLowerCase() : "";
+  if (opName !== "replace" && opName !== "add") return undefined;
+  if (o["path"] === "active") return o["value"] === true;
+  const val = rec(o["value"]);
+  if (val !== undefined && "active" in val) return val["active"] === true;
+  return undefined;
+}
+
+/** Returns the new `active` value if a PatchOp sets it, else undefined (last op wins). */
 export function parseScimPatchActive(patch: Record<string, unknown>): boolean | undefined {
   const ops = patch["Operations"];
   if (!Array.isArray(ops)) return undefined;
   let result: boolean | undefined;
   for (const op of ops) {
-    const o = rec(op);
-    if (o === undefined) continue;
-    const opName = typeof o["op"] === "string" ? o["op"].toLowerCase() : "";
-    if (opName !== "replace" && opName !== "add") continue;
-    if (o["path"] === "active") result = o["value"] === true;
-    else {
-      const val = rec(o["value"]);
-      if (val !== undefined && "active" in val) result = val["active"] === true;
-    }
+    const active = patchOpActive(op);
+    if (active !== undefined) result = active;
   }
   return result;
 }

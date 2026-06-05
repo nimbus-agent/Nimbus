@@ -39,6 +39,21 @@ export interface PollOpts {
   readonly onPoll: () => void;
 }
 
+function asRecord(body: unknown): Record<string, unknown> {
+  return body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
+}
+
+/** Builds a rich error from the IdP's OAuth error body (review S1: surface error_description/uri). */
+function deviceTokenError(body: unknown): Error {
+  const rec = asRecord(body);
+  const err = rec["error"];
+  const code = typeof err === "string" ? err : "unknown";
+  const desc =
+    typeof rec["error_description"] === "string" ? ` — ${rec["error_description"] as string}` : "";
+  const uri = typeof rec["error_uri"] === "string" ? ` (${rec["error_uri"] as string})` : "";
+  return new Error(`identity: device token error: ${code}${desc}${uri}`);
+}
+
 export async function pollDeviceToken(
   d: OidcDiscovery,
   clientId: string,
@@ -60,27 +75,9 @@ export async function pollDeviceToken(
     );
     const body: unknown = await res.json().catch(() => ({}));
     if (res.ok) return parseTokenResponse(body);
-    const err =
-      body !== null && typeof body === "object"
-        ? (body as Record<string, unknown>)["error"]
-        : undefined;
-    if (err === "authorization_pending") {
-      await opts.sleep(intervalMs);
-      continue;
-    }
-    if (err === "slow_down") {
-      intervalMs += 5000;
-      await opts.sleep(intervalMs);
-      continue;
-    }
-    // Surface the IdP's rich error fields (review S1) so operators can debug bad client_id / scopes.
-    const rec = body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    const code = typeof err === "string" ? err : "unknown";
-    const desc =
-      typeof rec["error_description"] === "string"
-        ? ` — ${rec["error_description"] as string}`
-        : "";
-    const uri = typeof rec["error_uri"] === "string" ? ` (${rec["error_uri"] as string})` : "";
-    throw new Error(`identity: device token error: ${code}${desc}${uri}`);
+    const err = asRecord(body)["error"];
+    if (err === "slow_down") intervalMs += 5000;
+    else if (err !== "authorization_pending") throw deviceTokenError(body);
+    await opts.sleep(intervalMs);
   }
 }

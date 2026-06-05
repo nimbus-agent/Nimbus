@@ -17,6 +17,24 @@ export interface IdentityIpc {
   disconnect(): Promise<void>;
 }
 
+function parseBindArgs(rest: string[]): IdentityCommand {
+  const [email, peerId] = [rest[0], rest[1]];
+  if (!email || !peerId) throw new Error("Usage: nimbus identity bind <email> <peerId>");
+  return { kind: "bind", email, peerId };
+}
+
+function parseUnbindArgs(rest: string[]): IdentityCommand {
+  const peerId = rest[0];
+  if (!peerId) throw new Error("Usage: nimbus identity unbind <peerId>");
+  return { kind: "unbind", peerId };
+}
+
+function parseListBindingsArgs(rest: string[]): IdentityCommand {
+  const email = rest[0];
+  if (!email) throw new Error("Usage: nimbus identity list-bindings <email>");
+  return { kind: "listBindings", email };
+}
+
 export function parseIdentityArgs(argv: string[]): IdentityCommand {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -27,21 +45,12 @@ export function parseIdentityArgs(argv: string[]): IdentityCommand {
       return { kind: "status" };
     case "logout":
       return { kind: "logout" };
-    case "bind": {
-      const [email, peerId] = [rest[0], rest[1]];
-      if (!email || !peerId) throw new Error("Usage: nimbus identity bind <email> <peerId>");
-      return { kind: "bind", email, peerId };
-    }
-    case "unbind": {
-      const peerId = rest[0];
-      if (!peerId) throw new Error("Usage: nimbus identity unbind <peerId>");
-      return { kind: "unbind", peerId };
-    }
-    case "list-bindings": {
-      const email = rest[0];
-      if (!email) throw new Error("Usage: nimbus identity list-bindings <email>");
-      return { kind: "listBindings", email };
-    }
+    case "bind":
+      return parseBindArgs(rest);
+    case "unbind":
+      return parseUnbindArgs(rest);
+    case "list-bindings":
+      return parseListBindingsArgs(rest);
     default:
       throw new Error(
         `Unknown subcommand: ${sub}\nUsage: nimbus identity [login|status|logout|bind|unbind|list-bindings]`,

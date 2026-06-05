@@ -64,9 +64,9 @@ export class IdTokenVerifier {
     private readonly cfg: { issuer: string; clientId: string; jwksUri: string },
   ) {}
 
-  /** I18 — the ONLY ID-token validation path. RS256 only (Okta/Entra/Auth0/Google). nowMs is injected. */
-  async validateIdToken(jwt: string, nowMs: number): Promise<ValidatedClaims> {
-    const { header, payload, signingInput, signature } = parseJwt(jwt);
+  /** Resolves the signing key for the JWT header and verifies the RS256 signature. */
+  private async verifySignature(parts: JwtParts, nowMs: number): Promise<void> {
+    const { header, signingInput, signature } = parts;
     if (header["alg"] !== "RS256") {
       throw new IdTokenValidationError(
         `identity: unsupported alg ${String(header["alg"])} (RS256 only)`,
@@ -80,6 +80,10 @@ export class IdTokenVerifier {
     if (!(await verifyRs256(jwk, signingInput, signature))) {
       throw new IdTokenValidationError("identity: signature verification failed");
     }
+  }
+
+  /** Validates iss/aud/exp/nbf/sub and returns the leak-proof claims shape. */
+  private validateClaims(payload: Record<string, unknown>, nowMs: number): ValidatedClaims {
     if (payload["iss"] !== this.cfg.issuer)
       throw new IdTokenValidationError("identity: issuer mismatch");
     const aud = payload["aud"];
@@ -108,6 +112,13 @@ export class IdTokenVerifier {
       ...(typeof nbf === "number" ? { nbf } : {}),
       raw: payload,
     };
+  }
+
+  /** I18 — the ONLY ID-token validation path. RS256 only (Okta/Entra/Auth0/Google). nowMs is injected. */
+  async validateIdToken(jwt: string, nowMs: number): Promise<ValidatedClaims> {
+    const parts = parseJwt(jwt);
+    await this.verifySignature(parts, nowMs);
+    return this.validateClaims(parts.payload, nowMs);
   }
 }
 

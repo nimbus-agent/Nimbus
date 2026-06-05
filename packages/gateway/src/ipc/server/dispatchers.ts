@@ -243,6 +243,17 @@ export async function tryDispatchFederationRpc(
   return phase4RpcSkipped;
 }
 
+/** scim.setToken writes a credential to the Vault — handled here, not in the pure dispatcher. */
+async function handleScimSetToken(ctx: ServerCtx, params: unknown): Promise<{ ok: true }> {
+  const vault = ctx.options.identityVault;
+  const rec = params as Record<string, unknown>;
+  if (vault === undefined || typeof rec?.["token"] !== "string") {
+    throw new RpcMethodError(-32602, "ERR_INVALID_PARAMS: token required");
+  }
+  await writeScimBearer(vault, rec["token"]);
+  return { ok: true };
+}
+
 export async function tryDispatchIdentityRpc(
   ctx: ServerCtx,
   method: string,
@@ -252,16 +263,7 @@ export async function tryDispatchIdentityRpc(
   const issuer = ctx.options.identityIssuer;
   const index = ctx.options.localIndex;
   if (store === undefined || issuer === undefined || index === undefined) return phase4RpcSkipped;
-  // scim.setToken writes a credential to the Vault — handled here, not in the pure dispatcher.
-  if (method === "scim.setToken") {
-    const vault = ctx.options.identityVault;
-    const rec = params as Record<string, unknown>;
-    if (vault === undefined || typeof rec?.["token"] !== "string") {
-      throw new RpcMethodError(-32602, "ERR_INVALID_PARAMS: token required");
-    }
-    await writeScimBearer(vault, rec["token"]);
-    return { ok: true };
-  }
+  if (method === "scim.setToken") return handleScimSetToken(ctx, params);
   try {
     const out = await dispatchIdentityRpc(method, params, {
       db: index.getDatabase(),
