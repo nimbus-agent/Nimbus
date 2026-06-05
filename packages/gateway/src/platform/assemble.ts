@@ -468,6 +468,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         discovery: federationRuntime.discovery,
         pairing: federationRuntime.pairing,
       });
+      // Register the stop callback BEFORE start() so a throw from start() can't leak the server
+      // (mirrors the autoUpdateRuntime registration order above).
+      sidecarStops.push(() => void built.lanServer.stop());
       await built.lanServer.start();
       const addr = built.lanServer.listenAddr();
       if (addr !== undefined && federationCfg.mdnsEnabled) {
@@ -475,7 +478,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       }
       ipcOpts.lanServer = built.lanServer;
       ipcOpts.lanPairingWindow = built.pairingWindow;
-      sidecarStops.push(() => void built.lanServer.stop());
     }
   }
 
