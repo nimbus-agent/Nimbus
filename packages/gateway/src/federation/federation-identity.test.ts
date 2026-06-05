@@ -10,7 +10,9 @@ function fakeVault() {
   return {
     store,
     get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => void store.set(k, v),
+    set: async (k: string, v: string) => {
+      store.set(k, v);
+    },
   };
 }
 
@@ -20,7 +22,7 @@ test("creates a 32-byte identity on first call and persists it base64", async ()
   expect(kp.secretKey.length).toBe(32);
   const stored = v.store.get(FEDERATION_IDENTITY_VAULT_KEY);
   expect(stored).toBeDefined();
-  expect(Buffer.from(stored as string, "base64").length).toBe(32);
+  expect(Buffer.from(stored ?? "", "base64").length).toBe(32);
 });
 
 test("returns the SAME keypair on a second call (load path)", async () => {
@@ -37,7 +39,7 @@ test("regenerates if the stored secret is corrupt (wrong length)", async () => {
   const kp = await loadOrCreateFederationIdentity(v);
   expect(kp.secretKey.length).toBe(32);
   const again = boxKeypairFromSecretKey(
-    new Uint8Array(Buffer.from(v.store.get(FEDERATION_IDENTITY_VAULT_KEY) as string, "base64")),
+    new Uint8Array(Buffer.from(v.store.get(FEDERATION_IDENTITY_VAULT_KEY) ?? "", "base64")),
   );
   expect(Buffer.from(again.publicKey).toString("hex")).toBe(
     Buffer.from(kp.publicKey).toString("hex"),

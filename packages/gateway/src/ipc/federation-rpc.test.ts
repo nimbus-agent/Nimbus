@@ -290,7 +290,7 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
     notify: () => {},
     discovery: new InMemoryDiscoveryProvider(),
     pairing: new PeerPairing(ctxIndex),
-    ...(asker !== undefined ? { index: asker.index, selfIdentity: asker.selfIdentity } : {}),
+    ...(asker === undefined ? {} : { index: asker.index, selfIdentity: asker.selfIdentity }),
   });
 
   // --- Responder B ---

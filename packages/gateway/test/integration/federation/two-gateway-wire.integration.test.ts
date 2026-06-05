@@ -202,9 +202,11 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
     expect(res.kind).toBe("ok");
     if (res.kind !== "ok") throw new Error(`expected ok, got ${JSON.stringify(res)}`);
     expect(res.response.items.length).toBe(2);
-    expect(res.response.items.map((i) => i["id"]).sort()).toEqual(["github:pr1", "github:pr2"]);
+    expect(
+      res.response.items.map((i) => String(i["id"])).sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["github:pr1", "github:pr2"]);
     for (const item of res.response.items) {
-      expect(Object.keys(item).sort()).toEqual(FEDERATED_ITEM_KEYS);
+      expect(Object.keys(item).sort((a, b) => a.localeCompare(b))).toEqual(FEDERATED_ITEM_KEYS);
       expect(item["service"]).toBe("github");
     }
     // Hard leak guard: no secret/metadata/raw/external_id/author_id anywhere in the serialized answer.

@@ -305,6 +305,61 @@ function collectSidecarsFromEnv(
   }
 }
 
+function asBroadcastParams(params: unknown): Record<string, unknown> {
+  return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+}
+
+/** Boot the federation LAN server + discovery into ipcOpts when enabled. Returns true if booted
+ *  (so the caller can wire the consent broadcast after the IPC server exists). */
+async function bootFederationIntoIpcOpts(
+  federationCfg: ReturnType<typeof loadNimbusFederationFromConfigDir>,
+  paths: PlatformPaths,
+  vault: NimbusVault,
+  db: Database,
+  localIndex: LocalIndex,
+  ipcOpts: Parameters<typeof createIpcServer>[0],
+  sidecarStops: Array<() => void>,
+): Promise<boolean> {
+  if (!federationCfg.enabled) return false;
+  const identity = await loadOrCreateFederationIdentity(vault);
+  const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
+  if (federationRuntime === undefined) return false;
+  void federationRuntime.discovery.start();
+  sidecarStops.push(() => void federationRuntime.discovery.stop());
+  ipcOpts.federationDiscovery = federationRuntime.discovery;
+  ipcOpts.federationPairing = federationRuntime.pairing;
+  ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+  ipcOpts.federationIdentity = identity;
+
+  const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  const built = buildFederationLanServer({
+    db,
+    index: localIndex,
+    identity,
+    lan: {
+      bind: lanCfg.bind,
+      port: lanCfg.port,
+      pairingWindowSeconds: lanCfg.pairingWindowSeconds,
+      maxFailedAttempts: lanCfg.maxFailedAttempts,
+      lockoutSeconds: lanCfg.lockoutSeconds,
+    },
+    consentTimeoutMs: federationRuntime.consentTimeoutSeconds * 1000,
+    notify: () => {},
+    discovery: federationRuntime.discovery,
+    pairing: federationRuntime.pairing,
+  });
+  // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
+  sidecarStops.push(() => void built.lanServer.stop());
+  await built.lanServer.start();
+  const addr = built.lanServer.listenAddr();
+  if (addr !== undefined && federationCfg.mdnsEnabled) {
+    void federationRuntime.discovery.advertise(`nimbus-${GATEWAY_VERSION}`, addr.port);
+  }
+  ipcOpts.lanServer = built.lanServer;
+  ipcOpts.lanPairingWindow = built.pairingWindow;
+  return true;
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
@@ -441,55 +496,21 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   collectSidecarsFromEnv(db, paths, sidecarStops);
 
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
-  if (federationCfg.enabled) {
-    const identity = await loadOrCreateFederationIdentity(vault);
-    const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
-    if (federationRuntime !== undefined) {
-      void federationRuntime.discovery.start();
-      sidecarStops.push(() => void federationRuntime.discovery.stop());
-      ipcOpts.federationDiscovery = federationRuntime.discovery;
-      ipcOpts.federationPairing = federationRuntime.pairing;
-      ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
-      ipcOpts.federationIdentity = identity;
-
-      const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
-      const built = buildFederationLanServer({
-        db,
-        index: localIndex,
-        identity,
-        lan: {
-          bind: lanCfg.bind,
-          port: lanCfg.port,
-          pairingWindowSeconds: lanCfg.pairingWindowSeconds,
-          maxFailedAttempts: lanCfg.maxFailedAttempts,
-          lockoutSeconds: lanCfg.lockoutSeconds,
-        },
-        consentTimeoutMs: federationRuntime.consentTimeoutSeconds * 1000,
-        notify: () => {},
-        discovery: federationRuntime.discovery,
-        pairing: federationRuntime.pairing,
-      });
-      // Register the stop callback BEFORE start() so a throw from start() can't leak the server
-      // (mirrors the autoUpdateRuntime registration order above).
-      sidecarStops.push(() => void built.lanServer.stop());
-      await built.lanServer.start();
-      const addr = built.lanServer.listenAddr();
-      if (addr !== undefined && federationCfg.mdnsEnabled) {
-        void federationRuntime.discovery.advertise(`nimbus-${GATEWAY_VERSION}`, addr.port);
-      }
-      ipcOpts.lanServer = built.lanServer;
-      ipcOpts.lanPairingWindow = built.pairingWindow;
-    }
-  }
+  const federationBooted = await bootFederationIntoIpcOpts(
+    federationCfg,
+    paths,
+    vault,
+    db,
+    localIndex,
+    ipcOpts,
+    sidecarStops,
+  );
 
   const ipc = createIpcServer(ipcOpts);
 
-  if (federationCfg.enabled) {
+  if (federationBooted) {
     federationConsent.setBroadcast((method, params) =>
-      ipc.broadcast(
-        method,
-        typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {},
-      ),
+      ipc.broadcast(method, asBroadcastParams(params)),
     );
   }
 

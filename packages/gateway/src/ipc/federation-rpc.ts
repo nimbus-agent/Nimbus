@@ -92,8 +92,11 @@ function requireAskTarget(
   }
   const peerId = requireString(rec, "peerId");
   const row = ctx.index.listLanPeers().find((r) => r.peer_id === peerId);
-  if (row === undefined || row.host_ip === null || row.host_port === null) {
+  if (row === undefined) {
     throw new FederationRpcError(-32602, `ERR_UNKNOWN_PEER: ${peerId}`);
+  }
+  if (row.host_ip === null || row.host_port === null) {
+    throw new FederationRpcError(-32602, `ERR_UNKNOWN_PEER: ${peerId} has no host address`);
   }
   return { row, selfIdentity: ctx.selfIdentity };
 }

@@ -70,7 +70,7 @@ export function exchangeOneFrame(
       else if (body) resolve(body);
       else reject(new Error("lan-client: connection closed without reply"));
     }
-    void Bun.connect<undefined>({
+    Bun.connect<undefined>({
       hostname: host,
       port,
       socket: {
@@ -138,7 +138,7 @@ function exchangeHelloThenRpc(
       else if (body) resolve(body);
       else reject(new Error("lan-client: connection closed mid-exchange"));
     }
-    void Bun.connect<undefined>({
+    Bun.connect<undefined>({
       hostname: host,
       port,
       socket: {
