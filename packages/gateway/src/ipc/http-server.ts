@@ -324,8 +324,10 @@ export function startReadOnlyHttpServer(
   const db = new Database(dbPath, { readonly: true, create: false });
   dbRun(db, "PRAGMA query_only = ON");
 
+  // Single writable DB (I13). Opened when EITHER the deployment-write surface OR the SCIM
+  // provisioning surface is enabled — SCIM must work on a gateway that has not enabled deployment writes.
   const writeDb =
-    opts.resolveDeploymentToken === undefined
+    opts.resolveDeploymentToken === undefined && opts.resolveScimToken === undefined
       ? null
       : new Database(dbPath, { create: false, readwrite: true });
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });
