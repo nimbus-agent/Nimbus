@@ -10,6 +10,13 @@ export type IdentityCommand =
   | { kind: "unbind"; peerId: string }
   | { kind: "listBindings"; email: string };
 
+/** Minimal client surface used by the identity dispatcher — satisfied by IPCClient. */
+export interface IdentityIpc {
+  call<T>(method: string, params?: unknown): Promise<T>;
+  onNotification(method: string, handler: (params: unknown) => void): void;
+  disconnect(): Promise<void>;
+}
+
 export function parseIdentityArgs(argv: string[]): IdentityCommand {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -42,7 +49,7 @@ export function parseIdentityArgs(argv: string[]): IdentityCommand {
   }
 }
 
-function awaitLogin(client: IPCClient): Promise<void> {
+export function awaitLogin(client: IdentityIpc): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let jobId: string | undefined;
     client.onNotification("identity.loginProgress", (n: unknown) => {
@@ -68,6 +75,37 @@ function awaitLogin(client: IPCClient): Promise<void> {
   });
 }
 
+export async function runIdentityCommand(client: IdentityIpc, cmd: IdentityCommand): Promise<void> {
+  switch (cmd.kind) {
+    case "login":
+      await awaitLogin(client);
+      process.stdout.write("Logged in.\n");
+      break;
+    case "status": {
+      const r = await client.call<unknown>("identity.status", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "logout":
+      await client.call("identity.logout", {});
+      process.stdout.write("Logged out.\n");
+      break;
+    case "bind":
+      await client.call("identity.bind", { email: cmd.email, peerId: cmd.peerId });
+      process.stdout.write(`Bound ${cmd.email} → ${cmd.peerId}\n`);
+      break;
+    case "unbind":
+      await client.call("identity.unbind", { peerId: cmd.peerId });
+      process.stdout.write(`Unbound ${cmd.peerId}\n`);
+      break;
+    case "listBindings": {
+      const r = await client.call<unknown>("identity.listBindings", { email: cmd.email });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+  }
+}
+
 export async function runIdentity(argv: string[]): Promise<void> {
   let cmd: IdentityCommand;
   try {
@@ -84,34 +122,7 @@ export async function runIdentity(argv: string[]): Promise<void> {
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
-    switch (cmd.kind) {
-      case "login":
-        await awaitLogin(client);
-        process.stdout.write("Logged in.\n");
-        break;
-      case "status": {
-        const r = await client.call<unknown>("identity.status", {});
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "logout":
-        await client.call("identity.logout", {});
-        process.stdout.write("Logged out.\n");
-        break;
-      case "bind":
-        await client.call("identity.bind", { email: cmd.email, peerId: cmd.peerId });
-        process.stdout.write(`Bound ${cmd.email} → ${cmd.peerId}\n`);
-        break;
-      case "unbind":
-        await client.call("identity.unbind", { peerId: cmd.peerId });
-        process.stdout.write(`Unbound ${cmd.peerId}\n`);
-        break;
-      case "listBindings": {
-        const r = await client.call<unknown>("identity.listBindings", { email: cmd.email });
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-    }
+    await runIdentityCommand(client, cmd);
   } finally {
     await client.disconnect().catch(() => {});
   }

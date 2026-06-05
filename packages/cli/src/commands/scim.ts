@@ -8,6 +8,12 @@ export type ScimCommand =
   | { kind: "listUsers" }
   | { kind: "deprovision"; email: string };
 
+/** Minimal client surface used by the SCIM dispatcher — satisfied by IPCClient. */
+export interface ScimIpc {
+  call<T>(method: string, params?: unknown): Promise<T>;
+  disconnect(): Promise<void>;
+}
+
 export function parseScimArgs(argv: string[]): ScimCommand {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -33,6 +39,29 @@ export function parseScimArgs(argv: string[]): ScimCommand {
   }
 }
 
+export async function runScimCommand(client: ScimIpc, cmd: ScimCommand): Promise<void> {
+  switch (cmd.kind) {
+    case "status": {
+      const r = await client.call<unknown>("scim.status", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "setToken":
+      await client.call("scim.setToken", { token: cmd.token });
+      process.stdout.write("SCIM bearer token stored.\n");
+      break;
+    case "listUsers": {
+      const r = await client.call<unknown>("scim.listUsers", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "deprovision":
+      await client.call("scim.deprovision", { email: cmd.email });
+      process.stdout.write(`Deprovisioned ${cmd.email}\n`);
+      break;
+  }
+}
+
 export async function runScim(argv: string[]): Promise<void> {
   let cmd: ScimCommand;
   try {
@@ -49,26 +78,7 @@ export async function runScim(argv: string[]): Promise<void> {
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
-    switch (cmd.kind) {
-      case "status": {
-        const r = await client.call<unknown>("scim.status", {});
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "setToken":
-        await client.call("scim.setToken", { token: cmd.token });
-        process.stdout.write("SCIM bearer token stored.\n");
-        break;
-      case "listUsers": {
-        const r = await client.call<unknown>("scim.listUsers", {});
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "deprovision":
-        await client.call("scim.deprovision", { email: cmd.email });
-        process.stdout.write(`Deprovisioned ${cmd.email}\n`);
-        break;
-    }
+    await runScimCommand(client, cmd);
   } finally {
     await client.disconnect().catch(() => {});
   }
