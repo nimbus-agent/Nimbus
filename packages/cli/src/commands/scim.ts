@@ -62,7 +62,13 @@ export async function runScimCommand(client: ScimIpc, cmd: ScimCommand): Promise
   }
 }
 
-export async function runScim(argv: string[]): Promise<void> {
+/** Injectable seams for `runScim` so the orchestration is testable without a live gateway. */
+export interface ScimRunDeps {
+  readState?: () => Promise<{ socketPath: string } | undefined>;
+  connect?: (socketPath: string) => Promise<ScimIpc>;
+}
+
+export async function runScim(argv: string[], deps: ScimRunDeps = {}): Promise<void> {
   let cmd: ScimCommand;
   try {
     cmd = parseScimArgs(argv);
@@ -70,13 +76,25 @@ export async function runScim(argv: string[]): Promise<void> {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);
   }
-  const state = await readGatewayState(getCliPlatformPaths());
+  const readState =
+    deps.readState ??
+    (async (): Promise<{ socketPath: string } | undefined> => {
+      const s = await readGatewayState(getCliPlatformPaths());
+      return s === undefined ? undefined : { socketPath: s.socketPath };
+    });
+  const state = await readState();
   if (state === undefined) {
     process.stderr.write("Gateway is not running. Start with: nimbus start\n");
     process.exit(1);
   }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
+  const connect =
+    deps.connect ??
+    (async (socketPath: string): Promise<ScimIpc> => {
+      const c = new IPCClient(socketPath);
+      await c.connect();
+      return c;
+    });
+  const client = await connect(state.socketPath);
   try {
     await runScimCommand(client, cmd);
   } finally {

@@ -1,5 +1,5 @@
-import { describe, expect, it, test } from "bun:test";
-import { parseScimArgs, runScimCommand, type ScimIpc } from "./scim.ts";
+import { afterEach, describe, expect, it, test } from "bun:test";
+import { parseScimArgs, runScim, runScimCommand, type ScimIpc } from "./scim.ts";
 
 // ---------------------------------------------------------------------------
 // Parser tests (unchanged)
@@ -138,5 +138,74 @@ describe("runScimCommand — deprovision", () => {
       params: { email: "carol@acme.com" },
     });
     expect(stdoutChunks.join("")).toContain("carol@acme.com");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runScim orchestration wrapper (injectable seams)
+// ---------------------------------------------------------------------------
+
+describe("runScim wrapper", () => {
+  const realExit = process.exit;
+  const realStderr = process.stderr.write.bind(process.stderr);
+  function stubExitAndStderr(): { exitCodes: number[]; err: string[] } {
+    const exitCodes: number[] = [];
+    const err: string[] = [];
+    process.exit = ((code?: number): never => {
+      exitCodes.push(code ?? 0);
+      throw new Error("__exit__");
+    }) as unknown as typeof process.exit;
+    process.stderr.write = ((chunk: unknown): boolean => {
+      err.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    return { exitCodes, err };
+  }
+  afterEach(() => {
+    process.exit = realExit;
+    process.stderr.write = realStderr;
+  });
+
+  it("parse error → writes usage to stderr and exits 1", async () => {
+    const { exitCodes, err } = stubExitAndStderr();
+    await expect(runScim(["totally-unknown-subcommand"])).rejects.toThrow("__exit__");
+    expect(exitCodes).toEqual([1]);
+    expect(err.join("")).toContain("Unknown subcommand");
+  });
+
+  it("no gateway running → writes hint and exits 1", async () => {
+    const { exitCodes, err } = stubExitAndStderr();
+    await expect(runScim(["status"], { readState: async () => undefined })).rejects.toThrow(
+      "__exit__",
+    );
+    expect(exitCodes).toEqual([1]);
+    expect(err.join("")).toContain("Gateway is not running");
+  });
+
+  it("connects, dispatches, then disconnects on the happy path", async () => {
+    const fake = makeFake([{ enabled: true }]);
+    let disconnected = false;
+    const ipc: ScimIpc = {
+      call: fake.ipc.call,
+      disconnect: async (): Promise<void> => {
+        disconnected = true;
+      },
+    };
+    const stdoutChunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: unknown): boolean => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    };
+    try {
+      await runScim(["status"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      });
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(fake.calls[0]).toEqual({ method: "scim.status", params: {} });
+    expect(disconnected).toBe(true);
   });
 });
