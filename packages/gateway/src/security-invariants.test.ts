@@ -510,4 +510,10 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
       expect(src).toContain(`"${m}"`); // present in FORBIDDEN_OVER_LAN
     }
   });
+
+  test("I17/R1 — the over-the-wire answerer forces peerId from the authenticated session (not the request body)", async () => {
+    const src = await read("packages/gateway/src/federation/federation-server.ts");
+    // onMessage must override any body-supplied peerId with the NaCl-authenticated peer.peerId.
+    expect(src).toMatch(/peerId:\s*peer\.peerId/);
+  });
 });

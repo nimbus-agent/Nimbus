@@ -328,6 +328,8 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 **How to comply:** any new path that answers a peer's data request must be routed through `answerFederatedQuery` in `query-gate.ts`, never by adding a second item-read import in another federation module.
 
+**Over-the-wire path (Slice 1 follow-up, delivered 2026-06-05):** the over-the-wire answering path is now live. `buildFederationLanServer` in `federation/federation-server.ts` constructs a `LanServer` that is started at gateway boot from `platform/assemble.ts` (gated on `[federation].enabled`, transport from `[lan]`). Its `onMessage` handler routes inbound `federation.query` / `federation.expertise` through `query-gate.ts`. Critically, the answering `peerId` is **forced** from the NaCl-authenticated session (`const forced = { ...body, peerId: peer.peerId }` — R1): a body-supplied `peerId` field is silently overwritten and cannot impersonate another peer. A regression that drops this override will fail the I17/R1 test in `security-invariants.test.ts`.
+
 ---
 
 ## How a new invariant is added
