@@ -2,6 +2,8 @@ import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
+import type { DiscoveryProvider } from "../../federation/discovery.ts";
+import type { PeerPairing } from "../../federation/peer-pairing.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
@@ -50,4 +52,9 @@ export type CreateIpcServerOptions = {
     intervalHours: number;
     airGapBlocked: boolean;
   };
+  // Federation (Phase 6 Slice 1). Constructed at gateway boot (deferred to Task 15); the
+  // dispatcher skips cleanly when these are unset.
+  federationConsentTimeoutSeconds?: number;
+  federationDiscovery?: DiscoveryProvider;
+  federationPairing?: PeerPairing;
 };

@@ -32,6 +32,7 @@ import {
   tryDispatchDataRpc,
   tryDispatchDeploymentRpc,
   tryDispatchDiagnosticsRpc,
+  tryDispatchFederationRpc,
   tryDispatchIndexReembedRpc,
   tryDispatchLanRpc,
   tryDispatchLlmRpc,
@@ -115,6 +116,18 @@ describe("tryDispatchAgentsRpc", () => {
   test("skips when localIndex is undefined", async () => {
     const { ctx } = makeCtx();
     expect(await tryDispatchAgentsRpc(ctx, "agents.expert", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchFederationRpc", () => {
+  test("skips a non-federation method", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchFederationRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips a federation method when the federation services are not wired", async () => {
+    // ctx has no federationDiscovery/federationPairing => skip
+    const { ctx } = makeCtx();
+    expect(await tryDispatchFederationRpc(ctx, "federation.discover", {})).toBe(phase4RpcSkipped);
   });
 });
 

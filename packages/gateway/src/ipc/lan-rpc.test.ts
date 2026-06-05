@@ -89,3 +89,31 @@ describe("security namespace over LAN", () => {
     ).toThrow(LanError);
   });
 });
+
+describe("federation over LAN (I5 + I17)", () => {
+  const peer = { peerId: "p", writeAllowed: false };
+
+  test("federation.query and federation.expertise are admitted over LAN", () => {
+    expect(() => checkLanMethodAllowed("federation.query", peer)).not.toThrow();
+    expect(() => checkLanMethodAllowed("federation.expertise", peer)).not.toThrow();
+  });
+
+  test("federation management methods are forbidden over LAN", () => {
+    for (const m of [
+      "federation.discover",
+      "federation.pair",
+      "federation.peers",
+      "federation.namespace.publish",
+      "federation.namespace.grant",
+      "federation.namespace.revoke",
+    ]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
+  });
+
+  test("vault/data/extension remain forbidden over LAN", () => {
+    for (const m of ["vault.get", "data.export", "extension.sync"]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
+  });
+});

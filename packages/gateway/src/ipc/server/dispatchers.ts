@@ -12,6 +12,7 @@ import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
+import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
@@ -189,6 +190,36 @@ export async function tryDispatchSecurityRpc(
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof SecurityRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+export async function tryDispatchFederationRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const index = ctx.options.localIndex;
+  const discovery = ctx.options.federationDiscovery;
+  const pairing = ctx.options.federationPairing;
+  // Federation needs the index + its long-lived services; skip cleanly if not configured.
+  if (index === undefined || discovery === undefined || pairing === undefined) {
+    return phase4RpcSkipped;
+  }
+  try {
+    const out = await dispatchFederationRpc(method, params, {
+      db: index.getDatabase(),
+      consentTimeoutMs: (ctx.options.federationConsentTimeoutSeconds ?? 30) * 1000,
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+      discovery,
+      pairing,
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof FederationRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
     throw e;
   }
   return phase4RpcSkipped;
@@ -483,6 +514,8 @@ export async function tryDispatchPhase4Rpc(
   if (auditOutcome !== phase4RpcSkipped) return auditOutcome;
   const securityOutcome = await tryDispatchSecurityRpc(ctx, method, params);
   if (securityOutcome !== phase4RpcSkipped) return securityOutcome;
+  const federationOutcome = await tryDispatchFederationRpc(ctx, method, params);
+  if (federationOutcome !== phase4RpcSkipped) return federationOutcome;
   const metricsOutcome = await tryDispatchMetricsRpc(ctx, method, params);
   if (metricsOutcome !== metricsRpcSkipped) return metricsOutcome;
   const preflightOutcome = await tryDispatchPreflightRpc(ctx, method, params);
