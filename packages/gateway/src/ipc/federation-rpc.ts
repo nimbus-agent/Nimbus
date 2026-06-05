@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
+import { federationConsent } from "../federation/consent-broker.ts";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
 import { scoreExpertise } from "../federation/expertise.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
-import type { ConsentDecision, ConsentPrompter } from "../federation/query-gate.ts";
+import type { ConsentPrompter } from "../federation/query-gate.ts";
 import { answerFederatedQuery } from "../federation/query-gate.ts";
 import type {
   ExpertiseRequest,
@@ -61,14 +62,14 @@ function parseFilters(raw: unknown): NamespaceFilter[] {
   });
 }
 
-/** The owner-UI consent prompt is surfaced via a notification; the actual owner decision is
- *  delivered out-of-band in the Tauri/CLI wiring (deferred seam). Until that lands, the prompter
- *  emits the request notification and defaults to a timeout-safe deny. */
+/** Routes consent round-trips through the broker singleton.
+ *  The broker broadcasts federation.consentRequest itself (via its setBroadcast channel) and
+ *  resolves when the owner calls federation.consentRespond.
+ *  The broker TTL is longer than the gate's own consentTimeoutMs so the gate's
+ *  timeout (→ timeout_waiting_for_consent) wins on no-response; the broker TTL is a belt-and-
+ *  suspenders cleanup, never the primary timer. */
 function makePrompter(ctx: FederationRpcContext): ConsentPrompter {
-  return async (input): Promise<ConsentDecision> => {
-    ctx.notify("federation.consentRequest", input);
-    return "denied";
-  };
+  return (input) => federationConsent.request(input, ctx.consentTimeoutMs + 5000);
 }
 
 export async function dispatchFederationRpc(
@@ -141,6 +142,15 @@ export async function dispatchFederationRpc(
         },
         { peerId: requireString(rec, "peerId"), request },
       );
+    },
+    "federation.consentRespond": (p) => {
+      const rec = asRecord(p);
+      const requestId = requireString(rec, "requestId");
+      if (typeof rec["approved"] !== "boolean") {
+        throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
+      }
+      const matched = federationConsent.respond(requestId, rec["approved"]);
+      return { ok: true, matched };
     },
     "federation.expertise": (p) => {
       const rec = asRecord(p);

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -27,7 +28,10 @@ beforeEach(() => {
   index = new LocalIndex(db);
   notes = [];
 });
-afterEach(() => db.close());
+afterEach(() => {
+  db.close();
+  federationConsent.setBroadcast(() => {});
+});
 
 test("federation.discover lists provider peers; federation.peers lists paired peers", async () => {
   const disc = await dispatchFederationRpc("federation.discover", {}, ctx());
@@ -113,7 +117,10 @@ test("federation.pair throws 'not wired' when no outbound handshake is configure
   ).rejects.toThrow(/not wired/);
 });
 
-test("federation.query with a non-standing grant fires the consent prompt (notify) and denies", async () => {
+test("federation.query with a non-standing grant and no broker response times out", async () => {
+  // Broker broadcast is a no-op (reset by afterEach); query-gate's own timeout (1000ms) fires first,
+  // producing timeout_waiting_for_consent. Broker TTL is consentTimeoutMs+5000 = 6000ms — longer —
+  // so the gate's timer wins.
   const c = ctx();
   await dispatchFederationRpc(
     "federation.namespace.publish",
@@ -134,10 +141,8 @@ test("federation.query with a non-standing grant fires the consent prompt (notif
   if (res.kind === "hit") {
     const v = res.value as { kind: string; error?: string };
     expect(v.kind).toBe("error");
-    expect(v.error).toBe("consent_denied");
+    expect(v.error).toBe("timeout_waiting_for_consent");
   }
-  // the deferred consent seam emitted exactly one consent-request notification
-  expect(notes.some((n) => n.method === "federation.consentRequest")).toBe(true);
 });
 
 test("requireString rejects an empty string", async () => {
@@ -173,4 +178,47 @@ test("namespace.grant rejects an unknown role", async () => {
       ctx(),
     ),
   ).rejects.toThrow();
+});
+
+test("federation.consentRespond resolves and reports matched=false for an unknown id", async () => {
+  const c = ctx();
+  const out = await dispatchFederationRpc(
+    "federation.consentRespond",
+    { requestId: "x", approved: true },
+    c,
+  );
+  expect(out.kind).toBe("hit");
+  expect((out as { kind: "hit"; value: { ok: boolean; matched: boolean } }).value.matched).toBe(
+    false,
+  );
+});
+
+test("federation.query blocks then unblocks on consent approve via the broker", async () => {
+  // Wire the broker so it auto-approves the first consent request via queueMicrotask.
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, true));
+  });
+  const c = ctx(); // consentTimeoutMs: 1000
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-c7", filters: [{ kind: "type", value: "pull_request" }] },
+    c,
+  );
+  await dispatchFederationRpc(
+    "federation.namespace.grant",
+    { namespace: "ns-c7", peerId: "peer:z", role: "viewer", standingConsent: false },
+    c,
+  );
+  const out = await dispatchFederationRpc(
+    "federation.query",
+    { peerId: "peer:z", namespace: "ns-c7", purpose: "p" },
+    c,
+  );
+  // Approved → answered (possibly empty items, but a hit not a wire error)
+  expect(out.kind).toBe("hit");
+  if (out.kind === "hit") {
+    const v = out.value as { kind: string };
+    expect(v.kind).toBe("ok");
+  }
 });
