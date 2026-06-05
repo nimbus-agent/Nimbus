@@ -98,3 +98,7 @@ test("parses team consent approve/deny", () => {
 test("team consent rejects a bad verb", () => {
   expect(() => parseTeamArgs(["consent", "req-1", "maybe"])).toThrow();
 });
+
+test("parses team listen", () => {
+  expect(parseTeamArgs(["listen"])).toEqual({ kind: "listen" });
+});

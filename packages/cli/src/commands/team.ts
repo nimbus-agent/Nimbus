@@ -1,3 +1,5 @@
+import { confirm, isCancel } from "@clack/prompts";
+
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -10,7 +12,8 @@ export type TeamCommand =
   | { kind: "namespaceRevoke"; namespace: string; peerId: string }
   | { kind: "query"; namespace: string; peerId: string; purpose: string }
   | { kind: "whoKnows"; query: string }
-  | { kind: "consent"; requestId: string; approved: boolean };
+  | { kind: "consent"; requestId: string; approved: boolean }
+  | { kind: "listen" };
 
 function collectFilters(args: string[]): Array<{ kind: string; value: string }> {
   const filters: Array<{ kind: string; value: string }> = [];
@@ -89,6 +92,8 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
       }
       return { kind: "consent", requestId, approved: verb === "approve" };
     }
+    case "listen":
+      return { kind: "listen" };
     default:
       throw new Error(
         `Unknown subcommand: ${sub}\nUsage: nimbus team [discover|pair|namespace|query|who-knows]`,
@@ -192,6 +197,42 @@ export async function runTeam(argv: string[]): Promise<void> {
           );
           process.exitCode = 1;
         }
+        break;
+      }
+      case "listen": {
+        process.stdout.write("Listening for federation consent requests. Press Ctrl-C to stop.\n");
+        client.onNotification("federation.consentRequest", (params: unknown) => {
+          void (async () => {
+            const p = params as {
+              requestId?: string;
+              peerId?: string;
+              namespace?: string;
+              purpose?: string;
+            };
+            if (typeof p.requestId !== "string") return;
+            const ok = await confirm({
+              message: `Peer ${p.peerId ?? "?"} requests namespace "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
+            });
+            if (isCancel(ok)) {
+              // Esc/cancel: do NOT submit a deny — leave the query to time out on the answerer.
+              process.stdout.write(
+                `consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`,
+              );
+              return;
+            }
+            try {
+              await client.call("federation.consentRespond", {
+                requestId: p.requestId,
+                approved: ok === true,
+              });
+            } catch (e) {
+              process.stderr.write(
+                `Error sending consent decision: ${e instanceof Error ? e.message : String(e)}\n`,
+              );
+            }
+          })();
+        });
+        await new Promise<void>(() => {}); // run until interrupted (Ctrl-C)
         break;
       }
     }
