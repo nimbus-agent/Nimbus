@@ -172,10 +172,10 @@ export async function runTeam(argv: string[]): Promise<void> {
       }
       case "consent": {
         try {
-          const r = (await client.call("federation.consentRespond", {
+          const r = await client.call<{ matched?: boolean }>("federation.consentRespond", {
             requestId: cmd.requestId,
             approved: cmd.approved,
-          })) as { matched?: boolean };
+          });
           if (r.matched === false) {
             process.stderr.write(
               `No pending consent request for ${cmd.requestId} (already answered or timed out).\n`,
