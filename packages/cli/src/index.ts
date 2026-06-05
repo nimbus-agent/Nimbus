@@ -33,6 +33,7 @@ import {
   runStart,
   runStatus,
   runStop,
+  runTeam,
   runTelemetry,
   runTest,
   runTui,
@@ -94,6 +95,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   lan: runLan,
   llm: runLlm,
   metrics: runMetricsCli,
+  team: runTeam,
   "mcp-server": runMcpServer,
 };
 

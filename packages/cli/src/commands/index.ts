@@ -31,6 +31,7 @@ export { runSession } from "./session.ts";
 export { runStart } from "./start.ts";
 export { runStatus } from "./status.ts";
 export { runStop } from "./stop.ts";
+export { runTeam } from "./team.ts";
 export { runTelemetry } from "./telemetry.ts";
 export { runTest } from "./test.ts";
 export { runTui } from "./tui.tsx";

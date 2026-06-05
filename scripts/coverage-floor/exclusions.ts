@@ -43,6 +43,9 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
   { kind: "exact", path: "packages/cli/src/commands/repl.ts" },
   { kind: "exact", path: "packages/cli/src/commands/doctor.ts" },
+  // `team.ts` runTeam is a CLI IPC command shell (no injection seam); the testable
+  // parseTeamArgs is covered by team.test.ts. Same exemption class as start/repl/doctor.
+  { kind: "exact", path: "packages/cli/src/commands/team.ts" },
 
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
