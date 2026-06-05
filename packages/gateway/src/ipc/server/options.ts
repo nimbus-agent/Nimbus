@@ -4,6 +4,7 @@ import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts"
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
+import type { IdentityStore } from "../../identity/identity-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
@@ -59,4 +60,10 @@ export type CreateIpcServerOptions = {
   federationDiscovery?: DiscoveryProvider;
   federationPairing?: PeerPairing;
   federationIdentity?: BoxKeypair;
+  // Identity (Phase 6 Slice 3). Present only when [identity].enabled; dispatcher skips cleanly when unset.
+  identityStore?: IdentityStore;
+  identityIssuer?: string;
+  identityGraceSeconds?: number;
+  identityStartLogin?: () => { jobId: string };
+  identityVault?: NimbusVault; // for scim.setToken
 };
