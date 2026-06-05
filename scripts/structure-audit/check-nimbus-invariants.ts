@@ -168,6 +168,30 @@ export function collectDbRunCensus(files: readonly FileEntry[]): DbRunHit[] {
   return findDirectDbRunExec(files, []);
 }
 
+export function checkFederationImportInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const DIR = "packages/gateway/src/federation/";
+  const ALLOWED = "packages/gateway/src/federation/query-gate.ts";
+  for (const f of files) {
+    if (!f.relPath.startsWith(DIR) || f.relPath === ALLOWED || f.relPath.endsWith(".test.ts")) {
+      continue;
+    }
+    const lines = f.contents.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (/from\s+["'][^"']*item-list-query/.test(line)) {
+        out.push({
+          rule: "D13-federation-import",
+          file: f.relPath,
+          line: i + 1,
+          snippet: line.trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -238,6 +262,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D12 direct db.run/db.exec outside allow-list: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkFederationImportInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D13 federation file imports item-list-query outside query-gate.ts — I17 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
