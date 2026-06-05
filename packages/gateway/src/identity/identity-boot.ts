@@ -68,8 +68,9 @@ async function refreshTokens(
   d: OidcDiscovery,
   clientId: string,
   refreshToken: string,
+  fetchImpl: typeof fetch,
 ): Promise<TokenResponse> {
-  const res = await fetch(
+  const res = await fetchImpl(
     d.tokenEndpoint,
     form({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken }),
   );
@@ -81,14 +82,15 @@ function buildProductionDeps(
   cfg: NimbusIdentityToml,
   db: Database,
   log: (msg: string) => void,
+  fetchImpl: typeof fetch,
 ): IdentityRuntimeDeps {
-  const jwks = new JwksCache(db, fetch, { maxAgeSeconds: cfg.jwksMaxAgeSeconds });
+  const jwks = new JwksCache(db, fetchImpl, { maxAgeSeconds: cfg.jwksMaxAgeSeconds });
   return {
-    discover: (issuer) => fetchOidcDiscovery(issuer, fetch),
-    requestDeviceCode: (d, clientId, scopes) => requestDeviceCode(d, clientId, scopes, fetch),
+    discover: (issuer) => fetchOidcDiscovery(issuer, fetchImpl),
+    requestDeviceCode: (d, clientId, scopes) => requestDeviceCode(d, clientId, scopes, fetchImpl),
     pollDeviceToken: (d, clientId, deviceCode, onPoll) =>
       pollDeviceToken(d, clientId, deviceCode, {
-        fetchLike: fetch,
+        fetchLike: fetchImpl,
         sleep: realSleep,
         intervalSeconds: DEFAULT_POLL_INTERVAL_SECONDS,
         deadlineMs: Date.now() + DEFAULT_DEVICE_DEADLINE_MS,
@@ -97,7 +99,7 @@ function buildProductionDeps(
       }),
     // The verifier discovers the jwks_uri lazily so we never block boot on a network round-trip.
     validateIdToken: async (jwt, nowMs) => {
-      const d = await fetchOidcDiscovery(cfg.issuer, fetch);
+      const d = await fetchOidcDiscovery(cfg.issuer, fetchImpl);
       const verifier = new IdTokenVerifier(jwks, {
         issuer: cfg.issuer,
         clientId: cfg.clientId,
@@ -107,7 +109,7 @@ function buildProductionDeps(
     },
     refreshTokens: (d, clientId, refresh) => {
       log("identity: attempting token refresh");
-      return refreshTokens(d, clientId, refresh);
+      return refreshTokens(d, clientId, refresh, fetchImpl);
     },
   };
 }
@@ -120,7 +122,13 @@ export function buildIdentityBoot(
   _scimCfg: NimbusScimToml,
   index: LocalIndex,
   vault: NimbusVault,
-  opts?: { log?: (msg: string) => void; deps?: Partial<IdentityRuntimeDeps> },
+  opts?: {
+    log?: (msg: string) => void;
+    deps?: Partial<IdentityRuntimeDeps>;
+    /** Injectable `fetch` for the production dep closures — defaults to the global `fetch`. Tests
+     *  pass a canned-Response fetch to exercise the real discover/device/token/jwks closures offline. */
+    fetchImpl?: typeof fetch;
+  },
 ): IdentityBoot {
   const db = index.getDatabase();
   const store = new IdentityStore(db);
@@ -131,7 +139,12 @@ export function buildIdentityBoot(
 
   // Production deps with optional test/caller overrides (keeps the unit test fully offline).
   const deps: IdentityRuntimeDeps = {
-    ...buildProductionDeps(cfg, db, (m) => loginNotify("identity.loginProgress", { message: m })),
+    ...buildProductionDeps(
+      cfg,
+      db,
+      (m) => loginNotify("identity.loginProgress", { message: m }),
+      opts?.fetchImpl ?? fetch,
+    ),
     ...(opts?.deps ?? {}),
   };
 
