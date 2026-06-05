@@ -1,5 +1,8 @@
 import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
+import { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
+
+export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -8,8 +11,9 @@ interface FrameReader {
   next(): Uint8Array | undefined;
 }
 
-/** Buffers a 4-byte-length-prefixed stream and yields one frame body at a time. */
-export function makeFrameReader(): FrameReader {
+/** Buffers a 4-byte-length-prefixed stream and yields one frame body at a time.
+ * Rejects any advertised frame length exceeding maxFrameBytes before buffering. */
+export function makeFrameReader(maxFrameBytes: number): FrameReader {
   let buf = new Uint8Array(0);
   return {
     push(chunk) {
@@ -22,6 +26,7 @@ export function makeFrameReader(): FrameReader {
       if (buf.length < 4) return undefined;
       const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
       const len = view.getUint32(0, false);
+      if (len > maxFrameBytes) throw new Error("lan-client: oversized frame");
       if (buf.length < 4 + len) return undefined;
       const body = buf.slice(4, 4 + len);
       buf = buf.slice(4 + len);
@@ -39,15 +44,18 @@ export function buildFrame(payload: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Connect, send one request frame, resolve with the first reply frame body (or reject on timeout/close). */
+/** Connect, send one request frame, resolve with the first reply frame body (or reject on timeout/close).
+ * maxFrameBytes bounds the advertised length before buffering; use MAX_HANDSHAKE_FRAME for pairing,
+ * MAX_ENCRYPTED_FRAME for Task 4 encrypted exchanges. */
 export function exchangeOneFrame(
   host: string,
   port: number,
   send: (socket: Socket<undefined>) => void,
+  maxFrameBytes: number,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
-    const reader = makeFrameReader();
+    const reader = makeFrameReader(maxFrameBytes);
     let settled = false;
     const timer = setTimeout(
       () => finish(undefined, new Error("lan-client: handshake timeout")),
@@ -73,14 +81,21 @@ export function exchangeOneFrame(
           }
         },
         data(socket, chunk) {
+          // Consumes a single reply frame (one-shot request/response); callers needing
+          // multi-frame exchange must not reuse this as-is.
           reader.push(chunk);
-          const body = reader.next();
-          if (body !== undefined) {
-            // Resolve before socket.end() — Bun fires close() synchronously
-            // inside socket.end(), so settling first prevents the close handler
-            // from winning the race with an "undefined body" rejection.
-            finish(body);
+          try {
+            const body = reader.next();
+            if (body !== undefined) {
+              // Resolve before socket.end() — Bun fires close() synchronously
+              // inside socket.end(), so settling first prevents the close handler
+              // from winning the race with an "undefined body" rejection.
+              finish(body);
+              socket.end();
+            }
+          } catch (e) {
             socket.end();
+            finish(undefined, e instanceof Error ? e : new Error(String(e)));
           }
         },
         close() {
@@ -104,6 +119,7 @@ export async function outboundPairHandshake(
   port: number,
   code: string,
   selfKp: BoxKeypair,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Uint8Array> {
   const req = new TextEncoder().encode(
     JSON.stringify({
@@ -112,7 +128,13 @@ export async function outboundPairHandshake(
       pairing_code: code,
     }),
   );
-  const body = await exchangeOneFrame(host, port, (s) => writeFrame(s, req));
+  const body = await exchangeOneFrame(
+    host,
+    port,
+    (s) => writeFrame(s, req),
+    MAX_HANDSHAKE_FRAME,
+    timeoutMs,
+  );
   const msg = JSON.parse(new TextDecoder().decode(body)) as {
     kind?: string;
     host_pubkey?: string;

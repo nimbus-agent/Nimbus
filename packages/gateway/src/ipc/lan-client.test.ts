@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import type { TCPSocketListener } from "bun";
 import { outboundPairHandshake } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
 import { generatePairingCode, PairingWindow } from "./lan-pairing.ts";
@@ -51,4 +52,23 @@ test("outboundPairHandshake throws on pair_err (window closed)", async () => {
   const { code, port } = await startResponder(false);
   const selfKp = generateBoxKeypair();
   await expect(outboundPairHandshake("127.0.0.1", port, code, selfKp)).rejects.toThrow();
+});
+
+test("outboundPairHandshake rejects on timeout when peer never replies", async () => {
+  // Start a bare TCP server that accepts connections and holds them open without writing.
+  let silent: TCPSocketListener | undefined;
+  silent = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { open() {}, data() {}, close() {}, error() {} },
+  });
+  try {
+    const selfKp = generateBoxKeypair();
+    // Pass a short timeoutMs (200 ms) so the test completes quickly.
+    await expect(
+      outboundPairHandshake("127.0.0.1", silent.port, "unused-code", selfKp, 200),
+    ).rejects.toThrow("lan-client: handshake timeout");
+  } finally {
+    silent.stop(true);
+  }
 });
