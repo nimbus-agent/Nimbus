@@ -90,6 +90,34 @@ describe("security namespace over LAN", () => {
   });
 });
 
+describe("extension management over LAN (I5 — CLI-only)", () => {
+  test("install/enable/disable/remove are forbidden over LAN regardless of grant-write", () => {
+    for (const m of [
+      "extension.install",
+      "extension.enable",
+      "extension.disable",
+      "extension.remove",
+    ]) {
+      // forbidden even with writeAllowed: true (fully forbidden, not merely write-gated)
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("extension.install rejection is ERR_METHOD_NOT_ALLOWED (not merely write-forbidden)", () => {
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("extension.install", { peerId: "p", writeAllowed: true });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown).toBeInstanceOf(LanError);
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+});
+
 describe("federation over LAN (I5 + I17)", () => {
   const peer = { peerId: "p", writeAllowed: false };
 

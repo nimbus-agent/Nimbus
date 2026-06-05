@@ -19,6 +19,13 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.sync", // T2 PR 2 — CLI-only sync of publisher pubkeys via vault writes
   "extension.checkForUpdates", // T2 PR 3 — CLI-only auto-update detection
   "extension.update", // T2 PR 3 — CLI-only auto-update apply (HITL-gated)
+  // Extension management is local/CLI-only — never reachable over the LAN channel (I5
+  // defense-in-depth). extension.install is RCE-class (arbitrary code); enable/disable/remove
+  // are also fully forbidden here, not merely write-gated, matching connector.addMcp.
+  "extension.install",
+  "extension.enable",
+  "extension.disable",
+  "extension.remove",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
   // Federation: management methods are local/Tauri-only. Only federation.query /
