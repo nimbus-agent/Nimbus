@@ -35,6 +35,7 @@ import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
+import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
@@ -373,6 +374,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "federation namespaces/filters/grants + audit_log.federation_json (federation v33)",
     V33_FEDERATION_SQL,
   ),
+  simpleStep(
+    33,
+    34,
+    "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34)",
+    V34_IDENTITY_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -409,6 +416,7 @@ const BACKFILL_LABELS: readonly string[] = [
   "extension_dependency table + reverse-dep index (T2 PR 4) (backfilled)",
   "git_blame_line table (security scan v2 blame attribution) (backfilled)",
   "federation namespaces/filters/grants + audit_log.federation_json (federation v33) (backfilled)",
+  "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
