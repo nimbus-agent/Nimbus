@@ -320,7 +320,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 **Wired at:**
 
 - `packages/gateway/src/federation/query-gate.ts` `answerFederatedQuery` — the sole function that reads index items in response to a peer query. Enforces the grant table, role check, consent gate, namespace filter, and the `FederatedItem` projection.
-- `packages/gateway/src/ipc/lan-rpc.ts` `FORBIDDEN_OVER_LAN` — the 6 management methods (`federation.namespace.publish`, `federation.namespace.grant`, `federation.namespace.revoke`, `federation.pair`, `federation.peers`, `federation.discover`) are listed here, leaving only `federation.query` and `federation.expertise` admitted over the wire (I5).
+- `packages/gateway/src/ipc/lan-rpc.ts` `FORBIDDEN_OVER_LAN` — the management methods (`federation.namespace.publish`, `federation.namespace.grant`, `federation.namespace.revoke`, `federation.pair`, `federation.peers`, `federation.discover`) **and** the local-only owner/asker methods (`federation.consentRespond`, `federation.ask`, `federation.askExpertise`) are listed here, leaving only `federation.query` and `federation.expertise` admitted over the wire (I5). `federation.consentRespond` is the owner's local consent-decision reply; `federation.ask`/`federation.askExpertise` are local asker entrypoints that *send* a query over the wire but are never *answered* over it.
 - Enforced statically by **D13** in `scripts/structure-audit/check-nimbus-invariants.ts` — any federation module other than `query-gate.ts` that imports `item-list-query` causes `audit:invariants` to exit 1.
 - Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I17` describe block.
 

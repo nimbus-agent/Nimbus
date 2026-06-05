@@ -502,6 +502,10 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
       "federation.pair",
       "federation.peers",
       "federation.discover",
+      // local-only owner/asker methods — never answerable over the wire (Slice 1 over-the-wire)
+      "federation.consentRespond",
+      "federation.ask",
+      "federation.askExpertise",
     ]) {
       expect(src).toContain(`"${m}"`); // present in FORBIDDEN_OVER_LAN
     }
