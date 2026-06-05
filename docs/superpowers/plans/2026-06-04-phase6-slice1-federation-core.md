@@ -68,6 +68,7 @@
 ## Task 1: V33 migration — federation tables + audit `federation_json` column
 
 **Files:**
+
 - Create: `packages/gateway/src/index/federation-v33-sql.ts`
 - Create: `packages/gateway/src/index/federation-v33-sql.test.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
@@ -196,6 +197,7 @@ git commit -m "feat(gateway): V33 migration — federation tables + audit_log.fe
 ## Task 2: Backward-compatible federation audit (`federation_json` in the Blake3 chain)
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/audit-chain.ts`
 - Modify: `packages/gateway/src/db/audit-verify.ts`
 - Create: `packages/gateway/src/federation/federation-audit.ts`
@@ -400,6 +402,7 @@ git commit -m "feat(gateway): federation_json folded into audit chain (backward-
 ## Task 3: Shared federation types
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/types.ts`
 
 No tests (pure types). This task exists so later tasks reference one canonical set of names.
@@ -501,6 +504,7 @@ git commit -m "feat(federation): shared federation types"
 ## Task 4: Namespace store (CRUD for namespaces, filters, grants)
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/namespace-store.ts`
 - Create: `packages/gateway/src/federation/namespace-store.test.ts`
 
@@ -739,6 +743,7 @@ git commit -m "feat(federation): namespace store (namespaces, filters, grants)"
 ## Task 5: Session consent cache
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/consent-cache.ts`
 - Create: `packages/gateway/src/federation/consent-cache.test.ts`
 
@@ -832,6 +837,7 @@ git commit -m "feat(federation): session consent cache"
 ## Task 6: Discovery provider (interface + in-memory + mDNS + manual fallback)
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/discovery.ts`
 - Create: `packages/gateway/src/federation/discovery.test.ts`
 - Modify: `package.json` (add the mDNS dependency)
@@ -973,6 +979,7 @@ git commit -m "feat(federation): DiscoveryProvider interface + in-memory + mDNS 
 ## Task 7: Peer pairing (mutual approval, outbound direction)
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/peer-pairing.ts`
 - Create: `packages/gateway/src/federation/peer-pairing.test.ts`
 
@@ -1168,6 +1175,7 @@ git commit -m "feat(federation): mutual-approval peer pairing"
 ## Task 8: Expertise (content-free rank)
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/expertise.ts`
 - Create: `packages/gateway/src/federation/expertise.test.ts`
 
@@ -1262,6 +1270,7 @@ git commit -m "feat(federation): content-free expertise rank"
 ## Task 9: Query gate — the I17 structural gate
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/query-gate.ts`
 - Create: `packages/gateway/src/federation/query-gate.test.ts`
 
@@ -1552,6 +1561,7 @@ git commit -m "feat(federation): query gate — scoped, consented, audited answe
 ## Task 10: IPC surface — `federation-rpc.ts` + dispatch + LAN allowlist + consent notification
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/federation-rpc.ts`
 - Create: `packages/gateway/src/ipc/federation-rpc.test.ts`
 - Modify: `packages/gateway/src/ipc/lan-rpc.ts`
@@ -1936,6 +1946,7 @@ git commit -m "feat(gateway): federation IPC dispatcher + LAN allowlist (admit q
 ## Task 11: `[federation]` config section
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Create/extend: `packages/gateway/src/config/nimbus-toml.test.ts` (federation cases)
 
@@ -2065,6 +2076,7 @@ git commit -m "feat(gateway): [federation] config section (consent timeout, mDNS
 ## Task 12: Security Invariant I17 (docs row + runtime test + static D13)
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md`
 - Modify: `CLAUDE.md`, `GEMINI.md` (same commit)
 - Modify: `packages/gateway/src/security-invariants.test.ts`
@@ -2161,6 +2173,7 @@ git commit -m "feat(security): invariant I17 — federated answering intrinsic t
 ## Task 13: CLI — `nimbus team`
 
 **Files:**
+
 - Create: `packages/cli/src/commands/team.ts`
 - Modify: `packages/cli/src/commands/index.ts` (export `runTeam`)
 - Modify: `packages/cli/src/index.ts` (register `team: runTeam`)
@@ -2402,6 +2415,7 @@ git commit -m "feat(cli): nimbus team command group"
 ## Task 14: Tauri allowlist — local federation management methods (I7)
 
 **Files:**
+
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs`
 
 Add ONLY the local management methods to `ALLOWED_METHODS`. The over-the-wire answering methods (`federation.query`, `federation.expertise`) are **never** renderer-callable.
@@ -2441,6 +2455,7 @@ git commit -m "feat(ui): expose local federation.* management methods to rendere
 ## Task 15: Two-gateway integration + acceptance tests
 
 **Files:**
+
 - Create: `packages/gateway/test/federation/federation-e2e.test.ts` (confirm the integration dir via `nimbus-testing`)
 - Create: `packages/gateway/test/federation/discovery-mdns.e2e.test.ts` (skippable real-mDNS E2E)
 
@@ -2518,6 +2533,7 @@ git commit -m "test(federation): two-gateway E2E (discover→pair→publish→gr
 ## Task 16: Roadmap checkbox + preflight + PR
 
 **Files:**
+
 - Modify: `docs/roadmap.md` (tick the Slice 1 sub-items now delivered)
 - Modify: `docs/CHANGELOG.md` (dated Slice 1 entry — connector/feature delivery convention)
 
@@ -2566,6 +2582,7 @@ gh pr create --title "feat: Phase 6 Slice 1 — Federation Core" --body "<summar
 **Other spec sections:** §4.3 components → Tasks 4–10; §6 data model → Task 1; §7 I17 → Task 12; §8 testing (DI discovery, skippable mDNS) → Tasks 6 + 15.
 
 **Open items deferred to implementation (flagged, not placeholders):**
+
 - The full owner-consent UI round-trip (notification → approve → unblock) — `makePrompter` seam in Task 10; structural gate already complete + tested. Consult `nimbus-tauri-allowlist`.
 - mDNS record parse/serialize detail — Task 6 skeleton; real broadcast behind the Task 15 skippable E2E.
 - The outbound pair-handshake socket body (`OutboundPairHandshake` in Task 7) — DI seam; `initiatePair` is unit-tested with a fake, and the real body is implemented once against the wire protocol proven in `ipc/lan-server-handshake.test.ts` (no production outbound LAN client exists yet).

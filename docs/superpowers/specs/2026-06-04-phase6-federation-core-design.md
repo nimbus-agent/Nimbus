@@ -224,4 +224,4 @@ Resolved during planning kickoff (2026-06-04):
 
 Remaining (confirm during implementation):
 
-4. **`consent_timeout_seconds` default** — 30 s is the proposed default; confirm against real LAN round-trip + human-response latency during implementation.
+1. **`consent_timeout_seconds` default** — 30 s is the proposed default; confirm against real LAN round-trip + human-response latency during implementation.
