@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V31** (`extension_dependency` table — Phase 5 T2 PR 4; V30 added `vec_items_1536` for T6 PR 3, V29 added `tool_call_log` for T6 PR 2). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V33** (`federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -268,6 +268,34 @@ CREATE TABLE extensions (
     last_sync_at    INTEGER,
     last_error      TEXT,
     registry_source TEXT               -- "npm" | "local" | "registry.nimbus-agent.dev"
+);
+
+-- Federation (Phase 6 Slice 1): the consent-scoped federated query primitive. V33.
+-- A namespace is a named, filtered slice of the local index a peer can query.
+CREATE TABLE federation_namespaces (
+    namespace_id TEXT PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,   -- e.g. "project:zurich"
+    owner_self   INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL
+);
+
+-- The declared filter set that bounds what a namespace exposes (query-gate compiles ONLY these).
+CREATE TABLE federation_namespace_filters (
+    namespace_id TEXT NOT NULL,
+    filter_kind  TEXT NOT NULL,          -- CHECK IN ('service','type','tag')
+    filter_value TEXT NOT NULL,
+    PRIMARY KEY (namespace_id, filter_kind, filter_value)
+);
+
+-- Per-peer RBAC grant on a namespace; revocation is live-checked on every inbound query.
+CREATE TABLE federation_grants (
+    namespace_id     TEXT NOT NULL,
+    peer_id          TEXT NOT NULL,
+    role             TEXT NOT NULL,       -- CHECK IN ('owner','editor','viewer')
+    standing_consent INTEGER NOT NULL DEFAULT 0,
+    granted_at       INTEGER NOT NULL,
+    revoked_at       INTEGER              -- NULL = active; set on revoke
+    , PRIMARY KEY (namespace_id, peer_id)
 );
 ```
 
