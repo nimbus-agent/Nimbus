@@ -75,6 +75,15 @@ The public key is the gateway's stable peer identity (it is what a peer pins dur
   `access_token`/`refresh_token`/`api_key`/…; `identity_secret` should not collide). If it does
   collide, add `federation/federation-identity.ts` to `VAULT_KEY_ALLOW_LIST`; otherwise no
   structure-audit edit is needed.
+- **Serialization (Q1):** the 32-byte secret is stored **base64-encoded**; on load, base64-decode →
+  `nacl.box.keyPair.fromSecretKey(secret)` recovers `{ publicKey, secretKey }`. A length check (32
+  bytes) guards against a corrupt/short vault value (regenerate-and-overwrite vs. crash is the
+  fallback, logged).
+- **Boot ordering (Q1):** `loadOrCreateFederationIdentity` runs **only after** the Vault is
+  initialized and unlocked in `assemble.ts` (the same `vault` already threaded into `ipcOpts`), and
+  **before** the `LanServer` is constructed. If the Vault is locked/unavailable at that point,
+  federation boot is **skipped with a logged warning** rather than crashing the gateway — federation
+  is opt-in (`[federation].enabled`) and must never be load-bearing for core boot.
 - Loaded **once** at boot; the same `BoxKeypair` is handed to `LanServer.hostKeypair` and closed into
   the outbound handshake.
 
@@ -106,13 +115,22 @@ Next to the existing `buildFederationRuntime` block, when `federationRuntime !==
 - Construct `LanServer` with:
   - `hostKeypair` = identity;
   - `bind` / `port` from `[federation]` — **default `127.0.0.1` / `7475`** (I6; `7475` is already the
-    `federation.pair` default port in `federation-rpc.ts`);
+    `federation.pair` default port in `federation-rpc.ts`). **`port: 0` selects an ephemeral port
+    (S2)**; the actual bound address is read back via `lanServer.listenAddr()` and surfaced through
+    `lan.status`. The two-subprocess E2E (§4.6) uses `port: 0` per gateway so both bind on one host
+    without collision, then discovers each peer's real port from `lan.status` before pairing;
   - `rateLimit` + `pairing` reusing the existing `lan-pairing.ts` `PairingWindow` + LAN rate limiter
     (the same services `lan.openPairingWindow` already drives);
   - `isKnownPeer(pubkey)` = lookup `lan_peers` by pubkey → `{ peerId, writeAllowed: false }` or `null`
     (federation peers are always read-only). Add a small `LocalIndex.findLanPeerByPubkey(pubkey)`
     helper (bound-param read; reuses the existing `lan_peers` table — no migration).
   - `registerPeer(pubkey, ip)` = persist an **inbound, read-only** peer row and return its peerId.
+    **Idempotent re-pair (Q2):** `peer_id` (derived from the pubkey) is the identity and the
+    `lan_peers` primary key. Re-pairing the **same pubkey** updates `host_ip` / `host_port` /
+    `last_seen_at` on the existing row instead of creating a duplicate (verify `LocalIndex.addLanPeer`
+    is upsert-shaped — `INSERT … ON CONFLICT(peer_id) DO UPDATE`; if it is insert-only today, extend
+    it to upsert). A **different pubkey from the same IP** is a distinct peer (distinct `peer_id`) —
+    IP is never an identity. `write_allowed` stays `0` on update (federation peers never gain write).
   - `onMessage(method, params, peer)` = route into the main gateway dispatch. For
     `federation.query` / `federation.expertise`, the answering `peerId` is taken from `peer.peerId`
     (the NaCl-authenticated session) and **overrides any `peerId` in the request body** (I17). The
@@ -135,13 +153,17 @@ inbound-approval prompt is introduced. `checkLanMethodAllowed` remains intrinsic
 
 A process-singleton pending-promise registry:
 
-- `request(input) → Promise<ConsentDecision>` — mint a `requestId`, emit
+- `request(input) → Promise<ConsentDecision>` — mint a `requestId` (`crypto.randomUUID()`), emit
   `federation.consentRequest { requestId, peer, namespace, purpose, role }` to local clients,
-  register and return the pending promise. (No internal timeout; `query-gate` already races the
-  prompter against `consentTimeoutMs`. The broker drops the pending entry when the promise settles or
-  when the gate abandons it, so it cannot leak.)
-- `respond(requestId, decision) → void` — resolve the matching pending promise; no-op for an unknown
-  or already-settled id.
+  register and return the pending promise. `query-gate` races the prompter against `consentTimeoutMs`.
+- **TTL safety-net (S1):** each pending entry also carries an **internal timer** = `consentTimeoutMs`
+  (+ small margin). On expiry the entry is **purged** and its promise resolves to `denied` — so a
+  never-answered prompt cannot leak the entry (or the promise) even if the gate fails to abandon it.
+  This is belt-and-suspenders behind `query-gate`'s own race; whichever fires first, the audited
+  outcome is the same (`timeout`).
+- `respond(requestId, decision) → void` — resolve the matching pending promise and clear its timer;
+  **no-op** for an unknown, already-settled, or already-expired `requestId` (a stale/duplicate
+  `respond` can never approve a different pending query — R5).
 
 `federation-rpc.ts` `makePrompter` is replaced to call `broker.request(...)` instead of returning a
 hardcoded `"denied"`. The same broker instance is shared between the local dispatch path and the LAN
@@ -188,6 +210,10 @@ discovery. Walk:
 11. **consent-timeout** — a fresh non-standing query with no owner response resolves as
     `timeout_waiting_for_consent` after `consent_timeout_seconds` and is audited with decision
     `timeout`.
+12. **impersonation (T1 / R1)** — A sends an encrypted `federation.query` whose **body carries
+    `peerId: <B's id>`** (spoof attempt). B answers from the **authenticated session** (A), not the
+    body: A receives only A's own grants, never B's — and if A holds no grant, an empty/`no_grant`
+    result. Asserted both here and in a focused security integration test (§7).
 
 ---
 
@@ -248,7 +274,8 @@ time; if a sibling track has not yet taken V34, leave it untouched.
 ## 6. Config
 
 Reuse `[federation]` (`enabled`, `mdns_enabled`, `consent_timeout_seconds`). Add `bind` / `port` keys
-only if absent (defaults `127.0.0.1` / `7475`). The `LanServer` starts **only** when
+only if absent (defaults `127.0.0.1` / `7475`); **`port` accepts `0` for ephemeral allocation** (S2),
+which the E2E and any multi-gateway-per-host setup relies on. The `LanServer` starts **only** when
 `[federation].enabled`.
 
 ---
