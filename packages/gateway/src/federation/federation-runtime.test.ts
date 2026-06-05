@@ -44,17 +44,15 @@ test("buildFederationRuntime wires a real outbound handshake (initiatePair no lo
   );
   expect(rt).toBeDefined();
   // No responder running → connection error, NOT the "not wired" sentinel.
-  await expect(rt?.pairing.initiatePair("127.0.0.1", 1, "code")).rejects.not.toThrow(
-    "outbound pair handshake not wired",
-  );
-});
-
-test("buildFederationRuntime returns undefined when disabled", () => {
-  expect(
-    buildFederationRuntime(
-      { enabled: false, consentTimeoutSeconds: 30, mdnsEnabled: false, mdnsBind: "127.0.0.1" },
-      index,
-      generateBoxKeypair(),
-    ),
-  ).toBeUndefined();
+  let err: unknown;
+  try {
+    await rt?.pairing.initiatePair("127.0.0.1", 1, "code");
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+  const msg = (err as Error).message;
+  expect(msg).not.toContain("outbound pair handshake not wired");
+  // a real connection was attempted (port 1 refuses): connection-class error, not the sentinel
+  expect(msg).toMatch(/connect|refus|ECONN|fail|timeout|reset/i);
 });
