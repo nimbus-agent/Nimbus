@@ -2,12 +2,152 @@ import { describe, expect, test } from "bun:test";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 
 describe("checkLanMethodAllowed", () => {
-  test("federation.consentRespond / ask / askExpertise are forbidden over LAN; query+expertise allowed", () => {
-    const peer = { peerId: "p", writeAllowed: false };
-    expect(() => checkLanMethodAllowed("federation.consentRespond", peer)).toThrow(LanError);
-    expect(() => checkLanMethodAllowed("federation.ask", peer)).toThrow(LanError);
-    expect(() => checkLanMethodAllowed("federation.askExpertise", peer)).toThrow(LanError);
+  test("allows read methods without grant-write", () => {
+    expect(() =>
+      checkLanMethodAllowed("index.search", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+
+  test("rejects forbidden namespaces regardless of grant-write", () => {
+    for (const method of ["vault.list", "updater.checkNow", "lan.grantWrite", "profile.create"]) {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("rejects write method without grant — rpcCode -32603", () => {
+    try {
+      checkLanMethodAllowed("engine.ask", { peerId: "p", writeAllowed: false });
+      throw new Error("expected");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LanError);
+      expect((err as LanError).rpcCode).toBe(-32603);
+      expect((err as LanError).message).toMatch(/ERR_LAN_WRITE_FORBIDDEN/);
+    }
+  });
+
+  test("allows write method with grant", () => {
+    expect(() =>
+      checkLanMethodAllowed("engine.ask", { peerId: "p", writeAllowed: true }),
+    ).not.toThrow();
+  });
+
+  test("rejects audit namespace regardless of grant-write", () => {
+    expect(() =>
+      checkLanMethodAllowed("audit.export", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+    expect(() => checkLanMethodAllowed("audit.list", { peerId: "p", writeAllowed: true })).toThrow(
+      LanError,
+    );
+  });
+
+  test("rejects data namespace regardless of grant-write", () => {
+    expect(() => checkLanMethodAllowed("data.delete", { peerId: "p", writeAllowed: true })).toThrow(
+      LanError,
+    );
+    expect(() => checkLanMethodAllowed("data.export", { peerId: "p", writeAllowed: true })).toThrow(
+      LanError,
+    );
+  });
+
+  test("rejects connector.addMcp regardless of grant-write", () => {
+    expect(() =>
+      checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+  });
+
+  test("rejects connector.addMcp even with writeAllowed false (also forbidden, not just write-gated)", () => {
+    expect(() =>
+      checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false }),
+    ).toThrow(LanError);
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+});
+
+describe("extension.sync over LAN", () => {
+  test("rejected by checkLanMethodAllowed (T2 PR 2 / I5)", () => {
+    expect(() =>
+      checkLanMethodAllowed("extension.sync", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+  });
+});
+
+describe("security namespace over LAN", () => {
+  test("rejected by checkLanMethodAllowed regardless of grant-write (I5)", () => {
+    expect(() =>
+      checkLanMethodAllowed("security.scan", { peerId: "p", writeAllowed: true }),
+    ).toThrow(LanError);
+    expect(() =>
+      checkLanMethodAllowed("security.scan", { peerId: "p", writeAllowed: false }),
+    ).toThrow(LanError);
+  });
+});
+
+describe("extension management over LAN (I5 — CLI-only)", () => {
+  test("install/enable/disable/remove are forbidden over LAN regardless of grant-write", () => {
+    for (const m of [
+      "extension.install",
+      "extension.enable",
+      "extension.disable",
+      "extension.remove",
+    ]) {
+      // forbidden even with writeAllowed: true (fully forbidden, not merely write-gated)
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("extension.install rejection is ERR_METHOD_NOT_ALLOWED (not merely write-forbidden)", () => {
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("extension.install", { peerId: "p", writeAllowed: true });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown).toBeInstanceOf(LanError);
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+});
+
+describe("federation over LAN (I5 + I17)", () => {
+  const peer = { peerId: "p", writeAllowed: false };
+
+  test("federation.query and federation.expertise are admitted over LAN", () => {
     expect(() => checkLanMethodAllowed("federation.query", peer)).not.toThrow();
     expect(() => checkLanMethodAllowed("federation.expertise", peer)).not.toThrow();
+  });
+
+  test("federation management methods are forbidden over LAN", () => {
+    for (const m of [
+      "federation.discover",
+      "federation.pair",
+      "federation.peers",
+      "federation.namespace.publish",
+      "federation.namespace.grant",
+      "federation.namespace.revoke",
+    ]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
+  });
+
+  test("local-only owner/asker methods are forbidden over LAN (consentRespond/ask/askExpertise)", () => {
+    for (const m of ["federation.consentRespond", "federation.ask", "federation.askExpertise"]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
+  });
+
+  test("vault/data/extension remain forbidden over LAN", () => {
+    for (const m of ["vault.get", "data.export", "extension.sync"]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
   });
 });
