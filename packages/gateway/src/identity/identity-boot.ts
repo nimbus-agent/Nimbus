@@ -114,9 +114,13 @@ function buildProductionDeps(
 
 export function buildIdentityBoot(
   cfg: NimbusIdentityToml,
+  // `scimCfg` is intentionally not consumed here: assemble independently gates the SCIM HTTP wiring
+  // on `scimCfg.enabled` (only then is `resolveScimToken` handed to the read-only HTTP server), so
+  // the boot always exposes the resolver and the param is kept for contract symmetry with assemble.
   _scimCfg: NimbusScimToml,
   index: LocalIndex,
   vault: NimbusVault,
+  opts?: { log?: (msg: string) => void; deps?: Partial<IdentityRuntimeDeps> },
 ): IdentityBoot {
   const db = index.getDatabase();
   const store = new IdentityStore(db);
@@ -125,14 +129,20 @@ export function buildIdentityBoot(
   let loginNotify: LongRunningEmit = () => {};
   const registry = new LongRunningJobRegistry();
 
+  // Production deps with optional test/caller overrides (keeps the unit test fully offline).
+  const deps: IdentityRuntimeDeps = {
+    ...buildProductionDeps(cfg, db, (m) => loginNotify("identity.loginProgress", { message: m })),
+    ...(opts?.deps ?? {}),
+  };
+
   const runtime = new IdentityRuntime({
     cfg,
     store,
     vault,
     now: () => Date.now(),
-    deps: buildProductionDeps(cfg, db, (m) =>
-      loginNotify("identity.loginProgress", { message: m }),
-    ),
+    deps,
+    // Wire the P2 refresh-failure warn sink when assemble (or a test) provides one.
+    ...(opts?.log === undefined ? {} : { log: opts.log }),
   });
 
   const startLogin = (): { jobId: string } =>

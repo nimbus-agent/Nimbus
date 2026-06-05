@@ -525,7 +525,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   let identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
   const httpSidecarOpts: { resolveScimToken?: () => Promise<string> } = {};
   if (identityCfg.enabled && localIndex !== undefined) {
-    identityBoot = buildIdentityBoot(identityCfg, scimCfg, localIndex, vault);
+    identityBoot = buildIdentityBoot(identityCfg, scimCfg, localIndex, vault, {
+      log: (m: string) => syncLogger.warn(m),
+    });
     ipcOpts.identityStore = identityBoot.store;
     ipcOpts.identityIssuer = identityBoot.issuer;
     ipcOpts.identityGraceSeconds = identityBoot.graceSeconds;

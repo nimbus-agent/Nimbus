@@ -6,7 +6,9 @@ import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildIdentityBoot } from "./identity-boot.ts";
+import type { IdentityRuntimeDeps } from "./identity-runtime.ts";
 import { IDENTITY_SCIM_BEARER_KEY } from "./identity-vault.ts";
+import type { DeviceAuthResponse, OidcDiscovery, TokenResponse, ValidatedClaims } from "./types.ts";
 
 const CFG: NimbusIdentityToml = {
   enabled: true,
@@ -60,9 +62,38 @@ describe("buildIdentityBoot", () => {
     expect(await boot.resolveScimToken()).toBe("scim-secret");
   });
 
-  test("startLogin returns a string jobId synchronously (background failure is isolated)", () => {
+  test("startLogin returns a string jobId synchronously (background job runs fully offline)", () => {
     const { vault } = fakeVault();
-    const boot = buildIdentityBoot(CFG, SCIM, freshIndex(), vault);
+    // Fully override the runtime deps with instant-resolving offline fakes so the background login
+    // job does NO real network I/O (no fetch to https://acme). The jobId is returned synchronously.
+    const discovery: OidcDiscovery = {
+      issuer: "https://acme",
+      deviceAuthorizationEndpoint: "https://acme/device",
+      tokenEndpoint: "https://acme/token",
+      jwksUri: "https://acme/jwks",
+    };
+    const deviceAuth: DeviceAuthResponse = {
+      deviceCode: "dc",
+      userCode: "UC-1234",
+      verificationUri: "https://acme/verify",
+      interval: 1,
+      expiresIn: 600,
+    };
+    const tokens: TokenResponse = { idToken: "h.p.s" };
+    const claims: ValidatedClaims = {
+      sub: "user-1",
+      iss: "https://acme",
+      aud: "c1",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      raw: {},
+    };
+    const deps: Partial<IdentityRuntimeDeps> = {
+      discover: async () => discovery,
+      requestDeviceCode: async () => deviceAuth,
+      pollDeviceToken: async () => tokens,
+      validateIdToken: async () => claims,
+    };
+    const boot = buildIdentityBoot(CFG, SCIM, freshIndex(), vault, { deps });
     const handle = boot.startLogin();
     expect(typeof handle.jobId).toBe("string");
     expect(handle.jobId.startsWith("identity-login")).toBe(true);
