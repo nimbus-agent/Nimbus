@@ -1,5 +1,5 @@
 import type { LocalIndex } from "../index/local-index.ts";
-import { computeAuditRowHash, GENESIS_HASH } from "./audit-chain.ts";
+import { auditLogHasFederationJson, computeAuditRowHash, GENESIS_HASH } from "./audit-chain.ts";
 
 export type AuditVerifyOptions = {
   fromId: number;
@@ -14,9 +14,13 @@ export type AuditVerifyResult = {
 };
 
 export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): AuditVerifyResult {
+  // `federation_json` is a V33 column; SELECT it only when present so verification works on a
+  // pre-V33 audit_log too (the fragment is a fixed literal — no caller data, I9-clean). A row
+  // without the column reconstructs with federationJson = null, i.e. the legacy hash.
+  const fedColumn = auditLogHasFederationJson(idx.rawDb) ? ", federation_json" : "";
   const rows = idx.rawDb
     .query(
-      `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, federation_json
+      `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash${fedColumn}
        FROM audit_log WHERE id > ? ORDER BY id ASC`,
     )
     .all(Math.max(0, Math.floor(opts.fromId))) as Array<{
@@ -27,7 +31,7 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
     timestamp: number;
     row_hash: string;
     prev_hash: string;
-    federation_json: string | null;
+    federation_json?: string | null;
   }>;
 
   let prev =
