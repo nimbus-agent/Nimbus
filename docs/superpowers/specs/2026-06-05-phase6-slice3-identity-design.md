@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS scim_user (
   user_name     TEXT,
   email         TEXT,
   active        INTEGER NOT NULL DEFAULT 1,
-  attrs_json    TEXT NOT NULL DEFAULT '{}',  -- non-sensitive SCIM attributes
+  attrs_json    TEXT NOT NULL DEFAULT '{}',  -- ALLOWLISTED non-PII core attrs only (see §6.1)
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
@@ -148,6 +148,10 @@ CREATE TABLE IF NOT EXISTS identity_binding (
   revoked_at    INTEGER,
   PRIMARY KEY (external_id, peer_id)
 );
+-- Deprovision (external_id → peers) uses the PK prefix; this index serves the REVERSE
+-- lookup: `identity unbind <peer_id>` and "which identity owns this peer". A partial index
+-- on (external_id) WHERE revoked_at IS NULL is deferred — the roster is org-sized (hundreds,
+-- not millions), so the prefix scan is already optimal. (resolves review S1)
 CREATE INDEX IF NOT EXISTS idx_identity_binding_peer ON identity_binding(peer_id);
 
 -- JWKS public keys cached for offline-grace ID-token verification (NOT secret).
@@ -175,8 +179,10 @@ issuer = "https://acme.okta.com"        # used to build .well-known discovery UR
 client_id = "0oaXXXXXXXX"
 flow = "device_code"                    # only supported value in Slice 3
 scopes = ["openid", "email", "profile"]
-session_grace_seconds = 86400           # offline tolerance past id_token exp
-revalidate_interval_seconds = 3600      # re-check cadence for long-lived sessions
+session_grace_seconds = 86400           # offline tolerance past id_token exp (fallback when refresh fails)
+revalidate_interval_seconds = 3600      # throttle: re-check/refresh at most this often
+token_refresh_skew_seconds = 300        # try a refresh once the token is within this window of exp
+jwks_max_age_seconds = 86400            # cached JWKS older than this is re-fetched before trust; stale+offline → fail closed
 
 [scim]
 enabled = false                         # only meaningful on the trust-anchor gateway
@@ -192,7 +198,20 @@ Defaults: both `enabled=false` — Slice 3 is inert until an operator opts in, p
 `identity/verifier.ts` is the **only** module that validates an ID token. It exposes:
 
 - `validateIdToken(jwt: string): Promise<ValidatedClaims>` — verify JWS signature against the cached JWKS (refetch on `kid` miss), check `iss` == configured issuer, `aud` == `client_id`, `exp`/`nbf` with clock-skew tolerance. Throws a typed error on any failure.
-- `isOperatorValid(now): boolean` — reads `identity_session`: status `active`, `now <= expires_at + session_grace_seconds`, and not locally `deprovisioned`. The federation gate's single question.
+- `isOperatorValid(now): boolean` — reads `identity_session`: status `active`, `now <= expires_at + session_grace_seconds`, and not locally `deprovisioned`. The federation gate's single question. **Pure/synchronous** (no network) — it is the cheap hot-path check; the network-touching refresh is `revalidateSession()` below.
+
+### 5.1 Session revalidation & token refresh (resolves review Q1)
+
+The `refresh_token` is not decorative — there is exactly **one** refresh attempt per cycle (multi-rotation chains are deferred). The orchestrator (`identity-runtime.ts`) exposes `revalidateSession(now): Promise<void>`:
+
+- **When it runs:** lazily, *not* via a free-running timer (Slice 1 avoided module-level clocks; the runtime takes an injected clock). It is called (a) at Gateway boot and (b) at the start of a federated operation — but **throttled**: it no-ops if the last attempt was `< revalidate_interval_seconds` ago.
+- **What it does:** if `now >= expires_at - token_refresh_skew_seconds` (token expired or near-expiry), POST `grant_type=refresh_token` to the token endpoint; on success, `validateIdToken` the new `id_token`, update `identity_session.expires_at` + `validated_at`, and rewrite the Vault token keys. On failure (offline, revoked, IdP error) it does **not** throw — it leaves the session as-is.
+- **The grace period is the fallback, not the primary window.** Order of precedence: a successful refresh resets `expires_at` (best case); if refresh can't run/fails, `isOperatorValid()` still honors the token until `expires_at + session_grace_seconds`; past grace → `isOperatorValid()` is false → federation denied, operator must `nimbus identity login` again. Local use is never affected.
+
+### 5.2 JWKS rotation & offline key handling (resolves review Q2)
+
+- **`kid` miss → refetch:** `validateIdToken` first tries the cached JWK for the token's `kid`. On a miss it fetches the issuer's `jwks_uri` once and retries. If the fetch fails (offline) and the `kid` is still unknown, validation **throws** — federation fails closed (local use unaffected). The Gateway never trusts a signature it cannot key-match.
+- **Stale-key TTL:** a cached JWK older than `jwks_max_age_seconds` is treated as needing re-fetch before it is trusted; if it can't be refreshed (offline), it is **not** used — preventing indefinite trust in a key the IdP may have rotated/compromised. (`fetched_at` already carried per key for exactly this check.)
 
 **Triple rule (I18):**
 
@@ -222,6 +241,14 @@ A SCIM 2.0 (RFC 7643/7644) **Users** resource on the HTTP write surface:
 - Gated on `[scim].enabled` — returns `503 write_surface_disabled`-style when off.
 
 `scim-service.ts` holds the pure SCIM shape logic (PatchOp parsing, resource serialization) and is unit-tested without HTTP. `scim-http-routes.ts` is the thin adapter.
+
+### 6.1 Attribute allowlist — `attrs_json` is non-PII by construction (resolves review S2)
+
+The SCIM payload an IdP sends can carry rich PII (`phoneNumbers`, `addresses`, `photos`, the enterprise extension's `manager`/`department`/`employeeNumber`, etc.). Local-first minimization (#1) and #3's spirit mean Nimbus persists only what the deprovision tie-in actually needs. `scim-service.ts` projects each inbound resource through a **fixed allowlist before any DB write**:
+
+- **Promoted to columns:** `externalId` → `external_id`, `userName` → `user_name`, primary `emails[].value` → `email`, `active` → `active`.
+- **`attrs_json` may contain only:** `displayName`, `name.formatted`, `active`, `meta.lastModified`. Everything else — every phone, address, photo, group membership, and the entire `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User` block — is **dropped, never stored**.
+- A unit test asserts that a maximal SCIM payload (with phone/address/enterprise-extension) round-trips to a `scim_user` row whose `attrs_json` contains none of those fields. Documenting the allowlist as code keeps "non-PII" enforced, not aspirational.
 
 ---
 
@@ -281,8 +308,9 @@ Both `identity` and `scim` registered in **both** `packages/cli/src/commands/reg
 
 ## 10. Testing Strategy
 
-- **Unit:** `verifier` (fake JWKS keypair, sign a test JWT, assert sig/iss/aud/exp paths); `oidc-device-flow` (fake token endpoint: pending → slow_down → authorized → expired); `oidc-discovery` (fake metadata + cache); `jwks-cache`; `identity-store` (real in-memory SQLite at V34); `scim-service` (PatchOp `active:false` → deprovision call); `deprovision` (binding resolution → `NamespaceStore.revoke` spy).
+- **Unit:** `verifier` (fake JWKS keypair, sign a test JWT, assert sig/iss/aud/exp paths; **`kid`-miss-offline → throws**; **stale-key-past-`jwks_max_age_seconds`-offline → not trusted**); `oidc-device-flow` (fake token endpoint: pending → slow_down → authorized → expired); `oidc-discovery` (fake metadata + cache); `jwks-cache`; `identity-runtime.revalidateSession` (**refresh success resets `expires_at`; refresh failure falls back to grace; throttled by `revalidate_interval_seconds`** — review Q1); `identity-store` (real in-memory SQLite at V34); `scim-service` (PatchOp `active:false` → deprovision call; **maximal-PII payload → `attrs_json` allowlist drops phone/address/enterprise-ext** — review S2); `deprovision` (binding resolution → `NamespaceStore.revoke` spy).
 - **Integration (real SQLite, V34 migration):** SCIM deprovision end-to-end — seed a granted peer, PATCH `active:false`, assert `query-gate` then returns `no_grant`; identity-disabled → federation unaffected; expired operator token → federated answer denied, local `index.query` still works.
+- **E2E device-grant simulation (review T1):** the device flow is **dependency-injected** — `oidc-device-flow` takes a `fetch`-like client + injected clock, and the E2E test stands up a **local mock OIDC HTTP server** (real `.well-known`, `device_authorization`, `token`, `jwks_uri` endpoints) that auto-authorizes the device code so `nimbus identity login` completes headlessly. **We deliberately do NOT add a `NIMBUS_TEST_OIDC_BYPASS` env var** — a production-reachable validation-bypass switch is exactly the kind of latent backdoor I18 exists to prevent (and prior CI pain favors DI over env/`mock.module` seams). The mock-server approach exercises the *real* validation path end-to-end instead of skipping it.
 - **Security invariants:** the `I18` block in `security-invariants.test.ts`; the new `D14` static rule in the structure-audit test.
 - **HTTP write surface:** SCIM route requires bearer; wrong/absent token → 401 + audit; `[scim].enabled=false` → disabled.
 - **Coverage:** new `identity/` subsystem targets **≥85%**. The gate is `bun run preflight` (not `test:ci`). `audit:coverage-floor` is **CI-Linux-authoritative** — verify on Linux via Docker (`oven/bun:latest`, `-v "C:/path":/src:ro`, `apt install git`, `bun install`, `audit:coverage-floor:build-lcov` + `audit:coverage-floor`) before the PR.
