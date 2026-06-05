@@ -29,14 +29,17 @@ function req(method: string, path: string, token: string | undefined, body?: unk
 
 describe("SCIM HTTP routes", () => {
   test("isScimPath matches /scim/v2/Users and item paths", () => {
-    expect(isScimPath(new URL("http://x/scim/v2/Users"))).toBe(true);
-    expect(isScimPath(new URL("http://x/scim/v2/Users/u1"))).toBe(true);
-    expect(isScimPath(new URL("http://x/v1/deployments"))).toBe(false);
+    expect(isScimPath(new URL("https://x/scim/v2/Users"))).toBe(true);
+    expect(isScimPath(new URL("https://x/scim/v2/Users/u1"))).toBe(true);
+    expect(isScimPath(new URL("https://x/v1/deployments"))).toBe(false);
   });
 
   test("allowlist is exactly the 3 SCIM write routes", () => {
-    expect([...SCIM_WRITE_ROUTES].sort()).toEqual(
-      ["DELETE /scim/v2/Users/{id}", "PATCH /scim/v2/Users/{id}", "POST /scim/v2/Users"].sort(),
+    const byName = (a: string, b: string): number => a.localeCompare(b);
+    expect([...SCIM_WRITE_ROUTES].sort(byName)).toEqual(
+      ["DELETE /scim/v2/Users/{id}", "PATCH /scim/v2/Users/{id}", "POST /scim/v2/Users"].sort(
+        byName,
+      ),
     );
   });
 

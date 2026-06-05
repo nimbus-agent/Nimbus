@@ -3,43 +3,9 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityStore } from "./identity-store.ts";
+import { makeSignedJwt } from "./identity-test-helpers.ts";
 import { JwksCache } from "./jwks-cache.ts";
 import { IdTokenVerifier, isOperatorValid } from "./verifier.ts";
-
-function b64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes)
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-function b64urlJson(obj: unknown): string {
-  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
-}
-
-async function makeSignedJwt(claims: Record<string, unknown>, kid: string) {
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  const header = { alg: "RS256", kid, typ: "JWT" };
-  const signingInput = `${b64urlJson(header)}.${b64urlJson(claims)}`;
-  const sig = new Uint8Array(
-    await crypto.subtle.sign(
-      { name: "RSASSA-PKCS1-v1_5" },
-      pair.privateKey,
-      new TextEncoder().encode(signingInput),
-    ),
-  );
-  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  return { jwt: `${signingInput}.${b64url(sig)}`, jwk: { ...jwk, kid, alg: "RS256" } };
-}
 
 function freshDb(): Database {
   const db = new Database(":memory:");

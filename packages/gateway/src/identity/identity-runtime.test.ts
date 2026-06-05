@@ -5,20 +5,9 @@ import type { NimbusIdentityToml } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityRuntime } from "./identity-runtime.ts";
 import { IdentityStore } from "./identity-store.ts";
+import { fakeVault } from "./identity-test-helpers.ts";
 import { isOperatorValid } from "./verifier.ts";
 
-function fakeVault() {
-  const m = new Map<string, string>();
-  return {
-    store: m,
-    vault: {
-      get: async (k: string) => m.get(k) ?? null,
-      set: async (k: string, v: string) => void m.set(k, v),
-      delete: async (k: string) => void m.delete(k),
-      listKeys: async () => [...m.keys()],
-    },
-  };
-}
 const CFG: NimbusIdentityToml = {
   enabled: true,
   issuer: "https://acme",

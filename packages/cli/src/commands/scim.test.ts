@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, test } from "bun:test";
+import { type CallRecord, captureStdout, makeQueuedCall } from "./cli-test-helpers.ts";
 import { parseScimArgs, runScim, runScimCommand, type ScimIpc } from "./scim.ts";
 
 // ---------------------------------------------------------------------------
@@ -25,33 +26,9 @@ test("deprovision requires an email", () => {
 // Fake ScimIpc helper
 // ---------------------------------------------------------------------------
 
-interface CallRecord {
-  method: string;
-  params: unknown;
-}
-
-function makeFake(responseQueue: ReadonlyArray<unknown | Error>): {
-  ipc: ScimIpc;
-  calls: CallRecord[];
-} {
-  const calls: CallRecord[] = [];
-  let idx = 0;
-
-  const ipc: ScimIpc = {
-    call: async <T>(method: string, params?: unknown): Promise<T> => {
-      calls.push({ method, params });
-      if (idx >= responseQueue.length) {
-        throw new Error(`Unexpected call: ${method} (response queue exhausted)`);
-      }
-      const r = responseQueue[idx];
-      idx += 1;
-      if (r instanceof Error) throw r;
-      return r as T;
-    },
-    disconnect: async (): Promise<void> => {},
-  };
-
-  return { ipc, calls };
+function makeFake(responseQueue: readonly unknown[]): { ipc: ScimIpc; calls: CallRecord[] } {
+  const { call, calls } = makeQueuedCall(responseQueue);
+  return { ipc: { call, disconnect: async (): Promise<void> => {} }, calls };
 }
 
 // ---------------------------------------------------------------------------
@@ -61,83 +38,47 @@ function makeFake(responseQueue: ReadonlyArray<unknown | Error>): {
 describe("runScimCommand — status", () => {
   it("calls scim.status and writes JSON output", async () => {
     const fake = makeFake([{ enabled: true, userCount: 3 }]);
-    const stdoutChunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown): boolean => {
-      stdoutChunks.push(String(chunk));
-      return true;
-    };
-    try {
-      await runScimCommand(fake.ipc, { kind: "status" });
-    } finally {
-      process.stdout.write = origWrite;
-    }
+    const out = await captureStdout(() => runScimCommand(fake.ipc, { kind: "status" }));
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]).toEqual({ method: "scim.status", params: {} });
-    expect(stdoutChunks.join("")).toContain("userCount");
+    expect(out).toContain("userCount");
   });
 });
 
 describe("runScimCommand — setToken", () => {
   it("calls scim.setToken with the token and writes confirmation", async () => {
     const fake = makeFake([{}]);
-    const stdoutChunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown): boolean => {
-      stdoutChunks.push(String(chunk));
-      return true;
-    };
-    try {
-      await runScimCommand(fake.ipc, { kind: "setToken", token: "tok-secret" });
-    } finally {
-      process.stdout.write = origWrite;
-    }
+    const out = await captureStdout(() =>
+      runScimCommand(fake.ipc, { kind: "setToken", token: "tok-secret" }),
+    );
     expect(fake.calls[0]).toEqual({
       method: "scim.setToken",
       params: { token: "tok-secret" },
     });
-    expect(stdoutChunks.join("")).toContain("SCIM bearer token stored.");
+    expect(out).toContain("SCIM bearer token stored.");
   });
 });
 
 describe("runScimCommand — listUsers", () => {
   it("calls scim.listUsers and writes JSON output", async () => {
     const fake = makeFake([{ users: [{ email: "bob@acme.com" }] }]);
-    const stdoutChunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown): boolean => {
-      stdoutChunks.push(String(chunk));
-      return true;
-    };
-    try {
-      await runScimCommand(fake.ipc, { kind: "listUsers" });
-    } finally {
-      process.stdout.write = origWrite;
-    }
+    const out = await captureStdout(() => runScimCommand(fake.ipc, { kind: "listUsers" }));
     expect(fake.calls[0]).toEqual({ method: "scim.listUsers", params: {} });
-    expect(stdoutChunks.join("")).toContain("bob@acme.com");
+    expect(out).toContain("bob@acme.com");
   });
 });
 
 describe("runScimCommand — deprovision", () => {
   it("calls scim.deprovision with the email and writes confirmation", async () => {
     const fake = makeFake([{}]);
-    const stdoutChunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown): boolean => {
-      stdoutChunks.push(String(chunk));
-      return true;
-    };
-    try {
-      await runScimCommand(fake.ipc, { kind: "deprovision", email: "carol@acme.com" });
-    } finally {
-      process.stdout.write = origWrite;
-    }
+    const out = await captureStdout(() =>
+      runScimCommand(fake.ipc, { kind: "deprovision", email: "carol@acme.com" }),
+    );
     expect(fake.calls[0]).toEqual({
       method: "scim.deprovision",
       params: { email: "carol@acme.com" },
     });
-    expect(stdoutChunks.join("")).toContain("carol@acme.com");
+    expect(out).toContain("carol@acme.com");
   });
 });
 
@@ -191,20 +132,12 @@ describe("runScim wrapper", () => {
         disconnected = true;
       },
     };
-    const stdoutChunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown): boolean => {
-      stdoutChunks.push(String(chunk));
-      return true;
-    };
-    try {
-      await runScim(["status"], {
+    await captureStdout(() =>
+      runScim(["status"], {
         readState: async () => ({ socketPath: "pipe://test" }),
         connect: async () => ipc,
-      });
-    } finally {
-      process.stdout.write = origWrite;
-    }
+      }),
+    );
     expect(fake.calls[0]).toEqual({ method: "scim.status", params: {} });
     expect(disconnected).toBe(true);
   });

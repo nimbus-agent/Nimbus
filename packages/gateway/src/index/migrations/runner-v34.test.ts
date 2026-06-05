@@ -46,11 +46,12 @@ describe("V34 migration — identity tables", () => {
   test("identity_session has the expected columns", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, 34);
+    const byName = (a: string, b: string): number => a.localeCompare(b);
     const cols = db
       .query<{ name: string }, []>(`PRAGMA table_info(identity_session)`)
       .all()
       .map((r) => r.name)
-      .sort();
+      .sort(byName);
     expect(cols).toEqual(
       [
         "claims_json",
@@ -60,7 +61,7 @@ describe("V34 migration — identity tables", () => {
         "issuer",
         "status",
         "validated_at",
-      ].sort(),
+      ].sort(byName),
     );
   });
 

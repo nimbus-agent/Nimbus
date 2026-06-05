@@ -48,9 +48,8 @@ function deviceTokenError(body: unknown): Error {
   const rec = asRecord(body);
   const err = rec["error"];
   const code = typeof err === "string" ? err : "unknown";
-  const desc =
-    typeof rec["error_description"] === "string" ? ` — ${rec["error_description"] as string}` : "";
-  const uri = typeof rec["error_uri"] === "string" ? ` (${rec["error_uri"] as string})` : "";
+  const desc = typeof rec["error_description"] === "string" ? ` — ${rec["error_description"]}` : "";
+  const uri = typeof rec["error_uri"] === "string" ? ` (${rec["error_uri"]})` : "";
   return new Error(`identity: device token error: ${code}${desc}${uri}`);
 }
 

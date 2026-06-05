@@ -1,6 +1,6 @@
 // identity-vault.test.ts
 import { describe, expect, test } from "bun:test";
-import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { fakeVault } from "./identity-test-helpers.ts";
 import {
   clearOidcTokens,
   IDENTITY_ID_TOKEN_KEY,
@@ -11,19 +11,6 @@ import {
   storeOidcTokens,
   writeScimBearer,
 } from "./identity-vault.ts";
-
-/** A Map-backed fake NimbusVault — no Vault backend, no key-format validation; round-trips raw bytes. */
-function fakeVault(): { vault: NimbusVault; store: Map<string, string> } {
-  const store = new Map<string, string>();
-  const vault: NimbusVault = {
-    get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
-    listKeys: async (prefix?: string) =>
-      [...store.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
-  };
-  return { vault, store };
-}
 
 describe("identity-vault key constants", () => {
   test("the three raw-token keys equal their expected literals", () => {

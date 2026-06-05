@@ -5,9 +5,9 @@ import type { NimbusIdentityToml, NimbusScimToml } from "../config/nimbus-toml.t
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { LongRunningEmit } from "../ipc/_lib/long-running.ts";
-import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildIdentityBoot } from "./identity-boot.ts";
 import type { IdentityRuntimeDeps } from "./identity-runtime.ts";
+import { fakeVault, makeSignedJwt } from "./identity-test-helpers.ts";
 import { IDENTITY_ID_TOKEN_KEY, IDENTITY_SCIM_BEARER_KEY } from "./identity-vault.ts";
 import type { DeviceAuthResponse, OidcDiscovery, TokenResponse, ValidatedClaims } from "./types.ts";
 
@@ -28,17 +28,6 @@ function freshIndex(): LocalIndex {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, 34);
   return new LocalIndex(db);
-}
-
-function fakeVault(): { vault: NimbusVault; store: Map<string, string> } {
-  const m = new Map<string, string>();
-  const vault: NimbusVault = {
-    get: async (k: string) => m.get(k) ?? null,
-    set: async (k: string, v: string) => void m.set(k, v),
-    delete: async (k: string) => void m.delete(k),
-    listKeys: async () => [...m.keys()],
-  };
-  return { vault, store: m };
 }
 
 describe("buildIdentityBoot", () => {
@@ -131,8 +120,12 @@ describe("buildIdentityBoot", () => {
       });
 
     const seenUrls: string[] = [];
+    const urlOf = (input: string | URL | Request): string => {
+      if (typeof input === "string") return input;
+      return input instanceof URL ? input.href : input.url;
+    };
     const fetchImpl = (async (input: string | URL | Request): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = urlOf(input);
       seenUrls.push(url);
       if (url.endsWith("/.well-known/openid-configuration")) return json(discoveryDoc);
       if (url.endsWith("/device"))
@@ -172,37 +165,3 @@ describe("buildIdentityBoot", () => {
     expect(store.get(IDENTITY_ID_TOKEN_KEY)).toBe(jwt);
   });
 });
-
-function b64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes)
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-function b64urlJson(obj: unknown): string {
-  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
-}
-async function makeSignedJwt(claims: Record<string, unknown>, kid: string) {
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  const header = { alg: "RS256", kid, typ: "JWT" };
-  const signingInput = `${b64urlJson(header)}.${b64urlJson(claims)}`;
-  const sig = new Uint8Array(
-    await crypto.subtle.sign(
-      { name: "RSASSA-PKCS1-v1_5" },
-      pair.privateKey,
-      new TextEncoder().encode(signingInput),
-    ),
-  );
-  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  return { jwt: `${signingInput}.${b64url(sig)}`, jwk: { ...jwk, kid, alg: "RS256" } };
-}

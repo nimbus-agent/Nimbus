@@ -531,8 +531,8 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     ]) {
       expect(rust).toContain(`"${m}"`);
     }
-    expect(rust).not.toMatch(/^\s*"scim\.setToken",\s*$/m);
-    expect(rust).not.toMatch(/^\s*"identity\.bind",\s*$/m);
+    expect(rust).not.toContain('"scim.setToken"');
+    expect(rust).not.toContain('"identity.bind"');
   });
   test("only the identity verifier validates an ID token; query-gate consults it", async () => {
     const gate = await read("packages/gateway/src/federation/query-gate.ts");

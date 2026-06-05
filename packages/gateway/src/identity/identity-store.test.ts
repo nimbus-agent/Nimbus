@@ -44,7 +44,10 @@ describe("IdentityStore", () => {
   test("bindings: bind, list active by externalId, revoke", () => {
     store.bind("u1", "peer:aa", "admin", 30);
     store.bind("u1", "peer:bb", "handshake", 31);
-    expect(store.activePeerIdsFor("u1").sort()).toEqual(["peer:aa", "peer:bb"]);
+    expect(store.activePeerIdsFor("u1").sort((a, b) => a.localeCompare(b))).toEqual([
+      "peer:aa",
+      "peer:bb",
+    ]);
     store.revokeBinding("peer:aa", 40);
     expect(store.activePeerIdsFor("u1")).toEqual(["peer:bb"]);
   });

@@ -145,7 +145,7 @@ export function buildIdentityBoot(
       (m) => loginNotify("identity.loginProgress", { message: m }),
       opts?.fetchImpl ?? fetch,
     ),
-    ...(opts?.deps ?? {}),
+    ...opts?.deps,
   };
 
   const runtime = new IdentityRuntime({

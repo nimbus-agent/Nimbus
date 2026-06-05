@@ -77,7 +77,7 @@ export class IdentityRuntime {
       return;
     this.lastRevalidateMs = t;
     const session = store.getSession(cfg.issuer);
-    if (session === undefined || session.status !== "active") return;
+    if (session?.status !== "active") return;
     if (t < session.expiresAt - cfg.tokenRefreshSkewSeconds * 1000) return; // not near expiry
     if (deps.refreshTokens === undefined) return;
     const refresh = await readRefreshToken(this.o.vault);

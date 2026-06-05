@@ -19,6 +19,13 @@ interface ScimRow {
   attrs_json: string;
 }
 
+/** Maps a raw `status` column to the closed status union (unknown values default to active). */
+function normalizeSessionStatus(raw: string): IdentitySession["status"] {
+  if (raw === "deprovisioned") return "deprovisioned";
+  if (raw === "expired") return "expired";
+  return "active";
+}
+
 export class IdentityStore {
   constructor(private readonly db: Database) {}
 
@@ -45,12 +52,7 @@ export class IdentityStore {
       email: row.email,
       validatedAt: row.validated_at,
       expiresAt: row.expires_at,
-      status:
-        row.status === "deprovisioned"
-          ? "deprovisioned"
-          : row.status === "expired"
-            ? "expired"
-            : "active",
+      status: normalizeSessionStatus(row.status),
     };
   }
 
