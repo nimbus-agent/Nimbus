@@ -226,6 +226,56 @@ test("federation.query blocks then unblocks on consent approve via the broker", 
   }
 });
 
+test("federation.ask throws ASKER_UNAVAILABLE when index/identity not wired", async () => {
+  await expect(
+    dispatchFederationRpc("federation.ask", { peerId: "x", namespace: "ns", purpose: "p" }, ctx()),
+  ).rejects.toThrow(/ERR_FEDERATION_ASKER_UNAVAILABLE/);
+});
+
+test("federation.askExpertise throws ASKER_UNAVAILABLE when index/identity not wired", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.askExpertise",
+      { peerId: "x", query: "q", purpose: "p" },
+      ctx(),
+    ),
+  ).rejects.toThrow(/ERR_FEDERATION_ASKER_UNAVAILABLE/);
+});
+
+test("federation.ask throws UNKNOWN_PEER for a peer with no host/port", async () => {
+  const peerDb = new Database(":memory:");
+  runIndexedSchemaMigrations(peerDb, 33);
+  const peerIndex = new LocalIndex(peerDb);
+  const selfKp = generateBoxKeypair();
+  // inbound-only peer: hostIp present but hostPort omitted → host_port = null → guard fires
+  peerIndex.addLanPeer({
+    peerId: "peer:nohost",
+    peerPubkey: new Uint8Array(32).fill(9),
+    direction: "inbound",
+    hostIp: "127.0.0.1",
+  });
+  const askCtx: FederationRpcContext = {
+    db: peerDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(peerIndex),
+    index: peerIndex,
+    selfIdentity: selfKp,
+  };
+  try {
+    await expect(
+      dispatchFederationRpc(
+        "federation.ask",
+        { peerId: "peer:nohost", namespace: "ns", purpose: "p" },
+        askCtx,
+      ),
+    ).rejects.toThrow(/ERR_UNKNOWN_PEER/);
+  } finally {
+    peerIndex.close();
+  }
+});
+
 test("federation.ask sends the query over the wire to a paired peer and returns its answer", async () => {
   const peerIdFor = (pub: Uint8Array) => `peer:${bytesToHex(pub.subarray(0, 8))}`;
 
