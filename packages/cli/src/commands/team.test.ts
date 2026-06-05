@@ -81,3 +81,20 @@ test("query + who-knows", () => {
 test("unknown subcommand throws", () => {
   expect(() => parseTeamArgs(["bogus"])).toThrow();
 });
+
+test("parses team consent approve/deny", () => {
+  expect(parseTeamArgs(["consent", "req-1", "approve"])).toEqual({
+    kind: "consent",
+    requestId: "req-1",
+    approved: true,
+  });
+  expect(parseTeamArgs(["consent", "req-2", "deny"])).toEqual({
+    kind: "consent",
+    requestId: "req-2",
+    approved: false,
+  });
+});
+
+test("team consent rejects a bad verb", () => {
+  expect(() => parseTeamArgs(["consent", "req-1", "maybe"])).toThrow();
+});

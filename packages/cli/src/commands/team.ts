@@ -9,7 +9,8 @@ export type TeamCommand =
   | { kind: "namespaceGrant"; namespace: string; peerId: string; role: string; standing: boolean }
   | { kind: "namespaceRevoke"; namespace: string; peerId: string }
   | { kind: "query"; namespace: string; peerId: string; purpose: string }
-  | { kind: "whoKnows"; query: string };
+  | { kind: "whoKnows"; query: string }
+  | { kind: "consent"; requestId: string; approved: boolean };
 
 function collectFilters(args: string[]): Array<{ kind: string; value: string }> {
   const filters: Array<{ kind: string; value: string }> = [];
@@ -79,6 +80,14 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
       const q = rest.join(" ");
       if (q.length === 0) throw new Error('Usage: nimbus team who-knows "<query>"');
       return { kind: "whoKnows", query: q };
+    }
+    case "consent": {
+      const requestId = rest[0];
+      const verb = rest[1];
+      if (requestId === undefined || (verb !== "approve" && verb !== "deny")) {
+        throw new Error("usage: nimbus team consent <requestId> approve|deny");
+      }
+      return { kind: "consent", requestId, approved: verb === "approve" };
     }
     default:
       throw new Error(
@@ -159,6 +168,30 @@ export async function runTeam(argv: string[]): Promise<void> {
           code: cmd.code,
         });
         process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+        break;
+      }
+      case "consent": {
+        try {
+          const r = (await client.call("federation.consentRespond", {
+            requestId: cmd.requestId,
+            approved: cmd.approved,
+          })) as { matched?: boolean };
+          if (r.matched === false) {
+            process.stderr.write(
+              `No pending consent request for ${cmd.requestId} (already answered or timed out).\n`,
+            );
+            process.exitCode = 1;
+          } else {
+            process.stdout.write(
+              `consent ${cmd.approved ? "approved" : "denied"} for ${cmd.requestId}\n`,
+            );
+          }
+        } catch (e) {
+          process.stderr.write(
+            `Error responding to consent request: ${e instanceof Error ? e.message : String(e)}\n`,
+          );
+          process.exitCode = 1;
+        }
         break;
       }
     }
