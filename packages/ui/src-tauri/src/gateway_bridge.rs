@@ -91,6 +91,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "federation.namespace.publish",
     "federation.namespace.revoke",
     "federation.peers",
+    "identity.listBindings",
+    "identity.login",
+    "identity.logout",
+    "identity.status",
     "index.metrics",
     "llm.cancelPull",
     "llm.getRouterStatus",
@@ -104,6 +108,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "profile.delete",
     "profile.list",
     "profile.switch",
+    "scim.listUsers",
+    "scim.status",
     "telemetry.getStatus",
     "telemetry.setEnabled",
     "updater.applyUpdate",
@@ -134,6 +140,7 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
+    "identity.login",
     "llm.pullModel",
     "updater.applyUpdate",
 ];
@@ -432,7 +439,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 68);
+        assert_eq!(ALLOWED_METHODS.len(), 74);
     }
 
     #[test]
@@ -458,9 +465,10 @@ mod tests {
     }
 
     #[test]
-    fn no_timeout_methods_contains_expected_four() {
+    fn no_timeout_methods_contains_expected_five() {
         assert!(is_no_timeout_method("data.export"));
         assert!(is_no_timeout_method("data.import"));
+        assert!(is_no_timeout_method("identity.login"));
         assert!(is_no_timeout_method("llm.pullModel"));
         assert!(is_no_timeout_method("updater.applyUpdate"));
         assert!(!is_no_timeout_method("profile.list"));
@@ -469,7 +477,7 @@ mod tests {
 
     #[test]
     fn no_timeout_methods_exact_size() {
-        assert_eq!(NO_TIMEOUT_METHODS.len(), 4);
+        assert_eq!(NO_TIMEOUT_METHODS.len(), 5);
     }
 
     #[test]

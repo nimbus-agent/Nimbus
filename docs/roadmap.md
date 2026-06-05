@@ -719,7 +719,7 @@ Phase 6 bundles several independent subsystems; it ships as **9 sequenced delive
 |---|-------|-----------|
 | 1 | **Federation Core** — E2EE peer pairing, mDNS discovery, consent-scoped federated query primitive, shared scoped namespaces, expertise routing, protocol-layer RBAC, audit integration, invariant I17 | Phase 4 E2EE LAN + audit chain |
 | 2 | Team Vault + Multi-user/Quorum HITL | 1 |
-| 3 | Identity — SSO/OIDC/SAML + SCIM | 1 |
+| 3 | Identity — SSO/OIDC/SAML + SCIM (✅ OIDC device-code + SCIM trust-anchor delivered, invariant I18; SAML deferred) | 1 |
 | 4 | Org Policy Engine + Admin Console + Observability | 1 |
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) | 1, 2 |
 | 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) | 1 |
@@ -770,8 +770,8 @@ These two primitives are the **foundation** every cross-colleague feature stands
 
 #### Identity & Access
 
-- [ ] **SSO/OIDC/SAML** — enterprise identity provider integration; tokens stored in the Vault; Gateway validates ID token on every session
-- [ ] **SCIM user provisioning** — automated user lifecycle driven by IdP; deprovisioned users' shared namespaces revoked automatically
+- [x] **SSO/OIDC/SAML** — enterprise identity provider integration; tokens stored in the Vault; Gateway validates ID token on every session *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — RS256 ID-token validation via `identity/verifier.ts` (I18), Vault-only tokens, SAML deferred)*
+- [x] **SCIM user provisioning** — automated user lifecycle driven by IdP; deprovisioned users' shared namespaces revoked automatically *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — bearer-authed SCIM 2.0 Users endpoint on the HTTP write surface; deprovision auto-revokes federation bindings)*
 - [x] **Role-based access control** — `owner`, `editor`, `viewer` roles per shared namespace; enforced at the federation protocol layer, not just the UI *(Slice 1: roles stored + enforced in the query gate; cross-org RBAC + SCIM-driven provisioning are Slice 3)*
 - [ ] **Multi-user HITL** — workspace owner delegates HITL approval rights to a named team member for a specific workflow; delegate sees a pending approval queue; every delegation recorded in audit log
 

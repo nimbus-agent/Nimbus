@@ -192,6 +192,38 @@ export function checkFederationImportInvariant(files: readonly FileEntry[]): Vio
   return out;
 }
 
+const IDENTITY_TOKEN_KEYS = [
+  "identity.oidc.id_token",
+  "identity.oidc.refresh_token",
+  "identity.scim.bearer",
+];
+const IDENTITY_DIR = "packages/gateway/src/identity/";
+
+/**
+ * D14 (I18) — raw IdP tokens live only in the Vault, inside identity/.
+ * Flags any non-identity, non-test file that references one of the identity token
+ * Vault keys as a quoted string literal (a leak vector onto IPC/wire/logs/config).
+ */
+export function checkIdentityTokenVaultInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.startsWith(IDENTITY_DIR) || f.relPath.endsWith(".test.ts")) continue;
+    const lines = f.contents.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (IDENTITY_TOKEN_KEYS.some((k) => line.includes(`"${k}"`) || line.includes(`'${k}'`))) {
+        out.push({
+          rule: "D14-identity-token",
+          file: f.relPath,
+          line: i + 1,
+          snippet: line.trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -271,6 +303,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D13 federation file imports item-list-query outside query-gate.ts — I17 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkIdentityTokenVaultInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D14 identity token key used outside identity/ — I18 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

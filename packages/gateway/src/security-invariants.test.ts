@@ -469,9 +469,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 68", async () => {
+  test("allowlist_exact_size assertion is 74", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*68\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*74\s*\)/);
   });
 });
 
@@ -515,5 +515,27 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
     const src = await read("packages/gateway/src/federation/federation-server.ts");
     // onMessage must override any body-supplied peerId with the NaCl-authenticated peer.peerId.
     expect(src).toMatch(/peerId:\s*peer\.peerId/);
+  });
+});
+
+describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", () => {
+  test("identity.* read/login methods are in the Tauri allowlist; bind/setToken are NOT", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of [
+      "identity.login",
+      "identity.status",
+      "identity.logout",
+      "identity.listBindings",
+      "scim.status",
+      "scim.listUsers",
+    ]) {
+      expect(rust).toContain(`"${m}"`);
+    }
+    expect(rust).not.toMatch(/^\s*"scim\.setToken",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"identity\.bind",\s*$/m);
+  });
+  test("only the identity verifier validates an ID token; query-gate consults it", async () => {
+    const gate = await read("packages/gateway/src/federation/query-gate.ts");
+    expect(gate).toContain("isOperatorValid");
   });
 });
