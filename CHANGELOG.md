@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.6.0](https://github.com/nimbus-agent/Nimbus/compare/v0.5.0...v0.6.0) (2026-06-05)
+
+
+### Features
+
+* Phase 6 Slice 1 — Federation Core ([#519](https://github.com/nimbus-agent/Nimbus/issues/519)) ([bb92960](https://github.com/nimbus-agent/Nimbus/commit/bb92960cb4e29c2290c98821d867566f0de00b03))
+* Phase 6 Slice 1 — real two-gateway over-the-wire federation ([#521](https://github.com/nimbus-agent/Nimbus/issues/521)) ([8f61f16](https://github.com/nimbus-agent/Nimbus/commit/8f61f16e2a85fd2c813c61cba3c21be2907440b9))
+
 ## [0.5.0](https://github.com/nimbus-agent/Nimbus/compare/v0.4.0...v0.5.0) (2026-06-04)
 
 
