@@ -365,7 +365,7 @@ jobs:
           # `{"msg":"The 'enable' parameter is missing"}`.
           response=$(curl -sS -o /tmp/autoscan-resp.txt -w '%{http_code}' \
             -H "Authorization: Bearer ${SONAR_TOKEN}" \
-            -X POST 'https://sonarcloud.io/api/autoscan/activation?projectKey=asafgolombek_Nimbus&enable=false')
+            -X POST 'https://sonarcloud.io/api/autoscan/activation?projectKey=nimbus-agent_Nimbus&enable=false')
           body=$(cat /tmp/autoscan-resp.txt 2>/dev/null | head -c 500)
           case "$response" in
             200|204)
