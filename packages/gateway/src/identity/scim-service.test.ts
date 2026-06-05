@@ -3,7 +3,12 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityStore } from "./identity-store.ts";
-import { applyScimCreate, parseScimPatchActive, projectScimAttrs } from "./scim-service.ts";
+import {
+  applyScimCreate,
+  parseScimPatchActive,
+  projectScimAttrs,
+  ScimError,
+} from "./scim-service.ts";
 
 function freshStore(): { db: Database; store: IdentityStore } {
   const db = new Database(":memory:");
@@ -72,5 +77,15 @@ describe("parseScimPatchActive", () => {
     expect(
       parseScimPatchActive({ Operations: [{ op: "replace", path: "displayName", value: "x" }] }),
     ).toBeUndefined();
+  });
+  test("throws ScimError(400) on a non-boolean active (path form) — no silent deprovision", () => {
+    expect(() =>
+      parseScimPatchActive({ Operations: [{ op: "replace", path: "active", value: "false" }] }),
+    ).toThrow(ScimError);
+  });
+  test("throws ScimError(400) on a non-boolean active (value-object form)", () => {
+    expect(() =>
+      parseScimPatchActive({ Operations: [{ op: "replace", value: { active: "true" } }] }),
+    ).toThrow(ScimError);
   });
 });

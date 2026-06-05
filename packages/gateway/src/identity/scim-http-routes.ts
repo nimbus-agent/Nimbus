@@ -44,10 +44,17 @@ function normalizedKey(method: string, url: URL): string | undefined {
 
 const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
 
-/** Parses + validates a JSON request body; throws ScimError(400) on a non-object body. */
+/** Parses + validates a JSON request body; throws ScimError(400) on bad JSON or a non-object body. */
 async function readScimBody(req: Request): Promise<Record<string, unknown>> {
-  const body: unknown = await req.json();
-  if (body === null || typeof body !== "object") throw new ScimError("invalid body", 400);
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    throw new ScimError("invalid body", 400);
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new ScimError("invalid body", 400);
+  }
   return body as Record<string, unknown>;
 }
 

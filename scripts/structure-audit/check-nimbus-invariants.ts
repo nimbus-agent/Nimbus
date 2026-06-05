@@ -211,7 +211,12 @@ export function checkIdentityTokenVaultInvariant(files: readonly FileEntry[]): V
     const lines = f.contents.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
-      if (IDENTITY_TOKEN_KEYS.some((k) => line.includes(`"${k}"`) || line.includes(`'${k}'`))) {
+      // Check all three string-literal quote styles — a backtick literal is just as much a leak.
+      if (
+        IDENTITY_TOKEN_KEYS.some(
+          (k) => line.includes(`"${k}"`) || line.includes(`'${k}'`) || line.includes(`\`${k}\``),
+        )
+      ) {
         out.push({
           rule: "D14-identity-token",
           file: f.relPath,

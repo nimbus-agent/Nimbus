@@ -209,6 +209,17 @@ describe("awaitLogin — loginProgress prints URI + code", () => {
   });
 });
 
+describe("awaitLogin — buffers events that race ahead of jobId", () => {
+  it("resolves a loginDone delivered before the login response assigns jobId", async () => {
+    const ipc = loginIpc("job-race", (handlers, jobId) => {
+      // Fire synchronously, before awaitLogin's call().then() runs to set jobId — exercises the
+      // backlog buffer + replay path (the event would otherwise be dropped and the Promise hang).
+      handlers.get("identity.loginDone")?.({ jobId });
+    });
+    await awaitLogin(ipc);
+  });
+});
+
 describe("runIdentityCommand — login (full flow via runIdentityCommand)", () => {
   it("calls awaitLogin internally and writes 'Logged in.'", async () => {
     const ipc = loginIpc("job-004", (handlers, jobId) =>

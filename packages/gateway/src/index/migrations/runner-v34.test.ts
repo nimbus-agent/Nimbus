@@ -80,4 +80,20 @@ describe("V34 migration — identity tables", () => {
     const n = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM identity_binding`).get();
     expect(n?.c).toBe(1);
   });
+
+  test("identity_session.status CHECK rejects a value outside the known enum (fail-closed)", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 34);
+    const insert = (status: string): void => {
+      db.run(
+        `INSERT INTO identity_session (issuer, external_id, validated_at, expires_at, status)
+         VALUES ('https://acme', 'u1', 0, 1, ?)`,
+        [status],
+      );
+    };
+    expect(() => insert("bogus")).toThrow();
+    insert("deprovisioned"); // a known value is accepted
+    const n = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM identity_session`).get();
+    expect(n?.c).toBe(1);
+  });
 });

@@ -63,15 +63,21 @@ export function applyScimCreate(
   return u;
 }
 
+/** SCIM `active` must be a JSON boolean; coercing anything else risks a silent deprovision. */
+function asActiveBool(v: unknown): boolean {
+  if (typeof v !== "boolean") throw new ScimError("invalid active value", 400);
+  return v;
+}
+
 /** Returns the `active` value a single replace/add PatchOp sets, or undefined if it sets none. */
 function patchOpActive(op: unknown): boolean | undefined {
   const o = rec(op);
   if (o === undefined) return undefined;
   const opName = typeof o["op"] === "string" ? o["op"].toLowerCase() : "";
   if (opName !== "replace" && opName !== "add") return undefined;
-  if (o["path"] === "active") return o["value"] === true;
+  if (o["path"] === "active") return asActiveBool(o["value"]);
   const val = rec(o["value"]);
-  if (val !== undefined && "active" in val) return val["active"] === true;
+  if (val !== undefined && "active" in val) return asActiveBool(val["active"]);
   return undefined;
 }
 

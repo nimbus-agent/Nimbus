@@ -59,7 +59,11 @@ export async function pollDeviceToken(
   deviceCode: string,
   opts: PollOpts,
 ): Promise<TokenResponse> {
-  let intervalMs = opts.intervalSeconds * 1000;
+  // Guard against a bad/absent IdP `interval` (≤0 or non-finite) that would otherwise spin a
+  // tight retry loop against the token endpoint; RFC 8628 defaults to 5s.
+  const intervalSeconds =
+    Number.isFinite(opts.intervalSeconds) && opts.intervalSeconds > 0 ? opts.intervalSeconds : 5;
+  let intervalMs = intervalSeconds * 1000;
   for (;;) {
     if (opts.now() > opts.deadlineMs)
       throw new Error("identity: device code expired before authorization");

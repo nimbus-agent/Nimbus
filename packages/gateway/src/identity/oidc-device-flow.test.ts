@@ -49,6 +49,26 @@ describe("pollDeviceToken", () => {
     expect(tok.refreshToken).toBe("rt");
   });
 
+  test("clamps a non-positive interval to the RFC 8628 default (5s) instead of tight-looping", async () => {
+    const bodies = [
+      new Response(JSON.stringify({ error: "authorization_pending" }), { status: 400 }),
+      new Response(JSON.stringify({ id_token: "h.p.s" }), { status: 200 }),
+    ];
+    let i = 0;
+    const sleeps: number[] = [];
+    await pollDeviceToken(DISCOVERY, "client-1", "dc", {
+      fetchLike: async () => bodies[i++] as Response,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      intervalSeconds: 0,
+      deadlineMs: Number.POSITIVE_INFINITY,
+      now: () => 0,
+      onPoll: () => {},
+    });
+    expect(sleeps).toEqual([5000]);
+  });
+
   test("throws on access_denied and surfaces error_description (review S1)", async () => {
     const fetchLike = async () =>
       new Response(

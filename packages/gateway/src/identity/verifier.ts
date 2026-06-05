@@ -92,8 +92,9 @@ export class IdTokenVerifier {
     if (!audOk) throw new IdTokenValidationError("identity: audience mismatch");
     const nowSec = nowMs / 1000;
     const exp = payload["exp"];
-    // Reject if the token is expired. Clock skew tolerance applies to nbf only.
-    if (typeof exp !== "number" || nowSec > exp) {
+    // Reject if the token is expired (RFC 7519: now must be strictly before exp). Clock skew
+    // tolerance applies to nbf only.
+    if (typeof exp !== "number" || nowSec >= exp) {
       throw new IdTokenValidationError("identity: token expired");
     }
     const nbf = payload["nbf"];

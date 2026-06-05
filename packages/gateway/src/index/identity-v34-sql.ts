@@ -9,7 +9,7 @@ export const V34_IDENTITY_SQL: readonly string[] = [
      claims_json   TEXT NOT NULL DEFAULT '{}',
      validated_at  INTEGER NOT NULL,
      expires_at    INTEGER NOT NULL,
-     status        TEXT NOT NULL DEFAULT 'active'
+     status        TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'deprovisioned', 'expired'))
    );`,
   `CREATE TABLE IF NOT EXISTS scim_user (
      external_id   TEXT PRIMARY KEY,

@@ -43,6 +43,24 @@ describe("SCIM HTTP routes", () => {
     );
   });
 
+  test("400 (not 500) on a malformed JSON body", async () => {
+    const bad = new Request("http://127.0.0.1/scim/v2/Users", {
+      method: "POST",
+      headers: { "content-type": "application/scim+json", authorization: "Bearer scim-secret" },
+      body: "{ not json",
+    });
+    const res = await dispatchScimRoute(bad, ctx());
+    expect(res.status).toBe(400);
+  });
+
+  test("400 on a JSON array body (arrays are not SCIM resources)", async () => {
+    const res = await dispatchScimRoute(
+      req("POST", "/scim/v2/Users", "scim-secret", [1, 2, 3]),
+      ctx(),
+    );
+    expect(res.status).toBe(400);
+  });
+
   test("401 without a valid bearer", async () => {
     const res = await dispatchScimRoute(
       req("POST", "/scim/v2/Users", "wrong", { externalId: "u1", userName: "a" }),

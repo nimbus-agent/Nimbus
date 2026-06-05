@@ -12,6 +12,16 @@ describe("D14 — identity token Vault keys stay inside identity/", () => {
     expect(v.length).toBe(1);
     expect(v[0]?.rule).toBe("D14-identity-token");
   });
+  test("flags a backtick-template literal too (not just single/double quotes)", () => {
+    const v = checkIdentityTokenVaultInvariant([
+      {
+        relPath: "packages/gateway/src/ipc/leaky.ts",
+        contents: "const k = `identity.scim.bearer`;",
+      },
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.rule).toBe("D14-identity-token");
+  });
   test("allows the same literal inside identity/", () => {
     const v = checkIdentityTokenVaultInvariant([
       {

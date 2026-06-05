@@ -61,24 +61,42 @@ export function parseIdentityArgs(argv: string[]): IdentityCommand {
 export function awaitLogin(client: IdentityIpc): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let jobId: string | undefined;
-    client.onNotification("identity.loginProgress", (n: unknown) => {
-      const p = n as { jobId: string; verificationUri?: string; userCode?: string };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      if (p.verificationUri && p.userCode) {
-        process.stdout.write(`Open ${p.verificationUri} and enter code: ${p.userCode}\n`);
+    // A terminal event can race ahead of the call() response that assigns jobId. Buffer events
+    // that arrive before jobId is known, then replay them once it is, so login never hangs.
+    const backlog: Array<{ method: string; payload: unknown }> = [];
+
+    const handle = (method: string, payload: unknown): void => {
+      const p = payload as {
+        jobId?: string;
+        verificationUri?: string;
+        userCode?: string;
+        message?: string;
+      };
+      if (typeof p.jobId !== "string") return;
+      if (jobId === undefined) {
+        backlog.push({ method, payload });
+        return;
       }
-    });
-    client.onNotification("identity.loginDone", (n: unknown) => {
-      if ((n as { jobId: string }).jobId === jobId) resolve();
-    });
-    client.onNotification("identity.loginError", (n: unknown) => {
-      const p = n as { jobId: string; message: string };
-      if (p.jobId === jobId) reject(new Error(p.message));
-    });
+      if (p.jobId !== jobId) return;
+      if (method === "identity.loginProgress") {
+        if (p.verificationUri && p.userCode) {
+          process.stdout.write(`Open ${p.verificationUri} and enter code: ${p.userCode}\n`);
+        }
+      } else if (method === "identity.loginDone") {
+        resolve();
+      } else if (method === "identity.loginError") {
+        reject(new Error(p.message ?? "identity: login failed"));
+      }
+    };
+
+    client.onNotification("identity.loginProgress", (n) => handle("identity.loginProgress", n));
+    client.onNotification("identity.loginDone", (n) => handle("identity.loginDone", n));
+    client.onNotification("identity.loginError", (n) => handle("identity.loginError", n));
     client
       .call<{ jobId: string }>("identity.login", {})
       .then((r) => {
         jobId = r.jobId;
+        for (const e of backlog.splice(0)) handle(e.method, e.payload);
       })
       .catch(reject);
   });
