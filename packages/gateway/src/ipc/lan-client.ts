@@ -221,6 +221,9 @@ export async function sendFederatedOverWire(
     hello,
     (reply) => {
       const hostPub = new Uint8Array(Buffer.from(reply.host_pubkey ?? "", "base64"));
+      if (hostPub.length !== 32) {
+        throw new Error("lan-client: responder sent invalid pubkey length");
+      }
       if (Buffer.compare(Buffer.from(hostPub), Buffer.from(peerPubkey)) !== 0) {
         throw new Error("lan-client: responder pubkey does not match pinned peer key");
       }
