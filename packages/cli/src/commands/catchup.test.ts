@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const mod = await import("./catchup.ts");
 const { parseCatchupArgs, runCatchupCli } = mod;
@@ -121,7 +121,7 @@ describe("runCatchupCli — dispatcher", () => {
   it("happy path: prints Markdown brief on catchup.briefReady", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.catchup") {
@@ -150,7 +150,7 @@ describe("runCatchupCli — dispatcher", () => {
   it("--json prints the structured findings", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.catchup") {
@@ -181,7 +181,7 @@ describe("runCatchupCli — dispatcher", () => {
   it("exits 1 with hint when findings include an empty_index gap", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.catchup") {
@@ -211,7 +211,7 @@ describe("runCatchupCli — dispatcher", () => {
     const handlers = new Map<string, (params: unknown) => void>();
     let agentCallParams: unknown;
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           if (method === "agents.catchup") {
@@ -241,7 +241,7 @@ describe("runCatchupCli — dispatcher", () => {
   it("exits 2 when catchup.briefError fires", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.catchup") {
@@ -266,7 +266,7 @@ describe("runCatchupCli — dispatcher", () => {
   it("exits 2 when briefReady payload is malformed", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.catchup") {

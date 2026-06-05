@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./deploy-annotate.ts");
@@ -211,7 +211,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: true,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(0);
     expect(stdoutChunks.join("")).toContain("Deployment recorded");
@@ -235,7 +235,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: false,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate([...VALID_ARGV, "--json"]);
     expect(exit).toBe(0);
     expect(stdoutChunks.join("")).toContain('"external_id"');
@@ -251,7 +251,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: true,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runDeployAnnotate([
       ...VALID_ARGV,
       "--finished-at",
@@ -275,7 +275,7 @@ describe("runDeployAnnotate", () => {
 
   it("returns 1 on malformed envelope from gateway", async () => {
     const mock = createMockIpcClient([{ not: "an envelope" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(1);
     expect(stderrChunks.join("")).toContain("malformed envelope");
@@ -283,7 +283,7 @@ describe("runDeployAnnotate", () => {
 
   it("returns 1 on IPC error", async () => {
     const mock = createMockIpcClient([new Error("connection refused")]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(1);
     expect(stderrChunks.join("")).toContain("connection refused");

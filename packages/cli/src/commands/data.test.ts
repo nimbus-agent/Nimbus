@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -47,14 +47,14 @@ describe("runData export", () => {
   });
 
   it("rejects when --output is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runData(["export", "--passphrase", "pw"])).rejects.toThrow(
       "Usage: nimbus data export",
     );
   });
 
   it("rejects when --passphrase is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runData(["export", "--output", "/tmp/x.tar.gz"])).rejects.toThrow(
       "Usage: nimbus data export",
     );
@@ -65,7 +65,7 @@ describe("runData export", () => {
       { outputPath: "/tmp/out.tar.gz", recoverySeed: "", recoverySeedGenerated: false },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData(["export", "--output", "/tmp/out.tar.gz", "--passphrase", "pw", "--yes"]);
@@ -85,7 +85,7 @@ describe("runData export", () => {
       },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData([
@@ -113,12 +113,12 @@ describe("runData import", () => {
   });
 
   it("rejects when the bundle path is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runData(["import"])).rejects.toThrow("Usage: nimbus data import");
   });
 
   it("rejects when neither --passphrase nor --recovery-seed is given", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runData(["import", "/tmp/bundle.tar.gz"])).rejects.toThrow(
       "Provide either --passphrase or --recovery-seed",
     );
@@ -127,7 +127,7 @@ describe("runData import", () => {
   it("calls data.import with passphrase and prints credential count", async () => {
     const ipc = createMockIpcClient([{ credentialsRestored: 5, oauthEntriesFlagged: 0 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData(["import", "/tmp/bundle.tar.gz", "--passphrase", "pw", "--yes"]);
@@ -138,7 +138,7 @@ describe("runData import", () => {
   it("prints the warn line when oauthEntriesFlagged > 0", async () => {
     const ipc = createMockIpcClient([{ credentialsRestored: 1, oauthEntriesFlagged: 2 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData(["import", "/tmp/b.tar.gz", "--passphrase", "pw", "--yes"]);
@@ -156,7 +156,7 @@ describe("runData delete", () => {
   });
 
   it("rejects when --service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runData(["delete"])).rejects.toThrow("Usage: nimbus data delete");
   });
 
@@ -168,7 +168,7 @@ describe("runData delete", () => {
       },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData(["delete", "--service", "github", "--dry-run"]);
@@ -191,7 +191,7 @@ describe("runData delete", () => {
       { deleted: true },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runData(["delete", "--service", "linear", "--yes"]);

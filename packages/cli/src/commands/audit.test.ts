@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -17,7 +17,7 @@ afterAll(() => {
 describe("runAuditList", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -81,7 +81,7 @@ describe("runAuditList", () => {
 describe("runAuditVerify", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     process.exitCode = 0;
   });
   afterEach(() => {
@@ -119,7 +119,7 @@ describe("runAuditVerify", () => {
 describe("runAuditExport", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -149,14 +149,14 @@ describe("runAudit (dispatcher)", () => {
   });
 
   it("rejects 'export' without --output", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runAudit(["export"])).rejects.toThrow("Usage: nimbus audit export --output");
   });
 
   it("dispatches 'verify' through withIpc", async () => {
     const ipc = createMockIpcClient([{ ok: true, verifiedRows: 3 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runAudit(["verify"]);
@@ -166,7 +166,7 @@ describe("runAudit (dispatcher)", () => {
   it("dispatches the bare list path through withIpc with the default limit (50)", async () => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runAudit([]);
@@ -176,7 +176,7 @@ describe("runAudit (dispatcher)", () => {
   it("respects --limit in the bare list path", async () => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runAudit(["--limit", "7"]);

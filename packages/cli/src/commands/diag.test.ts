@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -47,7 +47,7 @@ describe("runDiag (snapshot)", () => {
   it("calls diag.snapshot when no subcommand is given", async () => {
     const ipc = createMockIpcClient([{ index: { totalItems: 42 } }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDiag([]);
@@ -58,7 +58,7 @@ describe("runDiag (snapshot)", () => {
   it("calls diag.snapshot when --json is given", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDiag(["--json"]);
@@ -83,7 +83,7 @@ describe("runDiag (slow-queries)", () => {
   it("calls diag.slowQueries with the default limit (50) and sinceMs:0 when no flags are given", async () => {
     const ipc = createMockIpcClient([{ rows: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDiag(["slow-queries"]);
@@ -97,7 +97,7 @@ describe("runDiag (slow-queries)", () => {
   it("respects --limit", async () => {
     const ipc = createMockIpcClient([{ rows: [{ q: "select 1" }] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDiag(["slow-queries", "--limit", "10"]);
@@ -109,7 +109,7 @@ describe("runDiag (slow-queries)", () => {
   it("converts --since to a sinceMs window", async () => {
     const ipc = createMockIpcClient([{ rows: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     const before = Date.now();
@@ -132,7 +132,7 @@ describe("runDiag (unknown subcommand)", () => {
   });
 
   it("rejects unknown subcommands", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDiag(["bogus"])).rejects.toThrow("Unknown diag subcommand: bogus");
   });
 });

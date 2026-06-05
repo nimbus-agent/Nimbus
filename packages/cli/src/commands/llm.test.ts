@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -131,7 +131,7 @@ describe("runLlm (dispatcher)", () => {
   it("runs status when gateway is running", async () => {
     const ipc = createMockIpcClient([{ decisions: MOCK_DECISIONS }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock", pid: 42 },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runLlm(["status"]);
@@ -147,7 +147,7 @@ describe("runLlm (dispatcher)", () => {
   it("passes --json to status", async () => {
     const ipc = createMockIpcClient([{ decisions: MOCK_DECISIONS }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock", pid: 1 },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 1 },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runLlm(["status", "--json"]);

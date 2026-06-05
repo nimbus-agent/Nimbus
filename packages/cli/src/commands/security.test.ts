@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient, type MockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./security.ts");
@@ -197,7 +197,7 @@ function restoreStreams(): void {
 function emittingFixture(mock: MockIpcClient, onScan: (jobId: string) => void): void {
   const base = mock.client as unknown as { call: (m: string, p: unknown) => Promise<unknown> };
   setFixture({
-    gatewayState: { socketPath: "/tmp/fake.sock" },
+    gatewayState: { socketPath: FAKE_SOCKET_PATH },
     ipcClient: {
       call: async (m: string, p: unknown): Promise<unknown> => {
         const r = (await base.call(m, p)) as { jobId?: string };

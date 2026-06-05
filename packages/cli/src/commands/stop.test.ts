@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 
 const mod = await import("./stop.ts");
@@ -45,7 +45,7 @@ describe("runStop dispatcher", () => {
   });
 
   it("attempts to signal the recorded pid when state is present", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock", pid: 2_147_483_640 } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 2_147_483_640 } });
     await runStop([]);
     expect(out.stdout).not.toContain("No gateway state found");
   });

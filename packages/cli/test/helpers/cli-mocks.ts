@@ -1,4 +1,17 @@
 import { beforeEach, mock } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Shared, S5443-compliant fake paths for the mocked gateway. The IPC client and
+// gateway-state reader are fully mocked (the socket is never bound, the state
+// file is never written), so these only need to be unique, non-publicly-writable
+// strings — one real `mkdtempSync` root, derived paths via `join`. Replaces the
+// hardcoded fake socket / gateway-state path literals that every command test
+// repeated.
+const FAKE_GATEWAY_ROOT = mkdtempSync(join(tmpdir(), "nimbus-cli-mock-"));
+export const FAKE_SOCKET_PATH: string = join(FAKE_GATEWAY_ROOT, "fake.sock");
+export const FAKE_GATEWAY_STATE_PATH: string = join(FAKE_GATEWAY_ROOT, "fake-gateway-state.json");
 
 export interface CliTestFixture {
   gatewayState?: { socketPath: string; pid?: number };
@@ -41,7 +54,7 @@ export function installCliMocks(): void {
     readGatewayState: async (): Promise<CliTestFixture["gatewayState"]> =>
       globalThis.__nimbusCliFixture?.gatewayState,
     isProcessAlive: (_pid: number): boolean => globalThis.__nimbusCliFixture?.processAlive ?? true,
-    gatewayStatePath: (_paths: { dataDir: string }): string => "/tmp/fake-gateway-state.json",
+    gatewayStatePath: (_paths: { dataDir: string }): string => FAKE_GATEWAY_STATE_PATH,
     ensureGatewayDirs: async (_paths: unknown): Promise<void> => {},
   }));
 

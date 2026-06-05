@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -55,7 +55,7 @@ describe("runDb verify", () => {
   it("calls db.verify and prints formatted output", async () => {
     const ipc = createMockIpcClient([{ clean: true, formatted: "All good.", exitCode: 0 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["verify"]);
@@ -68,7 +68,7 @@ describe("runDb verify", () => {
   it("propagates non-zero exitCode from the gateway", async () => {
     const ipc = createMockIpcClient([{ clean: false, formatted: "Issues found.", exitCode: 1 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["verify"]);
@@ -92,14 +92,14 @@ describe("runDb repair", () => {
   });
 
   it("requires --yes", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["repair"])).rejects.toThrow("Usage: nimbus db repair --yes");
   });
 
   it("calls db.repair with confirm:true when --yes is given", async () => {
     const ipc = createMockIpcClient([{ formatted: "Repaired." }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["repair", "--yes"]);
@@ -119,7 +119,7 @@ describe("runDb snapshot", () => {
   it("calls db.snapshot.take and prints the path", async () => {
     const ipc = createMockIpcClient([{ path: "/data/snapshots/snap-1.db.gz" }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["snapshot"]);
@@ -139,7 +139,7 @@ describe("runDb snapshots list", () => {
   it("prints '(none)' message when list is empty", async () => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["snapshots", "list"]);
@@ -159,7 +159,7 @@ describe("runDb snapshots list", () => {
       ],
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["snapshots", "list"]);
@@ -168,7 +168,7 @@ describe("runDb snapshots list", () => {
   });
 
   it("rejects an unknown snapshots sub-op", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["snapshots", "bogus"])).rejects.toThrow(/snapshots/);
   });
 });
@@ -182,7 +182,7 @@ describe("runDb snapshots prune", () => {
   });
 
   it("requires --yes", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["snapshots", "prune"])).rejects.toThrow(
       "Usage: nimbus db snapshots prune --yes",
     );
@@ -191,7 +191,7 @@ describe("runDb snapshots prune", () => {
   it("calls db.snapshots.prune with confirm:true", async () => {
     const ipc = createMockIpcClient([{ deleted: 3, keepLast: 5 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["snapshots", "prune", "--yes"]);
@@ -205,7 +205,7 @@ describe("runDb snapshots prune", () => {
   it("passes --keep-last through", async () => {
     const ipc = createMockIpcClient([{ deleted: 0, keepLast: 2 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["snapshots", "prune", "--yes", "--keep-last", "2"]);
@@ -227,7 +227,7 @@ describe("runDb backups list", () => {
   it("calls db.backups.list and prints JSON", async () => {
     const ipc = createMockIpcClient([[{ id: "b1" }]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runDb(["backups", "list"]);
@@ -236,7 +236,7 @@ describe("runDb backups list", () => {
   });
 
   it("rejects an unknown backups sub-op", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["backups", "bogus"])).rejects.toThrow("Usage: nimbus db backups list");
   });
 });
@@ -250,7 +250,7 @@ describe("runDb restore", () => {
   });
 
   it("requires a snapshot argument", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["restore"])).rejects.toThrow(/restore/);
   });
 
@@ -271,7 +271,7 @@ describe("runDb (unknown subcommand)", () => {
   });
 
   it("rejects unknown subcommands", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runDb(["bogus"])).rejects.toThrow("Unknown db subcommand: bogus");
   });
 });

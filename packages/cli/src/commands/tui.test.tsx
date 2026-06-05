@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const replCalls: Array<string[]> = [];
 mock.module("./repl.ts", () => ({
@@ -109,7 +109,7 @@ describe("runTui — fallback to REPL", () => {
   });
 
   it("invokes runRepl with the original args when stdout is not a TTY", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await runTui(["--session", "s1"]);
     expect(stderrChunks.join("")).toContain("Unsuitable terminal detected");
     expect(stderrChunks.join("")).toContain("non-TTY");

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./metrics.ts");
@@ -235,7 +235,7 @@ describe("runMetricsCli", () => {
 
   it("renders pretty output on success", async () => {
     const mock = createMockIpcClient([envelopeFixture()]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runMetricsCli(["dora", "--service", "svc"]);
     expect(stdoutChunks.join("")).toContain("DORA metrics");
     expect(mock.calls).toHaveLength(1);
@@ -245,7 +245,7 @@ describe("runMetricsCli", () => {
 
   it("emits JSON envelope when --json passed", async () => {
     const mock = createMockIpcClient([envelopeFixture()]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runMetricsCli(["dora", "--service", "svc", "--json"]);
     expect(stdoutChunks.join("")).toContain('"service": "svc"');
     expect(stdoutChunks.join("")).toContain('"deployment_frequency"');
@@ -253,14 +253,14 @@ describe("runMetricsCli", () => {
 
   it("exits 2 on malformed envelope", async () => {
     const mock = createMockIpcClient([{ not: "an envelope" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 
   it("exits 2 on IPC error", async () => {
     const mock = createMockIpcClient([new Error("ipc down")]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("ipc down");
   });
