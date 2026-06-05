@@ -45,7 +45,7 @@ async function verifyRs256(
 ): Promise<boolean> {
   const key = await crypto.subtle.importKey(
     "jwk",
-    jwk as JsonWebKey,
+    jwk,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["verify"],
@@ -53,8 +53,8 @@ async function verifyRs256(
   return crypto.subtle.verify(
     { name: "RSASSA-PKCS1-v1_5" },
     key,
-    signature,
-    new TextEncoder().encode(signingInput),
+    new Uint8Array(signature),
+    new Uint8Array(new TextEncoder().encode(signingInput)),
   );
 }
 

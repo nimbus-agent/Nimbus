@@ -17,10 +17,7 @@ function b64urlJson(obj: unknown): string {
   return b64url(new TextEncoder().encode(JSON.stringify(obj)));
 }
 
-async function makeSignedJwt(
-  claims: Record<string, unknown>,
-  kid: string,
-): Promise<{ jwt: string; jwk: JsonWebKey }> {
+async function makeSignedJwt(claims: Record<string, unknown>, kid: string) {
   const pair = await crypto.subtle.generateKey(
     {
       name: "RSASSA-PKCS1-v1_5",
@@ -40,7 +37,7 @@ async function makeSignedJwt(
       new TextEncoder().encode(signingInput),
     ),
   );
-  const jwk = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
+  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   return { jwt: `${signingInput}.${b64url(sig)}`, jwk: { ...jwk, kid, alg: "RS256" } };
 }
 

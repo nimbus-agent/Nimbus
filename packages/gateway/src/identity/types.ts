@@ -82,11 +82,14 @@ export function parseTokenResponse(v: unknown): TokenResponse {
   const rec = asRecord(v);
   const idToken = str(rec, "id_token");
   if (idToken === undefined) throw new TypeError("identity: token response missing id_token");
+  const accessToken = str(rec, "access_token");
+  const refreshToken = str(rec, "refresh_token");
+  const expiresIn = num(rec, "expires_in");
   return {
     idToken,
-    ...(str(rec, "access_token") === undefined ? {} : { accessToken: str(rec, "access_token") }),
-    ...(str(rec, "refresh_token") === undefined ? {} : { refreshToken: str(rec, "refresh_token") }),
-    ...(num(rec, "expires_in") === undefined ? {} : { expiresIn: num(rec, "expires_in") }),
+    ...(accessToken === undefined ? {} : { accessToken }),
+    ...(refreshToken === undefined ? {} : { refreshToken }),
+    ...(expiresIn === undefined ? {} : { expiresIn }),
   };
 }
 
@@ -98,13 +101,12 @@ export function parseDeviceAuthResponse(v: unknown): DeviceAuthResponse {
   if (deviceCode === undefined || userCode === undefined || verificationUri === undefined) {
     throw new TypeError("identity: malformed device authorization response");
   }
+  const verificationUriComplete = str(rec, "verification_uri_complete");
   return {
     deviceCode,
     userCode,
     verificationUri,
-    ...(str(rec, "verification_uri_complete") === undefined
-      ? {}
-      : { verificationUriComplete: str(rec, "verification_uri_complete") }),
+    ...(verificationUriComplete === undefined ? {} : { verificationUriComplete }),
     interval: num(rec, "interval") ?? 5,
     expiresIn: num(rec, "expires_in") ?? 600,
   };
