@@ -44,6 +44,11 @@ execution**:
 | D5 | Federated-invoke placement | **New sibling gate `answerFederatedInvoke`** (do NOT overload the I17 read gate) |
 | D6 | Quorum / approval in-flight state | **Session-only** (in-memory coordinator); the durable record is the audit row |
 | D7 | Team Vault grant granularity | **Per `(entry, peer, tool)`** |
+| D8 | Team secret → connector env mapping | **Reuse the connector's existing vault-key → env mapping**; team entries mirror `CONNECTOR_VAULT_SECRET_KEYS` under `teamvault.<entry>.<key>` (no new per-connector hardcoding) |
+| D9 | Quorum denial semantics | **Fail-closed: a single explicit denial aborts the quorum immediately** (`quorum_denied`), distinct from timeout/partial (`quorum_failed`) |
+| D10 | Delegated-approval timeout | **Timeout / offline → fall back to local owner prompt**; an explicit delegate denial is a rejection (no fallback) |
+| D11 | Grant revocation latency | **DB live-check on every `federation.invoke`** (no in-memory permission cache) — matches I17 |
+| D12 | Anchor restart mid-vote | **Fail-safe**: session-only state discarded, peer gets a clean transport error + may retry, no partial unlock ever persists |
 
 ### Deferred (out of scope for Slice 2)
 
@@ -84,15 +89,23 @@ is untouched.
 ### Component 1 — Team Vault
 
 - **`TeamVaultStore`** persists *only* metadata + grants (V35). Secret bytes live in the anchor's OS
-  Vault under a reserved `teamvault.<entry>` key (e.g. `teamvault.prod-aws`). The store never holds
-  plaintext.
+  Vault under a reserved team keyspace that **mirrors the connector's own vault keys** —
+  `teamvault.<entry>.<connectorKey>` (e.g. `teamvault.prod-aws.aws.access_key_id`,
+  `teamvault.prod-aws.aws.secret_access_key`). The store never holds plaintext. **Injection reuses the
+  connector's existing vault-key → env-var mapping** — a team entry is simply a team-scoped copy of the
+  keys the connector already expects (those declared in `CONNECTOR_VAULT_SECRET_KEYS` for
+  `team_vault_entries.service`), so no new per-connector mapping logic is added (D8). The anchor's
+  cred-injection, at invoke time, reads `teamvault.<entry>.<key>` instead of the local `<key>` for the
+  bound service.
 - **`answerFederatedInvoke`** is the sole consumption path. It performs identity → RBAC → quorum →
   `executor.gate()` → in-process secret injection → `wrapToolOutput`. The secret is read from the OS
-  Vault only at injection time and is dropped after the connector call.
+  Vault only at injection time and is dropped after the connector call. **RBAC is a direct SQLite read
+  on every request** (`TeamVaultStore.checkGrant`) — no in-memory permission cache — so a revoked grant
+  stops the next invoke within one cycle (D11, mirroring I17 revocation).
 - **Invariant I19** — a team secret is injected only inside `answerFederatedInvoke`, only after RBAC
   and quorum pass, and is never placed in any outbound payload. Runtime test asserts (a) the injection
   site is intrinsic to the gate and (b) the invoke result shape carries no secret-shaped fields.
-  Static **D15** asserts the `teamvault.<entry>` vault-key prefix appears only under `teamvault/`
+  Static **D15** asserts the `teamvault.` vault-key prefix appears only under `teamvault/`
   (the D11 mechanism is connector-scoped and will not catch this — a purpose-built check is required,
   exactly as I18/D14 needed one).
 
@@ -106,6 +119,10 @@ is untouched.
   `federation.approvalRespond`.
 - **Invariant I20** — a remote approval is honored only when the answering peer holds a *live,
   in-scope* delegation **and** is I18-valid. This is verified in the gate; the wire is never trusted.
+- **Timeout / offline fallback (D10):** if the delegate is offline or does not answer within the
+  delegated-approval timeout, the gate falls back to a local owner prompt — the owner always retains
+  authority and workflows never hang indefinitely. An explicit delegate *denial* is honored as a
+  rejection and does **not** fall back (a denial is a decision, not an absence of one).
 - Both the delegator's and the delegate's local audit logs record the decision (acceptance criterion).
 
 ### Component 3 — Quorum HITL
@@ -116,6 +133,9 @@ is untouched.
 - **`QuorumCoordinator`** fans the approval request to eligible peers, collects votes via
   `federation.quorumRespond`, and succeeds only on **N distinct authenticated peerIds within the
   window**. A single approval leaves the credential locked and audits the partial approver set.
+  **Fail-closed denial (D9):** a single explicit *denial* aborts the quorum immediately (audited
+  `quorum_denied`), distinct from a timeout / never-reaching-N within the window (audited
+  `quorum_failed`). This prevents approval-spamming a denied request until someone approves.
 - **Invariant I21** — distinct-peer counting is intrinsic to the coordinator (no self-approval, no
   double-count); the executor cannot run a quorum-classified action without it.
 
@@ -138,12 +158,14 @@ is untouched.
 `N`/`windowSeconds` → `QuorumCoordinator.collect()` broadcasts approval requests; approving peers
 answer `federation.quorumRespond`; the coordinator counts distinct authenticated peerIds (I21). On
 `N`-in-window → unlock + run (step 5). On timeout/partial → credential stays locked; audit
-`quorum_failed` with the partial approver set.
+`quorum_failed` with the partial approver set. **Any single explicit denial aborts immediately** →
+credential stays locked; audit `quorum_denied` (D9).
 
 **Flow C — Delegated approval.** An action needing HITL fires on B. `gate()` finds an active,
 in-scope delegation → routes the consent request to the delegate over the consent-broker round-trip.
 Delegate answers `federation.approvalRespond` from `hitl.pendingQueue`. Gate verifies the answerer's
-live in-scope delegation + I18 validity (I20) before honoring. Both audit logs record it.
+live in-scope delegation + I18 validity (I20) before honoring. If the delegate is offline/unresponsive
+past the timeout, the gate falls back to the owner prompt (D10). Both audit logs record it.
 
 ## 6. Schema — V35 (additive, forward-only; `simpleStep` pattern)
 
@@ -151,7 +173,7 @@ live in-scope delegation + I18 validity (I20) before honoring. Both audit logs r
 > `origin/main` is still V34 before trusting this (recalled-version-is-verify-before-act).
 
 ```sql
--- Team Vault: metadata + RBAC only; secret bytes stay in the OS Vault under teamvault.<entry>
+-- Team Vault: metadata + RBAC only; secret bytes stay in the OS Vault under teamvault.<entry>.<connectorKey>
 CREATE TABLE team_vault_entries (
   entry        TEXT PRIMARY KEY,        -- e.g. "prod-aws"
   service      TEXT NOT NULL,           -- connector service id this entry credentials
@@ -235,7 +257,7 @@ Typed loader in `config/nimbus-toml.ts`; default empty map.
 
 | ID | Statement | Wiring site | Enforcement |
 |----|-----------|-------------|-------------|
-| **I19** | Team secrets injected only inside `answerFederatedInvoke`, after RBAC+quorum, never in an outbound payload | `federation/invoke-gate.ts`, `teamvault/team-vault-keys.ts` | runtime test (injection site + leak-proof result shape) + static **D15** (`teamvault.<entry>` prefix only under `teamvault/`) |
+| **I19** | Team secrets injected only inside `answerFederatedInvoke`, after RBAC+quorum, never in an outbound payload | `federation/invoke-gate.ts`, `teamvault/team-vault-keys.ts` | runtime test (injection site + leak-proof result shape) + static **D15** (`teamvault.` prefix only under `teamvault/`) |
 | **I20** | Delegated approval honored only when answerer holds a live in-scope delegation + is I18-valid | `engine/executor.ts` gate remote-approval branch | runtime test (forged/expired delegation rejected) |
 | **I21** | Distinct-peer quorum counting intrinsic to `QuorumCoordinator`; executor cannot run a quorum-classified action without it | `engine/quorum/quorum-coordinator.ts` | runtime test (self-approval + double-count rejected; single approval leaves credential locked) |
 
@@ -251,6 +273,12 @@ in the same commit as the wiring. D15 is added to `scripts/structure-audit/check
   set. Business errors travel as a resolved `{ kind: "error", error }` over the wire (not a throw),
   per the Slice 1 wire-error convention.
 - Delegation expired mid-flight → treated as no delegation; falls back to the owner prompt.
+- Delegate offline / no response past the timeout → fall back to the owner prompt (D10); an explicit
+  delegate denial is honored as a rejection (no fallback).
+- **Anchor restart mid-vote (D12)** — in-flight quorum / delegation state is session-only, so a
+  restart discards it. The requesting peer receives a clean transport error (connection reset / RPC
+  timeout) and may safely retry. A credential is unlocked only when full quorum is met within a single
+  live session, so a restart can **never** leave a partial unlock or a half-applied action.
 
 ## 10. Testing
 
@@ -284,3 +312,25 @@ in the same commit as the wiring. D15 is added to `scripts/structure-audit/check
 - New shared hot files churned by every Phase 6 slice (expect additive "keep both" rebase conflicts):
   `lan-rpc` FORBIDDEN list, `federation-rpc` ctx, `dispatchers.ts` ctx construction,
   `assemble.ts` boot binds, `security-invariants.test.ts` count, Tauri allowlist.
+
+## 13. Design-review resolutions (2026-06-06)
+
+Resolutions of the points raised in
+`2026-06-06-phase6-slice2-team-vault-quorum-hitl-design-review.md`:
+
+1. **Secret → connector env mapping** → **fixed (D8).** Team entries mirror the connector's existing
+   vault keys under `teamvault.<entry>.<key>`; injection reuses the connector's existing
+   vault-key → env-var mapping. See §4 Component 1 + §6.
+2. **Quorum denial semantics** → **fixed (D9).** A single explicit denial aborts immediately
+   (`quorum_denied`), fail-closed. See §4 Component 3 + §5 Flow B + §9.
+3. **Offline delegate / timeout fallback** → **fixed (D10).** Timeout/offline falls back to the owner
+   prompt; an explicit denial is a rejection. See §4 Component 2 + §5 Flow C + §9.
+4. **Zero-latency grant revocation** → **fixed (D11).** `checkGrant` is a direct SQLite read per
+   `federation.invoke`, no permission cache. See §4 Component 1 + §11.
+5. **Session-only state resiliency on restart** → **fixed (D12).** Restart discards in-flight state;
+   peer gets a clean transport error and may retry; no partial unlock can persist. See §9.
+
+Reviewer note on invariant alignment: the Tauri allowlist count lives in
+`packages/ui/src-tauri/src/gateway_bridge.rs` (`ALLOWED_METHODS`) with a TS mirror assertion in
+`security-invariants.test.ts` — **not** `tauri.conf.json` (that file carries the CSP, invariant I8).
+§7 already reflects the correct sites; no spec change needed.
