@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";

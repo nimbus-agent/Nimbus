@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ExpertBrief } from "./findings.ts";
-import { renderExpert } from "./render.ts";
+import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
+import { renderCatchup, renderExpert, renderImpact } from "./render.ts";
 
 const BASE: Pick<ExpertBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
   kind: "expert",
@@ -115,9 +115,6 @@ describe("renderExpert", () => {
   });
 });
 
-import type { ImpactBrief } from "./findings.ts";
-import { renderImpact } from "./render.ts";
-
 const IMPACT_BASE: Pick<ImpactBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
   kind: "impact",
   agentVersion: 1,
@@ -227,9 +224,6 @@ describe("renderImpact", () => {
     expect(renderImpact(brief)).toBe(renderImpact(brief));
   });
 });
-
-import type { CatchupBrief } from "./findings.ts";
-import { renderCatchup } from "./render.ts";
 
 const CATCHUP_BASE: Pick<CatchupBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
   kind: "catchup",

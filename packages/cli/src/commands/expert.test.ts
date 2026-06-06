@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 
 const mod = await import("./expert.ts");
