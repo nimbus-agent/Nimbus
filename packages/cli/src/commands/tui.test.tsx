@@ -100,10 +100,10 @@ describe("runTui — fallback to REPL", () => {
   afterEach(() => {
     clearFixture();
     restoreStreams();
-    if (origIsTty !== undefined) {
-      Object.defineProperty(process.stdout, "isTTY", origIsTty);
-    } else {
+    if (origIsTty === undefined) {
       delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", origIsTty);
     }
   });
 

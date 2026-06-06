@@ -46,11 +46,11 @@ if (import.meta.main) {
   let failures = 0;
   for (const p of paths) {
     const result = await auditSvgFile(p);
-    if (!result.ok) {
+    if (result.ok) {
+      console.log(`OK ${p} (${result.width}x${result.height})`);
+    } else {
       console.error(`FAIL ${p}: ${result.reason}`);
       failures++;
-    } else {
-      console.log(`OK ${p} (${result.width}x${result.height})`);
     }
   }
   if (failures > 0) {

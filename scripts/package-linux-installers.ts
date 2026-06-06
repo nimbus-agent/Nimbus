@@ -206,15 +206,15 @@ function buildTarball(): string {
     chmodSync(join(tarBin, "nimbus-sandbox-helper"), 0o755);
   }
   const helperNote =
-    sandboxHelper !== null
-      ? `bin/nimbus-sandbox-helper is the privileged Linux sandbox helper. After
+    sandboxHelper === null
+      ? ""
+      : `bin/nimbus-sandbox-helper is the privileged Linux sandbox helper. After
 running install.sh, run ./linux-postinstall.sh — it will grant the helper
 cap_net_admin+ep so the sandbox can enforce per-host network filtering
 without running the Gateway as root. See
 docs/release/headless-postinst-linux-setcap.md for details.
 
-`
-      : "";
+`;
   writeFileSync(
     join(tarStage, "README.txt"),
     `Nimbus headless bundle (Linux x64)

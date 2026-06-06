@@ -191,14 +191,14 @@ export class FakeGateway {
         if (typeof p.requestId === "string") {
           const rid = p.requestId;
           const earlyApproved = this.earlyConsents.get(rid);
-          if (earlyApproved !== undefined) {
-            this.earlyConsents.delete(rid);
-            this.consentDecisions.push({ requestId: rid, approved: earlyApproved });
-            // No pause needed — response is already here.
-          } else {
+          if (earlyApproved === undefined) {
             await new Promise<void>((resolve) => {
               this.pendingConsent = { requestId: rid, resume: resolve };
             });
+          } else {
+            this.earlyConsents.delete(rid);
+            this.consentDecisions.push({ requestId: rid, approved: earlyApproved });
+            // No pause needed — response is already here.
           }
         }
       }

@@ -28,12 +28,12 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
-  if (SAVED.agent !== undefined) process.env["NIMBUS_AGENT_MODEL"] = SAVED.agent;
-  else delete process.env["NIMBUS_AGENT_MODEL"];
-  if (SAVED.classifier !== undefined) process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED.classifier;
-  else delete process.env["NIMBUS_CLASSIFIER_MODEL"];
-  if (SAVED.telemetry !== undefined) process.env["NIMBUS_TELEMETRY_ENABLED"] = SAVED.telemetry;
-  else delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+  if (SAVED.agent === undefined) delete process.env["NIMBUS_AGENT_MODEL"];
+  else process.env["NIMBUS_AGENT_MODEL"] = SAVED.agent;
+  if (SAVED.classifier === undefined) delete process.env["NIMBUS_CLASSIFIER_MODEL"];
+  else process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED.classifier;
+  if (SAVED.telemetry === undefined) delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+  else process.env["NIMBUS_TELEMETRY_ENABLED"] = SAVED.telemetry;
 });
 
 describe("listTomlKeysWithEnv — llm.* entries", () => {

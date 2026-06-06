@@ -10,16 +10,16 @@ function res(over: {
   conditions?: unknown;
 }): Record<string, unknown> {
   const conditions =
-    over.conditions !== undefined
-      ? over.conditions
-      : [
+    over.conditions === undefined
+      ? [
           {
             type: "Ready",
             status: "True",
             reason: over.readyReason ?? "ReconciliationSucceeded",
             message: over.readyMessage ?? "Applied revision: main@sha1:abc",
           },
-        ];
+        ]
+      : over.conditions;
   return {
     metadata: { name: over.name ?? "podinfo", namespace: over.namespace ?? "flux-system" },
     status: { conditions },
