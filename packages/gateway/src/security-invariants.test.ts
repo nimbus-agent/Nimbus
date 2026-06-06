@@ -102,6 +102,33 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/"extension\.checkForUpdates"/);
     expect(src).toMatch(/"extension\.update"/);
   });
+
+  test("admits the team-vault wire methods but FORBIDS team-vault/HITL management over LAN (Slice 2)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // The three answerable wire methods are admitted (gated downstream by I19 RBAC + quorum).
+    for (const m of [
+      "federation.invoke",
+      "federation.quorumRespond",
+      "federation.approvalRespond",
+    ]) {
+      expect(() => checkLanMethodAllowed(m, peer)).not.toThrow();
+    }
+    // Management/secret surfaces are local-only — never callable over the wire.
+    for (const m of [
+      "teamvault.put",
+      "teamvault.delete",
+      "teamvault.grant",
+      "teamvault.revoke",
+      "teamvault.list",
+      "hitl.delegate",
+      "hitl.revokeDelegation",
+      "hitl.listDelegations",
+      "hitl.pendingQueue",
+    ]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(/not callable over LAN/);
+    }
+  });
 });
 
 describe("I6 — LAN bind defaults to loopback", () => {
