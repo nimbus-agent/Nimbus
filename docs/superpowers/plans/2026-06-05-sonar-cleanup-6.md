@@ -348,8 +348,8 @@ After each rule: `bun run typecheck` + affected `bun test`. Commit `refactor(son
 
 **Files:** enumerated live from `typescript:S4325`, grouped by package (paginate p=1..4; 622 > ps=200).
 
-- [ ] **Step 1: Enumerate and bucket by package.**
-- [ ] **Step 2: Per package, delete each redundant cast/assertion:**
+- [x] **Step 1: Enumerate and bucket by package.** 622 sites: gateway 428, ui 76, mcp-connectors 61, cli 30, vscode-extension 18, scripts 4, sdk 4, client 1.
+- [x] **Step 2: Per package, delete each redundant cast/assertion:**
 
 ```typescript
 const n = (x as number) + 1;   // → const n = x + 1;
@@ -358,8 +358,8 @@ foo(bar!.baz);                 // → foo(bar.baz);
 
 **Guard rail:** after removal, run `bun run typecheck`. If it now errors on that line, the assertion was NOT redundant (Sonar's model diverged from `tsc`) — restore it and add `// NOSONAR S4325`. Never silence with `any` or a looser type.
 
-- [ ] **Step 3: Verify + commit per package** — `bun run typecheck` + package `bun test`; `refactor(sonar): drop redundant casts/non-null in <package> (S4325)`.
-- [ ] **Step 4: `bun run preflight` before PR (largest churn) → PASS.**
+- [x] **Step 3: Verify + commit per package** — per-package `tsc --noEmit` (the oracle) + targeted suites; 9 commits (`fd662316` gateway → `a0d8cc24` cli, incl. one `biome format` follow-up). ~591 sites were clean removals; **31 are Sonar/`tsc` divergences kept with `// NOSONAR S4325`** (gateway 14, ui 9, sdk 4, cli 2, mcp-connectors 1, vscode-extension 1) and tabulated in `docs/structure-audit/sonarqube-rule-tuning.md`.
+- [ ] **Step 4: `bun run preflight` before PR (largest churn) → PASS.** (deferred — user chose "push later"; nothing pushed yet)
 
 ---
 
