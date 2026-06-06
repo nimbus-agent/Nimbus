@@ -25,15 +25,15 @@ export function isPublishedJsdocFile(relativePath: string): boolean {
   return PUBLISHED_JSDOC_PREFIXES.some((p) => relativePath.startsWith(p));
 }
 
+function isJsdoc(text: string): boolean {
+  return text.startsWith("/**");
+}
+
 export function stripTsSource(source: string, opts: { keepJsdoc: boolean }): string {
   const sf = ts.createSourceFile("f.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
   const removals: Array<{ start: number; end: number }> = [];
   const visitedScans = new Set<string>();
   const emittedStarts = new Set<number>();
-
-  function isJsdoc(text: string): boolean {
-    return text.startsWith("/**");
-  }
 
   function scanCommentsAtPosition(pos: number, isLeading: boolean): void {
     const key = `${pos}:${isLeading ? "L" : "T"}`;

@@ -65,16 +65,16 @@ describe("google-drive-sync — credential short-circuits", () => {
   });
 });
 
-describe("google-drive-sync — cursor decode", () => {
-  function stageLegacyFlowEmpty(): void {
-    fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t-fresh" });
-    fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
-  }
-  function stageNullCursorFlowEmpty(): void {
-    fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
-    fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
-  }
+function stageLegacyFlowEmpty(): void {
+  fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t-fresh" });
+  fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
+}
+function stageNullCursorFlowEmpty(): void {
+  fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
+  fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
+}
 
+describe("google-drive-sync — cursor decode", () => {
   test("null cursor → initial flow: fetches startPageToken + files.list, transitions to drain", async () => {
     stageNullCursorFlowEmpty();
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

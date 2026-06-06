@@ -83,12 +83,13 @@ describe("buildContextSnippet", () => {
   });
 });
 
+function findPattern(name: string): SecretPattern {
+  const p = SECRET_PATTERNS.find((x) => x.name === name);
+  if (p === undefined) throw new Error(`pattern ${name} missing`);
+  return p;
+}
+
 describe("individual pattern matches", () => {
-  function findPattern(name: string): SecretPattern {
-    const p = SECRET_PATTERNS.find((x) => x.name === name);
-    if (p === undefined) throw new Error(`pattern ${name} missing`);
-    return p;
-  }
   function hasMatch(name: string, body: string): boolean {
     const p = findPattern(name);
     p.regex.lastIndex = 0;

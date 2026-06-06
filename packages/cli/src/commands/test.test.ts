@@ -159,6 +159,22 @@ describe("runTest dispatcher", () => {
   });
 });
 
+function mockSpawnEmitting(event: "close" | "error", arg: number | Error): void {
+  mock.module("node:child_process", () => ({
+    spawn: (): EventEmitter => {
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit(event, arg));
+      return child;
+    },
+    execFile: realExecFile,
+    exec: realExec,
+    fork: realFork,
+    spawnSync: realSpawnSync,
+    execFileSync: realExecFileSync,
+    execSync: realExecSync,
+  }));
+}
+
 describe("runTest spawn path (mocked node:child_process)", () => {
   let tmpDir: string;
 
@@ -198,22 +214,6 @@ describe("runTest spawn path (mocked node:child_process)", () => {
     }));
     rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
-
-  function mockSpawnEmitting(event: "close" | "error", arg: number | Error): void {
-    mock.module("node:child_process", () => ({
-      spawn: (): EventEmitter => {
-        const child = new EventEmitter();
-        queueMicrotask(() => child.emit(event, arg));
-        return child;
-      },
-      execFile: realExecFile,
-      exec: realExec,
-      fork: realFork,
-      spawnSync: realSpawnSync,
-      execFileSync: realExecFileSync,
-      execSync: realExecSync,
-    }));
-  }
 
   it("resolves + prints OK when the test subprocess exits 0", async () => {
     mockSpawnEmitting("close", 0);

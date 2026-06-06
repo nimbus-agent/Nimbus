@@ -100,11 +100,11 @@ describe("bitbucket-sync — credential short-circuits", () => {
   });
 });
 
-describe("bitbucket-sync — cursor decode failures", () => {
-  function stageEmptyWorkspace(): void {
-    fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
-  }
+function stageEmptyWorkspace(): void {
+  fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
+}
 
+describe("bitbucket-sync — cursor decode failures", () => {
   test("null cursor falls back to default sync state and fetches workspace", async () => {
     stageEmptyWorkspace();
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

@@ -51,43 +51,38 @@ describe("dispatchWriteRoute", () => {
   });
 });
 
-describe("dispatchWriteRoute — SCIM writes flow through the I13 pipeline", () => {
-  function scimContext() {
-    const db = openSeededInMemoryDb(34);
-    return {
-      writeDb: db,
-      expectedToken: "deploy-token",
-      rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
-      nowMs: () => 1_700_000_000_000,
-      knownServices: (): readonly string[] => [],
-      scim: {
-        token: "scim-secret",
-        store: new NamespaceStore(db),
-        identity: new IdentityStore(db),
-      },
-    };
-  }
-  function scimReq(
-    method: string,
-    path: string,
-    token: string | undefined,
-    body?: unknown,
-  ): Request {
-    const headers: Record<string, string> = {};
-    if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
-    return new Request(`http://127.0.0.1${path}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  }
-  function auditCount(db: Database, actionType: string): number {
-    const row = db
-      .query("SELECT COUNT(*) AS n FROM audit_log WHERE action_type = ?")
-      .get(actionType) as { n: number };
-    return row.n;
-  }
+function scimContext() {
+  const db = openSeededInMemoryDb(34);
+  return {
+    writeDb: db,
+    expectedToken: "deploy-token",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: (): readonly string[] => [],
+    scim: {
+      token: "scim-secret",
+      store: new NamespaceStore(db),
+      identity: new IdentityStore(db),
+    },
+  };
+}
+function scimReq(method: string, path: string, token: string | undefined, body?: unknown): Request {
+  const headers: Record<string, string> = {};
+  if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
+  return new Request(`http://127.0.0.1${path}`, {
+    method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+function auditCount(db: Database, actionType: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM audit_log WHERE action_type = ?")
+    .get(actionType) as { n: number };
+  return row.n;
+}
 
+describe("dispatchWriteRoute — SCIM writes flow through the I13 pipeline", () => {
   it("provisions a user with a valid bearer (201) and surfaces rate-limit headers", async () => {
     const ctx = scimContext();
     const res = await dispatchWriteRoute(

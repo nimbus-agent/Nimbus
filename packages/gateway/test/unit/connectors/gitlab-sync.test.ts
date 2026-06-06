@@ -107,11 +107,11 @@ describe("gitlab-sync — credential short-circuits", () => {
   });
 });
 
-describe("gitlab-sync — cursor decode", () => {
-  function stageEmptyEvents(): void {
-    fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
-  }
+function stageEmptyEvents(): void {
+  fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
+}
 
+describe("gitlab-sync — cursor decode", () => {
   test("v2 cursor round-trips (happy path)", async () => {
     stageEmptyEvents();
     const v2 = encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 1, pipelines: {} });

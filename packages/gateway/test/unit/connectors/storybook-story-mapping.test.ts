@@ -57,19 +57,19 @@ describe("parseStorybookIndex", () => {
   });
 });
 
-describe("mapStorybookStoryToItem", () => {
-  function input(over: Partial<StorybookStoryInput> = {}): StorybookStoryInput {
-    return {
-      id: "components-button--primary",
-      title: "Components/Button",
-      name: "Primary",
-      importPath: "./src/Button.stories.tsx",
-      tags: ["autodocs"],
-      entryType: "story",
-      ...over,
-    };
-  }
+function input(over: Partial<StorybookStoryInput> = {}): StorybookStoryInput {
+  return {
+    id: "components-button--primary",
+    title: "Components/Button",
+    name: "Primary",
+    importPath: "./src/Button.stories.tsx",
+    tags: ["autodocs"],
+    entryType: "story",
+    ...over,
+  };
+}
 
+describe("mapStorybookStoryToItem", () => {
   test("maps to a storybook:story item with title 'Component / Story'", () => {
     const row = mapStorybookStoryToItem(input(), { syncedAt: SYNCED_AT, modifiedAtMs: 123 });
     expect(row).not.toBeNull();

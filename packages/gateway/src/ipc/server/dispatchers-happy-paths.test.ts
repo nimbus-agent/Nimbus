@@ -153,19 +153,19 @@ describe("tryDispatchAgentsRpc — body coverage with localIndex", () => {
   });
 });
 
-describe("tryDispatchFederationRpc — body coverage with wired providers", () => {
-  function fedCtx(): ServerCtx {
-    const db = trackDb();
-    const localIndex = new LocalIndex(db);
-    return makeCtx({
-      localIndex,
-      federationDiscovery: new InMemoryDiscoveryProvider([
-        { instanceName: "peer-x", host: "peer-x.test", port: 7475 },
-      ]),
-      federationPairing: new PeerPairing(localIndex),
-    });
-  }
+function fedCtx(): ServerCtx {
+  const db = trackDb();
+  const localIndex = new LocalIndex(db);
+  return makeCtx({
+    localIndex,
+    federationDiscovery: new InMemoryDiscoveryProvider([
+      { instanceName: "peer-x", host: "peer-x.test", port: 7475 },
+    ]),
+    federationPairing: new PeerPairing(localIndex),
+  });
+}
 
+describe("tryDispatchFederationRpc — body coverage with wired providers", () => {
   test("federation.discover hits and returns the provider's peers (covers the hit path)", async () => {
     const out = await tryDispatchFederationRpc(fedCtx(), "federation.discover", {});
     expect((out as { peers: unknown[] }).peers.length).toBe(1);

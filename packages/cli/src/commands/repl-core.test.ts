@@ -134,22 +134,22 @@ describe("loadReplPreconditions (REPL gate)", () => {
   });
 });
 
+function fakeInterface(answers: string[]): Parameters<typeof runRepl>[2] {
+  let idx = 0;
+  return (() => ({
+    question: async (): Promise<string> => {
+      const answer = answers[idx] ?? "exit";
+      idx += 1;
+      return answer;
+    },
+    close: (): void => {},
+  })) as unknown as Parameters<typeof runRepl>[2];
+}
+
 describe("runRepl (readline loop, injected interface)", () => {
   beforeEach(() => {
     out.reset();
   });
-
-  function fakeInterface(answers: string[]): Parameters<typeof runRepl>[2] {
-    let idx = 0;
-    return (() => ({
-      question: async (): Promise<string> => {
-        const answer = answers[idx] ?? "exit";
-        idx += 1;
-        return answer;
-      },
-      close: (): void => {},
-    })) as unknown as Parameters<typeof runRepl>[2];
-  }
 
   it("drives the readline loop and exits cleanly on `exit`", async () => {
     const mockIpc = createMockIpcClient([]);

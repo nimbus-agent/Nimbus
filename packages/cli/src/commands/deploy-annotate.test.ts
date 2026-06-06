@@ -21,6 +21,12 @@ const REQUIRED = [
   "1747142400000",
 ];
 
+function omitFlag(flag: string): string[] {
+  const idx = REQUIRED.indexOf(flag);
+  if (idx === -1) return [...REQUIRED];
+  return [...REQUIRED.slice(0, idx), ...REQUIRED.slice(idx + 2)];
+}
+
 describe("parseDeployAnnotateArgs", () => {
   test("parses the minimal required flag set with defaults", () => {
     const parsed = parseDeployAnnotateArgs(REQUIRED);
@@ -60,12 +66,6 @@ describe("parseDeployAnnotateArgs", () => {
     expect(parsed.jobId).toBe("job-7");
     expect(parsed.json).toBe(true);
   });
-
-  function omitFlag(flag: string): string[] {
-    const idx = REQUIRED.indexOf(flag);
-    if (idx === -1) return [...REQUIRED];
-    return [...REQUIRED.slice(0, idx), ...REQUIRED.slice(idx + 2)];
-  }
 
   test("rejects missing --sha with a clear error", () => {
     const args = omitFlag("--sha");

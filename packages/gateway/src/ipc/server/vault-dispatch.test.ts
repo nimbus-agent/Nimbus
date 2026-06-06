@@ -125,35 +125,35 @@ describe("dispatchVaultGated — invalid params", () => {
   });
 });
 
-describe("rpcVaultOrMethodNotFound", () => {
-  function buildCtx(opts: { withLocalIndex: boolean }): { ctx: ServerCtx; openDbs: unknown[] } {
-    const openDbs: unknown[] = [];
-    const consentImpl = new ConsentCoordinatorImpl(() => undefined);
-    let localIndex: LocalIndex | undefined;
-    if (opts.withLocalIndex) {
-      const { Database } = require("bun:sqlite") as { Database: new (path: string) => unknown };
-      const db = new Database(":memory:") as { close: () => void };
-      LocalIndex.ensureSchema(db as never); // NOSONAR S4325: db is a minimal {close} stub widened to Database for the test
-      localIndex = new LocalIndex(db as never); // NOSONAR S4325: db is a minimal {close} stub widened to Database for the test
-      openDbs.push(db);
-    }
-    const ctx: ServerCtx = {
-      options: {
-        listenPath: "",
-        vault,
-        version: "test",
-        ...(localIndex === undefined ? {} : { localIndex }),
-      },
-      consentImpl,
-      startedAtMs: Date.now(),
-      streamRegistry: { register: () => "id", complete: () => {}, error: () => {} } as never,
-      broadcastNotification: () => {},
-      getAgentInvokeHandler: () => undefined,
-      getWorkflowRunHandler: () => undefined,
-    };
-    return { ctx, openDbs };
+function buildCtx(opts: { withLocalIndex: boolean }): { ctx: ServerCtx; openDbs: unknown[] } {
+  const openDbs: unknown[] = [];
+  const consentImpl = new ConsentCoordinatorImpl(() => undefined);
+  let localIndex: LocalIndex | undefined;
+  if (opts.withLocalIndex) {
+    const { Database } = require("bun:sqlite") as { Database: new (path: string) => unknown };
+    const db = new Database(":memory:") as { close: () => void };
+    LocalIndex.ensureSchema(db as never); // NOSONAR S4325: db is a minimal {close} stub widened to Database for the test
+    localIndex = new LocalIndex(db as never); // NOSONAR S4325: db is a minimal {close} stub widened to Database for the test
+    openDbs.push(db);
   }
+  const ctx: ServerCtx = {
+    options: {
+      listenPath: "",
+      vault,
+      version: "test",
+      ...(localIndex === undefined ? {} : { localIndex }),
+    },
+    consentImpl,
+    startedAtMs: Date.now(),
+    streamRegistry: { register: () => "id", complete: () => {}, error: () => {} } as never,
+    broadcastNotification: () => {},
+    getAgentInvokeHandler: () => undefined,
+    getWorkflowRunHandler: () => undefined,
+  };
+  return { ctx, openDbs };
+}
 
+describe("rpcVaultOrMethodNotFound", () => {
   afterEach(() => {
     /* DB cleanup deferred to per-test using openDbs */
   });

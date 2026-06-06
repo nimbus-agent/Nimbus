@@ -4,20 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+function emptyEnvOverrides(): Record<string, string> {
+  const root = mkdtempSync(join(tmpdir(), "nimbus-no-gateway-"));
+  return {
+    LOCALAPPDATA: root,
+    APPDATA: root,
+    XDG_DATA_HOME: root,
+    XDG_CONFIG_HOME: root,
+    XDG_RUNTIME_DIR: root,
+    HOME: root,
+  };
+}
+
 describe("nimbus expert e2e (no-Gateway smoke)", () => {
   const cliEntry = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
-
-  function emptyEnvOverrides(): Record<string, string> {
-    const root = mkdtempSync(join(tmpdir(), "nimbus-no-gateway-"));
-    return {
-      LOCALAPPDATA: root,
-      APPDATA: root,
-      XDG_DATA_HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_RUNTIME_DIR: root,
-      HOME: root,
-    };
-  }
 
   test("expert exits non-zero with 'Gateway is not running' on stderr when no gateway", async () => {
     const proc = Bun.spawn({

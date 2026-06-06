@@ -103,11 +103,11 @@ describe("discord-sync — credential short-circuits", () => {
   });
 });
 
-describe("discord-sync — cursor decode failures", () => {
-  function stageEmptyGuilds(): void {
-    fixture.fetchMock.respond("GET", GUILDS_URL, []);
-  }
+function stageEmptyGuilds(): void {
+  fixture.fetchMock.respond("GET", GUILDS_URL, []);
+}
 
+describe("discord-sync — cursor decode failures", () => {
   test("null cursor falls back to default state and fetches guild list", async () => {
     stageEmptyGuilds();
     const res = await createDiscordSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

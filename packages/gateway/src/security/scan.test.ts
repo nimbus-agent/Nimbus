@@ -97,16 +97,17 @@ describe("scanItemsForSecrets — match never contains the full secret", () => {
   });
 });
 
+function* rows(): Generator<ScanItem> {
+  for (let i = 0; i < 100; i++) {
+    yield makeItem({
+      id: `filesystem:item-${String(i)}`,
+      body_preview: i % 5 === 0 ? "k='AKIAIOSFODNN7EXAMPLE'" : "no secret here",
+    });
+  }
+}
+
 describe("scanItemsForSecrets — many items streaming", () => {
   test("iterates a generator without loading into a single array", () => {
-    function* rows(): Generator<ScanItem> {
-      for (let i = 0; i < 100; i++) {
-        yield makeItem({
-          id: `filesystem:item-${String(i)}`,
-          body_preview: i % 5 === 0 ? "k='AKIAIOSFODNN7EXAMPLE'" : "no secret here",
-        });
-      }
-    }
     const r = scanItemsForSecrets(rows(), SECRET_PATTERNS, NOW);
     expect(r.items_scanned).toBe(100);
     expect(r.findings_count).toBe(20);
