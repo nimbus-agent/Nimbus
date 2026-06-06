@@ -131,6 +131,8 @@ class BridgeImapClient implements MailClient {
       secure: false,
       auth: { user: this.config.user, pass: this.config.pass },
       logger: false,
+      // ProtonMail Bridge listens on localhost with a self-signed certificate;
+      // disabling chain verification is required and safe for the loopback bridge.
       tls: { rejectUnauthorized: false },
     });
   }

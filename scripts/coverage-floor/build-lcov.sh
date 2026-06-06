@@ -11,7 +11,7 @@
 set -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
 rm -rf coverage
 mkdir -p coverage
