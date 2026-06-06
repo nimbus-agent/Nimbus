@@ -16,7 +16,7 @@ function ctx(): FederationRpcContext {
     consentTimeoutMs: 1000,
     notify: (method, params) => notes.push({ method, params }),
     discovery: new InMemoryDiscoveryProvider([
-      { instanceName: "bob", host: "10.0.0.2", port: 7475 },
+      { instanceName: "bob", host: "gateway-b.test", port: 7475 },
     ]),
     pairing: new PeerPairing(index),
   };
@@ -109,7 +109,11 @@ test("missing required param throws a FederationRpcError (invalid params)", asyn
 
 test("federation.pair throws 'not wired' when no outbound handshake is configured", async () => {
   await expect(
-    dispatchFederationRpc("federation.pair", { host: "10.0.0.2", port: 7475, code: "abc" }, ctx()),
+    dispatchFederationRpc(
+      "federation.pair",
+      { host: "gateway-b.test", port: 7475, code: "abc" },
+      ctx(),
+    ),
   ).rejects.toThrow(/not wired/);
 });
 

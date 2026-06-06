@@ -19,7 +19,7 @@ test("approveInboundPair persists an inbound peer only after owner approval", ()
 
   const req = pairing.beginInboundPair({
     peerPubkey: peerKey,
-    hostIp: "192.168.1.11",
+    hostIp: "bob-desktop.test",
     displayName: "bob-desktop",
   });
   expect(index.getLanPeerByPubkey(peerKey)).toBeUndefined();
@@ -34,7 +34,7 @@ test("approveInboundPair persists an inbound peer only after owner approval", ()
 test("rejectInboundPair never persists the peer", () => {
   const pairing = new PeerPairing(index);
   const peerKey = generateBoxKeypair().publicKey;
-  const req = pairing.beginInboundPair({ peerPubkey: peerKey, hostIp: "1.2.3.4" });
+  const req = pairing.beginInboundPair({ peerPubkey: peerKey, hostIp: "peer.test" });
   pairing.rejectInboundPair(req);
   expect(index.getLanPeerByPubkey(peerKey)).toBeUndefined();
 });
@@ -42,7 +42,7 @@ test("rejectInboundPair never persists the peer", () => {
 test("listPeers reflects persisted peers", () => {
   const pairing = new PeerPairing(index);
   const k = generateBoxKeypair().publicKey;
-  const req = pairing.beginInboundPair({ peerPubkey: k, hostIp: "1.2.3.4" });
+  const req = pairing.beginInboundPair({ peerPubkey: k, hostIp: "peer.test" });
   pairing.approveInboundPair(req);
   expect(pairing.listPeers().length).toBe(1);
 });
@@ -51,7 +51,7 @@ test("initiatePair persists an outbound peer using the injected handshake", asyn
   const peerKey = generateBoxKeypair().publicKey;
   const fakeHandshake = async () => peerKey;
   const pairing = new PeerPairing(index, fakeHandshake);
-  const peerId = await pairing.initiatePair("192.168.1.20", 7475, "PAIRCODE000000000000");
+  const peerId = await pairing.initiatePair("outbound-peer.test", 7475, "PAIRCODE000000000000");
   const row = index.getLanPeerByPubkey(peerKey);
   expect(row?.peer_id).toBe(peerId);
   expect(row?.direction).toBe("outbound");
@@ -60,14 +60,14 @@ test("initiatePair persists an outbound peer using the injected handshake", asyn
 
 test("initiatePair throws when no handshake is wired", async () => {
   const pairing = new PeerPairing(index);
-  await expect(pairing.initiatePair("1.2.3.4", 7475, "x")).rejects.toThrow("not wired");
+  await expect(pairing.initiatePair("peer.test", 7475, "x")).rejects.toThrow("not wired");
 });
 
 test("removePeer unpairs a persisted peer", () => {
   const pairing = new PeerPairing(index);
   const k = generateBoxKeypair().publicKey;
   const peerId = pairing.approveInboundPair(
-    pairing.beginInboundPair({ peerPubkey: k, hostIp: "1.2.3.4" }),
+    pairing.beginInboundPair({ peerPubkey: k, hostIp: "peer.test" }),
   );
   expect(pairing.listPeers().length).toBe(1);
   pairing.removePeer(peerId);

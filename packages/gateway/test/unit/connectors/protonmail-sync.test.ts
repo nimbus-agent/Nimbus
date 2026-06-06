@@ -89,10 +89,10 @@ describe("protonmail-sync", () => {
   test("honors a custom Bridge host/port override", async () => {
     await fx.vault.set("protonmail.username", "u");
     await fx.vault.set("protonmail.password", "p");
-    await fx.vault.set("protonmail.imap_host", "192.168.1.9");
+    await fx.vault.set("protonmail.imap_host", "proton-bridge.test");
     await fx.vault.set("protonmail.imap_port", "11143");
     await makeSyncable(okMessages()).sync(fx.createSyncContext(), null);
-    expect(lastConfig?.host).toBe("192.168.1.9");
+    expect(lastConfig?.host).toBe("proton-bridge.test");
     expect(lastConfig?.port).toBe(11143);
   });
 

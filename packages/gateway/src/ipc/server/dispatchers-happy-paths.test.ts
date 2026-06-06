@@ -160,7 +160,7 @@ describe("tryDispatchFederationRpc — body coverage with wired providers", () =
     return makeCtx({
       localIndex,
       federationDiscovery: new InMemoryDiscoveryProvider([
-        { instanceName: "peer-x", host: "10.0.0.9", port: 7475 },
+        { instanceName: "peer-x", host: "peer-x.test", port: 7475 },
       ]),
       federationPairing: new PeerPairing(localIndex),
     });
