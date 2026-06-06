@@ -101,6 +101,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "connector.reindex",
   "vault.set",
   "vault.delete",
+  "teamvault.put",
+  "teamvault.delete",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({
