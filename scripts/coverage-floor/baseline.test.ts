@@ -63,13 +63,13 @@ describe("serializeBaseline", () => {
       generated_at: "2026-05-17T00:00:00Z",
       files: new Map([
         ["packages/gateway/src/a.ts", 4.35],
-        ["packages/gateway/src/b.ts", 30.0],
+        ["packages/gateway/src/b.ts", 30],
       ]),
     };
     const text = serializeBaseline(original);
     const reparsed = parseBaseline(text);
     expect(reparsed.files.get("packages/gateway/src/a.ts")).toBe(4.35);
-    expect(reparsed.files.get("packages/gateway/src/b.ts")).toBe(30.0);
+    expect(reparsed.files.get("packages/gateway/src/b.ts")).toBe(30);
   });
 
   test("sorts file entries alphabetically for stable diffs", () => {

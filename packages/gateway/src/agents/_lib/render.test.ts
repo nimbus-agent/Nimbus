@@ -30,7 +30,7 @@ describe("renderExpert", () => {
               serviceId: "github",
               title: "fix retry backoff",
               modifiedAt: 1_699_999_900_000,
-              weight: 1.0,
+              weight: 1,
             },
           ],
         },

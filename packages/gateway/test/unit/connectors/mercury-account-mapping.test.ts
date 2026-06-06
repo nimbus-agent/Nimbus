@@ -15,7 +15,7 @@ function makeAccount(over: Record<string, unknown> = {}): Record<string, unknown
     accountNumber: "9876543210",
     routingNumber: "021000021",
     availableBalance: 12345.67,
-    currentBalance: 12300.0,
+    currentBalance: 12300,
     legalBusinessName: "ACME Corp",
     createdAt: CREATED_ISO,
     ...over,
@@ -152,7 +152,7 @@ describe("mapMercuryAccountToItem", () => {
     const row = mapMercuryAccountToItem(makeAccount(), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["available_balance"]).toBe(12345.67);
-    expect(meta(row)["current_balance"]).toBe(12300.0);
+    expect(meta(row)["current_balance"]).toBe(12300);
   });
 
   test("missing balances are null-passthrough in metadata", () => {

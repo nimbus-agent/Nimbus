@@ -9,9 +9,9 @@ const DARK_OUT = "docs/assets/hero-cast-dark.svg";
 
 const SCHEDULE_SECONDS: ReadonlyArray<number> = [
   0.5, //  0: "## Investigation\n\n…rose from 120ms to 380ms…" (the big block)
-  7.0, //  1: "Drafting incident summary for #ops..."
-  12.0, // 2: "[consent.request] Post to Slack #ops requires consent"
-  17.0, // 3: "Posted to #ops."
+  7, //  1: "Drafting incident summary for #ops..."
+  12, // 2: "[consent.request] Post to Slack #ops requires consent"
+  17, // 3: "Posted to #ops."
 ];
 const TRAILING_PAD_SECONDS = 4;
 interface AsciinemaHeader {

@@ -41,7 +41,7 @@ describe("vectorSearchChunks — dim awareness", () => {
       [Date.now(), Date.now()],
     );
     const v = new Float32Array(1536);
-    v[0] = 1.0;
+    v[0] = 1;
     db.run(`INSERT INTO vec_items_1536 (rowid, embedding) VALUES (1, vec_f32(?))`, [v]);
     db.run(
       `INSERT INTO embedding_chunk (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)

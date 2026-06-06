@@ -32,7 +32,7 @@ describe("writeCastBytes", () => {
     expect(lines).toHaveLength(3);
     const e1 = JSON.parse(lines[1] ?? "");
     const e2 = JSON.parse(lines[2] ?? "");
-    expect(e1).toEqual([0.0, "o", "hello\n"]);
+    expect(e1).toEqual([0, "o", "hello\n"]);
     expect(e2).toEqual([0.014, "o", "world\n"]);
   });
 

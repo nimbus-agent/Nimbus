@@ -71,7 +71,7 @@ describe("renderMetricRow", () => {
   test("does not prepend ⚠ for non-mixed_source gaps even on a colour TTY", () => {
     const row: MetricRowInput = {
       label: "Lead Time",
-      value: 2.0,
+      value: 2,
       unit: "hours",
       sample: 5,
       gap: "low_sample",
