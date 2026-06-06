@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
-import { createInlineHitlSurface, type InlineHitlReq } from "../../src/extension.js";
+import { createInlineHitlSurface } from "../../src/extension.js";
 import type { HitlDecision } from "../../src/hitl/hitl-router.js";
 
 function makePanel(): {
@@ -78,7 +78,7 @@ describe("createInlineHitlSurface", () => {
       pending: new Map(),
       fallback,
     });
-    const r = await surface({ requestId: "r3", prompt: "Q" } as InlineHitlReq);
+    const r = await surface({ requestId: "r3", prompt: "Q" });
     expect(r).toBe("reject");
     expect(fallback).toHaveBeenCalledWith({ requestId: "r3", prompt: "Q" });
   });

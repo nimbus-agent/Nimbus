@@ -95,13 +95,13 @@ function makeFixture(opts: {
     showInformationMessage: vi.fn(async (m: string) => {
       infoMessages.push(m);
       return undefined;
-    }) as unknown as WindowApi["showInformationMessage"],
+    }),
     showErrorMessage: vi.fn(async (m: string) => {
       errorMessages.push(m);
       return undefined;
-    }) as unknown as WindowApi["showErrorMessage"],
-    showInputBox: vi.fn(async () => inputAnswers.shift()) as unknown as WindowApi["showInputBox"],
-    showQuickPick: vi.fn(async () => undefined) as unknown as WindowApi["showQuickPick"],
+    }),
+    showInputBox: vi.fn(async () => inputAnswers.shift()),
+    showQuickPick: vi.fn(async () => undefined),
     activeTextEditor: undefined,
   };
 
@@ -123,7 +123,7 @@ function makeFixture(opts: {
       const h = commandHandlers.get(id);
       if (h !== undefined) await h();
       return undefined;
-    }) as unknown as CommandsApi["executeCommand"],
+    }),
     registerCommand: (id, h) => {
       commandHandlers.set(id, h);
       return { dispose: () => commandHandlers.delete(id) };
@@ -177,7 +177,7 @@ function makeFixture(opts: {
     configChangeHandlers,
     cfgValues,
     deps,
-  } as Captured & { deps: ActivateDeps };
+  };
 }
 
 // Wait for the connection manager's `void connection.start()` to settle.

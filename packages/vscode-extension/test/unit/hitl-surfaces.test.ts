@@ -20,11 +20,10 @@ function fakeWindow(answer: string | undefined): WindowApi {
       hide: () => undefined,
       dispose: () => undefined,
     }),
-    showInformationMessage:
-      showInformationMessage as unknown as WindowApi["showInformationMessage"],
-    showErrorMessage: vi.fn() as unknown as WindowApi["showErrorMessage"],
-    showInputBox: vi.fn() as unknown as WindowApi["showInputBox"],
-    showQuickPick: vi.fn() as unknown as WindowApi["showQuickPick"],
+    showInformationMessage: showInformationMessage,
+    showErrorMessage: vi.fn(),
+    showInputBox: vi.fn(),
+    showQuickPick: vi.fn(),
     activeTextEditor: undefined,
   };
 }
@@ -52,10 +51,10 @@ describe("ModalSurface", () => {
     const calls: { args: unknown[] }[] = [];
     const window: WindowApi = {
       ...fakeWindow("Approve"),
-      showInformationMessage: (async (...args: unknown[]) => {
+      showInformationMessage: async (...args: unknown[]) => {
         calls.push({ args });
         return "Approve";
-      }) as unknown as WindowApi["showInformationMessage"],
+      },
     };
     const surf = createModalSurface(window);
     await surf({ requestId: "r1", prompt: "ok?" });

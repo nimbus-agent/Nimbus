@@ -34,7 +34,7 @@ function makeDeps(opts: { openSequence: Array<"ok" | "eacces" | "enoent"> }): {
         err.code = "ENOENT";
         throw err;
       }
-      return new FakeClient() as unknown as never;
+      return new FakeClient();
     },
     discoverSocket: async () => ({
       socketPath: "/run/nimbus-test/test.sock",
@@ -103,7 +103,7 @@ describe("ConnectionManager", () => {
             err.code = "ENOENT";
             throw err;
           }
-          return new FakeClient() as unknown as never;
+          return new FakeClient();
         },
         discoverSocket: async () => ({
           socketPath: "/run/nimbus-test/y.sock",
