@@ -23,7 +23,7 @@ beforeEach(() => {
     updaterDownload: null,
     updaterRestarting: null,
     updaterFailure: null,
-  } as never);
+  });
 });
 
 afterEach(() => {
@@ -34,7 +34,7 @@ afterEach(() => {
     updaterDownload: null,
     updaterRestarting: null,
     updaterFailure: null,
-  } as never);
+  });
 });
 
 describe("UpdaterRestartChrome", () => {

@@ -58,7 +58,7 @@ beforeEach(() => {
   extensionDisableMock.mockReset();
   extensionInstallMock.mockReset();
   extensionRemoveMock.mockReset();
-  useNimbusStore.setState({ connectionState: "connected" } as never);
+  useNimbusStore.setState({ connectionState: "connected" });
 });
 
 describe("Marketplace page", () => {
@@ -181,7 +181,7 @@ describe("Marketplace page", () => {
   });
 
   it("'Install from directory' button is disabled when offline", () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     callMock.mockResolvedValue({ extensions: [] });
     renderPage();
     expect(screen.getByRole("button", { name: /install from directory/i })).toBeDisabled();

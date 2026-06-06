@@ -113,7 +113,7 @@ export function ImportWizard({ onClose }: ImportWizardProps) {
   const onNotification = useCallback(
     (n: JsonRpcNotification) => {
       if (n.method === "data.importProgress") {
-        setImportProgress(n.params as DataImportProgressPayload);
+        setImportProgress(n.params as DataImportProgressPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
       }
     },
     [setImportProgress],

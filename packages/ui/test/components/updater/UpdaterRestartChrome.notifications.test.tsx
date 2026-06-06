@@ -52,7 +52,7 @@ beforeEach(() => {
     updaterDownload: null,
     updaterRestarting: null,
     updaterFailure: null,
-  } as never);
+  });
 });
 
 describe("UpdaterRestartChrome — notification handlers", () => {

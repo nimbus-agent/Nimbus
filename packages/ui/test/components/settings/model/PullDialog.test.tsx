@@ -28,7 +28,7 @@ beforeEach(() => {
     routerStatus: null,
     loadedKeys: {},
     connectionState: "connected",
-  } as never);
+  });
 });
 
 function captureSubscription(): {
@@ -147,7 +147,7 @@ describe("PullDialog", () => {
             totalBytes: 1000,
           },
         },
-      } as never);
+      });
       llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true } });
       render(<PullDialog open onClose={() => {}} />);
       await waitFor(() => screen.getByLabelText(/model name/i));

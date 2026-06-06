@@ -54,7 +54,7 @@ beforeEach(() => {
   workflowSaveMock.mockReset();
   workflowDeleteMock.mockReset();
   workflowListRunsMock.mockReset();
-  useNimbusStore.setState({ connectionState: "connected" } as never);
+  useNimbusStore.setState({ connectionState: "connected" });
 });
 
 describe("Workflows page — list", () => {
@@ -114,7 +114,7 @@ describe("Workflows page — list", () => {
   });
 
   it("'New workflow' button is disabled when offline", () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     callMock.mockResolvedValue({ workflows: [] });
     renderPage();
     expect(screen.getByRole("button", { name: /new workflow/i })).toBeDisabled();

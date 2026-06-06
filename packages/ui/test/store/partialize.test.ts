@@ -111,7 +111,7 @@ describe("persistPartialize — Data slice (Plan 5)", () => {
       lastExportPreflight: { lastExportAt: 123, estimatedSizeBytes: 456, itemCount: 789 },
       profiles: ["default"],
     };
-    const out = persistPartialize(state as unknown as Record<string, unknown>);
+    const out = persistPartialize(state);
     expect(out).not.toHaveProperty("exportFlow");
     expect(out).not.toHaveProperty("importFlow");
     expect(out).not.toHaveProperty("deleteFlow");

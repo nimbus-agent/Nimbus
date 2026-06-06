@@ -78,7 +78,7 @@ export function ModelPanel() {
         return;
       }
       if (n.method === "llm.pullProgress") {
-        upsertPullProgress(n.params as LlmPullProgressPayload);
+        upsertPullProgress(n.params as LlmPullProgressPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
         return;
       }
       if (n.method === "llm.pullCompleted" || n.method === "llm.pullFailed") {

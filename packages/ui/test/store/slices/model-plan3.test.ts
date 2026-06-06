@@ -10,7 +10,7 @@ beforeEach(() => {
     pullProgress: {},
     pullStalled: false,
     loadedKeys: {},
-  } as never);
+  });
 });
 
 describe("ModelSlice — Plan 3 additions", () => {
@@ -74,7 +74,7 @@ describe("ModelSlice — persist whitelist unchanged", () => {
       },
       pullStalled: true,
       loadedKeys: { "ollama:x": true },
-    } as never);
+    });
     const raw = localStorage.getItem("nimbus-ui-store");
     if (raw === null) return;
     const parsed = JSON.parse(raw);

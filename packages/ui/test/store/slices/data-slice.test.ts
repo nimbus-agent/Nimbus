@@ -14,7 +14,7 @@ function makeSlice(): DataSlice {
     subscribe: () => () => {},
     destroy: () => {},
   } as never;
-  const slice = createDataSlice(set as never, get as never, api);
+  const slice = createDataSlice(set, get as never, api);
   Object.assign(storeLike.current, slice);
   return storeLike.current as DataSlice;
 }

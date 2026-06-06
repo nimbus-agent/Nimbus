@@ -68,7 +68,7 @@ beforeEach(() => {
     auditFilter: { service: "", outcome: "all", sinceMs: null, untilMs: null },
     auditSummary: null,
     auditActionInFlight: false,
-  } as never);
+  });
   callMock.mockImplementation(async (method: string) => {
     if (method === "audit.list") return SAMPLE_ROWS;
     return [];
@@ -85,7 +85,7 @@ afterEach(() => {
     auditFilter: { service: "", outcome: "all", sinceMs: null, untilMs: null },
     auditSummary: null,
     auditActionInFlight: false,
-  } as never);
+  });
 });
 
 async function renderAndWaitForRows(): Promise<void> {
@@ -192,7 +192,7 @@ describe("AuditPanel", () => {
   });
 
   it("disconnected state disables write buttons", async () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     renderAt("/settings/audit");
     expect(
       (screen.getByRole("button", { name: "Verify chain" }) as HTMLButtonElement).disabled,

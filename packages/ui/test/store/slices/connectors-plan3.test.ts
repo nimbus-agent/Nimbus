@@ -7,7 +7,7 @@ beforeEach(() => {
     connectorsList: [],
     perServiceInFlight: {},
     highlightService: null,
-  } as never);
+  });
 });
 
 describe("ConnectorsSlice — Plan 3 additions", () => {
@@ -45,7 +45,7 @@ describe("ConnectorsSlice — Plan 3 additions", () => {
           health: "healthy",
         },
       ],
-    } as never);
+    });
     useNimbusStore.getState().patchConnectorRow("github", { intervalMs: 120000 });
     const row = useNimbusStore.getState().connectorsList.find((r) => r.service === "github");
     expect(row?.intervalMs).toBe(120000);
@@ -69,7 +69,7 @@ describe("ConnectorsSlice — Plan 3 additions", () => {
           health: "healthy",
         },
       ],
-    } as never);
+    });
     useNimbusStore.getState().patchConnectorRow("slack", { enabled: false });
     const row = useNimbusStore.getState().connectorsList[0];
     expect(row.service).toBe("github");
@@ -82,7 +82,7 @@ describe("ConnectorsSlice — persist whitelist unchanged", () => {
     useNimbusStore.setState({
       perServiceInFlight: { github: true },
       highlightService: "slack",
-    } as never);
+    });
     const raw = localStorage.getItem("nimbus-ui-store");
     if (raw === null) {
       return;

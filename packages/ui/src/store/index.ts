@@ -53,7 +53,7 @@ export const useNimbusStore = create<NimbusStore>()(
       name: "nimbus-ui-store",
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => persistPartialize(state as unknown as Record<string, unknown>),
+      partialize: (state) => persistPartialize(state as unknown as Record<string, unknown>), // NOSONAR S4325: NimbusStore lacks an index signature; bridged to Record for the partializer
     },
   ),
 );

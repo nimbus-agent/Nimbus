@@ -15,7 +15,7 @@ function resetStore() {
     deleteFlow: { status: "idle" },
     lastExportPreflight: null,
     connectorsList: [],
-  } as never);
+  });
 }
 
 describe("DataPanel", () => {
@@ -44,7 +44,7 @@ describe("DataPanel", () => {
   });
 
   it("disables all three buttons when connectionState === 'disconnected'", async () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     render(<DataPanel />);
     const exportBtn = screen.getByRole("button", { name: /Export backup/ });
     const importBtn = screen.getByRole("button", { name: /Restore backup/ });
@@ -55,14 +55,14 @@ describe("DataPanel", () => {
   });
 
   it("disables siblings while one flow is running", async () => {
-    useNimbusStore.setState({ exportFlow: { status: "running" } } as never);
+    useNimbusStore.setState({ exportFlow: { status: "running" } });
     render(<DataPanel />);
     expect(screen.getByRole("button", { name: /Restore backup/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Delete service/ })).toBeDisabled();
   });
 
   it("disables siblings when importFlow is running", async () => {
-    useNimbusStore.setState({ importFlow: { status: "running" } } as never);
+    useNimbusStore.setState({ importFlow: { status: "running" } });
     render(<DataPanel />);
     expect(screen.getByRole("button", { name: /Export backup/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Delete service/ })).toBeDisabled();
@@ -87,7 +87,7 @@ describe("DataPanel", () => {
     useNimbusStore.setState({
       connectionState: "disconnected",
       lastExportPreflight: { lastExportAt: 1000, estimatedSizeBytes: 512, itemCount: 5 },
-    } as never);
+    });
     render(<DataPanel />);
     const staleChips = screen.getAllByRole("status");
     expect(staleChips.length).toBeGreaterThan(0);
@@ -134,9 +134,9 @@ describe("DataPanel", () => {
     useNimbusStore.setState({
       exportFlow: { status: "running" },
       markDisconnected: mark,
-    } as never);
+    });
     const { rerender } = render(<DataPanel />);
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     rerender(<DataPanel />);
     await vi.waitFor(() => {
       expect(mark).toHaveBeenCalled();

@@ -31,7 +31,7 @@ function resetStore() {
         (s) =>
           ({
             exportFlow: { ...s.exportFlow, ...patch },
-          }) as never,
+          }),
       ),
     setExportProgress: (progress: unknown) =>
       useNimbusStore.setState(
@@ -121,7 +121,7 @@ describe("ExportWizard — progress bar", () => {
         status: "running",
         progress: { stage: "packing", bytesWritten: 100, totalBytes: undefined },
       },
-    } as never);
+    });
     dataExportMock.mockImplementation(() => new Promise(() => {}));
     saveMock.mockResolvedValue("/mock-output/nimbus.tar.gz");
     existsMock.mockResolvedValue(false);
@@ -138,7 +138,7 @@ describe("ExportWizard — progress bar", () => {
         status: "running",
         progress: { stage: "packing", bytesWritten: 50, totalBytes: 100 },
       },
-    } as never);
+    });
     dataExportMock.mockImplementation(() => new Promise(() => {}));
     saveMock.mockResolvedValue("/mock-output/nimbus.tar.gz");
     existsMock.mockResolvedValue(false);

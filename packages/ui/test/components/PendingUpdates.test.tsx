@@ -23,7 +23,7 @@ function sample(overrides: Partial<AvailableUpdateUi> = {}): AvailableUpdateUi {
 
 beforeEach(() => {
   callMock.mockReset();
-  useNimbusStore.setState({ connectionState: "connected" } as never);
+  useNimbusStore.setState({ connectionState: "connected" });
 });
 
 describe("PendingUpdates", () => {

@@ -82,7 +82,7 @@ export function ExportWizard({ onClose }: ExportWizardProps) {
   const onNotification = useCallback(
     (n: JsonRpcNotification) => {
       if (n.method === "data.exportProgress") {
-        setExportProgress(n.params as DataExportProgressPayload);
+        setExportProgress(n.params as DataExportProgressPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
       }
     },
     [setExportProgress],

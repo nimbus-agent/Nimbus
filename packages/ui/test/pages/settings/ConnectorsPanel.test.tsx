@@ -35,7 +35,7 @@ beforeEach(() => {
     perServiceInFlight: {},
     highlightService: null,
     connectionState: "connected",
-  } as never);
+  });
 });
 
 describe("ConnectorsPanel", () => {
@@ -189,7 +189,7 @@ describe("ConnectorsPanel", () => {
           health: "healthy",
         },
       ],
-    } as never);
+    });
     stubListStatus([]);
     renderPanel();
     await waitFor(() => screen.getByLabelText("github enabled"));

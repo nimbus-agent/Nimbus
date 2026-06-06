@@ -26,7 +26,7 @@ function resetStore() {
         (s) =>
           ({
             importFlow: { ...s.importFlow, ...patch },
-          }) as never,
+          }),
       ),
     setImportProgress: (progress: unknown) =>
       useNimbusStore.setState(

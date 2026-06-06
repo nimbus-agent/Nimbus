@@ -15,7 +15,7 @@ function resetStore() {
         (s) =>
           ({
             deleteFlow: { ...s.deleteFlow, ...patch },
-          }) as never,
+          }),
       ),
     connectorsList: [
       {
