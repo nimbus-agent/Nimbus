@@ -6,6 +6,7 @@ import {
   type ConnectorSyncFixture,
   createConnectorSyncFixture,
 } from "../../helpers/connector-sync-harness.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 const ENSURE_MCP = { ensureGitlabMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-glab1:";
@@ -695,8 +696,7 @@ describe("gitlab-sync — phase machine + cycle", () => {
     fixture.fetchMock.restore();
     const origFetch = globalThis.fetch;
     globalThis.fetch = async (input: string | URL | Request): Promise<Response> => {
-      const u =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const u = requestUrl(input);
       if (/[&?]page=1(&|$)/.test(u) && /\/events\?/.test(u)) {
         pageCalls += 1;
         return new Response(

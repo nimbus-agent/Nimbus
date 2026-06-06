@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pino from "pino";
 import { openSeededDbFile } from "../../test/helpers/migrated-db-seed.ts";
+import { requestUrl } from "../../test/helpers/request-url.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
@@ -45,8 +46,7 @@ async function throwingLocalEmbedder(): Promise<Embedder> {
 const REAL_FETCH = globalThis.fetch;
 function installOpenaiFetchStub(): void {
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (!url.includes("api.openai.com/v1/embeddings")) {
       throw new Error(`unexpected fetch in routing-runtime test: ${url}`);
     }
