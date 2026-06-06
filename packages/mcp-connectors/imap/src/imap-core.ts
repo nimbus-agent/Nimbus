@@ -13,16 +13,15 @@
  * The IMAP client and SMTP mailer are injected so tests never open real sockets.
  */
 
-import {
+import type { MailAddress } from "../../shared/imap-mail-core.ts";
+
+export {
   capPreview,
   clampLimit,
   formatAddress,
-  type MailAddress,
   PREVIEW_FETCH_BYTES,
   PREVIEW_MAX_CHARS,
 } from "../../shared/imap-mail-core.ts";
-
-export { capPreview, clampLimit, formatAddress, PREVIEW_FETCH_BYTES, PREVIEW_MAX_CHARS };
 
 /** One parsed address (name optional). */
 export type ImapAddress = MailAddress;

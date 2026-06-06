@@ -12,17 +12,16 @@
  * The IMAP client and SMTP mailer are injected so tests never open real sockets.
  */
 
-import {
+import type { MailAddress } from "../../shared/imap-mail-core.ts";
+
+export {
   capPreview,
   clampLimit,
   formatAddress,
-  type MailAddress,
   PREVIEW_FETCH_BYTES,
   PREVIEW_MAX_CHARS,
 } from "../../shared/imap-mail-core.ts";
-
 export type { MailAddress };
-export { capPreview, clampLimit, formatAddress, PREVIEW_FETCH_BYTES, PREVIEW_MAX_CHARS };
 
 /** Message ENVELOPE — RFC 2822 header fields only. */
 export interface MailEnvelope {
