@@ -58,8 +58,8 @@ function parseStep(raw: unknown, idx: number): Step {
     const step: InputStep = {
       type: "input",
       input: asString(o["input"], `step ${idx}.input`),
-      ...(typeof o["expect"] === "string" ? { expect: o["expect"] as string } : {}),
-      ...(typeof o["timeoutMs"] === "number" ? { timeoutMs: o["timeoutMs"] as number } : {}),
+      ...(typeof o["expect"] === "string" ? { expect: o["expect"] } : {}),
+      ...(typeof o["timeoutMs"] === "number" ? { timeoutMs: o["timeoutMs"] } : {}),
     };
     return step;
   }
@@ -69,8 +69,8 @@ function parseStep(raw: unknown, idx: number): Step {
   }
   const step: ConsentStep = {
     type: "consent",
-    consent: c as "approve" | "reject",
-    ...(typeof o["expect"] === "string" ? { expect: o["expect"] as string } : {}),
+    consent: c,
+    ...(typeof o["expect"] === "string" ? { expect: o["expect"] } : {}),
   };
   return step;
 }
