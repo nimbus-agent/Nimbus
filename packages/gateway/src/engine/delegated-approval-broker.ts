@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RemoteApprovalOutcome } from "./delegated-approval.ts";
 
 interface Pending {
+  readonly prompt: string;
   readonly resolve: (o: RemoteApprovalOutcome) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -14,6 +15,11 @@ class DelegatedApprovalBroker {
     this.channel = fn;
   }
 
+  /** The delegate's inbound approval queue: open requests awaiting a respond(). */
+  listPending(): Array<{ requestId: string; prompt: string }> {
+    return [...this.pending.entries()].map(([requestId, p]) => ({ requestId, prompt: p.prompt }));
+  }
+
   request(input: { prompt: string }, timeoutMs: number): Promise<RemoteApprovalOutcome> {
     const requestId = randomUUID();
     return new Promise<RemoteApprovalOutcome>((resolve) => {
@@ -23,7 +29,7 @@ class DelegatedApprovalBroker {
         this.pending.delete(requestId);
         resolve({ kind: "timeout" });
       }, timeoutMs);
-      this.pending.set(requestId, { resolve, timer });
+      this.pending.set(requestId, { prompt: input.prompt, resolve, timer });
       this.channel(requestId, input.prompt);
     });
   }
