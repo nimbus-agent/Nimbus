@@ -34,10 +34,10 @@ branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
 block_or_warn() {
   local label="$1" envvar="$2" count="$3"
-  if [ "$count" -le 0 ]; then
+  if [[ "$count" -le 0 ]]; then
     return 0
   fi
-  if [ "${!envvar:-0}" = "1" ]; then
+  if [[ "${!envvar:-0}" = "1" ]]; then
     echo "[nimbus pre-commit] BLOCK: $label ($count)." >&2
     return 1
   fi

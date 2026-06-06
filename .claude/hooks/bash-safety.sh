@@ -20,7 +20,7 @@ set -u
 
 # Read stdin into a variable; if empty/unparseable, fail open.
 input=$(cat 2>/dev/null || echo '')
-if [ -z "$input" ]; then
+if [[ -z "$input" ]]; then
   exit 0
 fi
 
@@ -37,12 +37,15 @@ else
   cmd=$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' | head -1)
 fi
 
-if [ -z "$cmd" ]; then
+if [[ -z "$cmd" ]]; then
   exit 0
 fi
 
-block() {
-  echo "BLOCKED by .claude/hooks/bash-safety.sh: $1" >&2
+# Fatal handler: prints the reason and terminates the hook with the blocking
+# exit code (2). It never returns to the caller by design.
+block() { # NOSONAR shelldre:S7682 — always terminates via `exit 2`; an explicit return would be unreachable, and a return+exit rewrite would risk the hook's blocking guarantee.
+  local message="$1"
+  echo "BLOCKED by .claude/hooks/bash-safety.sh: $message" >&2
   echo "If this is intentional, edit .claude/settings.local.json to disable the hook for this session." >&2
   exit 2
 }
@@ -61,10 +64,9 @@ if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+push\b[^|;&]*\b(main|master)\
 fi
 
 # 3. git config writes — allow read-side flags only
-if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+config\b'; then
-  if ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+config[[:space:]]+(--get\b|--list\b|-l\b|--show-origin\b|--show-scope\b|--get-all\b|--get-regexp\b)'; then
-    block "git config writes are forbidden (read-only flags --get / --list / --show-* are allowed)."
-  fi
+if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+config\b' \
+  && ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+config[[:space:]]+(--get\b|--list\b|-l\b|--show-origin\b|--show-scope\b|--get-all\b|--get-regexp\b)'; then
+  block "git config writes are forbidden (read-only flags --get / --list / --show-* are allowed)."
 fi
 
 exit 0

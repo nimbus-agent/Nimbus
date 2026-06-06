@@ -17,7 +17,7 @@
 set -u
 
 input=$(cat 2>/dev/null || echo '')
-if [ -z "$input" ]; then
+if [[ -z "$input" ]]; then
   exit 0
 fi
 
@@ -49,7 +49,7 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! [ -f package.json ]; then
+if ! [[ -f package.json ]]; then
   exit 0
 fi
 
@@ -57,7 +57,7 @@ fi
 output=$(bun run audit:invariants 2>&1)
 status=$?
 
-if [ "$status" -eq 0 ]; then
+if [[ "$status" -eq 0 ]]; then
   exit 0
 fi
 

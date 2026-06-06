@@ -80,15 +80,13 @@ fi
 mkdir -p "$INSTALL_DIR"
 
 # Idempotent overwrite.
-if [ -e "${INSTALL_DIR}/nimbus" ] || [ -e "${INSTALL_DIR}/nimbus-gateway" ]; then
-  if [ "$ASSUME_YES" -ne 1 ]; then
-    printf "Existing install detected at %s. Overwrite? [y/N] " "$INSTALL_DIR"
-    read -r answer2
-    case "$answer2" in
-      y|Y|yes) ;;
-      *) echo "Aborted."; exit 1 ;;
-    esac
-  fi
+if { [ -e "${INSTALL_DIR}/nimbus" ] || [ -e "${INSTALL_DIR}/nimbus-gateway" ]; } && [ "$ASSUME_YES" -ne 1 ]; then
+  printf "Existing install detected at %s. Overwrite? [y/N] " "$INSTALL_DIR"
+  read -r answer2
+  case "$answer2" in
+    y|Y|yes) ;;
+    *) echo "Aborted."; exit 1 ;;
+  esac
 fi
 
 cp "$NIMBUS_SRC" "${INSTALL_DIR}/nimbus"

@@ -19,7 +19,7 @@ mkdir -p coverage
 
 run_pkg () {
   local pkg="$1"
-  if [ -z "$(find "${pkg}" -path "${pkg}/node_modules" -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit)" ]; then
+  if [[ -z "$(find "${pkg}" -path "${pkg}/node_modules" -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit)" ]]; then
     echo "Skipping ${pkg} — no test files."
     return 0
   fi
@@ -28,7 +28,7 @@ run_pkg () {
     cd "${pkg}"
     bun test --coverage --coverage-reporter=lcov
   ) || true  # tolerate failing tests; whatever lcov was emitted still merges
-  if [ -f "${pkg}/coverage/lcov.info" ]; then
+  if [[ -f "${pkg}/coverage/lcov.info" ]]; then
     sed "s|^SF:|SF:${pkg}/|" "${pkg}/coverage/lcov.info" >> coverage/lcov.info
   fi
 }
@@ -38,7 +38,7 @@ for pkg in packages/gateway packages/cli packages/sdk packages/client; do
 done
 
 for pkg in packages/mcp-connectors/*; do
-  if [ -f "${pkg}/package.json" ]; then
+  if [[ -f "${pkg}/package.json" ]]; then
     run_pkg "${pkg}"
   fi
 done

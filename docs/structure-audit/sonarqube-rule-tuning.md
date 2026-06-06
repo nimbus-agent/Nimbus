@@ -60,6 +60,17 @@ marks a line that does **not** compile without the cast.
 | `gateway/src/embedding/load-feature-extraction-pipeline.ts` | `as unknown as FeatureExtractionPipe` | bridges `@xenova` `FeatureExtractionPipeline` to the local interface |
 | `gateway/src/perf/process-spawn-bench.ts` | `as unknown as ProcSubset` | bridges Bun `Subprocess` (`stdout?`) to `ProcSubset` |
 
+### PR 7 — `shelldre:S7682` inline `# NOSONAR` (never-returning fatal handler)
+
+The `shelldre:*` shell-analyzer sweep (14 issues across 5 scripts) was fixed in
+code: `[` → `[[` for the bash files (`S7688`), nested-`if` merges (`S1066`), and
+a positional-param-to-local assignment (`S7679`). One issue is a genuine false
+positive and is suppressed inline.
+
+| Site | Rule | Why it's suppressed |
+|---|---|---|
+| `.claude/hooks/bash-safety.sh` `block()` | `shelldre:S7682` | The function is a fatal handler that always terminates the hook via `exit 2`; an explicit `return` at the end would be unreachable, and rewriting it as return-then-exit at the four call sites would risk the hook's blocking guarantee. |
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)
