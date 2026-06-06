@@ -68,8 +68,12 @@ export function installCliMocks(): void {
   mock.module("../../src/ipc-client/index.ts", () => ({
     IPCClient: class FakeIPCClient {
       constructor(_socketPath: string) {}
-      async connect(): Promise<void> {}
-      async disconnect(): Promise<void> {}
+      async connect(): Promise<void> {
+        /* no-op mock */
+      }
+      async disconnect(): Promise<void> {
+        /* no-op mock */
+      }
       async call<T>(method: string, params?: unknown): Promise<T> {
         const ipc = globalThis.__nimbusCliFixture?.ipcClient;
         if (ipc !== undefined) {

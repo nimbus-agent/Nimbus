@@ -34,8 +34,8 @@ export class FakeGateway {
   private server: Server | null = null;
   private currentStepIdx = 0;
   private pendingConsent: { requestId: string; resume: () => void } | null = null;
-  private earlyConsents = new Map<string, boolean>();
-  private activeSockets = new Set<Socket>();
+  private readonly earlyConsents = new Map<string, boolean>();
+  private readonly activeSockets = new Set<Socket>();
   readonly consentDecisions: ConsentDecision[] = [];
 
   constructor(private readonly opts: FakeGatewayOptions) {}

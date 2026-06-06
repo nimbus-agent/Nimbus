@@ -10,7 +10,7 @@ Also: nimbus doctor.
 But not "naimbus" or "nimbus_".
     `;
     const found = extractReadmeCliCommands(md);
-    expect(found.sort((a, b) => a.localeCompare(b))).toEqual(
+    expect(found.toSorted((a, b) => a.localeCompare(b))).toEqual(
       ["ask", "connector", "doctor"].sort((a, b) => a.localeCompare(b)),
     );
   });

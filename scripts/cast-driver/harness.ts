@@ -121,8 +121,7 @@ function parseInput(rawInput: string, cliEntry: string): string[] {
   const tokens: string[] = [];
   let cur = "";
   let quote: '"' | "'" | null = null;
-  for (let i = 0; i < rawInput.length; i += 1) {
-    const ch = rawInput[i];
+  for (const ch of rawInput) {
     if (quote !== null) {
       if (ch === quote) {
         quote = null;
