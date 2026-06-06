@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 interface RecordedReq {
   method: string;
@@ -135,7 +136,7 @@ function conversation(id: string, over: Record<string, unknown> = {}): Record<st
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
+    const urlStr = requestUrl(input);
     const rewritten = urlStr.replace("https://api.intercom.io", fakeBase);
     return original(rewritten, init);
   };

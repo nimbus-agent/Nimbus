@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 const BASE = "https://api.figma.com";
 const TEAM_ID = "1234567890";
@@ -36,7 +37,7 @@ const realFetch = globalThis.fetch;
 function installFakeFetch(config: FakeConfig): FakeServer {
   const requests: RecordedReq[] = [];
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
+    const urlStr = requestUrl(input);
     if (new URL(urlStr).origin !== BASE) {
       return realFetch(input, init);
     }

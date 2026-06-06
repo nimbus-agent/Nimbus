@@ -218,7 +218,9 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
       await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
       await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
       expect(
-        warnings.some((w) => String(w["msg"] ?? "").includes("Hybrid embedding init failed")),
+        warnings.some(
+          (w) => typeof w["msg"] === "string" && w["msg"].includes("Hybrid embedding init failed"),
+        ),
       ).toBe(true);
     } finally {
       h.cleanup();

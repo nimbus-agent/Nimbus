@@ -8,6 +8,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 interface RecordedReq {
   method: string;
@@ -150,7 +151,7 @@ async function seedCreds(h: Harness): Promise<void> {
 function withRampHostRewrite<T>(host: string, run: () => Promise<T>): Promise<T> {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
+    const url = requestUrl(input);
     const rewritten = url.replace("https://api.ramp.com", host);
     return realFetch(rewritten, init);
   };

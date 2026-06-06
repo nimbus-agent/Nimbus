@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 const BASE = "https://api.hubapi.com";
 
@@ -33,7 +34,7 @@ const realFetch = globalThis.fetch;
 function installFakeFetch(config: FakeConfig): FakeServer {
   const requests: RecordedReq[] = [];
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
+    const urlStr = requestUrl(input);
     // Only intercept HubSpot host; everything else falls through to the real fetch.
     if (new URL(urlStr).origin !== BASE) {
       return realFetch(input, init);
@@ -190,7 +191,7 @@ describe("hubspot-sync against a fake api.hubapi.com", () => {
     h = startHarness({});
     // Override with a stateful fake: first call ok, second call errors.
     globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
-      const urlStr = typeof input === "string" ? input : input.toString();
+      const urlStr = requestUrl(input);
       if (new URL(urlStr).origin !== BASE) {
         return realFetchLocal(input, init);
       }

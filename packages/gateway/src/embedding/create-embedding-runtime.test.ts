@@ -185,8 +185,10 @@ describe("createEmbeddingRuntime — provider 'openai'", () => {
       );
       expect(rt).toBeNull();
       expect(
-        warnings.some((w) =>
-          String(w["msg"] ?? "").includes("OpenAI embedding: set OPENAI_API_KEY"),
+        warnings.some(
+          (w) =>
+            typeof w["msg"] === "string" &&
+            w["msg"].includes("OpenAI embedding: set OPENAI_API_KEY"),
         ),
       ).toBe(true);
     } finally {
