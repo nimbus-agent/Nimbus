@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import "../../test/helpers/cli-mocks.ts";
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
@@ -7,6 +10,13 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const dataMod = await import("./data.ts");
 const { runData } = dataMod;
+
+const TMP_ROOT = mkdtempSync(join(tmpdir(), "nimbus-data-test-"));
+const EXPORT_X = join(TMP_ROOT, "x.tar.gz");
+const EXPORT_OUT = join(TMP_ROOT, "out.tar.gz");
+const EXPORT_O = join(TMP_ROOT, "o.tar.gz");
+const IMPORT_BUNDLE = join(TMP_ROOT, "bundle.tar.gz");
+const IMPORT_B = join(TMP_ROOT, "b.tar.gz");
 
 const out = captureOutput();
 
@@ -32,9 +42,9 @@ describe("runData (dispatcher)", () => {
 
   it("throws when gateway is not running (export)", async () => {
     setFixture({});
-    await expect(
-      runData(["export", "--output", "/tmp/x.tar.gz", "--passphrase", "pw"]),
-    ).rejects.toThrow("Gateway is not running. Start with: nimbus start");
+    await expect(runData(["export", "--output", EXPORT_X, "--passphrase", "pw"])).rejects.toThrow(
+      "Gateway is not running. Start with: nimbus start",
+    );
   });
 });
 
@@ -55,31 +65,31 @@ describe("runData export", () => {
 
   it("rejects when --passphrase is missing", async () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
-    await expect(runData(["export", "--output", "/tmp/x.tar.gz"])).rejects.toThrow(
+    await expect(runData(["export", "--output", EXPORT_X])).rejects.toThrow(
       "Usage: nimbus data export",
     );
   });
 
   it("calls data.export and prints output path when invoked successfully", async () => {
     const ipc = createMockIpcClient([
-      { outputPath: "/tmp/out.tar.gz", recoverySeed: "", recoverySeedGenerated: false },
+      { outputPath: EXPORT_OUT, recoverySeed: "", recoverySeedGenerated: false },
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
-    await runData(["export", "--output", "/tmp/out.tar.gz", "--passphrase", "pw", "--yes"]);
+    await runData(["export", "--output", EXPORT_OUT, "--passphrase", "pw", "--yes"]);
     expect(ipc.calls[0]).toEqual({
       method: "data.export",
-      params: { output: "/tmp/out.tar.gz", passphrase: "pw", includeIndex: true },
+      params: { output: EXPORT_OUT, passphrase: "pw", includeIndex: true },
     });
-    expect(out.stdout).toContain("[ok] wrote bundle to /tmp/out.tar.gz");
+    expect(out.stdout).toContain(`[ok] wrote bundle to ${EXPORT_OUT}`);
   });
 
   it("respects --no-index and reveals the recovery seed when one was generated", async () => {
     const ipc = createMockIpcClient([
       {
-        outputPath: "/tmp/o.tar.gz",
+        outputPath: EXPORT_O,
         recoverySeed: "abandon abandon ability",
         recoverySeedGenerated: true,
       },
@@ -88,15 +98,7 @@ describe("runData export", () => {
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
-    await runData([
-      "export",
-      "--output",
-      "/tmp/o.tar.gz",
-      "--passphrase",
-      "pw",
-      "--no-index",
-      "--yes",
-    ]);
+    await runData(["export", "--output", EXPORT_O, "--passphrase", "pw", "--no-index", "--yes"]);
     const params = ipc.calls[0]?.params as { includeIndex: boolean };
     expect(params.includeIndex).toBe(false);
     expect(out.stdout).toContain("Recovery seed");
@@ -119,7 +121,7 @@ describe("runData import", () => {
 
   it("rejects when neither --passphrase nor --recovery-seed is given", async () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
-    await expect(runData(["import", "/tmp/bundle.tar.gz"])).rejects.toThrow(
+    await expect(runData(["import", IMPORT_BUNDLE])).rejects.toThrow(
       "Provide either --passphrase or --recovery-seed",
     );
   });
@@ -130,7 +132,7 @@ describe("runData import", () => {
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
-    await runData(["import", "/tmp/bundle.tar.gz", "--passphrase", "pw", "--yes"]);
+    await runData(["import", IMPORT_BUNDLE, "--passphrase", "pw", "--yes"]);
     expect(ipc.calls[0]?.method).toBe("data.import");
     expect(out.stdout).toContain("[ok] restored 5 credentials");
   });
@@ -141,7 +143,7 @@ describe("runData import", () => {
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
-    await runData(["import", "/tmp/b.tar.gz", "--passphrase", "pw", "--yes"]);
+    await runData(["import", IMPORT_B, "--passphrase", "pw", "--yes"]);
     expect(out.stdout).toContain("[warn]");
     expect(out.stdout).toContain("OAuth entries may require re-auth");
   });

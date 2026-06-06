@@ -1,7 +1,18 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+let TMP_ROOT: string;
+beforeAll(() => {
+  TMP_ROOT = mkdtempSync(join(tmpdir(), "nimbus-dataprofile-assert-"));
+});
+afterAll(() => {
+  if (TMP_ROOT) {
+    rmSync(TMP_ROOT, { recursive: true, force: true });
+  }
+});
 
 import {
   assertWithinDataDir,
@@ -44,7 +55,7 @@ describe("dataDir / assertWithinDataDir", () => {
     }
   });
   test("assertWithinDataDir allows descendants, rejects escapes", () => {
-    const root = resolve("/tmp/data");
+    const root = resolve(join(TMP_ROOT, "data"));
     expect(() => assertWithinDataDir(join(root, "a.csv"), root)).not.toThrow();
     expect(() => assertWithinDataDir(resolve(root, "..", "x.csv"), root)).toThrow();
   });

@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { FeatureExtractionPipe } from "./load-feature-extraction-pipeline.ts";
 import { createLocalEmbedder, LOCAL_EMBEDDING_MODEL_ID, MINIMUM_MODEL_VERSION } from "./model.ts";
+
+// Real, unique temp root for the fake cache dir (S5443). The loader is a fake — the
+// cacheDir is only stored/asserted, never written.
+const CACHE_DIR = mkdtempSync(join(tmpdir(), "nimbus-embedding-model-test-"));
 
 type FakeTensor = { data: Float32Array; dims: readonly number[] };
 type LoaderState = {
@@ -37,10 +44,10 @@ describe("createLocalEmbedder", () => {
       tensor: { data: new Float32Array([0.5, 0.25]), dims: [1, 2] } as FakeTensor,
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
-    const e = await createLocalEmbedder({ cacheDir: "/tmp/cache" }, fakeLoader(state));
+    const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
     expect(e.model).toBe("all-MiniLM-L6-v2");
     expect(e.dims).toBe(384);
-    expect(state.cacheDir).toBe("/tmp/cache");
+    expect(state.cacheDir).toBe(CACHE_DIR);
 
     expect(await e.embed([])).toEqual([]);
     expect(state.calls.length).toBe(0);
@@ -57,7 +64,7 @@ describe("createLocalEmbedder", () => {
       tensor: { data: new Float32Array([1]), dims: [1, 1] } as FakeTensor,
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
-    await createLocalEmbedder({ cacheDir: "/tmp/cache" }, fakeLoader(state));
+    await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
     expect(state.cacheDir).toBe("/override/dir");
   });
 
@@ -66,7 +73,7 @@ describe("createLocalEmbedder", () => {
       tensor: { data: new Float32Array([1, 2]), dims: [2] } as FakeTensor, // rank 1
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
-    const e = await createLocalEmbedder({ cacheDir: "/tmp/cache" }, fakeLoader(state));
+    const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
     await expect(e.embed(["x"])).rejects.toThrow(/Unexpected embedding tensor rank/);
   });
 });

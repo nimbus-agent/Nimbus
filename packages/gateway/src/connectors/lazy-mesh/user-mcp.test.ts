@@ -1,10 +1,16 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LocalIndex } from "../../index/local-index.ts";
 import { getConnectorHealth } from "../health.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import type { MeshLogger, MeshSpawnContext } from "./slot.ts";
 import { ensureUserMcpClient, recordArgsJsonFailure } from "./user-mcp.ts";
+
+// Real, unique temp root for the fake sandbox cwd string (S5443) — never written.
+const SANDBOX_CWD = join(mkdtempSync(join(tmpdir(), "nimbus-user-mcp-test-")), "sandbox-cwd");
 
 type WarnRecord = { bindings: Record<string, unknown>; msg: string | undefined };
 
@@ -66,7 +72,7 @@ function makeSpyContext(
     ...(logger === undefined ? {} : { logger }),
     ...(healthDb === undefined ? {} : { healthDb }),
     obsidianVaultPaths: undefined,
-    sandboxCwd: "/tmp/sandbox-test-cwd",
+    sandboxCwd: SANDBOX_CWD,
     clearLazyIdle: (key: string): void => {
       calls.clearLazyIdle.push(key);
     },

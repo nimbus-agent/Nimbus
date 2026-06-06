@@ -1,8 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getCliPlatformPaths, resolveSocketPath } from "./paths.ts";
+
+// Real temp root for fake socket-path / TMPDIR override strings (never written to disk).
+let tmpRoot: string;
+beforeAll(() => {
+  tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-cli-paths-test-"));
+});
+afterAll(() => {
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
+});
 
 const ENV_KEYS = [
   "NIMBUS_GATEWAY_SOCKET",
@@ -58,8 +68,9 @@ describe("resolveSocketPath", () => {
   });
 
   it("returns NIMBUS_GATEWAY_SOCKET override when set", () => {
-    process.env["NIMBUS_GATEWAY_SOCKET"] = "/tmp/custom.sock";
-    expect(resolveSocketPath()).toBe("/tmp/custom.sock");
+    const customSock = join(tmpRoot, "custom.sock");
+    process.env["NIMBUS_GATEWAY_SOCKET"] = customSock;
+    expect(resolveSocketPath()).toBe(customSock);
   });
 
   it("treats empty NIMBUS_GATEWAY_SOCKET as unset (falls through to platform default)", () => {

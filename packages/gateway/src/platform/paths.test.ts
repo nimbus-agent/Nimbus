@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlatformInitError } from "./errors.ts";
 import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
+
+// Real, unique temp root used as an arbitrary TMPDIR override value (S5443).
+const FAKE_TMPDIR = mkdtempSync(join(tmpdir(), "nimbus-paths-test-"));
 
 const TRACKED_ENV_KEYS = [
   "APPDATA",
@@ -102,14 +106,15 @@ describe("createDarwinPaths", () => {
   });
 
   it("uses TMPDIR for the socketPath base when set", () => {
-    process.env["TMPDIR"] = "/private/var/tmp/custom";
+    process.env["TMPDIR"] = FAKE_TMPDIR;
     const paths = createDarwinPaths();
-    expect(paths.socketPath).toBe(join("/private/var/tmp/custom", "nimbus-gateway.sock"));
+    expect(paths.socketPath).toBe(join(FAKE_TMPDIR, "nimbus-gateway.sock"));
   });
 
   it("falls back to /tmp for the socketPath base when TMPDIR is unset", () => {
     const paths = createDarwinPaths();
-    expect(paths.socketPath).toBe(join("/tmp", "nimbus-gateway.sock"));
+    // Asserts production's hardcoded /tmp socket fallback (darwin, TMPDIR unset).
+    expect(paths.socketPath).toBe(join("/tmp", "nimbus-gateway.sock")); // NOSONAR S5443: production fallback assertion
   });
 });
 
