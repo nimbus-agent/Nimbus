@@ -23,7 +23,7 @@ export interface HarnessRun {
 
 function socketPathFor(tmpDir: string): string {
   if (process.platform === "win32") {
-    return `\\\\.\\pipe\\nimbus-cast-${process.pid}-${Date.now()}`;
+    return String.raw`\\.\pipe\nimbus-cast-${process.pid}-${Date.now()}`;
   }
   return join(tmpDir, "gw.sock");
 }

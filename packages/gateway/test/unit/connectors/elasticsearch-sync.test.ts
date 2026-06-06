@@ -22,7 +22,7 @@ function makeOptions() {
 const CAT_URL = /\/_cat\/indices\?/;
 /** Escape ALL regex metacharacters (incl. backslash) before embedding in a RegExp. */
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 function mappingUrl(index: string): RegExp {
   return new RegExp(`/${escapeRegExp(index)}/_mapping$`);

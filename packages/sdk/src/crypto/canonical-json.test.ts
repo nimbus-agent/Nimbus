@@ -43,7 +43,7 @@ describe("canonicalize — primitives", () => {
 
   test("string is JSON-encoded", () => {
     expect(canonicalize("hello")).toBe('"hello"');
-    expect(canonicalize('say "hi"')).toBe('"say \\"hi\\""');
+    expect(canonicalize('say "hi"')).toBe(String.raw`"say \"hi\""`);
   });
 
   test("empty array serializes to '[]'", () => {

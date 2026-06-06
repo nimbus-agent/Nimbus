@@ -32,7 +32,7 @@ describe("ALLOWED_OUTPUT_NAMES", () => {
 });
 
 describe("setOutput", () => {
-  test("writes name<<delim\\nvalue\\ndelim heredoc when GITHUB_OUTPUT is set", () => {
+  test(String.raw`writes name<<delim\nvalue\ndelim heredoc when GITHUB_OUTPUT is set`, () => {
     setOutput("external-id", "github-actions:abc123:production");
     const written = readFileSync(outFile, "utf8");
     const m = /^external-id<<(EOF_[0-9a-f]{32})\ngithub-actions:abc123:production\n\1\n$/.exec(

@@ -67,7 +67,11 @@ async function main() {
   for (const [marker, hits] of [...byMarker.entries()].sort(([a], [b]) => (a > b ? 1 : -1))) {
     out.push(`## ${marker} (${hits.length})`, "");
     for (const h of hits) {
-      const cleaned = h.text.replaceAll("`", "'").replaceAll("|", "\\|").trim().slice(0, 200);
+      const cleaned = h.text
+        .replaceAll("`", "'")
+        .replaceAll("|", String.raw`\|`)
+        .trim()
+        .slice(0, 200);
       out.push(`- \`${h.file}:${h.line}\` — \`${cleaned}\``);
     }
     out.push("");

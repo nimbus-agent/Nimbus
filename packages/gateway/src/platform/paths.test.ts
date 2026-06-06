@@ -54,8 +54,8 @@ describe("createWindowsPaths", () => {
   });
 
   it("derives configDir from APPDATA and dataDir from LOCALAPPDATA", () => {
-    const appData = "C:\\Users\\Test\\AppData\\Roaming";
-    const localAppData = "C:\\Users\\Test\\AppData\\Local";
+    const appData = String.raw`C:\Users\Test\AppData\Roaming`;
+    const localAppData = String.raw`C:\Users\Test\AppData\Local`;
     process.env["APPDATA"] = appData;
     process.env["LOCALAPPDATA"] = localAppData;
     const paths = createWindowsPaths();
@@ -68,18 +68,18 @@ describe("createWindowsPaths", () => {
   });
 
   it("throws PlatformInitError when APPDATA is missing", () => {
-    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["LOCALAPPDATA"] = String.raw`C:\Users\Test\AppData\Local`;
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 
   it("throws PlatformInitError when LOCALAPPDATA is missing", () => {
-    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
+    process.env["APPDATA"] = String.raw`C:\Users\Test\AppData\Roaming`;
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 
   it("throws PlatformInitError when APPDATA is empty string", () => {
     process.env["APPDATA"] = "";
-    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["LOCALAPPDATA"] = String.raw`C:\Users\Test\AppData\Local`;
     expect(() => createWindowsPaths()).toThrow(PlatformInitError);
   });
 });

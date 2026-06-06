@@ -87,7 +87,7 @@ describe("parseLcov", () => {
     const lcov = "SF:packages\\gateway\\src\\foo.ts\nDA:1,1\nend_of_record\n";
     const got = parseLcov(lcov);
     expect(got.has("packages/gateway/src/foo.ts")).toBe(true);
-    expect(got.has("packages\\gateway\\src\\foo.ts")).toBe(false);
+    expect(got.has(String.raw`packages\gateway\src\foo.ts`)).toBe(false);
   });
 
   test("a duplicate SF record (re-emitted from a second test run) keeps the last record", () => {

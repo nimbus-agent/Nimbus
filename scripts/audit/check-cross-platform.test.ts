@@ -19,7 +19,7 @@ describe("cross-platform audit detector (Windows-separator scope)", () => {
     expect(findCrossPlatformIssues(src, "x.test.ts").length).toBe(1);
   });
 
-  test("flags an explicit relative path (.\\ and ..\\)", () => {
+  test(String.raw`flags an explicit relative path (.\ and ..\)`, () => {
     const rel = `expect(p).toBe(".\\\\rel\\\\x.ts");\n`;
     const parent = `expect(q).toBe("..\\\\up\\\\y.ts");\n`;
     expect(findCrossPlatformIssues(rel, "x.test.ts").length).toBe(1);

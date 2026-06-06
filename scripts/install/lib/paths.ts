@@ -9,7 +9,7 @@ export function resolveInstallDir(
     if (!localAppData) {
       throw new Error("LOCALAPPDATA is not set");
     }
-    return `${localAppData}\\Programs\\Nimbus\\bin`;
+    return String.raw`${localAppData}\Programs\Nimbus\bin`;
   }
   if (platform === "darwin" || platform === "linux") {
     const home = env.HOME;

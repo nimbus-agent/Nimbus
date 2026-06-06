@@ -223,11 +223,11 @@ describe("setTomlValueInFile", () => {
   });
 
   test("escapes embedded backslashes and double quotes in string values", () => {
-    setTomlValueInFile(tomlPath, "llm.remote_model", 'tricky\\"value');
+    setTomlValueInFile(tomlPath, "llm.remote_model", String.raw`tricky\"value`);
     const contents = readFileSync(tomlPath, "utf8");
-    expect(contents).toContain(`remote_model = "tricky\\\\\\"value"`);
+    expect(contents).toContain(String.raw`remote_model = "tricky\\\"value"`);
     const read = getTomlValueFromFile(tomlPath, "llm.remote_model");
-    expect(read).toBe(`"tricky\\\\\\"value"`);
+    expect(read).toBe(String.raw`"tricky\\\"value"`);
   });
 
   test("scopes section boundary correctly — does not touch identically-named keys in a sibling section", () => {

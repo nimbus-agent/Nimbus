@@ -536,7 +536,7 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       noColor: false,
     });
     const ESC = String.fromCharCode(27);
-    expect(formatted).toMatch(new RegExp(`${ESC}\\[2;33m\\(unverified\\)\\s*${ESC}\\[0m`));
+    expect(formatted).toMatch(new RegExp(String.raw`${ESC}\[2;33m\(unverified\)\s*${ESC}\[0m`));
   });
 
   test("NO_COLOR=1 (noColor=true) disables ANSI codes even on TTY", () => {
@@ -545,7 +545,7 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       noColor: true,
     });
     const ESC = String.fromCharCode(27);
-    expect(formatted).not.toMatch(new RegExp(`${ESC}\\[`));
+    expect(formatted).not.toMatch(new RegExp(String.raw`${ESC}\[`));
   });
 
   test("disabled row shows 'disabled' in Status column", () => {

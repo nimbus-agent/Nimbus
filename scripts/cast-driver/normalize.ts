@@ -21,7 +21,7 @@ const VERSION = /\b(nimbus|Bun|Node)\s+v\d+\.\d+\.\d+(?:[-+.][\w.-]+)?\b/g;
 const GIT_SHA = /(?:sha=|commit=|SHA=|COMMIT=)([0-9a-f]{7,40})\b|\b[0-9a-f]{20,40}\b/g;
 
 function escapeForRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [

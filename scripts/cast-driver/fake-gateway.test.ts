@@ -13,7 +13,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "fake-gateway-"));
   socketPath =
     process.platform === "win32"
-      ? `\\\\.\\pipe\\nimbus-test-${process.pid}-${Date.now()}`
+      ? String.raw`\\.\pipe\nimbus-test-${process.pid}-${Date.now()}`
       : join(tmpDir, "gw.sock");
 });
 
