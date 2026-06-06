@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~70 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
+Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~70 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP (Model Context Protocol) connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
 
-**Runtime:** Bun v1.2+ / TypeScript 6.x strict · **Linter:** Biome · **License:** AGPL-3.0 (gateway/cli/mcp-connectors) + MIT (sdk)
+**Runtime:** Bun v1.2+ / TypeScript 6.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
 **Status:** Phase 4 ✅ · Phase 5 ✅ (2026-06-04; remaining connectors are documented non-gating deferrals). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; Tauri desktop release deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 **Gemini CLI:** [`GEMINI.md`](./GEMINI.md) mirrors this file — update both when changing commands, roadmap rows, or non-negotiables.
@@ -16,8 +16,8 @@ Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that main
 Architectural constraints, not preferences. Do not suggest changes that violate them:
 
 1. **Local-first** — machine is the source of truth; cloud is a connector.
-2. **HITL is structural** — consent gate lives in the executor, not the prompt; cannot be bypassed or configured away.
-3. **No plaintext credentials** — Vault only (DPAPI/Keychain/libsecret); never in logs/IPC/config.
+2. **HITL (human-in-the-loop) is structural** — consent gate lives in the executor, not the prompt; cannot be bypassed or configured away.
+3. **No plaintext credentials** — Vault only (Windows DPAPI / macOS Keychain / Linux libsecret); never in logs/IPC/config.
 4. **MCP as connector standard** — the engine never calls cloud APIs directly.
 5. **Platform equality** — Windows/macOS/Linux equally supported; PRs gate on Ubuntu (`pr-quality`), pushes run the full 3-OS matrix.
 6. **AGPL-3.0 core / MIT SDK** — dual license is intentional; do not change license fields.
@@ -34,8 +34,8 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - **I3** — HITL gate consults `action.type` only, never `payload.mcpToolId` · same
 - **I4** — `hitlStatus` set only by the consent gate · same
 - **I5** — `checkLanMethodAllowed` intrinsic to `LanServer` · `ipc/lan-server.ts`
-- **I6** — LAN bind defaults to `127.0.0.1` · `config/nimbus-toml.ts`
-- **I7** — Tauri `ALLOWED_METHODS` excludes RCE-class methods · `ui/src-tauri/src/gateway_bridge.rs`
+- **I6** — LAN (local-network) bind defaults to `127.0.0.1` · `config/nimbus-toml.ts`
+- **I7** — Tauri `ALLOWED_METHODS` excludes RCE-class (remote-code-execution) methods · `ui/src-tauri/src/gateway_bridge.rs`
 - **I8** — restrictive renderer CSP (no `unsafe-inline`/`unsafe-eval`) · `ui/src-tauri/tauri.conf.json`
 - **I9** — bound-param SQL; identifiers via `escapeIdentifier` · `db/write.ts`, `db/repair.ts`, `people/person-store.ts`
 - **I10** — constant-time compare for hashes/MACs/pairing-codes/tokens · `util/timing-safe-compare.ts` (canonical)
@@ -90,7 +90,7 @@ PRs gate on Ubuntu (`pr-quality`); pushes run the full Windows/macOS/Linux matri
 - **Pre-flight before a PR:** `bun run preflight` (full CI parity) or `bun run preflight:fast` (~2-3 min, cheap static gates). **`test:ci` is only the test suite, NOT the full gate set — `preflight` is.** Gate manifest: `scripts/lib/preflight-gates.ts` (drift test fails if a CI gate is missing). See the `nimbus-preflight` skill.
 - **Branch hygiene:** never commit on `main`/`develop` — `git switch -c dev/<you>/<topic>` and verify `git rev-parse --abbrev-ref HEAD` first. `bun run hooks:install` adds a pre-commit guard + pre-push `preflight:fast`.
 - **Cross-platform:** build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators; `bun run audit:cross-platform` flags Windows-separator path assertions (escape hatch: `// cross-platform-ok`).
-- **CI-Linux-only failures — reproduce, don't guess:** CI is Ubuntu + `bun-version: latest`. Some failures never reproduce on Windows/macOS and aren't version-related — chiefly `mock.module` contamination in the combined `bun test packages/cli/src` run (prefer **DI over `mock.module`** for dispatcher-driven code) and `@types/*` hoisting conflicts. Reproduce on Linux (Docker `oven/bun:latest`, or WSL on a Linux-native copy — not `/mnt/c`) **before** pushing a fix. `audit:coverage-floor` is **CI-Linux-authoritative**. Details: `nimbus-preflight` skill.
+- **CI-Linux-only failures — reproduce, don't guess:** CI is Ubuntu + `bun-version: latest`. Some failures never reproduce on Windows/macOS and aren't version-related — chiefly `mock.module` contamination in the combined `bun test packages/cli/src` run (prefer **dependency injection (DI) over `mock.module`** for dispatcher-driven code) and `@types/*` hoisting conflicts. Reproduce on Linux (Docker `oven/bun:latest`, or WSL on a Linux-native copy — not `/mnt/c`) **before** pushing a fix. `audit:coverage-floor` is **CI-Linux-authoritative**. Details: `nimbus-preflight` skill.
 
 Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` skill. File-location pointers: `nimbus-file-map` skill.
 
