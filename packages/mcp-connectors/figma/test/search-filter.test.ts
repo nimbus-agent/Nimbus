@@ -33,7 +33,7 @@ describe("filterFigmaFiles", () => {
 
   test("tolerates a missing project_name", () => {
     const noProject = file();
-    delete (noProject as Record<string, unknown>)["project_name"];
+    delete noProject["project_name"];
     // still matches on file name
     expect(filterFigmaFiles([noProject], { query: "roadmap" })).toHaveLength(1);
     // project-only query no longer matches

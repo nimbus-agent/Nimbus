@@ -67,7 +67,7 @@ describe("asRecord", () => {
 describe("asObjectish", () => {
   test("accepts a plain object and an array", () => {
     expect(asObjectish({ a: 1 })).toEqual({ a: 1 });
-    expect(asObjectish([1, 2])).toEqual([1, 2] as unknown as Record<string, unknown>);
+    expect(asObjectish([1, 2])).toEqual([1, 2] as unknown as Record<string, unknown>); // NOSONAR S4325: bridges the array literal to asObjectish's Record<string,unknown>|undefined return for toEqual
   });
 
   test("rejects null and primitives", () => {

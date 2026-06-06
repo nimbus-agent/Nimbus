@@ -50,9 +50,9 @@ describe("filterRaindropBookmarks", () => {
 
   test("tolerates missing string fields and non-string tags", () => {
     const sparse = bookmark();
-    delete (sparse as Record<string, unknown>)["note"];
-    delete (sparse as Record<string, unknown>)["excerpt"];
-    (sparse as Record<string, unknown>)["tags"] = [null, 7, "ops"];
+    delete sparse["note"];
+    delete sparse["excerpt"];
+    sparse["tags"] = [null, 7, "ops"];
     expect(filterRaindropBookmarks([sparse], { query: "exponential backoff" })).toHaveLength(1);
     expect(filterRaindropBookmarks([sparse], { query: "ops" })).toHaveLength(1);
     expect(filterRaindropBookmarks([sparse], { query: "full jitter" })).toHaveLength(0);
@@ -60,7 +60,7 @@ describe("filterRaindropBookmarks", () => {
 
   test("tolerates a missing tags array", () => {
     const noTags = bookmark();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     expect(filterRaindropBookmarks([noTags], { query: "exponential backoff" })).toHaveLength(1);
     expect(filterRaindropBookmarks([noTags], { query: "reliability" })).toHaveLength(0);
   });

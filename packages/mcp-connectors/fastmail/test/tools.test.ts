@@ -58,7 +58,7 @@ function parse(result: McpListResult): Record<string, unknown> {
 function wire() {
   const { server, handlers } = fakeServer();
   const client = new FakeClient();
-  registerFastmailTools(server as unknown as { tool: (...args: never) => unknown }, client);
+  registerFastmailTools(server, client);
   return { handlers, client };
 }
 

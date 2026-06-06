@@ -53,9 +53,9 @@ describe("filterReadwiseHighlights", () => {
 
   test("tolerates missing string fields and non-object tags", () => {
     const sparse = highlight();
-    delete (sparse as Record<string, unknown>)["note"];
-    delete (sparse as Record<string, unknown>)["color"];
-    (sparse as Record<string, unknown>)["tags"] = [null, 7, { id: 3, name: "ops" }];
+    delete sparse["note"];
+    delete sparse["color"];
+    sparse["tags"] = [null, 7, { id: 3, name: "ops" }];
     expect(filterReadwiseHighlights([sparse], { query: "exponential backoff" })).toHaveLength(1);
     expect(filterReadwiseHighlights([sparse], { query: "ops" })).toHaveLength(1);
     expect(filterReadwiseHighlights([sparse], { query: "full jitter" })).toHaveLength(0);
@@ -63,7 +63,7 @@ describe("filterReadwiseHighlights", () => {
 
   test("tolerates a missing tags array", () => {
     const noTags = highlight();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     expect(filterReadwiseHighlights([noTags], { query: "exponential backoff" })).toHaveLength(1);
     expect(filterReadwiseHighlights([noTags], { query: "reliability" })).toHaveLength(0);
   });

@@ -39,7 +39,7 @@ describe("filterVercelDeployments", () => {
 
   test("tolerates a missing meta object", () => {
     const noMeta = deployment();
-    delete (noMeta as Record<string, unknown>)["meta"];
+    delete noMeta["meta"];
     expect(filterVercelDeployments([noMeta], { query: "my-app" })).toHaveLength(1);
     expect(filterVercelDeployments([noMeta], { query: "checkout" })).toHaveLength(0);
   });

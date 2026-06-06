@@ -39,8 +39,8 @@ describe("filterStripeInvoices", () => {
 
   test("tolerates missing string fields", () => {
     const sparse = invoice();
-    delete (sparse as Record<string, unknown>)["description"];
-    delete (sparse as Record<string, unknown>)["customer_name"];
+    delete sparse["description"];
+    delete sparse["customer_name"];
     expect(filterStripeInvoices([sparse], { query: "abc-0001" })).toHaveLength(1);
     expect(filterStripeInvoices([sparse], { query: "pro plan" })).toHaveLength(0);
   });

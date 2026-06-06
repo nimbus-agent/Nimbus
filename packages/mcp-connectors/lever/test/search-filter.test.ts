@@ -53,9 +53,9 @@ describe("filterLeverPostings", () => {
 
   test("tolerates missing fields and non-string tags", () => {
     const sparse = posting();
-    delete (sparse as Record<string, unknown>)["state"];
-    (sparse as Record<string, unknown>)["categories"] = { team: "Engineering" };
-    (sparse as Record<string, unknown>)["tags"] = [null, 7, "ops"];
+    delete sparse["state"];
+    sparse["categories"] = { team: "Engineering" };
+    sparse["tags"] = [null, 7, "ops"];
     expect(filterLeverPostings([sparse], { query: "backend engineer" })).toHaveLength(1);
     expect(filterLeverPostings([sparse], { query: "ops" })).toHaveLength(1);
     expect(filterLeverPostings([sparse], { query: "remote" })).toHaveLength(0);
@@ -63,8 +63,8 @@ describe("filterLeverPostings", () => {
 
   test("tolerates a missing categories object and a missing tags array", () => {
     const bare = posting();
-    delete (bare as Record<string, unknown>)["categories"];
-    delete (bare as Record<string, unknown>)["tags"];
+    delete bare["categories"];
+    delete bare["tags"];
     expect(filterLeverPostings([bare], { query: "backend engineer" })).toHaveLength(1);
     expect(filterLeverPostings([bare], { query: "engineering" })).toHaveLength(0);
   });

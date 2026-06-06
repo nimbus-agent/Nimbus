@@ -43,8 +43,8 @@ describe("filterMercuryAccounts", () => {
 
   test("tolerates missing string fields", () => {
     const sparse = account();
-    delete (sparse as Record<string, unknown>)["legalBusinessName"];
-    delete (sparse as Record<string, unknown>)["kind"];
+    delete sparse["legalBusinessName"];
+    delete sparse["kind"];
     expect(filterMercuryAccounts([sparse], { query: "mercury checking" })).toHaveLength(1);
     expect(filterMercuryAccounts([sparse], { query: "acme corp" })).toHaveLength(0);
   });

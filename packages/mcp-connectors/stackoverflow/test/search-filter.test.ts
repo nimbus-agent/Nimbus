@@ -63,10 +63,10 @@ describe("filterStackOverflowQuestions", () => {
 
   test("tolerates missing string fields and non-object/non-string tags", () => {
     const sparse = question();
-    delete (sparse as Record<string, unknown>)["body"];
-    delete (sparse as Record<string, unknown>)["bodyMarkdown"];
-    (sparse as Record<string, unknown>)["tags"] = [null, 7, { name: "ops" }, "infra"];
-    delete (sparse as Record<string, unknown>)["owner"];
+    delete sparse["body"];
+    delete sparse["bodyMarkdown"];
+    sparse["tags"] = [null, 7, { name: "ops" }, "infra"];
+    delete sparse["owner"];
     expect(filterStackOverflowQuestions([sparse], { query: "exponential backoff" })).toHaveLength(
       1,
     );
@@ -78,7 +78,7 @@ describe("filterStackOverflowQuestions", () => {
 
   test("tolerates a missing tags array", () => {
     const noTags = question();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     expect(filterStackOverflowQuestions([noTags], { query: "exponential backoff" })).toHaveLength(
       1,
     );

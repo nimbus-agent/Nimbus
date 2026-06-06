@@ -75,7 +75,7 @@ function wire() {
   const client = new FakeClient();
   const mailer = new FakeMailer();
   registerProtonmailTools(
-    server as unknown as { tool: (...args: never) => unknown },
+    server,
     client,
     mailer,
   );

@@ -76,7 +76,7 @@ function wire() {
   const { server, handlers } = fakeServer();
   const client = new FakeClient();
   const mailer = new FakeMailer();
-  registerImapTools(server as unknown as { tool: (...args: never) => unknown }, client, mailer);
+  registerImapTools(server, client, mailer);
   return { handlers, client, mailer };
 }
 

@@ -48,9 +48,9 @@ describe("filterZendeskTickets", () => {
 
   test("tolerates missing string fields and non-string tags", () => {
     const sparse = ticket();
-    delete (sparse as Record<string, unknown>)["description"];
-    delete (sparse as Record<string, unknown>)["priority"];
-    (sparse as Record<string, unknown>)["tags"] = [null, 7, "billing"];
+    delete sparse["description"];
+    delete sparse["priority"];
+    sparse["tags"] = [null, 7, "billing"];
     expect(filterZendeskTickets([sparse], { query: "checkout button" })).toHaveLength(1);
     expect(filterZendeskTickets([sparse], { query: "billing" })).toHaveLength(1);
     expect(filterZendeskTickets([sparse], { query: "safari 17" })).toHaveLength(0);
@@ -58,7 +58,7 @@ describe("filterZendeskTickets", () => {
 
   test("tolerates a missing tags array", () => {
     const noTags = ticket();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     expect(filterZendeskTickets([noTags], { query: "checkout button" })).toHaveLength(1);
     expect(filterZendeskTickets([noTags], { query: "safari" })).toHaveLength(1);
   });

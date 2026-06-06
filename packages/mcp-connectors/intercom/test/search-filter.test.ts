@@ -69,8 +69,8 @@ describe("filterIntercomConversations", () => {
 
   test("tolerates a missing source object and non-object tag entries", () => {
     const sparse = conversation();
-    delete (sparse as Record<string, unknown>)["source"];
-    (sparse as Record<string, unknown>)["tags"] = { tags: [null, 7, { name: "ops" }, "x"] };
+    delete sparse["source"];
+    sparse["tags"] = { tags: [null, 7, { name: "ops" }, "x"] };
     expect(filterIntercomConversations([sparse], { query: "open" })).toHaveLength(1);
     expect(filterIntercomConversations([sparse], { query: "ops" })).toHaveLength(1);
     expect(filterIntercomConversations([sparse], { query: "billing bug" })).toHaveLength(0);
@@ -78,7 +78,7 @@ describe("filterIntercomConversations", () => {
 
   test("tolerates a missing tags object", () => {
     const noTags = conversation();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     expect(filterIntercomConversations([noTags], { query: "billing bug" })).toHaveLength(1);
     expect(filterIntercomConversations([noTags], { query: "urgent" })).toHaveLength(0);
   });

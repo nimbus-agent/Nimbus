@@ -41,9 +41,9 @@ describe("filterGreenhouseJobs", () => {
 
   test("tolerates missing fields and non-object department/office entries", () => {
     const sparse = job();
-    delete (sparse as Record<string, unknown>)["status"];
-    (sparse as Record<string, unknown>)["departments"] = [null, 7, { name: "Product" }];
-    (sparse as Record<string, unknown>)["offices"] = [{ name: "Remote" }];
+    delete sparse["status"];
+    sparse["departments"] = [null, 7, { name: "Product" }];
+    sparse["offices"] = [{ name: "Remote" }];
     expect(filterGreenhouseJobs([sparse], { query: "backend engineer" })).toHaveLength(1);
     expect(filterGreenhouseJobs([sparse], { query: "product" })).toHaveLength(1);
     expect(filterGreenhouseJobs([sparse], { query: "remote" })).toHaveLength(1);
@@ -52,8 +52,8 @@ describe("filterGreenhouseJobs", () => {
 
   test("tolerates a missing departments / offices array", () => {
     const bare = job();
-    delete (bare as Record<string, unknown>)["departments"];
-    delete (bare as Record<string, unknown>)["offices"];
+    delete bare["departments"];
+    delete bare["offices"];
     expect(filterGreenhouseJobs([bare], { query: "backend engineer" })).toHaveLength(1);
     expect(filterGreenhouseJobs([bare], { query: "engineering" })).toHaveLength(0);
   });

@@ -14,7 +14,7 @@ function board(over: Record<string, unknown> = {}): Record<string, unknown> {
     ...rootOver,
     owner: {
       name: "Ada Lovelace",
-      ...((ownerOver as Record<string, unknown> | undefined) ?? {}),
+      ...(ownerOver ?? {}),
     },
   };
 }
@@ -39,7 +39,7 @@ describe("filterMiroBoards", () => {
 
   test("tolerates a missing owner object", () => {
     const noOwner = board();
-    delete (noOwner as Record<string, unknown>)["owner"];
+    delete noOwner["owner"];
     // The board still matches on name even without an owner.
     expect(filterMiroBoards([noOwner], { query: "roadmap" })).toHaveLength(1);
     // An owner-only query no longer matches once the owner is gone.
