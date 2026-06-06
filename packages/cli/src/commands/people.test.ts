@@ -76,11 +76,7 @@ describe("runPeople — list", () => {
     const mock = createMockIpcClient([[fakePerson()]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["list"]);
     expect(mock.calls[0]).toEqual({
@@ -97,11 +93,7 @@ describe("runPeople — list", () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["list", "--unlinked", "--limit", "10"]);
     expect(mock.calls[0]).toEqual({
@@ -116,11 +108,7 @@ describe("runPeople — list", () => {
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["list"]);
     expect(out.stdout).toContain("unlinked");
@@ -140,11 +128,7 @@ describe("runPeople — search", () => {
     const mock = createMockIpcClient([[fakePerson()]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["search", "alice"]);
     expect(mock.calls[0]).toEqual({
@@ -171,11 +155,7 @@ describe("runPeople — get", () => {
     const mock = createMockIpcClient([fakePerson()]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["get", "p1"]);
     expect(mock.calls[0]).toEqual({ method: "people.get", params: { id: "p1" } });
@@ -186,11 +166,7 @@ describe("runPeople — get", () => {
     const mock = createMockIpcClient([null]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["get", "missing"]);
     expect(out.stdout).toContain("(not found)");
@@ -214,11 +190,7 @@ describe("runPeople — items", () => {
     const mock = createMockIpcClient([[{ id: "github:pr_1", service: "github", name: "Fix bug" }]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["items", "p1"]);
     expect(mock.calls[0]).toEqual({
@@ -246,11 +218,7 @@ describe("runPeople — link", () => {
     const mock = createMockIpcClient([{ survivorId: "p1", person: fakePerson() }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runPeople(["link", "p1", "p2"]);
     expect(mock.calls[0]).toEqual({

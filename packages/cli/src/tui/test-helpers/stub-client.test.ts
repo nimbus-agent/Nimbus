@@ -74,6 +74,6 @@ describe("StubIpcClient — calls recording", () => {
 describe("StubIpcClient — asClient()", () => {
   test("asClient() returns the stub cast to IPCClient", () => {
     const stub = new StubIpcClient();
-    expect(stub.asClient()).toBe(stub as unknown as ReturnType<typeof stub.asClient>);
+    expect(stub.asClient()).toBe(stub as unknown as ReturnType<typeof stub.asClient>); // NOSONAR S4325: stub is the backing object; bridged to asClient()'s return type
   });
 });

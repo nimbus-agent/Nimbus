@@ -53,7 +53,7 @@ const FAKE_PATHS = {
   socketPath: join(FAKE_ROOT, "gateway.sock"),
   extensionsDir: join(FAKE_ROOT, "data", "extensions"),
   tempDir: join(FAKE_ROOT, "temp"),
-} as unknown as CliPlatformPaths;
+};
 
 function makeDeps(overrides: Partial<DoctorCoreDeps> = {}): DoctorCoreDeps {
   return {

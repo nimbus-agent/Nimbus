@@ -32,11 +32,7 @@ describe("runSession", () => {
     const mock = createMockIpcClient([{ sessions: [{ id: "s1" }] }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSession(["list"]);
     expect(mock.calls).toHaveLength(1);
@@ -48,11 +44,7 @@ describe("runSession", () => {
     const mock = createMockIpcClient([{ sessions: [] }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSession([]);
     expect(mock.calls[0]?.method).toBe("session.list");
@@ -62,11 +54,7 @@ describe("runSession", () => {
     const mock = createMockIpcClient([{ cleared: 0 }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSession(["clear"]);
     expect(mock.calls[0]).toEqual({ method: "session.clear", params: {} });
@@ -76,11 +64,7 @@ describe("runSession", () => {
     const mock = createMockIpcClient([{ cleared: 1 }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSession(["clear", "abc-123"]);
     expect(mock.calls[0]).toEqual({
@@ -93,11 +77,7 @@ describe("runSession", () => {
     const mock = createMockIpcClient([{ chunks: [] }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSession(["recall", "sess-1", "hello", "world"]);
     expect(mock.calls[0]).toEqual({

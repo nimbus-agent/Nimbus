@@ -160,7 +160,7 @@ describe("runExtensionUpdateWithCaller — apply mode (id supplied)", () => {
 
 describe("runExtensionDowngradeWithCaller", () => {
   test("requires --to", async () => {
-    const caller: AutoUpdateIpcCaller = async () => ({ applied: false }) as UpdateApplyResultCli;
+    const caller: AutoUpdateIpcCaller = async () => ({ applied: false });
     const captured = captureStreams();
     const code = await runExtensionDowngradeWithCaller({
       args: ["com.x.a"],

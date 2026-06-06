@@ -72,11 +72,7 @@ describe("runQuery — --sql path", () => {
     const mock = createMockIpcClient([{ rows: [{ id: 1, title: "hi" }], meta: { count: 1 } }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--sql", "SELECT * FROM items", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -106,11 +102,7 @@ describe("runQuery — --service path", () => {
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--limit", "5000", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -125,11 +117,7 @@ describe("runQuery — --service path", () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "slack", "--type", "message", "--since", "1d", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -144,11 +132,7 @@ describe("runQuery — --service path", () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--limit", "garbage", "--json"]);
     expect(mock.calls[0]?.params).toMatchObject({ limit: 50 });
@@ -158,11 +142,7 @@ describe("runQuery — --service path", () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--pretty"]);
     expect(out.stdout).toContain("(no rows)");
@@ -186,11 +166,7 @@ describe("runQuery — --service path", () => {
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--pretty"]);
     expect(out.stdout).toContain("My PR");
@@ -205,11 +181,7 @@ describe("runQuery — --service path", () => {
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runQuery(["--sql", "SELECT id, label, created_at FROM other", "--pretty"]);
     expect(out.stdout).toContain("#1");

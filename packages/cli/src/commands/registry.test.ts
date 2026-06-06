@@ -31,7 +31,7 @@ describe("COMMAND_NAMES — registry contract", () => {
       "vault",
     ];
     for (const r of required) {
-      expect(COMMAND_NAMES).toContain(r as CommandName);
+      expect(COMMAND_NAMES).toContain(r as CommandName); // NOSONAR S4325: r is a raw string from the iteration; toContain expects CommandName
     }
   });
 

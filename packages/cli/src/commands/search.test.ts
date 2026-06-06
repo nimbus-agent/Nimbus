@@ -51,11 +51,7 @@ describe("runSearch — dispatcher", () => {
     const mock = createMockIpcClient([[{ id: "github:pr_1", title: "My PR" }]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch(["hello", "world"]);
     expect(mock.calls).toHaveLength(1);
@@ -70,11 +66,7 @@ describe("runSearch — dispatcher", () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch([
       "deploy",
@@ -100,11 +92,7 @@ describe("runSearch — dispatcher", () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch(["hi", "--limit", "9999"]);
     expect(mock.calls[0]?.params).toMatchObject({ limit: 500 });
@@ -114,11 +102,7 @@ describe("runSearch — dispatcher", () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch(["hi", "--limit", "notanumber"]);
     expect(mock.calls[0]?.params).toMatchObject({ limit: 20 });
@@ -128,11 +112,7 @@ describe("runSearch — dispatcher", () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch(["topic", "-n", "5", "-s", "slack", "-t", "message"]);
     expect(mock.calls[0]?.params).toEqual({
@@ -154,11 +134,7 @@ describe("runSearch — dispatcher", () => {
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      ipcClient: mock.client,
     });
     await runSearch(["x"]);
     expect(out.stdout).toContain('"id": "github:pr_1"');
