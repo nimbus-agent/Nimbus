@@ -11,7 +11,7 @@ describe("rankExpertFindings", () => {
         displayName: "Alice",
         evidence: [
           {
-            weight: 1.0,
+            weight: 1,
             modifiedAt: 0,
             type: "pr_authored" as const,
             serviceId: "github",
@@ -101,7 +101,7 @@ describe("rankExpertFindings", () => {
           personId: "a",
           displayName: "A",
           evidence: Array.from({ length: 5 }, () => ({
-            weight: 1.0,
+            weight: 1,
             modifiedAt: 0,
             type: "pr_authored" as const,
             serviceId: "github",

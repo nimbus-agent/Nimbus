@@ -253,10 +253,6 @@ class NodemailerMailer implements SmtpMailer {
 }
 
 const server = new McpServer({ name: "nimbus-imap", version: "0.1.0" });
-registerImapTools(
-  server as unknown as { tool: (...args: never) => unknown },
-  new ImapFlowClient(),
-  new NodemailerMailer(),
-);
+registerImapTools(server, new ImapFlowClient(), new NodemailerMailer());
 
 await server.connect(new StdioServerTransport());

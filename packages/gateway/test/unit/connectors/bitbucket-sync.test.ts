@@ -18,7 +18,8 @@ function encodeCursor(payload: unknown): string {
 }
 
 function authHeaderForUserPass(user: string, pass: string): string {
-  return `Basic ${Buffer.from(`${user}:${pass}`, "utf8").toString("base64")}`;
+  const creds = `${user}:${pass}`;
+  return `Basic ${Buffer.from(creds, "utf8").toString("base64")}`;
 }
 
 async function withIsolatedFixture(
@@ -100,11 +101,11 @@ describe("bitbucket-sync — credential short-circuits", () => {
   });
 });
 
-describe("bitbucket-sync — cursor decode failures", () => {
-  function stageEmptyWorkspace(): void {
-    fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
-  }
+function stageEmptyWorkspace(): void {
+  fixture.fetchMock.respond("GET", WORKSPACE_RE, { values: [], next: null });
+}
 
+describe("bitbucket-sync — cursor decode failures", () => {
   test("null cursor falls back to default sync state and fetches workspace", async () => {
     stageEmptyWorkspace();
     const res = await createBitbucketSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

@@ -24,11 +24,13 @@ class FakeIpc {
   emit(method: string, params: unknown): void {
     for (const h of this.notifHandlers.get(method) ?? []) h(params);
   }
-  async disconnect(): Promise<void> {}
+  async disconnect(): Promise<void> {
+    /* no-op fake */
+  }
 }
 
 function makeClient(ipc: FakeIpc): NimbusClient {
-  return new (NimbusClient as unknown as { new (ipc: unknown): NimbusClient })(ipc);
+  return new (NimbusClient as unknown as new (ipc: unknown) => NimbusClient)(ipc);
 }
 
 describe("NimbusClient method dispatch", () => {

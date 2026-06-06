@@ -145,7 +145,7 @@ export function formatScanPretty(result: SecurityScanResult, options: RenderOpti
     );
     if (f.blame != null) {
       const who = f.blame.author_email ?? f.blame.author_name ?? "unknown";
-      const when = f.blame.author_time_ms != null ? formatIso(f.blame.author_time_ms) : "?";
+      const when = f.blame.author_time_ms == null ? "?" : formatIso(f.blame.author_time_ms);
       lines.push(dim(`      introduced by ${who} @ ${when} (${f.blame.commit_sha.slice(0, 12)})`));
     } else if (f.type === "code_symbol") {
       gitFindingMissingBlame = true;

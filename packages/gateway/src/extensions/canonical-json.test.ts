@@ -92,7 +92,7 @@ describe("canonicalizeManifest", () => {
       id: "test",
       version: "1.0.0",
       permissions: {},
-    } as never);
+    });
     expect(out).toBeInstanceOf(Uint8Array);
   });
 });

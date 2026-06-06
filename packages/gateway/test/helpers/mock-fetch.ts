@@ -1,3 +1,5 @@
+import { requestUrl } from "./request-url.ts";
+
 export type FetchCall = {
   readonly url: string;
   readonly method: string;
@@ -59,8 +61,8 @@ export class MockFetch {
       throw new Error("MockFetch.install() called twice without restore()");
     }
     this.original = globalThis.fetch;
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
-      this.handle(input, init)) as typeof globalThis.fetch;
+    globalThis.fetch = (input: string | URL | Request, init?: RequestInit) =>
+      this.handle(input, init);
   }
 
   restore(): void {
@@ -94,10 +96,14 @@ export class MockFetch {
   }
 
   private async handle(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     const method = (init?.method ?? "GET").toUpperCase();
-    const rawBody = init?.body === undefined || init.body === null ? null : String(init.body);
+    let rawBody: string | null = null;
+    if (typeof init?.body === "string") {
+      rawBody = init.body;
+    } else if (init?.body instanceof URLSearchParams) {
+      rawBody = init.body.toString();
+    }
     const headers = normalizeRequestHeaders(init?.headers);
     this.calls.push({ url, method, body: rawBody, headers });
 

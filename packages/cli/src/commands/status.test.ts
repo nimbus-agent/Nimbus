@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -26,14 +25,14 @@ describe("runStatusImpl", () => {
     const ipc = createMockIpcClient([{ version: "1.2.3", uptime: 60_000 }]);
     await runStatusImpl(
       ipc.client,
-      { pid: 12345, socketPath: "/tmp/fake.sock" },
+      { pid: 12345, socketPath: FAKE_SOCKET_PATH },
       { wantDrift: false, verbose: false },
     );
     expect(ipc.calls[0]).toEqual({ method: "gateway.ping", params: {} });
     expect(out.stdout).toContain("Gateway: running (pid 12345)");
     expect(out.stdout).toContain("Version: 1.2.3");
     expect(out.stdout).toContain("Uptime:  60s");
-    expect(out.stdout).toContain("Socket:  /tmp/fake.sock");
+    expect(out.stdout).toContain(`Socket:  ${FAKE_SOCKET_PATH}`);
   });
 
   it("prints agent limits when present", async () => {
@@ -141,7 +140,7 @@ describe("runStatus (dispatcher)", () => {
   it("routes through the IPC client when gateway is running", async () => {
     const ipc = createMockIpcClient([{ version: "9.9", uptime: 1000 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock", pid: 42 },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runStatus([]);

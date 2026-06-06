@@ -61,7 +61,7 @@ main#root {
 }
 
 .empty-state h3 {
-  margin: 0 0 0.5em 0;
+  margin: 0 0 0.5em;
   color: var(--vscode-editor-foreground);
 }
 

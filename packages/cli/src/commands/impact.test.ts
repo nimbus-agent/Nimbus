@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./impact.ts");
 const { parseImpactArgs, runImpactCli } = mod;
@@ -48,31 +48,12 @@ describe("parseImpactArgs", () => {
   });
 });
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-const origExit = process.exit.bind(process);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-  process.exit = ((code?: number): never => {
-    throw new Error(`process.exit(${code ?? ""})`);
-  }) as typeof process.exit;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-  process.exit = origExit;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture({ captureExit: true });
 
 afterAll(() => {
   restoreStreams();
@@ -111,7 +92,7 @@ describe("runImpactCli — dispatcher", () => {
   it("happy path: prints Markdown brief on impact.briefReady", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.impact") {
@@ -141,7 +122,7 @@ describe("runImpactCli — dispatcher", () => {
   it("--json prints the structured findings", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.impact") {
@@ -172,7 +153,7 @@ describe("runImpactCli — dispatcher", () => {
   it("exits 1 with hint when findings include an empty_index gap", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.impact") {
@@ -201,7 +182,7 @@ describe("runImpactCli — dispatcher", () => {
   it("exits 2 when impact.briefError fires", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.impact") {
@@ -227,7 +208,7 @@ describe("runImpactCli — dispatcher", () => {
     const handlers = new Map<string, (params: unknown) => void>();
     let agentCallParams: unknown;
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           if (method === "agents.impact") {
@@ -261,7 +242,7 @@ describe("runImpactCli — dispatcher", () => {
   it("exits 2 when briefReady payload is malformed", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string) => {
           if (method === "agents.impact") {

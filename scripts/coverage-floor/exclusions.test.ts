@@ -75,7 +75,7 @@ describe("isExempt — github-actions entry points", () => {
 
 describe("isExempt — path-separator normalization", () => {
   test("backslash-separated paths (Windows) are normalized", () => {
-    expect(isExempt("packages\\gateway\\src\\vault\\win32.ts")).toBe(true);
+    expect(isExempt(String.raw`packages\gateway\src\vault\win32.ts`)).toBe(true);
   });
 });
 

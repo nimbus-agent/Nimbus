@@ -187,7 +187,7 @@ export async function tryDispatchSecurityRpc(
   try {
     const out = await dispatchSecurityRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
-      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+      notify: (m, p) => ctx.broadcastNotification(m, p),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
     if (out.kind === "hit") return out.value;

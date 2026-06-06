@@ -22,12 +22,18 @@ export class InMemoryDiscoveryProvider implements DiscoveryProvider {
   constructor(seed: readonly DiscoveredPeer[] = []) {
     this.peers = [...seed];
   }
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  async start(): Promise<void> {
+    // no-op: the in-memory provider needs no startup
+  }
+  async stop(): Promise<void> {
+    // no-op: nothing to tear down
+  }
   async list(): Promise<readonly DiscoveredPeer[]> {
     return [...this.peers];
   }
-  async advertise(): Promise<void> {}
+  async advertise(): Promise<void> {
+    // no-op: the in-memory provider does not broadcast
+  }
   addManualPeer(peer: DiscoveredPeer): void {
     this.peers.push(peer);
   }

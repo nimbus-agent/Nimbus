@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
 
 const BASE = "https://api.figma.com";
 const TEAM_ID = "1234567890";
@@ -29,35 +30,29 @@ interface FakeConfig {
 interface FakeServer {
   requests: RecordedReq[];
   fetch: typeof globalThis.fetch;
+  restore: () => void;
 }
 
-const realFetch = globalThis.fetch;
-
 function installFakeFetch(config: FakeConfig): FakeServer {
-  const requests: RecordedReq[] = [];
-  const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
-    if (new URL(urlStr).origin !== BASE) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
-    }
-    const u = new URL(urlStr);
-    requests.push({
+  return installHostInterceptFetch<RecordedReq>({
+    base: BASE,
+    record: (u, init) => ({
       method: init?.method ?? "GET",
       pathname: u.pathname,
       auth: new Headers(init?.headers).get("authorization"),
-    });
-    if (config.globalStatus !== undefined && config.globalStatus !== 200) {
-      return new Response("error", { status: config.globalStatus });
-    }
-    const forced = config.status?.[u.pathname];
-    if (forced !== undefined && forced !== 200) {
-      return new Response("error", { status: forced });
-    }
-    const body = config.routes?.[u.pathname] ?? {};
-    return Response.json(body as Record<string, unknown>);
-  }) as typeof globalThis.fetch;
-  globalThis.fetch = fakeFetch;
-  return { requests, fetch: fakeFetch };
+    }),
+    respond: (req) => {
+      if (config.globalStatus !== undefined && config.globalStatus !== 200) {
+        return new Response("error", { status: config.globalStatus });
+      }
+      const forced = config.status?.[req.pathname];
+      if (forced !== undefined && forced !== 200) {
+        return new Response("error", { status: forced });
+      }
+      const body = config.routes?.[req.pathname] ?? {};
+      return Response.json(body);
+    },
+  });
 }
 
 interface Harness {
@@ -76,7 +71,7 @@ function startHarness(config: FakeConfig): Harness {
     db,
     fake,
     cleanup: () => {
-      globalThis.fetch = realFetch;
+      fake.restore();
       db.close();
     },
     ctx: {

@@ -24,6 +24,13 @@ const VALID_BODY = {
   job_id: "67890",
 };
 
+function authHeaders(token = TOKEN): Record<string, string> {
+  return {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+  };
+}
+
 describe("POST /v1/deployments (integration)", () => {
   let dir: string;
   let dbPath: string;
@@ -33,19 +40,12 @@ describe("POST /v1/deployments (integration)", () => {
     return startReadOnlyHttpServer(dbPath, 0, {
       configDir: dir,
       nowMs: () => NOW,
-      resolveDeploymentToken: async () => (o.token === undefined ? TOKEN : o.token),
+      resolveDeploymentToken: async () => o.token ?? TOKEN,
     });
   }
 
   function urlFor(h: ReadOnlyHttpServerHandle): string {
     return `http://127.0.0.1:${h.port}/v1/deployments`;
-  }
-
-  function authHeaders(token = TOKEN): Record<string, string> {
-    return {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    };
   }
 
   beforeEach(() => {

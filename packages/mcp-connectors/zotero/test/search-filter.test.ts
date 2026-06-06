@@ -25,7 +25,7 @@ function item(over: Record<string, unknown> = {}): Record<string, unknown> {
       date: "2024",
       dateModified: "2024-03-02T08:00:00Z",
       dateAdded: "2024-03-01T12:00:00Z",
-      ...((dataOver as Record<string, unknown> | undefined) ?? {}),
+      ...dataOver,
     },
   };
 }

@@ -26,18 +26,25 @@ async function main() {
   }
   rows.sort((a, b) => b.loc - a.loc);
   const out: string[] = ["# Punch list — section 3: SRP offenders (>500 LOC)", ""];
-  out.push(`Total files: ${rows.length}`, "");
-  out.push("| File | LOC | Exports | Names (first 8) |");
-  out.push("|---|---|---|---|");
+  out.push(
+    `Total files: ${rows.length}`,
+    "",
+    "| File | LOC | Exports | Names (first 8) |",
+    "|---|---|---|---|",
+  );
   for (const r of rows) {
     out.push(
       `| \`${r.file}\` | ${r.loc} | ${r.exports} | ${r.names.slice(0, 8).join(", ")}${r.names.length > 8 ? "…" : ""} |`,
     );
   }
-  out.push("", "## Triage rule", "");
-  out.push("- LOC>500 + exports>=3 unrelated symbols → split candidate.");
-  out.push("- LOC>500 + one cohesive exported class/function → keep but audit for internal SRP.");
-  out.push("- LOC>500 in a test file → ignore for pass 5 (tests are frozen).");
+  out.push(
+    "",
+    "## Triage rule",
+    "",
+    "- LOC>500 + exports>=3 unrelated symbols → split candidate.",
+    "- LOC>500 + one cohesive exported class/function → keep but audit for internal SRP.",
+    "- LOC>500 in a test file → ignore for pass 5 (tests are frozen).",
+  );
   const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/03-srp-offenders.md`;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, out.join("\n"), "utf8");

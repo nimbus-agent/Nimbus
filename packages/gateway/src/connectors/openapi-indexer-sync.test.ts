@@ -121,7 +121,7 @@ paths:
   const remaining = db.query("SELECT method FROM api_endpoint ORDER BY method").all() as Array<{
     method: string;
   }>;
-  expect(remaining.map((r) => r.method).sort()).toEqual(["GET", "GET"]);
+  expect(remaining.map((r) => r.method).sort((a, b) => a.localeCompare(b))).toEqual(["GET", "GET"]);
 });
 
 test("uses enclosing-directory name when spec lives one level under the root", async () => {

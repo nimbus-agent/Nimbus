@@ -83,18 +83,19 @@ describe("buildContextSnippet", () => {
   });
 });
 
-describe("individual pattern matches", () => {
-  function findPattern(name: string): SecretPattern {
-    const p = SECRET_PATTERNS.find((x) => x.name === name);
-    if (p === undefined) throw new Error(`pattern ${name} missing`);
-    return p;
-  }
-  function hasMatch(name: string, body: string): boolean {
-    const p = findPattern(name);
-    p.regex.lastIndex = 0;
-    return p.regex.test(body);
-  }
+function findPattern(name: string): SecretPattern {
+  const p = SECRET_PATTERNS.find((x) => x.name === name);
+  if (p === undefined) throw new Error(`pattern ${name} missing`);
+  return p;
+}
 
+function hasMatch(name: string, body: string): boolean {
+  const p = findPattern(name);
+  p.regex.lastIndex = 0;
+  return p.regex.test(body);
+}
+
+describe("individual pattern matches", () => {
   test("aws_access_key matches AWS-documented public example", () => {
     expect(hasMatch("aws_access_key", "k='AKIAIOSFODNN7EXAMPLE'")).toBe(true);
   });
@@ -236,7 +237,7 @@ describe("pattern tiers", () => {
 describe("regex-DoS resilience", () => {
   test("scanning 100 KB of random text finishes within 200 ms per pattern", () => {
     const filler = Array.from({ length: 100_000 }, (_, i) =>
-      String.fromCharCode(48 + (i % 75)),
+      String.fromCodePoint(48 + (i % 75)),
     ).join("");
     for (const p of SECRET_PATTERNS) {
       p.regex.lastIndex = 0;

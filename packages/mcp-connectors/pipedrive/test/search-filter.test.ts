@@ -50,9 +50,9 @@ describe("filterPipedriveDeals", () => {
 
   test("tolerates missing string fields", () => {
     const sparse = deal();
-    delete (sparse as Record<string, unknown>)["org_name"];
-    delete (sparse as Record<string, unknown>)["person_name"];
-    delete (sparse as Record<string, unknown>)["label"];
+    delete sparse["org_name"];
+    delete sparse["person_name"];
+    delete sparse["label"];
     expect(filterPipedriveDeals([sparse], { query: "annual renewal" })).toHaveLength(1);
     expect(filterPipedriveDeals([sparse], { query: "Acme Corporation" })).toHaveLength(0);
   });

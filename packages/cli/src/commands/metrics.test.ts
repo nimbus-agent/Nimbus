@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./metrics.ts");
 const {
@@ -72,7 +72,7 @@ describe("renderMetricRow", () => {
   test("does not prepend ⚠ for non-mixed_source gaps even on a colour TTY", () => {
     const row: MetricRowInput = {
       label: "Lead Time",
-      value: 2.0,
+      value: 2,
       unit: "hours",
       sample: 5,
       gap: "low_sample",
@@ -172,31 +172,12 @@ describe("formatDoraPretty", () => {
   });
 });
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-const origExit = process.exit.bind(process);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-  process.exit = ((code?: number): never => {
-    throw new Error(`process.exit(${code ?? ""})`);
-  }) as typeof process.exit;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-  process.exit = origExit;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture({ captureExit: true });
 
 afterAll(() => {
   restoreStreams();
@@ -235,7 +216,7 @@ describe("runMetricsCli", () => {
 
   it("renders pretty output on success", async () => {
     const mock = createMockIpcClient([envelopeFixture()]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runMetricsCli(["dora", "--service", "svc"]);
     expect(stdoutChunks.join("")).toContain("DORA metrics");
     expect(mock.calls).toHaveLength(1);
@@ -245,7 +226,7 @@ describe("runMetricsCli", () => {
 
   it("emits JSON envelope when --json passed", async () => {
     const mock = createMockIpcClient([envelopeFixture()]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runMetricsCli(["dora", "--service", "svc", "--json"]);
     expect(stdoutChunks.join("")).toContain('"service": "svc"');
     expect(stdoutChunks.join("")).toContain('"deployment_frequency"');
@@ -253,14 +234,14 @@ describe("runMetricsCli", () => {
 
   it("exits 2 on malformed envelope", async () => {
     const mock = createMockIpcClient([{ not: "an envelope" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 
   it("exits 2 on IPC error", async () => {
     const mock = createMockIpcClient([new Error("ipc down")]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("ipc down");
   });

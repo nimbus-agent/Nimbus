@@ -255,7 +255,10 @@ describe("people.unlinked", () => {
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
     const list = r.value as Array<Record<string, unknown>>;
-    expect(list.map((p) => p["id"]).sort()).toEqual(["p_a", "p_c"]);
+    expect(list.map((p) => p["id"]).sort((a, b) => String(a).localeCompare(String(b)))).toEqual([
+      "p_a",
+      "p_c",
+    ]);
   });
 
   test("honors custom limit", () => {

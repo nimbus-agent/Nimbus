@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const replCalls: Array<string[]> = [];
 mock.module("./repl.ts", () => ({
@@ -13,26 +13,12 @@ mock.module("./repl.ts", () => ({
 const mod = await import("./tui.tsx");
 const { runTui } = mod;
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();
@@ -101,15 +87,15 @@ describe("runTui — fallback to REPL", () => {
   afterEach(() => {
     clearFixture();
     restoreStreams();
-    if (origIsTty !== undefined) {
-      Object.defineProperty(process.stdout, "isTTY", origIsTty);
-    } else {
+    if (origIsTty === undefined) {
       delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", origIsTty);
     }
   });
 
   it("invokes runRepl with the original args when stdout is not a TTY", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await runTui(["--session", "s1"]);
     expect(stderrChunks.join("")).toContain("Unsuitable terminal detected");
     expect(stderrChunks.join("")).toContain("non-TTY");

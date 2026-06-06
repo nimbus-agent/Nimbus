@@ -43,8 +43,8 @@ describe("filterNetlifySites", () => {
 
   test("tolerates a missing build_settings / published_deploy object", () => {
     const bare = site();
-    delete (bare as Record<string, unknown>)["build_settings"];
-    delete (bare as Record<string, unknown>)["published_deploy"];
+    delete bare["build_settings"];
+    delete bare["published_deploy"];
     expect(filterNetlifySites([bare], { query: "my-app" })).toHaveLength(1);
     expect(filterNetlifySites([bare], { query: "ready" })).toHaveLength(0);
   });

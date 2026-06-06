@@ -18,7 +18,7 @@ function txn(over: Record<string, unknown> = {}): Record<string, unknown> {
       first_name: "Ada",
       last_name: "Lovelace",
       department_name: "Engineering",
-      ...((holderOver as Record<string, unknown> | undefined) ?? {}),
+      ...holderOver,
     },
   };
 }
@@ -47,15 +47,15 @@ describe("filterRampTransactions", () => {
 
   test("tolerates a missing card_holder object", () => {
     const noHolder = txn();
-    delete (noHolder as Record<string, unknown>)["card_holder"];
+    delete noHolder["card_holder"];
     expect(filterRampTransactions([noHolder], { query: "amazon" })).toHaveLength(1);
     expect(filterRampTransactions([noHolder], { query: "Ada Lovelace" })).toHaveLength(0);
   });
 
   test("tolerates missing optional string fields", () => {
     const sparse = txn();
-    delete (sparse as Record<string, unknown>)["memo"];
-    delete (sparse as Record<string, unknown>)["sk_category_name"];
+    delete sparse["memo"];
+    delete sparse["sk_category_name"];
     expect(filterRampTransactions([sparse], { query: "amazon" })).toHaveLength(1);
     expect(filterRampTransactions([sparse], { query: "production bill" })).toHaveLength(0);
   });

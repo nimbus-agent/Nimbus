@@ -36,7 +36,7 @@ function ctx(): FederationRpcContext {
     consentTimeoutMs: 50,
     notify: (method, params) => notes.push({ method, params }),
     discovery: new InMemoryDiscoveryProvider([
-      { instanceName: "gateway-b", host: "10.0.0.2", port: 7475 },
+      { instanceName: "gateway-b", host: "gateway-b.test", port: 7475 },
     ]),
     pairing: new PeerPairing(index),
   };
@@ -93,7 +93,7 @@ test("acceptance: discover → pair → publish → grant → scoped leak-proof 
 
   // (criterion 1) mutual pairing: in-process owner approval persists an inbound peer
   const peerKey = generateBoxKeypair().publicKey;
-  const peerId = c.pairing.approveInboundPair({ peerPubkey: peerKey, hostIp: "10.0.0.2" });
+  const peerId = c.pairing.approveInboundPair({ peerPubkey: peerKey, hostIp: "gateway-b.test" });
   const peers = await dispatchFederationRpc("federation.peers", {}, c);
   expect(peers.kind).toBe("hit");
   if (peers.kind === "hit") {
@@ -134,9 +134,12 @@ test("acceptance: discover → pair → publish → grant → scoped leak-proof 
     };
     expect(r.kind).toBe("ok");
     const items = r.response?.items ?? [];
-    expect(items.map((i) => i["id"]).sort()).toEqual(["github:pr1", "github:pr2"]);
+    expect(items.map((i) => i["id"]).sort((a, b) => String(a).localeCompare(String(b)))).toEqual([
+      "github:pr1",
+      "github:pr2",
+    ]);
     for (const it of items) {
-      expect(Object.keys(it).sort()).toEqual([
+      expect(Object.keys(it).sort((a, b) => a.localeCompare(b))).toEqual([
         "id",
         "modifiedAt",
         "service",

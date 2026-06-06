@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pino from "pino";
 
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { tryCreateEmbeddingWorkerBridge } from "./worker-bridge.ts";
+
+// Real, unique temp root for the fake model/data dir (S5443). The worker is faked —
+// nothing is written under this path.
+const DATA_DIR = mkdtempSync(join(tmpdir(), "nimbus-worker-bridge-test-"));
 
 interface PostedMessage {
   readonly type: string;
@@ -59,7 +66,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (originalWorker === undefined) {
-    Reflect.deleteProperty(globalThis as object, "Worker");
+    Reflect.deleteProperty(globalThis, "Worker");
   } else {
     (globalThis as unknown as { Worker: unknown }).Worker = originalWorker;
   }
@@ -69,7 +76,7 @@ function makeBridge(): EmbeddingRuntime {
   const logger = pino({ level: "silent" });
   const bridge = tryCreateEmbeddingWorkerBridge(
     ":memory:",
-    "/tmp/nimbus-worker-bridge-test",
+    DATA_DIR,
     { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 8 },
     logger,
   );
@@ -80,7 +87,7 @@ function makeBridge(): EmbeddingRuntime {
 }
 
 function currentHandle(): FakeWorkerHandle {
-  const h = handles[handles.length - 1];
+  const h = handles.at(-1);
   if (h === undefined) {
     throw new Error("expected at least one fake worker handle");
   }
@@ -93,7 +100,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const logger = pino({ level: "silent" });
     const bridge = tryCreateEmbeddingWorkerBridge(
       ":memory:",
-      "/tmp/nimbus-worker-bridge-test",
+      DATA_DIR,
       { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 8 },
       logger,
     );
@@ -266,7 +273,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     } finally {
       bridge.terminate();
       if (originalOrigin === undefined) {
-        Reflect.deleteProperty(g as object, "origin");
+        Reflect.deleteProperty(g, "origin");
       } else {
         Object.defineProperty(g, "origin", {
           value: originalOrigin,
@@ -380,7 +387,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const start = Date.now();
     const bridge = tryCreateEmbeddingWorkerBridge(
       ":memory:",
-      "/tmp/nimbus-test",
+      DATA_DIR,
       { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 8 },
       logger,
     );

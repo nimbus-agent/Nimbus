@@ -67,27 +67,27 @@ describe("StructuredPreview", () => {
   });
 });
 
-describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
-  function autoUpdateDetails(overrides: Record<string, unknown> = {}) {
-    return {
-      displayName: "Notion",
-      fromVersion: "1.0.0",
-      toVersion: "1.1.0",
-      channel: "stable",
-      changelog: "Fixed parser bug",
-      publisherStatus: "verified",
-      addedPermissions: {
-        network: [],
-        filesystem: { read: [], write: [] },
-      },
-      removedPermissions: {
-        network: [],
-        filesystem: { read: [], write: [] },
-      },
-      ...overrides,
-    };
-  }
+function autoUpdateDetails(overrides: Record<string, unknown> = {}) {
+  return {
+    displayName: "Notion",
+    fromVersion: "1.0.0",
+    toVersion: "1.1.0",
+    channel: "stable",
+    changelog: "Fixed parser bug",
+    publisherStatus: "verified",
+    addedPermissions: {
+      network: [],
+      filesystem: { read: [], write: [] },
+    },
+    removedPermissions: {
+      network: [],
+      filesystem: { read: [], write: [] },
+    },
+    ...overrides,
+  };
+}
 
+describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
   it("renders version pair + channel + publisher for extension.autoUpdate", () => {
     render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
     expect(screen.getByTestId("auto-update-preview")).toBeInTheDocument();

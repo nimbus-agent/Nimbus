@@ -65,7 +65,7 @@ describe("mapDatabricksJobToItem", () => {
 
   test("returns null when job_id is missing or not a number", () => {
     const noId = makeJob();
-    delete (noId as Record<string, unknown>)["job_id"];
+    delete noId["job_id"];
     expect(mapDatabricksJobToItem(noId, ctx())).toBeNull();
     expect(mapDatabricksJobToItem(makeJob({ job_id: "555" }), ctx())).toBeNull();
   });
@@ -106,7 +106,7 @@ describe("mapDatabricksJobToItem", () => {
     expect(meta(row)["format"]).toBe("MULTI_TASK");
 
     const sparse = makeJob({ settings: { name: "X" } });
-    delete (sparse as Record<string, unknown>)["creator_user_name"];
+    delete sparse["creator_user_name"];
     const row2 = mapDatabricksJobToItem(sparse, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["creator_user_name"]).toBeNull();
@@ -135,7 +135,7 @@ describe("mapDatabricksJobToItem", () => {
     expect(meta(row)["created_at"]).toBe(CREATED_MS);
 
     const noCreated = makeJob();
-    delete (noCreated as Record<string, unknown>)["created_time"];
+    delete noCreated["created_time"];
     const row2 = mapDatabricksJobToItem(noCreated, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["created_at"]).toBeNull();
@@ -184,7 +184,7 @@ describe("mapDatabricksJobToItem", () => {
     expect(row.modifiedAt).toBe(CREATED_MS);
 
     const noCreated = makeJob();
-    delete (noCreated as Record<string, unknown>)["created_time"];
+    delete noCreated["created_time"];
     const row2 = mapDatabricksJobToItem(noCreated, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(row2.modifiedAt).toBe(NOW);

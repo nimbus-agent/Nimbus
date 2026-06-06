@@ -34,7 +34,7 @@ beforeEach(() => {
     status: null,
     telemetryActionInFlight: false,
     connectionState: "connected",
-  } as never);
+  });
 });
 
 describe("TelemetryPanel", () => {
@@ -85,7 +85,7 @@ describe("TelemetryPanel", () => {
     telemetryGetStatusMock.mockResolvedValueOnce({ enabled: false });
     render(<TelemetryPanel />);
     await waitFor(() => screen.getByRole("switch", { name: /telemetry/i }));
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     await waitFor(() => expect(screen.getByRole("switch", { name: /telemetry/i })).toBeDisabled());
   });
 });

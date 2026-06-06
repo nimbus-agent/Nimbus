@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./deploy-annotate.ts");
 const { ArgParseError, parseDeployAnnotateArgs, runDeployAnnotate } = mod;
@@ -21,6 +21,12 @@ const REQUIRED = [
   "--started-at",
   "1747142400000",
 ];
+
+function omitFlag(flag: string): string[] {
+  const idx = REQUIRED.indexOf(flag);
+  if (idx === -1) return [...REQUIRED];
+  return [...REQUIRED.slice(0, idx), ...REQUIRED.slice(idx + 2)];
+}
 
 describe("parseDeployAnnotateArgs", () => {
   test("parses the minimal required flag set with defaults", () => {
@@ -61,12 +67,6 @@ describe("parseDeployAnnotateArgs", () => {
     expect(parsed.jobId).toBe("job-7");
     expect(parsed.json).toBe(true);
   });
-
-  function omitFlag(flag: string): string[] {
-    const idx = REQUIRED.indexOf(flag);
-    if (idx === -1) return [...REQUIRED];
-    return [...REQUIRED.slice(0, idx), ...REQUIRED.slice(idx + 2)];
-  }
 
   test("rejects missing --sha with a clear error", () => {
     const args = omitFlag("--sha");
@@ -138,26 +138,12 @@ describe("parseDeployAnnotateArgs", () => {
   });
 });
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();
@@ -211,7 +197,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: true,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(0);
     expect(stdoutChunks.join("")).toContain("Deployment recorded");
@@ -235,7 +221,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: false,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate([...VALID_ARGV, "--json"]);
     expect(exit).toBe(0);
     expect(stdoutChunks.join("")).toContain('"external_id"');
@@ -251,7 +237,7 @@ describe("runDeployAnnotate", () => {
       dora_eligible: true,
     };
     const mock = createMockIpcClient([response]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runDeployAnnotate([
       ...VALID_ARGV,
       "--finished-at",
@@ -275,7 +261,7 @@ describe("runDeployAnnotate", () => {
 
   it("returns 1 on malformed envelope from gateway", async () => {
     const mock = createMockIpcClient([{ not: "an envelope" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(1);
     expect(stderrChunks.join("")).toContain("malformed envelope");
@@ -283,7 +269,7 @@ describe("runDeployAnnotate", () => {
 
   it("returns 1 on IPC error", async () => {
     const mock = createMockIpcClient([new Error("connection refused")]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     const exit = await runDeployAnnotate(VALID_ARGV);
     expect(exit).toBe(1);
     expect(stderrChunks.join("")).toContain("connection refused");

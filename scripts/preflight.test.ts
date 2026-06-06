@@ -25,12 +25,18 @@ function manifestScriptIds(): Set<string> {
 describe("preflight drift guard", () => {
   test("extractWorkflowGates pulls bun run + bunx ids", () => {
     const y = "      - run: bun run audit:boundaries\n      - run: bunx jscpd packages/\n";
-    expect(extractWorkflowGates(y).sort()).toEqual(["audit:boundaries", "jscpd"]);
+    expect(extractWorkflowGates(y).sort((a, b) => a.localeCompare(b))).toEqual([
+      "audit:boundaries",
+      "jscpd",
+    ]);
   });
 
   test("extractWorkflowGates tolerates intervening flags (--bun)", () => {
     const y = "      - run: bun --bun run audit:any\n      - run: bunx --bun vitest run\n";
-    expect(extractWorkflowGates(y).sort()).toEqual(["audit:any", "vitest"]);
+    expect(extractWorkflowGates(y).sort((a, b) => a.localeCompare(b))).toEqual([
+      "audit:any",
+      "vitest",
+    ]);
   });
 
   test("every workflow bun run/bunx gate is in the manifest or CI_ONLY_GATES", () => {

@@ -44,7 +44,7 @@ describe("mapDbtJobToItem", () => {
 
   test("returns null when id is missing or not a number", () => {
     const noId = makeJob();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapDbtJobToItem(noId, ctx())).toBeNull();
     expect(mapDbtJobToItem(makeJob({ id: "1234" }), ctx())).toBeNull();
   });
@@ -63,7 +63,7 @@ describe("mapDbtJobToItem", () => {
     expect(row.title).toBe("nightly-prod-run");
 
     const noName = makeJob();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row2 = mapDbtJobToItem(noName, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(row2.title).toBe("job 1234");
@@ -95,9 +95,9 @@ describe("mapDbtJobToItem", () => {
     expect(m["dbt_version"]).toBe("1.7.4");
 
     const sparse = makeJob();
-    delete (sparse as Record<string, unknown>)["project_id"];
-    delete (sparse as Record<string, unknown>)["environment_id"];
-    delete (sparse as Record<string, unknown>)["dbt_version"];
+    delete sparse["project_id"];
+    delete sparse["environment_id"];
+    delete sparse["dbt_version"];
     const row2 = mapDbtJobToItem(sparse, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["project_id"]).toBeNull();
@@ -115,7 +115,7 @@ describe("mapDbtJobToItem", () => {
     expect(meta(noCron)["schedule_cron"]).toBeNull();
 
     const noSchedule = makeJob();
-    delete (noSchedule as Record<string, unknown>)["schedule"];
+    delete noSchedule["schedule"];
     const row3 = mapDbtJobToItem(noSchedule, ctx());
     if (row3 === null) throw new Error("expected mapping to succeed");
     expect(meta(row3)["schedule_cron"]).toBeNull();
@@ -147,7 +147,7 @@ describe("mapDbtJobToItem", () => {
 
   test("modifiedAt falls back to created_at then syncedAt", () => {
     const noUpdated = makeJob();
-    delete (noUpdated as Record<string, unknown>)["updated_at"];
+    delete noUpdated["updated_at"];
     const row = mapDbtJobToItem(noUpdated, ctx());
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.modifiedAt).toBe(Date.parse("2021-02-10T20:03:11.000000Z"));
@@ -204,7 +204,7 @@ describe("mapDbtJobToItem", () => {
 
   test("canonical url falls back to account deploy page when project_id missing", () => {
     const noProject = makeJob();
-    delete (noProject as Record<string, unknown>)["project_id"];
+    delete noProject["project_id"];
     const row = mapDbtJobToItem(noProject, ctx());
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBe("https://cloud.getdbt.com/deploy/42");

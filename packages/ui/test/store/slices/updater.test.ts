@@ -60,9 +60,9 @@ describe("updater slice", () => {
     } as never;
     store.getState().setUpdaterStatus(status);
     store.getState().setUpdaterUiState("downloading");
-    store.getState().setUpdaterCheck({ updateAvailable: true } as never);
-    store.getState().setUpdaterDownload({ bytesDownloaded: 5, totalBytes: 10 } as never);
-    store.getState().setUpdaterRestarting({ toVersion: "0.2.0" } as never);
+    store.getState().setUpdaterCheck({ updateAvailable: true });
+    store.getState().setUpdaterDownload({ bytesDownloaded: 5, totalBytes: 10 });
+    store.getState().setUpdaterRestarting({ toVersion: "0.2.0" });
     store.getState().setUpdaterFailure({ reason: "reconnect_timeout" });
 
     store.getState().resetUpdaterTransients();
@@ -86,7 +86,7 @@ describe("UpdaterSlice — persist whitelist unchanged", () => {
       updaterDownload: null,
       updaterRestarting: null,
       updaterFailure: null,
-    } as never);
+    });
   });
 
   it("updaterStatus, updaterUiState, updaterCheck, updaterDownload, updaterRestarting, updaterFailure are NOT persisted", () => {
@@ -102,7 +102,7 @@ describe("UpdaterSlice — persist whitelist unchanged", () => {
       updaterDownload: { bytesDownloaded: 5, totalBytes: 10 },
       updaterRestarting: { toVersion: "0.2.0" },
       updaterFailure: { reason: "reconnect_timeout" },
-    } as never);
+    });
     const raw = localStorage.getItem("nimbus-ui-store");
     if (raw === null) {
       return;

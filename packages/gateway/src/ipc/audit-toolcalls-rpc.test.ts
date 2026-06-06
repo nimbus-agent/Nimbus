@@ -144,7 +144,7 @@ describe("audit.toolCalls dispatcher branch", () => {
     expect(value.hasMore).toBe(true);
     expect(value.nextCursor).not.toBeNull();
     if (value.nextCursor === null) throw new Error("unreachable");
-    const last = value.toolCalls[value.toolCalls.length - 1];
+    const last = value.toolCalls.at(-1);
     if (last === undefined) throw new Error("unreachable");
     expect(value.nextCursor.calledAt).toBe(last.calledAt);
     expect(value.nextCursor.id).toBe(last.id);

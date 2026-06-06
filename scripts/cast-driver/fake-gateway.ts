@@ -34,8 +34,8 @@ export class FakeGateway {
   private server: Server | null = null;
   private currentStepIdx = 0;
   private pendingConsent: { requestId: string; resume: () => void } | null = null;
-  private earlyConsents = new Map<string, boolean>();
-  private activeSockets = new Set<Socket>();
+  private readonly earlyConsents = new Map<string, boolean>();
+  private readonly activeSockets = new Set<Socket>();
   readonly consentDecisions: ConsentDecision[] = [];
 
   constructor(private readonly opts: FakeGatewayOptions) {}
@@ -191,14 +191,14 @@ export class FakeGateway {
         if (typeof p.requestId === "string") {
           const rid = p.requestId;
           const earlyApproved = this.earlyConsents.get(rid);
-          if (earlyApproved !== undefined) {
-            this.earlyConsents.delete(rid);
-            this.consentDecisions.push({ requestId: rid, approved: earlyApproved });
-            // No pause needed — response is already here.
-          } else {
+          if (earlyApproved === undefined) {
             await new Promise<void>((resolve) => {
               this.pendingConsent = { requestId: rid, resume: resolve };
             });
+          } else {
+            this.earlyConsents.delete(rid);
+            this.consentDecisions.push({ requestId: rid, approved: earlyApproved });
+            // No pause needed — response is already here.
           }
         }
       }

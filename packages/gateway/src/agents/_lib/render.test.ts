@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { ExpertBrief } from "./findings.ts";
-import { renderExpert } from "./render.ts";
+import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
+import { renderCatchup, renderExpert, renderImpact } from "./render.ts";
 
-const BASE: Pick<ExpertBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+type BriefMetaKeys = "kind" | "agentVersion" | "generatedAt" | "latencyMs";
+
+const BASE: Pick<ExpertBrief, BriefMetaKeys> = {
   kind: "expert",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,
@@ -28,7 +30,7 @@ describe("renderExpert", () => {
               serviceId: "github",
               title: "fix retry backoff",
               modifiedAt: 1_699_999_900_000,
-              weight: 1.0,
+              weight: 1,
             },
           ],
         },
@@ -115,10 +117,7 @@ describe("renderExpert", () => {
   });
 });
 
-import type { ImpactBrief } from "./findings.ts";
-import { renderImpact } from "./render.ts";
-
-const IMPACT_BASE: Pick<ImpactBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+const IMPACT_BASE: Pick<ImpactBrief, BriefMetaKeys> = {
   kind: "impact",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,
@@ -228,10 +227,7 @@ describe("renderImpact", () => {
   });
 });
 
-import type { CatchupBrief } from "./findings.ts";
-import { renderCatchup } from "./render.ts";
-
-const CATCHUP_BASE: Pick<CatchupBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+const CATCHUP_BASE: Pick<CatchupBrief, BriefMetaKeys> = {
   kind: "catchup",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,

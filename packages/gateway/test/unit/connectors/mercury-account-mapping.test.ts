@@ -15,7 +15,7 @@ function makeAccount(over: Record<string, unknown> = {}): Record<string, unknown
     accountNumber: "9876543210",
     routingNumber: "021000021",
     availableBalance: 12345.67,
-    currentBalance: 12300.0,
+    currentBalance: 12300,
     legalBusinessName: "ACME Corp",
     createdAt: CREATED_ISO,
     ...over,
@@ -37,7 +37,7 @@ describe("mapMercuryAccountToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makeAccount();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapMercuryAccountToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapMercuryAccountToItem(makeAccount({ id: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -58,7 +58,7 @@ describe("mapMercuryAccountToItem", () => {
 
   test("title falls back to `Account <id>` when name missing", () => {
     const noName = makeAccount();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row = mapMercuryAccountToItem(noName, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Account acct_1A2b3C");
@@ -72,7 +72,7 @@ describe("mapMercuryAccountToItem", () => {
 
   test("bodyPreview falls back to type when kind missing", () => {
     const noKind = makeAccount();
-    delete (noKind as Record<string, unknown>)["kind"];
+    delete noKind["kind"];
     const row = mapMercuryAccountToItem(noKind, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("mercury — 12300 USD");
@@ -80,8 +80,8 @@ describe("mapMercuryAccountToItem", () => {
 
   test("bodyPreview is balance-only when both kind and type missing", () => {
     const bare = makeAccount();
-    delete (bare as Record<string, unknown>)["kind"];
-    delete (bare as Record<string, unknown>)["type"];
+    delete bare["kind"];
+    delete bare["type"];
     const row = mapMercuryAccountToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("12300 USD");
@@ -89,7 +89,7 @@ describe("mapMercuryAccountToItem", () => {
 
   test("bodyPreview is the kind label when no balance present", () => {
     const noBalance = makeAccount();
-    delete (noBalance as Record<string, unknown>)["currentBalance"];
+    delete noBalance["currentBalance"];
     const row = mapMercuryAccountToItem(noBalance, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("checking");
@@ -97,9 +97,9 @@ describe("mapMercuryAccountToItem", () => {
 
   test("bodyPreview falls back to the title when neither balance nor label present", () => {
     const bare = makeAccount();
-    delete (bare as Record<string, unknown>)["currentBalance"];
-    delete (bare as Record<string, unknown>)["kind"];
-    delete (bare as Record<string, unknown>)["type"];
+    delete bare["currentBalance"];
+    delete bare["kind"];
+    delete bare["type"];
     const row = mapMercuryAccountToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("Mercury Checking");
@@ -118,7 +118,7 @@ describe("mapMercuryAccountToItem", () => {
     expect(row.modifiedAt).toBe(CREATED_MS);
 
     const noCreated = makeAccount();
-    delete (noCreated as Record<string, unknown>)["createdAt"];
+    delete noCreated["createdAt"];
     const fallback = mapMercuryAccountToItem(noCreated, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -142,7 +142,7 @@ describe("mapMercuryAccountToItem", () => {
 
   test("missing account number → account_number_last4 is null", () => {
     const noNum = makeAccount();
-    delete (noNum as Record<string, unknown>)["accountNumber"];
+    delete noNum["accountNumber"];
     const row = mapMercuryAccountToItem(noNum, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["account_number_last4"]).toBeNull();
@@ -152,13 +152,13 @@ describe("mapMercuryAccountToItem", () => {
     const row = mapMercuryAccountToItem(makeAccount(), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["available_balance"]).toBe(12345.67);
-    expect(meta(row)["current_balance"]).toBe(12300.0);
+    expect(meta(row)["current_balance"]).toBe(12300);
   });
 
   test("missing balances are null-passthrough in metadata", () => {
     const sparse = makeAccount();
-    delete (sparse as Record<string, unknown>)["availableBalance"];
-    delete (sparse as Record<string, unknown>)["currentBalance"];
+    delete sparse["availableBalance"];
+    delete sparse["currentBalance"];
     const row = mapMercuryAccountToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["available_balance"]).toBeNull();
@@ -180,9 +180,9 @@ describe("mapMercuryAccountToItem", () => {
 
   test("missing string fields are null-passthrough in metadata", () => {
     const sparse = makeAccount();
-    delete (sparse as Record<string, unknown>)["status"];
-    delete (sparse as Record<string, unknown>)["routingNumber"];
-    delete (sparse as Record<string, unknown>)["legalBusinessName"];
+    delete sparse["status"];
+    delete sparse["routingNumber"];
+    delete sparse["legalBusinessName"];
     const row = mapMercuryAccountToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["status"]).toBeNull();

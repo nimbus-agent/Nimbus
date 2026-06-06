@@ -76,14 +76,16 @@ function wire() {
   const { server, handlers } = fakeServer();
   const client = new FakeClient();
   const mailer = new FakeMailer();
-  registerImapTools(server as unknown as { tool: (...args: never) => unknown }, client, mailer);
+  registerImapTools(server, client, mailer);
   return { handlers, client, mailer };
 }
 
 describe("registerImapTools", () => {
   test("registers exactly the documented tool surface", () => {
     const { handlers } = wire();
-    expect([...handlers.keys()].sort()).toEqual([...IMAP_TOOL_NAMES].sort());
+    expect([...handlers.keys()].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...IMAP_TOOL_NAMES].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   test("imap_list returns the header/metadata/preview view — never attachment bytes", async () => {
@@ -96,7 +98,11 @@ describe("registerImapTools", () => {
     expect(m.from).toEqual(["Ada <ada@x.com>"]);
     expect(m.preview).toBe("the body preview");
     const att = (m.attachments as Array<Record<string, unknown>>)[0]!;
-    expect(Object.keys(att).sort()).toEqual(["filename", "mimeType", "sizeBytes"]);
+    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+      "filename",
+      "mimeType",
+      "sizeBytes",
+    ]);
     // No content/data/base64 field anywhere in the serialized view.
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain('"content"');

@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -51,7 +54,13 @@ import {
 } from "./phase3-config.ts";
 import type { ServerSpec } from "./slot.ts";
 
-const SANDBOX_CWD = "/tmp/phase3-test-cwd";
+let SANDBOX_CWD: string;
+beforeAll(() => {
+  SANDBOX_CWD = mkdtempSync(join(tmpdir(), "nimbus-phase3-config-test-"));
+});
+afterAll(() => {
+  if (SANDBOX_CWD) rmSync(SANDBOX_CWD, { recursive: true, force: true });
+});
 
 function readManifest(spec: ServerSpec): {
   permissions: { network: string[]; filesystem: { read: string[]; write: string[] } };
@@ -1876,7 +1885,7 @@ describe("buildPhase3Servers", () => {
     await vault.set("datadog.app_key", "appk");
     await vault.set("snyk.token", "snyk-tok");
     const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
-    expect(Object.keys(servers).sort()).toEqual(
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual(
       // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
       // sagemaker reuse aws creds — all appear whenever their underlying credentials
       // are seeded.
@@ -1896,7 +1905,7 @@ describe("buildPhase3Servers", () => {
         "sentry",
         "snyk",
         "vertex_ai",
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
     for (const id of Object.keys(servers)) {
       expectSandboxed(servers[id] as ServerSpec);
@@ -1913,7 +1922,7 @@ describe("buildPhase3Servers", () => {
     // bigquery + cloud_logging + vertex_ai reuse gcp creds; athena + cloudwatch +
     // sagemaker reuse aws creds — all appear whenever their underlying credentials
     // are seeded.
-    expect(Object.keys(servers).sort()).toEqual([
+    expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual([
       "athena",
       "aws",
       "bigquery",

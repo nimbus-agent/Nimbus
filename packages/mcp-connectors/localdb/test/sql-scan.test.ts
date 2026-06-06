@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,6 +13,16 @@ import {
   scanSavedQueries,
   scriptsDir,
 } from "../src/sql-scan.ts";
+
+let tmpRoot: string;
+beforeAll(() => {
+  tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-localdb-test-"));
+});
+afterAll(() => {
+  if (tmpRoot) {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
 
 describe("baseTitle", () => {
   test("strips the .sql extension from the basename", () => {
@@ -33,7 +44,7 @@ describe("scriptsDir", () => {
 
 describe("assertWithinScriptsDir", () => {
   test("allows the dir itself and descendants, rejects escapes", () => {
-    const root = resolve("/tmp/scripts");
+    const root = resolve(join(tmpRoot, "scripts"));
     expect(() => assertWithinScriptsDir(root, root)).not.toThrow();
     expect(() => assertWithinScriptsDir(join(root, "a", "b.sql"), root)).not.toThrow();
     expect(() => assertWithinScriptsDir(resolve(root, "..", "secret.sql"), root)).toThrow();
@@ -92,7 +103,7 @@ describe("scanSavedQueries / getSavedQuery (real fs)", () => {
     await writeFile(join(dir, "empty.sql"), "  ", "utf8");
 
     const scanned = await scanSavedQueries();
-    expect(scanned.map((q) => q.title).sort()).toEqual(["a", "b"]);
+    expect(scanned.map((q) => q.title).sort((a, b) => a.localeCompare(b))).toEqual(["a", "b"]);
     const a = scanned.find((q) => q.title === "a")!;
     expect(a.lineCount).toBe(2);
     expect(a.preview).toContain("SELECT 1;");

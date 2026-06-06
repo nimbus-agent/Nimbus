@@ -63,22 +63,22 @@ export function UpdaterRestartChrome() {
             .catch(() => undefined);
           return;
         case "updater.downloadProgress":
-          setDownload(n.params as UpdaterDownloadProgressPayload);
+          setDownload(n.params as UpdaterDownloadProgressPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
           if (useNimbusStore.getState().updaterUiState !== "downloading") {
             setUiState("downloading");
           }
           return;
         case "updater.restarting":
-          setRestarting(n.params as UpdaterRestartingPayload);
+          setRestarting(n.params as UpdaterRestartingPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
           setUiState("restarting");
           return;
         case "updater.rolledBack":
-          setFailure(n.params as UpdaterRolledBackPayload);
+          setFailure(n.params as UpdaterRolledBackPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
           setUiState("rolled_back");
           invoke("updater_apply_finished").catch(() => undefined);
           return;
         case "updater.verifyFailed":
-          setFailure(n.params as UpdaterVerifyFailedPayload);
+          setFailure(n.params as UpdaterVerifyFailedPayload); // NOSONAR S4325: n.params is unknown; narrowed to the typed notification payload
           setUiState("failed");
           invoke("updater_apply_finished").catch(() => undefined);
           return;

@@ -48,7 +48,7 @@ describe("mapGreenhouseJobToItem", () => {
 
   test("returns null when id is missing or non-numeric", () => {
     const noId = makeJob();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapGreenhouseJobToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapGreenhouseJobToItem(makeJob({ id: "4001234" }), { syncedAt: NOW })).toBeNull();
   });
@@ -71,7 +71,7 @@ describe("mapGreenhouseJobToItem", () => {
 
   test("title falls back to `Job <id>` when name missing/empty", () => {
     const noName = makeJob();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row = mapGreenhouseJobToItem(noName, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe(`Job ${String(JOB_ID)}`);
@@ -101,7 +101,7 @@ describe("mapGreenhouseJobToItem", () => {
     expect(onStatus.bodyPreview).toBe("open");
 
     const bare = makeJob({ departments: [], offices: [] });
-    delete (bare as Record<string, unknown>)["status"];
+    delete bare["status"];
     const onTitle = mapGreenhouseJobToItem(bare, { syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe("Senior Backend Engineer");
@@ -126,10 +126,10 @@ describe("mapGreenhouseJobToItem", () => {
 
   test("missing / unparseable timestamps → null", () => {
     const missing = makeJob();
-    delete (missing as Record<string, unknown>)["created_at"];
-    delete (missing as Record<string, unknown>)["updated_at"];
-    delete (missing as Record<string, unknown>)["opened_at"];
-    delete (missing as Record<string, unknown>)["closed_at"];
+    delete missing["created_at"];
+    delete missing["updated_at"];
+    delete missing["opened_at"];
+    delete missing["closed_at"];
     const row = mapGreenhouseJobToItem(missing, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["created_at"]).toBeNull();
@@ -150,14 +150,14 @@ describe("mapGreenhouseJobToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdate = makeJob();
-    delete (noUpdate as Record<string, unknown>)["updated_at"];
+    delete noUpdate["updated_at"];
     const onCreated = mapGreenhouseJobToItem(noUpdate, { syncedAt: NOW });
     if (onCreated === null) throw new Error("expected mapping to succeed");
     expect(onCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makeJob();
-    delete (noTimes as Record<string, unknown>)["updated_at"];
-    delete (noTimes as Record<string, unknown>)["created_at"];
+    delete noTimes["updated_at"];
+    delete noTimes["created_at"];
     const fallback = mapGreenhouseJobToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -218,11 +218,11 @@ describe("mapGreenhouseJobToItem", () => {
 
   test("missing fields are null/empty-passthrough in metadata", () => {
     const sparse = makeJob();
-    delete (sparse as Record<string, unknown>)["status"];
-    delete (sparse as Record<string, unknown>)["requisition_id"];
-    delete (sparse as Record<string, unknown>)["confidential"];
-    delete (sparse as Record<string, unknown>)["departments"];
-    delete (sparse as Record<string, unknown>)["offices"];
+    delete sparse["status"];
+    delete sparse["requisition_id"];
+    delete sparse["confidential"];
+    delete sparse["departments"];
+    delete sparse["offices"];
     const row = mapGreenhouseJobToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

@@ -54,7 +54,7 @@ test("matches case-insensitively for known filenames", () => {
 });
 
 test("does not follow symlinks (file or directory)", () => {
-  const { symlinkSync } = require("node:fs") as typeof import("node:fs");
+  const { symlinkSync } = require("node:fs");
   const root = mkdtempSync(join(tmpdir(), "openapi-discover-symlink-"));
   writeFileSync(join(root, "openapi.yaml"), "openapi: 3.0.0");
   try {
@@ -88,7 +88,7 @@ test("ignoreGlobs excludes both files and directories", () => {
   });
   const rels = files
     .map((f) => f.replace(`${root}/`, "").replace(`${root}\\`, "").replaceAll("\\", "/"))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   expect(rels).toEqual(["current/active/openapi.yaml", "openapi.yaml"]);
 });
 
@@ -102,6 +102,6 @@ test("ignoreGlobs supports `?` single-char and literal special chars", () => {
   });
   const rels = files
     .map((f) => f.replace(`${root}/`, "").replace(`${root}\\`, "").replaceAll("\\", "/"))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   expect(rels).toEqual(["openapi.yaml"]);
 });

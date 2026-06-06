@@ -50,7 +50,7 @@ describe("mapNetlifySiteToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makeSite();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapNetlifySiteToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapNetlifySiteToItem(makeSite({ id: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -69,7 +69,7 @@ describe("mapNetlifySiteToItem", () => {
     expect(withName.title).toBe("my-app");
 
     const noName = makeSite();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row = mapNetlifySiteToItem(noName, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Site site_abc123");
@@ -85,7 +85,7 @@ describe("mapNetlifySiteToItem", () => {
     expect(row.bodyPreview).toBe("Ship the redesigned checkout flow");
 
     const noDeploy = makeSite();
-    delete (noDeploy as Record<string, unknown>)["published_deploy"];
+    delete noDeploy["published_deploy"];
     const bare = mapNetlifySiteToItem(noDeploy, { syncedAt: NOW });
     if (bare === null) throw new Error("expected mapping to succeed");
     expect(bare.bodyPreview).toBe("");
@@ -113,7 +113,7 @@ describe("mapNetlifySiteToItem", () => {
 
   test("missing build_settings → repo fields null", () => {
     const noBuild = makeSite();
-    delete (noBuild as Record<string, unknown>)["build_settings"];
+    delete noBuild["build_settings"];
     const row = mapNetlifySiteToItem(noBuild, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["repo_url"]).toBeNull();
@@ -122,7 +122,7 @@ describe("mapNetlifySiteToItem", () => {
 
   test("missing published_deploy → deploy fields null", () => {
     const noDeploy = makeSite();
-    delete (noDeploy as Record<string, unknown>)["published_deploy"];
+    delete noDeploy["published_deploy"];
     const row = mapNetlifySiteToItem(noDeploy, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["deploy_state"]).toBeNull();
@@ -143,7 +143,7 @@ describe("mapNetlifySiteToItem", () => {
 
   test("canonicalUrl falls back to ssl_url when admin_url missing", () => {
     const noAdmin = makeSite();
-    delete (noAdmin as Record<string, unknown>)["admin_url"];
+    delete noAdmin["admin_url"];
     const row = mapNetlifySiteToItem(noAdmin, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBe("https://my-app.netlify.app");
@@ -151,8 +151,8 @@ describe("mapNetlifySiteToItem", () => {
 
   test("canonicalUrl falls back to url when admin_url + ssl_url missing", () => {
     const bare = makeSite();
-    delete (bare as Record<string, unknown>)["admin_url"];
-    delete (bare as Record<string, unknown>)["ssl_url"];
+    delete bare["admin_url"];
+    delete bare["ssl_url"];
     const row = mapNetlifySiteToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBe("http://my-app.netlify.app");
@@ -160,9 +160,9 @@ describe("mapNetlifySiteToItem", () => {
 
   test("canonicalUrl is null when admin_url, ssl_url, and url are all missing", () => {
     const bare = makeSite();
-    delete (bare as Record<string, unknown>)["admin_url"];
-    delete (bare as Record<string, unknown>)["ssl_url"];
-    delete (bare as Record<string, unknown>)["url"];
+    delete bare["admin_url"];
+    delete bare["ssl_url"];
+    delete bare["url"];
     const row = mapNetlifySiteToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBeNull();
@@ -184,14 +184,14 @@ describe("mapNetlifySiteToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdated = makeSite();
-    delete (noUpdated as Record<string, unknown>)["updated_at"];
+    delete noUpdated["updated_at"];
     const onlyCreated = mapNetlifySiteToItem(noUpdated, { syncedAt: NOW });
     if (onlyCreated === null) throw new Error("expected mapping to succeed");
     expect(onlyCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimestamps = makeSite();
-    delete (noTimestamps as Record<string, unknown>)["updated_at"];
-    delete (noTimestamps as Record<string, unknown>)["created_at"];
+    delete noTimestamps["updated_at"];
+    delete noTimestamps["created_at"];
     const fallback = mapNetlifySiteToItem(noTimestamps, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);

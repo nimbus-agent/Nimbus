@@ -14,6 +14,8 @@ import {
   type GmailSyncCursorV1,
 } from "./gmail-sync.ts";
 
+type FetchInput = string | URL | Request;
+
 interface CapturedLog {
   obj: unknown;
   msg: string | undefined;
@@ -58,7 +60,7 @@ describe("createGmailSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/gmail/v1/users/me/messages?")) {
         return new Response(
@@ -124,7 +126,7 @@ describe("createGmailSyncable", () => {
     const ctx = { ...setup.ctx, logger };
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/gmail/v1/users/me/messages?")) {
         return new Response(
@@ -201,7 +203,7 @@ describe("createGmailSyncable", () => {
       pageToken: null,
     });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/gmail/v1/users/me/history")) {
         return new Response(

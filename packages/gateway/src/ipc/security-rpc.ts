@@ -175,9 +175,9 @@ export async function runSecurityScan(
   signal?: AbortSignal,
 ): Promise<SecurityScanResult> {
   const sec =
-    opts.configDir !== undefined
-      ? loadNimbusSecurityFromConfigDir(opts.configDir)
-      : DEFAULT_NIMBUS_SECURITY_TOML;
+    opts.configDir === undefined
+      ? DEFAULT_NIMBUS_SECURITY_TOML
+      : loadNimbusSecurityFromConfigDir(opts.configDir);
   const allowlist = new Set(sec.allowlistFingerprints);
   const extended = opts.extended ?? sec.extendedPatterns;
   const patterns = effectivePatterns(extended);

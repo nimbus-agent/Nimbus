@@ -22,7 +22,7 @@ function makeOptions() {
 const CAT_URL = /\/_cat\/indices\?/;
 /** Escape ALL regex metacharacters (incl. backslash) before embedding in a RegExp. */
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 function mappingUrl(index: string): RegExp {
   return new RegExp(`/${escapeRegExp(index)}/_mapping$`);
@@ -128,7 +128,7 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
     const res = await createElasticsearchSyncable(makeOptions()).sync(fx.createSyncContext(), null);
     expect(res.itemsUpserted).toBe(1);
     // Only the visible index's mapping was fetched — no .kibana_1 request.
-    const mappingCalls = fx.fetchMock.calls.filter((c) => /_mapping$/.test(c.url));
+    const mappingCalls = fx.fetchMock.calls.filter((c) => c.url.endsWith("_mapping"));
     expect(mappingCalls).toHaveLength(1);
     expect(mappingCalls[0]!.url).toContain("/visible/_mapping");
   });

@@ -16,7 +16,7 @@ import {
 
 /** Build a partial BODYSTRUCTURE node; the connector only reads a few fields. */
 function node(partial: Partial<MessageStructureObject>): MessageStructureObject {
-  return partial as MessageStructureObject;
+  return partial as MessageStructureObject; // NOSONAR S4325: Partial→full assertion required under exactOptionalPropertyTypes
 }
 
 describe("capPreview", () => {
@@ -182,6 +182,46 @@ describe("toInput", () => {
   });
 });
 
+function makeFake(opts: {
+  mailbox?: ImapClientLike["mailbox"];
+  messages?: FetchMessageObject[];
+  connectError?: Error;
+  fetchError?: Error;
+  onLogout?: () => void;
+}): ImapClientFactory {
+  return () => ({
+    async connect() {
+      if (opts.connectError !== undefined) {
+        throw opts.connectError;
+      }
+    },
+    async getMailboxLock() {
+      return { release() {} };
+    },
+    mailbox: opts.mailbox ?? false,
+    async *fetch() {
+      if (opts.fetchError !== undefined) {
+        throw opts.fetchError;
+      }
+      for (const m of opts.messages ?? []) {
+        yield m;
+      }
+    },
+    async logout() {
+      opts.onLogout?.();
+    },
+  });
+}
+
+function fakeMsg(uid: number): FetchMessageObject {
+  return {
+    uid,
+    envelope: { subject: `m${uid}` },
+    bodyStructure: { part: "1", type: "text/plain" },
+    bodyParts: new Map([["1", Buffer.from(`body ${uid}`)]]),
+  } as unknown as FetchMessageObject;
+}
+
 describe("fetchImapMessages", () => {
   const config = {
     host: "imap.example.com",
@@ -190,46 +230,6 @@ describe("fetchImapMessages", () => {
     password: "p",
     mailbox: "INBOX",
   } as unknown as ImapConnectionConfig;
-
-  function makeFake(opts: {
-    mailbox?: ImapClientLike["mailbox"];
-    messages?: FetchMessageObject[];
-    connectError?: Error;
-    fetchError?: Error;
-    onLogout?: () => void;
-  }): ImapClientFactory {
-    return () => ({
-      async connect() {
-        if (opts.connectError !== undefined) {
-          throw opts.connectError;
-        }
-      },
-      async getMailboxLock() {
-        return { release() {} };
-      },
-      mailbox: opts.mailbox ?? false,
-      async *fetch() {
-        if (opts.fetchError !== undefined) {
-          throw opts.fetchError;
-        }
-        for (const m of opts.messages ?? []) {
-          yield m;
-        }
-      },
-      async logout() {
-        opts.onLogout?.();
-      },
-    });
-  }
-
-  function fakeMsg(uid: number): FetchMessageObject {
-    return {
-      uid,
-      envelope: { subject: `m${uid}` },
-      bodyStructure: { part: "1", type: "text/plain" },
-      bodyParts: new Map([["1", Buffer.from(`body ${uid}`)]]),
-    } as unknown as FetchMessageObject;
-  }
 
   test("returns the most-recent messages sorted by descending uid", async () => {
     const out = await fetchImapMessages(
@@ -295,7 +295,7 @@ describe("fetchImapMessages", () => {
         password: "p",
         mailbox: "INBOX",
         secure: false,
-      } as unknown as ImapConnectionConfig,
+      },
       1,
     );
     expect(out.ok).toBe(false);

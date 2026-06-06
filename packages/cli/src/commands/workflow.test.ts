@@ -3,8 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -197,14 +196,14 @@ describe("runWorkflowCli (dispatcher)", () => {
   });
 
   it("throws on unknown subcommand", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runWorkflowCli(["bogus"])).rejects.toThrow("Usage: nimbus workflow");
   });
 
   it("routes 'list' through IPC when gateway is running", async () => {
     const ipc = createMockIpcClient([{ workflows: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWorkflowCli(["list"]);
@@ -214,7 +213,7 @@ describe("runWorkflowCli (dispatcher)", () => {
   it("routes empty args to 'list'", async () => {
     const ipc = createMockIpcClient([{ workflows: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWorkflowCli([]);

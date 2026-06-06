@@ -24,15 +24,15 @@ describe("applyNormalization", () => {
     expect(n("\x1b[2J\x1b[H\n")).toBe("\n");
   });
 
-  test("normalizes \\r\\n to \\n", () => {
+  test(String.raw`normalizes \r\n to \n`, () => {
     expect(n("line1\r\nline2\r\n")).toBe("line1\nline2\n");
   });
 
-  test("resolves carriage returns within a line (keeps substring after last \\r)", () => {
+  test(String.raw`resolves carriage returns within a line (keeps substring after last \r)`, () => {
     expect(n("loading...\rdone\n")).toBe("done\n");
   });
 
-  test("trailing lone \\r at EOF normalizes to \\n", () => {
+  test(String.raw`trailing lone \r at EOF normalizes to \n`, () => {
     expect(n("hello\r")).toBe("hello\n");
   });
 

@@ -1,7 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import {
+  CLACK_CANCEL,
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -17,7 +21,7 @@ afterAll(() => {
 describe("runVaultSet", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -43,7 +47,7 @@ describe("runVaultSet", () => {
 describe("runVaultGet", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, clackAnswer: true });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, clackAnswer: true });
   });
   afterEach(() => {
     clearFixture();
@@ -63,7 +67,7 @@ describe("runVaultGet", () => {
   });
 
   it("returns silently without calling vault.get when confirm is cancelled", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, clackAnswer: CLACK_CANCEL });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, clackAnswer: CLACK_CANCEL });
     const { client, calls } = createMockIpcClient([]);
     await runVaultGet(client, "github.pat");
     expect(calls).toHaveLength(0);
@@ -71,7 +75,7 @@ describe("runVaultGet", () => {
   });
 
   it("returns silently when confirm returns false", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, clackAnswer: false });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, clackAnswer: false });
     const { client, calls } = createMockIpcClient([]);
     await runVaultGet(client, "github.pat");
     expect(calls).toHaveLength(0);
@@ -81,7 +85,7 @@ describe("runVaultGet", () => {
 describe("runVaultDelete", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -98,7 +102,7 @@ describe("runVaultDelete", () => {
 describe("runVaultList", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -141,34 +145,34 @@ describe("runVault (dispatcher)", () => {
   });
 
   it("rejects unknown subcommands", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runVault(["bogus"])).rejects.toThrow("Unknown vault subcommand: bogus");
   });
 
   it("reports an explicit '(none)' subcommand name when no subcommand is given", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runVault([])).rejects.toThrow("Unknown vault subcommand: (none)");
   });
 
   it("rejects vault set with missing args", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runVault(["set", "key"])).rejects.toThrow("Usage: nimbus vault set");
   });
 
   it("rejects vault get with missing key", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runVault(["get"])).rejects.toThrow("Usage: nimbus vault get");
   });
 
   it("rejects vault delete with missing key", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runVault(["delete"])).rejects.toThrow("Usage: nimbus vault delete");
   });
 
   it("routes 'set' through withIpc and exercises the IPC client lifecycle", async () => {
     const ipc = createMockIpcClient([null]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runVault(["set", "github.pat", "ghp_test"]);
@@ -183,7 +187,7 @@ describe("runVault (dispatcher)", () => {
   it("routes 'get' through withIpc", async () => {
     const ipc = createMockIpcClient(["secret-value"]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       clackAnswer: true,
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
@@ -195,7 +199,7 @@ describe("runVault (dispatcher)", () => {
   it("routes 'delete' through withIpc", async () => {
     const ipc = createMockIpcClient([null]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runVault(["delete", "github.pat"]);
@@ -206,7 +210,7 @@ describe("runVault (dispatcher)", () => {
   it("routes 'list' through withIpc with no prefix", async () => {
     const ipc = createMockIpcClient([["a", "b"]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runVault(["list"]);
@@ -217,7 +221,7 @@ describe("runVault (dispatcher)", () => {
   it("routes 'list' through withIpc with a prefix", async () => {
     const ipc = createMockIpcClient([["a.x"]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runVault(["list", "a."]);

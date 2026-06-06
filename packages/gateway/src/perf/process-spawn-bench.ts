@@ -60,16 +60,16 @@ function validateMarkerOpts(opts: SpawnAndTimeOptions): void {
 function spawnChild(opts: SpawnAndTimeOptions): ProcSubset {
   const spawn = opts.spawn ?? Bun.spawn;
   const stdio = opts.mode === "exit" ? "ignore" : "pipe";
-  return spawn([opts.cmd, ...opts.args], {
+  const child = spawn([opts.cmd, ...opts.args], {
     stdin: "ignore",
     stdout: stdio,
     stderr: stdio,
     ...(opts.env !== undefined && { env: { ...process.env, ...opts.env } }),
-    // Bun's Subprocess types stdout/stderr as `ReadableStream | undefined` (the
-    // "ignore" case); ProcSubset narrows them. The shapes are runtime-compatible
-    // for what the bench reads, so bridge through unknown. (Sonar S4325 here is a
-    // false positive under Bun's lib types — the cast IS required to typecheck.)
-  }) as unknown as ProcSubset;
+  });
+  // Bun's Subprocess types stdout/stderr as `ReadableStream | undefined` (the
+  // "ignore" case); ProcSubset narrows them. The shapes are runtime-compatible
+  // for what the bench reads, so bridge through unknown.
+  return child as unknown as ProcSubset; // NOSONAR S4325: required Bun-Subprocess→ProcSubset bridge
 }
 
 async function runExitMode(proc: ProcSubset, start: number, timeoutMs: number): Promise<number> {

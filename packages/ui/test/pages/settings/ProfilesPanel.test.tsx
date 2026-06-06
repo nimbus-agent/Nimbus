@@ -34,7 +34,7 @@ beforeEach(() => {
     lastFetchAt: null,
     actionInFlight: false,
     connectionState: "connected",
-  } as never);
+  });
 });
 
 describe("ProfilesPanel", () => {
@@ -105,7 +105,7 @@ describe("ProfilesPanel", () => {
     });
     renderPanel();
     await waitFor(() => screen.getByText("default"));
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     await waitFor(() => expect(screen.getByRole("button", { name: /create…/i })).toBeDisabled());
   });
 });

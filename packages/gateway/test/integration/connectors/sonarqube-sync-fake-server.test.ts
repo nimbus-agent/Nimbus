@@ -8,6 +8,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 interface RecordedReq {
   method: string;
@@ -96,12 +97,11 @@ function startHarness(): Harness {
   const vault = createMockVault();
   const fake = startFakeSonar();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = requestUrl(input);
     const rewritten = url.replace("https://sonarcloud.io", fake.baseUrl);
     return originalFetch(rewritten, init);
-  }) as typeof globalThis.fetch;
+  };
   return {
     db,
     fake,
@@ -201,12 +201,11 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
     });
     const newBase = `http://${server.hostname}:${server.port}`;
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+      const url = requestUrl(input);
       const rewritten = url.replace("https://sonarcloud.io", newBase);
       return originalFetch(rewritten, init);
-    }) as typeof globalThis.fetch;
+    };
     try {
       const syncable = createSonarqubeSyncable({ ensureSonarqubeMcpRunning: async () => {} });
       const result = await syncable.sync(h.ctx, null);

@@ -44,7 +44,7 @@ describe("mapCodemagicAppToItem", () => {
 
   test("returns null when _id is missing or empty", () => {
     const noId = makeApp();
-    delete (noId as Record<string, unknown>)["_id"];
+    delete noId["_id"];
     expect(mapCodemagicAppToItem(noId, NOW)).toBeNull();
     expect(mapCodemagicAppToItem(makeApp({ _id: "" }), NOW)).toBeNull();
   });
@@ -93,7 +93,7 @@ describe("mapCodemagicBuildToItem", () => {
 
   test("returns null when _id is missing or empty", () => {
     const noId = makeBuild();
-    delete (noId as Record<string, unknown>)["_id"];
+    delete noId["_id"];
     expect(mapCodemagicBuildToItem(noId, { appId: APP_ID, syncedAt: NOW })).toBeNull();
     expect(
       mapCodemagicBuildToItem(makeBuild({ _id: "" }), { appId: APP_ID, syncedAt: NOW }),

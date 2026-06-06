@@ -62,7 +62,7 @@ function makeProvider(id: LlmProviderKind, opts: ProviderOpts): LlmProvider {
   if (opts.pullModel !== undefined) {
     (base as unknown as { pullModel: typeof opts.pullModel }).pullModel = opts.pullModel;
   }
-  return base as LlmProvider;
+  return base;
 }
 
 function makeDbWithSchema(): { db: Database; dir: string } {
@@ -127,7 +127,11 @@ describe("LlmRegistry.listAllModels", () => {
     );
     const models = await reg.listAllModels();
     expect(models.length).toBe(3);
-    expect(models.map((m) => m.provider).sort()).toEqual(["llamacpp", "ollama", "remote"]);
+    expect(models.map((m) => m.provider).sort((a, b) => a.localeCompare(b))).toEqual([
+      "llamacpp",
+      "ollama",
+      "remote",
+    ]);
   });
 
   test("skips a provider when isAvailable returns false", async () => {

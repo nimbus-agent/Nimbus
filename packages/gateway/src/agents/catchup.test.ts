@@ -39,7 +39,10 @@ describe("scoreAndGroup", () => {
     const sections = scoreAndGroup(items, involvement);
     expect(sections.length).toBe(1);
     expect(sections[0]?.serviceId).toBe("github");
-    expect(sections[0]?.items.map((i) => i.title).sort()).toEqual(["high", "low"]);
+    expect(sections[0]?.items.map((i) => i.title).sort((a, b) => a.localeCompare(b))).toEqual([
+      "high",
+      "low",
+    ]);
   });
 
   test("ranks owned_service highest, then active_repo, then collaborator, then default", () => {

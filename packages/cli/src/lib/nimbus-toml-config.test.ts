@@ -28,12 +28,12 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
-  if (SAVED.agent !== undefined) process.env["NIMBUS_AGENT_MODEL"] = SAVED.agent;
-  else delete process.env["NIMBUS_AGENT_MODEL"];
-  if (SAVED.classifier !== undefined) process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED.classifier;
-  else delete process.env["NIMBUS_CLASSIFIER_MODEL"];
-  if (SAVED.telemetry !== undefined) process.env["NIMBUS_TELEMETRY_ENABLED"] = SAVED.telemetry;
-  else delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+  if (SAVED.agent === undefined) delete process.env["NIMBUS_AGENT_MODEL"];
+  else process.env["NIMBUS_AGENT_MODEL"] = SAVED.agent;
+  if (SAVED.classifier === undefined) delete process.env["NIMBUS_CLASSIFIER_MODEL"];
+  else process.env["NIMBUS_CLASSIFIER_MODEL"] = SAVED.classifier;
+  if (SAVED.telemetry === undefined) delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+  else process.env["NIMBUS_TELEMETRY_ENABLED"] = SAVED.telemetry;
 });
 
 describe("listTomlKeysWithEnv — llm.* entries", () => {
@@ -223,11 +223,11 @@ describe("setTomlValueInFile", () => {
   });
 
   test("escapes embedded backslashes and double quotes in string values", () => {
-    setTomlValueInFile(tomlPath, "llm.remote_model", 'tricky\\"value');
+    setTomlValueInFile(tomlPath, "llm.remote_model", String.raw`tricky\"value`);
     const contents = readFileSync(tomlPath, "utf8");
-    expect(contents).toContain(`remote_model = "tricky\\\\\\"value"`);
+    expect(contents).toContain(String.raw`remote_model = "tricky\\\"value"`);
     const read = getTomlValueFromFile(tomlPath, "llm.remote_model");
-    expect(read).toBe(`"tricky\\\\\\"value"`);
+    expect(read).toBe(String.raw`"tricky\\\"value"`);
   });
 
   test("scopes section boundary correctly — does not touch identically-named keys in a sibling section", () => {

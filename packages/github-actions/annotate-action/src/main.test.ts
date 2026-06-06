@@ -55,7 +55,7 @@ function startMockGateway(responder: () => MockResponse): {
         status,
         headers: {
           "content-type": "application/json; charset=utf-8",
-          ...(headers ?? {}),
+          ...headers,
         },
       });
     },

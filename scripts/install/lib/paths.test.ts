@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { resolveInstallDir } from "./paths.ts";
 
 describe("resolveInstallDir", () => {
-  test("windows: %LOCALAPPDATA%\\Programs\\Nimbus\\bin", () => {
-    const env = { LOCALAPPDATA: "C:\\Users\\jane\\AppData\\Local" };
+  test(String.raw`windows: %LOCALAPPDATA%\Programs\Nimbus\bin`, () => {
+    const env = { LOCALAPPDATA: String.raw`C:\Users\jane\AppData\Local` };
     expect(resolveInstallDir("win32", env)).toBe(
-      "C:\\Users\\jane\\AppData\\Local\\Programs\\Nimbus\\bin",
+      String.raw`C:\Users\jane\AppData\Local\Programs\Nimbus\bin`,
     );
   });
 

@@ -11,6 +11,11 @@ import {
 } from "./gateway-state-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 
+// Real, unique temp root for the fake dir / socketPath strings (S5443). These are
+// pure path values stored in JSON — never bound or written as sockets.
+const FAKE_DIR = mkdtempSync(join(tmpdir(), "nimbus-gw-state-path-"));
+const FAKE_SOCK = join(FAKE_DIR, "sock");
+
 function makePaths(dir: string): PlatformPaths {
   return {
     configDir: dir,
@@ -24,8 +29,8 @@ function makePaths(dir: string): PlatformPaths {
 
 describe("gatewayStateFilePath", () => {
   test("returns dataDir/gateway.json", () => {
-    const paths = makePaths("/tmp/some/dir");
-    expect(gatewayStateFilePath(paths)).toBe(join("/tmp/some/dir", "gateway.json"));
+    const paths = makePaths(FAKE_DIR);
+    expect(gatewayStateFilePath(paths)).toBe(join(FAKE_DIR, "gateway.json"));
   });
 });
 
@@ -50,11 +55,11 @@ describe("writeGatewayStateFile", () => {
 
   test("writes a valid JSON file with pid + socketPath when no logPath", () => {
     const paths = makePaths(dir);
-    writeGatewayStateFile(paths, { pid: 12345, socketPath: "/tmp/sock" });
+    writeGatewayStateFile(paths, { pid: 12345, socketPath: FAKE_SOCK });
     const raw = readFileSync(gatewayStateFilePath(paths), "utf8");
     const obj = JSON.parse(raw) as Record<string, unknown>;
     expect(obj["pid"]).toBe(12345);
-    expect(obj["socketPath"]).toBe("/tmp/sock");
+    expect(obj["socketPath"]).toBe(FAKE_SOCK);
     expect("logPath" in obj).toBe(false);
     expect(raw.endsWith("\n")).toBe(true);
   });
@@ -63,7 +68,7 @@ describe("writeGatewayStateFile", () => {
     const paths = makePaths(dir);
     writeGatewayStateFile(paths, {
       pid: 7,
-      socketPath: "/tmp/x",
+      socketPath: FAKE_SOCK,
       logPath: "/var/log/nimbus.log",
     });
     const obj = JSON.parse(readFileSync(gatewayStateFilePath(paths), "utf8")) as Record<
@@ -76,7 +81,7 @@ describe("writeGatewayStateFile", () => {
   test("falls back to NIMBUS_GATEWAY_LOG_PATH env var when opts.logPath is absent", () => {
     processEnvSet("NIMBUS_GATEWAY_LOG_PATH", "/from/env.log");
     const paths = makePaths(dir);
-    writeGatewayStateFile(paths, { pid: 99, socketPath: "/tmp/y" });
+    writeGatewayStateFile(paths, { pid: 99, socketPath: FAKE_SOCK });
     const obj = JSON.parse(readFileSync(gatewayStateFilePath(paths), "utf8")) as Record<
       string,
       unknown
@@ -87,7 +92,7 @@ describe("writeGatewayStateFile", () => {
   test("empty env var does not surface as logPath", () => {
     processEnvSet("NIMBUS_GATEWAY_LOG_PATH", "");
     const paths = makePaths(dir);
-    writeGatewayStateFile(paths, { pid: 1, socketPath: "/tmp/z" });
+    writeGatewayStateFile(paths, { pid: 1, socketPath: FAKE_SOCK });
     const obj = JSON.parse(readFileSync(gatewayStateFilePath(paths), "utf8")) as Record<
       string,
       unknown
@@ -100,7 +105,7 @@ describe("writeGatewayStateFile", () => {
     const paths = makePaths(dir);
     writeGatewayStateFile(paths, {
       pid: 2,
-      socketPath: "/tmp/a",
+      socketPath: FAKE_SOCK,
       logPath: "/explicit/opts.log",
     });
     const obj = JSON.parse(readFileSync(gatewayStateFilePath(paths), "utf8")) as Record<

@@ -62,7 +62,7 @@ describe("resolveClosure", () => {
       installed: new Map(),
       activeConstraints: new Map(),
     });
-    expect(plan.nodes.map((n) => n.id).sort()).toEqual([
+    expect(plan.nodes.map((n) => n.id).sort((a, b) => a.localeCompare(b))).toEqual([
       "com.example.a",
       "com.shared.b",
       "com.shared.c",

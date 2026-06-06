@@ -90,7 +90,7 @@ beforeEach(() => {
   watcherValidateConditionMock.mockReset();
   watcherListHistoryMock.mockReset();
   watcherListCandidateRelationsMock.mockResolvedValue({ relations: CANDIDATE_RELATIONS });
-  useNimbusStore.setState({ connectionState: "connected" } as never);
+  useNimbusStore.setState({ connectionState: "connected" });
 });
 
 afterEach(() => {
@@ -160,7 +160,7 @@ describe("Watchers page — list", () => {
   });
 
   it("'New watcher' button is disabled when offline", () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     callMock.mockResolvedValue({ watchers: [] });
     renderPage();
     expect(screen.getByRole("button", { name: /new watcher/i })).toBeDisabled();

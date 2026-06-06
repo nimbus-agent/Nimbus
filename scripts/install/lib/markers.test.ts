@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BEGIN_MARKER, END_MARKER } from "./markers.ts";
+import { BEGIN_MARKER, buildMarkerBlock, END_MARKER, stripMarkerBlock } from "./markers.ts";
 
 describe("marker constants", () => {
   test("are unique sentinel strings", () => {
@@ -8,8 +8,6 @@ describe("marker constants", () => {
     expect(BEGIN_MARKER).not.toBe(END_MARKER);
   });
 });
-
-import { buildMarkerBlock } from "./markers.ts";
 
 describe("buildMarkerBlock", () => {
   test("wraps export PATH line with markers", () => {
@@ -30,8 +28,6 @@ describe("buildMarkerBlock", () => {
     expect(() => buildMarkerBlock('/tmp/"evil')).toThrow(/double-quote/);
   });
 });
-
-import { stripMarkerBlock } from "./markers.ts";
 
 describe("stripMarkerBlock", () => {
   test("removes a single nimbus block, preserves surrounding lines", () => {

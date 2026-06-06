@@ -47,9 +47,12 @@ test("granted viewer with standing consent gets only declared items, audited", a
   });
   expect(res.kind).toBe("ok");
   if (res.kind !== "ok") return;
-  expect(res.response.items.map((i) => i.id).sort()).toEqual(["github:pr1", "github:pr2"]);
+  expect(res.response.items.map((i) => i.id).sort((a, b) => a.localeCompare(b))).toEqual([
+    "github:pr1",
+    "github:pr2",
+  ]);
   for (const it of res.response.items) {
-    expect(Object.keys(it).sort()).toEqual([
+    expect(Object.keys(it).sort((a, b) => a.localeCompare(b))).toEqual([
       "id",
       "modifiedAt",
       "service",

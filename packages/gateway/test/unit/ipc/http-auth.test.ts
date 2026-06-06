@@ -24,14 +24,14 @@ describe("tokenFingerprint", () => {
   });
 });
 
-describe("requireBearer", () => {
-  function req(headers: Record<string, string>): Request {
-    return new Request("http://127.0.0.1:7474/v1/deployments", {
-      method: "POST",
-      headers,
-    });
-  }
+function req(headers: Record<string, string>): Request {
+  return new Request("http://127.0.0.1:7474/v1/deployments", {
+    method: "POST",
+    headers,
+  });
+}
 
+describe("requireBearer", () => {
   test("returns ok=true on a matching token", () => {
     const r = requireBearer(req({ authorization: "Bearer hunter2" }), {
       expectedToken: "hunter2",

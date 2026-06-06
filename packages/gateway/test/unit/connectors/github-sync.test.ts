@@ -78,12 +78,12 @@ describe("github-sync — credential short-circuits", () => {
   });
 });
 
-describe("github-sync — cursor decode failures", () => {
-  function stageHappyPath(): void {
-    fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
-    fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
-  }
+function stageHappyPath(): void {
+  fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
+  fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
+}
 
+describe("github-sync — cursor decode failures", () => {
   test("null cursor falls back to default; fetches /user then events", async () => {
     stageHappyPath();
     const res = await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

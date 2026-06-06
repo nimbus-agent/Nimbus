@@ -186,7 +186,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("falls back to default region when gcp.region has a control char", async () => {
     // A region with a control char (< 0x20) passes the non-empty / length / `-`
     // checks but is rejected by the char-scan loop → loadCreds returns null → noop.
-    const regionWithControlChar = `us${String.fromCharCode(0x07)}central1`;
+    const regionWithControlChar = `us${String.fromCodePoint(0x07)}central1`;
     await fx.vault.set("gcp.region", regionWithControlChar);
     const { run: run2, calls: calls2 } = makeRunner([{ body: [] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run2 }).sync(
@@ -215,6 +215,13 @@ describe("vertex-ai-sync — model metadata walk", () => {
   });
 });
 
+// Exercise the real (non-DI) `gcloudAiModelsList` runner body without spawning
+// a real subprocess: mock Bun.spawn to return a fake process. `new Response(<string>)`
+// reads the canned stdout, so the spawn → exited → parse path is covered hermetically.
+function fakeProc(code: number, stdout: string): ReturnType<typeof Bun.spawn> {
+  return { exited: Promise.resolve(code), stdout } as unknown as ReturnType<typeof Bun.spawn>;
+}
+
 describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", () => {
   let fx: ConnectorSyncFixture;
   beforeEach(async () => {
@@ -222,13 +229,6 @@ describe("vertex-ai-sync — default gcloud runner (hermetic Bun.spawn mock)", (
     await seedGcpCreds(fx);
   });
   afterEach(() => fx.cleanup());
-
-  // Exercise the real (non-DI) `gcloudAiModelsList` runner body without spawning
-  // a real subprocess: mock Bun.spawn to return a fake process. `new Response(<string>)`
-  // reads the canned stdout, so the spawn → exited → parse path is covered hermetically.
-  function fakeProc(code: number, stdout: string): ReturnType<typeof Bun.spawn> {
-    return { exited: Promise.resolve(code), stdout } as unknown as ReturnType<typeof Bun.spawn>;
-  }
 
   test("spawn exits 0 with model JSON → models upserted", async () => {
     const models = [{ name: "projects/p/locations/us-central1/models/m1", displayName: "Model 1" }];

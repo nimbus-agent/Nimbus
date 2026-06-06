@@ -13,7 +13,10 @@ function rankForCount(n: number): ExpertiseRank {
 
 /** Escape SQL LIKE metacharacters so a query token matches literally (privacy: no wildcard probing). */
 function escapeLikeWildcards(s: string): string {
-  return s.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+  return s
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll("%", String.raw`\%`)
+    .replaceAll("_", String.raw`\_`);
 }
 
 /**
@@ -28,7 +31,7 @@ export function scoreExpertise(db: Database, req: ExpertiseRequest): ExpertiseRe
     .slice(0, 5);
   if (tokens.length === 0) return { rank: "none" };
   const clauses = tokens
-    .map(() => `(title LIKE ? ESCAPE '\\' OR body_preview LIKE ? ESCAPE '\\')`)
+    .map(() => String.raw`(title LIKE ? ESCAPE '\' OR body_preview LIKE ? ESCAPE '\')`)
     .join(" OR ");
   const vals: string[] = [];
   for (const t of tokens) {

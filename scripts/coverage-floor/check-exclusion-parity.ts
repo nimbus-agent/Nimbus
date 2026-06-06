@@ -10,8 +10,10 @@ const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 function patternToSampleRelPaths(pattern: string): string[] {
   const samples: string[] = [];
   if (pattern === "**/index/*-v[0-9]*-sql.ts") {
-    samples.push("packages/gateway/src/index/vec-items-1536-v30-sql.ts");
-    samples.push("packages/gateway/src/index/audit-session-v24-sql.ts");
+    samples.push(
+      "packages/gateway/src/index/vec-items-1536-v30-sql.ts",
+      "packages/gateway/src/index/audit-session-v24-sql.ts",
+    );
     return samples;
   }
   if (pattern === "**/perf/fixtures/synthetic-*-trace.ts") {
@@ -31,13 +33,17 @@ function patternToSampleRelPaths(pattern: string): string[] {
     return samples;
   }
   if (pattern === "**/packages/mcp-connectors/*/src/server.ts") {
-    samples.push("packages/mcp-connectors/snyk/src/server.ts");
-    samples.push("packages/mcp-connectors/sonarqube/src/server.ts");
+    samples.push(
+      "packages/mcp-connectors/snyk/src/server.ts",
+      "packages/mcp-connectors/sonarqube/src/server.ts",
+    );
     return samples;
   }
   if (pattern === "**/packages/mcp-connectors/*/src/tools.ts") {
-    samples.push("packages/mcp-connectors/bigquery/src/tools.ts");
-    samples.push("packages/mcp-connectors/athena/src/tools.ts");
+    samples.push(
+      "packages/mcp-connectors/bigquery/src/tools.ts",
+      "packages/mcp-connectors/athena/src/tools.ts",
+    );
     return samples;
   }
   samples.push(pattern);

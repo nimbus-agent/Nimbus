@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import type { ServerSpec } from "./slot.ts";
 import { SANDBOX_WRAPPER_PATH, wrapServerSpec } from "./wrap-server-spec.ts";
+
+// Real, unique temp root for the fake sandbox cwd args (S5443). wrapServerSpec
+// only string-copies the cwd into env — it is never written to.
+const TMP_ROOT = mkdtempSync(join(tmpdir(), "nimbus-wrap-spec-test-"));
+const CWD = join(TMP_ROOT, "cwd");
+const LEGIT_CWD = join(TMP_ROOT, "legitimate");
 
 function makeManifest(
   overrides: Partial<ExtensionManifest["permissions"]> = {},
@@ -29,18 +38,18 @@ function makeSpec(env: Record<string, string> = {}): ServerSpec {
 
 describe("wrapServerSpec", () => {
   test("replaces command with process.execPath", () => {
-    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/tmp/cwd");
+    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
     expect(wrapped.command).toBe(process.execPath);
   });
 
   test("args[0] is the sandbox-wrapper path", () => {
-    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/tmp/cwd");
+    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
     expect(wrapped.args[0]).toBe(SANDBOX_WRAPPER_PATH);
     expect(wrapped.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
   });
 
   test("preserves the original command + args after the wrapper path", () => {
-    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/tmp/cwd");
+    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
     expect(wrapped.args[1]).toBe("bun");
     expect(wrapped.args[2]).toBe("packages/mcp-connectors/github/src/server.ts");
     expect(wrapped.args[3]).toBe("--mode");
@@ -51,7 +60,7 @@ describe("wrapServerSpec", () => {
     const wrapped = wrapServerSpec(
       makeSpec({ EXTRA: "value", PATH: "/usr/bin" }),
       makeManifest(),
-      "/tmp/cwd",
+      CWD,
     );
     expect(wrapped.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(wrapped.env["EXTRA"]).toBe("value");
@@ -60,7 +69,7 @@ describe("wrapServerSpec", () => {
 
   test("adds NIMBUS_SANDBOX_MANIFEST_JSON env carrying the JSON-stringified manifest", () => {
     const manifest = makeManifest({ network: ["api.github.com"] });
-    const wrapped = wrapServerSpec(makeSpec(), manifest, "/tmp/cwd");
+    const wrapped = wrapServerSpec(makeSpec(), manifest, CWD);
     const raw = wrapped.env["NIMBUS_SANDBOX_MANIFEST_JSON"];
     expect(raw).toBeDefined();
     const parsed = JSON.parse(raw as string) as ExtensionManifest;
@@ -77,11 +86,11 @@ describe("wrapServerSpec", () => {
     const spec = makeSpec();
     const originalCommand = spec.command;
     const originalArgs = [...spec.args];
-    const originalEnvKeys = Object.keys(spec.env).sort();
-    wrapServerSpec(spec, makeManifest(), "/tmp/cwd");
+    const originalEnvKeys = Object.keys(spec.env).sort((a, b) => a.localeCompare(b));
+    wrapServerSpec(spec, makeManifest(), CWD);
     expect(spec.command).toBe(originalCommand);
     expect(spec.args).toEqual(originalArgs);
-    expect(Object.keys(spec.env).sort()).toEqual(originalEnvKeys);
+    expect(Object.keys(spec.env).sort((a, b) => a.localeCompare(b))).toEqual(originalEnvKeys);
   });
 
   test("the env-control keys overlay (not replace) when the spec already has them", () => {
@@ -92,14 +101,14 @@ describe("wrapServerSpec", () => {
         NIMBUS_SANDBOX_CWD: "/etc",
       }),
       makeManifest({ network: ["api.github.com"] }),
-      "/tmp/legitimate",
+      LEGIT_CWD,
     );
     const parsed = JSON.parse(
       wrapped.env["NIMBUS_SANDBOX_MANIFEST_JSON"] as string,
     ) as ExtensionManifest;
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
-    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/tmp/legitimate");
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(LEGIT_CWD);
   });
 });
 

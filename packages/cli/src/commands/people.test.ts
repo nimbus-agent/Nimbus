@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -76,12 +75,8 @@ describe("runPeople — list", () => {
   it("calls people.list with default unlinkedOnly=false, limit=100", async () => {
     const mock = createMockIpcClient([[fakePerson()]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["list"]);
     expect(mock.calls[0]).toEqual({
@@ -97,12 +92,8 @@ describe("runPeople — list", () => {
   it("honours --unlinked and --limit flags", async () => {
     const mock = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["list", "--unlinked", "--limit", "10"]);
     expect(mock.calls[0]).toEqual({
@@ -116,12 +107,8 @@ describe("runPeople — list", () => {
       [fakePerson({ displayName: null, canonicalEmail: null, githubLogin: null, linked: false })],
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["list"]);
     expect(out.stdout).toContain("unlinked");
@@ -140,12 +127,8 @@ describe("runPeople — search", () => {
   it("calls people.search with query + default limit 25", async () => {
     const mock = createMockIpcClient([[fakePerson()]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["search", "alice"]);
     expect(mock.calls[0]).toEqual({
@@ -155,7 +138,7 @@ describe("runPeople — search", () => {
   });
 
   it("throws usage when query missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runPeople(["search"])).rejects.toThrow(/Usage: nimbus people search/);
   });
 });
@@ -171,12 +154,8 @@ describe("runPeople — get", () => {
   it("calls people.get and prints person row", async () => {
     const mock = createMockIpcClient([fakePerson()]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["get", "p1"]);
     expect(mock.calls[0]).toEqual({ method: "people.get", params: { id: "p1" } });
@@ -186,19 +165,15 @@ describe("runPeople — get", () => {
   it("prints '(not found)' when null returned", async () => {
     const mock = createMockIpcClient([null]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["get", "missing"]);
     expect(out.stdout).toContain("(not found)");
   });
 
   it("throws usage when id missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runPeople(["get"])).rejects.toThrow(/Usage: nimbus people get/);
   });
 });
@@ -214,12 +189,8 @@ describe("runPeople — items", () => {
   it("calls people.items with personId and prints tab-delimited rows", async () => {
     const mock = createMockIpcClient([[{ id: "github:pr_1", service: "github", name: "Fix bug" }]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["items", "p1"]);
     expect(mock.calls[0]).toEqual({
@@ -230,7 +201,7 @@ describe("runPeople — items", () => {
   });
 
   it("throws usage when id missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runPeople(["items"])).rejects.toThrow(/Usage: nimbus people items/);
   });
 });
@@ -246,12 +217,8 @@ describe("runPeople — link", () => {
   it("calls people.merge with both ids and prints 'Merged into <id>'", async () => {
     const mock = createMockIpcClient([{ survivorId: "p1", person: fakePerson() }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runPeople(["link", "p1", "p2"]);
     expect(mock.calls[0]).toEqual({
@@ -262,7 +229,7 @@ describe("runPeople — link", () => {
   });
 
   it("throws usage when ids missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runPeople(["link"])).rejects.toThrow(/Usage: nimbus people link/);
     await expect(runPeople(["link", "p1"])).rejects.toThrow(/Usage: nimbus people link/);
   });

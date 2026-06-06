@@ -10,8 +10,7 @@ export async function loadFeatureExtractionPipeline(
 ): Promise<FeatureExtractionPipe> {
   const { env, pipeline } = await import("@xenova/transformers");
   env.cacheDir = cacheDir;
-  return (await pipeline(
-    "feature-extraction",
-    XENOVA_MODEL_REPO,
-  )) as unknown as FeatureExtractionPipe;
+  const pipe = await pipeline("feature-extraction", XENOVA_MODEL_REPO);
+  // The `as unknown as` bridges @xenova's FeatureExtractionPipeline to the local FeatureExtractionPipe interface.
+  return pipe as unknown as FeatureExtractionPipe; // NOSONAR S4325: required cross-library type bridge
 }

@@ -1,8 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getCliPlatformPaths, resolveSocketPath } from "./paths.ts";
+
+// Real temp root for fake socket-path / TMPDIR override strings (never written to disk).
+let tmpRoot: string;
+beforeAll(() => {
+  tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-cli-paths-test-"));
+});
+afterAll(() => {
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
+});
 
 const ENV_KEYS = [
   "NIMBUS_GATEWAY_SOCKET",
@@ -58,8 +68,9 @@ describe("resolveSocketPath", () => {
   });
 
   it("returns NIMBUS_GATEWAY_SOCKET override when set", () => {
-    process.env["NIMBUS_GATEWAY_SOCKET"] = "/tmp/custom.sock";
-    expect(resolveSocketPath()).toBe("/tmp/custom.sock");
+    const customSock = join(tmpRoot, "custom.sock");
+    process.env["NIMBUS_GATEWAY_SOCKET"] = customSock;
+    expect(resolveSocketPath()).toBe(customSock);
   });
 
   it("treats empty NIMBUS_GATEWAY_SOCKET as unset (falls through to platform default)", () => {
@@ -108,37 +119,37 @@ describe("getCliPlatformPaths — win32 branch", () => {
   });
 
   it("derives configDir from APPDATA + dataDir from LOCALAPPDATA", () => {
-    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
-    process.env["LOCALAPPDATA"] = "C:\\Users\\Test\\AppData\\Local";
+    process.env["APPDATA"] = String.raw`C:\Users\Test\AppData\Roaming`;
+    process.env["LOCALAPPDATA"] = String.raw`C:\Users\Test\AppData\Local`;
     const paths = getCliPlatformPaths();
-    expect(paths.configDir).toBe(join("C:\\Users\\Test\\AppData\\Roaming", "Nimbus"));
-    expect(paths.dataDir).toBe(join("C:\\Users\\Test\\AppData\\Local", "Nimbus", "data"));
+    expect(paths.configDir).toBe(join(String.raw`C:\Users\Test\AppData\Roaming`, "Nimbus"));
+    expect(paths.dataDir).toBe(join(String.raw`C:\Users\Test\AppData\Local`, "Nimbus", "data"));
     expect(paths.logDir).toBe(join(paths.dataDir, "logs"));
     expect(paths.extensionsDir).toBe(
-      join("C:\\Users\\Test\\AppData\\Local", "Nimbus", "extensions"),
+      join(String.raw`C:\Users\Test\AppData\Local`, "Nimbus", "extensions"),
     );
     expect(paths.tempDir).toBe(join(tmpdir(), "nimbus"));
     expect(paths.socketPath).toBe(String.raw`\\.\pipe\nimbus-gateway`);
   });
 
   it("throws when APPDATA is missing", () => {
-    process.env["LOCALAPPDATA"] = "C:\\x";
+    process.env["LOCALAPPDATA"] = String.raw`C:\x`;
     expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
   });
 
   it("throws when APPDATA is empty", () => {
     process.env["APPDATA"] = "";
-    process.env["LOCALAPPDATA"] = "C:\\x";
+    process.env["LOCALAPPDATA"] = String.raw`C:\x`;
     expect(() => getCliPlatformPaths()).toThrow(/APPDATA/);
   });
 
   it("throws when LOCALAPPDATA is missing", () => {
-    process.env["APPDATA"] = "C:\\x";
+    process.env["APPDATA"] = String.raw`C:\x`;
     expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
   });
 
   it("throws when LOCALAPPDATA is empty", () => {
-    process.env["APPDATA"] = "C:\\x";
+    process.env["APPDATA"] = String.raw`C:\x`;
     process.env["LOCALAPPDATA"] = "";
     expect(() => getCliPlatformPaths()).toThrow(/LOCALAPPDATA/);
   });

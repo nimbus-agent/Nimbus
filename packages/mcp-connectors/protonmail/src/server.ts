@@ -131,6 +131,8 @@ class BridgeImapClient implements MailClient {
       secure: false,
       auth: { user: this.config.user, pass: this.config.pass },
       logger: false,
+      // ProtonMail Bridge listens on localhost with a self-signed certificate;
+      // disabling chain verification is required and safe for the loopback bridge.
       tls: { rejectUnauthorized: false },
     });
   }
@@ -241,10 +243,6 @@ class BridgeMailer implements SmtpMailer {
 }
 
 const server = new McpServer({ name: "nimbus-protonmail", version: "0.1.0" });
-registerProtonmailTools(
-  server as unknown as { tool: (...args: never) => unknown },
-  new BridgeImapClient(),
-  new BridgeMailer(),
-);
+registerProtonmailTools(server, new BridgeImapClient(), new BridgeMailer());
 
 await server.connect(new StdioServerTransport());

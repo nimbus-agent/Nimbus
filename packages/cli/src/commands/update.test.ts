@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -51,7 +50,7 @@ describe("runUpdateCheck", () => {
     out.reset();
     origExitCode = process.exitCode;
     process.exitCode = 0;
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     process.exitCode = origExitCode;
@@ -102,7 +101,7 @@ describe("runUpdateCheck", () => {
 describe("runUpdateApply", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -129,7 +128,7 @@ describe("runUpdate dispatcher", () => {
     out.reset();
     origExitCode = process.exitCode;
     process.exitCode = 0;
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     process.exitCode = origExitCode;
@@ -140,7 +139,7 @@ describe("runUpdate dispatcher", () => {
     const mock = createMockIpcClient([
       { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
     ]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate(["--check"]);
     expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow"]);
     expect(out.stdout).toContain("current: 0.1.0");
@@ -149,7 +148,7 @@ describe("runUpdate dispatcher", () => {
 
   it("--yes applies without prompting", async () => {
     const mock = createMockIpcClient([null]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate(["--yes"]);
     expect(mock.calls.map((c) => c.method)).toEqual(["updater.applyUpdate"]);
     expect(out.stdout).toContain("Update applied. Gateway will restart.");
@@ -159,7 +158,7 @@ describe("runUpdate dispatcher", () => {
     const mock = createMockIpcClient([
       { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
     ]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate([]);
     expect(out.stdout).toContain("No update available.");
   });
@@ -173,7 +172,7 @@ describe("runUpdate dispatcher", () => {
         notes: "Bug fixes",
       },
     ]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate([]);
     expect(out.stdout).toContain("Aborted.");
   });

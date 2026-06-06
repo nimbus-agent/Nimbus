@@ -162,11 +162,11 @@ describe("getInput family", () => {
   });
 });
 
-describe("sanitizeEnvelope", () => {
-  function check(count: unknown, findings: unknown, gap: unknown) {
-    return { count, findings, gap } as unknown as Envelope["checks"]["active_p1_incidents"];
-  }
+function check(count: unknown, findings: unknown, gap: unknown) {
+  return { count, findings, gap } as unknown as Envelope["checks"]["active_p1_incidents"];
+}
 
+describe("sanitizeEnvelope", () => {
   test("sanitizes strings, coerces counts, normalizes verdict, and maps findings", () => {
     const raw = {
       service: "che\x00ckout",

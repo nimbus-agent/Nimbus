@@ -428,16 +428,16 @@ describe.skipIf(!VEC_AVAILABLE)(
   },
 );
 
+async function throwingCreateEmbedder(): Promise<Embedder> {
+  throw new Error("synthetic createLocalEmbedder failure");
+}
+async function fromMockCreateEmbedder(): Promise<Embedder> {
+  return fakeEmbedder("loaded:from-mock", 384);
+}
+
 describe.skipIf(!VEC_AVAILABLE)(
   "createLazyEmbeddingRuntime — createLocalEmbedder failure path",
   () => {
-    async function throwingCreateEmbedder(): Promise<Embedder> {
-      throw new Error("synthetic createLocalEmbedder failure");
-    }
-    async function fromMockCreateEmbedder(): Promise<Embedder> {
-      return fakeEmbedder("loaded:from-mock", 384);
-    }
-
     test("returns null pipeline when createLocalEmbedder throws (no preloaded embedder)", async () => {
       const h = makeHarness({ migrateTo: 30 });
       try {

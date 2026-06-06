@@ -47,7 +47,7 @@ describe("mapZendeskTicketToItem", () => {
 
   test("returns null when id is missing or not numeric", () => {
     const noId = makeTicket();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapZendeskTicketToItem(noId, { baseUrl: BASE, syncedAt: NOW })).toBeNull();
     expect(
       mapZendeskTicketToItem(makeTicket({ id: "not-a-number" }), { baseUrl: BASE, syncedAt: NOW }),
@@ -76,7 +76,7 @@ describe("mapZendeskTicketToItem", () => {
 
   test("title falls back to `Ticket <id>` when subject missing/empty/whitespace", () => {
     const noSubject = makeTicket();
-    delete (noSubject as Record<string, unknown>)["subject"];
+    delete noSubject["subject"];
     const row = mapZendeskTicketToItem(noSubject, { baseUrl: BASE, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Ticket 12345");
@@ -97,14 +97,14 @@ describe("mapZendeskTicketToItem", () => {
 
   test("bodyPreview falls back to the status label, then the title", () => {
     const noDesc = makeTicket();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const onStatus = mapZendeskTicketToItem(noDesc, { baseUrl: BASE, syncedAt: NOW });
     if (onStatus === null) throw new Error("expected mapping to succeed");
     expect(onStatus.bodyPreview).toBe("open");
 
     const noStatus = makeTicket();
-    delete (noStatus as Record<string, unknown>)["description"];
-    delete (noStatus as Record<string, unknown>)["status"];
+    delete noStatus["description"];
+    delete noStatus["status"];
     const onTitle = mapZendeskTicketToItem(noStatus, { baseUrl: BASE, syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe("Checkout button unresponsive on Safari");
@@ -124,14 +124,14 @@ describe("mapZendeskTicketToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdate = makeTicket();
-    delete (noUpdate as Record<string, unknown>)["updated_at"];
+    delete noUpdate["updated_at"];
     const onlyCreated = mapZendeskTicketToItem(noUpdate, { baseUrl: BASE, syncedAt: NOW });
     if (onlyCreated === null) throw new Error("expected mapping to succeed");
     expect(onlyCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makeTicket();
-    delete (noTimes as Record<string, unknown>)["updated_at"];
-    delete (noTimes as Record<string, unknown>)["created_at"];
+    delete noTimes["updated_at"];
+    delete noTimes["created_at"];
     const fallback = mapZendeskTicketToItem(noTimes, { baseUrl: BASE, syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -178,7 +178,7 @@ describe("mapZendeskTicketToItem", () => {
 
   test("via_channel is null when via is missing or not an object", () => {
     const noVia = makeTicket();
-    delete (noVia as Record<string, unknown>)["via"];
+    delete noVia["via"];
     const row = mapZendeskTicketToItem(noVia, { baseUrl: BASE, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["via_channel"]).toBeNull();
@@ -208,13 +208,13 @@ describe("mapZendeskTicketToItem", () => {
 
   test("missing optional fields are null-passthrough in metadata", () => {
     const sparse = makeTicket();
-    delete (sparse as Record<string, unknown>)["priority"];
-    delete (sparse as Record<string, unknown>)["type"];
-    delete (sparse as Record<string, unknown>)["requester_id"];
-    delete (sparse as Record<string, unknown>)["assignee_id"];
-    delete (sparse as Record<string, unknown>)["group_id"];
-    delete (sparse as Record<string, unknown>)["organization_id"];
-    delete (sparse as Record<string, unknown>)["tags"];
+    delete sparse["priority"];
+    delete sparse["type"];
+    delete sparse["requester_id"];
+    delete sparse["assignee_id"];
+    delete sparse["group_id"];
+    delete sparse["organization_id"];
+    delete sparse["tags"];
     const row = mapZendeskTicketToItem(sparse, { baseUrl: BASE, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

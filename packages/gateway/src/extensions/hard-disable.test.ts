@@ -14,6 +14,7 @@ import {
   preT2DisabledCount,
   preT2DisabledIds,
   preT2DisableMessage,
+  signatureDisabledRegistry,
 } from "./hard-disable.ts";
 
 function memoryLogger(): { logger: Logger; warns: unknown[] } {
@@ -198,8 +199,6 @@ describe("hardDisablePreT2Extensions", () => {
     expect(msg).toContain("Reinstall to enable: nimbus extension reinstall acme.foo");
   });
 });
-
-import { signatureDisabledRegistry } from "./hard-disable.ts";
 
 describe("signatureDisabledRegistry", () => {
   beforeEach(() => signatureDisabledRegistry.reset());

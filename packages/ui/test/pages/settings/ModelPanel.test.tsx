@@ -54,7 +54,7 @@ beforeEach(() => {
     routerStatus: null,
     loadedKeys: {},
     connectionState: "connected",
-  } as never);
+  });
 });
 
 describe("ModelPanel", () => {
@@ -91,7 +91,7 @@ describe("ModelPanel", () => {
   });
 
   it("Unload button calls llmUnloadModel when the row is loaded", async () => {
-    useNimbusStore.setState({ loadedKeys: { "ollama:gemma:2b": true } } as never);
+    useNimbusStore.setState({ loadedKeys: { "ollama:gemma:2b": true } });
     llmListModelsMock.mockResolvedValueOnce({
       models: [{ provider: "ollama", modelName: "gemma:2b" }],
     });
@@ -168,7 +168,7 @@ describe("ModelPanel", () => {
           totalBytes: 1000,
         },
       },
-    } as never);
+    });
     llmListModelsMock.mockResolvedValueOnce({ models: [] });
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     renderPanel();
@@ -179,7 +179,7 @@ describe("ModelPanel", () => {
   });
 
   it("llm.modelUnloaded notification patches the row's loaded state to false", async () => {
-    useNimbusStore.setState({ loadedKeys: { "ollama:gemma:2b": true } } as never);
+    useNimbusStore.setState({ loadedKeys: { "ollama:gemma:2b": true } });
     llmListModelsMock.mockResolvedValueOnce({
       models: [{ provider: "ollama", modelName: "gemma:2b" }],
     });
@@ -197,7 +197,7 @@ describe("ModelPanel", () => {
   });
 
   it("llm.pullProgress notification updates the active pull banner", async () => {
-    useNimbusStore.setState({ activePullId: "pull_x" } as never);
+    useNimbusStore.setState({ activePullId: "pull_x" });
     llmListModelsMock.mockResolvedValueOnce({ models: [] });
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
@@ -218,7 +218,7 @@ describe("ModelPanel", () => {
   });
 
   it("llm.pullCompleted clears the active pull and re-fetches models", async () => {
-    useNimbusStore.setState({ activePullId: "pull_done" } as never);
+    useNimbusStore.setState({ activePullId: "pull_done" });
     llmListModelsMock.mockResolvedValueOnce({ models: [] });
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     llmListModelsMock.mockResolvedValueOnce({
@@ -234,7 +234,7 @@ describe("ModelPanel", () => {
   });
 
   it("llm.pullFailed clears the active pull without re-fetching models", async () => {
-    useNimbusStore.setState({ activePullId: "pull_fail" } as never);
+    useNimbusStore.setState({ activePullId: "pull_fail" });
     llmListModelsMock.mockResolvedValueOnce({ models: [] });
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
@@ -269,12 +269,12 @@ describe("ModelPanel", () => {
   });
 
   it("disables write controls when connectionState=disconnected", async () => {
-    useNimbusStore.setState({ connectionState: "disconnected" } as never);
+    useNimbusStore.setState({ connectionState: "disconnected" });
     llmListModelsMock.mockRejectedValueOnce(new Error("offline"));
     llmGetRouterStatusMock.mockRejectedValueOnce(new Error("offline"));
     useNimbusStore.setState({
       installedModels: [{ id: "ollama:gemma:2b", provider: "ollama" }],
-    } as never);
+    });
     renderPanel();
     await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
     expect(screen.getByRole("button", { name: /pull new model/i })).toBeDisabled();

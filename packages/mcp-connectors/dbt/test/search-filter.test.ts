@@ -34,7 +34,7 @@ describe("filterDbtJobs", () => {
 
   test("tolerates a missing dbt_version without throwing", () => {
     const noVersion = job();
-    delete (noVersion as Record<string, unknown>)["dbt_version"];
+    delete noVersion["dbt_version"];
     expect(filterDbtJobs([noVersion], { query: "nightly" })).toHaveLength(1);
   });
 

@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -41,7 +40,7 @@ describe("runQuery — help & validation", () => {
   });
 
   it("throws when neither --service nor --sql is provided", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runQuery(["--type", "pr"])).rejects.toThrow(/Missing --service/);
   });
 
@@ -63,7 +62,7 @@ describe("runQuery — help & validation", () => {
 describe("runQuery — --sql path", () => {
   beforeEach(() => {
     out.reset();
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
   });
   afterEach(() => {
     clearFixture();
@@ -72,12 +71,8 @@ describe("runQuery — --sql path", () => {
   it("calls index.querySql with the supplied sql and prints JSON when --json", async () => {
     const mock = createMockIpcClient([{ rows: [{ id: 1, title: "hi" }], meta: { count: 1 } }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--sql", "SELECT * FROM items", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -106,12 +101,8 @@ describe("runQuery — --service path", () => {
       },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--limit", "5000", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -125,12 +116,8 @@ describe("runQuery — --service path", () => {
   it("includes types + sinceMs when --type and --since are present", async () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "slack", "--type", "message", "--since", "1d", "--json"]);
     expect(mock.calls).toHaveLength(1);
@@ -144,12 +131,8 @@ describe("runQuery — --service path", () => {
   it("default-limits to 50 when --limit is missing or invalid", async () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--limit", "garbage", "--json"]);
     expect(mock.calls[0]?.params).toMatchObject({ limit: 50 });
@@ -158,12 +141,8 @@ describe("runQuery — --service path", () => {
   it("prints '(no rows)' when no items returned and pretty is set", async () => {
     const mock = createMockIpcClient([{ items: [], meta: { limit: 50, total: 0 } }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--pretty"]);
     expect(out.stdout).toContain("(no rows)");
@@ -186,12 +165,8 @@ describe("runQuery — --service path", () => {
       },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--service", "github", "--pretty"]);
     expect(out.stdout).toContain("My PR");
@@ -205,12 +180,8 @@ describe("runQuery — --service path", () => {
       { rows: [{ id: 1, label: "x", created_at: 1700000000000 }], meta: { count: 1 } },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runQuery(["--sql", "SELECT id, label, created_at FROM other", "--pretty"]);
     expect(out.stdout).toContain("#1");

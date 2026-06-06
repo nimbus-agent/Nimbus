@@ -63,7 +63,7 @@ describe("AuditSlice — persist whitelist unchanged", () => {
       auditFilter: { service: "", outcome: "all", sinceMs: null, untilMs: null },
       auditSummary: null,
       auditActionInFlight: false,
-    } as never);
+    });
   });
 
   it("auditFilter, auditSummary, auditActionInFlight are NOT persisted", () => {
@@ -71,7 +71,7 @@ describe("AuditSlice — persist whitelist unchanged", () => {
       auditFilter: { service: "github", outcome: "approved", sinceMs: 1, untilMs: 2 },
       auditSummary: { byOutcome: { approved: 1 }, byService: { github: 1 }, total: 1 },
       auditActionInFlight: true,
-    } as never);
+    });
     const raw = localStorage.getItem("nimbus-ui-store");
     if (raw === null) {
       return;

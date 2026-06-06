@@ -191,7 +191,7 @@ function makeFakeMcpClient(opts: {
       return listToolsCalls;
     },
   };
-  return fake as FakeMcpClient & { disconnectCalls: number; listToolsCalls: number };
+  return fake;
 }
 
 function asPrivate(m: LazyConnectorMesh): {
@@ -218,7 +218,7 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
 
     const merged = await mesh.listToolsForDispatcher();
 
-    expect(Object.keys(merged).sort()).toEqual(["fs_read"]);
+    expect(Object.keys(merged).sort((a, b) => a.localeCompare(b))).toEqual(["fs_read"]);
     const fsRead = merged["fs_read"];
     if (fsRead?.execute === undefined) throw new Error("fs_read missing");
     const result = (await fsRead.execute({}, undefined)) as { ok: boolean };
@@ -250,7 +250,7 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
 
     const merged = await mesh.listToolsForDispatcher();
 
-    expect(Object.keys(merged).sort()).toEqual(["fs_list", "gh_repos"]);
+    expect(Object.keys(merged).sort((a, b) => a.localeCompare(b))).toEqual(["fs_list", "gh_repos"]);
 
     const ghReposExec = merged["gh_repos"]?.execute;
     if (ghReposExec === undefined) throw new Error("gh_repos missing");
@@ -313,7 +313,7 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
 
     const merged = await mesh.listToolsForDispatcher();
 
-    expect(Object.keys(merged).sort()).toEqual(["fs_ok"]);
+    expect(Object.keys(merged).sort((a, b) => a.localeCompare(b))).toEqual(["fs_ok"]);
   });
 });
 

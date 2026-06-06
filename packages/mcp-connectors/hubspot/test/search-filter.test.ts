@@ -15,7 +15,7 @@ function deal(over: Record<string, unknown> = {}): Record<string, unknown> {
       closedate: "2026-06-30T00:00:00Z",
       createdate: "2026-01-02T00:00:00Z",
       hs_lastmodifieddate: "2026-05-20T00:00:00Z",
-      ...((propsOver as Record<string, unknown> | undefined) ?? {}),
+      ...propsOver,
     },
   };
 }
@@ -40,7 +40,7 @@ describe("filterHubspotDeals", () => {
 
   test("tolerates a missing properties object", () => {
     const noProps = deal();
-    delete (noProps as Record<string, unknown>)["properties"];
+    delete noProps["properties"];
     expect(filterHubspotDeals([noProps], { query: "acme" })).toHaveLength(0);
     // A row with no properties still does not throw.
     expect(filterHubspotDeals([noProps, deal()], { query: "acme" })).toHaveLength(1);

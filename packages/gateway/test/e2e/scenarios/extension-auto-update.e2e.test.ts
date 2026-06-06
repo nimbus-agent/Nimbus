@@ -119,7 +119,7 @@ async function buildTarball(opts: {
     const tarPath = join(stage, "out.tar.gz");
     await tar.c({ cwd: stage, file: tarPath, gzip: true }, ["nimbus.extension.json", "dist"]);
     const tarballBytes = new Uint8Array(readFileSync(tarPath));
-    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const { createHash } = require("node:crypto");
     return {
       manifest,
       manifestHash: createHash("sha256").update(Buffer.from(manifestText, "utf8")).digest("hex"),
@@ -168,7 +168,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       writeFileSync(join(extRoot, "active", "nimbus.extension.json"), v1ManifestText, "utf8");
       writeFileSync(join(extRoot, "active", "dist", "index.js"), v1EntryText, "utf8");
 
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.0.0",
@@ -287,7 +287,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         `export default { version: "1.0.0" };`,
       );
 
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.1.0",

@@ -37,7 +37,7 @@ describe("createIpcServer", () => {
   test("setAgentInvokeHandler replaces the handler without throwing", () => {
     const { server } = makeMinimalServer();
     const handler = async (_ctx: unknown) => ({ reply: "ok" });
-    expect(() => server.setAgentInvokeHandler(handler as never)).not.toThrow();
+    expect(() => server.setAgentInvokeHandler(handler)).not.toThrow();
     expect(() => server.setAgentInvokeHandler(undefined)).not.toThrow();
   });
 

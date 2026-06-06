@@ -28,7 +28,7 @@ function makeOptions(mint = tokenOk) {
 
 const DATASETS_URL = /\/datasets\?/;
 function tablesUrl(dataset: string): RegExp {
-  return new RegExp(`/datasets/${dataset}/tables\\?`);
+  return new RegExp(String.raw`/datasets/${dataset}/tables\?`);
 }
 function tableDetailUrl(dataset: string, table: string): RegExp {
   return new RegExp(`/datasets/${dataset}/tables/${table}$`);

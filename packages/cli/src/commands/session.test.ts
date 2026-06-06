@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -32,12 +31,8 @@ describe("runSession", () => {
   it("'list' calls session.list and prints sessions JSON", async () => {
     const mock = createMockIpcClient([{ sessions: [{ id: "s1" }] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runSession(["list"]);
     expect(mock.calls).toHaveLength(1);
@@ -48,12 +43,8 @@ describe("runSession", () => {
   it("no-subcommand falls through to 'list'", async () => {
     const mock = createMockIpcClient([{ sessions: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runSession([]);
     expect(mock.calls[0]?.method).toBe("session.list");
@@ -62,12 +53,8 @@ describe("runSession", () => {
   it("'clear' without sessionId calls session.clear with empty payload", async () => {
     const mock = createMockIpcClient([{ cleared: 0 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runSession(["clear"]);
     expect(mock.calls[0]).toEqual({ method: "session.clear", params: {} });
@@ -76,12 +63,8 @@ describe("runSession", () => {
   it("'clear <sessionId>' passes sessionId to session.clear", async () => {
     const mock = createMockIpcClient([{ cleared: 1 }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runSession(["clear", "abc-123"]);
     expect(mock.calls[0]).toEqual({
@@ -93,12 +76,8 @@ describe("runSession", () => {
   it("'recall' calls session.recall with sessionId/query/topK", async () => {
     const mock = createMockIpcClient([{ chunks: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
-      ipcClient: mock.client as unknown as {
-        call: unknown;
-        connect: unknown;
-        disconnect: unknown;
-      },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
     });
     await runSession(["recall", "sess-1", "hello", "world"]);
     expect(mock.calls[0]).toEqual({
@@ -108,13 +87,13 @@ describe("runSession", () => {
   });
 
   it("'recall' without sessionId or query throws usage", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runSession(["recall"])).rejects.toThrow(/Usage: nimbus session recall/);
     await expect(runSession(["recall", "sess-1"])).rejects.toThrow(/Usage: nimbus session recall/);
   });
 
   it("unknown subcommand throws usage", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runSession(["bogus"])).rejects.toThrow(/Usage: nimbus session/);
   });
 });

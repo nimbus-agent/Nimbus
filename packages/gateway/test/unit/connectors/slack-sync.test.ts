@@ -81,16 +81,16 @@ describe("slack-sync — credential short-circuits", () => {
   });
 });
 
-describe("slack-sync — cursor decode", () => {
-  function stageListEmpty(): void {
-    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
-    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
-      ok: true,
-      channels: [],
-      response_metadata: { next_cursor: "" },
-    });
-  }
+function stageListEmpty(): void {
+  fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+  fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.list", {
+    ok: true,
+    channels: [],
+    response_metadata: { next_cursor: "" },
+  });
+}
 
+describe("slack-sync — cursor decode", () => {
   test("null cursor falls back to default list-phase state", async () => {
     stageListEmpty();
     const res = await createSlackSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
@@ -563,30 +563,30 @@ describe("slack-sync — list phase", () => {
   });
 });
 
-describe("slack-sync — history phase", () => {
-  function historyCursor(
-    overrides: Partial<{
-      floorTs: string;
-      ids: string[];
-      nextIdx: number;
-      hw: Record<string, string | null>;
-      histCursor: string | null;
-      teamSubdomain: string | null;
-    }>,
-  ): string {
-    return encodeCursor({
-      phase: "history",
-      floorTs: "1.0",
-      ids: ["C1"],
-      nextIdx: 0,
-      hw: {},
-      listCursor: null,
-      histCursor: null,
-      teamSubdomain: null,
-      ...overrides,
-    });
-  }
+function historyCursor(
+  overrides: Partial<{
+    floorTs: string;
+    ids: string[];
+    nextIdx: number;
+    hw: Record<string, string | null>;
+    histCursor: string | null;
+    teamSubdomain: string | null;
+  }> = {},
+): string {
+  return encodeCursor({
+    phase: "history",
+    floorTs: "1.0",
+    ids: ["C1"],
+    nextIdx: 0,
+    hw: {},
+    listCursor: null,
+    histCursor: null,
+    teamSubdomain: null,
+    ...overrides,
+  });
+}
 
+describe("slack-sync — history phase", () => {
   test("ids=[''] (empty channel slot) -> early return with hasMore=false", async () => {
     fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
     const res = await createSlackSyncable(ENSURE_MCP).sync(
@@ -705,28 +705,16 @@ describe("slack-sync — history phase", () => {
   });
 });
 
-describe("slack-sync — message indexing skip paths", () => {
-  function stageHistory(messages: unknown[]): void {
-    fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
-    fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
-      ok: true,
-      messages,
-      response_metadata: { next_cursor: "" },
-    });
-  }
-  function historyCursor(): string {
-    return encodeCursor({
-      phase: "history",
-      floorTs: "1.0",
-      ids: ["C1"],
-      nextIdx: 0,
-      hw: {},
-      listCursor: null,
-      histCursor: null,
-      teamSubdomain: null,
-    });
-  }
+function stageHistory(messages: unknown[]): void {
+  fixture.fetchMock.respond("POST", "https://slack.com/api/auth.test", { ok: false });
+  fixture.fetchMock.respond("POST", "https://slack.com/api/conversations.history", {
+    ok: true,
+    messages,
+    response_metadata: { next_cursor: "" },
+  });
+}
 
+describe("slack-sync — message indexing skip paths", () => {
   test("messages not an array -> 0 upserts", async () => {
     stageHistory("not-array" as unknown as unknown[]);
     const res = await createSlackSyncable(ENSURE_MCP).sync(

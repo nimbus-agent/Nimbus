@@ -1,31 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./ask.ts");
 const { runAsk } = mod;
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-}
+// stderr is captured but never asserted on (only stdout); the capture keeps it silent.
+const {
+  stdoutChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();
@@ -34,7 +20,6 @@ afterAll(() => {
 describe("runAsk — usage / preconditions", () => {
   beforeEach(() => {
     stdoutChunks.length = 0;
-    stderrChunks.length = 0;
     installStreamCapture();
   });
   afterEach(() => {
@@ -63,7 +48,6 @@ describe("runAsk — usage / preconditions", () => {
 describe("runAsk — happy paths", () => {
   beforeEach(() => {
     stdoutChunks.length = 0;
-    stderrChunks.length = 0;
     installStreamCapture();
   });
   afterEach(() => {
@@ -74,7 +58,7 @@ describe("runAsk — happy paths", () => {
   it("prints onboarding hint and returns when connector list is empty", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });
@@ -95,7 +79,7 @@ describe("runAsk — happy paths", () => {
   it("prints onboarding hint when listStatus returns a non-array", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });
@@ -115,7 +99,7 @@ describe("runAsk — happy paths", () => {
   it("happy path: invokes agent.invoke with input + stream=true and no session.append", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });
@@ -140,7 +124,7 @@ describe("runAsk — happy paths", () => {
   it("forwards --session + --agent + writes user/assistant session.append entries", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });
@@ -178,7 +162,7 @@ describe("runAsk — happy paths", () => {
   it("skips assistant session.append when reply is empty / whitespace", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });
@@ -201,7 +185,7 @@ describe("runAsk — happy paths", () => {
     const longReply = "x".repeat(9000);
     const calls: Array<{ method: string; params: unknown }> = [];
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           calls.push({ method, params });

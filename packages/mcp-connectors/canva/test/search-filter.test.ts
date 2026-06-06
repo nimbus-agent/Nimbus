@@ -33,7 +33,7 @@ describe("filterCanvaDesigns", () => {
 
   test("tolerates a missing title", () => {
     const noTitle = design();
-    delete (noTitle as Record<string, unknown>)["title"];
+    delete noTitle["title"];
     expect(filterCanvaDesigns([noTitle], { query: "marketing" })).toHaveLength(0);
   });
 

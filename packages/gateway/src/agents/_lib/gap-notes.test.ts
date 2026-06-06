@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import {
+  aggregateMissingEntityTypes,
   detectEmptyIndex,
   detectMissingConnector,
   detectMissingEntityType,
@@ -119,7 +120,6 @@ describe("detectMissingRelationEmit", () => {
 });
 
 import type { GapNote } from "./findings.ts";
-import { aggregateMissingEntityTypes } from "./gap-notes.ts";
 
 describe("aggregateMissingEntityTypes", () => {
   test("collapses 3 missing_entity_type notes into 1 combined note", () => {

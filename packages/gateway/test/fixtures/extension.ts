@@ -40,10 +40,10 @@ export async function stageSignedExtensionOnDisk(opts: {
     publisher: { id: opts.publisherId, key: encodeBase64(opts.pubkey) },
   };
   let signature: string;
-  if (opts.privkey !== undefined) {
-    signature = await signManifest(baseManifest, opts.privkey);
-  } else {
+  if (opts.privkey === undefined) {
     signature = `${"A".repeat(86)}==`;
+  } else {
+    signature = await signManifest(baseManifest, opts.privkey);
   }
   const manifest = { ...baseManifest, signature };
   const manifestPath = join(dir, "nimbus.extension.json");

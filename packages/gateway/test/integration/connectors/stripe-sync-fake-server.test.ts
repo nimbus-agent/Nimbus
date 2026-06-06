@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 interface RecordedReq {
   method: string;
@@ -115,11 +116,11 @@ function invoice(id: string, over: Record<string, unknown> = {}): Record<string,
 
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const urlStr = requestUrl(input);
     const rewritten = urlStr.replace("https://api.stripe.com", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  };
   return () => {
     globalThis.fetch = original;
   };
@@ -166,7 +167,7 @@ describe("stripe-sync against Bun.serve fake API", () => {
 
   test("multi-page: has_more drives a starting_after cursor walk", async () => {
     const firstPage = fullPage("a");
-    const lastId = (firstPage[firstPage.length - 1] as { id: string }).id;
+    const lastId = (firstPage.at(-1) as { id: string }).id;
     h = startHarness({
       pages: {
         "": { data: firstPage, has_more: true },

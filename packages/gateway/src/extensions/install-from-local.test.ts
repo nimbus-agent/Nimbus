@@ -695,7 +695,8 @@ function buildExtensionTarball(opts: {
       windowsHide: true,
     });
     if (r.status !== 0) {
-      throw new Error(`tar pack failed: ${r.stderr?.toString() ?? `exit ${String(r.status)}`}`);
+      const reason = r.stderr?.toString() ?? `exit ${String(r.status)}`;
+      throw new Error(`tar pack failed: ${reason}`);
     }
     const bytes = new Uint8Array(readFileSync(archive));
     const entryHash = createHash("sha256").update(entryContents).digest("hex");
@@ -734,7 +735,7 @@ function makeMockRegistry(opts: {
           entry: "dist/index.js",
           permissions: { network: [], filesystem: { read: [], write: [] } },
           updateChannel: "stable",
-        } as FetchManifestResponse["manifest"],
+        },
         manifestRaw: { id, version },
         manifestHash: "0".repeat(64),
         entryHash: "0".repeat(64),

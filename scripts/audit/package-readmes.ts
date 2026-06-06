@@ -77,8 +77,9 @@ async function main() {
         console.error(error);
         failed = true;
       }
-    } catch (_e) {
-      console.error(`Missing README.md in '${pkg.path}'`);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`Missing README.md in '${pkg.path}' (${reason})`);
       failed = true;
     }
   }

@@ -47,7 +47,7 @@ describe("filterSalesforceOpportunities", () => {
 
   test("tolerates a missing Type", () => {
     const noType = opportunity();
-    delete (noType as Record<string, unknown>)["Type"];
+    delete noType["Type"];
     // still matches on name
     expect(filterSalesforceOpportunities([noType], { query: "renewal" })).toHaveLength(1);
     // type-only query no longer matches

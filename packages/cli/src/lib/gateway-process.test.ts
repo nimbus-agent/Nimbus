@@ -158,14 +158,11 @@ describe("readGatewayState", () => {
 
   it("omits logPath when absent in the file", async () => {
     const stateFile = gatewayStatePath(paths);
-    writeFileSync(
-      stateFile,
-      JSON.stringify({ pid: process.pid, socketPath: "/tmp/no-log.sock" }),
-      "utf8",
-    );
+    const noLogSock = join(dir, "no-log.sock");
+    writeFileSync(stateFile, JSON.stringify({ pid: process.pid, socketPath: noLogSock }), "utf8");
     const state = await readGatewayState(paths);
     expect(state?.pid).toBe(process.pid);
-    expect(state?.socketPath).toBe("/tmp/no-log.sock");
+    expect(state?.socketPath).toBe(noLogSock);
     expect(state?.logPath).toBeUndefined();
   });
 
@@ -173,7 +170,7 @@ describe("readGatewayState", () => {
     const stateFile = gatewayStatePath(paths);
     writeFileSync(
       stateFile,
-      JSON.stringify({ pid: process.pid, socketPath: "/tmp/x.sock", logPath: "" }),
+      JSON.stringify({ pid: process.pid, socketPath: join(dir, "x.sock"), logPath: "" }),
       "utf8",
     );
     const state = await readGatewayState(paths);
@@ -184,7 +181,7 @@ describe("readGatewayState", () => {
     const stateFile = gatewayStatePath(paths);
     writeFileSync(
       stateFile,
-      JSON.stringify({ pid: "not-a-number", socketPath: "/tmp/x.sock" }),
+      JSON.stringify({ pid: "not-a-number", socketPath: join(dir, "x.sock") }),
       "utf8",
     );
     const state = await readGatewayState(paths);
@@ -200,7 +197,11 @@ describe("readGatewayState", () => {
 
   it("returns undefined when pid is non-finite (NaN)", async () => {
     const stateFile = gatewayStatePath(paths);
-    writeFileSync(stateFile, '{"pid": "Infinity-bad", "socketPath": "/tmp/x.sock"}', "utf8");
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ pid: "Infinity-bad", socketPath: join(dir, "x.sock") }),
+      "utf8",
+    );
     const state = await readGatewayState(paths);
     expect(state).toBeUndefined();
   });
@@ -209,7 +210,7 @@ describe("readGatewayState", () => {
     const stateFile = gatewayStatePath(paths);
     writeFileSync(
       stateFile,
-      JSON.stringify({ pid: process.pid, socketPath: "/tmp/x.sock", logPath: 42 }),
+      JSON.stringify({ pid: process.pid, socketPath: join(dir, "x.sock"), logPath: 42 }),
       "utf8",
     );
     const state = await readGatewayState(paths);
@@ -241,7 +242,7 @@ describe("readGatewayState", () => {
     const proc = spawnNoop();
     const pid = proc.pid;
     if (typeof pid !== "number") {
-      throw new Error("spawned subprocess has no pid");
+      throw new TypeError("spawned subprocess has no pid");
     }
     const stateFile = gatewayStatePath(paths);
     writeFileSync(stateFile, JSON.stringify({ pid, socketPath: join(dir, "live.sock") }), "utf8");

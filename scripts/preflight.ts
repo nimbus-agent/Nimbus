@@ -17,10 +17,10 @@ async function runGate(g: Gate): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  const argv = Bun.argv.slice(2);
-  const fast = argv.includes("--fast");
-  const list = argv.includes("--list");
-  const noBail = argv.includes("--no-bail");
+  const argv = new Set(Bun.argv.slice(2));
+  const fast = argv.has("--fast");
+  const list = argv.has("--list");
+  const noBail = argv.has("--no-bail");
   const tier: GateTier = fast ? "fast" : "full";
   const gates = selectGates(tier);
 

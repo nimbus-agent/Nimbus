@@ -400,10 +400,10 @@ export function activateWithDeps(
 }
 
 export function activate(ctx: vscode.ExtensionContext): void {
-  activateWithDeps(ctx as unknown as ExtensionContextLike, {
-    window: vscode.window as unknown as WindowApi,
-    workspace: vscode.workspace as unknown as WorkspaceApi,
-    commands: vscode.commands as unknown as CommandsApi,
+  activateWithDeps(ctx, {
+    window: vscode.window as unknown as WindowApi, // NOSONAR S4325: vscode.window is structurally wider than WindowApi; bridge required
+    workspace: vscode.workspace,
+    commands: vscode.commands,
   });
 }
 

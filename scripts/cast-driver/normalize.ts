@@ -11,7 +11,7 @@ export interface Rule {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI CSI parsing requires the literal ESC (\x1b) byte
 const ANSI_CSI = /\x1b\[[?]?[0-9;]*[A-Za-z]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI OSC parsing requires the literal ESC (\x1b) and BEL (\x07) bytes
-const ANSI_OSC = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g;
+const ANSI_OSC = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g; // NOSONAR S6324: ANSI OSC parsing requires literal ESC/BEL control bytes
 const ISO_8601 = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
 const EPOCH_MS = /\b\d{13}\b/g;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
@@ -21,7 +21,7 @@ const VERSION = /\b(nimbus|Bun|Node)\s+v\d+\.\d+\.\d+(?:[-+.][\w.-]+)?\b/g;
 const GIT_SHA = /(?:sha=|commit=|SHA=|COMMIT=)([0-9a-f]{7,40})\b|\b[0-9a-f]{20,40}\b/g;
 
 function escapeForRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
@@ -31,12 +31,12 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
   },
   {
     name: "crlf-to-lf",
-    apply: (t) => t.replace(/\r\n/g, "\n"),
+    apply: (t) => t.replaceAll("\r\n", "\n"),
   },
   {
     name: "cr-resolution",
     apply: (t) => {
-      let text = t.replace(/\r\n/g, "\n");
+      let text = t.replaceAll("\r\n", "\n");
       if (text.endsWith("\r")) {
         text = `${text.slice(0, -1)}\n`;
       }
@@ -102,7 +102,7 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
     name: "git-sha",
     apply: (t) =>
       t.replace(GIT_SHA, (match) => {
-        const labelMatch = match.match(/^(sha=|commit=|SHA=|COMMIT=)/i);
+        const labelMatch = /^(sha=|commit=|SHA=|COMMIT=)/i.exec(match);
         if (labelMatch) {
           return `${labelMatch[1]}<SHA>`;
         }

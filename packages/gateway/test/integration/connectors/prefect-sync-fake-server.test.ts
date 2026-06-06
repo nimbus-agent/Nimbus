@@ -46,9 +46,9 @@ function startFakePrefect(config: FakePrefectConfig): FakePrefect {
         } catch {
           bodyJson = {};
         }
-        offset = typeof bodyJson["offset"] === "number" ? (bodyJson["offset"] as number) : null;
-        limit = typeof bodyJson["limit"] === "number" ? (bodyJson["limit"] as number) : null;
-        sort = typeof bodyJson["sort"] === "string" ? (bodyJson["sort"] as string) : null;
+        offset = typeof bodyJson["offset"] === "number" ? bodyJson["offset"] : null;
+        limit = typeof bodyJson["limit"] === "number" ? bodyJson["limit"] : null;
+        sort = typeof bodyJson["sort"] === "string" ? bodyJson["sort"] : null;
       }
       requests.push({
         method: req.method,

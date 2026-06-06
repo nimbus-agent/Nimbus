@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -536,8 +535,8 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       isTty: true,
       noColor: false,
     });
-    const ESC = String.fromCharCode(27);
-    expect(formatted).toMatch(new RegExp(`${ESC}\\[2;33m\\(unverified\\)\\s*${ESC}\\[0m`));
+    const ESC = String.fromCodePoint(27);
+    expect(formatted).toMatch(new RegExp(String.raw`${ESC}\[2;33m\(unverified\)\s*${ESC}\[0m`));
   });
 
   test("NO_COLOR=1 (noColor=true) disables ANSI codes even on TTY", () => {
@@ -545,8 +544,8 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       isTty: true,
       noColor: true,
     });
-    const ESC = String.fromCharCode(27);
-    expect(formatted).not.toMatch(new RegExp(`${ESC}\\[`));
+    const ESC = String.fromCodePoint(27);
+    expect(formatted).not.toMatch(new RegExp(String.raw`${ESC}\[`));
   });
 
   test("disabled row shows 'disabled' in Status column", () => {

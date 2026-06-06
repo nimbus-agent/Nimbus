@@ -8,6 +8,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 interface RecordedReq {
   method: string;
@@ -84,12 +85,11 @@ function startHarness(config: FakeDbtConfig): Harness {
   const vault = createMockVault();
   const fake = startFakeDbt(config);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = requestUrl(input);
     const rewritten = url.replace("https://cloud.getdbt.com", fake.apiBase);
     return originalFetch(rewritten, init);
-  }) as typeof globalThis.fetch;
+  };
   return {
     db,
     fake,

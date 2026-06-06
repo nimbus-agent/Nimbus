@@ -32,7 +32,7 @@ describe("signJwt", () => {
       "sha256",
       Buffer.from(`${h}.${p}`, "utf8"),
       crypto.createPublicKey(publicKey.export({ type: "spki", format: "pem" }).toString()),
-      Buffer.from(sig as string, "base64url"),
+      Buffer.from(sig as string, "base64url"), // NOSONAR S4325: sig is string|undefined from the JWT split under noUncheckedIndexedAccess
     );
     expect(ok).toBe(true);
   });
@@ -55,7 +55,7 @@ describe("signJwt", () => {
         key: crypto.createPublicKey(publicKey.export({ type: "spki", format: "pem" }).toString()),
         dsaEncoding: "ieee-p1363",
       },
-      Buffer.from(sig as string, "base64url"),
+      Buffer.from(sig as string, "base64url"), // NOSONAR S4325: sig is string|undefined from the JWT split under noUncheckedIndexedAccess
     );
     expect(ok).toBe(true);
   });

@@ -35,9 +35,9 @@ function seed(db: Database) {
     [now, now],
   );
   const v384 = new Float32Array(384);
-  v384[0] = 1.0;
+  v384[0] = 1;
   const v1536 = new Float32Array(1536);
-  v1536[0] = 1.0;
+  v1536[0] = 1;
   db.run(`INSERT INTO vec_items_384  (rowid, embedding) VALUES (1, vec_f32(?))`, [v384]);
   db.run(`INSERT INTO vec_items_1536 (rowid, embedding) VALUES (1, vec_f32(?))`, [v1536]);
   db.run(
@@ -57,9 +57,9 @@ describe("vectorSearchChunksDual", () => {
     const db = freshDb();
     seed(db);
     const v384 = new Float32Array(384);
-    v384[0] = 1.0;
+    v384[0] = 1;
     const v1536 = new Float32Array(1536);
-    v1536[0] = 1.0;
+    v1536[0] = 1;
     const hits = vectorSearchChunksDual(db, {
       queryEmbedding384: v384,
       queryEmbedding1536: v1536,
@@ -76,7 +76,7 @@ describe("vectorSearchChunksDual", () => {
     const db = freshDb();
     seed(db);
     const v384 = new Float32Array(384);
-    v384[0] = 1.0;
+    v384[0] = 1;
     const hits = vectorSearchChunksDual(db, {
       queryEmbedding384: v384,
       model384: "m384",
@@ -90,9 +90,9 @@ describe("vectorSearchChunksDual", () => {
     const db = freshDb();
     seed(db);
     const v384 = new Float32Array(384);
-    v384[0] = 1.0;
+    v384[0] = 1;
     const v1536 = new Float32Array(1536);
-    v1536[0] = 1.0;
+    v1536[0] = 1;
     const hits = vectorSearchChunksDual(db, {
       queryEmbedding384: v384,
       queryEmbedding1536: v1536,
@@ -107,7 +107,7 @@ describe("vectorSearchChunksDual", () => {
     const db = freshDb();
     seed(db);
     const v1536 = new Float32Array(1536);
-    v1536[0] = 1.0;
+    v1536[0] = 1;
     const hits = vectorSearchChunksDual(db, {
       queryEmbedding1536: v1536,
       limit: 10,

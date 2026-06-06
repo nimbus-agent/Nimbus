@@ -92,6 +92,21 @@ describe("parseScriptConsentSource", () => {
   });
 });
 
+function captureStderr(fn: () => void): string {
+  let captured = "";
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown): boolean => {
+    captured += typeof chunk === "string" ? chunk : String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return captured;
+}
+
 describe("selectConsentHandler", () => {
   let tmpDir: string;
 
@@ -103,21 +118,6 @@ describe("selectConsentHandler", () => {
     const p = join(tmpDir, "decisions.jsonl");
     writeFileSync(p, decisions, "utf8");
     return p;
-  }
-
-  function captureStderr(fn: () => void): string {
-    let captured = "";
-    const original = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: unknown): boolean => {
-      captured += typeof chunk === "string" ? chunk : String(chunk);
-      return true;
-    }) as typeof process.stderr.write;
-    try {
-      fn();
-    } finally {
-      process.stderr.write = original;
-    }
-    return captured;
   }
 
   test("both yes:true and scriptConsentSource set → stderr warning emitted, script handler registered", async () => {

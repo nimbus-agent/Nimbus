@@ -23,7 +23,7 @@ function input(over: Partial<LocalDbQueryInput> = {}): LocalDbQueryInput {
 describe("baseTitle", () => {
   test("returns the basename without the .sql extension (any separator)", () => {
     expect(baseTitle("reports/monthly.sql")).toBe("monthly");
-    expect(baseTitle("a\\b\\q.SQL")).toBe("q");
+    expect(baseTitle(String.raw`a\b\q.SQL`)).toBe("q");
     expect(baseTitle("top.sql")).toBe("top");
   });
 });

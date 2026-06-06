@@ -337,20 +337,20 @@ describe("migrateToPerServiceOAuthKeys", () => {
   });
 });
 
-describe("clearOAuthVaultIfProviderUnused", () => {
-  function insertItemRow(
-    db: ReturnType<typeof openMemoryIndexDatabase>,
-    service: string,
-    externalId: string,
-  ): void {
-    dbRun(
-      db,
-      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+function insertItemRow(
+  db: ReturnType<typeof openMemoryIndexDatabase>,
+  service: string,
+  externalId: string,
+): void {
+  dbRun(
+    db,
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES (?, ?, 'file', ?, 'test', 0, 0)`,
-      [`${service}:${externalId}`, service, externalId],
-    );
-  }
+    [`${service}:${externalId}`, service, externalId],
+  );
+}
 
+describe("clearOAuthVaultIfProviderUnused", () => {
   test("clears Google keys when no Google items remain", async () => {
     const vault = createMemoryVault();
     const db = openMemoryIndexDatabase();

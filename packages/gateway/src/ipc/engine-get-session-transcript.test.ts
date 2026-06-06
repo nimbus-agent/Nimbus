@@ -90,6 +90,6 @@ describe("createGetSessionTranscriptHandler", () => {
     const db = seedDb();
     const handler = createGetSessionTranscriptHandler(db);
     await expect(handler({ sessionId: "" })).rejects.toThrow();
-    await expect(handler({} as { sessionId: string })).rejects.toThrow();
+    await expect(handler({})).rejects.toThrow();
   });
 });

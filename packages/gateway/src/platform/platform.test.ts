@@ -94,12 +94,14 @@ describe("Platform Abstraction Layer", () => {
   }, 30000);
   it("uses the documented IPC path pattern per OS", () => {
     const os = platform();
-    const paths =
-      os === "win32"
-        ? createWindowsPaths()
-        : os === "darwin"
-          ? createDarwinPaths()
-          : createLinuxPaths();
+    let paths: ReturnType<typeof createWindowsPaths>;
+    if (os === "win32") {
+      paths = createWindowsPaths();
+    } else if (os === "darwin") {
+      paths = createDarwinPaths();
+    } else {
+      paths = createLinuxPaths();
+    }
     if (os === "win32") {
       expect(paths.socketPath.toLowerCase()).toBe(
         String.raw`\\.\pipe\nimbus-gateway`.toLowerCase(),

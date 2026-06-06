@@ -7,6 +7,8 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
+import { requestUrl } from "../../helpers/request-url.ts";
 
 const BASE = "https://api.miro.com";
 
@@ -26,38 +28,30 @@ interface FakeConfig {
 interface FakeServer {
   requests: RecordedReq[];
   fetch: typeof globalThis.fetch;
+  restore: () => void;
 }
 
-const realFetch = globalThis.fetch;
-
 function installFakeFetch(config: FakeConfig): FakeServer {
-  const requests: RecordedReq[] = [];
-  const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const urlStr = typeof input === "string" ? input : input.toString();
-    // Only intercept Miro host; everything else falls through to the real fetch.
-    if (new URL(urlStr).origin !== BASE) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
-    }
-    const u = new URL(urlStr);
-    const cursor = u.searchParams.get("cursor");
-    requests.push({
+  return installHostInterceptFetch<RecordedReq>({
+    base: BASE,
+    record: (u, init) => ({
       method: init?.method ?? "GET",
       pathname: u.pathname,
-      cursor,
+      cursor: u.searchParams.get("cursor"),
       auth: new Headers(init?.headers).get("authorization"),
-    });
-    if (config.status !== undefined && config.status !== 200) {
-      return new Response("error", { status: config.status });
-    }
-    const page = config.pages?.[cursor ?? ""] ?? { data: [] };
-    const body: Record<string, unknown> = { data: page.data };
-    if (page.nextCursor !== undefined && page.nextCursor !== "") {
-      body["cursor"] = page.nextCursor;
-    }
-    return Response.json(body);
-  }) as typeof globalThis.fetch;
-  globalThis.fetch = fakeFetch;
-  return { requests, fetch: fakeFetch };
+    }),
+    respond: (req) => {
+      if (config.status !== undefined && config.status !== 200) {
+        return new Response("error", { status: config.status });
+      }
+      const page = config.pages?.[req.cursor ?? ""] ?? { data: [] };
+      const body: Record<string, unknown> = { data: page.data };
+      if (page.nextCursor !== undefined && page.nextCursor !== "") {
+        body["cursor"] = page.nextCursor;
+      }
+      return Response.json(body);
+    },
+  });
 }
 
 interface Harness {
@@ -76,7 +70,7 @@ function startHarness(config: FakeConfig): Harness {
     db,
     fake,
     cleanup: () => {
-      globalThis.fetch = realFetch;
+      fake.restore();
       db.close();
     },
     ctx: {
@@ -185,10 +179,10 @@ describe("miro-sync against a fake api.miro.com", () => {
     const realFetchLocal = globalThis.fetch;
     h = startHarness({});
     // Override with a stateful fake: first call ok, second call errors.
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const urlStr = typeof input === "string" ? input : input.toString();
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const urlStr = requestUrl(input);
       if (new URL(urlStr).origin !== BASE) {
-        return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
+        return realFetchLocal(input, init);
       }
       h?.fake.requests.push({
         method: init?.method ?? "GET",
@@ -201,7 +195,7 @@ describe("miro-sync against a fake api.miro.com", () => {
         return Response.json({ data: [board("1", "Alpha")], cursor: "p2" });
       }
       return new Response("boom", { status: 500 });
-    }) as typeof globalThis.fetch;
+    };
     await setOAuth(h);
 
     const syncable = createMiroSyncable({ ensureMiroMcpRunning: async () => {} });

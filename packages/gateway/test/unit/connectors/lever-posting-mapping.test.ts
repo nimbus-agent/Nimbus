@@ -46,7 +46,7 @@ describe("mapLeverPostingToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makePosting();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapLeverPostingToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapLeverPostingToItem(makePosting({ id: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -75,7 +75,7 @@ describe("mapLeverPostingToItem", () => {
 
   test("title falls back to `Posting <id>` when text missing/empty", () => {
     const noText = makePosting();
-    delete (noText as Record<string, unknown>)["text"];
+    delete noText["text"];
     const row = mapLeverPostingToItem(noText, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe(`Posting ${POSTING_ID}`);
@@ -100,14 +100,14 @@ describe("mapLeverPostingToItem", () => {
 
   test("bodyPreview falls back to state, then title", () => {
     const noCats = makePosting();
-    delete (noCats as Record<string, unknown>)["categories"];
+    delete noCats["categories"];
     const onState = mapLeverPostingToItem(noCats, { syncedAt: NOW });
     if (onState === null) throw new Error("expected mapping to succeed");
     expect(onState.bodyPreview).toBe("published");
 
     const bare = makePosting();
-    delete (bare as Record<string, unknown>)["categories"];
-    delete (bare as Record<string, unknown>)["state"];
+    delete bare["categories"];
+    delete bare["state"];
     const onTitle = mapLeverPostingToItem(bare, { syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe("Senior Backend Engineer");
@@ -129,8 +129,8 @@ describe("mapLeverPostingToItem", () => {
     expect(meta(zeroed)["updated_at"]).toBeNull();
 
     const missing = makePosting();
-    delete (missing as Record<string, unknown>)["createdAt"];
-    delete (missing as Record<string, unknown>)["updatedAt"];
+    delete missing["createdAt"];
+    delete missing["updatedAt"];
     const row = mapLeverPostingToItem(missing, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["created_at"]).toBeNull();
@@ -151,14 +151,14 @@ describe("mapLeverPostingToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdate = makePosting();
-    delete (noUpdate as Record<string, unknown>)["updatedAt"];
+    delete noUpdate["updatedAt"];
     const onCreated = mapLeverPostingToItem(noUpdate, { syncedAt: NOW });
     if (onCreated === null) throw new Error("expected mapping to succeed");
     expect(onCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makePosting();
-    delete (noTimes as Record<string, unknown>)["updatedAt"];
-    delete (noTimes as Record<string, unknown>)["createdAt"];
+    delete noTimes["updatedAt"];
+    delete noTimes["createdAt"];
     const fallback = mapLeverPostingToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -174,21 +174,21 @@ describe("mapLeverPostingToItem", () => {
 
   test("canonicalUrl falls back to urls.show, then applyUrl, then null", () => {
     const noHosted = makePosting();
-    delete (noHosted as Record<string, unknown>)["hostedUrl"];
-    (noHosted as Record<string, unknown>)["urls"] = { show: "https://jobs.lever.co/acme/show" };
+    delete noHosted["hostedUrl"];
+    noHosted["urls"] = { show: "https://jobs.lever.co/acme/show" };
     const onShow = mapLeverPostingToItem(noHosted, { syncedAt: NOW });
     if (onShow === null) throw new Error("expected mapping to succeed");
     expect(onShow.canonicalUrl).toBe("https://jobs.lever.co/acme/show");
 
     const onApply = makePosting();
-    delete (onApply as Record<string, unknown>)["hostedUrl"];
+    delete onApply["hostedUrl"];
     const apply = mapLeverPostingToItem(onApply, { syncedAt: NOW });
     if (apply === null) throw new Error("expected mapping to succeed");
     expect(apply.canonicalUrl).toBe("https://jobs.lever.co/acme/f2f01e16/apply");
 
     const none = makePosting();
-    delete (none as Record<string, unknown>)["hostedUrl"];
-    delete (none as Record<string, unknown>)["applyUrl"];
+    delete none["hostedUrl"];
+    delete none["applyUrl"];
     const nullUrl = mapLeverPostingToItem(none, { syncedAt: NOW });
     if (nullUrl === null) throw new Error("expected mapping to succeed");
     expect(nullUrl.canonicalUrl).toBeNull();
@@ -218,14 +218,14 @@ describe("mapLeverPostingToItem", () => {
     expect(meta(direct)["req_code"]).toBe("ENG-042");
 
     const fromList = makePosting();
-    delete (fromList as Record<string, unknown>)["reqCode"];
-    (fromList as Record<string, unknown>)["requisitionCodes"] = ["REQ-1", "REQ-2"];
+    delete fromList["reqCode"];
+    fromList["requisitionCodes"] = ["REQ-1", "REQ-2"];
     const list = mapLeverPostingToItem(fromList, { syncedAt: NOW });
     if (list === null) throw new Error("expected mapping to succeed");
     expect(meta(list)["req_code"]).toBe("REQ-1");
 
     const none = makePosting();
-    delete (none as Record<string, unknown>)["reqCode"];
+    delete none["reqCode"];
     const noReq = mapLeverPostingToItem(none, { syncedAt: NOW });
     if (noReq === null) throw new Error("expected mapping to succeed");
     expect(meta(noReq)["req_code"]).toBeNull();
@@ -244,12 +244,12 @@ describe("mapLeverPostingToItem", () => {
 
   test("missing fields are null-passthrough in metadata", () => {
     const sparse = makePosting();
-    delete (sparse as Record<string, unknown>)["state"];
-    delete (sparse as Record<string, unknown>)["categories"];
-    delete (sparse as Record<string, unknown>)["hostedUrl"];
-    delete (sparse as Record<string, unknown>)["applyUrl"];
-    delete (sparse as Record<string, unknown>)["reqCode"];
-    delete (sparse as Record<string, unknown>)["tags"];
+    delete sparse["state"];
+    delete sparse["categories"];
+    delete sparse["hostedUrl"];
+    delete sparse["applyUrl"];
+    delete sparse["reqCode"];
+    delete sparse["tags"];
     const row = mapLeverPostingToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

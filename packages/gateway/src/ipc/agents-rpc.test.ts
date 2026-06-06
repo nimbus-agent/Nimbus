@@ -58,7 +58,7 @@ describe("dispatchAgentsRpc", () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx);
     await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;
+    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
     const briefReady = calls.find((c) => c[0] === "expert.briefReady");
     expect(briefReady).toBeDefined();
   });
@@ -116,7 +116,7 @@ describe("dispatchAgentsRpc — agents.impact", () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.impact", { fileOrPrUrl: "x" }, ctx);
     await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;
+    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
     const briefReady = calls.find((c) => c[0] === "impact.briefReady");
     expect(briefReady).toBeDefined();
   });
@@ -177,11 +177,11 @@ describe("dispatchAgentsRpc — agents.catchup", () => {
     await dispatchAgentsRpc("agents.catchup", {}, ctx);
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
-      const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;
-      if (calls.find((c) => c[0] === "catchup.briefReady") !== undefined) break;
+      const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
+      if (calls.some((c) => c[0] === "catchup.briefReady")) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls;
+    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
     const briefReady = calls.find((c) => c[0] === "catchup.briefReady");
     expect(briefReady).toBeDefined();
   });

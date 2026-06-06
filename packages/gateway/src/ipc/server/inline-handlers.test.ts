@@ -61,7 +61,7 @@ function makeCtx(opts: CtxOpts = {}): ServerCtx {
     startedAtMs: Date.now() - 5_000,
     streamRegistry: createStreamRegistry(),
     broadcastNotification: () => {},
-    getAgentInvokeHandler: () => opts.agentInvokeHandler as never,
+    getAgentInvokeHandler: () => opts.agentInvokeHandler,
     getWorkflowRunHandler: () => opts.workflowRunHandler as never,
   };
   return ctx;

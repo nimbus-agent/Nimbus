@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { type CommentHit, iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
 
 const MARKERS = [
-  { name: "I-numbered", pattern: /\bI[1-9][0-9]?\b/ },
+  { name: "I-numbered", pattern: /\bI[1-9]\d?\b/ },
   { name: "HITL", pattern: /\bHITL\b/ },
   { name: "WHY", pattern: /\bWHY:/ },
   { name: "NOTE", pattern: /\bNOTE:/ },
@@ -64,10 +64,14 @@ async function main() {
   }
   const out: string[] = ["# Punch list — section 1: Load-bearing comments", ""];
   out.push(`Total hits: ${allHits.length}`, "");
-  for (const [marker, hits] of [...byMarker.entries()].sort()) {
+  for (const [marker, hits] of [...byMarker.entries()].sort(([a], [b]) => (a > b ? 1 : -1))) {
     out.push(`## ${marker} (${hits.length})`, "");
     for (const h of hits) {
-      const cleaned = h.text.replaceAll("`", "'").replaceAll("|", "\\|").trim().slice(0, 200);
+      const cleaned = h.text
+        .replaceAll("`", "'")
+        .replaceAll("|", String.raw`\|`)
+        .trim()
+        .slice(0, 200);
       out.push(`- \`${h.file}:${h.line}\` — \`${cleaned}\``);
     }
     out.push("");

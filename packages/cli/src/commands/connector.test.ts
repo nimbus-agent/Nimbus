@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -76,7 +75,7 @@ describe("runConnector list", () => {
       ],
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -93,7 +92,7 @@ describe("runConnector list", () => {
   it("prints empty-state hint when no connectors registered", async () => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -126,7 +125,7 @@ describe("runConnector status / pause / resume", () => {
     };
     const ipc = createMockIpcClient([row]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -156,7 +155,7 @@ describe("runConnector status / pause / resume", () => {
       },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -171,7 +170,7 @@ describe("runConnector status / pause / resume", () => {
   });
 
   it("status throws when service id is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["status"])).rejects.toThrow(
       "Usage: nimbus connector status <service>",
     );
@@ -180,7 +179,7 @@ describe("runConnector status / pause / resume", () => {
   it("dispatches pause", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -198,7 +197,7 @@ describe("runConnector status / pause / resume", () => {
   it("dispatches resume", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -214,7 +213,7 @@ describe("runConnector status / pause / resume", () => {
   });
 
   it("pause throws when service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["pause"])).rejects.toThrow(
       "Usage: nimbus connector pause <service>",
     );
@@ -243,7 +242,7 @@ describe("runConnector history", () => {
       ],
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -262,7 +261,7 @@ describe("runConnector history", () => {
   it("respects --limit", async () => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -277,7 +276,7 @@ describe("runConnector history", () => {
   });
 
   it("history throws when service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["history"])).rejects.toThrow(
       "Usage: nimbus connector history <service>",
     );
@@ -295,7 +294,7 @@ describe("runConnector sync", () => {
   it("dispatches sync without --full", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -313,7 +312,7 @@ describe("runConnector sync", () => {
   it("dispatches sync --full", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -329,7 +328,7 @@ describe("runConnector sync", () => {
   });
 
   it("sync throws when service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["sync"])).rejects.toThrow("Usage: nimbus connector sync");
   });
 });
@@ -345,7 +344,7 @@ describe("runConnector reindex", () => {
   it("calls connector.reindex with default depth metadata_only", async () => {
     const ipc = createMockIpcClient([{ itemsAffected: 7, mode: "metadata_only" }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -363,7 +362,7 @@ describe("runConnector reindex", () => {
   it("passes --depth full", async () => {
     const ipc = createMockIpcClient([{ itemsAffected: 0, mode: "full" }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -378,7 +377,7 @@ describe("runConnector reindex", () => {
   });
 
   it("reindex throws when service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["reindex"])).rejects.toThrow(
       "Usage: nimbus connector reindex <name>",
     );
@@ -398,7 +397,7 @@ describe("runConnector remove", () => {
       { ok: true, itemsDeleted: 12, vaultKeysRemoved: ["github.pat"] },
     ]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -417,7 +416,7 @@ describe("runConnector remove", () => {
   it("omits the vault-keys line when none were removed", async () => {
     const ipc = createMockIpcClient([{ ok: true, itemsDeleted: 0, vaultKeysRemoved: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -430,7 +429,7 @@ describe("runConnector remove", () => {
   });
 
   it("remove throws when service is missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["remove"])).rejects.toThrow("Usage: nimbus connector remove");
   });
 });
@@ -446,7 +445,7 @@ describe("runConnector set-interval", () => {
   it("converts a duration string and dispatches connector.setInterval", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -462,7 +461,7 @@ describe("runConnector set-interval", () => {
   });
 
   it("throws when both args are missing", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["set-interval"])).rejects.toThrow(
       "Usage: nimbus connector set-interval",
     );
@@ -509,7 +508,7 @@ describe("runConnector add", () => {
   it("dispatches add --mcp <id> <command>", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: ipc.client.call,
         connect: () => {},
@@ -666,7 +665,7 @@ describe("runConnector auth — per-applier success", () => {
     flags,
   }) => {
     const mock = createMockIpcClient([{ ok: true, serviceId: service, scopesGranted: [] }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runConnector(["auth", service, ...flags]);
     expect(mock.calls[0]?.method).toBe("connector.auth");
     expect(out.stdout).toContain(`Signed in: ${service}`);
@@ -731,7 +730,7 @@ describe("runConnector auth — help + flag edges", () => {
 
   it("passes --port + --scopes through to the auth params", async () => {
     const mock = createMockIpcClient([{ ok: true, serviceId: "github", scopesGranted: [] }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runConnector(["auth", "github", "--token", "k", "--port", "9000", "--scopes", "a,b"]);
     const params = mock.calls[0]?.params as Record<string, unknown>;
     expect(params["port"]).toBe(9000);
@@ -744,7 +743,7 @@ describe("runConnector auth — help + flag edges", () => {
     process.env["NIMBUS_GITHUB_PAT"] = "ghp_from_env";
     try {
       const mock = createMockIpcClient([{ ok: true, serviceId: "github", scopesGranted: [] }]);
-      setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
       await runConnector(["auth", "github"]);
       expect(out.stdout).toContain("Signed in: github");
     } finally {

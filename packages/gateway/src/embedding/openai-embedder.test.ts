@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { requestUrl } from "../../test/helpers/request-url.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
 
 const ORIG_FETCH = globalThis.fetch;
@@ -16,8 +17,7 @@ type FetchCall = {
 function captureFetch(response: Response | (() => Response)): { calls: FetchCall[] } {
   const calls: FetchCall[] = [];
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     const headers: Record<string, string> = {};
     if (init?.headers !== undefined) {
       const h = new Headers(init.headers);

@@ -59,10 +59,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (origIsTty !== undefined) {
-    Object.defineProperty(process.stdout, "isTTY", origIsTty);
-  } else {
+  if (origIsTty === undefined) {
     delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+  } else {
+    Object.defineProperty(process.stdout, "isTTY", origIsTty);
   }
   if (origColumns !== undefined) Object.defineProperty(process.stdout, "columns", origColumns);
   if (origRows !== undefined) Object.defineProperty(process.stdout, "rows", origRows);

@@ -156,15 +156,15 @@ describe("parseValidationResult — no-row-data stripping", () => {
   });
 });
 
-describe("deriveBatchId — fallback ladder (via parseValidationResult)", () => {
-  function batchIdFor(meta: Record<string, unknown>): string {
-    const [row] = parseValidationResult(
-      { meta, results: [{ success: true, expectation_config: {}, result: {} }] },
-      "x.json",
-    );
-    return row?.batchId ?? "<none>";
-  }
+function batchIdFor(meta: Record<string, unknown>): string {
+  const [row] = parseValidationResult(
+    { meta, results: [{ success: true, expectation_config: {}, result: {} }] },
+    "x.json",
+  );
+  return row?.batchId ?? "<none>";
+}
 
+describe("deriveBatchId — fallback ladder (via parseValidationResult)", () => {
   it("prefers batch_id", () => {
     expect(batchIdFor({ batch_id: "direct-batch" })).toBe("direct-batch");
   });
@@ -200,15 +200,15 @@ describe("deriveBatchId — fallback ladder (via parseValidationResult)", () => 
   });
 });
 
-describe("deriveRunId / deriveRunTime (via parseValidationResult)", () => {
-  function runFor(meta: Record<string, unknown>): { runId: string | null; runTime: string | null } {
-    const [row] = parseValidationResult(
-      { meta, results: [{ success: true, expectation_config: {}, result: {} }] },
-      "x.json",
-    );
-    return { runId: row?.runId ?? null, runTime: row?.runTime ?? null };
-  }
+function runFor(meta: Record<string, unknown>): { runId: string | null; runTime: string | null } {
+  const [row] = parseValidationResult(
+    { meta, results: [{ success: true, expectation_config: {}, result: {} }] },
+    "x.json",
+  );
+  return { runId: row?.runId ?? null, runTime: row?.runTime ?? null };
+}
 
+describe("deriveRunId / deriveRunTime (via parseValidationResult)", () => {
   it("reads a string run_id directly; run_time falls back to meta.run_time", () => {
     const { runId, runTime } = runFor({ run_id: "run-string", run_time: "2026-01-01T00:00:00Z" });
     expect(runId).toBe("run-string");
@@ -363,7 +363,7 @@ describe("listAllExpectations — filesystem walk", () => {
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toContain(PII);
 
-    const suites = rows.map((r) => r.suiteName).sort();
+    const suites = rows.map((r) => r.suiteName).sort((a, b) => a.localeCompare(b));
     expect(suites).toEqual(["suiteA", "suiteA", "suiteB"]);
   });
 

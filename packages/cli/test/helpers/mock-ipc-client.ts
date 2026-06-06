@@ -1,7 +1,6 @@
 import type { IPCClient } from "../../src/ipc-client/index.ts";
 
 export type CallRecord = { method: string; params: unknown };
-export type IpcResponse = unknown | Error;
 
 export interface MockIpcClient {
   readonly client: IPCClient;
@@ -10,7 +9,8 @@ export interface MockIpcClient {
 }
 
 export function createMockIpcClient(
-  responseQueue: ReadonlyArray<IpcResponse>,
+  // Each queued value is returned in order; an Error entry is thrown instead.
+  responseQueue: ReadonlyArray<unknown>,
   notificationHandlers?: Map<string, (params: unknown) => void>,
 ): MockIpcClient {
   const calls: CallRecord[] = [];

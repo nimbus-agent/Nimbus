@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -88,14 +87,14 @@ describe("runWatch (dispatcher)", () => {
   });
 
   it("throws on unknown subcommand", async () => {
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" } });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runWatch(["bogus"])).rejects.toThrow("Usage: nimbus watch");
   });
 
   it("routes 'list' to watcher.list when gateway is running", async () => {
     const ipc = createMockIpcClient([{ watchers: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWatch(["list"]);
@@ -105,7 +104,7 @@ describe("runWatch (dispatcher)", () => {
   it("routes empty args to 'list'", async () => {
     const ipc = createMockIpcClient([{ watchers: [] }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWatch([]);
@@ -115,7 +114,7 @@ describe("runWatch (dispatcher)", () => {
   it("routes 'pause <id>' through IPC", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWatch(["pause", "w-1"]);
@@ -125,7 +124,7 @@ describe("runWatch (dispatcher)", () => {
   it("routes 'resume <id>' through IPC", async () => {
     const ipc = createMockIpcClient([{ ok: true }]);
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runWatch(["resume", "w-2"]);

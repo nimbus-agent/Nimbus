@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const deployMod = await import("./deploy.ts");
 const { parseDeployPreflightArgs, runDeployCli } = deployMod;
@@ -77,31 +77,12 @@ describe("nimbus deploy preflight arg parser", () => {
   });
 });
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-const origExit = process.exit.bind(process);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-  process.exit = ((code?: number): never => {
-    throw new Error(`process.exit(${code ?? ""})`);
-  }) as typeof process.exit;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-  process.exit = origExit;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture({ captureExit: true });
 
 afterAll(() => {
   restoreStreams();
@@ -151,7 +132,7 @@ describe("runDeployCli — dispatcher", () => {
       },
     };
     const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
     expect(stdoutChunks.join("")).toContain("Deploy preflight");
     expect(stdoutChunks.join("")).toContain("[ok]");
@@ -176,7 +157,7 @@ describe("runDeployCli — dispatcher", () => {
       },
     };
     const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main", "--json"]);
     const out = stdoutChunks.join("");
     expect(out).toContain('"verdict": "warn"');
@@ -196,7 +177,7 @@ describe("runDeployCli — dispatcher", () => {
       },
     };
     const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(
       runDeployCli(["preflight", "--service", "svc", "--target-ref", "main", "--mode", "block"]),
     ).rejects.toThrow(/process\.exit/);
@@ -216,14 +197,14 @@ describe("runDeployCli — dispatcher", () => {
       },
     };
     const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main", "--mode", "off"]);
     expect(stdoutChunks.join("")).toContain("[warn]");
   });
 
   it("exits 2 on malformed envelope", async () => {
     const mock = createMockIpcClient([{ not: "an envelope" }]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(
       runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
     ).rejects.toThrow("process.exit(2)");
@@ -232,7 +213,7 @@ describe("runDeployCli — dispatcher", () => {
 
   it("exits 2 on IPC error", async () => {
     const mock = createMockIpcClient([new Error("ipc broke")]);
-    setFixture({ gatewayState: { socketPath: "/tmp/fake.sock" }, ipcClient: mock.client });
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(
       runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
     ).rejects.toThrow("process.exit(2)");

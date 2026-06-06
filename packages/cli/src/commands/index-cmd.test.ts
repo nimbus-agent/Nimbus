@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -114,7 +113,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       return r;
     };
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: wrappedCall,
         connect: async () => {},
@@ -159,7 +158,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       return r;
     };
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: wrappedCall,
         connect: async () => {},
@@ -222,7 +221,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       return r;
     };
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: wrappedCall,
         connect: async () => {},
@@ -267,7 +266,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       return r;
     };
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: wrappedCall,
         connect: async () => {},
@@ -311,7 +310,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       return r;
     };
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: wrappedCall,
         connect: async () => {},
@@ -332,7 +331,7 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
 
   it("rejects when the initial index.reembed call throws", async () => {
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock" },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
         call: async () => {
           throw new Error("network down");

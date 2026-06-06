@@ -1,7 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
-import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import {
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  fakePath,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 
 const mod = await import("./serve.ts");
@@ -82,7 +86,7 @@ describe("runServe dispatcher", () => {
 
   it("throws when gateway state is present + pid alive", async () => {
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake.sock", pid: 1234 },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 1234 },
       processAlive: true,
     });
     await expect(runServe(["--port", "7474"])).rejects.toThrow(/already running/i);
@@ -109,7 +113,7 @@ describe("runServe spawn path (mocked ../lib/spawn-gateway.ts)", () => {
         logStartOffset: number;
       }> => ({
         pid: 4242,
-        logPath: "/tmp/nimbus-test.log",
+        logPath: fakePath("nimbus-test.log"),
         logStartOffset: 0,
       }),
       stripInspectorEnv: realStripInspectorEnv,

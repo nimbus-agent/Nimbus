@@ -109,12 +109,12 @@ describe("runScimWrite — SCIM write semantics (auth/rate-limit/audit owned by 
   });
 });
 
-describe("dispatchScimRead — bearer-checked roster read (spec §6)", () => {
-  function readable() {
-    const c = writeCtx();
-    return { identity: c.identity, scimToken: "scim-secret", seed: c };
-  }
+function readable() {
+  const c = writeCtx();
+  return { identity: c.identity, scimToken: "scim-secret", seed: c };
+}
 
+describe("dispatchScimRead — bearer-checked roster read (spec §6)", () => {
   test("GET lists the roster (leak-proof ListResponse) and reads a single User", async () => {
     const r = readable();
     await runScimWrite(

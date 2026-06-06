@@ -98,22 +98,22 @@ describe("parquetColumnsFromMetadata", () => {
   });
 });
 
-describe("mapDataModelToItem", () => {
-  function profile(over: Partial<DataModelProfile> = {}): DataModelProfile {
-    return {
-      relativePath: "exports/orders.parquet",
-      format: "parquet",
-      columns: [
-        { name: "order_id", type: "INT64" },
-        { name: "total", type: "DOUBLE" },
-      ],
-      rowCountEstimate: 5000,
-      sizeBytes: 4096,
-      modifiedAtMs: 1_700_000_000_000,
-      ...over,
-    };
-  }
+function profile(over: Partial<DataModelProfile> = {}): DataModelProfile {
+  return {
+    relativePath: "exports/orders.parquet",
+    format: "parquet",
+    columns: [
+      { name: "order_id", type: "INT64" },
+      { name: "total", type: "DOUBLE" },
+    ],
+    rowCountEstimate: 5000,
+    sizeBytes: 4096,
+    modifiedAtMs: 1_700_000_000_000,
+    ...over,
+  };
+}
 
+describe("mapDataModelToItem", () => {
   test("maps a profile to a dataprofile:data_model item (schema only)", () => {
     const row = mapDataModelToItem(profile(), { syncedAt: SYNCED_AT });
     expect(row).not.toBeNull();

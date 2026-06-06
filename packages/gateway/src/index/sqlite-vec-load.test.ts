@@ -46,8 +46,8 @@ describe("sidecarPath", () => {
     );
   });
   test("works for a Windows-style path", () => {
-    expect(sidecarPath("C:\\Program Files\\Nimbus\\nimbus-gateway.exe", "win32")).toBe(
-      winPath.join("C:\\Program Files\\Nimbus", "vec0.dll"),
+    expect(sidecarPath(String.raw`C:\Program Files\Nimbus\nimbus-gateway.exe`, "win32")).toBe(
+      winPath.join(String.raw`C:\Program Files\Nimbus`, "vec0.dll"),
     );
   });
 });

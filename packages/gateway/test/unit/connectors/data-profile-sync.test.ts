@@ -74,7 +74,7 @@ describe("data-profile-sync", () => {
         "SELECT external_id, metadata, body_preview FROM item WHERE service = 'dataprofile' ORDER BY external_id",
       )
       .all();
-    expect(rows.map((r) => r.external_id).sort()).toEqual([
+    expect(rows.map((r) => r.external_id).sort((a, b) => a.localeCompare(b))).toEqual([
       "config.json",
       "events.jsonl",
       "orders.parquet",

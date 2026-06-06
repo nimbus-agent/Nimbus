@@ -37,7 +37,7 @@ function kdf(secret: string, salt: Uint8Array, p: KdfParams): Uint8Array {
 }
 
 function aesGcmEncrypt(key: Uint8Array, iv: Uint8Array, plaintext: Uint8Array): Uint8Array {
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: TAG_LEN });
   const out = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   return new Uint8Array(Buffer.concat([out, cipher.getAuthTag()]));
 }
@@ -45,7 +45,9 @@ function aesGcmEncrypt(key: Uint8Array, iv: Uint8Array, plaintext: Uint8Array): 
 function aesGcmDecrypt(key: Uint8Array, iv: Uint8Array, ctWithTag: Uint8Array): Uint8Array {
   const ct = ctWithTag.subarray(0, ctWithTag.length - TAG_LEN);
   const tag = ctWithTag.subarray(ctWithTag.length - TAG_LEN);
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  // Pin the GCM tag length: without authTagLength, Node accepts truncated
+  // (4..16-byte) auth tags at setAuthTag; pinning to TAG_LEN rejects them.
+  const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: TAG_LEN });
   decipher.setAuthTag(tag);
   return new Uint8Array(Buffer.concat([decipher.update(ct), decipher.final()]));
 }

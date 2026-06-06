@@ -57,9 +57,9 @@ test("namespace revoke", () => {
 });
 
 test("pair", () => {
-  expect(parseTeamArgs(["pair", "192.168.1.20", "PAIRCODE"])).toEqual({
+  expect(parseTeamArgs(["pair", "peer-host.test", "PAIRCODE"])).toEqual({
     kind: "pair",
-    host: "192.168.1.20",
+    host: "peer-host.test",
     code: "PAIRCODE",
   });
   expect(() => parseTeamArgs(["pair", "onlyhost"])).toThrow();

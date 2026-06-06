@@ -338,7 +338,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     await sync.sync(syncTestContext(db, vault), null);
     const after = Date.now();
     expect(capturedUrl).toBeDefined();
-    const since = new URL(capturedUrl as string).searchParams.get("since");
+    const since = new URL(capturedUrl as string).searchParams.get("since"); // NOSONAR S4325: capturedUrl is string|undefined (narrowed by the toBeDefined above)
     expect(since).toBeDefined();
     const sinceMs = Date.parse(since as string);
     const expectedMin = before - EXPECTED_BACKFILL_DAYS * 86_400_000 - 2000;
@@ -397,9 +397,9 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
     const result = await sync.sync(syncTestContext(db, vault), null);
     expect(calls.length).toBe(3);
-    expect(new URL(calls[0] as string).searchParams.get("sort_by")).toBe("updated_at:asc");
-    expect(new URL(calls[1] as string).searchParams.get("offset")).toBe("100");
-    expect(new URL(calls[2] as string).searchParams.get("offset")).toBe("200");
+    expect(new URL(calls[0] as string).searchParams.get("sort_by")).toBe("updated_at:asc"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
+    expect(new URL(calls[1] as string).searchParams.get("offset")).toBe("100"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
+    expect(new URL(calls[2] as string).searchParams.get("offset")).toBe("200"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
     expect(result.itemsUpserted).toBe(3);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;

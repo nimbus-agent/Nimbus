@@ -10,7 +10,6 @@ const isWin = process.platform === "win32";
 let tmp: string;
 let socketPath: string;
 let server: ReturnType<typeof Bun.listen> | undefined;
-const sockets = new Set<{ write: (s: string) => void; end: () => void }>();
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-ipc-"));
@@ -19,7 +18,6 @@ beforeEach(() => {
 afterEach(() => {
   server?.stop(true);
   server = undefined;
-  sockets.clear();
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -27,9 +25,6 @@ function startServer(respond: (line: string, write: (s: string) => void) => void
   server = Bun.listen({
     unix: socketPath,
     socket: {
-      open(sock) {
-        sockets.add(sock as unknown as { write: (s: string) => void; end: () => void });
-      },
       data(sock, chunk) {
         const write = (s: string): void => {
           (sock as unknown as { write: (s: string) => void }).write(s);
