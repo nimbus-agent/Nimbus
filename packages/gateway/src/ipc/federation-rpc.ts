@@ -1,8 +1,11 @@
 import type { Database } from "bun:sqlite";
+import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
+import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
 import { scoreExpertise } from "../federation/expertise.ts";
+import { answerFederatedInvoke } from "../federation/invoke-gate.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
 import type { ConsentPrompter } from "../federation/query-gate.ts";
@@ -14,6 +17,7 @@ import type {
   NamespaceFilter,
 } from "../federation/types.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
+import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
@@ -38,6 +42,18 @@ export interface FederationRpcContext {
   readonly selfIdentity?: BoxKeypair;
   // I18: when identity is enabled, the answerer's own operator identity must be valid to federate.
   readonly identityGuard?: { enabled: boolean; isOperatorValid: () => boolean };
+  // Team Vault (Slice 2). Present on the answering (anchor) dispatch path.
+  readonly teamVault?: {
+    readonly quorumFor: (
+      toolId: string,
+    ) => { approvers: number; windowSeconds: number } | undefined;
+    readonly runTool: (input: {
+      entry: string;
+      service: string;
+      toolId: string;
+      args: unknown;
+    }) => Promise<unknown>;
+  };
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -224,6 +240,62 @@ export async function dispatchFederationRpc(
         "federation.expertise",
         { query: requireString(rec, "query"), purpose: requireString(rec, "purpose") },
       );
+    },
+    // Anchor-side: a teammate asks the trust anchor to run a named team-vault tool. The secret is
+    // injected inside teamVault.runTool (never in this scope); I19 gate enforces RBAC + quorum.
+    "federation.invoke": async (p) => {
+      const rec = asRecord(p);
+      if (ctx.teamVault === undefined) {
+        throw new FederationRpcError(-32603, "ERR_TEAMVAULT_UNAVAILABLE: not the trust anchor");
+      }
+      const tv = ctx.teamVault;
+      return answerFederatedInvoke(
+        {
+          db: ctx.db,
+          store: new TeamVaultStore(ctx.db),
+          quorumFor: tv.quorumFor,
+          runQuorum: (rule) =>
+            quorumCoordinator.collect({
+              approvers: rule.approvers,
+              windowMs: rule.windowSeconds * 1000,
+            }),
+          runTool: tv.runTool,
+          ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
+        },
+        {
+          peerId: requireString(rec, "peerId"),
+          entry: requireString(rec, "entry"),
+          toolId: requireString(rec, "toolId"),
+          purpose: requireString(rec, "purpose"),
+          args: rec["args"],
+        },
+      );
+    },
+    // Quorum approver's response (over the wire) → feeds the QuorumCoordinator singleton.
+    "federation.quorumRespond": (p) => {
+      const rec = asRecord(p);
+      if (typeof rec["approved"] !== "boolean") {
+        throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
+      }
+      const matched = quorumCoordinator.respond(
+        requireString(rec, "requestId"),
+        requireString(rec, "peerId"),
+        rec["approved"],
+      );
+      return { ok: true, matched };
+    },
+    // Delegate's approval response (over the wire) → feeds the delegated-approval broker singleton.
+    "federation.approvalRespond": (p) => {
+      const rec = asRecord(p);
+      if (typeof rec["approved"] !== "boolean") {
+        throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
+      }
+      const matched = delegatedApprovalBroker.respond(
+        requireString(rec, "requestId"),
+        requireString(rec, "peerId"),
+        rec["approved"],
+      );
+      return { ok: true, matched };
     },
   });
 }
