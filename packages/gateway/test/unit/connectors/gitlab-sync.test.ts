@@ -11,6 +11,7 @@ const ENSURE_MCP = { ensureGitlabMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-glab1:";
 
 const DEFAULT_API_BASE = "https://gitlab.com/api/v4";
+const EVENTS_PREFIX_DEFAULT = "https://gitlab.com/api/v4/events?";
 const EVENTS_RE_DEFAULT = /^https:\/\/gitlab\.com\/api\/v4\/events\?/;
 const PIPELINES_RE_ANY = /\/api\/v4\/projects\/[^/]+\/pipelines\?/;
 
@@ -101,7 +102,9 @@ describe("gitlab-sync — credential short-circuits", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url.startsWith(`${DEFAULT_API_BASE}/events?`)).toBe(true);
   });
@@ -117,7 +120,9 @@ describe("gitlab-sync — cursor decode", () => {
     const v2 = encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 1, pipelines: {} });
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("after=2026-04-01T00%3A00%3A00.000Z");
   });
@@ -127,7 +132,9 @@ describe("gitlab-sync — cursor decode", () => {
     const v1 = encodeCursor({ after: "2026-03-15T00:00:00.000Z", page: 2 });
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v1);
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("after=2026-03-15T00%3A00%3A00.000Z");
     expect(eventCalls[0].url).toContain("page=2");
@@ -142,7 +149,9 @@ describe("gitlab-sync — cursor decode", () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("page=1");
   });
@@ -151,7 +160,9 @@ describe("gitlab-sync — cursor decode", () => {
     stageEmptyEvents();
     const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), "");
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
   });
 
@@ -162,7 +173,9 @@ describe("gitlab-sync — cursor decode", () => {
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("page=1");
   });
@@ -174,7 +187,9 @@ describe("gitlab-sync — cursor decode", () => {
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
   });
 
@@ -185,7 +200,9 @@ describe("gitlab-sync — cursor decode", () => {
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("page=1");
   });
@@ -197,7 +214,9 @@ describe("gitlab-sync — cursor decode", () => {
       encodeCursor({ v: 2, after: "", page: 1, pipelines: {} }),
     );
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("page=1");
   });
@@ -209,7 +228,9 @@ describe("gitlab-sync — cursor decode", () => {
       encodeCursor({ v: 2, after: "2026-04-01T00:00:00.000Z", page: 0, pipelines: {} }),
     );
     expect(res.hasMore).toBe(false);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].url).toContain("page=1");
   });
@@ -238,7 +259,9 @@ describe("gitlab-sync — HTTP request paths (events)", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
 
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     expect(eventCalls[0].headers["private-token"]).toBe("gitlab-stub-pat");
   });
@@ -253,7 +276,9 @@ describe("gitlab-sync — HTTP request paths (events)", () => {
     });
     await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), v2);
 
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE_DEFAULT.test(c.url));
+    const eventCalls = fixture.fetchMock.calls.filter((c) =>
+      c.url.startsWith(EVENTS_PREFIX_DEFAULT),
+    );
     expect(eventCalls).toHaveLength(1);
     const url = eventCalls[0].url;
     expect(url).toContain("after=2026-04-01T00%3A00%3A00.000Z");

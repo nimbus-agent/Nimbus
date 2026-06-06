@@ -23,6 +23,9 @@ import {
 const ENSURE_MCP = { ensureGoogleDriveRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-gdrv1:";
 
+const START_TOKEN_PREFIX = "https://www.googleapis.com/drive/v3/changes/startPageToken?";
+const FILES_LIST_PREFIX = "https://www.googleapis.com/drive/v3/files?";
+const CHANGES_LIST_PREFIX = "https://www.googleapis.com/drive/v3/changes?";
 const START_TOKEN_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\/startPageToken\?/;
 const FILES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\?/;
 const CHANGES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\?/;
@@ -102,7 +105,7 @@ describe("google-drive-sync — cursor decode", () => {
       "legacyOpaqueToken",
     );
     expect(res.hasMore).toBe(true);
-    const filesCalls = fixture.fetchMock.calls.filter((c) => FILES_LIST_RE.test(c.url));
+    const filesCalls = fixture.fetchMock.calls.filter((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCalls).toHaveLength(1);
     expect(filesCalls[0]?.url).toContain("pageToken=legacyOpaqueToken");
   });
@@ -168,7 +171,7 @@ describe("google-drive-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    const startCall = fixture.fetchMock.calls.find((c) => START_TOKEN_RE.test(c.url));
+    const startCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(START_TOKEN_PREFIX));
     expect(startCall).toBeDefined();
     expect(startCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
   });
@@ -177,7 +180,7 @@ describe("google-drive-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-    const filesCall = fixture.fetchMock.calls.find((c) => FILES_LIST_RE.test(c.url));
+    const filesCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCall).toBeDefined();
     expect(filesCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
     const url = filesCall?.url ?? "";
@@ -195,7 +198,7 @@ describe("google-drive-sync — HTTP request paths", () => {
     });
     const drainCursor = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
     await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), drainCursor);
-    const changesCall = fixture.fetchMock.calls.find((c) => CHANGES_LIST_RE.test(c.url));
+    const changesCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(CHANGES_LIST_PREFIX));
     expect(changesCall).toBeDefined();
     expect(changesCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
     const url = changesCall?.url ?? "";
@@ -292,8 +295,10 @@ describe("google-drive-sync — phase machine: init_list", () => {
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokA", listToken: "page2" });
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), cur);
     expect(res.hasMore).toBe(true);
-    expect(fixture.fetchMock.calls.filter((c) => START_TOKEN_RE.test(c.url))).toHaveLength(0);
-    const filesCalls = fixture.fetchMock.calls.filter((c) => FILES_LIST_RE.test(c.url));
+    expect(
+      fixture.fetchMock.calls.filter((c) => c.url.startsWith(START_TOKEN_PREFIX)),
+    ).toHaveLength(0);
+    const filesCalls = fixture.fetchMock.calls.filter((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCalls).toHaveLength(1);
     expect(filesCalls[0]?.url).toContain("pageToken=page2");
   });

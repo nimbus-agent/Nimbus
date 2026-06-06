@@ -32,7 +32,7 @@ const ASSERTION_RE = /\.(toBe|toEqual|toStrictEqual|toContain)\(\s*(['"`])((?:\\
 function looksLikeWindowsPath(literal: string): boolean {
   if (!literal.includes("\\\\")) return false;
   if (/^[A-Za-z]:\\\\/.test(literal)) return true;
-  if (/^\\\\\\\\/.test(literal)) return true;
+  if (literal.startsWith(String.raw`\\\\`)) return true;
   if (/^\.\.?\\\\/.test(literal)) return true;
   if (/\\\\[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(literal)) return true;
   return false;
