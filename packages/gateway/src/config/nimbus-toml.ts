@@ -957,6 +957,82 @@ export function loadNimbusIdentityFromConfigDir(configDir: string): NimbusIdenti
   );
 }
 
+// ---------------------------------------------------------------------------
+// [hitl.quorum] — per-action-type quorum rules
+// ---------------------------------------------------------------------------
+
+export interface QuorumRule {
+  readonly approvers: number;
+  readonly windowSeconds: number;
+}
+
+export type QuorumConfig = ReadonlyMap<string, QuorumRule>;
+
+const HITL_QUORUM_TABLE_PREFIX = '[hitl.quorum."';
+
+/**
+ * Parse the `[hitl.quorum."<action-type>"]` sub-tables from a raw nimbus.toml
+ * string into a QuorumConfig map.
+ *
+ * Each sub-table must have:
+ *   approvers    = <integer >= 1>
+ *   window_seconds = <integer > 0>
+ *
+ * Malformed rows (missing/non-numeric values, approvers < 1, window <= 0) are
+ * silently ignored. Returns an empty map when the section is absent (quorum off).
+ */
+export function parseQuorumConfig(source: string): QuorumConfig {
+  // Accumulate raw kv strings per action-type id.
+  const accum = new Map<string, Record<string, string>>();
+  let currentId: string | undefined;
+
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") continue;
+    if (isTableHeader(trimmed)) {
+      currentId = undefined;
+      if (trimmed.startsWith(HITL_QUORUM_TABLE_PREFIX) && trimmed.endsWith('"]')) {
+        const id = trimmed.slice(HITL_QUORUM_TABLE_PREFIX.length, -2);
+        if (id.length > 0) {
+          if (!accum.has(id)) accum.set(id, {});
+          currentId = id;
+        }
+      }
+      continue;
+    }
+    if (currentId === undefined) continue;
+    const kv = splitKeyValue(trimmed);
+    if (kv !== undefined) {
+      const bucket = accum.get(currentId);
+      if (bucket !== undefined) bucket[kv.key] = kv.valRaw;
+    }
+  }
+
+  const out = new Map<string, QuorumRule>();
+  for (const [actionType, kv] of accum.entries()) {
+    const approversRaw = kv["approvers"];
+    const windowRaw = kv["window_seconds"];
+    if (approversRaw === undefined || windowRaw === undefined) continue;
+    const approvers = parseIntDec(approversRaw);
+    const windowSeconds = parseIntDec(windowRaw);
+    if (approvers === undefined || windowSeconds === undefined) continue;
+    if (approvers < 1 || windowSeconds <= 0) continue;
+    out.set(actionType, { approvers, windowSeconds });
+  }
+
+  return out;
+}
+
+export function loadNimbusQuorumFromPath(tomlPath: string): QuorumConfig {
+  return loadTomlSection<QuorumConfig>(tomlPath, new Map(), parseQuorumConfig);
+}
+
+export function loadNimbusQuorumFromConfigDir(configDir: string): QuorumConfig {
+  return loadNimbusQuorumFromPath(join(configDir, "nimbus.toml"));
+}
+
+// ---------------------------------------------------------------------------
+
 export type NimbusScimToml = { enabled: boolean };
 export const DEFAULT_NIMBUS_SCIM_TOML: NimbusScimToml = { enabled: false };
 
