@@ -68,13 +68,14 @@ async function main() {
     }
     out.push("");
   }
-  out.push("## Proposed extractions", "");
   out.push(
+    "## Proposed extractions",
+    "",
     "- `runConnectorSync` template + `Pagination`/`AuthHeaderProvider`/`RateLimitObserver` strategies — `packages/gateway/src/connectors/_lib/`",
+    "- `createRpcDispatcher` — `packages/gateway/src/ipc/_lib/dispatcher.ts`",
+    "- `buildIndexedItem` — `packages/gateway/src/connectors/_lib/item-builder.ts`",
+    "- `registerReadOnlyConnectorTools` — `@nimbus-dev/sdk`",
   );
-  out.push("- `createRpcDispatcher` — `packages/gateway/src/ipc/_lib/dispatcher.ts`");
-  out.push("- `buildIndexedItem` — `packages/gateway/src/connectors/_lib/item-builder.ts`");
-  out.push("- `registerReadOnlyConnectorTools` — `@nimbus-dev/sdk`");
 
   const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/02b-shape-dupes.md`;
   await mkdir(dirname(target), { recursive: true });

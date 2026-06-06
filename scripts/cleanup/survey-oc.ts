@@ -125,22 +125,23 @@ async function main() {
   }
   all.sort((a, b) => b.literals.length - a.literals.length);
   const out: string[] = ["# Punch list — section 4: Open/closed violations (3+ literals)", ""];
-  out.push(`Total clusters: ${all.length}`, "");
-  out.push("| File | Line | Kind | Discriminator | Literals |");
-  out.push("|---|---|---|---|---|");
+  out.push(
+    `Total clusters: ${all.length}`,
+    "",
+    "| File | Line | Kind | Discriminator | Literals |",
+    "|---|---|---|---|---|",
+  );
   for (const c of all) {
     out.push(
       `| \`${c.file}\` | ${c.startLine} | ${c.kind} | \`${c.discriminator}\` | ${c.literals.length} (${c.literals.slice(0, 6).join(", ")}${c.literals.length > 6 ? "…" : ""}) |`,
     );
   }
-  out.push("", "## Triage rule", "");
   out.push(
+    "",
+    "## Triage rule",
+    "",
     "- Discriminator is `service` / `provider` / `connector` / `type` / `kind` → strong registry candidate.",
-  );
-  out.push(
     "- Discriminator is a tagged-union state field (`status`, `state`) → leave as switch; that's idiomatic.",
-  );
-  out.push(
     "- Discriminator is a config flag (`mode`, `level`) → registry only if open to extension; otherwise keep.",
   );
   const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/04-oc-violations.md`;
