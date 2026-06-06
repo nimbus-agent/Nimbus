@@ -15,7 +15,7 @@ function deal(over: Record<string, unknown> = {}): Record<string, unknown> {
       closedate: "2026-06-30T00:00:00Z",
       createdate: "2026-01-02T00:00:00Z",
       hs_lastmodifieddate: "2026-05-20T00:00:00Z",
-      ...(propsOver ?? {}),
+      ...propsOver,
     },
   };
 }

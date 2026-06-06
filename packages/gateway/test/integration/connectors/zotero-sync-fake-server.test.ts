@@ -113,7 +113,7 @@ function reference(key: string, over: Record<string, unknown> = {}): Record<stri
       collections: ["COLL01"],
       dateModified: "2024-03-02T08:00:00Z",
       dateAdded: "2024-03-01T12:00:00Z",
-      ...(dataOver ?? {}),
+      ...dataOver,
     },
   };
 }

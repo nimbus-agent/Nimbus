@@ -16,13 +16,13 @@ function design(over: Record<string, unknown> = {}): Record<string, unknown> {
     urls: {
       edit_url: "https://www.canva.com/design/DAFxyz123/edit",
       view_url: "https://www.canva.com/design/DAFxyz123/view",
-      ...(urlsOver ?? {}),
+      ...urlsOver,
     },
     thumbnail: {
       url: "https://thumb.canva.com/DAFxyz123.png",
       width: 200,
       height: 120,
-      ...(thumbOver ?? {}),
+      ...thumbOver,
     },
   };
 }

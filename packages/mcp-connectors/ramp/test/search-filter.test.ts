@@ -18,7 +18,7 @@ function txn(over: Record<string, unknown> = {}): Record<string, unknown> {
       first_name: "Ada",
       last_name: "Lovelace",
       department_name: "Engineering",
-      ...(holderOver ?? {}),
+      ...holderOver,
     },
   };
 }
