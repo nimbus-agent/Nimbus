@@ -28,7 +28,7 @@ function startServer(respond: (line: string, write: (s: string) => void) => void
     unix: socketPath,
     socket: {
       open(sock) {
-        sockets.add(sock as unknown as { write: (s: string) => void; end: () => void });
+        sockets.add(sock);
       },
       data(sock, chunk) {
         const write = (s: string): void => {
