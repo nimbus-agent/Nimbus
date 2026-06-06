@@ -1080,6 +1080,198 @@ git add packages/gateway/src/engine/delegated-approval.ts packages/gateway/src/e
 git commit -m "feat(hitl): resolveDelegatedApproval (I20 delegate authority + identity check)"
 ```
 
+### Task 8b: Integrate delegated approval into the executor gate
+
+**Files:**
+- Modify: `packages/gateway/src/engine/delegation-store.ts` (add `activeDelegateePeer`)
+- Modify: `packages/gateway/src/engine/executor.ts` (constructor dep + `gate()` delegation branch)
+- Test: `packages/gateway/src/engine/executor-delegation.test.ts`
+
+Without this task the `DelegationStore`/`resolveDelegatedApproval` pieces from Tasks 7–8 are never consulted by the gate — the feature is unwired. The gate must check **both** delegation scopes for an action: `action_type = action.type` AND `service = action.type.split(".")[0]` (review point 3).
+
+- [ ] **Step 1: Add `activeDelegateePeer` to DelegationStore (with test)**
+
+Add to `delegation-store.ts`:
+```ts
+  /** The peer a HITL request for this action should route to, if any active delegation matches
+   *  either the action-type scope or the service scope. (Both-scopes resolution.) */
+  activeDelegateePeer(actionType: string, service: string, nowMs: number): string | undefined {
+    const row = this.db
+      .query<{ delegate_peer: string }, [number, string, string]>(
+        `SELECT delegate_peer FROM hitl_delegations
+         WHERE revoked_at IS NULL AND expires_at > ?
+           AND ((scope_kind = 'action_type' AND scope_value = ?)
+             OR (scope_kind = 'service'     AND scope_value = ?))
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(nowMs, actionType, service);
+    return row?.delegate_peer;
+  }
+```
+
+Add to `delegation-store.test.ts`:
+```ts
+it("activeDelegateePeer resolves via action_type OR service scope", () => {
+  store.create({ delegatePeer: "peer:bob", scopeKind: "service", scopeValue: "aws", expiresAt: 9e9, nowMs: 1 });
+  expect(store.activeDelegateePeer("aws.ec2.instance.stop", "aws", 5)).toBe("peer:bob");
+  expect(store.activeDelegateePeer("slack.message.post", "slack", 5)).toBeUndefined();
+});
+```
+
+- [ ] **Step 2: Write the failing executor-delegation test**
+
+```ts
+import { describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { DelegationStore } from "./delegation-store.ts";
+import { ToolExecutor } from "./executor.ts";
+import type { RemoteApprovalOutcome } from "./delegated-approval.ts";
+
+function db35() {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 35);
+  return db;
+}
+const audit = { recordAudit: () => {} };
+const connectors = { dispatch: async () => ({}) };
+
+describe("executor gate — delegation branch", () => {
+  it("routes a HITL action to an active delegate and honors their approval (no local prompt)", async () => {
+    const db = db35();
+    const store = new DelegationStore(db);
+    store.create({ delegatePeer: "peer:bob", scopeKind: "action_type", scopeValue: "email.send", expiresAt: 9e9, nowMs: 1 });
+    let localPrompted = false;
+    const consent = {
+      requestApproval: async () => {
+        localPrompted = true;
+        return false;
+      },
+    };
+    const remote = async (): Promise<RemoteApprovalOutcome> => ({ kind: "answered", peerId: "peer:bob", approved: true });
+    const exec = new ToolExecutor(consent, audit, connectors, {
+      store,
+      isOperatorValid: () => true,
+      requestRemote: remote,
+    });
+    const r = await exec.gate({ type: "email.send", payload: {} });
+    expect(r).toBe("proceed");
+    expect(localPrompted).toBe(false);
+  });
+
+  it("falls back to the local owner prompt when the delegate is offline (D10)", async () => {
+    const db = db35();
+    const store = new DelegationStore(db);
+    store.create({ delegatePeer: "peer:bob", scopeKind: "action_type", scopeValue: "email.send", expiresAt: 9e9, nowMs: 1 });
+    let localPrompted = false;
+    const consent = {
+      requestApproval: async () => {
+        localPrompted = true;
+        return true;
+      },
+    };
+    const exec = new ToolExecutor(consent, audit, connectors, {
+      store,
+      isOperatorValid: () => true,
+      requestRemote: async (): Promise<RemoteApprovalOutcome> => ({ kind: "timeout" }),
+    });
+    const r = await exec.gate({ type: "email.send", payload: {} });
+    expect(r).toBe("proceed");
+    expect(localPrompted).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 3: Run to verify it fails**
+
+Run: `bun test packages/gateway/src/engine/executor-delegation.test.ts`
+Expected: FAIL — `ToolExecutor` has no 4th constructor argument.
+
+- [ ] **Step 4: Add the optional delegation dep + the gate branch**
+
+In `executor.ts`, add imports:
+```ts
+import { resolveDelegatedApproval, type RemoteApprovalOutcome } from "./delegated-approval.ts";
+import type { DelegationStore } from "./delegation-store.ts";
+```
+
+Add the dep type (near the other types):
+```ts
+export interface ExecutorDelegationDep {
+  readonly store: DelegationStore;
+  readonly isOperatorValid: () => boolean;
+  readonly requestRemote: (actionType: string) => Promise<RemoteApprovalOutcome>;
+}
+```
+
+Extend the constructor (append an optional 4th param — backward compatible with existing call sites):
+```ts
+  constructor(
+    private readonly consent: ConsentChannel,
+    private readonly audit: AuditSink,
+    private readonly connectors: ConnectorDispatcher,
+    private readonly delegation?: ExecutorDelegationDep,
+  ) {}
+```
+
+Add the private helper:
+```ts
+  /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
+   *  live in-scope, identity-valid answerer; otherwise fall back to the local owner prompt. */
+  private async tryDelegatedApproval(
+    action: PlannedAction,
+  ): Promise<"approved" | "rejected" | "fallback"> {
+    if (this.delegation === undefined) return "fallback";
+    const del = this.delegation;
+    const service = action.type.split(".")[0] ?? "";
+    const now = Date.now();
+    if (del.store.activeDelegateePeer(action.type, service, now) === undefined) return "fallback";
+    const outcome = await resolveDelegatedApproval({
+      isActiveDelegate: (peerId) =>
+        del.store.activeDelegateFor("action_type", action.type, peerId, now) ||
+        del.store.activeDelegateFor("service", service, peerId, now),
+      isOperatorValid: del.isOperatorValid,
+      requestRemote: () => del.requestRemote(action.type),
+    });
+    return outcome === "fallback_to_owner" ? "fallback" : outcome;
+  }
+```
+
+Modify the `requiresHITL` branch inside `gate()` so it tries delegation before the local prompt:
+```ts
+      if (requiresHITL) {
+        const delegated = await this.tryDelegatedApproval(action);
+        let approved: boolean;
+        if (delegated === "fallback") {
+          const details =
+            action.payload === undefined
+              ? undefined
+              : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
+          approved = await this.consent.requestApproval(formatConsentPrompt(action), details);
+        } else {
+          approved = delegated === "approved";
+        }
+        hitlStatus = approved ? "approved" : "rejected";
+        if (!approved) rejectReason = "User declined consent gate.";
+      } else {
+```
+
+The rest of `gate()` (the `catch`, audit, and return) is unchanged. The owner-side audit row still records the final `hitlStatus`; the delegate's gateway audits its own answer when it handles `federation.approvalRespond` (Task 27 asserts both logs).
+
+- [ ] **Step 5: Run to verify it passes + typecheck**
+
+Run: `bun test packages/gateway/src/engine/executor-delegation.test.ts packages/gateway/src/engine/delegation-store.test.ts && cd packages/gateway && bunx tsc --noEmit && cd ../..`
+Expected: PASS, typecheck clean. Also re-run `bun test packages/gateway/src/engine/executor.test.ts` to confirm the existing gate tests (3-arg constructor) still pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/gateway/src/engine/executor.ts packages/gateway/src/engine/delegation-store.ts packages/gateway/src/engine/executor-delegation.test.ts
+git commit -m "feat(hitl): wire delegated approval into the executor gate (both-scopes, owner fallback)"
+```
+
+> **Task 17 addendum:** when constructing `ToolExecutor` in `assemble.ts`, pass the 4th `delegation` arg: `{ store: new DelegationStore(db), isOperatorValid, requestRemote: (actionType) => delegatedApprovalBroker.request({ prompt: \`approve ${actionType}?\` }, consentTimeoutMs) }`. The broker's broadcast is what surfaces the request to the delegate's `hitl.pendingQueue`.
+
 ---
 
 ## Part E — Team-vault audit + the invoke gate
@@ -1908,7 +2100,7 @@ export async function dispatchTeamVaultRpc(
 }
 ```
 
-> The IPC server must run `teamvault.put`/`teamvault.delete` through the consent gate before dispatch (they are in `HITL_REQUIRED`). Wire that in Task 17 (assemble) following how `vault.set` is gated; if `vault.set` is gated inside its own handler, mirror that exact mechanism here.
+> **HITL gating mechanism (read `packages/gateway/src/ipc/server/vault-dispatch.ts` first):** `vault.set`/`vault.delete` are gated by `dispatchVaultGated`, which intercepts those methods and calls `toolExecutor.gate({ type, payload })` BEFORE performing the write, returning the rejection if the gate denies. Do NOT gate inside `dispatchTeamVaultRpc` (it has no `toolExecutor`). Instead, in Task 17, wrap the team-vault dispatch with a `dispatchTeamVaultGated(method, params, { toolExecutor, ... })` that mirrors `dispatchVaultGated`: for `teamvault.put`/`teamvault.delete` it builds a `PlannedAction { type: method, payload: params }`, calls `toolExecutor.gate(action)`, and only calls `dispatchTeamVaultRpc` when the gate returns `"proceed"`. Adding the two action types to `HITL_REQUIRED_BACKING` (this step) is what makes that gate fire (I2/I3).
 
 - [ ] **Step 5: Run test + typecheck**
 
@@ -2130,7 +2322,9 @@ git commit -m "feat(teamvault): admit federation.invoke/*Respond over LAN; forbi
 - Modify: `packages/gateway/src/index/migrations/runner.ts` callers if not already at 35 (done in Task 2)
 - Test: a focused smoke test, e.g. `packages/gateway/test/integration/teamvault/assemble-teamvault.test.ts`
 
-> **Read `assemble.ts` first** to see how the federation dispatcher, `federationConsent.setBroadcast`, and the IPC method table are wired. Mirror that for: (a) `quorumCoordinator.setBroadcast` + `delegatedApprovalBroker.setBroadcast` (broadcast `federation.quorumRequest` / `federation.approvalRequest` via `ipc.broadcast`); (b) register `dispatchTeamVaultRpc` + `dispatchHitlRpc` in the local IPC method table; (c) pass `teamVault: { quorumFor, runTool }` into the `FederationRpcContext` (only on the anchor — gate behind the same `[federation].enabled` flag); (d) `quorumFor` = `(toolId) => quorumConfig.get(toolId)`; (e) `runTool` = a closure that injects `teamvault.<entry>.<key>` secrets and dispatches the connector tool through the executor.
+> **Read `assemble.ts` first** to see how the federation dispatcher, `federationConsent.setBroadcast`, and the IPC method table are wired. Mirror that for: (a) `quorumCoordinator.setBroadcast` + `delegatedApprovalBroker.setBroadcast` (broadcast `federation.quorumRequest` / `federation.approvalRequest` via `ipc.broadcast`); (b) register `dispatchTeamVaultRpc` + `dispatchHitlRpc` in the local IPC method table; (c) pass `teamVault: { quorumFor, runTool }` into the `FederationRpcContext` (only on the anchor — gate behind the same `[federation].enabled` flag); (d) `quorumFor` = `(toolId) => quorumConfig.get(toolId)`; (e) `runTool` = a closure that resolves the service's secret keys, reads them from the OS Vault under the team keyspace, and dispatches the connector tool through the executor.
+
+**`runTool` secret resolution (D8 — review point 4):** the closure receives `{ entry, service, toolId, args }`. It must look up the service's expected secret keys from `CONNECTOR_VAULT_SECRET_KEYS[service]` (in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), read each as `vault.get(teamVaultKey(entry, key))`, and feed them into the connector's existing cred-injection path (the same env/arg mapping a local connector uses — so no per-connector hardcoding). The secret values live only in this closure's scope for the duration of the dispatch (I19 — they are never returned to the gate or placed in any outbound payload). If a manifest key is missing from the team vault, fail the invoke (do not silently fall through to the operator's own local credential).
 
 - [ ] **Step 1: Write the smoke test** (asserts a put→grant→invoke happy path through the assembled wiring)
 
@@ -2231,7 +2425,7 @@ import { describe, expect, it } from "bun:test";
 import { runTeamCommand } from "./team.ts";
 
 describe("nimbus team invoke", () => {
-  it("invoke calls federation.ask-invoke with peer/entry/tool", async () => {
+  it("invoke calls federation.askInvoke with peer/entry/tool", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     const fakeClient = {
       call: async (method: string, params: unknown) => {
@@ -2645,3 +2839,25 @@ Then run `bun run preflight` once more clean and open the PR against `main`.
 - **Known read-first wiring tasks (T16 lan-rpc I5 API, T17 assemble, T18–T20 team.ts, T21 gateway_bridge.rs, T5 nimbus-toml shape):** each instructs reading the target file first and mirroring the named adjacent pattern, because those files' exact internal APIs were not all read at plan time. Do not skip the read step.
 - **Type consistency:** `InvokeResult`/`QuorumResult`/`RemoteApprovalOutcome`/`DelegatedApprovalResult` names are used consistently across producer + consumer tasks. `checkGrant(entry,peerId,toolId)` and `activeDelegateFor(kind,value,peer,now)` signatures match between store and gate tasks.
 - **Placeholder note:** T17's smoke test ships a `expect(true)` scaffold — the task explicitly requires replacing it with the real harness assertions before commit. No other placeholders.
+
+## Plan-review resolutions (2026-06-06)
+
+Resolutions of `2026-06-06-phase6-slice2-team-vault-quorum-hitl-review.md`:
+
+1. **RPC naming inconsistency (Task 19)** → **fixed.** The test `it()` description now reads
+   `federation.askInvoke` (camelCase), matching the assertion + `federation.ask`/`askExpertise`.
+2. **Where `teamvault.put`/`delete` gating happens** → **fixed.** Task 14's note now points at the
+   real mechanism — `dispatchVaultGated` in `ipc/server/vault-dispatch.ts` — and Task 14/17 specify a
+   `dispatchTeamVaultGated` wrapper that calls `toolExecutor.gate()` before the write (not inside
+   `dispatchTeamVaultRpc`, which has no executor).
+3. **Delegation both-scope resolution + missing gate wiring** → **fixed (new Task 8b).** The review
+   exposed that the plan never wired `DelegationStore`/`resolveDelegatedApproval` into `executor.gate()`.
+   Task 8b adds `DelegationStore.activeDelegateePeer` (matches an `action_type` OR `service` scope) and
+   the executor-gate delegation branch (route to delegate, owner fallback), with tests.
+4. **`runTool` secret-key resolution** → **fixed.** Task 17 now specifies consulting
+   `CONNECTOR_VAULT_SECRET_KEYS[service]`, reading each key via `teamVaultKey(entry, key)` from the OS
+   Vault, and failing closed if a manifest key is absent from the team vault.
+5. **Grants table overwrites history** → **acknowledged, no change.** Correct by design: the
+   `team_vault_grants` row is current-state only; the tamper-evident audit log (`appendTeamVaultAudit`)
+   is the authoritative grant/revoke history. Noted so future compliance work reads the audit chain,
+   not the grants table.
