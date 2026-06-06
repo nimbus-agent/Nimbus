@@ -1,12 +1,20 @@
 // scim-http-routes.ts
+//
+// The SCIM provisioning surface is split in two so the write path is intrinsic to the I13
+// pipeline (invariant): every POST/PATCH/DELETE flows through `dispatchWriteRoute` (bearer auth,
+// rate-limit, body cap, audit-on-rejection) and lands here as `runScimWrite`, which owns only the
+// SCIM *semantics* (provision / deprovision / leak-proof shape) and throws `ScimError` for the
+// dispatcher to map + audit. The read path (`dispatchScimRead`, spec §6 roster list/read) is a
+// bearer-checked GET — reads never write, so they stay off the I13 write surface.
 import type { Database } from "bun:sqlite";
 import type { NamespaceStore } from "../federation/namespace-store.ts";
 import { requireBearer } from "../ipc/http-auth.ts";
 import { deprovisionUser } from "./deprovision.ts";
 import type { IdentityStore } from "./identity-store.ts";
 import { applyScimCreate, parseScimPatchActive, ScimError } from "./scim-service.ts";
+import type { ScimUser } from "./types.ts";
 
-/** I13 — the SCIM write surface allowlist (mirrors WRITE_ROUTE_ALLOWLIST's discipline). */
+/** I13 — the SCIM write routes (these live in `WRITE_ROUTE_ALLOWLIST`; this mirror documents them). */
 export const SCIM_WRITE_ROUTES: readonly string[] = Object.freeze([
   "POST /scim/v2/Users",
   "PATCH /scim/v2/Users/{id}",
@@ -15,96 +23,112 @@ export const SCIM_WRITE_ROUTES: readonly string[] = Object.freeze([
 
 const ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
 
-export interface ScimRouteContext {
-  readonly writeDb: Database;
-  readonly store: NamespaceStore;
-  readonly identity: IdentityStore;
-  readonly scimToken: string;
-  readonly nowMs: () => number;
-}
+const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+const SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
 
 export function isScimPath(url: URL): boolean {
   return url.pathname === "/scim/v2/Users" || ITEM_RE.test(url.pathname);
 }
 
-function json(body: unknown, status: number): Response {
+function scimJson(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/scim+json" },
   });
 }
 
-function normalizedKey(method: string, url: URL): string | undefined {
-  if (method === "POST" && url.pathname === "/scim/v2/Users") return "POST /scim/v2/Users";
-  if (ITEM_RE.test(url.pathname) && (method === "PATCH" || method === "DELETE")) {
-    return `${method} /scim/v2/Users/{id}`;
-  }
-  return undefined;
+/** The leak-proof SCIM User resource shape (id + userName + active only — never raw claims). */
+function scimUserResource(u: ScimUser): Record<string, unknown> {
+  return { schemas: [SCIM_USER_SCHEMA], id: u.externalId, userName: u.userName, active: u.active };
 }
 
-const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
-
-/** Parses + validates a JSON request body; throws ScimError(400) on bad JSON or a non-object body. */
-async function readScimBody(req: Request): Promise<Record<string, unknown>> {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
+/** Coerces an already-parsed body to a SCIM resource object; throws ScimError(400) otherwise. */
+function asScimResource(parsed: unknown): Record<string, unknown> {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ScimError("invalid body", 400);
   }
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    throw new ScimError("invalid body", 400);
+  return parsed as Record<string, unknown>;
+}
+
+// ── Write path (runs inside dispatchWriteRoute) ───────────────────────────────────────────────
+
+export interface ScimWriteContext {
+  readonly writeDb: Database;
+  readonly store: NamespaceStore;
+  readonly identity: IdentityStore;
+  readonly nowMs: () => number;
+}
+
+function applyScimPatch(id: string, parsed: unknown, ctx: ScimWriteContext): Response {
+  const active = parseScimPatchActive(asScimResource(parsed));
+  if (active === false) {
+    deprovisionUser(
+      { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
+      id,
+    );
+  } else if (active === true) {
+    ctx.identity.setScimActive(id, true, ctx.nowMs());
   }
-  return body as Record<string, unknown>;
-}
-
-function deprovision(ctx: ScimRouteContext, id: string): void {
-  deprovisionUser(
-    { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
-    id,
-  );
-}
-
-async function handleScimCreate(req: Request, ctx: ScimRouteContext): Promise<Response> {
-  const u = applyScimCreate(ctx.identity, await readScimBody(req), ctx.nowMs());
-  return json(
-    { schemas: [SCIM_USER_SCHEMA], id: u.externalId, userName: u.userName, active: u.active },
-    201,
-  );
-}
-
-async function handleScimPatch(req: Request, ctx: ScimRouteContext, id: string): Promise<Response> {
-  const active = parseScimPatchActive(await readScimBody(req));
-  if (active === false) deprovision(ctx, id);
-  else if (active === true) ctx.identity.setScimActive(id, true, ctx.nowMs());
   const u = ctx.identity.getScimUser(id);
-  return json({ schemas: [SCIM_USER_SCHEMA], id, active: u?.active ?? false }, 200);
+  return scimJson({ schemas: [SCIM_USER_SCHEMA], id, active: u?.active ?? false }, 200);
 }
 
-async function routeScim(key: string, req: Request, ctx: ScimRouteContext): Promise<Response> {
-  if (key === "POST /scim/v2/Users") return handleScimCreate(req, ctx);
-  const id = ITEM_RE.exec(new URL(req.url).pathname)?.[1];
+/**
+ * Executes a SCIM write (create / patch / delete). Throws `ScimError` on a bad body or missing id;
+ * the caller (`dispatchWriteRoute`) owns auth, rate-limiting, and rejection auditing.
+ */
+export async function runScimWrite(
+  key: string,
+  id: string | undefined,
+  parsed: unknown,
+  ctx: ScimWriteContext,
+): Promise<Response> {
+  if (key === "POST /scim/v2/Users") {
+    const u = applyScimCreate(ctx.identity, asScimResource(parsed), ctx.nowMs());
+    return scimJson(scimUserResource(u), 201);
+  }
   if (id === undefined) throw new ScimError("missing id", 400);
   if (key === "DELETE /scim/v2/Users/{id}") {
-    deprovision(ctx, id);
+    deprovisionUser(
+      { db: ctx.writeDb, store: ctx.store, identity: ctx.identity, nowMs: ctx.nowMs() },
+      id,
+    );
     return new Response(null, { status: 204 });
   }
-  return handleScimPatch(req, ctx, id);
+  return applyScimPatch(id, parsed, ctx);
 }
 
-export async function dispatchScimRoute(req: Request, ctx: ScimRouteContext): Promise<Response> {
-  const key = normalizedKey(req.method, new URL(req.url));
-  if (key === undefined || !SCIM_WRITE_ROUTES.includes(key)) {
-    return json({ detail: "not_found", status: 404 }, 404);
+// ── Read path (spec §6) ───────────────────────────────────────────────────────────────────────
+
+export interface ScimReadContext {
+  readonly identity: IdentityStore;
+  readonly scimToken: string;
+}
+
+/** SCIM read surface (spec §6): list the roster or read a single User. Leak-proof shape only. */
+function handleScimGet(url: URL, identity: IdentityStore): Response {
+  const m = ITEM_RE.exec(url.pathname);
+  if (m !== null) {
+    const u = identity.getScimUser(m[1] as string);
+    if (u === undefined) return scimJson({ detail: "not found", status: 404 }, 404);
+    return scimJson(scimUserResource(u), 200);
   }
-  if (ctx.scimToken === "") return json({ detail: "scim_disabled", status: 503 }, 503);
+  const users = identity.listScimUsers();
+  return scimJson(
+    {
+      schemas: [SCIM_LIST_SCHEMA],
+      totalResults: users.length,
+      Resources: users.map(scimUserResource),
+    },
+    200,
+  );
+}
+
+/** Bearer-checked SCIM roster read. Empty token = surface disabled (503); bad token = 401. */
+export function dispatchScimRead(req: Request, ctx: ScimReadContext): Response {
+  if (ctx.scimToken === "") return scimJson({ detail: "scim_disabled", status: 503 }, 503);
   if (!requireBearer(req, { expectedToken: ctx.scimToken }).ok) {
-    return json({ detail: "unauthorized", status: 401 }, 401);
+    return scimJson({ detail: "unauthorized", status: 401 }, 401);
   }
-  try {
-    return await routeScim(key, req, ctx);
-  } catch (e) {
-    if (e instanceof ScimError) return json({ detail: e.message, status: e.status }, e.status);
-    return json({ detail: "internal_error", status: 500 }, 500);
-  }
+  return handleScimGet(new URL(req.url), ctx.identity);
 }

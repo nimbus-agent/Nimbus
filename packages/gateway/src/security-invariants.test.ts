@@ -251,10 +251,17 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST has exactly one entry: POST /v1/deployments", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(1);
-    expect(WRITE_ROUTE_ALLOWLIST[0]).toBe("POST /v1/deployments");
+    // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
+    // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes.
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(4);
+    expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
+      "POST /v1/deployments",
+      "POST /scim/v2/Users",
+      "PATCH /scim/v2/Users/{id}",
+      "DELETE /scim/v2/Users/{id}",
+    ]);
   });
 });
 

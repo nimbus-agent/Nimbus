@@ -218,24 +218,24 @@ No inline comments were mapped to I12 specifically in the triage. No additional 
 
 **Wired at:**
 
-- `packages/gateway/src/ipc/http-server.ts` — POST routes dispatch through `dispatchWriteRoute` (and not the readonly handler).
-- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, currently a single entry: `"POST /v1/deployments"`).
+- `packages/gateway/src/ipc/http-server.ts` — every write method (POST/PATCH/DELETE) dispatches through `dispatchWriteRoute` (and not the readonly handler). SCIM GET roster reads go through the bearer-checked `dispatchScimRead` read path (reads never write).
+- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, four entries: `"POST /v1/deployments"` + the three `/scim/v2/Users` provisioning routes). `dispatchWriteRoute` selects the per-route bearer token (deployment uses `http_api.deployment_token`; SCIM uses `identity.scim.bearer`) and audit action type.
 
 **Test:** `packages/gateway/src/security-invariants.test.ts` — three sub-asserts:
 
 1. `http-server.ts` imports `dispatchWriteRoute` from `./http-write-routes.ts`.
-2. `http-server.ts` opens at most one writable `Database` handle (the write-surface handle).
-3. `WRITE_ROUTE_ALLOWLIST.length === 1` and contains exactly `"POST /v1/deployments"`.
+2. `http-server.ts` opens at most one writable `Database` handle (the write-surface handle, shared by the deployment and SCIM surfaces).
+3. `WRITE_ROUTE_ALLOWLIST.length === 4` and contains exactly `"POST /v1/deployments"`, `"POST /scim/v2/Users"`, `"PATCH /scim/v2/Users/{id}"`, `"DELETE /scim/v2/Users/{id}"`.
 
 **Anti-patterns:**
 
 - Opening a second writable `Database` handle in `http-server.ts` outside the server-context wiring.
-- Adding a new POST/PUT/DELETE handler that bypasses `dispatchWriteRoute`.
+- Adding a new POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` (e.g. a parallel SCIM dispatcher with its own bearer check — the original Slice 3 implementation did this and was folded into `dispatchWriteRoute`).
 - Adding entries to `WRITE_ROUTE_ALLOWLIST` without bumping the count assertion in `security-invariants.test.ts`.
 
-**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). This PR introduced a narrow write surface (post-deploy annotation) — per-route allowlisting + bearer auth + per-token rate limiting is the structural defense against a same-host process spoofing deploys. Same rigor as Tauri `ALLOWED_METHODS` (I7).
+**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). T4 introduced a narrow write surface (post-deploy annotation) and Phase 6 Slice 3 added SCIM provisioning — both flow through the same `dispatchWriteRoute` pipeline (per-route allowlist + bearer auth + per-token rate limiting + audit-on-rejection), the structural defense against a same-host process spoofing deploys or provisioning operators. Same rigor as Tauri `ALLOWED_METHODS` (I7).
 
-**Audit cross-reference:** S2 disposition from the plan review — every rejection at the HTTP write boundary writes a `deployment.annotation_rejected` audit row via `appendAuditEntry`, making brute-force probes tamper-evident on the BLAKE3 chain.
+**Audit cross-reference:** S2 disposition from the plan review — every rejection at the HTTP write boundary writes an audit row via `appendAuditEntry` (`deployment.annotation_rejected` for the deploy route, `scim.provision_rejected` for SCIM), making brute-force probes tamper-evident on the BLAKE3 chain.
 
 ### Migrated rationale (2026-05-28)
 

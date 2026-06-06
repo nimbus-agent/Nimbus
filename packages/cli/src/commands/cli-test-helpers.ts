@@ -27,18 +27,30 @@ export function makeQueuedCall(responseQueue: readonly unknown[]): {
   return { call, calls };
 }
 
+// Serializes the global `process.stdout.write` swap so overlapping captures (e.g. parallel test
+// files in one worker) can't corrupt each other's restore order or leak the hook.
+let stdoutCaptureChain: Promise<unknown> = Promise.resolve();
+
 /** Runs `fn` with `process.stdout.write` captured, returning everything written to stdout. */
 export async function captureStdout(fn: () => Promise<void>): Promise<string> {
-  const chunks: string[] = [];
-  const orig = process.stdout.write.bind(process.stdout);
-  process.stdout.write = (chunk: unknown): boolean => {
-    chunks.push(String(chunk));
-    return true;
-  };
-  try {
-    await fn();
-  } finally {
-    process.stdout.write = orig;
-  }
-  return chunks.join("");
+  const run = stdoutCaptureChain.then(async () => {
+    const chunks: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: unknown): boolean => {
+      chunks.push(String(chunk));
+      return true;
+    };
+    try {
+      await fn();
+    } finally {
+      process.stdout.write = orig;
+    }
+    return chunks.join("");
+  });
+  // Advance the chain regardless of outcome so one failing capture can't wedge later ones.
+  stdoutCaptureChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }

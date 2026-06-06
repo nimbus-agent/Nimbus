@@ -2,19 +2,12 @@
 import {
   type DeviceAuthResponse,
   type FetchLike,
+  form,
   type OidcDiscovery,
   parseDeviceAuthResponse,
   parseTokenResponse,
   type TokenResponse,
 } from "./types.ts";
-
-function form(params: Record<string, string>): RequestInit {
-  return {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params).toString(),
-  };
-}
 
 export async function requestDeviceCode(
   d: OidcDiscovery,
@@ -53,34 +46,56 @@ function deviceTokenError(body: unknown): Error {
   return new Error(`identity: device token error: ${code}${desc}${uri}`);
 }
 
+/**
+ * Guards against a bad/absent IdP `interval` (≤0 or non-finite) that would otherwise spin a tight
+ * retry loop against the token endpoint; RFC 8628 defaults to 5s.
+ */
+function normalizeIntervalMs(intervalSeconds: number): number {
+  const safe = Number.isFinite(intervalSeconds) && intervalSeconds > 0 ? intervalSeconds : 5;
+  return safe * 1000;
+}
+
+/** Result of a single token-endpoint poll: the token on success, or the next backoff while pending. */
+type PollStep = { readonly token: TokenResponse } | { readonly waitMs: number };
+
+/** One token-endpoint poll. Returns the token, the next backoff, or throws the IdP's OAuth error. */
+async function pollTokenOnce(
+  d: OidcDiscovery,
+  clientId: string,
+  deviceCode: string,
+  opts: PollOpts,
+  intervalMs: number,
+): Promise<PollStep> {
+  const res = await opts.fetchLike(
+    d.tokenEndpoint,
+    form({
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      device_code: deviceCode,
+      client_id: clientId,
+    }),
+  );
+  const body: unknown = await res.json().catch(() => ({}));
+  if (res.ok) return { token: parseTokenResponse(body) };
+  const err = asRecord(body)["error"];
+  if (err === "slow_down") return { waitMs: intervalMs + 5000 };
+  if (err !== "authorization_pending") throw deviceTokenError(body);
+  return { waitMs: intervalMs };
+}
+
 export async function pollDeviceToken(
   d: OidcDiscovery,
   clientId: string,
   deviceCode: string,
   opts: PollOpts,
 ): Promise<TokenResponse> {
-  // Guard against a bad/absent IdP `interval` (≤0 or non-finite) that would otherwise spin a
-  // tight retry loop against the token endpoint; RFC 8628 defaults to 5s.
-  const intervalSeconds =
-    Number.isFinite(opts.intervalSeconds) && opts.intervalSeconds > 0 ? opts.intervalSeconds : 5;
-  let intervalMs = intervalSeconds * 1000;
+  let intervalMs = normalizeIntervalMs(opts.intervalSeconds);
   for (;;) {
     if (opts.now() > opts.deadlineMs)
       throw new Error("identity: device code expired before authorization");
     opts.onPoll();
-    const res = await opts.fetchLike(
-      d.tokenEndpoint,
-      form({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        device_code: deviceCode,
-        client_id: clientId,
-      }),
-    );
-    const body: unknown = await res.json().catch(() => ({}));
-    if (res.ok) return parseTokenResponse(body);
-    const err = asRecord(body)["error"];
-    if (err === "slow_down") intervalMs += 5000;
-    else if (err !== "authorization_pending") throw deviceTokenError(body);
+    const step = await pollTokenOnce(d, clientId, deviceCode, opts, intervalMs);
+    if ("token" in step) return step.token;
+    intervalMs = step.waitMs;
     await opts.sleep(intervalMs);
   }
 }

@@ -1,12 +1,51 @@
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import type { NamespaceStore } from "../federation/namespace-store.ts";
+import type { IdentityStore } from "../identity/identity-store.ts";
+import { runScimWrite } from "../identity/scim-http-routes.ts";
+import { ScimError } from "../identity/scim-service.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
 import { requireBearer } from "./http-auth.ts";
 import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts";
 
-export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze(["POST /v1/deployments"]);
+// Canonical allowlist keys ("<METHOD> <PATH>", exact-match for deployment; the `{id}` item routes
+// are matched by the SCIM regex below, never by string templating). Plain string literals (no
+// backtick templating of `{id}`) so the Opengrep missing-template-string rule can't false-fire.
+const ROUTE_DEPLOY = "POST /v1/deployments";
+const ROUTE_SCIM_CREATE = "POST /scim/v2/Users";
+const ROUTE_SCIM_PATCH = "PATCH /scim/v2/Users/{id}";
+const ROUTE_SCIM_DELETE = "DELETE /scim/v2/Users/{id}";
 
+/**
+ * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
+ * auth, per-token rate-limit, body cap, and audit-on-rejection. `POST /v1/deployments` is the CI
+ * deploy-annotation route; the three `/scim/v2/Users` routes are the SCIM provisioning surface
+ * (own bearer = `identity.scim.bearer`). No other HTTP method may write.
+ */
+export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
+  ROUTE_DEPLOY,
+  ROUTE_SCIM_CREATE,
+  ROUTE_SCIM_PATCH,
+  ROUTE_SCIM_DELETE,
+]);
+
+const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
 const MAX_BODY_BYTES = 8 * 1024;
+
+const DEPLOY_DISABLED_HINT =
+  "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
+const SCIM_DISABLED_HINT = "set identity.scim.bearer via 'nimbus identity scim set-token <value>'";
+
+const DEPLOY_REJECT_ACTION = "deployment.annotation_rejected";
+const SCIM_REJECT_ACTION = "scim.provision_rejected";
+
+/** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
+export interface ScimWriteSurface {
+  readonly token: string;
+  readonly store: NamespaceStore;
+  readonly identity: IdentityStore;
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -14,6 +53,19 @@ export interface WriteRouteContext {
   readonly nowMs: () => number;
   readonly deployEnvironments?: readonly string[];
   readonly knownServices: () => readonly string[];
+  readonly scim?: ScimWriteSurface;
+}
+
+type RouteKind = "deployment" | "scim";
+
+interface ResolvedRoute {
+  readonly key: string;
+  readonly kind: RouteKind;
+  readonly expectedToken: string;
+  readonly disabledHint: string;
+  readonly rejectAction: string;
+  readonly hasBody: boolean;
+  readonly id?: string;
 }
 
 function rateLimitHeaders(check: RateLimitCheck): Record<string, string> {
@@ -38,9 +90,14 @@ function jsonResponse(
   });
 }
 
+function methodNotAllowed(allow: string): Response {
+  return new Response("Method Not Allowed", { status: 405, headers: { Allow: allow } });
+}
+
 function recordRejection(
   ctx: WriteRouteContext,
   args: {
+    readonly actionType: string;
     readonly tokenFingerprint: string;
     readonly resultCode: number;
     readonly reason: string;
@@ -50,7 +107,7 @@ function recordRejection(
 ): void {
   try {
     appendAuditEntry(ctx.writeDb, {
-      actionType: "deployment.annotation_rejected",
+      actionType: args.actionType,
       hitlStatus: "not_required",
       actionJson: JSON.stringify({
         token_fingerprint: args.tokenFingerprint,
@@ -67,32 +124,60 @@ function recordRejection(
   }
 }
 
-function checkAllowlist(req: Request, url: URL): Response | undefined {
-  const key = `${req.method} ${url.pathname}`;
-  if (WRITE_ROUTE_ALLOWLIST.includes(key)) {
-    return undefined;
+/** Resolves the request to an allowlisted route, or a 404/405 Response. Does NOT consult auth. */
+function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedRoute | Response {
+  const { method } = req;
+  const path = url.pathname;
+  if (path === "/v1/deployments") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    return {
+      key: ROUTE_DEPLOY,
+      kind: "deployment",
+      expectedToken: ctx.expectedToken,
+      disabledHint: DEPLOY_DISABLED_HINT,
+      rejectAction: DEPLOY_REJECT_ACTION,
+      hasBody: true,
+    };
   }
-  if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${url.pathname}`))) {
-    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  if (path === "/scim/v2/Users") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    if (ctx.scim === undefined) return new Response("Not Found", { status: 404 });
+    return {
+      key: ROUTE_SCIM_CREATE,
+      kind: "scim",
+      expectedToken: ctx.scim.token,
+      disabledHint: SCIM_DISABLED_HINT,
+      rejectAction: SCIM_REJECT_ACTION,
+      hasBody: true,
+    };
+  }
+  const item = SCIM_ITEM_RE.exec(path);
+  if (item !== null) {
+    if (method !== "PATCH" && method !== "DELETE") return methodNotAllowed("PATCH, DELETE");
+    if (ctx.scim === undefined) return new Response("Not Found", { status: 404 });
+    return {
+      key: method === "PATCH" ? ROUTE_SCIM_PATCH : ROUTE_SCIM_DELETE,
+      kind: "scim",
+      expectedToken: ctx.scim.token,
+      disabledHint: SCIM_DISABLED_HINT,
+      rejectAction: SCIM_REJECT_ACTION,
+      hasBody: method === "PATCH",
+      id: item[1] as string,
+    };
   }
   return new Response("Not Found", { status: 404 });
 }
 
 type AuthOk = { fingerprint: string };
 
-function checkAuth(req: Request, ctx: WriteRouteContext): Response | AuthOk {
-  const auth = requireBearer(req, { expectedToken: ctx.expectedToken });
+function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): Response | AuthOk {
+  const auth = requireBearer(req, { expectedToken: route.expectedToken });
   if (auth.surfaceDisabled === true) {
-    return jsonResponse(
-      {
-        error: "write_surface_disabled",
-        hint: "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'",
-      },
-      503,
-    );
+    return jsonResponse({ error: "write_surface_disabled", hint: route.disabledHint }, 503);
   }
   if (!auth.ok) {
     recordRejection(ctx, {
+      actionType: route.rejectAction,
       tokenFingerprint: auth.fingerprint,
       resultCode: 401,
       reason: "unauthorized",
@@ -102,13 +187,22 @@ function checkAuth(req: Request, ctx: WriteRouteContext): Response | AuthOk {
   return { fingerprint: auth.fingerprint };
 }
 
-function checkRateLimit(ctx: WriteRouteContext, fingerprint: string): Response | RateLimitCheck {
+function checkRateLimit(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+): Response | RateLimitCheck {
   const limit = ctx.rateLimiter.check(fingerprint);
   if (limit.allowed) {
     return limit;
   }
   const retryAfter = Math.max(0, Math.ceil((limit.resetMs - ctx.nowMs()) / 1000));
-  recordRejection(ctx, { tokenFingerprint: fingerprint, resultCode: 429, reason: "rate_limited" });
+  recordRejection(ctx, {
+    actionType: route.rejectAction,
+    tokenFingerprint: fingerprint,
+    resultCode: 429,
+    reason: "rate_limited",
+  });
   return jsonResponse({ error: "rate_limited" }, 429, {
     ...rateLimitHeaders(limit),
     "Retry-After": String(retryAfter),
@@ -118,6 +212,7 @@ function checkRateLimit(ctx: WriteRouteContext, fingerprint: string): Response |
 async function parseBody(
   req: Request,
   ctx: WriteRouteContext,
+  route: ResolvedRoute,
   fingerprint: string,
   limit: RateLimitCheck,
 ): Promise<Response | { parsed: unknown }> {
@@ -126,6 +221,7 @@ async function parseBody(
     const n = Number.parseInt(lenHeader, 10);
     if (Number.isInteger(n) && n > MAX_BODY_BYTES) {
       recordRejection(ctx, {
+        actionType: route.rejectAction,
         tokenFingerprint: fingerprint,
         resultCode: 413,
         reason: "payload_too_large",
@@ -138,6 +234,7 @@ async function parseBody(
     bodyBytes = await req.arrayBuffer();
   } catch {
     recordRejection(ctx, {
+      actionType: route.rejectAction,
       tokenFingerprint: fingerprint,
       resultCode: 400,
       reason: "invalid_body",
@@ -146,6 +243,7 @@ async function parseBody(
   }
   if (bodyBytes.byteLength > MAX_BODY_BYTES) {
     recordRejection(ctx, {
+      actionType: route.rejectAction,
       tokenFingerprint: fingerprint,
       resultCode: 413,
       reason: "payload_too_large",
@@ -157,6 +255,7 @@ async function parseBody(
     return { parsed: JSON.parse(text) };
   } catch {
     recordRejection(ctx, {
+      actionType: route.rejectAction,
       tokenFingerprint: fingerprint,
       resultCode: 400,
       reason: "invalid_json",
@@ -187,6 +286,7 @@ function checkServiceAllowlist(
     return undefined;
   }
   recordRejection(ctx, {
+    actionType: DEPLOY_REJECT_ACTION,
     tokenFingerprint: fingerprint,
     resultCode: 400,
     reason: "unknown_service",
@@ -218,6 +318,7 @@ async function runDeploymentRoute(
       return jsonResponse(out.value, 200, rateLimitHeaders(limit));
     }
     recordRejection(ctx, {
+      actionType: DEPLOY_REJECT_ACTION,
       tokenFingerprint: fingerprint,
       resultCode: 500,
       reason: "internal_error_miss",
@@ -226,6 +327,7 @@ async function runDeploymentRoute(
   } catch (e) {
     if (e instanceof DeploymentRpcError) {
       recordRejection(ctx, {
+        actionType: DEPLOY_REJECT_ACTION,
         tokenFingerprint: fingerprint,
         resultCode: 400,
         reason: e.field === undefined ? "invalid_request" : `invalid_${e.field}`,
@@ -244,6 +346,7 @@ async function runDeploymentRoute(
       );
     }
     recordRejection(ctx, {
+      actionType: DEPLOY_REJECT_ACTION,
       tokenFingerprint: fingerprint,
       resultCode: 500,
       reason: "internal_error",
@@ -252,31 +355,93 @@ async function runDeploymentRoute(
   }
 }
 
+/** Maps a SCIM HTTP status to the audit `reason` tag. */
+function scimReason(status: number): string {
+  if (status === 400) return "invalid_request";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  return "scim_error";
+}
+
+/** Re-attaches the rate-limit headers to a SCIM handler Response without consuming its body. */
+function withRateLimitHeaders(res: Response, limit: RateLimitCheck): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(rateLimitHeaders(limit))) {
+    headers.set(k, v);
+  }
+  return new Response(res.body, { status: res.status, headers });
+}
+
+async function runScimRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  parsed: unknown,
+): Promise<Response> {
+  // resolveRoute guarantees ctx.scim is defined for every scim-kind route.
+  const scim = ctx.scim as ScimWriteSurface;
+  try {
+    const res = await runScimWrite(route.key, route.id, parsed, {
+      writeDb: ctx.writeDb,
+      store: scim.store,
+      identity: scim.identity,
+      nowMs: ctx.nowMs,
+    });
+    return withRateLimitHeaders(res, limit);
+  } catch (e) {
+    if (e instanceof ScimError) {
+      recordRejection(ctx, {
+        actionType: SCIM_REJECT_ACTION,
+        tokenFingerprint: fingerprint,
+        resultCode: e.status,
+        reason: scimReason(e.status),
+        ...(route.id === undefined ? {} : { externalId: route.id }),
+      });
+      return jsonResponse(
+        { detail: e.message, status: e.status },
+        e.status,
+        rateLimitHeaders(limit),
+      );
+    }
+    recordRejection(ctx, {
+      actionType: SCIM_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+      ...(route.id === undefined ? {} : { externalId: route.id }),
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+}
+
 export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): Promise<Response> {
   const url = new URL(req.url);
-  const key = `${req.method} ${url.pathname}`;
-  const allowlistRes = checkAllowlist(req, url);
-  if (allowlistRes !== undefined) {
-    return allowlistRes;
+  const route = resolveRoute(req, url, ctx);
+  if (route instanceof Response) {
+    return route;
   }
 
-  const auth = checkAuth(req, ctx);
+  const auth = checkAuth(req, route, ctx);
   if (auth instanceof Response) {
     return auth;
   }
 
-  const limit = checkRateLimit(ctx, auth.fingerprint);
+  const limit = checkRateLimit(ctx, route, auth.fingerprint);
   if (limit instanceof Response) {
     return limit;
   }
 
-  const body = await parseBody(req, ctx, auth.fingerprint, limit);
-  if (body instanceof Response) {
-    return body;
+  let parsed: unknown;
+  if (route.hasBody) {
+    const body = await parseBody(req, ctx, route, auth.fingerprint, limit);
+    if (body instanceof Response) {
+      return body;
+    }
+    parsed = body.parsed;
   }
-  const { parsed } = body;
 
-  if (key === "POST /v1/deployments") {
+  if (route.kind === "deployment") {
     const svc = extractService(parsed);
     const svcRes = checkServiceAllowlist(ctx, auth.fingerprint, limit, svc);
     if (svcRes !== undefined) {
@@ -284,7 +449,7 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
     }
     return runDeploymentRoute(ctx, auth.fingerprint, limit, parsed, svc);
   }
-  return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }
 
 export { tokenFingerprint } from "./http-auth.ts";

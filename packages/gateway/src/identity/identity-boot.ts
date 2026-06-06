@@ -29,7 +29,7 @@ import { readScimBearer } from "./identity-vault.ts";
 import { JwksCache } from "./jwks-cache.ts";
 import { pollDeviceToken, requestDeviceCode } from "./oidc-device-flow.ts";
 import { fetchOidcDiscovery } from "./oidc-discovery.ts";
-import { type OidcDiscovery, parseTokenResponse, type TokenResponse } from "./types.ts";
+import { form, type OidcDiscovery, parseTokenResponse, type TokenResponse } from "./types.ts";
 import { IdTokenVerifier } from "./verifier.ts";
 
 /** Default device-code poll interval (RFC 8628 default) when the IdP omits one. */
@@ -53,14 +53,6 @@ export interface IdentityBoot {
 
 function realSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function form(params: Record<string, string>): RequestInit {
-  return {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params).toString(),
-  };
 }
 
 /** `grant_type=refresh_token` POST mirroring the device-flow form helper. */

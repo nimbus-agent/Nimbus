@@ -5,7 +5,7 @@ import { getAllConnectorHealth } from "../connectors/health.ts";
 import { dbRun } from "../db/write.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
-import { dispatchScimRoute, isScimPath } from "../identity/scim-http-routes.ts";
+import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
@@ -272,28 +272,41 @@ async function dispatchReadOnlyGet(
   return new Response("Not Found", { status: 404 });
 }
 
-async function handlePost(
+// Every HTTP write (deployment annotation + SCIM provisioning) flows through the single I13
+// dispatcher. The deployment token and the SCIM seam are resolved independently — a gateway can
+// enable either surface alone — and dispatchWriteRoute selects per route.
+async function handleWrite(
   req: Request,
   writeDb: Database | null,
   rateLimiter: HttpWriteRateLimiter,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  if (writeDb === null || opts.resolveDeploymentToken === undefined) {
+  if (writeDb === null) {
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
   }
   try {
-    const expectedToken = await opts.resolveDeploymentToken();
+    const expectedToken =
+      opts.resolveDeploymentToken === undefined ? "" : await opts.resolveDeploymentToken();
     const cfgDir = opts.configDir;
     const knownServices =
       cfgDir === undefined
         ? (): readonly string[] => []
         : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
+    const scim =
+      opts.resolveScimToken === undefined
+        ? undefined
+        : {
+            token: await opts.resolveScimToken(),
+            store: new NamespaceStore(writeDb),
+            identity: new IdentityStore(writeDb),
+          };
     return await dispatchWriteRoute(req, {
       writeDb,
       expectedToken,
       rateLimiter,
       nowMs: opts.nowMs ?? ((): number => Date.now()),
       knownServices,
+      ...(scim === undefined ? {} : { scim }),
     });
   } catch {
     return json({ error: "internal_error" }, 500);
@@ -337,23 +350,19 @@ export function startReadOnlyHttpServer(
     port,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      // SCIM roster read (spec §6) — bearer-checked GET; reads stay off the I13 write surface.
       if (
         writeDb !== null &&
         opts.resolveScimToken !== undefined &&
         isScimPath(url) &&
-        req.method !== "GET"
+        req.method === "GET"
       ) {
         const scimToken = await opts.resolveScimToken();
-        return dispatchScimRoute(req, {
-          writeDb,
-          store: new NamespaceStore(writeDb),
-          identity: new IdentityStore(writeDb),
-          scimToken,
-          nowMs: opts.nowMs ?? ((): number => Date.now()),
-        });
+        return dispatchScimRead(req, { identity: new IdentityStore(writeDb), scimToken });
       }
-      if (req.method === "POST") {
-        return handlePost(req, writeDb, rateLimiter, opts);
+      // All writes (deployment POST + SCIM POST/PATCH/DELETE) → the single I13 dispatcher.
+      if (req.method === "POST" || req.method === "PATCH" || req.method === "DELETE") {
+        return handleWrite(req, writeDb, rateLimiter, opts);
       }
       if (req.method !== "GET") {
         const allow = writeDb === null ? "GET" : "GET, POST";

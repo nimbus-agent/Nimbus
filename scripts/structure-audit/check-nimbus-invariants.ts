@@ -198,30 +198,32 @@ const IDENTITY_TOKEN_KEYS = [
   "identity.scim.bearer",
 ];
 const IDENTITY_DIR = "packages/gateway/src/identity/";
+// Match a token key wrapped in any of the three string-literal quote styles (a backtick literal
+// is just as much a leak as a single/double-quoted one).
+const IDENTITY_TOKEN_LITERAL_RE = IDENTITY_TOKEN_KEYS.map(
+  (k) => new RegExp(String.raw`['"\`]${escapeRegex(k)}['"\`]`),
+);
 
 /**
  * D14 (I18) — raw IdP tokens live only in the Vault, inside identity/.
  * Flags any non-identity, non-test file that references one of the identity token
  * Vault keys as a quoted string literal (a leak vector onto IPC/wire/logs/config).
+ * Comments are stripped first so a mention in a doc-comment can't false-fail CI.
  */
 export function checkIdentityTokenVaultInvariant(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.startsWith(IDENTITY_DIR) || f.relPath.endsWith(".test.ts")) continue;
-    const lines = f.contents.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] ?? "";
-      // Check all three string-literal quote styles — a backtick literal is just as much a leak.
-      if (
-        IDENTITY_TOKEN_KEYS.some(
-          (k) => line.includes(`"${k}"`) || line.includes(`'${k}'`) || line.includes(`\`${k}\``),
-        )
-      ) {
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (IDENTITY_TOKEN_LITERAL_RE.some((re) => re.test(line))) {
         out.push({
           rule: "D14-identity-token",
           file: f.relPath,
           line: i + 1,
-          snippet: line.trim(),
+          snippet: (originalLines[i] ?? "").trim(),
         });
       }
     }

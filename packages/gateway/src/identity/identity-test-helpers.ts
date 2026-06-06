@@ -4,13 +4,12 @@
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 function b64url(bytes: Uint8Array): string {
-  // base64 padding is always trailing `=`, so dropping every `=` is equivalent to
-  // stripping the run at the end — and avoids a regex (matches pkce.ts's convention).
+  // base64url: swap +/ for -_ and drop the trailing `=` padding run.
   return Buffer.from(bytes)
     .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 function b64urlJson(obj: unknown): string {

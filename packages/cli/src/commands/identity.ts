@@ -65,28 +65,32 @@ export function awaitLogin(client: IdentityIpc): Promise<void> {
     // that arrive before jobId is known, then replay them once it is, so login never hangs.
     const backlog: Array<{ method: string; payload: unknown }> = [];
 
+    type LoginEvent = {
+      jobId?: string;
+      verificationUri?: string;
+      userCode?: string;
+      message?: string;
+    };
+    const emitProgress = (p: LoginEvent): void => {
+      if (p.verificationUri && p.userCode) {
+        process.stdout.write(`Open ${p.verificationUri} and enter code: ${p.userCode}\n`);
+      }
+    };
+    const dispatchEvent = (method: string, p: LoginEvent): void => {
+      if (method === "identity.loginProgress") emitProgress(p);
+      else if (method === "identity.loginDone") resolve();
+      else if (method === "identity.loginError")
+        reject(new Error(p.message ?? "identity: login failed"));
+    };
     const handle = (method: string, payload: unknown): void => {
-      const p = payload as {
-        jobId?: string;
-        verificationUri?: string;
-        userCode?: string;
-        message?: string;
-      };
+      const p = payload as LoginEvent;
       if (typeof p.jobId !== "string") return;
       if (jobId === undefined) {
         backlog.push({ method, payload });
         return;
       }
       if (p.jobId !== jobId) return;
-      if (method === "identity.loginProgress") {
-        if (p.verificationUri && p.userCode) {
-          process.stdout.write(`Open ${p.verificationUri} and enter code: ${p.userCode}\n`);
-        }
-      } else if (method === "identity.loginDone") {
-        resolve();
-      } else if (method === "identity.loginError") {
-        reject(new Error(p.message ?? "identity: login failed"));
-      }
+      dispatchEvent(method, p);
     };
 
     client.onNotification("identity.loginProgress", (n) => handle("identity.loginProgress", n));

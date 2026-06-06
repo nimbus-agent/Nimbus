@@ -4,6 +4,15 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 /** Injected clock (ms). Module code must never call Date.now() directly in hot paths under test. */
 export type Clock = () => number;
 
+/** Builds an `application/x-www-form-urlencoded` POST `RequestInit` — the OAuth token/device wire format. */
+export function form(params: Record<string, string>): RequestInit {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString(),
+  };
+}
+
 export interface OidcDiscovery {
   readonly issuer: string;
   readonly deviceAuthorizationEndpoint: string;

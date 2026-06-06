@@ -15,7 +15,7 @@ import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
-import { dispatchIdentityRpc, IdentityRpcError } from "../identity-rpc.ts";
+import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
@@ -254,6 +254,30 @@ async function handleScimSetToken(ctx: ServerCtx, params: unknown): Promise<{ ok
   return { ok: true };
 }
 
+/** Assembles the per-call identity RPC context (keeps the `??` / conditional-spread out of the dispatcher hot path). */
+function buildIdentityRpcContext(
+  ctx: ServerCtx,
+  issuer: string,
+  store: NonNullable<ServerCtx["options"]["identityStore"]>,
+  index: NonNullable<ServerCtx["options"]["localIndex"]>,
+): IdentityRpcContext {
+  return {
+    db: index.getDatabase(),
+    issuer,
+    identityStore: store,
+    notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    now: () => Date.now(),
+    startLogin:
+      ctx.options.identityStartLogin ??
+      (() => {
+        throw new RpcMethodError(-32000, "identity login not wired");
+      }),
+    ...(ctx.options.identityGraceSeconds === undefined
+      ? {}
+      : { graceSeconds: ctx.options.identityGraceSeconds }),
+  };
+}
+
 export async function tryDispatchIdentityRpc(
   ctx: ServerCtx,
   method: string,
@@ -265,21 +289,11 @@ export async function tryDispatchIdentityRpc(
   if (store === undefined || issuer === undefined || index === undefined) return phase4RpcSkipped;
   if (method === "scim.setToken") return handleScimSetToken(ctx, params);
   try {
-    const out = await dispatchIdentityRpc(method, params, {
-      db: index.getDatabase(),
-      issuer,
-      identityStore: store,
-      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
-      now: () => Date.now(),
-      startLogin:
-        ctx.options.identityStartLogin ??
-        (() => {
-          throw new RpcMethodError(-32000, "identity login not wired");
-        }),
-      ...(ctx.options.identityGraceSeconds === undefined
-        ? {}
-        : { graceSeconds: ctx.options.identityGraceSeconds }),
-    });
+    const out = await dispatchIdentityRpc(
+      method,
+      params,
+      buildIdentityRpcContext(ctx, issuer, store, index),
+    );
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof IdentityRpcError) throw new RpcMethodError(e.rpcCode, e.message);

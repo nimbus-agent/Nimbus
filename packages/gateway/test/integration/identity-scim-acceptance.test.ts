@@ -5,8 +5,9 @@ import { SessionConsentCache } from "../../src/federation/consent-cache.ts";
 import { NamespaceStore } from "../../src/federation/namespace-store.ts";
 import { answerFederatedQuery } from "../../src/federation/query-gate.ts";
 import { IdentityStore } from "../../src/identity/identity-store.ts";
-import { dispatchScimRoute } from "../../src/identity/scim-http-routes.ts";
 import { runIndexedSchemaMigrations } from "../../src/index/migrations/runner.ts";
+import { HttpWriteRateLimiter } from "../../src/ipc/http-rate-limit.ts";
+import { dispatchWriteRoute } from "../../src/ipc/http-write-routes.ts";
 
 describe("Slice 3 acceptance — SCIM deprovision revokes federation access", () => {
   test("IdP DELETE /scim/v2/Users/{id} → peer's next federated query is no_grant", async () => {
@@ -26,12 +27,13 @@ describe("Slice 3 acceptance — SCIM deprovision revokes federation access", ()
       method: "DELETE",
       headers: { authorization: "Bearer scim-secret" },
     });
-    const res = await dispatchScimRoute(req, {
+    const res = await dispatchWriteRoute(req, {
       writeDb: db,
-      store,
-      identity,
-      scimToken: "scim-secret",
+      expectedToken: "",
+      rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
       nowMs: () => 2,
+      knownServices: () => [],
+      scim: { token: "scim-secret", store, identity },
     });
     expect(res.status).toBe(204);
 

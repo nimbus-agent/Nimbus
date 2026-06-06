@@ -16,7 +16,7 @@ interface JwtParts {
 
 function b64urlToBytes(s: string): Uint8Array {
   const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  return new Uint8Array(Buffer.from(s.replaceAll("-", "+").replaceAll("_", "/") + pad, "base64"));
+  return new Uint8Array(Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64"));
 }
 function b64urlToJson(s: string): Record<string, unknown> {
   const obj: unknown = JSON.parse(new TextDecoder().decode(b64urlToBytes(s)));
@@ -82,18 +82,26 @@ export class IdTokenVerifier {
     }
   }
 
-  /** Validates iss/aud/exp/nbf/sub and returns the leak-proof claims shape. */
-  private validateClaims(payload: Record<string, unknown>, nowMs: number): ValidatedClaims {
+  /** Rejects a token whose `iss`/`aud` claims do not match the configured IdP + client. */
+  private assertIssuerAudience(payload: Record<string, unknown>): void {
     if (payload["iss"] !== this.cfg.issuer)
       throw new IdTokenValidationError("identity: issuer mismatch");
     const aud = payload["aud"];
     const audOk =
       aud === this.cfg.clientId || (Array.isArray(aud) && aud.includes(this.cfg.clientId));
     if (!audOk) throw new IdTokenValidationError("identity: audience mismatch");
+  }
+
+  /**
+   * Rejects an expired / not-yet-valid token and returns the numeric `exp` (+ `nbf` when present).
+   * RFC 7519: now must be strictly before `exp`; the clock-skew tolerance applies to `nbf` only.
+   */
+  private assertTimeWindow(
+    payload: Record<string, unknown>,
+    nowMs: number,
+  ): { exp: number; nbf?: number } {
     const nowSec = nowMs / 1000;
     const exp = payload["exp"];
-    // Reject if the token is expired (RFC 7519: now must be strictly before exp). Clock skew
-    // tolerance applies to nbf only.
     if (typeof exp !== "number" || nowSec >= exp) {
       throw new IdTokenValidationError("identity: token expired");
     }
@@ -101,6 +109,13 @@ export class IdTokenVerifier {
     if (typeof nbf === "number" && nowSec + CLOCK_SKEW_SECONDS < nbf) {
       throw new IdTokenValidationError("identity: token not yet valid");
     }
+    return typeof nbf === "number" ? { exp, nbf } : { exp };
+  }
+
+  /** Validates iss/aud/exp/nbf/sub and returns the leak-proof claims shape. */
+  private validateClaims(payload: Record<string, unknown>, nowMs: number): ValidatedClaims {
+    this.assertIssuerAudience(payload);
+    const { exp, nbf } = this.assertTimeWindow(payload, nowMs);
     const sub = payload["sub"];
     if (typeof sub !== "string" || sub.length === 0)
       throw new IdTokenValidationError("identity: missing sub");
@@ -110,7 +125,7 @@ export class IdTokenVerifier {
       iss: this.cfg.issuer,
       aud: this.cfg.clientId,
       exp,
-      ...(typeof nbf === "number" ? { nbf } : {}),
+      ...(nbf === undefined ? {} : { nbf }),
       raw: payload,
     };
   }

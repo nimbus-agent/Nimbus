@@ -54,7 +54,14 @@ Each invariant has a production wiring site and an enforcement test in `packages
 
 When changing a wiring site, update both the test and `SECURITY-INVARIANTS.md` in the same commit. When retiring an invariant, delete the row — never leave it as documentation drift.
 
-**Static-time complement:** `scripts/structure-audit/check-nimbus-invariants.ts` enforces I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`DB_RUN_EXEC_ALLOW_LIST` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`), I17 (`D13` — only `federation/query-gate.ts` imports the item-list read path under `federation/`), and I18 (`D14` — the identity-token Vault-key literals appear only under `identity/`) at static time. Runtime tests remain authoritative; the static checks fail before the test suite runs.
+**Static-time complement:** `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (it fails first). Runtime tests remain authoritative. It enforces, at static time:
+
+- **I1** — every `spawn` under `connectors/` uses `extensionProcessEnv()`.
+- the **vault-key allow-list**.
+- **I14** (`DB_RUN_EXEC_ALLOW_LIST`) — no direct `db.run` / `db.exec` outside `db/write.ts`.
+- **I15** (`D10`) — every `ServerSpec` under `connectors/lazy-mesh/` passes through `wrapServerSpec(...)`.
+- **I17** (`D13`) — only `federation/query-gate.ts` imports the item-list read path under `federation/`.
+- **I18** (`D14`) — the identity-token Vault-key literals appear only under `identity/`.
 
 ---
 
