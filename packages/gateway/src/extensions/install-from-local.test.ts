@@ -734,7 +734,7 @@ function makeMockRegistry(opts: {
           entry: "dist/index.js",
           permissions: { network: [], filesystem: { read: [], write: [] } },
           updateChannel: "stable",
-        } as FetchManifestResponse["manifest"],
+        },
         manifestRaw: { id, version },
         manifestHash: "0".repeat(64),
         entryHash: "0".repeat(64),

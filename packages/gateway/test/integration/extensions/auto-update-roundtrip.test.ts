@@ -137,7 +137,7 @@ async function buildSignedTarball(opts: {
 
     const manifestBytes = Buffer.from(manifestText, "utf8");
     const sha256Hex = (b: Buffer): string => {
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       return createHash("sha256").update(b).digest("hex");
     };
 
@@ -195,7 +195,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       writeFileSync(join(extRoot, "active", "dist", "index.js"), v1EntryText, "utf8");
 
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.0.0",
@@ -295,7 +295,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       );
 
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.1.0",
@@ -446,7 +446,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       writeFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json"), manifestText);
       writeFileSync(join(extRoot, "_prev", "1.0.0", "dist", "index.js"), "// prev");
 
-      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const { createHash } = require("node:crypto");
       const manifestBytes = Buffer.from(manifestText, "utf8");
       const entryBytes = Buffer.from("// prev", "utf8");
       const manifestHash = createHash("sha256").update(manifestBytes).digest("hex");

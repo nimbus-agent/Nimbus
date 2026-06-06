@@ -111,7 +111,7 @@ function withRewrittenFetch(fakeBase: string): () => void {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://harvest.greenhouse.io", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = original;
   };
@@ -210,7 +210,7 @@ describe("greenhouse-sync against Bun.serve fake API", () => {
 
   test("missing-id / non-numeric-id rows are skipped", async () => {
     const noId = job(0);
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     const stringId = job(0, { id: "abc" });
     h = startHarness({ pages: [[job(4001), noId, stringId]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);

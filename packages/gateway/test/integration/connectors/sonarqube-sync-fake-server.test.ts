@@ -101,7 +101,7 @@ function startHarness(): Harness {
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url.replace("https://sonarcloud.io", fake.baseUrl);
     return originalFetch(rewritten, init);
-  }) as typeof globalThis.fetch;
+  });
   return {
     db,
     fake,
@@ -206,7 +206,7 @@ describe("sonarqube-sync against Bun.serve fake API", () => {
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const rewritten = url.replace("https://sonarcloud.io", newBase);
       return originalFetch(rewritten, init);
-    }) as typeof globalThis.fetch;
+    });
     try {
       const syncable = createSonarqubeSyncable({ ensureSonarqubeMcpRunning: async () => {} });
       const result = await syncable.sync(h.ctx, null);

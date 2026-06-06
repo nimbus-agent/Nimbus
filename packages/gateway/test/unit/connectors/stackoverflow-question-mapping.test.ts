@@ -47,7 +47,7 @@ describe("mapStackOverflowQuestionToItem", () => {
 
   test("returns null when id is missing or not a number", () => {
     const noId = makeQuestion();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapStackOverflowQuestionToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(
       mapStackOverflowQuestionToItem(makeQuestion({ id: "4242" }), { syncedAt: NOW }),
@@ -72,7 +72,7 @@ describe("mapStackOverflowQuestionToItem", () => {
 
   test("title falls back to `Question <id>` when title missing/empty", () => {
     const noTitle = makeQuestion();
-    delete (noTitle as Record<string, unknown>)["title"];
+    delete noTitle["title"];
     const row = mapStackOverflowQuestionToItem(noTitle, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Question 4242");
@@ -90,7 +90,7 @@ describe("mapStackOverflowQuestionToItem", () => {
 
   test("bodyPreview falls back to bodyMarkdown, then tag summary, then title", () => {
     const noBody = makeQuestion();
-    delete (noBody as Record<string, unknown>)["body"];
+    delete noBody["body"];
     const onMarkdown = mapStackOverflowQuestionToItem(noBody, { syncedAt: NOW });
     if (onMarkdown === null) throw new Error("expected mapping to succeed");
     expect(onMarkdown.bodyPreview).toBe(
@@ -98,16 +98,16 @@ describe("mapStackOverflowQuestionToItem", () => {
     );
 
     const noText = makeQuestion();
-    delete (noText as Record<string, unknown>)["body"];
-    delete (noText as Record<string, unknown>)["bodyMarkdown"];
+    delete noText["body"];
+    delete noText["bodyMarkdown"];
     const onTags = mapStackOverflowQuestionToItem(noText, { syncedAt: NOW });
     if (onTags === null) throw new Error("expected mapping to succeed");
     expect(onTags.bodyPreview).toBe("reliability, retries");
 
     const bare = makeQuestion();
-    delete (bare as Record<string, unknown>)["body"];
-    delete (bare as Record<string, unknown>)["bodyMarkdown"];
-    delete (bare as Record<string, unknown>)["tags"];
+    delete bare["body"];
+    delete bare["bodyMarkdown"];
+    delete bare["tags"];
     const onTitle = mapStackOverflowQuestionToItem(bare, { syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe(
@@ -130,22 +130,22 @@ describe("mapStackOverflowQuestionToItem", () => {
     expect(row.modifiedAt).toBe(ACTIVITY_MS);
 
     const noActivity = makeQuestion();
-    delete (noActivity as Record<string, unknown>)["lastActivityDate"];
+    delete noActivity["lastActivityDate"];
     const onEdit = mapStackOverflowQuestionToItem(noActivity, { syncedAt: NOW });
     if (onEdit === null) throw new Error("expected mapping to succeed");
     expect(onEdit.modifiedAt).toBe(EDIT_MS);
 
     const noEdit = makeQuestion();
-    delete (noEdit as Record<string, unknown>)["lastActivityDate"];
-    delete (noEdit as Record<string, unknown>)["lastEditDate"];
+    delete noEdit["lastActivityDate"];
+    delete noEdit["lastEditDate"];
     const onCreated = mapStackOverflowQuestionToItem(noEdit, { syncedAt: NOW });
     if (onCreated === null) throw new Error("expected mapping to succeed");
     expect(onCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makeQuestion();
-    delete (noTimes as Record<string, unknown>)["lastActivityDate"];
-    delete (noTimes as Record<string, unknown>)["lastEditDate"];
-    delete (noTimes as Record<string, unknown>)["creationDate"];
+    delete noTimes["lastActivityDate"];
+    delete noTimes["lastEditDate"];
+    delete noTimes["creationDate"];
     const fallback = mapStackOverflowQuestionToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -171,7 +171,7 @@ describe("mapStackOverflowQuestionToItem", () => {
     expect(nullUrl.url).toBeNull();
 
     const noUrl = makeQuestion();
-    delete (noUrl as Record<string, unknown>)["webUrl"];
+    delete noUrl["webUrl"];
     const missing = mapStackOverflowQuestionToItem(noUrl, { syncedAt: NOW });
     if (missing === null) throw new Error("expected mapping to succeed");
     expect(missing.canonicalUrl).toBeNull();
@@ -200,7 +200,7 @@ describe("mapStackOverflowQuestionToItem", () => {
     expect(meta(row)["owner_name"]).toBe("Ada Lovelace");
 
     const noOwner = makeQuestion();
-    delete (noOwner as Record<string, unknown>)["owner"];
+    delete noOwner["owner"];
     const missing = mapStackOverflowQuestionToItem(noOwner, { syncedAt: NOW });
     if (missing === null) throw new Error("expected mapping to succeed");
     expect(meta(missing)["owner_id"]).toBeNull();
@@ -221,11 +221,11 @@ describe("mapStackOverflowQuestionToItem", () => {
 
   test("missing numeric/bool fields are null-passthrough in metadata", () => {
     const sparse = makeQuestion();
-    delete (sparse as Record<string, unknown>)["score"];
-    delete (sparse as Record<string, unknown>)["viewCount"];
-    delete (sparse as Record<string, unknown>)["answerCount"];
-    delete (sparse as Record<string, unknown>)["isAnswered"];
-    delete (sparse as Record<string, unknown>)["tags"];
+    delete sparse["score"];
+    delete sparse["viewCount"];
+    delete sparse["answerCount"];
+    delete sparse["isAnswered"];
+    delete sparse["tags"];
     const row = mapStackOverflowQuestionToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

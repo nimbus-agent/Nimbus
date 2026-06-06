@@ -38,7 +38,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
   const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
     if (new URL(urlStr).origin !== BASE) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
+      return realFetch(input, init);
     }
     const u = new URL(urlStr);
     requests.push({
@@ -54,7 +54,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
       return new Response("error", { status: forced });
     }
     const body = config.routes?.[u.pathname] ?? {};
-    return Response.json(body as Record<string, unknown>);
+    return Response.json(body);
   }) as typeof globalThis.fetch;
   globalThis.fetch = fakeFetch;
   return { requests, fetch: fakeFetch };

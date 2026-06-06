@@ -44,8 +44,8 @@ describe("mapSemgrepFindingToItem", () => {
 
   test("returns null when both id and syntactic_id are missing", () => {
     const noIds = makeFinding();
-    delete (noIds as Record<string, unknown>)["id"];
-    delete (noIds as Record<string, unknown>)["syntactic_id"];
+    delete noIds["id"];
+    delete noIds["syntactic_id"];
     expect(mapSemgrepFindingToItem(noIds, { deploymentSlug: SLUG, syncedAt: NOW })).toBeNull();
   });
 
@@ -60,7 +60,7 @@ describe("mapSemgrepFindingToItem", () => {
 
   test("externalId falls back to syntactic_id when id is missing", () => {
     const noId = makeFinding();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     const row = mapSemgrepFindingToItem(noId, {
       deploymentSlug: SLUG,
       syncedAt: NOW,
@@ -76,14 +76,14 @@ describe("mapSemgrepFindingToItem", () => {
         syncedAt: NOW,
       });
       if (row === null) throw new Error("expected mapping to succeed");
-      expect((row.metadata as Record<string, unknown>)["severity"]).toBe(sev);
+      expect(row.metadata["severity"]).toBe(sev);
     }
     const garbage = mapSemgrepFindingToItem(makeFinding({ severity: "garbage" }), {
       deploymentSlug: SLUG,
       syncedAt: NOW,
     });
     if (garbage === null) throw new Error("expected mapping to succeed");
-    expect((garbage.metadata as Record<string, unknown>)["severity"]).toBeNull();
+    expect(garbage.metadata["severity"]).toBeNull();
   });
 
   test("confidence accepts high/medium/low only", () => {
@@ -93,7 +93,7 @@ describe("mapSemgrepFindingToItem", () => {
         syncedAt: NOW,
       });
       if (row === null) throw new Error("expected mapping to succeed");
-      expect((row.metadata as Record<string, unknown>)["confidence"]).toBe(c);
+      expect(row.metadata["confidence"]).toBe(c);
     }
   });
 
@@ -104,7 +104,7 @@ describe("mapSemgrepFindingToItem", () => {
         syncedAt: NOW,
       });
       if (row === null) throw new Error("expected mapping to succeed");
-      expect((row.metadata as Record<string, unknown>)["triage_state"]).toBe(s);
+      expect(row.metadata["triage_state"]).toBe(s);
     }
   });
 
@@ -114,7 +114,7 @@ describe("mapSemgrepFindingToItem", () => {
       syncedAt: NOW,
     });
     if (row === null) throw new Error("expected mapping to succeed");
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["file_path"]).toBe("src/api/user.js");
     expect(meta["line"]).toBe(42);
     expect(meta["end_line"]).toBe(42);
@@ -123,10 +123,10 @@ describe("mapSemgrepFindingToItem", () => {
 
   test("location absent yields null file_path / null integers", () => {
     const noLoc = makeFinding();
-    delete (noLoc as Record<string, unknown>)["location"];
+    delete noLoc["location"];
     const row = mapSemgrepFindingToItem(noLoc, { deploymentSlug: SLUG, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["file_path"]).toBeNull();
     expect(meta["line"]).toBeNull();
     expect(meta["end_line"]).toBeNull();
@@ -139,7 +139,7 @@ describe("mapSemgrepFindingToItem", () => {
       syncedAt: NOW,
     });
     if (row === null) throw new Error("expected mapping to succeed");
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["repository"]).toBe("acme/payments");
     expect(meta["repository_url"]).toBe("https://github.com/acme/payments");
   });
@@ -150,7 +150,7 @@ describe("mapSemgrepFindingToItem", () => {
       { deploymentSlug: SLUG, syncedAt: NOW },
     );
     if (row === null) throw new Error("expected mapping to succeed");
-    expect((row.metadata as Record<string, unknown>)["categories"]).toEqual([
+    expect(row.metadata["categories"]).toEqual([
       "security",
       "best-practice",
     ]);
@@ -165,8 +165,8 @@ describe("mapSemgrepFindingToItem", () => {
     expect(both.modifiedAt).toBe(Date.parse("2024-03-16T09:30:00.000Z"));
 
     const noDates = makeFinding();
-    delete (noDates as Record<string, unknown>)["relevant_since"];
-    delete (noDates as Record<string, unknown>)["created_at"];
+    delete noDates["relevant_since"];
+    delete noDates["created_at"];
     const fallback = mapSemgrepFindingToItem(noDates, {
       deploymentSlug: SLUG,
       syncedAt: NOW,
@@ -202,7 +202,7 @@ describe("mapSemgrepFindingToItem", () => {
     expect(withMsg.title).toBe("User input flows into HTTP response without escaping.");
 
     const noMsg = makeFinding();
-    delete (noMsg as Record<string, unknown>)["rule_message"];
+    delete noMsg["rule_message"];
     const row = mapSemgrepFindingToItem(noMsg, { deploymentSlug: SLUG, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("javascript.lang.security.audit.xss.direct-response-write");
@@ -210,9 +210,9 @@ describe("mapSemgrepFindingToItem", () => {
 
   test("branch falls back from ref to found_in_branch", () => {
     const noRef = makeFinding({ ref: undefined, found_in_branch: "release/2025-q1" });
-    delete (noRef as Record<string, unknown>)["ref"];
+    delete noRef["ref"];
     const row = mapSemgrepFindingToItem(noRef, { deploymentSlug: SLUG, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
-    expect((row.metadata as Record<string, unknown>)["branch"]).toBe("release/2025-q1");
+    expect(row.metadata["branch"]).toBe("release/2025-q1");
   });
 });

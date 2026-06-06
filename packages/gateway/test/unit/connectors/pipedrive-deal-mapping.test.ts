@@ -68,7 +68,7 @@ describe("mapPipedriveDealToItem", () => {
 
   test("returns null when id is missing or not a number", () => {
     const noId = makeDeal();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapPipedriveDealToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapPipedriveDealToItem(makeDeal({ id: "12345" }), { syncedAt: NOW })).toBeNull();
   });
@@ -87,7 +87,7 @@ describe("mapPipedriveDealToItem", () => {
     expect(row.title).toBe("Acme Corp — annual renewal");
 
     const noTitle = makeDeal();
-    delete (noTitle as Record<string, unknown>)["title"];
+    delete noTitle["title"];
     const fallback = mapPipedriveDealToItem(noTitle, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.title).toBe("Deal 12345");
@@ -105,34 +105,34 @@ describe("mapPipedriveDealToItem", () => {
 
   test("bodyPreview falls back to status, then org_name, then person_name, then title", () => {
     const noValue = makeDeal();
-    delete (noValue as Record<string, unknown>)["value"];
+    delete noValue["value"];
     const onStatus = mapPipedriveDealToItem(noValue, { syncedAt: NOW });
     if (onStatus === null) throw new Error("expected mapping to succeed");
     expect(onStatus.bodyPreview).toBe("open");
 
     const noStatus = makeDeal();
-    delete (noStatus as Record<string, unknown>)["value"];
-    delete (noStatus as Record<string, unknown>)["status"];
+    delete noStatus["value"];
+    delete noStatus["status"];
     const onOrg = mapPipedriveDealToItem(noStatus, { syncedAt: NOW });
     if (onOrg === null) throw new Error("expected mapping to succeed");
     expect(onOrg.bodyPreview).toBe("Acme Corporation");
 
     const noOrg = makeDeal();
-    delete (noOrg as Record<string, unknown>)["value"];
-    delete (noOrg as Record<string, unknown>)["status"];
-    delete (noOrg as Record<string, unknown>)["org_name"];
-    delete (noOrg as Record<string, unknown>)["org_id"];
+    delete noOrg["value"];
+    delete noOrg["status"];
+    delete noOrg["org_name"];
+    delete noOrg["org_id"];
     const onPerson = mapPipedriveDealToItem(noOrg, { syncedAt: NOW });
     if (onPerson === null) throw new Error("expected mapping to succeed");
     expect(onPerson.bodyPreview).toBe("Jane Roe");
 
     const bare = makeDeal();
-    delete (bare as Record<string, unknown>)["value"];
-    delete (bare as Record<string, unknown>)["status"];
-    delete (bare as Record<string, unknown>)["org_name"];
-    delete (bare as Record<string, unknown>)["org_id"];
-    delete (bare as Record<string, unknown>)["person_name"];
-    delete (bare as Record<string, unknown>)["person_id"];
+    delete bare["value"];
+    delete bare["status"];
+    delete bare["org_name"];
+    delete bare["org_id"];
+    delete bare["person_name"];
+    delete bare["person_id"];
     const onTitle = mapPipedriveDealToItem(bare, { syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe("Acme Corp — annual renewal");
@@ -156,14 +156,14 @@ describe("mapPipedriveDealToItem", () => {
     expect(row.modifiedAt).toBe(UPDATE_MS);
 
     const noUpdate = makeDeal();
-    delete (noUpdate as Record<string, unknown>)["update_time"];
+    delete noUpdate["update_time"];
     const onAdd = mapPipedriveDealToItem(noUpdate, { syncedAt: NOW });
     if (onAdd === null) throw new Error("expected mapping to succeed");
     expect(onAdd.modifiedAt).toBe(ADD_MS);
 
     const noTimes = makeDeal();
-    delete (noTimes as Record<string, unknown>)["update_time"];
-    delete (noTimes as Record<string, unknown>)["add_time"];
+    delete noTimes["update_time"];
+    delete noTimes["add_time"];
     const fallback = mapPipedriveDealToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -191,8 +191,8 @@ describe("mapPipedriveDealToItem", () => {
       person_id: { value: 777, name: "Jane Roe" },
       org_id: { value: 999, name: "Acme Corporation" },
     });
-    delete (nested as Record<string, unknown>)["person_name"];
-    delete (nested as Record<string, unknown>)["org_name"];
+    delete nested["person_name"];
+    delete nested["org_name"];
     const row = mapPipedriveDealToItem(nested, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["person_id"]).toBe(777);
@@ -222,18 +222,18 @@ describe("mapPipedriveDealToItem", () => {
 
   test("missing fields are null-passthrough in metadata", () => {
     const sparse = makeDeal();
-    delete (sparse as Record<string, unknown>)["value"];
-    delete (sparse as Record<string, unknown>)["currency"];
-    delete (sparse as Record<string, unknown>)["stage_id"];
-    delete (sparse as Record<string, unknown>)["pipeline_id"];
-    delete (sparse as Record<string, unknown>)["person_id"];
-    delete (sparse as Record<string, unknown>)["person_name"];
-    delete (sparse as Record<string, unknown>)["org_id"];
-    delete (sparse as Record<string, unknown>)["org_name"];
-    delete (sparse as Record<string, unknown>)["owner_name"];
-    delete (sparse as Record<string, unknown>)["probability"];
-    delete (sparse as Record<string, unknown>)["label"];
-    delete (sparse as Record<string, unknown>)["expected_close_date"];
+    delete sparse["value"];
+    delete sparse["currency"];
+    delete sparse["stage_id"];
+    delete sparse["pipeline_id"];
+    delete sparse["person_id"];
+    delete sparse["person_name"];
+    delete sparse["org_id"];
+    delete sparse["org_name"];
+    delete sparse["owner_name"];
+    delete sparse["probability"];
+    delete sparse["label"];
+    delete sparse["expected_close_date"];
     const row = mapPipedriveDealToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

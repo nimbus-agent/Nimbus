@@ -66,7 +66,7 @@ describe("mapIntercomConversationToItem", () => {
 
   test("returns null when id is missing or non-numeric", () => {
     const noId = makeConversation();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapIntercomConversationToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(
       mapIntercomConversationToItem(makeConversation({ id: "abc" }), { syncedAt: NOW }),
@@ -107,7 +107,7 @@ describe("mapIntercomConversationToItem", () => {
 
   test("title falls back to `Conversation <id>` when subject missing/empty", () => {
     const noSubject = makeConversation();
-    delete ((noSubject as Record<string, unknown>)["source"] as Record<string, unknown>)["subject"];
+    delete (noSubject["source"] as Record<string, unknown>)["subject"];
     const row = mapIntercomConversationToItem(noSubject, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Conversation 123456");
@@ -119,7 +119,7 @@ describe("mapIntercomConversationToItem", () => {
     expect(empty.title).toBe("Conversation 123456");
 
     const noSource = makeConversation();
-    delete (noSource as Record<string, unknown>)["source"];
+    delete noSource["source"];
     const bare = mapIntercomConversationToItem(noSource, { syncedAt: NOW });
     if (bare === null) throw new Error("expected mapping to succeed");
     expect(bare.title).toBe("Conversation 123456");
@@ -162,14 +162,14 @@ describe("mapIntercomConversationToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdated = makeConversation();
-    delete (noUpdated as Record<string, unknown>)["updated_at"];
+    delete noUpdated["updated_at"];
     const onCreated = mapIntercomConversationToItem(noUpdated, { syncedAt: NOW });
     if (onCreated === null) throw new Error("expected mapping to succeed");
     expect(onCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makeConversation();
-    delete (noTimes as Record<string, unknown>)["updated_at"];
-    delete (noTimes as Record<string, unknown>)["created_at"];
+    delete noTimes["updated_at"];
+    delete noTimes["created_at"];
     const fallback = mapIntercomConversationToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -219,7 +219,7 @@ describe("mapIntercomConversationToItem", () => {
     expect(meta(r2)["tags"]).toEqual(["ops"]);
 
     const noTags = makeConversation();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     const r3 = mapIntercomConversationToItem(noTags, { syncedAt: NOW });
     if (r3 === null) throw new Error("expected mapping to succeed");
     expect(meta(r3)["tags"]).toEqual([]);
@@ -232,15 +232,15 @@ describe("mapIntercomConversationToItem", () => {
     expect(meta(row)["team_assignee_id"]).toBe(7);
 
     const nested = makeConversation();
-    delete (nested as Record<string, unknown>)["admin_assignee_id"];
-    (nested as Record<string, unknown>)["assignee"] = { id: 4242, type: "admin" };
+    delete nested["admin_assignee_id"];
+    nested["assignee"] = { id: 4242, type: "admin" };
     const r2 = mapIntercomConversationToItem(nested, { syncedAt: NOW });
     if (r2 === null) throw new Error("expected mapping to succeed");
     expect(meta(r2)["assignee_id"]).toBe(4242);
 
     const none = makeConversation();
-    delete (none as Record<string, unknown>)["admin_assignee_id"];
-    delete (none as Record<string, unknown>)["team_assignee_id"];
+    delete none["admin_assignee_id"];
+    delete none["team_assignee_id"];
     const r3 = mapIntercomConversationToItem(none, { syncedAt: NOW });
     if (r3 === null) throw new Error("expected mapping to succeed");
     expect(meta(r3)["assignee_id"]).toBeNull();
@@ -254,8 +254,8 @@ describe("mapIntercomConversationToItem", () => {
     expect(meta(row)["read"]).toBe(false);
 
     const sparse = makeConversation();
-    delete (sparse as Record<string, unknown>)["open"];
-    (sparse as Record<string, unknown>)["read"] = "nope";
+    delete sparse["open"];
+    sparse["read"] = "nope";
     const r2 = mapIntercomConversationToItem(sparse, { syncedAt: NOW });
     if (r2 === null) throw new Error("expected mapping to succeed");
     expect(meta(r2)["open"]).toBeNull();
@@ -278,8 +278,8 @@ describe("mapIntercomConversationToItem", () => {
 
   test("missing source fields are null-passthrough in metadata", () => {
     const noSource = makeConversation();
-    delete (noSource as Record<string, unknown>)["source"];
-    delete (noSource as Record<string, unknown>)["priority"];
+    delete noSource["source"];
+    delete noSource["priority"];
     const row = mapIntercomConversationToItem(noSource, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

@@ -50,7 +50,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makeInvoice();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapStripeInvoiceToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapStripeInvoiceToItem(makeInvoice({ id: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -71,7 +71,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("title falls back to id when number missing", () => {
     const noNumber = makeInvoice();
-    delete (noNumber as Record<string, unknown>)["number"];
+    delete noNumber["number"];
     const row = mapStripeInvoiceToItem(noNumber, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Invoice in_1A2b3C — paid");
@@ -79,8 +79,8 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("title is `Invoice <id>` when number and status both missing", () => {
     const bare = makeInvoice();
-    delete (bare as Record<string, unknown>)["number"];
-    delete (bare as Record<string, unknown>)["status"];
+    delete bare["number"];
+    delete bare["status"];
     const row = mapStripeInvoiceToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Invoice in_1A2b3C");
@@ -88,7 +88,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("title drops the status clause when number present but status missing", () => {
     const noStatus = makeInvoice();
-    delete (noStatus as Record<string, unknown>)["status"];
+    delete noStatus["status"];
     const row = mapStripeInvoiceToItem(noStatus, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Invoice ABC-0001");
@@ -102,7 +102,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("bodyPreview falls back to `<name> — <amount> <CUR>` when description missing", () => {
     const noDesc = makeInvoice();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row = mapStripeInvoiceToItem(noDesc, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("ACME Corp — 12.50 USD");
@@ -110,16 +110,16 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("bodyPreview falls back to email when name missing, and amount-only when both absent", () => {
     const noName = makeInvoice();
-    delete (noName as Record<string, unknown>)["description"];
-    delete (noName as Record<string, unknown>)["customer_name"];
+    delete noName["description"];
+    delete noName["customer_name"];
     const emailRow = mapStripeInvoiceToItem(noName, { syncedAt: NOW });
     if (emailRow === null) throw new Error("expected mapping to succeed");
     expect(emailRow.bodyPreview).toBe("billing@acme.com — 12.50 USD");
 
     const noCustomer = makeInvoice();
-    delete (noCustomer as Record<string, unknown>)["description"];
-    delete (noCustomer as Record<string, unknown>)["customer_name"];
-    delete (noCustomer as Record<string, unknown>)["customer_email"];
+    delete noCustomer["description"];
+    delete noCustomer["customer_name"];
+    delete noCustomer["customer_email"];
     const amountOnly = mapStripeInvoiceToItem(noCustomer, { syncedAt: NOW });
     if (amountOnly === null) throw new Error("expected mapping to succeed");
     expect(amountOnly.bodyPreview).toBe("12.50 USD");
@@ -141,7 +141,7 @@ describe("mapStripeInvoiceToItem", () => {
     expect(row.modifiedAt).toBe(CREATED_MS);
 
     const noCreated = makeInvoice();
-    delete (noCreated as Record<string, unknown>)["created"];
+    delete noCreated["created"];
     const fallback = mapStripeInvoiceToItem(noCreated, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -150,7 +150,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("missing due_date → metadata due_date is undefined (omitted)", () => {
     const noDue = makeInvoice();
-    delete (noDue as Record<string, unknown>)["due_date"];
+    delete noDue["due_date"];
     const row = mapStripeInvoiceToItem(noDue, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["due_date"]).toBeUndefined();
@@ -171,14 +171,14 @@ describe("mapStripeInvoiceToItem", () => {
     expect(meta(hosted)["canonical_url"]).toBe(hosted.canonicalUrl);
 
     const noHosted = makeInvoice();
-    delete (noHosted as Record<string, unknown>)["hosted_invoice_url"];
+    delete noHosted["hosted_invoice_url"];
     const pdf = mapStripeInvoiceToItem(noHosted, { syncedAt: NOW });
     if (pdf === null) throw new Error("expected mapping to succeed");
     expect(pdf.canonicalUrl).toBe("https://pay.stripe.com/invoice/acct_1/in_1A2b3C/pdf");
 
     const noUrls = makeInvoice();
-    delete (noUrls as Record<string, unknown>)["hosted_invoice_url"];
-    delete (noUrls as Record<string, unknown>)["invoice_pdf"];
+    delete noUrls["hosted_invoice_url"];
+    delete noUrls["invoice_pdf"];
     const none = mapStripeInvoiceToItem(noUrls, { syncedAt: NOW });
     if (none === null) throw new Error("expected mapping to succeed");
     expect(none.canonicalUrl).toBeNull();
@@ -187,7 +187,7 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("amount/currency body formatting renders minor units → major", () => {
     const noDesc = makeInvoice({ amount_due: 999, currency: "eur" });
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row = mapStripeInvoiceToItem(noDesc, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("ACME Corp — 9.99 EUR");
@@ -195,9 +195,9 @@ describe("mapStripeInvoiceToItem", () => {
 
   test("missing customer fields are null-passthrough in metadata", () => {
     const sparse = makeInvoice();
-    delete (sparse as Record<string, unknown>)["customer"];
-    delete (sparse as Record<string, unknown>)["customer_name"];
-    delete (sparse as Record<string, unknown>)["customer_email"];
+    delete sparse["customer"];
+    delete sparse["customer_name"];
+    delete sparse["customer_email"];
     const row = mapStripeInvoiceToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["customer_id"]).toBeNull();

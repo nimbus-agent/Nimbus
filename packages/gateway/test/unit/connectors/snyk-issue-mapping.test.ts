@@ -53,7 +53,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makeIssue();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(
       mapSnykAggregatedIssueToItem(noId, {
         orgId: ORG_ID,
@@ -105,7 +105,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
       if (row === null) {
         throw new Error("expected mapping to succeed");
       }
-      expect((row.metadata as Record<string, unknown>)["severity"]).toBe(sev);
+      expect(row.metadata["severity"]).toBe(sev);
     }
   });
 
@@ -120,7 +120,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["severity"]).toBeNull();
+    expect(row.metadata["severity"]).toBeNull();
   });
 
   test("cve_id surfaces the first CVE identifier; null when none assigned", () => {
@@ -132,7 +132,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (withCve === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((withCve.metadata as Record<string, unknown>)["cve_id"]).toBe("CVE-2020-8203");
+    expect(withCve.metadata["cve_id"]).toBe("CVE-2020-8203");
 
     const noIdentifiers = makeIssue();
     (noIdentifiers["issueData"] as Record<string, unknown>)["identifiers"] = { CVE: [] };
@@ -144,7 +144,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["cve_id"]).toBeNull();
+    expect(row.metadata["cve_id"]).toBeNull();
   });
 
   test("affected_package surfaces pkgName + pkgVersions", () => {
@@ -156,7 +156,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["affected_package"]).toBe("lodash");
     expect(meta["affected_versions"]).toEqual(["4.17.20"]);
   });
@@ -170,7 +170,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (fixable === null) {
       throw new Error("expected mapping to succeed");
     }
-    const fm = fixable.metadata as Record<string, unknown>;
+    const fm = fixable.metadata;
     expect(fm["fix_available"]).toBe(true);
     expect(fm["fix_version"]).toBe("4.17.21");
 
@@ -185,7 +185,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const um = row.metadata as Record<string, unknown>;
+    const um = row.metadata;
     expect(um["fix_available"]).toBe(false);
     expect(um["fix_version"]).toBeNull();
   });
@@ -199,7 +199,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["project_id"]).toBe(PROJECT_ID);
     expect(meta["org_id"]).toBe(ORG_ID);
     expect(meta["type"]).toBe("vuln");
@@ -215,7 +215,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["disclosed_at"]).toBe("2020-07-15T00:00:00.000Z");
     expect(meta["published_at"]).toBe("2020-07-16T12:00:00.000Z");
     expect(row.modifiedAt).toBe(Date.parse("2020-07-15T00:00:00.000Z"));

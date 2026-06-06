@@ -698,7 +698,7 @@ describe("gitlab-sync — phase machine + cycle", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       throw new Error(`unexpected request: ${u}`);
-    }) as typeof globalThis.fetch;
+    });
 
     try {
       const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

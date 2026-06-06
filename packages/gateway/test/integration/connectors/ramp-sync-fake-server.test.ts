@@ -153,7 +153,7 @@ function withRampHostRewrite<T>(host: string, run: () => Promise<T>): Promise<T>
     const url = typeof input === "string" ? input : input.toString();
     const rewritten = url.replace("https://api.ramp.com", host);
     return realFetch(rewritten, init);
-  }) as typeof fetch;
+  });
   return run().finally(() => {
     globalThis.fetch = realFetch;
   });

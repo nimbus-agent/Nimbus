@@ -113,7 +113,7 @@ function reference(key: string, over: Record<string, unknown> = {}): Record<stri
       collections: ["COLL01"],
       dateModified: "2024-03-02T08:00:00Z",
       dateAdded: "2024-03-01T12:00:00Z",
-      ...((dataOver as Record<string, unknown> | undefined) ?? {}),
+      ...(dataOver ?? {}),
     },
   };
 }
@@ -129,7 +129,7 @@ function withRewrittenFetch(fakeBase: string): () => void {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://api.zotero.org", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = original;
   };

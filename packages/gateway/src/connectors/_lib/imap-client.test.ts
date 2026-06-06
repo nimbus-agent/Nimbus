@@ -16,7 +16,7 @@ import {
 
 /** Build a partial BODYSTRUCTURE node; the connector only reads a few fields. */
 function node(partial: Partial<MessageStructureObject>): MessageStructureObject {
-  return partial as MessageStructureObject;
+  return partial as MessageStructureObject; // NOSONAR S4325: Partial→full assertion required under exactOptionalPropertyTypes
 }
 
 describe("capPreview", () => {
@@ -295,7 +295,7 @@ describe("fetchImapMessages", () => {
         password: "p",
         mailbox: "INBOX",
         secure: false,
-      } as unknown as ImapConnectionConfig,
+      },
       1,
     );
     expect(out.ok).toBe(false);

@@ -19,7 +19,7 @@ function makeCtx(opts: {
   } as unknown as Logger;
   const rateLimiter = {
     async acquire(serviceId: string): Promise<void> {
-      opts.acquired.acquired.push(serviceId as string);
+      opts.acquired.acquired.push(serviceId);
     },
   };
   return {

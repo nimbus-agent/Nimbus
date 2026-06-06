@@ -23,7 +23,7 @@ function fakeLoader(state: LoaderState): (cacheDir: string) => Promise<FeatureEx
     return (async (texts: string[], options: unknown) => {
       state.calls.push({ texts, options });
       return state.tensor;
-    }) as unknown as FeatureExtractionPipe;
+    });
   };
 }
 
@@ -41,7 +41,7 @@ describe("model.ts constants", () => {
 describe("createLocalEmbedder", () => {
   test("uses options.cacheDir and embeds rows", async () => {
     const state: LoaderState = {
-      tensor: { data: new Float32Array([0.5, 0.25]), dims: [1, 2] } as FakeTensor,
+      tensor: { data: new Float32Array([0.5, 0.25]), dims: [1, 2] },
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
     const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
@@ -61,7 +61,7 @@ describe("createLocalEmbedder", () => {
   test("NIMBUS_EMBEDDING_MODEL_DIR overrides the cache dir", async () => {
     process.env["NIMBUS_EMBEDDING_MODEL_DIR"] = "/override/dir";
     const state: LoaderState = {
-      tensor: { data: new Float32Array([1]), dims: [1, 1] } as FakeTensor,
+      tensor: { data: new Float32Array([1]), dims: [1, 1] },
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
     await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
@@ -70,7 +70,7 @@ describe("createLocalEmbedder", () => {
 
   test("tensorToRowVectors throws on a rank-1 tensor", async () => {
     const state: LoaderState = {
-      tensor: { data: new Float32Array([1, 2]), dims: [2] } as FakeTensor, // rank 1
+      tensor: { data: new Float32Array([1, 2]), dims: [2] }, // rank 1
       calls: [] as Array<{ texts: string[]; options: unknown }>,
     };
     const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));

@@ -60,7 +60,7 @@ export class MockFetch {
     }
     this.original = globalThis.fetch;
     globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
-      this.handle(input, init)) as typeof globalThis.fetch;
+      this.handle(input, init));
   }
 
   restore(): void {

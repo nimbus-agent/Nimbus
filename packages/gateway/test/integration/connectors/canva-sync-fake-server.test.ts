@@ -36,7 +36,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
     const urlStr = typeof input === "string" ? input : input.toString();
     // Only intercept Canva host; everything else falls through to the real fetch.
     if (new URL(urlStr).origin !== BASE) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
+      return realFetch(input, init);
     }
     const u = new URL(urlStr);
     const continuation = u.searchParams.get("continuation");
@@ -190,7 +190,7 @@ describe("canva-sync against a fake api.canva.com", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== BASE) {
-        return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
+        return realFetchLocal(input, init);
       }
       h?.fake.requests.push({
         method: init?.method ?? "GET",
@@ -203,7 +203,7 @@ describe("canva-sync against a fake api.canva.com", () => {
         return Response.json({ items: [design("1", "Alpha")], continuation: "p2" });
       }
       return new Response("boom", { status: 500 });
-    }) as typeof globalThis.fetch;
+    });
     await setOAuth(h);
 
     const syncable = createCanvaSyncable({ ensureCanvaMcpRunning: async () => {} });

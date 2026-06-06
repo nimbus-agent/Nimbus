@@ -238,7 +238,7 @@ describe("zendesk-sync against Bun.serve fake API", () => {
 
   test("a ticket missing its id is skipped, well-formed siblings still upsert", async () => {
     const noId = ticket(0);
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     h = startHarness({ pages: [[noId, ticket(7)]] });
     await seedCreds(h);
     const syncable = createZendeskSyncable({ ensureZendeskMcpRunning: async () => {} });

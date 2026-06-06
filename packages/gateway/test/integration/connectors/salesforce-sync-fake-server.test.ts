@@ -56,7 +56,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
     const urlStr = typeof input === "string" ? input : input.toString();
     // Only intercept the Salesforce instance host; everything else falls through.
     if (new URL(urlStr).origin !== INSTANCE_URL) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
+      return realFetch(input, init);
     }
     const u = new URL(urlStr);
     requests.push({
@@ -239,7 +239,7 @@ describe("salesforce-sync against a fake instance host", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== INSTANCE_URL) {
-        return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
+        return realFetchLocal(input, init);
       }
       h?.fake.requests.push({
         method: init?.method ?? "GET",
@@ -257,7 +257,7 @@ describe("salesforce-sync against a fake instance host", () => {
         });
       }
       return new Response("boom", { status: 500 });
-    }) as typeof globalThis.fetch;
+    });
     await setOAuth(h);
 
     const syncable = createSalesforceSyncable({ ensureSalesforceMcpRunning: async () => {} });

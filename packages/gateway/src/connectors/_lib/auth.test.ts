@@ -18,7 +18,7 @@ describe("BearerPat", () => {
 describe("QueryStringToken", () => {
   test("appends token to URL as query param", async () => {
     const p = new QueryStringToken("api_token", async () => "secret");
-    const url = await p.applyToUrl!(new URL("https://api/items"));
+    const url = await p.applyToUrl(new URL("https://api/items"));
     expect(url.searchParams.get("api_token")).toBe("secret");
   });
 });

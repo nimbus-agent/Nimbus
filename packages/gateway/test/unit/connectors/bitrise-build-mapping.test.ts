@@ -47,7 +47,7 @@ describe("mapBitriseAppToItem", () => {
 
   test("returns null when slug is missing or empty", () => {
     const noSlug = makeApp();
-    delete (noSlug as Record<string, unknown>)["slug"];
+    delete noSlug["slug"];
     expect(mapBitriseAppToItem(noSlug, NOW)).toBeNull();
     expect(mapBitriseAppToItem(makeApp({ slug: "" }), NOW)).toBeNull();
   });
@@ -97,7 +97,7 @@ describe("mapBitriseBuildToItem", () => {
 
   test("returns null when slug is missing or empty", () => {
     const noSlug = makeBuild();
-    delete (noSlug as Record<string, unknown>)["slug"];
+    delete noSlug["slug"];
     expect(mapBitriseBuildToItem(noSlug, { appSlug: APP_SLUG, syncedAt: NOW })).toBeNull();
     expect(
       mapBitriseBuildToItem(makeBuild({ slug: "" }), { appSlug: APP_SLUG, syncedAt: NOW }),

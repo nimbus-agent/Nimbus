@@ -39,6 +39,27 @@ will be recorded here.
 |---|---|---|---|
 | _none_ | Sonar Way verified clean for B3 scope | 2026-05-01 | `sonar-project.properties` |
 
+### PR 6 — S4325 inline `// NOSONAR` (Sonar-vs-`tsc` divergence)
+
+S4325 ("unnecessary cast — does not change the type") had 622 sites. The vast
+majority were genuinely redundant and were **removed in code** (no suppression).
+A small set were Sonar **false positives**: removing the cast makes `tsc` fail,
+because Sonar's type model lacks the strict-mode features our `tsconfig` enables
+(`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`), full third-party lib
+types, or Bun's mock types. For these — and only these — the cast is restored
+with an inline `// NOSONAR S4325: <reason>`. `tsc` is the oracle: each NOSONAR
+marks a line that does **not** compile without the cast.
+
+| Site | Cast | Why `tsc` needs it |
+|---|---|---|
+| `gateway/src/connectors/_lib/imap-client.test.ts` | `partial as MessageStructureObject` | `Partial<T>`→`T` under `exactOptionalPropertyTypes` |
+| `gateway/src/connectors/pagerduty-sync.test.ts` (×4) | `x as string` | `string \| undefined` (captured var / `noUncheckedIndexedAccess` index) |
+| `gateway/src/ipc/agents-rpc.test.ts` (×4) | `ctx.notify as ReturnType<typeof mock>` | exposes the Bun mock's `.mock.calls` |
+| `gateway/src/ipc/server/vault-dispatch.test.ts` (×2) | `db as never` | minimal `{close}` stub widened to `Database` |
+| `gateway/src/people/linker.test.ts` | `idA as string` | `idA` is `string \| null`; `toBe` expects `string` |
+| `gateway/src/embedding/load-feature-extraction-pipeline.ts` | `as unknown as FeatureExtractionPipe` | bridges `@xenova` `FeatureExtractionPipeline` to the local interface |
+| `gateway/src/perf/process-spawn-bench.ts` | `as unknown as ProcSubset` | bridges Bun `Subprocess` (`stdout?`) to `ProcSubset` |
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)

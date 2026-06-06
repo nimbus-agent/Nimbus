@@ -45,7 +45,7 @@ describe("mapLaunchDarklyFlagToItem", () => {
 
   test("returns null when key is missing or empty", () => {
     const noKey = makeFlag();
-    delete (noKey as Record<string, unknown>)["key"];
+    delete noKey["key"];
     expect(
       mapLaunchDarklyFlagToItem(noKey, { baseUrl: BASE, projectKey: "default", syncedAt: NOW }),
     ).toBeNull();
@@ -80,7 +80,7 @@ describe("mapLaunchDarklyFlagToItem", () => {
     expect(withName.title).toBe("Enable new checkout");
 
     const noName = makeFlag();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row = mapLaunchDarklyFlagToItem(noName, {
       baseUrl: BASE,
       projectKey: "default",
@@ -92,7 +92,7 @@ describe("mapLaunchDarklyFlagToItem", () => {
 
   test("bodyPreview from description; falls back to title", () => {
     const noDesc = makeFlag();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row = mapLaunchDarklyFlagToItem(noDesc, {
       baseUrl: BASE,
       projectKey: "default",
@@ -170,7 +170,7 @@ describe("mapLaunchDarklyFlagToItem", () => {
     expect(createdOnly.modifiedAt).toBe(1_700_000_000_000);
 
     const noDates = makeFlag({ environments: {} });
-    delete (noDates as Record<string, unknown>)["creationDate"];
+    delete noDates["creationDate"];
     const fallback = mapLaunchDarklyFlagToItem(noDates, {
       baseUrl: BASE,
       projectKey: "default",

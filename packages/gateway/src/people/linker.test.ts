@@ -105,12 +105,12 @@ describe("mergePeople", () => {
       ],
     );
     const survivor = mergePeople(db, idA as string, idB as string);
-    expect(survivor).toBe(idA as string);
+    expect(survivor).toBe(idA as string); // NOSONAR S4325: idA is string|null; toBe's expected param is typed string
     expect(getPersonById(db, idB as string)).toBeNull();
     const row = db.query("SELECT author_id FROM item WHERE id = ?").get("github:x") as {
       author_id: string | null;
     };
-    expect(row.author_id).toBe(idA as string);
+    expect(row.author_id).toBe(idA);
   });
 
   test("rejects conflicting emails", () => {

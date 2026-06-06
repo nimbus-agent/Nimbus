@@ -64,7 +64,7 @@ describe("mapMlflowModelToItem", () => {
 
   test("returns null when name is missing or not a string", () => {
     const noName = makeModel();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     expect(mapMlflowModelToItem(noName, ctx())).toBeNull();
     expect(mapMlflowModelToItem(makeModel({ name: 555 }), ctx())).toBeNull();
   });
@@ -91,7 +91,7 @@ describe("mapMlflowModelToItem", () => {
     expect(row.bodyPreview).toBe("Detects fraudulent transactions");
 
     const noDesc = makeModel();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row2 = mapMlflowModelToItem(noDesc, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["description"]).toBeNull();
@@ -105,8 +105,8 @@ describe("mapMlflowModelToItem", () => {
     expect(meta(row)["updated_at"]).toBe(UPDATED_MS);
 
     const noTs = makeModel();
-    delete (noTs as Record<string, unknown>)["creation_timestamp"];
-    delete (noTs as Record<string, unknown>)["last_updated_timestamp"];
+    delete noTs["creation_timestamp"];
+    delete noTs["last_updated_timestamp"];
     const row2 = mapMlflowModelToItem(noTs, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["created_at"]).toBeNull();
@@ -157,7 +157,7 @@ describe("mapMlflowModelToItem", () => {
 
   test("missing latest_versions: count 0, all latest_* null, summary says 'no versions'", () => {
     const noVersions = makeModel();
-    delete (noVersions as Record<string, unknown>)["latest_versions"];
+    delete noVersions["latest_versions"];
     const row = mapMlflowModelToItem(noVersions, ctx());
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);
@@ -182,7 +182,7 @@ describe("mapMlflowModelToItem", () => {
     expect(meta(row)["tags"]).toEqual(["team=ml-platform", "tier=1"]);
 
     const noTags = makeModel();
-    delete (noTags as Record<string, unknown>)["tags"];
+    delete noTags["tags"];
     const row2 = mapMlflowModelToItem(noTags, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["tags"]).toEqual([]);
@@ -203,14 +203,14 @@ describe("mapMlflowModelToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const onlyCreated = makeModel();
-    delete (onlyCreated as Record<string, unknown>)["last_updated_timestamp"];
+    delete onlyCreated["last_updated_timestamp"];
     const row2 = mapMlflowModelToItem(onlyCreated, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(row2.modifiedAt).toBe(CREATED_MS);
 
     const neither = makeModel();
-    delete (neither as Record<string, unknown>)["creation_timestamp"];
-    delete (neither as Record<string, unknown>)["last_updated_timestamp"];
+    delete neither["creation_timestamp"];
+    delete neither["last_updated_timestamp"];
     const row3 = mapMlflowModelToItem(neither, ctx());
     if (row3 === null) throw new Error("expected mapping to succeed");
     expect(row3.modifiedAt).toBe(NOW);

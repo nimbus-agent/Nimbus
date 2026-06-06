@@ -45,7 +45,7 @@ describe("mapReadwiseHighlightToItem", () => {
 
   test("returns null when id is missing or not a number", () => {
     const noId = makeHighlight();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapReadwiseHighlightToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapReadwiseHighlightToItem(makeHighlight({ id: "123" }), { syncedAt: NOW })).toBeNull();
   });
@@ -82,7 +82,7 @@ describe("mapReadwiseHighlightToItem", () => {
 
   test("title falls back to `Highlight <id>` when text missing/empty", () => {
     const noText = makeHighlight();
-    delete (noText as Record<string, unknown>)["text"];
+    delete noText["text"];
     const row = mapReadwiseHighlightToItem(noText, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Highlight 123456");
@@ -100,7 +100,7 @@ describe("mapReadwiseHighlightToItem", () => {
 
   test("bodyPreview falls back to the highlight text when note missing/empty", () => {
     const noNote = makeHighlight();
-    delete (noNote as Record<string, unknown>)["note"];
+    delete noNote["note"];
     const row = mapReadwiseHighlightToItem(noNote, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("Exponential backoff with jitter avoids thundering-herd retries");
@@ -126,14 +126,14 @@ describe("mapReadwiseHighlightToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdated = makeHighlight();
-    delete (noUpdated as Record<string, unknown>)["updated"];
+    delete noUpdated["updated"];
     const onlyHighlighted = mapReadwiseHighlightToItem(noUpdated, { syncedAt: NOW });
     if (onlyHighlighted === null) throw new Error("expected mapping to succeed");
     expect(onlyHighlighted.modifiedAt).toBe(HIGHLIGHTED_MS);
 
     const noTimes = makeHighlight();
-    delete (noTimes as Record<string, unknown>)["updated"];
-    delete (noTimes as Record<string, unknown>)["highlighted_at"];
+    delete noTimes["updated"];
+    delete noTimes["highlighted_at"];
     const fallback = mapReadwiseHighlightToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -157,7 +157,7 @@ describe("mapReadwiseHighlightToItem", () => {
     expect(nullUrl.url).toBeNull();
 
     const noUrl = makeHighlight();
-    delete (noUrl as Record<string, unknown>)["url"];
+    delete noUrl["url"];
     const missing = mapReadwiseHighlightToItem(noUrl, { syncedAt: NOW });
     if (missing === null) throw new Error("expected mapping to succeed");
     expect(missing.canonicalUrl).toBeNull();
@@ -195,12 +195,12 @@ describe("mapReadwiseHighlightToItem", () => {
 
   test("missing fields are null-passthrough in metadata", () => {
     const sparse = makeHighlight();
-    delete (sparse as Record<string, unknown>)["note"];
-    delete (sparse as Record<string, unknown>)["location"];
-    delete (sparse as Record<string, unknown>)["location_type"];
-    delete (sparse as Record<string, unknown>)["color"];
-    delete (sparse as Record<string, unknown>)["book_id"];
-    delete (sparse as Record<string, unknown>)["tags"];
+    delete sparse["note"];
+    delete sparse["location"];
+    delete sparse["location_type"];
+    delete sparse["color"];
+    delete sparse["book_id"];
+    delete sparse["tags"];
     const row = mapReadwiseHighlightToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

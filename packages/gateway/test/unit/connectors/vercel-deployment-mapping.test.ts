@@ -42,7 +42,7 @@ describe("mapVercelDeploymentToItem", () => {
 
   test("returns null when uid is missing or empty", () => {
     const noUid = makeDeployment();
-    delete (noUid as Record<string, unknown>)["uid"];
+    delete noUid["uid"];
     expect(mapVercelDeploymentToItem(noUid, { syncedAt: NOW })).toBeNull();
     expect(mapVercelDeploymentToItem(makeDeployment({ uid: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -61,7 +61,7 @@ describe("mapVercelDeploymentToItem", () => {
     expect(withName.title).toBe("my-app — READY");
 
     const noName = makeDeployment();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     const row = mapVercelDeploymentToItem(noName, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Deployment dpl_abc123");
@@ -76,7 +76,7 @@ describe("mapVercelDeploymentToItem", () => {
     expect(meta(row)["state"]).toBe("READY");
 
     const noReady = makeDeployment({ state: "ERROR" });
-    delete (noReady as Record<string, unknown>)["readyState"];
+    delete noReady["readyState"];
     const fallback = mapVercelDeploymentToItem(noReady, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(meta(fallback)["state"]).toBe("ERROR");
@@ -88,7 +88,7 @@ describe("mapVercelDeploymentToItem", () => {
     expect(row.bodyPreview).toBe("Ship the redesigned checkout flow");
 
     const noMeta = makeDeployment();
-    delete (noMeta as Record<string, unknown>)["meta"];
+    delete noMeta["meta"];
     const bare = mapVercelDeploymentToItem(noMeta, { syncedAt: NOW });
     if (bare === null) throw new Error("expected mapping to succeed");
     expect(bare.bodyPreview).toBe("");
@@ -110,8 +110,8 @@ describe("mapVercelDeploymentToItem", () => {
     expect(m["created_at"]).toBe(1_700_000_000_000);
 
     const noMetaNoCreator = makeDeployment();
-    delete (noMetaNoCreator as Record<string, unknown>)["meta"];
-    delete (noMetaNoCreator as Record<string, unknown>)["creator"];
+    delete noMetaNoCreator["meta"];
+    delete noMetaNoCreator["creator"];
     const sparse = mapVercelDeploymentToItem(noMetaNoCreator, { syncedAt: NOW });
     if (sparse === null) throw new Error("expected mapping to succeed");
     expect(meta(sparse)["commit_sha"]).toBeNull();
@@ -132,7 +132,7 @@ describe("mapVercelDeploymentToItem", () => {
 
   test("target is null-passthrough when absent", () => {
     const noTarget = makeDeployment();
-    delete (noTarget as Record<string, unknown>)["target"];
+    delete noTarget["target"];
     const row = mapVercelDeploymentToItem(noTarget, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["target"]).toBeNull();
@@ -148,7 +148,7 @@ describe("mapVercelDeploymentToItem", () => {
 
   test("canonicalUrl falls back to https://<host> when inspectorUrl missing", () => {
     const noInspector = makeDeployment();
-    delete (noInspector as Record<string, unknown>)["inspectorUrl"];
+    delete noInspector["inspectorUrl"];
     const row = mapVercelDeploymentToItem(noInspector, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBe("https://my-app-abc123.vercel.app");
@@ -156,8 +156,8 @@ describe("mapVercelDeploymentToItem", () => {
 
   test("canonicalUrl is null when both inspectorUrl and host are missing", () => {
     const bare = makeDeployment();
-    delete (bare as Record<string, unknown>)["inspectorUrl"];
-    delete (bare as Record<string, unknown>)["url"];
+    delete bare["inspectorUrl"];
+    delete bare["url"];
     const row = mapVercelDeploymentToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.canonicalUrl).toBeNull();
@@ -170,7 +170,7 @@ describe("mapVercelDeploymentToItem", () => {
     expect(row.modifiedAt).toBe(1_700_000_000_000);
 
     const noCreated = makeDeployment();
-    delete (noCreated as Record<string, unknown>)["created"];
+    delete noCreated["created"];
     const fallback = mapVercelDeploymentToItem(noCreated, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);

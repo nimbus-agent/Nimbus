@@ -122,7 +122,7 @@ function withRewrittenFetch(fakeBase: string): () => void {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://api.lever.co", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = original;
   };
@@ -203,8 +203,8 @@ describe("lever-sync against Bun.serve fake API", () => {
 
   test("the hostedUrl is the canonical url; missing-url postings → null", async () => {
     const noUrl = posting("uuid-2", {});
-    delete (noUrl as Record<string, unknown>)["hostedUrl"];
-    delete (noUrl as Record<string, unknown>)["applyUrl"];
+    delete noUrl["hostedUrl"];
+    delete noUrl["applyUrl"];
     h = startHarness({ pages: [[posting("uuid-1"), noUrl]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("lever.api_key", "k");
@@ -228,7 +228,7 @@ describe("lever-sync against Bun.serve fake API", () => {
 
   test("missing-id rows are skipped", async () => {
     const noId = posting("");
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     h = startHarness({ pages: [[posting("uuid-1"), noId]] });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.ctx.vault.set("lever.api_key", "k");

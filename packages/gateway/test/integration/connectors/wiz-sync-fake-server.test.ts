@@ -119,7 +119,7 @@ function startHarness(config: FakeWizConfig): Harness {
       .replace("https://auth.app.wiz.io", fake.baseUrl)
       .replace("https://api.app.wiz.io", fake.baseUrl);
     return originalFetch(rewritten, init);
-  }) as typeof globalThis.fetch;
+  });
   return {
     db,
     fake,

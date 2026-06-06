@@ -24,7 +24,7 @@ function makeTxn(over: Record<string, unknown> = {}): Record<string, unknown> {
       first_name: "Ada",
       last_name: "Lovelace",
       department_name: "Engineering",
-      ...((holderOver as Record<string, unknown> | undefined) ?? {}),
+      ...(holderOver ?? {}),
     },
   };
 }
@@ -44,7 +44,7 @@ describe("mapRampTransactionToItem", () => {
 
   test("returns null when id is missing/empty", () => {
     const noId = makeTxn();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapRampTransactionToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapRampTransactionToItem(makeTxn({ id: "" }), { syncedAt: NOW })).toBeNull();
   });
@@ -65,7 +65,7 @@ describe("mapRampTransactionToItem", () => {
 
   test("title falls back to `Ramp transaction — <amount>` when merchant missing", () => {
     const noMerchant = makeTxn();
-    delete (noMerchant as Record<string, unknown>)["merchant_name"];
+    delete noMerchant["merchant_name"];
     const row = mapRampTransactionToItem(noMerchant, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Ramp transaction — 4212.55 USD");
@@ -73,8 +73,8 @@ describe("mapRampTransactionToItem", () => {
 
   test("title is bare `Ramp transaction` when amount + merchant both missing", () => {
     const bare = makeTxn();
-    delete (bare as Record<string, unknown>)["merchant_name"];
-    delete (bare as Record<string, unknown>)["amount"];
+    delete bare["merchant_name"];
+    delete bare["amount"];
     const row = mapRampTransactionToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Ramp transaction");
@@ -96,14 +96,14 @@ describe("mapRampTransactionToItem", () => {
 
   test("bodyPreview falls back to merchant then title when memo missing", () => {
     const noMemo = makeTxn();
-    delete (noMemo as Record<string, unknown>)["memo"];
+    delete noMemo["memo"];
     const row = mapRampTransactionToItem(noMemo, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("Amazon Web Services");
 
     const noMemoNoMerchant = makeTxn();
-    delete (noMemoNoMerchant as Record<string, unknown>)["memo"];
-    delete (noMemoNoMerchant as Record<string, unknown>)["merchant_name"];
+    delete noMemoNoMerchant["memo"];
+    delete noMemoNoMerchant["merchant_name"];
     const row2 = mapRampTransactionToItem(noMemoNoMerchant, { syncedAt: NOW });
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(row2.bodyPreview).toBe(row2.title);
@@ -115,7 +115,7 @@ describe("mapRampTransactionToItem", () => {
     expect(meta(row)["user_transaction_time"]).toBe(TXN_MS);
 
     const noTime = makeTxn();
-    delete (noTime as Record<string, unknown>)["user_transaction_time"];
+    delete noTime["user_transaction_time"];
     const row2 = mapRampTransactionToItem(noTime, { syncedAt: NOW });
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["user_transaction_time"]).toBeNull();
@@ -127,7 +127,7 @@ describe("mapRampTransactionToItem", () => {
     expect(row.modifiedAt).toBe(TXN_MS);
 
     const noTime = makeTxn();
-    delete (noTime as Record<string, unknown>)["user_transaction_time"];
+    delete noTime["user_transaction_time"];
     const fallback = mapRampTransactionToItem(noTime, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -161,13 +161,13 @@ describe("mapRampTransactionToItem", () => {
 
   test("missing optional fields are null-passthrough in metadata", () => {
     const sparse = makeTxn();
-    delete (sparse as Record<string, unknown>)["amount"];
-    delete (sparse as Record<string, unknown>)["currency_code"];
-    delete (sparse as Record<string, unknown>)["merchant_name"];
-    delete (sparse as Record<string, unknown>)["state"];
-    delete (sparse as Record<string, unknown>)["sk_category_name"];
-    delete (sparse as Record<string, unknown>)["memo"];
-    delete (sparse as Record<string, unknown>)["card_holder"];
+    delete sparse["amount"];
+    delete sparse["currency_code"];
+    delete sparse["merchant_name"];
+    delete sparse["state"];
+    delete sparse["sk_category_name"];
+    delete sparse["memo"];
+    delete sparse["card_holder"];
     const row = mapRampTransactionToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

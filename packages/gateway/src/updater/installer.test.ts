@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  buildInstallerCommand,
-  type InstallerCommandSubprocess,
-  type Platform,
-} from "./installer.ts";
+import { buildInstallerCommand, type InstallerCommandSubprocess } from "./installer.ts";
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "nimbus-installer-"));
@@ -17,7 +13,7 @@ describe("buildInstallerCommand", () => {
     const dir = tmp();
     const pkg = join(dir, "nimbus-0.2.0.pkg");
     writeFileSync(pkg, "");
-    const cmd = buildInstallerCommand("darwin" as Platform, pkg);
+    const cmd = buildInstallerCommand("darwin", pkg);
     expect(cmd.kind).toBe("subprocess");
     const subprocess = cmd as InstallerCommandSubprocess;
     expect(subprocess.argv[0]).toBe("open");
@@ -29,7 +25,7 @@ describe("buildInstallerCommand", () => {
     const dir = tmp();
     const deb = join(dir, "nimbus_0.2.0_amd64.deb");
     writeFileSync(deb, "");
-    const cmd = buildInstallerCommand("linux" as Platform, deb);
+    const cmd = buildInstallerCommand("linux", deb);
     expect(cmd.kind).toBe("subprocess");
     const subprocess = cmd as InstallerCommandSubprocess;
     expect(subprocess.argv[0]).toBe("sudo");
@@ -40,7 +36,7 @@ describe("buildInstallerCommand", () => {
     const dir = tmp();
     const tar = join(dir, "nimbus-0.2.0-x86_64.tar.gz");
     writeFileSync(tar, "");
-    const cmd = buildInstallerCommand("linux" as Platform, tar);
+    const cmd = buildInstallerCommand("linux", tar);
     expect(cmd.kind).toBe("replace-in-place");
   });
 
@@ -48,7 +44,7 @@ describe("buildInstallerCommand", () => {
     const dir = tmp();
     const exe = join(dir, "nimbus-0.2.0-setup.exe");
     writeFileSync(exe, "");
-    const cmd = buildInstallerCommand("win32" as Platform, exe);
+    const cmd = buildInstallerCommand("win32", exe);
     expect(cmd.kind).toBe("subprocess");
     const subprocess = cmd as InstallerCommandSubprocess;
     expect(subprocess.argv[0]).toBe(exe);
@@ -59,7 +55,7 @@ describe("buildInstallerCommand", () => {
     const dir = tmp();
     const bogus = join(dir, "nimbus-0.2.0.foo");
     writeFileSync(bogus, "");
-    expect(() => buildInstallerCommand("linux" as Platform, bogus)).toThrow(/unsupported/i);
+    expect(() => buildInstallerCommand("linux", bogus)).toThrow(/unsupported/i);
   });
 });
 

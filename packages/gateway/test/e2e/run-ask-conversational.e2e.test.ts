@@ -25,14 +25,14 @@ function baseParams(
       socketPath: "/s",
       extensionsDir: "/e",
       tempDir: "/t",
-    } as PlatformPaths,
+    },
     consentCoordinator: {
       requestConsent: async () => false,
       rejectAllPending: () => {
         /* noop */
       },
       pendingCount: () => 0,
-    } as ConsentCoordinator,
+    },
     localIndex: {
       recordAudit: (): void => {
         /* ToolExecutor writes audit before connector dispatch */
@@ -40,7 +40,7 @@ function baseParams(
     } as unknown as LocalIndex,
     dispatcher: {
       dispatch: async () => ({}),
-    } as ConnectorDispatcher,
+    },
     sendChunk,
   };
 }
@@ -174,7 +174,7 @@ describe("runAsk conversational routing (e2e-style)", () => {
         /* noop */
       }),
       conversationalAgent: agent,
-      dispatcher: { dispatch } as unknown as ConnectorDispatcher,
+      dispatcher: { dispatch },
     });
 
     expect(dispatch).toHaveBeenCalled();

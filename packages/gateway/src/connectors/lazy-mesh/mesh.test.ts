@@ -191,7 +191,7 @@ function makeFakeMcpClient(opts: {
       return listToolsCalls;
     },
   };
-  return fake as FakeMcpClient & { disconnectCalls: number; listToolsCalls: number };
+  return fake;
 }
 
 function asPrivate(m: LazyConnectorMesh): {

@@ -16,7 +16,7 @@ function board(over: Record<string, unknown> = {}): Record<string, unknown> {
     ...rootOver,
     owner: {
       name: "Ada Lovelace",
-      ...((ownerOver as Record<string, unknown> | undefined) ?? {}),
+      ...(ownerOver ?? {}),
     },
   };
 }

@@ -66,7 +66,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (originalWorker === undefined) {
-    Reflect.deleteProperty(globalThis as object, "Worker");
+    Reflect.deleteProperty(globalThis, "Worker");
   } else {
     (globalThis as unknown as { Worker: unknown }).Worker = originalWorker;
   }
@@ -273,7 +273,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     } finally {
       bridge.terminate();
       if (originalOrigin === undefined) {
-        Reflect.deleteProperty(g as object, "origin");
+        Reflect.deleteProperty(g, "origin");
       } else {
         Object.defineProperty(g, "origin", {
           value: originalOrigin,

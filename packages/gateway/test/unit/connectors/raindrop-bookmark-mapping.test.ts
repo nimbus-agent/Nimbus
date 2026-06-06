@@ -43,7 +43,7 @@ describe("mapRaindropBookmarkToItem", () => {
 
   test("returns null when _id is missing or not a number", () => {
     const noId = makeBookmark();
-    delete (noId as Record<string, unknown>)["_id"];
+    delete noId["_id"];
     expect(mapRaindropBookmarkToItem(noId, { syncedAt: NOW })).toBeNull();
     expect(mapRaindropBookmarkToItem(makeBookmark({ _id: "123" }), { syncedAt: NOW })).toBeNull();
   });
@@ -64,7 +64,7 @@ describe("mapRaindropBookmarkToItem", () => {
 
   test("title falls back to the link when title missing/empty", () => {
     const noTitle = makeBookmark();
-    delete (noTitle as Record<string, unknown>)["title"];
+    delete noTitle["title"];
     const row = mapRaindropBookmarkToItem(noTitle, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("https://example.com/article");
@@ -76,8 +76,8 @@ describe("mapRaindropBookmarkToItem", () => {
 
   test("title falls back to `Bookmark <id>` when title and link missing/empty", () => {
     const bare = makeBookmark();
-    delete (bare as Record<string, unknown>)["title"];
-    delete (bare as Record<string, unknown>)["link"];
+    delete bare["title"];
+    delete bare["link"];
     const row = mapRaindropBookmarkToItem(bare, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("Bookmark 123456");
@@ -91,22 +91,22 @@ describe("mapRaindropBookmarkToItem", () => {
 
   test("bodyPreview falls back to note, then domain, then title", () => {
     const noExcerpt = makeBookmark();
-    delete (noExcerpt as Record<string, unknown>)["excerpt"];
+    delete noExcerpt["excerpt"];
     const onNote = mapRaindropBookmarkToItem(noExcerpt, { syncedAt: NOW });
     if (onNote === null) throw new Error("expected mapping to succeed");
     expect(onNote.bodyPreview).toBe("Use full jitter for queue workers");
 
     const noNote = makeBookmark();
-    delete (noNote as Record<string, unknown>)["excerpt"];
-    delete (noNote as Record<string, unknown>)["note"];
+    delete noNote["excerpt"];
+    delete noNote["note"];
     const onDomain = mapRaindropBookmarkToItem(noNote, { syncedAt: NOW });
     if (onDomain === null) throw new Error("expected mapping to succeed");
     expect(onDomain.bodyPreview).toBe("example.com");
 
     const noDomain = makeBookmark();
-    delete (noDomain as Record<string, unknown>)["excerpt"];
-    delete (noDomain as Record<string, unknown>)["note"];
-    delete (noDomain as Record<string, unknown>)["domain"];
+    delete noDomain["excerpt"];
+    delete noDomain["note"];
+    delete noDomain["domain"];
     const onTitle = mapRaindropBookmarkToItem(noDomain, { syncedAt: NOW });
     if (onTitle === null) throw new Error("expected mapping to succeed");
     expect(onTitle.bodyPreview).toBe(
@@ -128,14 +128,14 @@ describe("mapRaindropBookmarkToItem", () => {
     expect(row.modifiedAt).toBe(UPDATED_MS);
 
     const noUpdate = makeBookmark();
-    delete (noUpdate as Record<string, unknown>)["lastUpdate"];
+    delete noUpdate["lastUpdate"];
     const onlyCreated = mapRaindropBookmarkToItem(noUpdate, { syncedAt: NOW });
     if (onlyCreated === null) throw new Error("expected mapping to succeed");
     expect(onlyCreated.modifiedAt).toBe(CREATED_MS);
 
     const noTimes = makeBookmark();
-    delete (noTimes as Record<string, unknown>)["lastUpdate"];
-    delete (noTimes as Record<string, unknown>)["created"];
+    delete noTimes["lastUpdate"];
+    delete noTimes["created"];
     const fallback = mapRaindropBookmarkToItem(noTimes, { syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);
@@ -159,7 +159,7 @@ describe("mapRaindropBookmarkToItem", () => {
     expect(nullLink.url).toBeNull();
 
     const noLink = makeBookmark();
-    delete (noLink as Record<string, unknown>)["link"];
+    delete noLink["link"];
     const missing = mapRaindropBookmarkToItem(noLink, { syncedAt: NOW });
     if (missing === null) throw new Error("expected mapping to succeed");
     expect(missing.canonicalUrl).toBeNull();
@@ -196,12 +196,12 @@ describe("mapRaindropBookmarkToItem", () => {
 
   test("missing fields are null-passthrough in metadata", () => {
     const sparse = makeBookmark();
-    delete (sparse as Record<string, unknown>)["excerpt"];
-    delete (sparse as Record<string, unknown>)["note"];
-    delete (sparse as Record<string, unknown>)["domain"];
-    delete (sparse as Record<string, unknown>)["type"];
-    delete (sparse as Record<string, unknown>)["collectionId"];
-    delete (sparse as Record<string, unknown>)["tags"];
+    delete sparse["excerpt"];
+    delete sparse["note"];
+    delete sparse["domain"];
+    delete sparse["type"];
+    delete sparse["collectionId"];
+    delete sparse["tags"];
     const row = mapRaindropBookmarkToItem(sparse, { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     const m = meta(row);

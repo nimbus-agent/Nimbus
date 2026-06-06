@@ -36,7 +36,7 @@ describe("mapWizIssueToItem", () => {
 
   test("returns null when id is missing or empty", () => {
     const noId = makeIssue();
-    delete (noId as Record<string, unknown>)["id"];
+    delete noId["id"];
     expect(mapWizIssueToItem(noId, { apiBaseUrl: API, syncedAt: NOW })).toBeNull();
     expect(mapWizIssueToItem(makeIssue({ id: "" }), { apiBaseUrl: API, syncedAt: NOW })).toBeNull();
   });
@@ -55,7 +55,7 @@ describe("mapWizIssueToItem", () => {
     expect(withRule.title).toBe("Publicly exposed S3 bucket");
 
     const noRule = makeIssue();
-    delete (noRule as Record<string, unknown>)["sourceRule"];
+    delete noRule["sourceRule"];
     const row = mapWizIssueToItem(noRule, { apiBaseUrl: API, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe("abc-123");
@@ -63,7 +63,7 @@ describe("mapWizIssueToItem", () => {
 
   test("bodyPreview comes from description; falls back to title when absent", () => {
     const noDesc = makeIssue();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row = mapWizIssueToItem(noDesc, { apiBaseUrl: API, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.bodyPreview).toBe("Publicly exposed S3 bucket");
@@ -135,7 +135,7 @@ describe("mapWizIssueToItem", () => {
 
   test("projects absent yields empty arrays", () => {
     const noProjects = makeIssue();
-    delete (noProjects as Record<string, unknown>)["projects"];
+    delete noProjects["projects"];
     const row = mapWizIssueToItem(noProjects, { apiBaseUrl: API, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(meta(row)["project_ids"]).toEqual([]);
@@ -148,14 +148,14 @@ describe("mapWizIssueToItem", () => {
     expect(both.modifiedAt).toBe(Date.parse("2024-03-16T09:30:00.000Z"));
 
     const noUpdated = makeIssue();
-    delete (noUpdated as Record<string, unknown>)["updatedAt"];
+    delete noUpdated["updatedAt"];
     const createdOnly = mapWizIssueToItem(noUpdated, { apiBaseUrl: API, syncedAt: NOW });
     if (createdOnly === null) throw new Error("expected mapping to succeed");
     expect(createdOnly.modifiedAt).toBe(Date.parse("2024-03-15T12:00:00.000Z"));
 
     const noDates = makeIssue();
-    delete (noDates as Record<string, unknown>)["updatedAt"];
-    delete (noDates as Record<string, unknown>)["createdAt"];
+    delete noDates["updatedAt"];
+    delete noDates["createdAt"];
     const fallback = mapWizIssueToItem(noDates, { apiBaseUrl: API, syncedAt: NOW });
     if (fallback === null) throw new Error("expected mapping to succeed");
     expect(fallback.modifiedAt).toBe(NOW);

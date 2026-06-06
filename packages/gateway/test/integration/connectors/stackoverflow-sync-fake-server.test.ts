@@ -128,7 +128,7 @@ function withRewrittenFetch(fakeBase: string): () => void {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://api.stackoverflowteams.com", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = original;
   };

@@ -49,7 +49,7 @@ describe("mapFlagsmithFeatureToItem", () => {
 
   test("returns null when name is missing or empty", () => {
     const noName = makeFeature();
-    delete (noName as Record<string, unknown>)["name"];
+    delete noName["name"];
     expect(mapFlagsmithFeatureToItem(noName, ctx())).toBeNull();
     expect(mapFlagsmithFeatureToItem(makeFeature({ name: "" }), ctx())).toBeNull();
   });
@@ -69,7 +69,7 @@ describe("mapFlagsmithFeatureToItem", () => {
     expect(row.bodyPreview).toBe("Rolls out the redesigned checkout flow.");
 
     const noDesc = makeFeature();
-    delete (noDesc as Record<string, unknown>)["description"];
+    delete noDesc["description"];
     const row2 = mapFlagsmithFeatureToItem(noDesc, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(row2.bodyPreview).toBe("enable-new-checkout");
@@ -85,7 +85,7 @@ describe("mapFlagsmithFeatureToItem", () => {
     expect(meta(weird)["type"]).toBe("SOME_FUTURE_TYPE");
 
     const noType = makeFeature();
-    delete (noType as Record<string, unknown>)["type"];
+    delete noType["type"];
     const missing = mapFlagsmithFeatureToItem(noType, ctx());
     if (missing === null) throw new Error("expected mapping to succeed");
     expect(meta(missing)["type"]).toBeNull();
@@ -125,7 +125,7 @@ describe("mapFlagsmithFeatureToItem", () => {
     expect(meta(row)["owner_count"]).toBe(2);
 
     const noOwners = makeFeature();
-    delete (noOwners as Record<string, unknown>)["owners"];
+    delete noOwners["owners"];
     const row2 = mapFlagsmithFeatureToItem(noOwners, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["owner_count"]).toBe(0);
@@ -155,7 +155,7 @@ describe("mapFlagsmithFeatureToItem", () => {
     expect(row.modifiedAt).toBe(NOW);
 
     const noDate = makeFeature();
-    delete (noDate as Record<string, unknown>)["created_date"];
+    delete noDate["created_date"];
     const row2 = mapFlagsmithFeatureToItem(noDate, ctx());
     if (row2 === null) throw new Error("expected mapping to succeed");
     expect(meta(row2)["created_at"]).toBeNull();

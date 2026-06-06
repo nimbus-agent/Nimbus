@@ -209,7 +209,7 @@ describe("manifestWithExtraNetworkHosts", () => {
     const out = manifestWithExtraNetworkHosts("obsidian", ["sync.obsidian.example.com"]);
     expect(out.permissions.filesystem.read).toEqual([]);
     expect(out.permissions.filesystem.write).toEqual([]);
-    (out.permissions.filesystem.read as string[]).push("/etc");
+    out.permissions.filesystem.read.push("/etc");
     expect(FIRST_PARTY_MANIFESTS["obsidian"]?.permissions.filesystem.read).toEqual([]);
   });
 

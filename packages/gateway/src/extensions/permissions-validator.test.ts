@@ -25,7 +25,7 @@ describe("validateAndNormalizePermissions", () => {
   });
 
   it("rejects unknown top-level keys", () => {
-    expect(() => validateAndNormalizePermissions({ unknownKey: 1 } as never)).toThrow(
+    expect(() => validateAndNormalizePermissions({ unknownKey: 1 })).toThrow(
       /unknown permission/i,
     );
   });

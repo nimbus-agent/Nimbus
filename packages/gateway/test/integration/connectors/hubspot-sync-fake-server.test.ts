@@ -36,7 +36,7 @@ function installFakeFetch(config: FakeConfig): FakeServer {
     const urlStr = typeof input === "string" ? input : input.toString();
     // Only intercept HubSpot host; everything else falls through to the real fetch.
     if (new URL(urlStr).origin !== BASE) {
-      return realFetch(input as Parameters<typeof realFetch>[0], init);
+      return realFetch(input, init);
     }
     const u = new URL(urlStr);
     const after = u.searchParams.get("after");
@@ -192,7 +192,7 @@ describe("hubspot-sync against a fake api.hubapi.com", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== BASE) {
-        return realFetchLocal(input as Parameters<typeof realFetchLocal>[0], init);
+        return realFetchLocal(input, init);
       }
       h?.fake.requests.push({
         method: init?.method ?? "GET",
@@ -205,7 +205,7 @@ describe("hubspot-sync against a fake api.hubapi.com", () => {
         return Response.json({ results: [deal("1", "Alpha")], paging: { next: { after: "p2" } } });
       }
       return new Response("boom", { status: 500 });
-    }) as typeof globalThis.fetch;
+    });
     await setOAuth(h);
 
     const syncable = createHubspotSyncable({ ensureHubspotMcpRunning: async () => {} });

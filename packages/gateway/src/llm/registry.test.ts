@@ -62,7 +62,7 @@ function makeProvider(id: LlmProviderKind, opts: ProviderOpts): LlmProvider {
   if (opts.pullModel !== undefined) {
     (base as unknown as { pullModel: typeof opts.pullModel }).pullModel = opts.pullModel;
   }
-  return base as LlmProvider;
+  return base;
 }
 
 function makeDbWithSchema(): { db: Database; dir: string } {

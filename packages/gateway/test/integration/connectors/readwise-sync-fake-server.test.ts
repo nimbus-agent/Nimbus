@@ -118,7 +118,7 @@ function withRewrittenFetch(fakeBase: string): () => void {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://readwise.io", fakeBase);
     return original(rewritten, init);
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = original;
   };

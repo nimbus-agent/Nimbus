@@ -44,7 +44,7 @@ describe("LatencyRingBuffer", () => {
       if (typeof sql === "string" && sql.includes("INSERT INTO query_latency_log")) {
         insertCount += 1;
       }
-      return origRun(sql, params as never);
+      return origRun(sql, params);
     }) as typeof db.run;
 
     for (let i = 0; i < 250; i += 1) {

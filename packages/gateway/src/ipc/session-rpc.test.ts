@@ -45,7 +45,7 @@ function makeStubStore(): StubStore {
     },
   };
   return {
-    store: stub as unknown as SessionMemoryStore,
+    store: stub,
     appendCalls,
     recallCalls,
     deleted,

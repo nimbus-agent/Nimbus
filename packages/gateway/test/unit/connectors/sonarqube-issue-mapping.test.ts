@@ -42,7 +42,7 @@ describe("mapSonarIssueToItem", () => {
 
   test("returns null when key is missing or empty", () => {
     const noKey = makeIssue();
-    delete (noKey as Record<string, unknown>)["key"];
+    delete noKey["key"];
     expect(
       mapSonarIssueToItem(noKey, { baseUrl: SAAS_BASE, organization: ORG, syncedAt: NOW }),
     ).toBeNull();
@@ -79,7 +79,7 @@ describe("mapSonarIssueToItem", () => {
       if (row === null) {
         throw new Error("expected mapping to succeed");
       }
-      expect((row.metadata as Record<string, unknown>)["severity"]).toBe(sev);
+      expect(row.metadata["severity"]).toBe(sev);
     }
   });
 
@@ -93,7 +93,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["severity"]).toBeNull();
+    expect(row.metadata["severity"]).toBeNull();
   });
 
   test("type accepts BUG / VULNERABILITY / CODE_SMELL and rejects others", () => {
@@ -106,7 +106,7 @@ describe("mapSonarIssueToItem", () => {
       if (row === null) {
         throw new Error("expected mapping to succeed");
       }
-      expect((row.metadata as Record<string, unknown>)["type"]).toBe(t);
+      expect(row.metadata["type"]).toBe(t);
     }
 
     const garbage = mapSonarIssueToItem(makeIssue({ type: "WHATEVER" }), {
@@ -117,7 +117,7 @@ describe("mapSonarIssueToItem", () => {
     if (garbage === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((garbage.metadata as Record<string, unknown>)["type"]).toBeNull();
+    expect(garbage.metadata["type"]).toBeNull();
   });
 
   test("status accepts the five Sonar status values", () => {
@@ -130,7 +130,7 @@ describe("mapSonarIssueToItem", () => {
       if (row === null) {
         throw new Error("expected mapping to succeed");
       }
-      expect((row.metadata as Record<string, unknown>)["status"]).toBe(s);
+      expect(row.metadata["status"]).toBe(s);
     }
   });
 
@@ -143,7 +143,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["file_path"]).toBe("src/main/java/Foo.java");
+    expect(row.metadata["file_path"]).toBe("src/main/java/Foo.java");
   });
 
   test("file_path is null when component is the project root (no colon)", () => {
@@ -155,7 +155,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["file_path"]).toBeNull();
+    expect(row.metadata["file_path"]).toBeNull();
   });
 
   test("line is preserved as an integer; null when missing", () => {
@@ -167,10 +167,10 @@ describe("mapSonarIssueToItem", () => {
     if (withLine === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((withLine.metadata as Record<string, unknown>)["line"]).toBe(42);
+    expect(withLine.metadata["line"]).toBe(42);
 
     const noLine = makeIssue();
-    delete (noLine as Record<string, unknown>)["line"];
+    delete noLine["line"];
     const row = mapSonarIssueToItem(noLine, {
       baseUrl: SAAS_BASE,
       organization: ORG,
@@ -179,7 +179,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["line"]).toBeNull();
+    expect(row.metadata["line"]).toBeNull();
   });
 
   test("tags are surfaced as a string array; non-strings filtered out", () => {
@@ -191,7 +191,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((row.metadata as Record<string, unknown>)["tags"]).toEqual(["sec", "x", "owasp"]);
+    expect(row.metadata["tags"]).toEqual(["sec", "x", "owasp"]);
   });
 
   test("rule, effort, debt, author, project_key surfaced verbatim", () => {
@@ -203,7 +203,7 @@ describe("mapSonarIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    const meta = row.metadata as Record<string, unknown>;
+    const meta = row.metadata;
     expect(meta["rule"]).toBe("java:S1234");
     expect(meta["effort"]).toBe("10min");
     expect(meta["debt"]).toBe("10min");
@@ -223,8 +223,8 @@ describe("mapSonarIssueToItem", () => {
     expect(both.modifiedAt).toBe(Date.parse("2024-03-16T09:30:00+0000"));
 
     const noDates = makeIssue();
-    delete (noDates as Record<string, unknown>)["updateDate"];
-    delete (noDates as Record<string, unknown>)["creationDate"];
+    delete noDates["updateDate"];
+    delete noDates["creationDate"];
     const fallback = mapSonarIssueToItem(noDates, {
       baseUrl: SAAS_BASE,
       organization: ORG,
@@ -275,7 +275,7 @@ describe("mapSonarIssueToItem", () => {
     expect(withMessage.bodyPreview).toBe("Replace null check with Optional");
 
     const noMessage = makeIssue();
-    delete (noMessage as Record<string, unknown>)["message"];
+    delete noMessage["message"];
     const row = mapSonarIssueToItem(noMessage, {
       baseUrl: SAAS_BASE,
       organization: ORG,
@@ -296,7 +296,7 @@ describe("mapSonarIssueToItem", () => {
     if (saas === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((saas.metadata as Record<string, unknown>)["organization"]).toBe(ORG);
+    expect(saas.metadata["organization"]).toBe(ORG);
 
     const selfHosted = mapSonarIssueToItem(makeIssue(), {
       baseUrl: "https://sonar.example.com",
@@ -306,6 +306,6 @@ describe("mapSonarIssueToItem", () => {
     if (selfHosted === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect((selfHosted.metadata as Record<string, unknown>)["organization"]).toBeNull();
+    expect(selfHosted.metadata["organization"]).toBeNull();
   });
 });

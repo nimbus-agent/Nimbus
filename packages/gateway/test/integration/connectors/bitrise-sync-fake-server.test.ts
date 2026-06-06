@@ -102,7 +102,7 @@ function startHarness(): Harness {
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url.replace("https://api.bitrise.io", fake.baseUrl);
     return originalFetch(rewritten, init);
-  }) as typeof globalThis.fetch;
+  });
   return {
     db,
     fake,

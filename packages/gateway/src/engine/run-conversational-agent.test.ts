@@ -217,7 +217,7 @@ describe("runConversationalAgent", () => {
     const calls = generateMock.mock.calls as unknown as unknown[][];
     const arg: unknown = calls[0]?.[0];
     expect(typeof arg).toBe("string");
-    expect(arg as string).toBe("hello");
+    expect(arg).toBe("hello");
   });
 
   test("sanitizes other errors before surfacing to callers", async () => {
