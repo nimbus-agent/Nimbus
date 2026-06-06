@@ -1,14 +1,11 @@
 ---
 name: nimbus-testing
 description: >
-  Complete testing reference for the Nimbus project: which test layer to use for each
-  situation, file naming and location conventions, coverage gates, isolation rules, and
-  ready-to-use patterns for the most common test scenarios (HITL, IPC, Vault, connectors,
-  UI components, E2E CLI). Use this skill whenever the user is writing a new test, deciding
-  where a test belongs, asking what tool to use, checking coverage requirements, or trying
-  to figure out how to test a specific Nimbus subsystem. Also trigger for questions like
-  "how do I test X?", "where does this test file go?", "do I need an integration test or
-  a unit test?", or "how do I mock the Gateway?". Consult this before writing any test file.
+  Complete testing reference for Nimbus: which test layer to use, file naming/location,
+  coverage gates, isolation rules, and ready-to-use patterns (HITL, IPC, Vault, connectors,
+  UI components, E2E CLI). Use when writing a test, deciding where it belongs or which tool
+  to use, checking coverage requirements, mocking the Gateway, or choosing integration-vs-unit.
+  Consult before writing any test file.
 ---
 
 # Nimbus Testing Reference

@@ -1,22 +1,16 @@
 ---
 name: nimbus-cicd-data-layer
 description: >
-  Reference for the Phase 5 T4 CI/CD data layer: the four DORA metric calculators
-  (deployment frequency, lead time for changes, change failure rate, MTTR), the
-  pre-deploy preflight check, the post-deploy annotation pipeline, the
-  `[metrics.dora.<service-id>]` + `[ci.service.<service-id>]` nimbus.toml schema,
-  the URN-based repo + PagerDuty service binding, the OpenAPI surface
-  (`/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments`), and the
-  first-party GitHub Actions in `packages/github-actions/`. Use this skill whenever
-  you are adding a new DORA metric, a new preflight check, a new deployment provider,
-  changing the pure calculators, wiring a new CI integration that feeds the local
-  index, modifying the `ServiceConfig` schema, or asking why `nimbus metrics dora`
-  returns nulls. Also trigger for questions like "where do I add a fifth DORA metric?",
-  "how does preflight count P1 incidents?", "what's a `severity_p1_aliases`?", "why
-  doesn't my deploy show up in `deployment_frequency`?", or "should this calculation
-  be pure or have side effects?". Consult before any change under
-  `packages/gateway/src/metrics/`, `packages/gateway/src/preflight/`, or
-  `packages/gateway/src/deployment/`.
+  Phase 5 T4 CI/CD data layer: the four DORA calculators (deployment frequency, lead
+  time, change failure rate, MTTR), the pre-deploy preflight check, the post-deploy
+  annotation pipeline, the `[metrics.dora.<id>]` + `[ci.service.<id>]` nimbus.toml
+  schema, URN-based repo + PagerDuty binding, the OpenAPI surface (`/v1/metrics/dora`,
+  `/v1/preflight/deploy`, `POST /v1/deployments`), and `packages/github-actions/`. Use
+  when adding a DORA metric / preflight check / deployment provider, changing the pure
+  calculators, modifying `ServiceConfig`, wiring a CI integration that feeds the index,
+  counting P1 incidents (`severity_p1_aliases`), or asking why `nimbus metrics dora`
+  returns nulls / a deploy is missing from `deployment_frequency`. Consult before any
+  change under `packages/gateway/src/{metrics,preflight,deployment}/`.
 ---
 
 # Nimbus CI/CD Data Layer (Phase 5 T4)

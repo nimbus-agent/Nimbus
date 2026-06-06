@@ -3,6 +3,8 @@ import { loadNimbusServiceConfigsFromConfigDir } from "../../config/nimbus-toml.
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
+import { writeScimBearer } from "../../identity/identity-vault.ts";
+import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -13,6 +15,7 @@ import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
+import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
@@ -207,6 +210,9 @@ export async function tryDispatchFederationRpc(
   if (index === undefined || discovery === undefined || pairing === undefined) {
     return phase4RpcSkipped;
   }
+  const idStore = ctx.options.identityStore;
+  const idIssuer = ctx.options.identityIssuer;
+  const idGrace = ctx.options.identityGraceSeconds ?? 0;
   try {
     const out = await dispatchFederationRpc(method, params, {
       db: index.getDatabase(),
@@ -214,12 +220,83 @@ export async function tryDispatchFederationRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
       discovery,
       pairing,
+      index,
+      ...(ctx.options.federationIdentity === undefined
+        ? {}
+        : { selfIdentity: ctx.options.federationIdentity }),
+      ...(idStore !== undefined && idIssuer !== undefined
+        ? {
+            identityGuard: {
+              enabled: true,
+              isOperatorValid: () => isOperatorValid(idStore, idIssuer, Date.now(), idGrace),
+            },
+          }
+        : {}),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof FederationRpcError) {
       throw new RpcMethodError(e.rpcCode, e.message);
     }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/** scim.setToken writes a credential to the Vault — handled here, not in the pure dispatcher. */
+async function handleScimSetToken(ctx: ServerCtx, params: unknown): Promise<{ ok: true }> {
+  const vault = ctx.options.identityVault;
+  const rec = params as Record<string, unknown>;
+  if (vault === undefined || typeof rec?.["token"] !== "string") {
+    throw new RpcMethodError(-32602, "ERR_INVALID_PARAMS: token required");
+  }
+  await writeScimBearer(vault, rec["token"]);
+  return { ok: true };
+}
+
+/** Assembles the per-call identity RPC context (keeps the `??` / conditional-spread out of the dispatcher hot path). */
+function buildIdentityRpcContext(
+  ctx: ServerCtx,
+  issuer: string,
+  store: NonNullable<ServerCtx["options"]["identityStore"]>,
+  index: NonNullable<ServerCtx["options"]["localIndex"]>,
+): IdentityRpcContext {
+  return {
+    db: index.getDatabase(),
+    issuer,
+    identityStore: store,
+    notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    now: () => Date.now(),
+    startLogin:
+      ctx.options.identityStartLogin ??
+      (() => {
+        throw new RpcMethodError(-32000, "identity login not wired");
+      }),
+    ...(ctx.options.identityGraceSeconds === undefined
+      ? {}
+      : { graceSeconds: ctx.options.identityGraceSeconds }),
+  };
+}
+
+export async function tryDispatchIdentityRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const store = ctx.options.identityStore;
+  const issuer = ctx.options.identityIssuer;
+  const index = ctx.options.localIndex;
+  if (store === undefined || issuer === undefined || index === undefined) return phase4RpcSkipped;
+  if (method === "scim.setToken") return handleScimSetToken(ctx, params);
+  try {
+    const out = await dispatchIdentityRpc(
+      method,
+      params,
+      buildIdentityRpcContext(ctx, issuer, store, index),
+    );
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IdentityRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;
@@ -516,6 +593,8 @@ export async function tryDispatchPhase4Rpc(
   if (securityOutcome !== phase4RpcSkipped) return securityOutcome;
   const federationOutcome = await tryDispatchFederationRpc(ctx, method, params);
   if (federationOutcome !== phase4RpcSkipped) return federationOutcome;
+  const identityOutcome = await tryDispatchIdentityRpc(ctx, method, params);
+  if (identityOutcome !== phase4RpcSkipped) return identityOutcome;
   const metricsOutcome = await tryDispatchMetricsRpc(ctx, method, params);
   if (metricsOutcome !== metricsRpcSkipped) return metricsOutcome;
   const preflightOutcome = await tryDispatchPreflightRpc(ctx, method, params);

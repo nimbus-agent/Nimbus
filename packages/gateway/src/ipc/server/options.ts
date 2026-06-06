@@ -4,6 +4,7 @@ import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts"
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
+import type { IdentityStore } from "../../identity/identity-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
@@ -13,6 +14,7 @@ import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
+import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { ClientSession } from "../session.ts";
@@ -57,4 +59,11 @@ export type CreateIpcServerOptions = {
   federationConsentTimeoutSeconds?: number;
   federationDiscovery?: DiscoveryProvider;
   federationPairing?: PeerPairing;
+  federationIdentity?: BoxKeypair;
+  // Identity (Phase 6 Slice 3). Present only when [identity].enabled; dispatcher skips cleanly when unset.
+  identityStore?: IdentityStore;
+  identityIssuer?: string;
+  identityGraceSeconds?: number;
+  identityStartLogin?: () => { jobId: string };
+  identityVault?: NimbusVault; // for scim.setToken
 };

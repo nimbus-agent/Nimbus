@@ -1,19 +1,15 @@
 ---
 name: nimbus-http-write-surface
 description: >
-  Reference for the local HTTP API write surface and the `WRITE_ROUTE_ALLOWLIST` /
-  bearer-auth / per-token rate-limit / audit-on-rejection pipeline that protects it
-  (security invariant `I13`). Use this skill whenever you are adding a new HTTP
-  `POST` / `PUT` / `DELETE` handler, modifying an existing one, debating whether a
-  route should live on the local socket or on the HTTP API, wiring a new CI integration
-  that needs to feed data into the local index, or touching `http-server.ts` /
-  `http-write-routes.ts` / `http-auth.ts` / `http-rate-limit.ts`. Also trigger for
-  questions like "can I POST to the HTTP API?", "where does this token check live?",
-  "why is my route returning 503 `write_surface_disabled`?", "should this be a new
-  HTTP route or an IPC method?", or "the WRITE_ROUTE_ALLOWLIST count assertion is
-  wrong". Consult before any code that lets an external process write into the
-  gateway over HTTP — the HTTP API was historically read-only, and the carve-out
-  for `POST /v1/deployments` is the **only** sanctioned write path.
+  The local HTTP API write surface + the `WRITE_ROUTE_ALLOWLIST` / bearer-auth /
+  per-token rate-limit / audit-on-rejection pipeline that protects it (invariant `I13`).
+  Use when adding/modifying an HTTP `POST`/`PUT`/`DELETE` handler, debating whether a
+  route belongs on the local socket vs the HTTP API, wiring a CI integration that feeds
+  the index, touching `http-server.ts`/`http-write-routes.ts`/`http-auth.ts`/
+  `http-rate-limit.ts`, or hitting a 503 `write_surface_disabled` / a wrong
+  WRITE_ROUTE_ALLOWLIST count assertion. Consult before any code that lets an external
+  process write into the gateway over HTTP — the API is read-only except the sanctioned
+  `POST /v1/deployments` carve-out.
 ---
 
 # Nimbus HTTP Write Surface (I13)
@@ -37,15 +33,18 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 
 ## The Allowlist
 
-Currently a single entry:
+Four entries (the CI deploy-annotation route + the SCIM provisioning surface added in Phase 6 Slice 3):
 
 ```typescript
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   "POST /v1/deployments",
+  "POST /scim/v2/Users",
+  "PATCH /scim/v2/Users/{id}",
+  "DELETE /scim/v2/Users/{id}",
 ]);
 ```
 
-Entries are `"<METHOD> <PATH>"` strings — exact match, no path templating, no method aliasing. `dispatchWriteRoute` rejects anything not in this array; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header.
+Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match; the SCIM item routes use a `{id}` placeholder matched by a regex in `resolveRoute` (the only sanctioned path-templating). `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
 
 ## Enforcement (the I13 test triple)
 
@@ -53,7 +52,7 @@ Entries are `"<METHOD> <PATH>"` strings — exact match, no path templating, no 
 
 1. **`http-server.ts` imports `dispatchWriteRoute`** from `./http-write-routes.ts`. A second dispatcher cannot exist; the import is the proof.
 2. **`http-server.ts` opens at most one writable `Database` handle** — counted by source-grep. Any second writable handle is a structural regression because it bypasses the dispatcher.
-3. **`WRITE_ROUTE_ALLOWLIST.length === 1`** and contains exactly `"POST /v1/deployments"`. Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
+3. **`WRITE_ROUTE_ALLOWLIST.length === 4`** and contains exactly the deployment route + the three `/scim/v2/Users` routes. Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
 
 ## Request Flow
 

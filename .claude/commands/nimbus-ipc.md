@@ -2,14 +2,11 @@
 name: nimbus-ipc
 description: >
   Complete reference for the Nimbus Gateway IPC layer: JSON-RPC 2.0 conventions, all
-  method namespaces, notification patterns, streaming patterns, the Tauri allowlist,
-  error codes, and the step-by-step checklist for adding a new method correctly. Use
-  this skill whenever the user is adding a new IPC method, designing a new notification,
-  wiring an IPC call from the CLI or UI, asking what method name to use, checking whether
-  a method is safe to expose to the Tauri frontend, or debugging an IPC contract. Also
-  trigger for questions like "how do I expose X over IPC?", "what namespace does Y belong
-  to?", "should this be a notification or a response?", or "how do I stream results?".
-  Consult this skill before writing any code that touches packages/gateway/src/ipc/.
+  method namespaces, notification + streaming patterns, the Tauri allowlist, error codes,
+  and the checklist for adding a new method. Use when adding an IPC method, designing a
+  notification, wiring an IPC call from CLI/UI, choosing a method name/namespace, deciding
+  notification-vs-response or how to stream, checking Tauri-frontend exposure safety, or
+  debugging an IPC contract. Consult before any code that touches packages/gateway/src/ipc/.
 ---
 
 # Nimbus IPC Reference

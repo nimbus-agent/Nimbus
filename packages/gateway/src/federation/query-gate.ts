@@ -26,6 +26,8 @@ export interface QueryGateCtx {
   readonly prompt: ConsentPrompter;
   readonly consentTimeoutMs: number;
   readonly now?: () => number;
+  /** I18: when identity is enabled, the answerer's own operator identity must be valid to federate. */
+  readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
 }
 
 export interface InboundQuery {
@@ -89,6 +91,12 @@ export async function answerFederatedQuery(
   ctx: QueryGateCtx,
   q: InboundQuery,
 ): Promise<AnswerResult> {
+  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
+    // Audited precisely; over the wire we return the SAME opaque denial as no_grant (no identity-state leak).
+    audit(ctx, q, "identity_invalid");
+    return { kind: "error", error: "no_grant" };
+  }
+
   const ns = ctx.store.getByName(q.request.namespace);
   if (ns === undefined) {
     audit(ctx, q, "namespace_unknown");

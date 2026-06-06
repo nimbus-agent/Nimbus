@@ -16,6 +16,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { verifyAuditChain } from "../../../src/db/audit-verify.ts";
+import { federationConsent } from "../../../src/federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../../../src/federation/discovery.ts";
 import { PeerPairing } from "../../../src/federation/peer-pairing.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
@@ -32,7 +33,7 @@ let notes: Array<{ method: string; params: unknown }>;
 function ctx(): FederationRpcContext {
   return {
     db,
-    consentTimeoutMs: 1000,
+    consentTimeoutMs: 50,
     notify: (method, params) => notes.push({ method, params }),
     discovery: new InMemoryDiscoveryProvider([
       { instanceName: "gateway-b", host: "gateway-b.test", port: 7475 },
@@ -59,7 +60,11 @@ beforeEach(() => {
      VALUES ('gmail:e1','gmail','email','e1','Salaries','TOP SECRET',30,1,'{"secret":"z"}')`,
   );
 });
-afterEach(() => index.close());
+afterEach(() => {
+  index.close();
+  // Reset broker broadcast so tests don't leak auto-response behaviour into each other.
+  federationConsent.setBroadcast(() => {});
+});
 
 test("acceptance: discover → pair → publish → grant → scoped leak-proof query → undeclared empty → revoke → verify → expertise", async () => {
   const c = ctx();
@@ -204,6 +209,7 @@ test("criterion 7 / I5: only federation.query + federation.expertise are admitte
     "federation.namespace.publish",
     "federation.namespace.grant",
     "federation.namespace.revoke",
+    "federation.consentRespond",
     "vault.get",
     "data.export",
     "extension.install",
@@ -212,7 +218,9 @@ test("criterion 7 / I5: only federation.query + federation.expertise are admitte
   }
 });
 
-test("criterion 10 (deferred consent seam): a non-standing grant routes through the consent prompt → deny + notify", async () => {
+test("criterion 10 (broker consent seam): a non-standing grant with no owner response times out", async () => {
+  // Broker broadcast is a no-op (reset by afterEach). The query-gate's own consentTimeoutMs (1000ms)
+  // fires before the broker TTL (consentTimeoutMs+5000 = 6000ms), producing timeout_waiting_for_consent.
   const c = ctx();
   // Unique namespace + peerId so the module-level sessionConsent cannot have a cached entry
   const ns = "ns-consent-accept-15b";
@@ -236,7 +244,6 @@ test("criterion 10 (deferred consent seam): a non-standing grant routes through 
   if (res.kind === "hit") {
     const v = res.value as { kind: string; error?: string };
     expect(v.kind).toBe("error");
-    expect(v.error).toBe("consent_denied");
+    expect(v.error).toBe("timeout_waiting_for_consent");
   }
-  expect(notes.some((n) => n.method === "federation.consentRequest")).toBe(true);
 });

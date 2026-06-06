@@ -36,6 +36,20 @@ const FORBIDDEN_OVER_LAN = new Set([
   "federation.namespace.publish",
   "federation.namespace.grant",
   "federation.namespace.revoke",
+  "federation.consentRespond", // local/Tauri-only owner action — never answerable over the wire
+  "federation.ask", // local-only asker entrypoint (sends over the wire to a peer); not answerable
+  "federation.askExpertise", // local-only asker entrypoint; not answerable
+  // Identity & SCIM (Slice 3): all management/read methods are local/CLI/Tauri-only — never over LAN.
+  "identity.login",
+  "identity.status",
+  "identity.logout",
+  "identity.bind",
+  "identity.unbind",
+  "identity.listBindings",
+  "scim.status",
+  "scim.setToken",
+  "scim.listUsers",
+  "scim.deprovision",
 ]);
 
 const WRITE_METHODS = new Set([

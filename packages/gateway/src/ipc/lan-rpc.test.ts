@@ -139,6 +139,12 @@ describe("federation over LAN (I5 + I17)", () => {
     }
   });
 
+  test("local-only owner/asker methods are forbidden over LAN (consentRespond/ask/askExpertise)", () => {
+    for (const m of ["federation.consentRespond", "federation.ask", "federation.askExpertise"]) {
+      expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+    }
+  });
+
   test("vault/data/extension remain forbidden over LAN", () => {
     for (const m of ["vault.get", "data.export", "extension.sync"]) {
       expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);

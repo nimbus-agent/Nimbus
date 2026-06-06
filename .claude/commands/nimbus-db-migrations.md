@@ -1,15 +1,13 @@
 ---
 name: nimbus-db-migrations
 description: >
-  Reference for authoring SQLite migrations in the Nimbus Gateway: file location and
-  numbering, the runner contract (transaction wrapping, pre-migration backups, ledger
-  recording), the append-only schema rule, large-backfill batching, the _schema_migrations
-  ledger, the new-table checklist, and FTS5/vec0 virtual-table cautions. Use this skill
-  whenever the user is adding a schema migration, modifying an existing one, debugging
-  a failed migration, asking why a migration cannot be rolled back, or adding a new
-  table or column. Also trigger for questions like "what V<N> number do I use?", "can
-  I drop this column?", "how do I backfill safely?", or "where does the pre-migration
-  backup live?". Consult before creating any file under packages/gateway/src/index/.
+  Authoring SQLite migrations in the Nimbus Gateway: file location + V<N> numbering, the
+  runner contract (transaction wrapping, pre-migration backups, ledger recording), the
+  append-only/forward-only schema rule, large-backfill batching, the _schema_migrations
+  ledger, the new-table checklist, and FTS5/vec0 virtual-table cautions. Use when adding
+  or debugging a migration, adding/dropping a table or column, backfilling safely, or
+  asking why a migration can't be rolled back / what V<N> to use. Consult before creating
+  any file under packages/gateway/src/index/.
 ---
 
 # Nimbus DB Migrations

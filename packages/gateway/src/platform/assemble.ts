@@ -13,9 +13,12 @@ import {
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusFederationFromConfigDir,
+  loadNimbusIdentityFromConfigDir,
+  loadNimbusLanFromConfigDir,
   loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
+  loadNimbusScimFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   resolveNimbusTomlForProfile,
 } from "../config/nimbus-toml.ts";
@@ -42,7 +45,13 @@ import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
+import { federationConsent } from "../federation/consent-broker.ts";
+import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
+
+import { buildFederationLanServer } from "../federation/federation-server.ts";
+import { buildIdentityBoot } from "../identity/identity-boot.ts";
+
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -284,12 +293,20 @@ function collectSidecarsFromEnv(
   db: Database,
   paths: PlatformPaths,
   sidecarStops: Array<() => void>,
+  httpOpts: { resolveScimToken?: () => Promise<string> } = {},
 ): void {
   const httpPortRaw = processEnvGet("NIMBUS_HTTP_PORT");
   if (httpPortRaw !== undefined && httpPortRaw.trim() !== "") {
     const hp = Number.parseInt(httpPortRaw.trim(), 10);
     if (Number.isFinite(hp) && hp > 0) {
-      sidecarStops.push(startReadOnlyHttpServer(join(paths.dataDir, "nimbus.db"), hp).stop);
+      sidecarStops.push(
+        startReadOnlyHttpServer(join(paths.dataDir, "nimbus.db"), hp, {
+          configDir: paths.configDir,
+          ...(httpOpts.resolveScimToken === undefined
+            ? {}
+            : { resolveScimToken: httpOpts.resolveScimToken }),
+        }).stop,
+      );
     }
   }
   const metricsPortRaw = processEnvGet("NIMBUS_METRICS_PORT");
@@ -299,6 +316,61 @@ function collectSidecarsFromEnv(
       sidecarStops.push(startMetricsServer(() => db, mp).stop);
     }
   }
+}
+
+function asBroadcastParams(params: unknown): Record<string, unknown> {
+  return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+}
+
+/** Boot the federation LAN server + discovery into ipcOpts when enabled. Returns true if booted
+ *  (so the caller can wire the consent broadcast after the IPC server exists). */
+async function bootFederationIntoIpcOpts(
+  federationCfg: ReturnType<typeof loadNimbusFederationFromConfigDir>,
+  paths: PlatformPaths,
+  vault: NimbusVault,
+  db: Database,
+  localIndex: LocalIndex,
+  ipcOpts: Parameters<typeof createIpcServer>[0],
+  sidecarStops: Array<() => void>,
+): Promise<boolean> {
+  if (!federationCfg.enabled) return false;
+  const identity = await loadOrCreateFederationIdentity(vault);
+  const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
+  if (federationRuntime === undefined) return false;
+  void federationRuntime.discovery.start();
+  sidecarStops.push(() => void federationRuntime.discovery.stop());
+  ipcOpts.federationDiscovery = federationRuntime.discovery;
+  ipcOpts.federationPairing = federationRuntime.pairing;
+  ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+  ipcOpts.federationIdentity = identity;
+
+  const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  const built = buildFederationLanServer({
+    db,
+    index: localIndex,
+    identity,
+    lan: {
+      bind: lanCfg.bind,
+      port: lanCfg.port,
+      pairingWindowSeconds: lanCfg.pairingWindowSeconds,
+      maxFailedAttempts: lanCfg.maxFailedAttempts,
+      lockoutSeconds: lanCfg.lockoutSeconds,
+    },
+    consentTimeoutMs: federationRuntime.consentTimeoutSeconds * 1000,
+    notify: () => {},
+    discovery: federationRuntime.discovery,
+    pairing: federationRuntime.pairing,
+  });
+  // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
+  sidecarStops.push(() => void built.lanServer.stop());
+  await built.lanServer.start();
+  const addr = built.lanServer.listenAddr();
+  if (addr !== undefined && federationCfg.mdnsEnabled) {
+    void federationRuntime.discovery.advertise(`nimbus-${GATEWAY_VERSION}`, addr.port);
+  }
+  ipcOpts.lanServer = built.lanServer;
+  ipcOpts.lanPairingWindow = built.pairingWindow;
+  return true;
 }
 
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
@@ -434,19 +506,49 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     });
   }
 
-  collectSidecarsFromEnv(db, paths, sidecarStops);
-
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
-  const federationRuntime = buildFederationRuntime(federationCfg, localIndex);
-  if (federationRuntime !== undefined) {
-    void federationRuntime.discovery.start();
-    sidecarStops.push(() => void federationRuntime.discovery.stop());
-    ipcOpts.federationDiscovery = federationRuntime.discovery;
-    ipcOpts.federationPairing = federationRuntime.pairing;
-    ipcOpts.federationConsentTimeoutSeconds = federationRuntime.consentTimeoutSeconds;
+  const federationBooted = await bootFederationIntoIpcOpts(
+    federationCfg,
+    paths,
+    vault,
+    db,
+    localIndex,
+    ipcOpts,
+    sidecarStops,
+  );
+
+  // Identity & Access (Phase 6 Slice 3). Mirrors the federation block: build the boot, wire the
+  // IPC-facing seams onto ipcOpts, and (when [scim].enabled) hand the SCIM bearer resolver to the
+  // read-only HTTP server so the SCIM provisioning surface authenticates.
+  const identityCfg = loadNimbusIdentityFromConfigDir(paths.configDir);
+  const scimCfg = loadNimbusScimFromConfigDir(paths.configDir);
+  let identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
+  const httpSidecarOpts: { resolveScimToken?: () => Promise<string> } = {};
+  if (identityCfg.enabled && localIndex !== undefined) {
+    identityBoot = buildIdentityBoot(identityCfg, scimCfg, localIndex, vault, {
+      log: (m: string) => syncLogger.warn(m),
+    });
+    ipcOpts.identityStore = identityBoot.store;
+    ipcOpts.identityIssuer = identityBoot.issuer;
+    ipcOpts.identityGraceSeconds = identityBoot.graceSeconds;
+    ipcOpts.identityStartLogin = identityBoot.startLogin;
+    ipcOpts.identityVault = vault;
+    if (scimCfg.enabled) {
+      httpSidecarOpts.resolveScimToken = identityBoot.resolveScimToken;
+    }
   }
 
+  collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
+
   const ipc = createIpcServer(ipcOpts);
+
+  if (federationBooted) {
+    federationConsent.setBroadcast((method, params) =>
+      ipc.broadcast(method, asBroadcastParams(params)),
+    );
+  }
+  // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
+  identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
 
   const updaterCfg = loadNimbusUpdaterFromConfigDir(paths.configDir);
   const updater = createUpdaterFromConfig({

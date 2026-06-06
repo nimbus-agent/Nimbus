@@ -18,7 +18,8 @@
       "Bash(gh run *)",
       "Bash(gh pr *)",
       "Bash(bun -e ' *)",
-      "Skill(superpowers:using-git-worktrees)"
+      "Skill(superpowers:using-git-worktrees)",
+      "PowerShell(bun run *)"
     ]
   },
   "hooks": {

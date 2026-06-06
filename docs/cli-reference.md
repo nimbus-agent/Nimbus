@@ -891,6 +891,101 @@ nimbus profile delete personal
 
 ---
 
+## Identity & Access
+
+Enterprise SSO/OIDC and SCIM provisioning for the Phase 6 federation layer (Slice 3). Identity gates **federation only** — local `ask` / `search` are never affected. Disabled by default; enable via the `[identity]` / `[scim]` sections in `nimbus.toml`. Raw ID/refresh tokens and the SCIM bearer live only in the Vault (invariant I18); ID tokens are validated (RS256) on every session.
+
+### `nimbus identity login`
+
+Start the OIDC device-code login flow. The Gateway prints a verification URL and a user code; open the URL in a browser and enter the code to complete sign-in. This is the default subcommand (`nimbus identity` with no argument runs `login`).
+
+```bash
+nimbus identity login
+```
+
+---
+
+### `nimbus identity status`
+
+Show the current operator session (issuer, subject/email, validity window) as JSON.
+
+```bash
+nimbus identity status
+```
+
+---
+
+### `nimbus identity logout`
+
+Clear the current operator session and remove the Vault-stored tokens.
+
+```bash
+nimbus identity logout
+```
+
+---
+
+### `nimbus identity list-bindings <email>`
+
+List the federation peer bindings for a provisioned user.
+
+```bash
+nimbus identity list-bindings alice@acme.com
+```
+
+---
+
+### `nimbus identity bind <email> <peerId>` / `unbind <peerId>`
+
+Administratively bind a provisioned user to a federation peer (or remove the binding). Credential-mutating; CLI-only (not exposed to the desktop UI).
+
+```bash
+nimbus identity bind alice@acme.com peer:aabbcc
+nimbus identity unbind peer:aabbcc
+```
+
+---
+
+### `nimbus scim status`
+
+Show the SCIM provisioning endpoint status (enabled, user count) as JSON. This is the default subcommand (`nimbus scim` with no argument runs `status`).
+
+```bash
+nimbus scim status
+```
+
+---
+
+### `nimbus scim set-token <token>`
+
+Store the SCIM bearer token (the trust anchor the IdP presents on SCIM 2.0 requests) in the Vault. Credential-mutating; CLI-only.
+
+```bash
+nimbus scim set-token "$SCIM_BEARER"
+```
+
+---
+
+### `nimbus scim list-users`
+
+List the SCIM-provisioned users as JSON.
+
+```bash
+nimbus scim list-users
+```
+
+---
+
+### `nimbus scim deprovision <email>`
+
+Deprovision a user. Marks the SCIM user inactive and auto-revokes their federation grants/bindings. Credential-mutating; CLI-only.
+
+```bash
+nimbus scim deprovision alice@acme.com
+```
+
+---
+
 ## Local LLM
 
 ### `nimbus llm status`

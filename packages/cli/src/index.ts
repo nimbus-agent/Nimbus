@@ -15,6 +15,7 @@ import {
   runDoctor,
   runExpertCli,
   runExtension,
+  runIdentity,
   runImpactCli,
   runIndexCmd,
   runLan,
@@ -26,6 +27,7 @@ import {
   runQuery,
   runRepl,
   runScaffold,
+  runScim,
   runSearch,
   runSecurity,
   runServe,
@@ -96,6 +98,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   llm: runLlm,
   metrics: runMetricsCli,
   team: runTeam,
+  identity: runIdentity,
+  scim: runScim,
   "mcp-server": runMcpServer,
 };
 

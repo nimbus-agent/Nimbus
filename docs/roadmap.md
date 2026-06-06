@@ -713,13 +713,13 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 #### Delivery Slices
 
-Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on; its full design lives in [`docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`](superpowers/specs/2026-06-04-phase6-federation-core-design.md). Each slice gets its own spec → plan → implementation cycle.
+Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on. Each slice gets its own spec → plan → implementation cycle.
 
 | # | Slice | Depends on |
 |---|-------|-----------|
 | 1 | **Federation Core** — E2EE peer pairing, mDNS discovery, consent-scoped federated query primitive, shared scoped namespaces, expertise routing, protocol-layer RBAC, audit integration, invariant I17 | Phase 4 E2EE LAN + audit chain |
 | 2 | Team Vault + Multi-user/Quorum HITL | 1 |
-| 3 | Identity — SSO/OIDC/SAML + SCIM | 1 |
+| 3 | Identity — SSO/OIDC/SAML + SCIM (✅ OIDC device-code + SCIM trust-anchor delivered, invariant I18; SAML deferred) | 1 |
 | 4 | Org Policy Engine + Admin Console + Observability | 1 |
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) | 1, 2 |
 | 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) | 1 |
@@ -741,7 +741,7 @@ Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; S
 
 **Slice 1 — Federation Core: ✅ delivered (2026-06-05).** The federation substrate ships: the V33 schema (`federation_namespaces` / `_filters` / `_grants` + `audit_log.federation_json`), the namespace store with per-peer RBAC grants, the session consent cache, the `DiscoveryProvider` (mDNS via `bonjour-service` + in-memory + manual fallback), mutual-approval peer pairing, content-free expertise ranking, and the **I17 query gate** — `answerFederatedQuery`, the only path that answers an inbound `federation.query`: grant + role + consent + declared-filter scoping, leak-proof `FederatedItem` shape (never `metadata`), every outcome audited into the Blake3 chain. Wired through the `federation.*` JSON-RPC dispatcher (LAN admits only `federation.query` / `federation.expertise`; the management methods are local/Tauri-only — I5), the `[federation]` config section, the `nimbus team` CLI, the Tauri renderer allowlist (5 local management methods; `federation.pair` stays CLI-only), invariant **I17** (runtime test + static **D13**), and an integration-tested acceptance suite.
 
-> **Deferred so two gateways can exchange queries over the literal wire** (a Slice 1 follow-up / Slice 2): the production **outbound LAN client** (`OutboundPairHandshake` socket body — `initiatePair` is currently a tested DI seam that throws "not wired"), wiring the **`LanServer` into gateway boot**, and the **owner-consent UI round-trip** (the dispatcher's prompter is a `notify` seam defaulting to a timeout-safe deny). Until those land, the gate + primitives are fully functional and integration-tested and reachable locally (CLI/renderer), but a *remote* peer cannot yet connect over the NaCl-box channel.
+> **Over-the-wire seams delivered (2026-06-05):** the three previously-deferred Slice-1 seams are now wired — outbound LAN pair/query client (`ipc/lan-client.ts`), `LanServer` constructed and started at gateway boot (`federation/federation-server.ts` `buildFederationLanServer` + `platform/assemble.ts`, gated on `[federation].enabled`), and the owner-consent round-trip (`federation/consent-broker.ts` + `federation.consentRespond`). Two gateways can now exchange federated queries over the NaCl-box channel. The answering `peerId` is forced from the NaCl-authenticated session (I17/R1).
 
 #### Dependencies
 
@@ -770,8 +770,8 @@ These two primitives are the **foundation** every cross-colleague feature stands
 
 #### Identity & Access
 
-- [ ] **SSO/OIDC/SAML** — enterprise identity provider integration; tokens stored in the Vault; Gateway validates ID token on every session
-- [ ] **SCIM user provisioning** — automated user lifecycle driven by IdP; deprovisioned users' shared namespaces revoked automatically
+- [x] **SSO/OIDC/SAML** — enterprise identity provider integration; tokens stored in the Vault; Gateway validates ID token on every session *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — RS256 ID-token validation via `identity/verifier.ts` (I18), Vault-only tokens, SAML deferred)*
+- [x] **SCIM user provisioning** — automated user lifecycle driven by IdP; deprovisioned users' shared namespaces revoked automatically *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — bearer-authed SCIM 2.0 Users endpoint on the HTTP write surface; deprovision auto-revokes federation bindings)*
 - [x] **Role-based access control** — `owner`, `editor`, `viewer` roles per shared namespace; enforced at the federation protocol layer, not just the UI *(Slice 1: roles stored + enforced in the query gate; cross-org RBAC + SCIM-driven provisioning are Slice 3)*
 - [ ] **Multi-user HITL** — workspace owner delegates HITL approval rights to a named team member for a specific workflow; delegate sees a pending approval queue; every delegation recorded in audit log
 

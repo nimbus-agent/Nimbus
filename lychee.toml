@@ -28,7 +28,9 @@ exclude = [
   "conventionalcommits\\.org",  # intermittent TCP RST from GH runner egress
   "nimbus-agent\\.dev",    # exclude until PR 1 DNS propagates
 ]
-accept = ["200", "203", "204", "206", "301", "302", "304"]
+# 202 Accepted is a 2xx success — figma.com's homepage returns it to scripted UAs,
+# which lychee otherwise rejects (the long-standing intermittent figma.com flake).
+accept = ["200", "202", "203", "204", "206", "301", "302", "304"]
 max_redirects = 5
 timeout = 30
 max_retries = 3

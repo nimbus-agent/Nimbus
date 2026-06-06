@@ -1,16 +1,14 @@
 ---
 name: nimbus-agent-patterns
 description: >
-  Reference for authoring built-in Nimbus agents (meeting-prep, oncall-brief, expert,
-  standup, catchup, impact, etc.): file location, the read-only/HITL-free shape invariant,
-  parallel sub-agent decomposition via AgentCoordinator, tool-scope restriction, the
-  briefReady IPC notification contract, the matching CLI entry point, the e2e test
-  pattern, and the latency budget. Use this skill whenever you are adding a new built-in
-  agent, modifying an existing one, deciding how to decompose a multi-step task, wiring
-  a new CLI command for an agent, or asking why an agent's brief is slow or empty. Also
-  trigger for questions like "where does this agent live?", "should this be sequential
-  or parallel?", "what tool scope does my sub-agent need?", or "how do I test an agent?".
-  Consult before writing any new file under packages/gateway/src/agents/.
+  Authoring built-in Nimbus agents (meeting-prep, oncall-brief, expert, standup, catchup,
+  impact, etc.): file location, the read-only/HITL-free shape invariant, parallel
+  sub-agent decomposition via AgentCoordinator, tool-scope restriction, the briefReady
+  IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
+  latency budget. Use when adding/modifying a built-in agent, deciding sequential-vs-parallel
+  decomposition, scoping a sub-agent's tools, wiring an agent's CLI command, testing an
+  agent, or asking why a brief is slow/empty. Consult before writing any new file under
+  packages/gateway/src/agents/.
 ---
 
 # Nimbus Built-in Agent Patterns

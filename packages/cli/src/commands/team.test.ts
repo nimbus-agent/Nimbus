@@ -65,19 +65,49 @@ test("pair", () => {
   expect(() => parseTeamArgs(["pair", "onlyhost"])).toThrow();
 });
 
-test("query + who-knows", () => {
+test("query parses namespace-first arg order", () => {
   expect(parseTeamArgs(["query", "project:zurich", "peer:abcd", "find auth bugs"])).toEqual({
     kind: "query",
     namespace: "project:zurich",
     peerId: "peer:abcd",
     purpose: "find auth bugs",
   });
-  expect(parseTeamArgs(["who-knows", "auth.ts race"])).toEqual({
+});
+
+test("parses team who-knows with a peer", () => {
+  expect(parseTeamArgs(["who-knows", "peer:abc", "kafka", "tuning"])).toEqual({
     kind: "whoKnows",
-    query: "auth.ts race",
+    peerId: "peer:abc",
+    query: "kafka tuning",
   });
+});
+
+test("team who-knows requires a peer and a query", () => {
+  expect(() => parseTeamArgs(["who-knows"])).toThrow();
+  expect(() => parseTeamArgs(["who-knows", "peer:abc"])).toThrow();
 });
 
 test("unknown subcommand throws", () => {
   expect(() => parseTeamArgs(["bogus"])).toThrow();
+});
+
+test("parses team consent approve/deny", () => {
+  expect(parseTeamArgs(["consent", "req-1", "approve"])).toEqual({
+    kind: "consent",
+    requestId: "req-1",
+    approved: true,
+  });
+  expect(parseTeamArgs(["consent", "req-2", "deny"])).toEqual({
+    kind: "consent",
+    requestId: "req-2",
+    approved: false,
+  });
+});
+
+test("team consent rejects a bad verb", () => {
+  expect(() => parseTeamArgs(["consent", "req-1", "maybe"])).toThrow();
+});
+
+test("parses team listen", () => {
+  expect(parseTeamArgs(["listen"])).toEqual({ kind: "listen" });
 });

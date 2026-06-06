@@ -122,7 +122,7 @@ No inline comments were mapped to I6 in the triage. No additional subsection nee
 
 **T2 PR 3 additions (2026-05-20):** `extension.checkForUpdates` (read-only cache surface) and `extension.update` (HITL-gated via `extension.autoUpdate` / `extension.downgrade`) joined the allowlist, bumping `allowlist_exact_size` from 60 to 62. `extension.install` stays absent — the marketplace install flow continues to use the Rust-native file picker so chain C1 cannot be reintroduced via the auto-update surface.
 
-**Phase 6 Slice 1 additions (2026-06-05):** `federation.discover`, `federation.namespace.grant`, `federation.namespace.publish`, `federation.namespace.revoke`, and `federation.peers` joined the allowlist (62 → 67). `federation.pair` is deliberately absent (CLI-only, transmits an out-of-band pairing code — same class as `lan.pair`). `federation.query` and `federation.expertise` are over-the-wire answering methods routed through `query-gate.ts` (I17) and are never renderer-callable.
+**Phase 6 Slice 1 additions (2026-06-05):** `federation.discover`, `federation.namespace.grant`, `federation.namespace.publish`, `federation.namespace.revoke`, and `federation.peers` joined the allowlist (62 → 67). `federation.pair` is deliberately absent (CLI-only, transmits an out-of-band pairing code — same class as `lan.pair`). `federation.query` and `federation.expertise` are over-the-wire answering methods routed through `query-gate.ts` (I17) and are never renderer-callable. `federation.consentRespond` (the owner's local consent-decision reply for the over-the-wire federation flow) also joined the allowlist (67 → 68); `federation.consentRequest` remains a notification delivered to the renderer, not a renderer-callable method.
 
 ### Migrated rationale (2026-05-28)
 
@@ -218,24 +218,24 @@ No inline comments were mapped to I12 specifically in the triage. No additional 
 
 **Wired at:**
 
-- `packages/gateway/src/ipc/http-server.ts` — POST routes dispatch through `dispatchWriteRoute` (and not the readonly handler).
-- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, currently a single entry: `"POST /v1/deployments"`).
+- `packages/gateway/src/ipc/http-server.ts` — every write method (POST/PATCH/DELETE) dispatches through `dispatchWriteRoute` (and not the readonly handler). SCIM GET roster reads go through the bearer-checked `dispatchScimRead` read path (reads never write).
+- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, four entries: `"POST /v1/deployments"` + the three `/scim/v2/Users` provisioning routes). `dispatchWriteRoute` selects the per-route bearer token (deployment uses `http_api.deployment_token`; SCIM uses `identity.scim.bearer`) and audit action type.
 
 **Test:** `packages/gateway/src/security-invariants.test.ts` — three sub-asserts:
 
 1. `http-server.ts` imports `dispatchWriteRoute` from `./http-write-routes.ts`.
-2. `http-server.ts` opens at most one writable `Database` handle (the write-surface handle).
-3. `WRITE_ROUTE_ALLOWLIST.length === 1` and contains exactly `"POST /v1/deployments"`.
+2. `http-server.ts` opens at most one writable `Database` handle (the write-surface handle, shared by the deployment and SCIM surfaces).
+3. `WRITE_ROUTE_ALLOWLIST.length === 4` and contains exactly `"POST /v1/deployments"`, `"POST /scim/v2/Users"`, `"PATCH /scim/v2/Users/{id}"`, `"DELETE /scim/v2/Users/{id}"`.
 
 **Anti-patterns:**
 
 - Opening a second writable `Database` handle in `http-server.ts` outside the server-context wiring.
-- Adding a new POST/PUT/DELETE handler that bypasses `dispatchWriteRoute`.
+- Adding a new POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` (e.g. a parallel SCIM dispatcher with its own bearer check — the original Slice 3 implementation did this and was folded into `dispatchWriteRoute`).
 - Adding entries to `WRITE_ROUTE_ALLOWLIST` without bumping the count assertion in `security-invariants.test.ts`.
 
-**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). This PR introduced a narrow write surface (post-deploy annotation) — per-route allowlisting + bearer auth + per-token rate limiting is the structural defense against a same-host process spoofing deploys. Same rigor as Tauri `ALLOWED_METHODS` (I7).
+**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). T4 introduced a narrow write surface (post-deploy annotation) and Phase 6 Slice 3 added SCIM provisioning — both flow through the same `dispatchWriteRoute` pipeline (per-route allowlist + bearer auth + per-token rate limiting + audit-on-rejection), the structural defense against a same-host process spoofing deploys or provisioning operators. Same rigor as Tauri `ALLOWED_METHODS` (I7).
 
-**Audit cross-reference:** S2 disposition from the plan review — every rejection at the HTTP write boundary writes a `deployment.annotation_rejected` audit row via `appendAuditEntry`, making brute-force probes tamper-evident on the BLAKE3 chain.
+**Audit cross-reference:** S2 disposition from the plan review — every rejection at the HTTP write boundary writes an audit row via `appendAuditEntry` (`deployment.annotation_rejected` for the deploy route, `scim.provision_rejected` for SCIM), making brute-force probes tamper-evident on the BLAKE3 chain.
 
 ### Migrated rationale (2026-05-28)
 
@@ -320,13 +320,33 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 **Wired at:**
 
 - `packages/gateway/src/federation/query-gate.ts` `answerFederatedQuery` — the sole function that reads index items in response to a peer query. Enforces the grant table, role check, consent gate, namespace filter, and the `FederatedItem` projection.
-- `packages/gateway/src/ipc/lan-rpc.ts` `FORBIDDEN_OVER_LAN` — the 6 management methods (`federation.namespace.publish`, `federation.namespace.grant`, `federation.namespace.revoke`, `federation.pair`, `federation.peers`, `federation.discover`) are listed here, leaving only `federation.query` and `federation.expertise` admitted over the wire (I5).
+- `packages/gateway/src/ipc/lan-rpc.ts` `FORBIDDEN_OVER_LAN` — the management methods (`federation.namespace.publish`, `federation.namespace.grant`, `federation.namespace.revoke`, `federation.pair`, `federation.peers`, `federation.discover`) **and** the local-only owner/asker methods (`federation.consentRespond`, `federation.ask`, `federation.askExpertise`) are listed here, leaving only `federation.query` and `federation.expertise` admitted over the wire (I5). `federation.consentRespond` is the owner's local consent-decision reply; `federation.ask`/`federation.askExpertise` are local asker entrypoints that *send* a query over the wire but are never *answered* over it.
 - Enforced statically by **D13** in `scripts/structure-audit/check-nimbus-invariants.ts` — any federation module other than `query-gate.ts` that imports `item-list-query` causes `audit:invariants` to exit 1.
 - Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I17` describe block.
 
 **Anti-pattern:** a federation module other than `query-gate.ts` that imports `item-list-query` (or otherwise reads index items to answer a peer), bypassing the gate's declared-filter / consent / audit chain. Note: `peer-pairing.ts` legitimately imports `LocalIndex` for the lan_peers registry — that is NOT an item-answer path and is not blocked. `expertise.ts` reads a content-free `COUNT(*)` and returns only a rank — also fine.
 
 **How to comply:** any new path that answers a peer's data request must be routed through `answerFederatedQuery` in `query-gate.ts`, never by adding a second item-read import in another federation module.
+
+**Over-the-wire path (Slice 1 follow-up, delivered 2026-06-05):** the over-the-wire answering path is now live. `buildFederationLanServer` in `federation/federation-server.ts` constructs a `LanServer` that is started at gateway boot from `platform/assemble.ts` (gated on `[federation].enabled`, transport from `[lan]`). Its `onMessage` handler routes inbound `federation.query` / `federation.expertise` through `query-gate.ts`. Critically, the answering `peerId` is **forced** from the NaCl-authenticated session (`const forced = { ...body, peerId: peer.peerId }` — R1): a body-supplied `peerId` field is silently overwritten and cannot impersonate another peer. A regression that drops this override will fail the I17/R1 test in `security-invariants.test.ts`.
+
+---
+
+## I18 — IdP ID-token validation is intrinsic to the identity verifier; raw tokens are Vault-only
+
+**Statement:** `identity/verifier.ts` (`IdTokenVerifier.validateIdToken`) is the ONLY module that validates an IdP ID token — RS256 signature via Bun WebCrypto, plus `iss`/`aud`/`exp`/`nbf` checks against the configured issuer and client. Raw tokens (`identity.oidc.id_token`, `identity.oidc.refresh_token`, `identity.scim.bearer`) live ONLY in the Vault, never on an IPC/wire shape, a DB column, a log line, or config. The federation query gate consults the pure, synchronous `isOperatorValid()` before answering a peer whenever identity is enabled, so a deprovisioned or expired operator session fails federation closed.
+
+**Wired at:**
+
+- `packages/gateway/src/identity/verifier.ts` `IdTokenVerifier.validateIdToken` — the sole ID-token validation path (RS256 only). `isOperatorValid()` in the same file is the federation gate's single, no-network operator-validity question.
+- `packages/gateway/src/federation/query-gate.ts` — `answerFederatedQuery` consults `isOperatorValid()` before answering when identity is enabled.
+- `packages/gateway/src/identity/identity-vault.ts` — the only module that constructs the `identity.oidc.*` / `identity.scim.bearer` Vault keys; tokens never leave the Vault.
+- Enforced statically by **D14** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `packages/gateway/src/identity/` (and not a `.test.ts`) that references an identity token Vault-key string literal causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I18` describe block (Tauri allowlist surface for the identity/scim read+login methods, size assertion 73, and the query-gate `isOperatorValid` consult).
+
+**Anti-pattern:** validating an ID token anywhere other than `verifier.ts`; placing a token field on an IPC/wire/notification shape or a DB column; reading `identity.oidc.*` / `identity.scim.bearer` outside `identity/`; a federation answer path that skips the `isOperatorValid()` consult when identity is enabled. Note: the renderer-callable surface exposes only the read/login methods (`identity.login`/`status`/`logout`/`listBindings`, `scim.status`/`listUsers`); the credential-mutating methods (`identity.bind`/`unbind`, `scim.setToken`/`deprovision`) stay CLI-only and out of the Tauri allowlist (I7).
+
+**How to comply:** route every ID-token check through `IdTokenVerifier.validateIdToken`; keep raw tokens in the Vault via `identity-vault.ts`; have any new peer-answer path consult `isOperatorValid()` when identity is enabled.
 
 ---
 
@@ -350,12 +370,12 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I18 — Sub-agent tool scope enforcement` section (the next free number after the current `I17`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I19 — Sub-agent tool scope enforcement` section (the next free number after the current `I18`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
 ```typescript
-test("I18 — sub-agent dispatcher checks frozen tool scope", () => {
+test("I19 — sub-agent dispatcher checks frozen tool scope", () => {
   const source = readFileSync(
     join(REPO_ROOT, "packages/gateway/src/engine/sub-agent.ts"),
     "utf8"

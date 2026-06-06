@@ -1,14 +1,12 @@
 ---
 name: nimbus-security-invariants
 description: >
-  Authoritative reference for the Nimbus invariant triple rule and the security-defense
-  lifecycle: production wiring + docs entry + enforcement test. Use this skill whenever
-  you are adding, modifying, or auditing a structural security defense — HITL action types,
-  extension integrity checks, Vault redaction rules, ALLOWED_METHODS bridge entries, or
-  any new gating mechanism. Also trigger for questions like "is this defense real?",
-  "how do I add a new HITL action?", "should this be in ALLOWED_METHODS?", or "why does
-  the security-invariants test fail?". Consult before claiming a defense is active —
-  the B1 audit found three defenses defined in code but never wired in production.
+  The Nimbus invariant triple rule + security-defense lifecycle: production wiring + docs
+  entry + enforcement test. Use when adding, modifying, or auditing a structural security
+  defense — HITL action types, extension integrity checks, Vault redaction, ALLOWED_METHODS
+  entries, any new gating mechanism — or asking "is this defense real?" / why the
+  security-invariants test fails. Consult before claiming a defense is active — the B1 audit
+  found three defenses defined in code but never wired in production.
 ---
 
 # Nimbus Security Invariants

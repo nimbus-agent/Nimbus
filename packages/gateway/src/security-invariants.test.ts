@@ -251,10 +251,17 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST has exactly one entry: POST /v1/deployments", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(1);
-    expect(WRITE_ROUTE_ALLOWLIST[0]).toBe("POST /v1/deployments");
+    // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
+    // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes.
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(4);
+    expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
+      "POST /v1/deployments",
+      "POST /scim/v2/Users",
+      "PATCH /scim/v2/Users/{id}",
+      "DELETE /scim/v2/Users/{id}",
+    ]);
   });
 });
 
@@ -469,9 +476,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 67", async () => {
+  test("allowlist_exact_size assertion is 74", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*67\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*74\s*\)/);
   });
 });
 
@@ -502,8 +509,40 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
       "federation.pair",
       "federation.peers",
       "federation.discover",
+      // local-only owner/asker methods — never answerable over the wire (Slice 1 over-the-wire)
+      "federation.consentRespond",
+      "federation.ask",
+      "federation.askExpertise",
     ]) {
       expect(src).toContain(`"${m}"`); // present in FORBIDDEN_OVER_LAN
     }
+  });
+
+  test("I17/R1 — the over-the-wire answerer forces peerId from the authenticated session (not the request body)", async () => {
+    const src = await read("packages/gateway/src/federation/federation-server.ts");
+    // onMessage must override any body-supplied peerId with the NaCl-authenticated peer.peerId.
+    expect(src).toMatch(/peerId:\s*peer\.peerId/);
+  });
+});
+
+describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", () => {
+  test("identity.* read/login methods are in the Tauri allowlist; bind/setToken are NOT", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of [
+      "identity.login",
+      "identity.status",
+      "identity.logout",
+      "identity.listBindings",
+      "scim.status",
+      "scim.listUsers",
+    ]) {
+      expect(rust).toContain(`"${m}"`);
+    }
+    expect(rust).not.toContain('"scim.setToken"');
+    expect(rust).not.toContain('"identity.bind"');
+  });
+  test("only the identity verifier validates an ID token; query-gate consults it", async () => {
+    const gate = await read("packages/gateway/src/federation/query-gate.ts");
+    expect(gate).toContain("isOperatorValid");
   });
 });

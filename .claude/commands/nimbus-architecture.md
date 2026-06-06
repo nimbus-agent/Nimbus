@@ -1,14 +1,12 @@
 ---
 name: nimbus-architecture
 description: >
-  Authoritative reference for the Nimbus codebase: subsystem responsibilities, package layout,
-  IPC conventions, non-negotiable design rules, and where to put new code. Use this skill
-  whenever the user is writing a new feature, adding a new file, designing a new IPC method,
-  wiring a new connector, working with the engine/HITL/Vault, or planning anything that touches
-  the Gateway. Also trigger for questions like "where does X live?", "how should I name this?",
-  "which package owns this?", or any task involving the Nimbus monorepo structure. When in doubt,
-  read this skill first — it prevents putting code in the wrong place and violating load-bearing
-  architectural constraints.
+  Authoritative reference for the Nimbus codebase: subsystem responsibilities, package
+  layout, IPC conventions, non-negotiable design rules, and where to put new code. Use
+  when writing a feature, adding a file, designing an IPC method, wiring a connector,
+  working with the engine/HITL/Vault, naming/placing code, deciding package ownership, or
+  planning anything that touches the Gateway. Read first when in doubt — it prevents
+  putting code in the wrong place and violating load-bearing architectural constraints.
 ---
 
 # Nimbus Architecture Reference
