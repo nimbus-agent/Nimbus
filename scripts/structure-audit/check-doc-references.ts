@@ -120,7 +120,7 @@ function looksLikePathTarget(s: string): boolean {
 function splitTargetParts(raw: string): { path: string; lineHint?: number } {
   const anchorIx = raw.indexOf("#");
   const noAnchor = anchorIx >= 0 ? raw.slice(0, anchorIx) : raw;
-  const m = noAnchor.match(/^(.*?):(\d+)$/);
+  const m = /^(.*?):(\d+)$/.exec(noAnchor);
   if (m) return { path: m[1] ?? "", lineHint: Number(m[2]) };
   return { path: noAnchor };
 }

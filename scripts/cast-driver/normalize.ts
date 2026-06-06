@@ -102,7 +102,7 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
     name: "git-sha",
     apply: (t) =>
       t.replace(GIT_SHA, (match) => {
-        const labelMatch = match.match(/^(sha=|commit=|SHA=|COMMIT=)/i);
+        const labelMatch = /^(sha=|commit=|SHA=|COMMIT=)/i.exec(match);
         if (labelMatch) {
           return `${labelMatch[1]}<SHA>`;
         }

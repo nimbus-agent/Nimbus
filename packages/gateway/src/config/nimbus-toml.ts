@@ -729,7 +729,7 @@ function parseNimbusTomlSecuritySection(source: string): Partial<NimbusSecurityT
     }
     if (!inAllow) continue;
     const kv = splitKeyValue(t);
-    if (kv !== undefined && kv.key === "fingerprint") {
+    if (kv?.key === "fingerprint") {
       const v = parseString(kv.valRaw);
       if (v.length > 0) fps.push(v);
     }

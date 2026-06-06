@@ -25,7 +25,7 @@ interface ParsedEnvelope {
 }
 
 function parseEnvelope(body: string): ParsedEnvelope {
-  const m = body.match(/^<tool_output service="([^"]+)" tool="([^"]+)">([\s\S]*)<\/tool_output>$/);
+  const m = /^<tool_output service="([^"]+)" tool="([^"]+)">([\s\S]*)<\/tool_output>$/.exec(body);
   if (m === null) {
     throw new Error(`Not a <tool_output> envelope: ${body.slice(0, 120)}`);
   }

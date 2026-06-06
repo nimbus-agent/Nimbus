@@ -292,7 +292,7 @@ describe("I14 — all SQLite write paths route through dbRun/dbExec/dbStmtRun", 
     const src = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(src).toMatch(/DB_RUN_EXEC_ALLOW_LIST/);
     expect(src).toMatch(/"packages\/gateway\/src\/db\/write\.ts"/);
-    const m = src.match(/DB_RUN_EXEC_ALLOW_LIST[^\]]*?\]/s);
+    const m = /DB_RUN_EXEC_ALLOW_LIST[^\]]*?\]/s.exec(src);
     expect(m).toBeTruthy();
     const block = m?.[0] ?? "";
     const extra = block.match(/"packages\/(?!gateway\/src\/db\/write\.ts")[^"]+"/g);

@@ -77,7 +77,7 @@ repos = ["github:org/d"]
     expect(cfg.pagerdutyServices).toEqual([]);
     expect(cfg.incidentWindowMinutes).toBe(60);
     expect(cfg.excludePrLabels).toEqual(["revert"]);
-    expect("Deploy production".match(cfg.deployWorkflowPattern)).not.toBeNull();
+    expect(cfg.deployWorkflowPattern.exec("Deploy production")).not.toBeNull();
   });
 });
 
