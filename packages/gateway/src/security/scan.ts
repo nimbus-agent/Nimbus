@@ -81,7 +81,7 @@ function absoluteLineFor(item: ScanItem, body: string, offset: number): number |
   let linesBefore = 0;
   const end = Math.min(offset, body.length);
   for (let i = 0; i < end; i++) {
-    if (body.charCodeAt(i) === 10) linesBefore++;
+    if (body.codePointAt(i) === 10) linesBefore++;
   }
   if (linesBefore < 1) return null; // offset is in the path header line
   return start + (linesBefore - 1); // subtract the header line

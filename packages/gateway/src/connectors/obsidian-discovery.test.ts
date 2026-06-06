@@ -28,7 +28,7 @@ test("discoverVaults returns absolute paths of every directory containing .obsid
   for (const r of rels) {
     expect(r.includes("node_modules")).toBe(false);
   }
-  expect(rels.some((r) => r === "/Random")).toBe(false);
+  expect(rels.includes("/Random")).toBe(false);
 });
 
 test("discoverNotesInVault returns relative paths of all .md files under the vault root", () => {

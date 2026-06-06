@@ -71,6 +71,18 @@ positive and is suppressed inline.
 |---|---|---|
 | `.claude/hooks/bash-safety.sh` `block()` | `shelldre:S7682` | The function is a fatal handler that always terminates the hook via `exit 2`; an explicit `return` at the end would be unreachable, and rewriting it as return-then-exit at the four call sites would risk the hook's blocking guarantee. |
 
+### PR 7 — `typescript` S77xx tail inline `// NOSONAR` (semantics-preserving exceptions)
+
+The S77xx modernization tail was fixed in code (`String.fromCodePoint`,
+`replaceAll`, `.at(-1)`, `Number.parseInt`, `globalThis`, `TypeError`, etc.).
+Two sites cannot adopt the suggested rewrite without changing behavior or
+breaking compilation, so the original is kept with an inline `// NOSONAR`.
+
+| Site | Rule | Why it's suppressed |
+|---|---|---|
+| `mcp-connectors/great-expectations/src/gx-parse.ts` `clampId()` | `typescript:S7767` | `(… ) \| 0` is a deliberate 32-bit wraparound (Java-style `hashCode`), not a truncation; `Math.trunc` would let the accumulator exceed 2^53 and corrupt the hash. |
+| `sdk/src/testing/sandbox-probe.ts` | `typescript:S7787` | The specifier-less `export {}` is the module marker required by the top-level `await main()` below it; removing it makes the top-level await a compile error (TS1375). |
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)

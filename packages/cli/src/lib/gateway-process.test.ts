@@ -242,7 +242,7 @@ describe("readGatewayState", () => {
     const proc = spawnNoop();
     const pid = proc.pid;
     if (typeof pid !== "number") {
-      throw new Error("spawned subprocess has no pid");
+      throw new TypeError("spawned subprocess has no pid");
     }
     const stateFile = gatewayStatePath(paths);
     writeFileSync(stateFile, JSON.stringify({ pid, socketPath: join(dir, "live.sock") }), "utf8");

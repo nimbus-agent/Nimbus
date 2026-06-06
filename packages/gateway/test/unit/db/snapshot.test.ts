@@ -79,7 +79,7 @@ describe("db/snapshot", () => {
       const snapshotPath = takeSnapshot(db, dataDir);
       const compressed = readFileSync(snapshotPath);
       const raw = Bun.gunzipSync(compressed);
-      const magic = String.fromCharCode(...raw.slice(0, 15));
+      const magic = String.fromCodePoint(...raw.slice(0, 15));
       expect(magic).toBe("SQLite format 3");
     });
   });

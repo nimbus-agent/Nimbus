@@ -51,7 +51,7 @@ function stretchCast(input: { header: AsciinemaHeader; events: AsciinemaEvent[] 
     const tSeconds = SCHEDULE_SECONDS[idx] ?? 0;
     return JSON.stringify([tSeconds, event[1], event[2]]);
   });
-  const lastT = SCHEDULE_SECONDS[SCHEDULE_SECONDS.length - 1] ?? 0;
+  const lastT = SCHEDULE_SECONDS.at(-1) ?? 0;
   eventLines.push(JSON.stringify([lastT + TRAILING_PAD_SECONDS, "o", ""]));
   return `${[headerLine, ...eventLines].join("\n")}\n`;
 }

@@ -237,7 +237,7 @@ describe("pattern tiers", () => {
 describe("regex-DoS resilience", () => {
   test("scanning 100 KB of random text finishes within 200 ms per pattern", () => {
     const filler = Array.from({ length: 100_000 }, (_, i) =>
-      String.fromCharCode(48 + (i % 75)),
+      String.fromCodePoint(48 + (i % 75)),
     ).join("");
     for (const p of SECRET_PATTERNS) {
       p.regex.lastIndex = 0;

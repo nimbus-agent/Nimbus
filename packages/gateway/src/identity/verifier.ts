@@ -16,7 +16,7 @@ interface JwtParts {
 
 function b64urlToBytes(s: string): Uint8Array {
   const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  return new Uint8Array(Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64"));
+  return new Uint8Array(Buffer.from(s.replaceAll("-", "+").replaceAll("_", "/") + pad, "base64"));
 }
 function b64urlToJson(s: string): Record<string, unknown> {
   const obj: unknown = JSON.parse(new TextDecoder().decode(b64urlToBytes(s)));

@@ -138,7 +138,7 @@ function clampId(id: string): string {
   }
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = (h * 31 + (id.codePointAt(i) ?? 0)) | 0;
+    h = (h * 31 + (id.codePointAt(i) ?? 0)) | 0; // NOSONAR S7767: `| 0` is 32-bit wraparound (Java-style hashCode), not truncation; Math.trunc would let h exceed 2^53 and corrupt the hash.
   }
   return `${id.slice(0, 240)}#${(h >>> 0).toString(16)}`;
 }

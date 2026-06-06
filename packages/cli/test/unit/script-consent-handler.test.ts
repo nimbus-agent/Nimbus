@@ -48,7 +48,7 @@ describe("registerScriptConsentHandler", () => {
 
     const handler = notifications.find((n) => n.method === "consent.request")?.handler;
     expect(handler).toBeDefined();
-    if (handler === undefined) throw new Error();
+    if (handler === undefined) throw new Error("consent.request handler was not registered");
 
     await handler({ requestId: "req-1", prompt: "First action" });
     await handler({ requestId: "req-2", prompt: "Second action" });
@@ -90,7 +90,7 @@ describe("registerScriptConsentHandler", () => {
     const { client, notifications } = makeFakeClient();
     registerScriptConsentHandler(client, source);
     const handler = notifications.find((n) => n.method === "consent.request")?.handler;
-    if (handler === undefined) throw new Error();
+    if (handler === undefined) throw new Error("consent.request handler was not registered");
 
     let captured = "";
     const restore = process.stdout.write;
@@ -128,7 +128,7 @@ describe("registerScriptConsentHandler", () => {
     const { client, notifications } = makeFakeClient();
     registerScriptConsentHandler(client, source);
     const handler = notifications.find((n) => n.method === "consent.request")?.handler;
-    if (handler === undefined) throw new Error();
+    if (handler === undefined) throw new Error("consent.request handler was not registered");
 
     await handler({ requestId: "r1", prompt: "p1" });
     await expect(handler({ requestId: "r2", prompt: "p2" })).rejects.toThrow(

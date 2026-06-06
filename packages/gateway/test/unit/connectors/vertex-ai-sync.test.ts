@@ -186,7 +186,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
   test("falls back to default region when gcp.region has a control char", async () => {
     // A region with a control char (< 0x20) passes the non-empty / length / `-`
     // checks but is rejected by the char-scan loop → loadCreds returns null → noop.
-    const regionWithControlChar = `us${String.fromCharCode(0x07)}central1`;
+    const regionWithControlChar = `us${String.fromCodePoint(0x07)}central1`;
     await fx.vault.set("gcp.region", regionWithControlChar);
     const { run: run2, calls: calls2 } = makeRunner([{ body: [] }]);
     const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run2 }).sync(

@@ -166,7 +166,7 @@ describe("stripe-sync against Bun.serve fake API", () => {
 
   test("multi-page: has_more drives a starting_after cursor walk", async () => {
     const firstPage = fullPage("a");
-    const lastId = (firstPage[firstPage.length - 1] as { id: string }).id;
+    const lastId = (firstPage.at(-1) as { id: string }).id;
     h = startHarness({
       pages: {
         "": { data: firstPage, has_more: true },

@@ -87,7 +87,7 @@ function makeBridge(): EmbeddingRuntime {
 }
 
 function currentHandle(): FakeWorkerHandle {
-  const h = handles[handles.length - 1];
+  const h = handles.at(-1);
   if (h === undefined) {
     throw new Error("expected at least one fake worker handle");
   }

@@ -24,7 +24,7 @@ interface VsCodeApi {
 }
 
 function dispatch(origin: string, data: unknown): void {
-  window.dispatchEvent(new MessageEvent("message", { origin, data }));
+  globalThis.dispatchEvent(new MessageEvent("message", { origin, data }));
 }
 
 function transcriptHtml(): string {
@@ -68,7 +68,7 @@ describe("webview message listener", () => {
       data: { type: "userMessage", text: "no-source-payload" },
     });
     expect(ev.source).toBeNull();
-    window.dispatchEvent(ev);
+    globalThis.dispatchEvent(ev);
     expect(transcriptHtml()).toContain("no-source-payload");
   });
 

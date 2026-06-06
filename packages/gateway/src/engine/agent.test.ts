@@ -39,7 +39,7 @@ function parseEnvelope(body: string): ParsedEnvelope {
 async function listAgentTools(agent: unknown): Promise<ToolMap> {
   const fn = (agent as AgentWithListTools).listTools;
   if (typeof fn !== "function") {
-    throw new Error("Agent.listTools() not exposed (Mastra version drift?)");
+    throw new TypeError("Agent.listTools() not exposed (Mastra version drift?)");
   }
   return await fn.call(agent);
 }

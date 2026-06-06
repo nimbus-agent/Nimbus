@@ -7,8 +7,8 @@ function b64url(bytes: Uint8Array): string {
   // base64url: swap +/ for -_ and drop the trailing `=` padding run.
   return Buffer.from(bytes)
     .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
     .replace(/=+$/, "");
 }
 

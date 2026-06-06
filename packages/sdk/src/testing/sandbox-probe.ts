@@ -82,6 +82,6 @@ async function main(): Promise<void> {
 // `await main()` below requires the file to be a module. `export {}` is the
 // canonical module marker for that. (Sonar S7787 flags the specifier-less
 // export, but removing it makes the top-level await a compile error — TS1375.)
-export {};
+export {}; // NOSONAR S7787: specifier-less export is the module marker required for the top-level `await main()` below (removing it is TS1375).
 
 await main();

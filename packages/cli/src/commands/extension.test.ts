@@ -535,7 +535,7 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       isTty: true,
       noColor: false,
     });
-    const ESC = String.fromCharCode(27);
+    const ESC = String.fromCodePoint(27);
     expect(formatted).toMatch(new RegExp(String.raw`${ESC}\[2;33m\(unverified\)\s*${ESC}\[0m`));
   });
 
@@ -544,7 +544,7 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
       isTty: true,
       noColor: true,
     });
-    const ESC = String.fromCharCode(27);
+    const ESC = String.fromCodePoint(27);
     expect(formatted).not.toMatch(new RegExp(String.raw`${ESC}\[`));
   });
 

@@ -23,7 +23,7 @@ export function parseBaseline(text: string): Baseline {
     throw new Error(`baseline version must be 1 (got ${JSON.stringify(obj["version"])})`);
   }
   if (typeof obj["generated_at"] !== "string") {
-    throw new Error("baseline generated_at must be an ISO-8601 string");
+    throw new TypeError("baseline generated_at must be an ISO-8601 string");
   }
   const filesRaw = obj["files"];
   if (filesRaw === null || typeof filesRaw !== "object" || Array.isArray(filesRaw)) {

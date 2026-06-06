@@ -755,7 +755,7 @@ describe("runPKCEFlow", () => {
     const redirectUri = authUrlParsed.searchParams.get("redirect_uri");
     const state = authUrlParsed.searchParams.get("state");
 
-    const boundPort = parseInt(new URL(redirectUri!).port, 10);
+    const boundPort = Number.parseInt(new URL(redirectUri!).port, 10);
     expect(boundPort).toBeGreaterThan(0);
 
     const callbackUrl = new URL(redirectUri!);

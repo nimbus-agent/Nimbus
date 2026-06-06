@@ -178,7 +178,7 @@ describe("dispatchAgentsRpc — agents.catchup", () => {
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
       const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
-      if (calls.find((c) => c[0] === "catchup.briefReady") !== undefined) break;
+      if (calls.some((c) => c[0] === "catchup.briefReady")) break;
       await new Promise((r) => setTimeout(r, 25));
     }
     const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)

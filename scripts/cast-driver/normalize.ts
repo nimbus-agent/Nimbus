@@ -31,12 +31,12 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
   },
   {
     name: "crlf-to-lf",
-    apply: (t) => t.replace(/\r\n/g, "\n"),
+    apply: (t) => t.replaceAll("\r\n", "\n"),
   },
   {
     name: "cr-resolution",
     apply: (t) => {
-      let text = t.replace(/\r\n/g, "\n");
+      let text = t.replaceAll("\r\n", "\n");
       if (text.endsWith("\r")) {
         text = `${text.slice(0, -1)}\n`;
       }
