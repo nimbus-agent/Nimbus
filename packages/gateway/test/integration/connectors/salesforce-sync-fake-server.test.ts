@@ -7,6 +7,7 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import { createMockVault } from "../../../src/vault/mock.ts";
+import { installHostInterceptFetch } from "../../helpers/host-intercept-fetch.ts";
 import { requestUrl } from "../../helpers/request-url.ts";
 
 const INSTANCE_URL = "https://acme.my.salesforce.com";
@@ -35,9 +36,8 @@ interface FakeConfig {
 interface FakeServer {
   requests: RecordedReq[];
   fetch: typeof globalThis.fetch;
+  restore: () => void;
 }
-
-const realFetch = globalThis.fetch;
 
 function pageBody(page: FakePage): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -52,31 +52,25 @@ function pageBody(page: FakePage): Record<string, unknown> {
 }
 
 function installFakeFetch(config: FakeConfig): FakeServer {
-  const requests: RecordedReq[] = [];
-  const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const urlStr = requestUrl(input);
-    // Only intercept the Salesforce instance host; everything else falls through.
-    if (new URL(urlStr).origin !== INSTANCE_URL) {
-      return realFetch(input, init);
-    }
-    const u = new URL(urlStr);
-    requests.push({
+  return installHostInterceptFetch<RecordedReq>({
+    base: INSTANCE_URL,
+    record: (u, init) => ({
       method: init?.method ?? "GET",
       pathname: u.pathname,
       search: u.search,
       auth: new Headers(init?.headers).get("authorization"),
-    });
-    if (config.status !== undefined && config.status !== 200) {
-      return new Response("error", { status: config.status });
-    }
-    const isFirst = u.pathname === "/services/data/v60.0/query";
-    const page = isFirst
-      ? (config.first ?? { records: [], done: true })
-      : (config.byPath?.[u.pathname] ?? { records: [], done: true });
-    return Response.json(pageBody(page));
-  }) as typeof globalThis.fetch;
-  globalThis.fetch = fakeFetch;
-  return { requests, fetch: fakeFetch };
+    }),
+    respond: (req) => {
+      if (config.status !== undefined && config.status !== 200) {
+        return new Response("error", { status: config.status });
+      }
+      const isFirst = req.pathname === "/services/data/v60.0/query";
+      const page = isFirst
+        ? (config.first ?? { records: [], done: true })
+        : (config.byPath?.[req.pathname] ?? { records: [], done: true });
+      return Response.json(pageBody(page));
+    },
+  });
 }
 
 interface Harness {
@@ -95,7 +89,7 @@ function startHarness(config: FakeConfig): Harness {
     db,
     fake,
     cleanup: () => {
-      globalThis.fetch = realFetch;
+      fake.restore();
       db.close();
     },
     ctx: {
