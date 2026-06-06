@@ -20,10 +20,10 @@ type LoaderState = {
 function fakeLoader(state: LoaderState): (cacheDir: string) => Promise<FeatureExtractionPipe> {
   return async (cacheDir: string) => {
     state.cacheDir = cacheDir;
-    return (async (texts: string[], options: unknown) => {
+    return async (texts: string[], options: unknown) => {
       state.calls.push({ texts, options });
       return state.tensor;
-    });
+    };
   };
 }
 

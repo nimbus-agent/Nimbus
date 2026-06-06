@@ -189,9 +189,6 @@ class FetchJmapClient implements JmapClient {
 }
 
 const server = new McpServer({ name: "nimbus-fastmail", version: "0.1.0" });
-registerFastmailTools(
-  server,
-  new FetchJmapClient(),
-);
+registerFastmailTools(server, new FetchJmapClient());
 
 await server.connect(new StdioServerTransport());

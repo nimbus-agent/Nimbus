@@ -150,10 +150,7 @@ describe("mapSemgrepFindingToItem", () => {
       { deploymentSlug: SLUG, syncedAt: NOW },
     );
     if (row === null) throw new Error("expected mapping to succeed");
-    expect(row.metadata["categories"]).toEqual([
-      "security",
-      "best-practice",
-    ]);
+    expect(row.metadata["categories"]).toEqual(["security", "best-practice"]);
   });
 
   test("modifiedAt prefers relevant_since over created_at; falls back to syncedAt", () => {

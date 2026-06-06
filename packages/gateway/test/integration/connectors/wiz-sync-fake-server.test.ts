@@ -112,14 +112,14 @@ function startHarness(config: FakeWizConfig): Harness {
   const vault = createMockVault();
   const fake = startFakeWiz(config);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url
       .replace("https://auth.app.wiz.io", fake.baseUrl)
       .replace("https://api.app.wiz.io", fake.baseUrl);
     return originalFetch(rewritten, init);
-  });
+  };
   return {
     db,
     fake,

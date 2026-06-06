@@ -187,7 +187,7 @@ describe("canva-sync against a fake api.canva.com", () => {
     const realFetchLocal = globalThis.fetch;
     h = startHarness({});
     // Override with a stateful fake: first call ok, second call errors.
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== BASE) {
         return realFetchLocal(input, init);
@@ -203,7 +203,7 @@ describe("canva-sync against a fake api.canva.com", () => {
         return Response.json({ items: [design("1", "Alpha")], continuation: "p2" });
       }
       return new Response("boom", { status: 500 });
-    });
+    };
     await setOAuth(h);
 
     const syncable = createCanvaSyncable({ ensureCanvaMcpRunning: async () => {} });

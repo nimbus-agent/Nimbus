@@ -185,7 +185,7 @@ describe("miro-sync against a fake api.miro.com", () => {
     const realFetchLocal = globalThis.fetch;
     h = startHarness({});
     // Override with a stateful fake: first call ok, second call errors.
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== BASE) {
         return realFetchLocal(input, init);
@@ -201,7 +201,7 @@ describe("miro-sync against a fake api.miro.com", () => {
         return Response.json({ data: [board("1", "Alpha")], cursor: "p2" });
       }
       return new Response("boom", { status: 500 });
-    });
+    };
     await setOAuth(h);
 
     const syncable = createMiroSyncable({ ensureMiroMcpRunning: async () => {} });

@@ -59,8 +59,8 @@ export class MockFetch {
       throw new Error("MockFetch.install() called twice without restore()");
     }
     this.original = globalThis.fetch;
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
-      this.handle(input, init));
+    globalThis.fetch = (input: string | URL | Request, init?: RequestInit) =>
+      this.handle(input, init);
   }
 
   restore(): void {

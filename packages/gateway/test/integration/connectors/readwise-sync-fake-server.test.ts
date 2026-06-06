@@ -114,11 +114,11 @@ function highlight(id: number, over: Record<string, unknown> = {}): Record<strin
 
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://readwise.io", fakeBase);
     return original(rewritten, init);
-  });
+  };
   return () => {
     globalThis.fetch = original;
   };

@@ -669,7 +669,7 @@ describe("gitlab-sync — phase machine + cycle", () => {
     let pipelineCalls = 0;
     fixture.fetchMock.restore();
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
+    globalThis.fetch = async (input: string | URL | Request): Promise<Response> => {
       const u =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (/[&?]page=1(&|$)/.test(u) && /\/events\?/.test(u)) {
@@ -698,7 +698,7 @@ describe("gitlab-sync — phase machine + cycle", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       throw new Error(`unexpected request: ${u}`);
-    });
+    };
 
     try {
       const res = await createGitlabSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);

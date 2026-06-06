@@ -149,11 +149,11 @@ async function seedCreds(h: Harness): Promise<void> {
 // api.ramp.com origin to the fake server origin.
 function withRampHostRewrite<T>(host: string, run: () => Promise<T>): Promise<T> {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const rewritten = url.replace("https://api.ramp.com", host);
     return realFetch(rewritten, init);
-  });
+  };
   return run().finally(() => {
     globalThis.fetch = realFetch;
   });

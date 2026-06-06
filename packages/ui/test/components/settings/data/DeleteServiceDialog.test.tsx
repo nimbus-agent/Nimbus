@@ -11,12 +11,9 @@ function resetStore() {
   useNimbusStore.setState({
     deleteFlow: { status: "idle" },
     setDeleteFlow: (patch: Record<string, unknown>) =>
-      useNimbusStore.setState(
-        (s) =>
-          ({
-            deleteFlow: { ...s.deleteFlow, ...patch },
-          }),
-      ),
+      useNimbusStore.setState((s) => ({
+        deleteFlow: { ...s.deleteFlow, ...patch },
+      })),
     connectorsList: [
       {
         service: "github",

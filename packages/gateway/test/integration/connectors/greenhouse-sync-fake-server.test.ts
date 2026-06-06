@@ -107,11 +107,11 @@ function job(id: number, over: Record<string, unknown> = {}): Record<string, unk
 
 function withRewrittenFetch(fakeBase: string): () => void {
   const original = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const urlStr = typeof input === "string" ? input : input.toString();
     const rewritten = urlStr.replace("https://harvest.greenhouse.io", fakeBase);
     return original(rewritten, init);
-  });
+  };
   return () => {
     globalThis.fetch = original;
   };

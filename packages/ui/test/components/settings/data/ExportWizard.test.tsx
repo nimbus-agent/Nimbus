@@ -27,12 +27,9 @@ function resetStore() {
     connectionState: "connected",
     exportFlow: { status: "idle" },
     setExportFlow: (patch: Record<string, unknown>) =>
-      useNimbusStore.setState(
-        (s) =>
-          ({
-            exportFlow: { ...s.exportFlow, ...patch },
-          }),
-      ),
+      useNimbusStore.setState((s) => ({
+        exportFlow: { ...s.exportFlow, ...patch },
+      })),
     setExportProgress: (progress: unknown) =>
       useNimbusStore.setState(
         (s) =>

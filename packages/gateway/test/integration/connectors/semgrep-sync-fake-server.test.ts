@@ -101,12 +101,12 @@ function startHarness(): Harness {
   const vault = createMockVault();
   const fake = startFakeSemgrep();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url.replace("https://semgrep.dev", fake.baseUrl);
     return originalFetch(rewritten, init);
-  });
+  };
   return {
     db,
     fake,

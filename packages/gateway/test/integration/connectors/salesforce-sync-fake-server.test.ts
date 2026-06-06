@@ -236,7 +236,7 @@ describe("salesforce-sync against a fake instance host", () => {
     let call = 0;
     const realFetchLocal = globalThis.fetch;
     h = startHarness({});
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input.toString();
       if (new URL(urlStr).origin !== INSTANCE_URL) {
         return realFetchLocal(input, init);
@@ -257,7 +257,7 @@ describe("salesforce-sync against a fake instance host", () => {
         });
       }
       return new Response("boom", { status: 500 });
-    });
+    };
     await setOAuth(h);
 
     const syncable = createSalesforceSyncable({ ensureSalesforceMcpRunning: async () => {} });

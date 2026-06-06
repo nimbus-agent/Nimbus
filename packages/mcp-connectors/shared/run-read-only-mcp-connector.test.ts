@@ -9,7 +9,7 @@ function syntheticSchema(): ZodObjectSchema<SyntheticArgs> {
     shape: { id: {} },
     safeParse: (args: unknown) => ({
       success: true as const,
-      data: (args ?? {}),
+      data: args ?? {},
     }),
   };
 }

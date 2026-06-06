@@ -74,11 +74,7 @@ function wire() {
   const { server, handlers } = fakeServer();
   const client = new FakeClient();
   const mailer = new FakeMailer();
-  registerProtonmailTools(
-    server,
-    client,
-    mailer,
-  );
+  registerProtonmailTools(server, client, mailer);
   return { handlers, client, mailer };
 }
 

@@ -72,12 +72,12 @@ function startHarness(config: FakeLdConfig): Harness {
   const vault = createMockVault();
   const fake = startFakeLd(config);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url.replace("https://app.launchdarkly.com", fake.baseUrl);
     return originalFetch(rewritten, init);
-  });
+  };
   return {
     db,
     fake,

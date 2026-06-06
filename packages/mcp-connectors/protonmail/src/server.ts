@@ -243,10 +243,6 @@ class BridgeMailer implements SmtpMailer {
 }
 
 const server = new McpServer({ name: "nimbus-protonmail", version: "0.1.0" });
-registerProtonmailTools(
-  server,
-  new BridgeImapClient(),
-  new BridgeMailer(),
-);
+registerProtonmailTools(server, new BridgeImapClient(), new BridgeMailer());
 
 await server.connect(new StdioServerTransport());

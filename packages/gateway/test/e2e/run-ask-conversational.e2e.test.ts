@@ -1,10 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
-import type { ConnectorDispatcher } from "../../src/engine/types.ts";
 import type { LocalIndex } from "../../src/index/local-index.ts";
-import type { ConsentCoordinator } from "../../src/ipc/consent.ts";
-import type { PlatformPaths } from "../../src/platform/paths.ts";
 
 const routerModuleAbs = join(import.meta.dir, "..", "..", "src", "engine", "router.ts");
 const runAskModuleAbs = join(import.meta.dir, "..", "..", "src", "engine", "run-ask.ts");

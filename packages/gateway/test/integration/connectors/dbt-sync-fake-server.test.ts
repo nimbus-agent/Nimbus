@@ -84,12 +84,12 @@ function startHarness(config: FakeDbtConfig): Harness {
   const vault = createMockVault();
   const fake = startFakeDbt(config);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rewritten = url.replace("https://cloud.getdbt.com", fake.apiBase);
     return originalFetch(rewritten, init);
-  });
+  };
   return {
     db,
     fake,

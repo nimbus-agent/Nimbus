@@ -22,12 +22,9 @@ function resetStore() {
   useNimbusStore.setState({
     importFlow: { status: "idle" },
     setImportFlow: (patch: Record<string, unknown>) =>
-      useNimbusStore.setState(
-        (s) =>
-          ({
-            importFlow: { ...s.importFlow, ...patch },
-          }),
-      ),
+      useNimbusStore.setState((s) => ({
+        importFlow: { ...s.importFlow, ...patch },
+      })),
     setImportProgress: (progress: unknown) =>
       useNimbusStore.setState(
         (s) =>
