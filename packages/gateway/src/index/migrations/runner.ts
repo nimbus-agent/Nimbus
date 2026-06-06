@@ -51,6 +51,7 @@ import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
+import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
 import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
@@ -380,6 +381,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34)",
     V34_IDENTITY_SQL,
   ),
+  simpleStep(
+    34,
+    35,
+    "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35)",
+    V35_TEAM_VAULT_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -417,6 +424,7 @@ const BACKFILL_LABELS: readonly string[] = [
   "git_blame_line table (security scan v2 blame attribution) (backfilled)",
   "federation namespaces/filters/grants + audit_log.federation_json (federation v33) (backfilled)",
   "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34) (backfilled)",
+  "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
