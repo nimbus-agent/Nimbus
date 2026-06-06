@@ -108,7 +108,8 @@ describe("startMetricsServer", () => {
   test("escapes label backslash, double-quote, and newline characters", async () => {
     const escapeDb = openSeededInMemoryDb(30);
     const now = Date.now();
-    const wild = `${String.raw`tricky"name\with`}\nnewline`;
+    const rawLabel = String.raw`tricky"name\with`;
+    const wild = `${rawLabel}\nnewline`;
     escapeDb.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
        VALUES (?, ?, 'doc', 'x', 't', ?, ?)`,

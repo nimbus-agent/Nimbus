@@ -261,6 +261,5 @@ describe("dispatchSecurityRpc — long-running job", () => {
   });
 });
 
-// Keep a reference to the exported result type so it stays part of the surface.
-const _typecheck: SecurityScanResult | undefined = undefined;
-void _typecheck;
+// Keep the exported result type referenced so it stays part of the module's surface.
+export type _SecurityScanResultSurface = SecurityScanResult;

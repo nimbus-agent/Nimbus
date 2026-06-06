@@ -30,7 +30,7 @@ class FakeIpc {
 }
 
 function makeClient(ipc: FakeIpc): NimbusClient {
-  return new (NimbusClient as unknown as { new (ipc: unknown): NimbusClient })(ipc);
+  return new (NimbusClient as unknown as new (ipc: unknown) => NimbusClient)(ipc);
 }
 
 describe("NimbusClient method dispatch", () => {

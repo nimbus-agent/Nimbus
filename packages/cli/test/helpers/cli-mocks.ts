@@ -67,7 +67,6 @@ export function installCliMocks(): void {
 
   mock.module("../../src/ipc-client/index.ts", () => ({
     IPCClient: class FakeIPCClient {
-      constructor(_socketPath: string) {}
       async connect(): Promise<void> {
         /* no-op mock */
       }

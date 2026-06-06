@@ -18,7 +18,8 @@ function encodeCursor(payload: unknown): string {
 }
 
 function authHeaderForUserPass(user: string, pass: string): string {
-  return `Basic ${Buffer.from(`${user}:${pass}`, "utf8").toString("base64")}`;
+  const creds = `${user}:${pass}`;
+  return `Basic ${Buffer.from(creds, "utf8").toString("base64")}`;
 }
 
 async function withIsolatedFixture(

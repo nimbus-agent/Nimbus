@@ -40,7 +40,7 @@ describe("POST /v1/deployments (integration)", () => {
     return startReadOnlyHttpServer(dbPath, 0, {
       configDir: dir,
       nowMs: () => NOW,
-      resolveDeploymentToken: async () => (o.token === undefined ? TOKEN : o.token),
+      resolveDeploymentToken: async () => o.token ?? TOKEN,
     });
   }
 

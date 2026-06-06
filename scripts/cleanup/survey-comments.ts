@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { type CommentHit, iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
 
 const MARKERS = [
-  { name: "I-numbered", pattern: /\bI[1-9][0-9]?\b/ },
+  { name: "I-numbered", pattern: /\bI[1-9]\d?\b/ },
   { name: "HITL", pattern: /\bHITL\b/ },
   { name: "WHY", pattern: /\bWHY:/ },
   { name: "NOTE", pattern: /\bNOTE:/ },

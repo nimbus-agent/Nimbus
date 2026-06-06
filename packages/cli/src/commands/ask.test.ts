@@ -6,7 +6,6 @@ const mod = await import("./ask.ts");
 const { runAsk } = mod;
 
 const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
 const origStdoutWrite = process.stdout.write.bind(process.stdout);
 const origStderrWrite = process.stderr.write.bind(process.stderr);
 
@@ -15,10 +14,8 @@ function installStreamCapture(): void {
     stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
     return true;
   }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
+  // Silence stderr noise during these tests; the content is never asserted on.
+  process.stderr.write = (() => true) as typeof process.stderr.write;
 }
 
 function restoreStreams(): void {
@@ -33,7 +30,6 @@ afterAll(() => {
 describe("runAsk — usage / preconditions", () => {
   beforeEach(() => {
     stdoutChunks.length = 0;
-    stderrChunks.length = 0;
     installStreamCapture();
   });
   afterEach(() => {
@@ -62,7 +58,6 @@ describe("runAsk — usage / preconditions", () => {
 describe("runAsk — happy paths", () => {
   beforeEach(() => {
     stdoutChunks.length = 0;
-    stderrChunks.length = 0;
     installStreamCapture();
   });
   afterEach(() => {

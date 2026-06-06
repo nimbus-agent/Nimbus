@@ -60,7 +60,7 @@ export function extractTableNames(sql: string): string[] {
   // members — Sonar's regex analyzer (S5869) false-positives on a bracket pair
   // sharing a class with quote chars, even though no character is duplicated.
   const cleaned = stripSqlComments(sql).replace(/["`]/g, "").replace(/[[\]]/g, "");
-  const re = /\b(?:from|join|into|update)\s+([a-zA-Z_][\w.$]*)/gi;
+  const re = /\b(?:from|join|into|update)\s+([a-z_][\w.$]*)/gi;
   const seen = new Set<string>();
   const out: string[] = [];
   for (const m of cleaned.matchAll(re)) {

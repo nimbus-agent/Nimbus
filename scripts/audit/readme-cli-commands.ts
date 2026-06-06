@@ -4,7 +4,7 @@ const STOP_WORDS = new Set(["--version", "--help", "-v", "-h"]);
 
 export function extractReadmeCliCommands(markdown: string): string[] {
   const found = new Set<string>();
-  const pattern = /(?<![A-Za-z0-9_])nimbus\s+([a-z][a-z0-9-]*)/g;
+  const pattern = /(?<!\w)nimbus\s+([a-z][a-z0-9-]*)/g;
   for (const m of markdown.matchAll(pattern)) {
     const cmd = m[1];
     if (cmd && !STOP_WORDS.has(cmd)) found.add(cmd);

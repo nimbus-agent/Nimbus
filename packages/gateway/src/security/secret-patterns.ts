@@ -78,14 +78,13 @@ export const EXTENDED_SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
     confidence: "extended",
     // an identifier containing secret/token/api[-_]key/passwd/password assigned a
     // 32+ char base64-ish literal, e.g. `apiSecret = "…"`, `API_KEY: '…'`
-    regex:
-      /\b[A-Za-z0-9_]*(?:secret|token|api[_-]?key|passwd|password)\s*[:=]\s*["'`][A-Za-z0-9+/_-]{32,}["'`]/gi,
+    regex: /\b\w*(?:secret|token|api[_-]?key|passwd|password)\s*[:=]\s*["'`][\w+/-]{32,}["'`]/gi,
   },
   {
     name: "generic_bearer_like",
     category: "token",
     confidence: "extended",
-    regex: /\bbearer\s+[A-Za-z0-9._-]{24,}\b/gi,
+    regex: /\bbearer\s+[\w.-]{24,}\b/gi,
   },
 ]);
 
