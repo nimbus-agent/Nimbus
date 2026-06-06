@@ -86,7 +86,7 @@ describe("signServiceAccountAssertion", () => {
       "sha256",
       Buffer.from(`${h}.${p}`, "utf8"),
       crypto.createPublicKey(publicKey),
-      Buffer.from(sig as string, "base64url"),
+      Buffer.from(sig as string, "base64url"), // NOSONAR S4325: sig is string|undefined from the JWT split under noUncheckedIndexedAccess
     );
     expect(ok).toBe(true);
   });
