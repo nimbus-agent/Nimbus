@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
 import { renderCatchup, renderExpert, renderImpact } from "./render.ts";
 
-const BASE: Pick<ExpertBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+type BriefMetaKeys = "kind" | "agentVersion" | "generatedAt" | "latencyMs";
+
+const BASE: Pick<ExpertBrief, BriefMetaKeys> = {
   kind: "expert",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,
@@ -115,7 +117,7 @@ describe("renderExpert", () => {
   });
 });
 
-const IMPACT_BASE: Pick<ImpactBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+const IMPACT_BASE: Pick<ImpactBrief, BriefMetaKeys> = {
   kind: "impact",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,
@@ -225,7 +227,7 @@ describe("renderImpact", () => {
   });
 });
 
-const CATCHUP_BASE: Pick<CatchupBrief, "kind" | "agentVersion" | "generatedAt" | "latencyMs"> = {
+const CATCHUP_BASE: Pick<CatchupBrief, BriefMetaKeys> = {
   kind: "catchup",
   agentVersion: 1,
   generatedAt: 1_700_000_000_000,

@@ -76,9 +76,9 @@ function makeSpyContext(
     clearLazyIdle: (key: string): void => {
       calls.clearLazyIdle.push(key);
     },
-    getLazyClient: (key: string): never | undefined => {
+    getLazyClient: (key: string): undefined => {
       calls.getLazyClient.push(key);
-      return opts.existingClient as never | undefined;
+      return opts.existingClient as undefined;
     },
     setLazyClient: (key: string, client: never): void => {
       calls.setLazyClient.push({ key, client });

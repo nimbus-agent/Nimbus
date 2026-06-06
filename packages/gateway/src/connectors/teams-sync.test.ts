@@ -13,6 +13,8 @@ import {
   type TeamsSyncCursorV1,
 } from "./teams-sync.ts";
 
+type FetchInput = string | URL | Request;
+
 describe("Teams sync cursor codec", () => {
   test("round-trip", () => {
     const samples: TeamsSyncCursorV1[] = [
@@ -57,7 +59,7 @@ describe("createTeamsSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/joinedTeams")) {
         return new Response(JSON.stringify({ value: [{ id: "team-1", displayName: "T" }] }), {
@@ -120,7 +122,7 @@ describe("createTeamsSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/joinedTeams")) {
         return new Response(
@@ -150,7 +152,7 @@ describe("createTeamsSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/teams/team-1/channels") && !url.includes("/messages")) {
         return new Response(
@@ -197,7 +199,7 @@ describe("createTeamsSyncable", () => {
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // No fetch should ever happen on this path.
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       throw new Error(`unexpected fetch: ${requestUrlString(input)}`);
     }) as unknown as typeof fetch;
 
@@ -228,7 +230,7 @@ describe("createTeamsSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       throw new Error(`unexpected fetch: ${requestUrlString(input)}`);
     }) as unknown as typeof fetch;
 
@@ -257,7 +259,7 @@ describe("createTeamsSyncable", () => {
     const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // Pass 1: index a normal message so there is a row to delete later.
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return new Response(
@@ -301,7 +303,7 @@ describe("createTeamsSyncable", () => {
     expect(beforeRow).toBeTruthy();
 
     // Pass 2: the delta now reports the message as removed → deletion branch.
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return new Response(

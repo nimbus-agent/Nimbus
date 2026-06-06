@@ -54,7 +54,7 @@ function walkIfChain(node: ts.IfStatement, source: ts.SourceFile): Cluster | nul
   let cur: ts.IfStatement | undefined = node;
   while (cur?.elseStatement && ts.isIfStatement(cur.elseStatement)) {
     const next = extractIfLiteralBranch(cur.elseStatement);
-    if (!next || next.discriminator !== first.discriminator) break;
+    if (next?.discriminator !== first.discriminator) break;
     literals.push(next.literal);
     cur = cur.elseStatement;
   }

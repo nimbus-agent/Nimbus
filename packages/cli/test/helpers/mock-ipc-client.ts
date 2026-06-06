@@ -1,7 +1,8 @@
 import type { IPCClient } from "../../src/ipc-client/index.ts";
 
 export type CallRecord = { method: string; params: unknown };
-export type IpcResponse = unknown | Error;
+// A queued response value, or an Error to be thrown (Error ⊆ unknown).
+export type IpcResponse = unknown;
 
 export interface MockIpcClient {
   readonly client: IPCClient;

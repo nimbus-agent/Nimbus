@@ -9,6 +9,8 @@ import {
   refreshViaRegistry,
 } from "./oauth-registry.ts";
 
+type FetchInput = string | URL | Request;
+
 describe("OAUTH_PROVIDERS table", () => {
   test("has an entry for every existing provider with its vault key", () => {
     expect(OAUTH_PROVIDERS.google.vaultKey).toBe("google.oauth");
@@ -204,7 +206,7 @@ describe("hubspot descriptor", () => {
   test("exchange posts form with client_secret in body; error message omits secrets", async () => {
     let seenBody = "";
     let seenCT = "";
-    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_i: FetchInput, init?: RequestInit) => {
       seenBody = typeof init?.body === "string" ? init.body : "";
       seenCT = new Headers(init?.headers).get("content-type") ?? "";
       return new Response(
@@ -262,7 +264,7 @@ describe("miro descriptor", () => {
   test("exchange posts form with client_secret in body; error message omits secrets", async () => {
     let seenBody = "";
     let seenCT = "";
-    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_i: FetchInput, init?: RequestInit) => {
       seenBody = typeof init?.body === "string" ? init.body : "";
       seenCT = new Headers(init?.headers).get("content-type") ?? "";
       return new Response(
@@ -321,7 +323,7 @@ describe("canva descriptor", () => {
     let seenBody = "";
     let seenAuth = "";
     let seenCT = "";
-    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_i: FetchInput, init?: RequestInit) => {
       seenBody = typeof init?.body === "string" ? init.body : "";
       const h = new Headers(init?.headers);
       seenAuth = h.get("authorization") ?? "";
@@ -386,7 +388,7 @@ describe("figma descriptor", () => {
   test("exchange posts form with client_secret in body; error message omits secrets", async () => {
     let seenBody = "";
     let seenCT = "";
-    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_i: FetchInput, init?: RequestInit) => {
       seenBody = typeof init?.body === "string" ? init.body : "";
       seenCT = new Headers(init?.headers).get("content-type") ?? "";
       return new Response(
@@ -505,7 +507,7 @@ describe("exchangeAuthorizationCode", () => {
   test("notion exchange posts JSON with Basic auth header; no token leaks on error", async () => {
     let seenAuth = "";
     let seenCT = "";
-    const fetchImpl = async (_i: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_i: FetchInput, init?: RequestInit) => {
       const h = new Headers(init?.headers);
       seenAuth = h.get("authorization") ?? "";
       seenCT = h.get("content-type") ?? "";
