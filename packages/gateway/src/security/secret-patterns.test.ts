@@ -89,13 +89,13 @@ function findPattern(name: string): SecretPattern {
   return p;
 }
 
-describe("individual pattern matches", () => {
-  function hasMatch(name: string, body: string): boolean {
-    const p = findPattern(name);
-    p.regex.lastIndex = 0;
-    return p.regex.test(body);
-  }
+function hasMatch(name: string, body: string): boolean {
+  const p = findPattern(name);
+  p.regex.lastIndex = 0;
+  return p.regex.test(body);
+}
 
+describe("individual pattern matches", () => {
   test("aws_access_key matches AWS-documented public example", () => {
     expect(hasMatch("aws_access_key", "k='AKIAIOSFODNN7EXAMPLE'")).toBe(true);
   });
