@@ -1,27 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./ask.ts");
 const { runAsk } = mod;
 
-const stdoutChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  // Silence stderr noise during these tests; the content is never asserted on.
-  process.stderr.write = (() => true) as typeof process.stderr.write;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-}
+// stderr is captured but never asserted on (only stdout); the capture keeps it silent.
+const {
+  stdoutChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();

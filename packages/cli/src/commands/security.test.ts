@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createMockIpcClient, type MockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const mod = await import("./security.ts");
 const { decideExitCode, formatScanPretty, parseSecurityArgs, runSecurity } = mod;
@@ -166,31 +167,12 @@ describe("formatScanPretty", () => {
   });
 });
 
-const stdoutChunks: string[] = [];
-const stderrChunks: string[] = [];
-const origStdoutWrite = process.stdout.write.bind(process.stdout);
-const origStderrWrite = process.stderr.write.bind(process.stderr);
-const origExit = process.exit.bind(process);
-
-function installStreamCapture(): void {
-  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-    stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    return true;
-  }) as typeof process.stderr.write;
-  process.exit = ((code?: number): never => {
-    throw new Error(`process.exit(${code ?? ""})`);
-  }) as typeof process.exit;
-}
-
-function restoreStreams(): void {
-  process.stdout.write = origStdoutWrite;
-  process.stderr.write = origStderrWrite;
-  process.exit = origExit;
-}
+const {
+  stdoutChunks,
+  stderrChunks,
+  install: installStreamCapture,
+  restore: restoreStreams,
+} = createStreamCapture({ captureExit: true });
 
 /** Wire a mock whose security.scan call returns {jobId} then asynchronously emits a done/error event. */
 function emittingFixture(mock: MockIpcClient, onScan: (jobId: string) => void): void {
