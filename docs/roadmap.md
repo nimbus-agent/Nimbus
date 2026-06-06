@@ -713,7 +713,7 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 #### Delivery Slices
 
-Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on; its full design lives in [`docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`](superpowers/specs/2026-06-04-phase6-federation-core-design.md). Each slice gets its own spec → plan → implementation cycle.
+Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on. Each slice gets its own spec → plan → implementation cycle.
 
 | # | Slice | Depends on |
 |---|-------|-----------|

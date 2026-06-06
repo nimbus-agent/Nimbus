@@ -71,12 +71,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/auth/google-access-token.ts` | Google per-service OAuth — `resolveGoogleOAuthVaultKey()`, `anyGoogleOAuthVaultPresent()` |
 | `packages/gateway/src/auth/oauth-vault-tokens.ts` | Generic OAuth helpers — `getValidVaultOAuthAccessToken()`, `microsoftOAuthAccessFromConfig()` |
 | `packages/gateway/src/auth/oauth-registry.ts` | OAuth provider registry — `OAUTH_PROVIDERS` (google/microsoft/slack/notion/zoom/hubspot/miro/canva/figma/salesforce) + `getValidVaultAccessToken` single-flight; `StoredOAuthTokens`/`PKCEResult` carry optional `instanceUrl` (Salesforce per-tenant host, additive) |
-| `packages/gateway/src/auth/zoom-access-token.ts` | `getValidZoomAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.zoom` |
-| `packages/gateway/src/auth/hubspot-access-token.ts` | `getValidHubspotAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.hubspot` |
-| `packages/gateway/src/auth/miro-access-token.ts` | `getValidMiroAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.miro` |
-| `packages/gateway/src/auth/canva-access-token.ts` | `getValidCanvaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.canva` (PKCE + Basic-header, like Zoom) |
-| `packages/gateway/src/auth/figma-access-token.ts` | `getValidFigmaAccessToken(vault)` — delegates to `OAUTH_PROVIDERS.figma` (body-secret, like Miro) |
-| `packages/gateway/src/auth/salesforce-access-token.ts` | `getValidSalesforceAuth(vault)` — delegates to `OAUTH_PROVIDERS.salesforce` (PKCE + body-secret), returns `{ accessToken, instanceUrl }`; requires the per-tenant `instance_url` from the stored blob (no silent fallback) |
+| `packages/gateway/src/auth/<svc>-access-token.ts` | Per-provider `getValid<Svc>AccessToken(vault)` delegating to `OAUTH_PROVIDERS.<svc>` (zoom/hubspot/miro/canva/figma). Salesforce's `getValidSalesforceAuth` returns `{ accessToken, instanceUrl }` — requires the per-tenant `instance_url` from the stored blob (no silent fallback) |
 
 ## Connectors + MCP Mesh
 
@@ -245,7 +240,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 
 | File | Purpose |
 |---|---|
-| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS` (67), `NO_TIMEOUT_METHODS` (4), `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
+| `packages/ui/src-tauri/src/gateway_bridge.rs` | Rust IPC bridge — `ALLOWED_METHODS`, `NO_TIMEOUT_METHODS`, `GLOBAL_BROADCAST_METHODS`; invariant `I7` |
 | `packages/ui/src-tauri/src/tray.rs` | System tray icon, menu, state forwarding |
 | `packages/ui/src-tauri/src/quick_query.rs` | Quick Query window lifecycle |
 | `packages/ui/src-tauri/src/hitl_popup.rs` | HITL popup window lifecycle |
@@ -292,15 +287,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I16 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I18 rationale + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |
 | `docs/cli/pre-commit.md` | Pre-commit hook docs — install, env-var knobs, exit codes |
-| `docs/og-card.png` | OG social card PNG (1200×630, deterministic resvg-js render) |
-| `docs/assets/og-card.svg` | OG card source SVG |
-| `docs/assets/fonts/JetBrainsMono-Regular.ttf` | Deterministic OG render font — Regular (SIL OFL 1.1) |
-| `docs/assets/fonts/JetBrainsMono-Bold.ttf` | Deterministic OG render font — Bold (SIL OFL 1.1) |
-| `docs/assets/hero-cast-light.svg` | Rendered asciinema cast — light variant |
-| `docs/assets/hero-cast-dark.svg` | Rendered asciinema cast — dark variant |
-| `scripts/render-og-card.ts` | `bun run render:og-card` — resvg-js renderer for `docs/og-card.png` |

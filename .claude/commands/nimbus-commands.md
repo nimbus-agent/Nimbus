@@ -1,14 +1,11 @@
 ---
 name: nimbus-commands
 description: >
-  Reference for the bun scripts, CLI subcommands, and environment-variable overrides used to develop
-  on, test, build, package, and release Nimbus. Use this skill whenever the user asks "how do I run
-  X?", "which coverage gate covers Y?", "what's the bun script for Z?", "what env var overrides
-  the LLM model?", or before proposing a `bun add` (the dependency-safety section names the
-  pre-flight check). Also trigger when wiring CI gates, drafting release commands, or deciding
-  whether a subsystem is covered by an existing coverage threshold. Faster and more accurate than
-  re-reading `package.json` from scratch — the skill groups scripts by concern and includes
-  rationale (what each gate covers, why a script exists).
+  The bun scripts, CLI subcommands, and env-var overrides for developing, testing, building,
+  packaging, and releasing Nimbus. Use when asking how to run a script, which coverage gate
+  covers a subsystem, what env var overrides the LLM model, before a `bun add` (the
+  dependency-safety pre-flight), or when wiring CI gates / drafting release commands. Faster
+  than re-reading `package.json` — grouped by concern with rationale per gate.
 ---
 
 # Nimbus Commands Reference
@@ -255,7 +252,7 @@ nimbus extension update [<id>] [--check] [--to <version>] [--json]
 # --check: force registry poll + list. <id>: apply cached bump via HITL.
 # --to <v>: override target (forward or backward; backward fires extension.downgrade).
 # Exit 0 on success, 1 on apply failure (stderr hint when reason has one).
-# IPC: extension.checkForUpdates / extension.update — CLI + Tauri allowed (ALLOWED_METHODS 67),
+# IPC: extension.checkForUpdates / extension.update — CLI + Tauri allowed (ALLOWED_METHODS),
 # FORBIDDEN_OVER_LAN (I5).
 
 nimbus extension downgrade <id> --to <version> [--json]

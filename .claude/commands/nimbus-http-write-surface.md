@@ -1,19 +1,15 @@
 ---
 name: nimbus-http-write-surface
 description: >
-  Reference for the local HTTP API write surface and the `WRITE_ROUTE_ALLOWLIST` /
-  bearer-auth / per-token rate-limit / audit-on-rejection pipeline that protects it
-  (security invariant `I13`). Use this skill whenever you are adding a new HTTP
-  `POST` / `PUT` / `DELETE` handler, modifying an existing one, debating whether a
-  route should live on the local socket or on the HTTP API, wiring a new CI integration
-  that needs to feed data into the local index, or touching `http-server.ts` /
-  `http-write-routes.ts` / `http-auth.ts` / `http-rate-limit.ts`. Also trigger for
-  questions like "can I POST to the HTTP API?", "where does this token check live?",
-  "why is my route returning 503 `write_surface_disabled`?", "should this be a new
-  HTTP route or an IPC method?", or "the WRITE_ROUTE_ALLOWLIST count assertion is
-  wrong". Consult before any code that lets an external process write into the
-  gateway over HTTP — the HTTP API was historically read-only, and the carve-out
-  for `POST /v1/deployments` is the **only** sanctioned write path.
+  The local HTTP API write surface + the `WRITE_ROUTE_ALLOWLIST` / bearer-auth /
+  per-token rate-limit / audit-on-rejection pipeline that protects it (invariant `I13`).
+  Use when adding/modifying an HTTP `POST`/`PUT`/`DELETE` handler, debating whether a
+  route belongs on the local socket vs the HTTP API, wiring a CI integration that feeds
+  the index, touching `http-server.ts`/`http-write-routes.ts`/`http-auth.ts`/
+  `http-rate-limit.ts`, or hitting a 503 `write_surface_disabled` / a wrong
+  WRITE_ROUTE_ALLOWLIST count assertion. Consult before any code that lets an external
+  process write into the gateway over HTTP — the API is read-only except the sanctioned
+  `POST /v1/deployments` carve-out.
 ---
 
 # Nimbus HTTP Write Surface (I13)

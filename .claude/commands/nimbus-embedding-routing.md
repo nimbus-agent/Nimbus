@@ -1,21 +1,16 @@
 ---
 name: nimbus-embedding-routing
 description: >
-  Reference for the hybrid 384-dim / 1536-dim embedding routing pipeline shipped in
-  Phase 5 T6 PR 3: `PROSE_HEAVY_TYPES`, `EMBEDDING_DIM_LOCAL` / `EMBEDDING_DIM_OPENAI`,
-  the `RoutingEmbeddingPipeline` wrapper, the dual-table search (`vec_items_384` +
-  `vec_items_1536` via `vectorSearchChunksDual`), the migration story (V30 added the
-  1536-dim table with dim-aware delete triggers), the `nimbus index reembed` CLI +
-  long-running IPC contract, and the hybrid-mode factory's MiniLM-only fallback when
-  `openai.api_key` is absent. Use this skill whenever you are adding a new connector
-  item type and need to decide its embedding routing, modifying `PROSE_HEAVY_TYPES`,
-  changing the embedding-table dimensions, authoring search code that should hit
-  both tables, debugging "why isn't my new item embedded into the right table?",
-  wiring a new long-running IPC notification (`index.reembedProgress` is the canonical
-  example), or asking what `nimbus index reembed` actually does. Also trigger for
-  questions like "MiniLM or OpenAI for this type?", "do I need a new V31 migration to
-  add a 3072-dim provider?", "why is my reembed run hitting the wrong table?", or
-  "is reembed cancellable?".
+  Hybrid 384/1536-dim embedding routing (Phase 5 T6 PR 3): `PROSE_HEAVY_TYPES`,
+  `EMBEDDING_DIM_LOCAL`/`EMBEDDING_DIM_OPENAI`, the `RoutingEmbeddingPipeline` wrapper,
+  dual-table search (`vec_items_384` + `vec_items_1536` via `vectorSearchChunksDual`),
+  the V30 migration (1536-dim table + dim-aware delete triggers), the `nimbus index
+  reembed` CLI + long-running IPC contract (`index.reembedProgress`), and the
+  MiniLM-only fallback when `openai.api_key` is absent. Use when adding a connector
+  item type and deciding its routing (MiniLM vs OpenAI), modifying `PROSE_HEAVY_TYPES`,
+  changing embedding-table dims (e.g. a new V31 for a 3072-dim provider), writing search
+  that must hit both tables, wiring a long-running IPC notification, or asking what
+  `nimbus index reembed` does / whether it's cancellable.
 ---
 
 # Nimbus Embedding Routing (T6 PR 3)

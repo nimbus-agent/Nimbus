@@ -1,17 +1,14 @@
 ---
 name: nimbus-tauri-allowlist
 description: >
-  Reference for the Tauri renderer-callable IPC method allowlist (security invariant
-  `I7`). Use this skill whenever you are exposing a new Gateway IPC method to the
-  Tauri desktop UI, removing or renaming an existing renderer-callable method, marking
-  a method as long-running (no-timeout), classifying a notification for global
-  rebroadcast across windows, or auditing whether the renderer can reach an RCE-class
-  surface. Also trigger for questions like "should this method be in `ALLOWED_METHODS`?",
-  "why does the Rust allowlist test fail?", "is `vault.*` reachable from the
-  renderer?", "where do I add a new long-running method?", or "the count assertion
-  is wrong". Consult before any change to `packages/ui/src-tauri/src/gateway_bridge.rs`
-  — chain C1 in the B1 audit (renderer XSS → `extension.install` → credential
-  exfiltration) was a single allowlist mistake.
+  The Tauri renderer-callable IPC method allowlist (invariant `I7`). Use when exposing
+  a new Gateway IPC method to the desktop UI, removing/renaming a renderer-callable
+  method, marking a method long-running (no-timeout), classifying a notification for
+  cross-window rebroadcast, auditing whether the renderer can reach an RCE-class surface
+  (`vault.*`, `extension.install`), or fixing a Rust allowlist test / count assertion.
+  Consult before any change to `packages/ui/src-tauri/src/gateway_bridge.rs` — B1 chain
+  C1 (renderer XSS → `extension.install` → credential exfiltration) was a single
+  allowlist mistake.
 ---
 
 # Nimbus Tauri Allowlist (I7)

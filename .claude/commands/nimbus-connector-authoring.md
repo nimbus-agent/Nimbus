@@ -1,15 +1,13 @@
 ---
 name: nimbus-connector-authoring
 description: >
-  Complete reference for authoring first-party MCP connectors in the Nimbus monorepo:
-  package layout, mandatory tool surface, manifest structure, credential injection,
-  the sync handler contract, item ID format, HITL declaration, contract tests, and
-  coverage gates. Use this skill whenever the user is creating a new connector,
-  modifying an existing one, asking what tools must be exposed, debugging a contract
-  test failure, or wiring a new MCP server into the connector registry. Also trigger
-  for questions like "where does the connector go?", "do I need a write tool here?",
-  "how do credentials get into the connector process?", or "what does my sync handler
-  need to return?". Consult before writing any connector code.
+  Complete reference for authoring first-party MCP connectors: package layout, mandatory
+  tool surface, manifest structure, credential injection, the sync handler contract, item
+  ID format, HITL declaration, contract tests, and coverage gates. Use when creating or
+  modifying a connector, deciding which tools to expose (incl. write tools), debugging a
+  contract-test failure, wiring an MCP server into the registry, or asking how credentials
+  reach the connector process / what a sync handler returns. Consult before writing any
+  connector code.
 ---
 
 # Nimbus Connector Authoring

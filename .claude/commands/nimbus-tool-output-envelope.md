@@ -1,15 +1,12 @@
 ---
 name: nimbus-tool-output-envelope
 description: >
-  Reference for the `<tool_output>` envelope that wraps every LLM-facing tool result
-  in Nimbus (security invariant `I11`). Use this skill whenever you are adding a new
-  agent surface, registering a new Mastra tool, exposing an MCP-backed tool to the
-  LLM, building a sub-agent worker, or auditing a path where tool output reaches the
-  conversational model. Also trigger for questions like "should I wrap this with
-  `wrapToolOutput`?", "where does the envelope live?", "why is my prompt-injection
-  test failing?", or "is this an LLM-facing surface?". Consult before any code that
-  hands a tool result to the LLM — the B1 audit found the envelope was orphan-defined
-  and a similar gap is the easiest way to regress prompt-injection defenses.
+  The `<tool_output>` envelope that wraps every LLM-facing tool result in Nimbus (invariant
+  `I11`). Use when adding an agent surface, registering a Mastra tool, exposing an MCP-backed
+  tool to the LLM, building a sub-agent worker, deciding whether to `wrapToolOutput`, or
+  auditing a path where tool output reaches the conversational model (incl. prompt-injection
+  test failures). Consult before any code that hands a tool result to the LLM — the B1 audit
+  found the envelope orphan-defined, and a similar gap is the easiest prompt-injection regress.
 ---
 
 # Nimbus Tool-Output Envelope (I11)
