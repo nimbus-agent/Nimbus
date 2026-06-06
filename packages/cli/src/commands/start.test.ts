@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 
 const mod = await import("./start.ts");
@@ -37,7 +37,7 @@ describe("decideStartAction", () => {
   });
 
   it("returns reuse when state present, pid alive, and reachable", () => {
-    expect(decideStartAction({ pid: 4242, socketPath: "/tmp/s" }, true, true)).toEqual({
+    expect(decideStartAction({ pid: 4242, socketPath: FAKE_SOCKET_PATH }, true, true)).toEqual({
       action: "reuse",
       pid: 4242,
       reason: "gateway already running",
@@ -45,7 +45,7 @@ describe("decideStartAction", () => {
   });
 
   it("returns abort-stale-clear when pid alive but socket unreachable", () => {
-    expect(decideStartAction({ pid: 7777, socketPath: "/tmp/s" }, true, false)).toEqual({
+    expect(decideStartAction({ pid: 7777, socketPath: FAKE_SOCKET_PATH }, true, false)).toEqual({
       action: "abort-stale-clear",
       pid: 7777,
       reason: "stale state, will clear and restart",
@@ -53,7 +53,7 @@ describe("decideStartAction", () => {
   });
 
   it("returns abort-stale-clear when state present but pid dead", () => {
-    expect(decideStartAction({ pid: 8888, socketPath: "/tmp/s" }, false, false)).toEqual({
+    expect(decideStartAction({ pid: 8888, socketPath: FAKE_SOCKET_PATH }, false, false)).toEqual({
       action: "abort-stale-clear",
       pid: 8888,
       reason: "stale state, will clear and restart",
@@ -71,7 +71,7 @@ describe("runStart dispatcher", () => {
 
   it("returns early with 'already running' when state is live and socket reachable", async () => {
     setFixture({
-      gatewayState: { socketPath: "/tmp/fake-already-running.sock", pid: 1234 },
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 1234 },
       processAlive: true,
     });
     await runStart([]);

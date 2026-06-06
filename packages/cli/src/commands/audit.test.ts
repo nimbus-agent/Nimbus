@@ -1,7 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import "../../test/helpers/cli-mocks.ts";
-import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import {
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  fakePath,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -131,12 +136,13 @@ describe("runAuditExport", () => {
       writes.push({ path: p, data });
     };
     const { client, calls } = createMockIpcClient([[{ id: 1 }, { id: 2 }]]);
-    await runAuditExport(client, "/tmp/out.json", writeFile);
+    const outPath = fakePath("out.json");
+    await runAuditExport(client, outPath, writeFile);
     expect(calls[0]).toEqual({ method: "audit.exportAll", params: {} });
     expect(writes).toHaveLength(1);
-    expect(writes[0]?.path).toBe("/tmp/out.json");
+    expect(writes[0]?.path).toBe(outPath);
     expect(writes[0]?.data).toContain('"id": 1');
-    expect(out.stdout).toContain("wrote 2 audit rows to /tmp/out.json");
+    expect(out.stdout).toContain(`wrote 2 audit rows to ${outPath}`);
   });
 });
 

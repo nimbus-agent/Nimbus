@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
@@ -40,13 +43,16 @@ function makeVoiceCfg(overrides: Partial<DoctorVoiceConfig> = {}): DoctorVoiceCo
   };
 }
 
+// Single real mkdtemp root; all paths are stubbed (deps never touch disk), so
+// these only need to be unique, non-publicly-writable strings (S5443).
+const FAKE_ROOT = mkdtempSync(join(tmpdir(), "nimbus-doctor-test-"));
 const FAKE_PATHS = {
-  configDir: "/tmp/nimbus-test/config",
-  dataDir: "/tmp/nimbus-test/data",
-  logDir: "/tmp/nimbus-test/data/logs",
-  socketPath: "/tmp/nimbus-test/gateway.sock",
-  extensionsDir: "/tmp/nimbus-test/data/extensions",
-  tempDir: "/tmp/nimbus",
+  configDir: join(FAKE_ROOT, "config"),
+  dataDir: join(FAKE_ROOT, "data"),
+  logDir: join(FAKE_ROOT, "data", "logs"),
+  socketPath: join(FAKE_ROOT, "gateway.sock"),
+  extensionsDir: join(FAKE_ROOT, "data", "extensions"),
+  tempDir: join(FAKE_ROOT, "temp"),
 } as unknown as CliPlatformPaths;
 
 function makeDeps(overrides: Partial<DoctorCoreDeps> = {}): DoctorCoreDeps {
@@ -54,7 +60,7 @@ function makeDeps(overrides: Partial<DoctorCoreDeps> = {}): DoctorCoreDeps {
     getCliPlatformPaths: (): CliPlatformPaths => FAKE_PATHS,
     readGatewayState: async (): Promise<DoctorGatewayState | undefined> => undefined,
     isProcessAlive: (): boolean => true,
-    gatewayStatePath: (): string => "/tmp/nimbus-test/gateway.json",
+    gatewayStatePath: (): string => join(FAKE_ROOT, "gateway.json"),
     makeClient: (): IPCClient => createMockIpcClient([]).client,
     ...overrides,
   };
@@ -207,7 +213,7 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     await runDoctor(
       [],
       makeDeps({
-        readGatewayState: async () => ({ socketPath: "/tmp/fake.sock", pid: 999999 }),
+        readGatewayState: async () => ({ socketPath: join(FAKE_ROOT, "fake.sock"), pid: 999999 }),
         isProcessAlive: () => false,
       }),
     );
@@ -224,7 +230,7 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     await runDoctor(
       [],
       makeDeps({
-        readGatewayState: async () => ({ socketPath: "/tmp/fake.sock", pid: 1 }),
+        readGatewayState: async () => ({ socketPath: join(FAKE_ROOT, "fake.sock"), pid: 1 }),
         isProcessAlive: () => true,
         makeClient: () => mock.client,
       }),
@@ -242,7 +248,7 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     await runDoctor(
       [],
       makeDeps({
-        readGatewayState: async () => ({ socketPath: "/tmp/fake.sock", pid: 1 }),
+        readGatewayState: async () => ({ socketPath: join(FAKE_ROOT, "fake.sock"), pid: 1 }),
         isProcessAlive: () => true,
         makeClient: () => mock.client,
       }),

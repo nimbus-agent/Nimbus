@@ -13,6 +13,13 @@ const FAKE_GATEWAY_ROOT = mkdtempSync(join(tmpdir(), "nimbus-cli-mock-"));
 export const FAKE_SOCKET_PATH: string = join(FAKE_GATEWAY_ROOT, "fake.sock");
 export const FAKE_GATEWAY_STATE_PATH: string = join(FAKE_GATEWAY_ROOT, "fake-gateway-state.json");
 
+/**
+ * Build a unique, S5443-compliant fake path under the shared mkdtemp root for an
+ * arbitrary file name. The path is never written to disk — use it wherever a test
+ * needs a non-publicly-writable stand-in for a `/tmp/...` argument literal.
+ */
+export const fakePath = (name: string): string => join(FAKE_GATEWAY_ROOT, name);
+
 export interface CliTestFixture {
   gatewayState?: { socketPath: string; pid?: number };
   processAlive?: boolean;
