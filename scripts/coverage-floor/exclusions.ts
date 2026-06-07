@@ -24,6 +24,9 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/index.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/mapped-row.ts" },
+  // Team-vault ephemeral connector spawn: real MCPClient subprocess lifecycle (I/O glue, reuses the
+  // existing per-service spawners). Exercised end-to-end by the two-gateway invoke integration test.
+  { kind: "exact", path: "packages/gateway/src/teamvault/team-tool-spawn.ts" },
   { kind: "exact", path: "packages/client/src/index.ts" },
   { kind: "exact", path: "packages/client/src/stream-events.ts" },
   { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
