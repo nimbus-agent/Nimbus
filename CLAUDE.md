@@ -125,4 +125,5 @@ Domain skills live in `.claude/commands/nimbus-*.md`, **loaded on demand** via t
 | `nimbus-db-migrations` | Authoring a SQLite migration or new table |
 | `nimbus-embedding-routing` | Embedding-table routing for a new item type; `nimbus index reembed` |
 | `nimbus-cicd-data-layer` | DORA metrics, preflight checks, deployment annotation (Phase 5 T4) |
+| `nimbus-federation-identity` | Phase 6 Team federation (I17 query gate, namespaces/RBAC, pairing/discovery) + identity/SSO/SCIM (I18, OIDC device-code, SCIM-on-I13); touching `gateway/src/{federation,identity}/` |
 | `nimbus-agent-patterns` | Authoring a built-in read-only agent |

@@ -484,7 +484,7 @@ Fallback path prints exactly one reason (first match wins) to stderr before hand
 - Input dimmed and disabled; `Ctrl+C` still exits.
 - Exponential reconnect: 2 s → 4 s → 8 s → 16 s → 30 s (repeats). Input re-enables on reconnect; `✓ Reconnected` fade confirms recovery.
 
-**Cancel note (v0.1.0):** cancel is local-only — the Gateway has no `engine.cancelStream` handler yet, so the LLM may continue generating in the background after `Ctrl+C`. Full-fidelity cancellation is a post-v0.1.0 Gateway follow-up.
+**Cancel note:** the Gateway has an `engine.cancelStream` handler (`ipc/engine-cancel-stream.ts`) that stops token streaming immediately on `Ctrl+C`. The underlying LLM generation may still complete in the background — the `AbortSignal` is not yet plumbed into the agent invocation context (see `architecture.md` § *AbortController scope in `engine.cancelStream`*), so full-fidelity cancellation remains a follow-up.
 
 ---
 
@@ -887,6 +887,77 @@ Delete a profile and its associated configuration. Does not delete Vault entries
 
 ```bash
 nimbus profile delete personal
+```
+
+---
+
+## Team Federation
+
+Peer-to-peer federation between Nimbus Gateways over the encrypted LAN channel (Phase 6 Slice 1). Disabled by default; enable via the `[federation]` section in `nimbus.toml`. Every inbound query is answered only through the consent-scoped, leak-proof **query gate** (invariant `I17`): grant + role + consent + declared-namespace filter, returning rank/metadata-free results only. Pairing uses an out-of-band code (same trust model as `nimbus lan pair`).
+
+### `nimbus team discover`
+
+Discover reachable peer Gateways via mDNS (with a manual fallback). Read-only. This is the default subcommand (`nimbus team` with no argument runs `discover`).
+
+```bash
+nimbus team discover
+```
+
+### `nimbus team pair <host> <code>`
+
+Pair with a peer Gateway using a one-time, out-of-band pairing code. Transmit the code over a channel other than the one being paired (read it aloud, SMS, etc.) — a mid-pairing network attacker who sees the code can substitute their own key.
+
+```bash
+nimbus team pair gw.lan:7700 a1b2c3d4e5f6g7h8i9j0
+```
+
+### `nimbus team namespace publish <name> --type <T> --service <S>`
+
+Publish a shared scoped namespace. Requires at least one `--type` / `--service` / `--tag` filter; the filters define exactly what a granted peer may query.
+
+```bash
+nimbus team namespace publish incidents --type incident --service pagerduty
+```
+
+### `nimbus team namespace grant <ns> <peerId> <role> [--standing]`
+
+Grant a paired peer role-based access to a published namespace. `--standing` persists the grant across sessions (otherwise it is session-scoped).
+
+```bash
+nimbus team namespace grant incidents peer:aabbcc reader --standing
+```
+
+### `nimbus team namespace revoke <ns> <peerId>`
+
+Revoke a peer's access to a namespace. Further answers stop within one sync cycle.
+
+```bash
+nimbus team namespace revoke incidents peer:aabbcc
+```
+
+### `nimbus team query <ns> <peerId> "<purpose>"`
+
+Send a consent-scoped federated query to a paired peer within a namespace. The answering peer's query gate enforces grant + role + consent (`I17`); results never include raw item bodies.
+
+```bash
+nimbus team query incidents peer:aabbcc "open P1 incidents this week"
+```
+
+### `nimbus team who-knows <peerId> "<query>"`
+
+Expertise routing — ask a peer "who knows X?" Returns a ranked contributor list with **no** indexed item content transmitted (ranks only).
+
+```bash
+nimbus team who-knows peer:aabbcc "src/billing/retry.ts"
+```
+
+### `nimbus team consent <requestId> approve|deny` · `nimbus team listen`
+
+`consent` replies to an inbound federated-query consent request — the host owner remains the consent authority. `listen` runs the foreground listener that surfaces inbound consent requests as they arrive.
+
+```bash
+nimbus team consent req:1234 approve
+nimbus team listen
 ```
 
 ---
