@@ -1087,7 +1087,7 @@ Create `scripts/coverage/merge-coverage.ts`:
 // single coverage/lcov.info with repo-root-relative SF paths. Runs once after
 // all per-package `bun test` invocations (design spec §5.2.1).
 import { Glob } from "bun";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import libCoverage, { type CoverageMapData, type FileCoverageData } from "istanbul-lib-coverage";
 import { createContext } from "istanbul-lib-report";
@@ -1112,6 +1112,10 @@ export function mergeShardsToLcov(repoRoot: string): number {
   }
   const context = createContext({ dir: resolve(repoRoot, "coverage"), coverageMap: rel });
   reports.create("lcovonly", {}).execute(context);
+  // Delete shards after merging so a later standalone merge can't pick up stale
+  // data from an aborted/direct run (plan review #1). Orchestrators also
+  // `rm -rf coverage` before each run for a clean shard dir.
+  rmSync(tmpDir, { recursive: true, force: true });
   return shards;
 }
 
@@ -1231,7 +1235,7 @@ In the **"Unit tests (with coverage) — Linux"** step's `run_pkg` (around lines
             echo "::endgroup::"
 ```
 
-Remove the per-package `if [ -f "${pkg}/coverage/lcov.info" ]; then sed ... >> coverage/lcov.info; fi` block (the merge step now produces the lcov). Keep `mkdir -p coverage junit-reports` but change it to also make the shard dir: `mkdir -p coverage/.nyc-tmp junit-reports`. Remove the `: > coverage/lcov.info` line (merge writes it).
+Remove the per-package `if [ -f "${pkg}/coverage/lcov.info" ]; then sed ... >> coverage/lcov.info; fi` block (the merge step now produces the lcov). **Keep the existing `rm -rf coverage` line** (line ~181) — it guarantees a clean shard dir each CI run (plan review #1). Change `mkdir -p coverage junit-reports` to also make the shard dir: `mkdir -p coverage/.nyc-tmp junit-reports`. Remove the `: > coverage/lcov.info` line (merge writes it).
 
 - [ ] **Step 2: Add the merge step after the package loops**
 
@@ -1251,14 +1255,13 @@ In the **"Unit tests (with coverage) — macOS/Windows (retry once)"** step, cha
 
 > Leave the per-subsystem `test:coverage:engine|vault|embedding|…` scripts (which use Bun-native `--coverage-threshold-lines`) untouched — they are independent line-only gates and must keep working.
 
-- [ ] **Step 4: Validate the workflow YAML**
+- [ ] **Step 4: Validate the workflow YAML (best-effort; CI is authoritative)**
 
-Run: `bun run lint:markdown` is not it — instead confirm YAML parses:
+The push in Task 10 is the authoritative YAML validator (GitHub rejects/serially-errors a malformed workflow). Do **not** add a dependency just to check locally. Optionally, if `yaml` already resolves in the repo (it's a common transitive dep), do a quick parse:
 ```bash
-bun -e "import {parse} from 'yaml'; parse(await Bun.file('.github/workflows/_test-suite.yml').text()); console.log('yaml ok')"
+bun -e "import('yaml').then(async m => { m.parse(await Bun.file('.github/workflows/_test-suite.yml').text()); console.log('yaml ok'); }).catch(e => console.log('skip local check:', e.message))"
 ```
-(If the `yaml` package isn't present, skip — the push in Task 10 will surface any YAML error in CI.)
-Expected: `yaml ok`.
+Expected: `yaml ok`, or `skip local check: ...` if `yaml` isn't installed (fine — rely on CI). Either way, re-read your diff by eye for indentation before pushing.
 
 - [ ] **Step 5: Commit**
 
@@ -1325,6 +1328,8 @@ gh run download <run-id> --name coverage-lcov-merged --dir coverage
 ```
 Expected: `coverage/lcov.info` from CI is on disk, containing `BRDA:` records. Confirm: `grep -c '^BRDA:' coverage/lcov.info` is non-zero.
 
+**No `gh` CLI?** (plan review #2) Open the run on github.com → the workflow run page → the **Artifacts** section → download **`coverage-lcov-merged`** → unzip it and place `lcov.info` at `coverage/lcov.info` in the worktree. The rest of Task 10 is identical.
+
 - [ ] **Step 3: Regenerate the v2 baseline from CI's lcov**
 
 Run: `COVERAGE_LCOV_PATH=coverage/lcov.info bun run audit:coverage-floor:update-baseline`
@@ -1362,7 +1367,7 @@ Run these on the CI-Linux output (download artifacts as in Task 10) before decla
 
 - [ ] **Step 4: `mock.module` interaction** — confirm the combined `packages/cli/src` tests still pass under instrumentation on CI-Linux (no new `mock.module` contamination failures vs the known-flaky baseline).
 
-- [ ] **Step 5: Canary guard** — confirm a branch-heavy file (e.g. `packages/gateway/src/engine/executor.ts`) shows `BRF` > 0 in the lcov: `grep -A50 'SF:packages/gateway/src/engine/executor.ts' coverage/lcov.info | grep '^BRF:'`. (This guard can later be codified into `check.ts` per spec §5.3.)
+- [ ] **Step 5: Canary guard** — confirm a branch-heavy file (e.g. `packages/gateway/src/engine/executor.ts`) shows `BRF` > 0 in the lcov: `grep -A50 'SF:packages/gateway/src/engine/executor.ts' coverage/lcov.info | grep '^BRF:'`. This is the safety net for the one risk that `branchPct = (branches===0 ? 100)` hides (plan review #4): a file that *has* branches but for which instrumentation silently emitted no `BRDA` would read as a false 100%. A genuinely branchless file legitimately reporting 100% is correct and standard (SonarCloud agrees). Codify this canary/global `BRF>0` assertion into `check.ts` per spec §5.3.
 
 - [ ] **Step 6: Open the PR**
 
@@ -1378,4 +1383,15 @@ Title: `feat(coverage): branch-coverage foundation (true-coverage Sub-project A)
 - **Spec coverage:** §5.2 new files → Tasks 4–6; §5.3 the 6 modified files → Tasks 1,2,3,7,8,10 (+ exclusions Task 9); §5.4 atomic migration → Task 10 Step 5; §5.5 Linux-authoritative → Task 10; §5.6 testing → Tasks 1–3,6 tests; §5.7 gates → Task 11; §5.2.1 aggregation → Tasks 5,6,11; §5.2.2 pinned deps → Task 0. Covered.
 - **Type consistency:** `FileCoverage` (Task 1) gains `branchPct`, consumed by `lcovToBranchPctMap` (Task 3). `Baseline.files: Map<string, FileFloor>` (Task 2) consumed by `computeBaselineDiff`/`computeUpdatedBaseline`/`evaluateCheck` (Tasks 2,3). `mergeShardsToLcov(repoRoot)` (Task 6) called by build-lcov (Task 7) and CI (Task 8). `shouldInstrument` (Task 4) used by `istanbul-register` (Task 4). Consistent.
 - **Placeholders:** none — every code/test step has full content; the only `<...>` are runtime values (`<run-id>`, `<pid>`) the engineer fills from command output.
+
+---
+
+## Plan review dispositions (2026-06-07)
+
+Addressing [the plan review](./2026-06-07-true-coverage-foundation-review.md):
+
+1. **Stale shard accumulation — FIXED.** `mergeShardsToLcov` now `rmSync`-deletes `coverage/.nyc-tmp` after a successful merge (Task 6 Step 3), so a standalone/aborted-run merge can't ingest leftover shards. Orchestrators still `rm -rf coverage` up front — made explicit for the CI step (Task 8 Step 1).
+2. **`gh` CLI fallback — FIXED (doc).** Added the manual github.com → Artifacts → `coverage-lcov-merged` download path to Task 10 Step 2.
+3. **YAML check dependency — FIXED.** Reframed Task 8 Step 4 as a best-effort local parse (graceful skip if `yaml` isn't installed — no dep added) with the Task 10 push as the authoritative validator.
+4. **Zero-branch files — ACKNOWLEDGED.** `branches===0 ? 100` is correct/standard and Sonar-aligned; left as-is. The only failure mode it could mask (instrumentation emits no `BRDA` for a file that has branches → false 100%) is caught by the canary/global `BRF>0` guard — Task 11 Step 5 now states this explicitly and points to codifying it in `check.ts` (spec §5.3).
 ```
