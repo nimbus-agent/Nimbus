@@ -147,6 +147,33 @@ describe("computeBaselineDiff (dual-axis, file-level)", () => {
     expect(diff.mustRaise).toEqual([{ path: "a.ts" }]);
   });
 
+  test("does NOT flag must-raise for a satisfied axis pinned at the floor (idempotent after a reseed)", () => {
+    // computeUpdatedBaseline pins a satisfied axis (>=80) down to the floor (80)
+    // while retaining a file for its other, sub-floor axis — e.g. a 95%-line /
+    // 55%-branch file is stored as {line: 80, branch: 55}. Re-checking the SAME
+    // actuals must be a no-op: the pinned line axis sitting at 95 (> the stored
+    // 80) must NOT demand a raise, or the gate could never be green right after
+    // `update-baseline` (every mixed file would loop forever on must_raise).
+    const diff = computeBaselineDiff(
+      base(80, 55),
+      new Map([["a.ts", 95]]),
+      new Map([["a.ts", 55]]),
+    );
+    expect(diff).toEqual({ regressions: [], mustRaise: [], mustRemove: [], missingFromActual: [] });
+  });
+
+  test("still flags must-raise when a genuinely sub-floor axis improves above its watermark", () => {
+    // The branch watermark (55) is below the floor, so a real improvement to 60
+    // must still ratchet — the pinned line axis (80) is untouched.
+    const diff = computeBaselineDiff(
+      base(80, 55),
+      new Map([["a.ts", 95]]),
+      new Map([["a.ts", 60]]),
+    );
+    expect(diff.mustRaise).toEqual([{ path: "a.ts" }]);
+    expect(diff.mustRemove).toEqual([]);
+  });
+
   test("a baseline file missing from both actual maps is a 0% regression", () => {
     const diff = computeBaselineDiff(base(50, 40), new Map(), new Map());
     expect(diff.regressions).toEqual([
