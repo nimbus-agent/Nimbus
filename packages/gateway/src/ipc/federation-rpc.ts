@@ -243,6 +243,12 @@ export async function dispatchFederationRpc(
     },
     // Anchor-side: a teammate asks the trust anchor to run a named team-vault tool. The secret is
     // injected inside teamVault.runTool (never in this scope); I19 gate enforces RBAC + quorum.
+    // SECURITY (I17/R1): `peerId` here is NOT trusted from the request body. The LAN transport
+    // (federation-server.ts onMessage) overwrites it with the NaCl-authenticated session id BEFORE
+    // dispatch — `const forced = { ...body, peerId: peer.peerId }`. The same forcing protects
+    // federation.query. These handlers (invoke RBAC subject; *Respond quorum/delegate identity)
+    // are therefore spoof-proof over the wire. They MUST only be reached via a transport that forces
+    // peerId; never dispatch them with a caller-supplied peerId (see Task 17 local-path note).
     "federation.invoke": async (p) => {
       const rec = asRecord(p);
       if (ctx.teamVault === undefined) {
