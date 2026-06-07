@@ -121,6 +121,7 @@
     "audit:coverage-floor": "bun scripts/coverage-floor/check.ts",
     "audit:coverage-floor:build-lcov": "bash scripts/coverage-floor/build-lcov.sh",
     "audit:coverage-floor:update-baseline": "bun scripts/coverage-floor/check.ts --update-baseline",
+    "coverage:merge": "bun scripts/coverage/merge-coverage.ts",
     "audit:dead-code": "bunx knip",
     "audit:duplication": "bunx jscpd packages",
     "audit:exclusion-parity": "bun scripts/coverage-floor/check-exclusion-parity.ts",
