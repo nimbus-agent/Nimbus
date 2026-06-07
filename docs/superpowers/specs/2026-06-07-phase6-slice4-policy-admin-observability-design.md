@@ -100,7 +100,22 @@ by reading files** — it never imports admin-console source (dependency rule pr
 ### 4.2 `nimbus.policy.toml` schema
 
 Lives in `<configDir>` beside `nimbus.toml`, with a detached `nimbus.policy.toml.sig` (Ed25519 over the
-canonical UTF-8 bytes of the `.toml`).
+**canonicalized** bytes of the `.toml` — see §4.2.1).
+
+#### 4.2.1 Signature canonicalization (cross-platform stability)
+
+Signing and verifying operate on a **canonical byte form**, never the raw on-disk bytes, so that
+CRLF↔LF rewrites by git (`core.autocrlf`) or a text editor cannot break verification across Windows /
+macOS / Linux (platform-equality non-negotiable). `policy-signing.canonicalize(toml)` is the single
+function both `sign()` and `verify()` call. Canonical form:
+
+1. decode as UTF-8, strip a leading BOM if present;
+2. normalize all line endings `\r\n` and `\r` → `\n`;
+3. strip trailing whitespace on each line;
+4. ensure exactly one trailing `\n` (no extra blank lines at EOF).
+
+The signature covers `canonicalize(toml)`. The `.sig` is base64; the `.toml` on disk may carry either
+line-ending style without affecting validity.
 
 ```toml
 [policy]
@@ -144,8 +159,16 @@ ship_format = "ndjson"
      the last cryptographically-valid persisted policy.
   2. If no valid policy was ever received, the gateway runs **un-governed** (local config only) but the
      status surface flags `policy: none` and the console shows an "ungoverned" banner.
-  3. Policy may only make enforcement **stricter** (monotonic). The `EnforcedPolicy` view is computed so
-     that a policy attempting to lower a quorum or drop a HITL requirement has **no weakening effect**.
+  3. Policy may only make enforcement **stricter than the local baseline** — never stricter than its own
+     history. "Stricter" is defined **relative to the local config/default**, *not* a historical
+     high-water mark. Concretely `effective = max(localConfig, policy)` (and HITL-required = the union of
+     the local set with `policy.require`). An admin **can** scale an org constraint back down — e.g. lower
+     a quorum from 3 to 2 — and it takes effect, **as long as the result stays ≥ the local baseline**
+     (the `nimbus.toml` default and the frozen `HITL_REQUIRED_BACKING` set). What policy can *never* do is
+     drop **below** that baseline: it cannot reduce a quorum under the local default or remove a HITL
+     requirement that exists locally (that would violate non-negotiable #2). There is no "lock-in" of past
+     policy values; each refresh recomputes `EnforcedPolicy` from the *current* policy against the local
+     baseline.
 
 ### 4.4 Data flow — peer policy refresh
 
@@ -211,7 +234,11 @@ Exposed three ways from the **same** snapshot:
 - **HTTP** `GET /metrics` — Prometheus text exposition (`nimbus_peer_reachable`,
   `nimbus_connector_enabled`, `nimbus_audit_chain_length`, `nimbus_policy_signature_valid`,
   `nimbus_hitl_pending`, …) for external scraping. Distinct from the existing `/v1/metrics/dora` JSON —
-  no route collision.
+  no route collision. **Auth:** `/metrics` requires the **same bearer token** as the rest of the read
+  surface (it exposes peer/connector/audit posture, so it is not anonymous). A Prometheus scraper
+  configures it via the standard `authorization` / `bearer_token_file` scrape-config keys
+  (`Authorization: Bearer <token>`). The gateway already binds `127.0.0.1` by default (I6), so the token
+  is the second layer, not the only one.
 
 ## 7. Admin Console
 
@@ -236,6 +263,24 @@ The bundle is plain HTML/CSS + vanilla TS compiled to one JS file (no framework)
 into **pure functions** (`renderOverview(status)`, etc.) so they unit-test without a DOM driver; a thin
 `main.ts` wires fetch + DOM mount.
 
+#### 7.1 Build & deploy lifecycle
+
+`packages/admin-console` carries a `build` script (`bun build src/main.ts --outdir dist --minify` +
+copy `index.html`/`styles.css` to `dist/`). No framework, no Vite — Bun's bundler only.
+
+- **Monorepo wiring** — the package is added to the workspace `build` fan-out so `dist/` is produced
+  before any gateway test/package step that serves it. A preflight/CI gate asserts `dist/` exists and is
+  current (hash of `src/` vs a committed manifest), so a stale or missing bundle fails fast rather than
+  404-ing at runtime. `dist/` is **git-ignored** (built artifact), like other package build outputs.
+- **Runtime resolution** — the gateway resolves the console root via a small `admin-console-assets.ts`
+  helper: in-repo it points at `packages/admin-console/dist` (resolved relative to the gateway package,
+  via `import.meta`/`path.join`, never a hardcoded separator); in a packaged release the assets are
+  shipped alongside the gateway binary and resolved from the install root. If `dist/` is absent at
+  runtime, `GET /admin/*` returns a clear 503 ("admin console not built — run `bun run build`") instead of
+  a confusing 404.
+- **Dependency rule** — the gateway only ever **reads** `dist/` files; it never imports admin-console
+  source (preserves the `gateway`-imports-nothing-from-ui-class rule).
+
 ## 8. Team audit merged view
 
 A new `federation.auditExport` method returns **only federation-related** audit entries from a peer
@@ -249,17 +294,36 @@ rendered in the Audit view behind the team/local toggle and reachable via `team.
 `nimbus team purge --user <id>` (`team.purge` IPC, CLI; **not** Tauri-exposed):
 
 ```text
-resolve user → peer_id via identity_binding
+nimbus team purge --user <id>
+  → resolve user → peer_id via identity_binding
   → revoke all of the user's grants               # reuse Slice 3 deprovision path
   → delete the user's contributions from LOCAL shared namespaces
-  → for each peer: send federation.purge request   # lands in THAT peer's HITL queue (D11)
-       peer approves → peer purges its copy → returns a signed deletion record
-  → aggregate signed deletion records
-  → write ONE Ed25519-signed deletion record into the local audit chain (action: team.purge.completed)
+  → open a purge job: insert one purge_request row per known peer (status='pending')   # durable
+  → for each peer: attempt federation.purge        # lands in THAT peer's HITL queue (D11)
+       peer approves → peer purges its copy → returns a signed deletion record → status='done'
+       peer offline / not-yet-approved          → status stays 'pending' (no failure)
+  → CLI reports per-peer status (done / pending) and exits non-zero only on a hard error,
+       NOT merely because some peers are still pending
+  → when ALL peers are 'done': write ONE Ed25519-signed completion record into the local
+       audit chain (action: team.purge.completed) and close the job
 ```
 
-No auto-execution on another machine: each peer's own HITL gate authorizes its own deletion (consistent
-with the blast-radius philosophy). The aggregate signed record is the durable proof of what was purged.
+#### 9.1 Durability across offline / partitioned peers
+
+GDPR is a high-reliability operation, so purge state is **persisted**, not session-only. A new
+`gdpr_purge_job` + `gdpr_purge_request` pair (own migration, owned by `policy-store`/`gdpr-purge.ts`)
+records, per `(jobId, peerId)`: status (`pending` / `done` / `refused`), attempt count, last-attempt
+time, and the returned signed deletion record. The purge **never blocks on offline peers**:
+
+- The federation **sync cycle** retries every `pending` request (bounded backoff) until that peer returns
+  a signed deletion record, then marks it `done`. A peer that comes back online days later is purged on
+  its next sync — no operator re-run needed.
+- The job stays **open** until every request is `done`; only then is the aggregate
+  `team.purge.completed` record signed and appended. `nimbus team purge --status <jobId>` and the console
+  show outstanding peers.
+- No auto-execution on another machine: each peer's own HITL gate authorizes its own deletion (consistent
+  with the blast-radius philosophy). The per-peer signed deletion records are the durable proof of exactly
+  what was purged and when.
 
 ## 10. Security invariant I22 (triple rule)
 
@@ -273,9 +337,11 @@ stricter.*
 - **Docs** — a new row in [`docs/SECURITY-INVARIANTS.md`](../../SECURITY-INVARIANTS.md) + the
   CLAUDE.md / GEMINI.md invariant list.
 - **Test** — `packages/gateway/src/security-invariants.test.ts`: (a) a tampered policy (bad sig) is
-  rejected and the prior policy stays in force; (b) a policy that tries to *lower* a quorum or *remove* a
-  HITL requirement cannot weaken the effective gate (monotonic-stricter); (c) the connector allowlist
-  blocks a non-listed connector before mesh start.
+  rejected and the prior policy stays in force; (b) a policy that sets a quorum/HITL requirement **below
+  the local baseline** cannot weaken the effective gate (`effective = max(local, policy)`), while a policy
+  that *raises* a quorum and a later policy that *lowers* it back toward — but not under — the baseline
+  both take effect (no historical high-water lock); (c) the connector allowlist blocks a non-listed
+  connector before mesh start.
 - **Static complement D16** — `scripts/structure-audit/check-nimbus-invariants.ts`: no module outside
   `policy/` reads the policy file into an enforcement path; `policy.signing.privkey` is in the vault-key
   allow-list.
@@ -297,12 +363,16 @@ I22's wiring + docs + test land in the **same commit** (triple rule).
 
 ## 12. Testing strategy
 
-- **Unit / co-located `*.test.ts`:** policy-toml parse/serialize; signing/verify; policy-gate
-  monotonic-stricter resolution; profile×policy resolver; gateway-status snapshot; audit-shipper batching
-  (metadata-only proof); Prometheus formatter; console pure render functions.
+- **Unit / co-located `*.test.ts`:** policy-toml parse/serialize; **`canonicalize()` stability across
+  CRLF/LF/BOM/trailing-whitespace inputs (§4.2.1)**; signing/verify; policy-gate monotonic resolution
+  **including the raise-then-lower-toward-baseline case and the below-baseline floor (§4.3 R3)**;
+  profile×policy resolver; gateway-status snapshot; **`/metrics` bearer-auth (401 without token, 200
+  with)**; audit-shipper batching (metadata-only proof); Prometheus formatter; console pure render
+  functions.
 - **Integration (real SQLite + Bun subprocess):** connector allowlist blocks-before-mesh; retention floor;
   signed fetch→verify→enforce round-trip between two gateways; tampered-policy rejection keeps last-valid;
-  GDPR purge fan-out with HITL.
+  GDPR purge fan-out with HITL **+ an offline-peer case: the request persists `pending` and a later sync
+  cycle completes it and closes the job (§9.1)**.
 - **E2E CLI (real Gateway + mock peers):** `nimbus policy show/verify`, `nimbus admin status`,
   `nimbus team purge`.
 - **Invariant:** the I22 cases in `security-invariants.test.ts`.
@@ -316,9 +386,11 @@ I22's wiring + docs + test land in the **same commit** (triple rule).
 - **B — Enforcement:** connector allowlist @ `assemble`, retention floor, HITL/quorum override, profile×policy resolver.
 - **C — Distribution:** `federation.policy` serve/fetch, pubkey pinning at pairing, sync re-fetch.
 - **D — Observability:** status aggregation, `/v1/admin/status`, `/metrics`, `admin.status` IPC.
-- **E — Admin console:** `packages/admin-console` bundle + serving + bearer auth + 6 views (left-sidebar shell).
+- **E — Admin console:** `packages/admin-console` bundle + **`bun build` pipeline + monorepo build wiring +
+  runtime asset resolution (§7.1)** + serving + bearer auth + 6 views (left-sidebar shell).
 - **F — Team audit merged view:** `federation.auditExport` + aggregation + console view.
-- **G — GDPR purge:** `federation.purge` + signed deletion record + CLI.
+- **G — GDPR purge:** `gdpr_purge_job`/`_request` migration + durable per-peer ledger + sync-cycle retry
+  (§9.1) + `federation.purge` + signed deletion records + CLI (`purge`, `purge --status`).
 - **H — Surface & docs:** CLI/Tauri wiring, [`docs/architecture.md`](../../architecture.md), SECURITY-INVARIANTS.md, [`docs/CHANGELOG.md`](../../CHANGELOG.md), roadmap checkboxes.
 
 A → B → C form a dependency chain; D/E/F/G hang off A+C and can proceed in parallel; H closes out.
@@ -328,3 +400,29 @@ A → B → C form a dependency chain; D/E/F/G hang off A+C and can proceed in p
 - "Org-level policy engine" + "Policy enforcement at the Gateway" (Shared Workflows & Policy).
 - "Admin console" + "Team audit log" + "GDPR/compliance at org level" (Admin & Observability).
 - The Slice 4 row in the Phase 6 delivery-slice table.
+
+## 15. Design-review resolutions
+
+Resolutions to [the design review](./2026-06-07-phase6-slice4-policy-admin-observability-design-review.md)
+(all five fixed; none deferred):
+
+1. **Line-ending normalization for signatures** — *Fixed.* Added §4.2.1: sign/verify operate on a single
+   `canonicalize(toml)` form (LF, BOM-stripped, per-line trailing-whitespace stripped, one trailing `\n`),
+   so git/editor CRLF rewrites cannot break verification across OSes. Test added (§12).
+2. **Monotonicity vs policy updates** — *Fixed (clarification).* Rewrote §4.3 R3: "stricter" is relative
+   to the **local baseline**, not a historical high-water mark. Admins **can** lower an org constraint
+   (e.g. quorum 3 → 2) as long as the result stays ≥ the local default; policy can only never drop
+   *below* that baseline. I22 test (§10) and §12 updated to cover the raise-then-lower case.
+3. **Offline peers during GDPR purge** — *Fixed.* Added §9.1: a durable `gdpr_purge_job`/`_request` ledger;
+   purge never blocks on offline peers; the federation sync cycle retries every `pending` request until a
+   signed deletion record returns; the job closes (and the aggregate record is signed) only when all peers
+   are `done`. Lane G + an offline-peer integration test added.
+4. **`/metrics` authentication** — *Fixed.* §6 now specifies `/metrics` requires the same bearer token as
+   the read surface (it exposes posture data), configured via Prometheus `authorization` /
+   `bearer_token_file`; localhost bind (I6) is the second layer. Auth test added (§12).
+5. **Static console build/deploy lifecycle** — *Fixed.* Added §7.1: a `bun build` script (no Vite),
+   monorepo build fan-out so `dist/` precedes gateway serve/package steps, a freshness gate, runtime asset
+   resolution with a clear 503 when unbuilt, and `dist/` git-ignored. Lane E updated.
+
+The review's "Alignment with Invariants" section (I22, I7 Tauri exclusions, audit-shipper metadata-only)
+recorded **no** required changes.
