@@ -1,12 +1,738 @@
 {
-  "version": 1,
-  "generated_at": "2026-05-29T00:00:00.000Z",
+  "version": 2,
+  "generated_at": "2026-06-07T18:11:08.375Z",
   "files": {
+    "packages/cli/src/commands/audit.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74.19
+    },
+    "packages/cli/src/commands/bench.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.73
+    },
+    "packages/cli/src/commands/cli-test-helpers.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/cli/src/commands/config.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70.49
+    },
+    "packages/cli/src/commands/deploy.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.94
+    },
+    "packages/cli/src/commands/doctor-core.ts": {
+      "min_line_pct": 77.91,
+      "min_branch_pct": 67.72
+    },
+    "packages/cli/src/commands/extension.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.1
+    },
+    "packages/cli/src/commands/identity.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/cli/src/commands/people.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.31
+    },
+    "packages/cli/src/commands/query.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.96
+    },
+    "packages/cli/src/commands/run-workflow.ts": {
+      "min_line_pct": 78,
+      "min_branch_pct": 75
+    },
+    "packages/cli/src/commands/scim.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76
+    },
+    "packages/cli/src/commands/security.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.59
+    },
+    "packages/cli/src/commands/status.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.39
+    },
+    "packages/cli/src/commands/update.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.27
+    },
+    "packages/cli/src/lib/interactive-ipc-handlers.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78
+    },
+    "packages/cli/src/lib/parse-duration.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.92
+    },
+    "packages/cli/src/mcp/adapter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.5
+    },
+    "packages/cli/src/tui/QueryInput.tsx": {
+      "min_line_pct": 79.49,
+      "min_branch_pct": 67.11
+    },
+    "packages/cli/src/tui/SubTaskPane.tsx": {
+      "min_line_pct": 80,
+      "min_branch_pct": 71.43
+    },
+    "packages/cli/src/tui/ipc-context.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/cli/src/tui/state.ts": {
+      "min_line_pct": 78.57,
+      "min_branch_pct": 79.17
+    },
+    "packages/cli/src/tui/test-helpers/context.ts": {
+      "min_line_pct": 66.67,
+      "min_branch_pct": 0
+    },
+    "packages/cli/src/tui/useIpcPoll.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70
+    },
+    "packages/client/src/ask-stream.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.22
+    },
+    "packages/client/src/ipc-transport.ts": {
+      "min_line_pct": 69.47,
+      "min_branch_pct": 58.93
+    },
+    "packages/gateway/src/agents/_lib/emit-brief.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/agents/expert.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 67.24
+    },
+    "packages/gateway/src/agents/impact.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.27
+    },
+    "packages/gateway/src/commands/data-delete.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/commands/data-export.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/config/nimbus-toml.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.86
+    },
+    "packages/gateway/src/config/telemetry-toml.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.97
+    },
+    "packages/gateway/src/connectors/_lib/fetch-outcome.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/connectors/_lib/gitlab/events.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74.03
+    },
+    "packages/gateway/src/connectors/_lib/gitlab/pipelines.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.56
+    },
+    "packages/gateway/src/connectors/_lib/gmail/api.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 58.97
+    },
+    "packages/gateway/src/connectors/_lib/gmail/cursor.ts": {
+      "min_line_pct": 78.57,
+      "min_branch_pct": 76
+    },
     "packages/gateway/src/connectors/_lib/gmail/history.ts": {
-      "min_coverage_pct": 78.64
+      "min_line_pct": 68.52,
+      "min_branch_pct": 47.22
+    },
+    "packages/gateway/src/connectors/_lib/http.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.92
+    },
+    "packages/gateway/src/connectors/_lib/pagination.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 71.43
+    },
+    "packages/gateway/src/connectors/_lib/rate-limit-observer.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.78
+    },
+    "packages/gateway/src/connectors/_lib/teams/api.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/connectors/_lib/teams/cursor.ts": {
+      "min_line_pct": 69.84,
+      "min_branch_pct": 74.36
+    },
+    "packages/gateway/src/connectors/athena-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.93
+    },
+    "packages/gateway/src/connectors/atlassian-api-sync-helpers.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/connectors/bigquery-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 71.95
+    },
+    "packages/gateway/src/connectors/bitrise-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 61.54
+    },
+    "packages/gateway/src/connectors/cloudwatch-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.51
+    },
+    "packages/gateway/src/connectors/codemagic-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 61.54
+    },
+    "packages/gateway/src/connectors/confluence-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 62.77
+    },
+    "packages/gateway/src/connectors/connector-catalog.ts": {
+      "min_line_pct": 78.95,
+      "min_branch_pct": 60
+    },
+    "packages/gateway/src/connectors/connector-sync-test-helpers.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 62.5
+    },
+    "packages/gateway/src/connectors/dagster-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.08
+    },
+    "packages/gateway/src/connectors/data-profile-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.73
+    },
+    "packages/gateway/src/connectors/databricks-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74
+    },
+    "packages/gateway/src/connectors/dbt-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 67.5
+    },
+    "packages/gateway/src/connectors/dependencytrack-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.17
+    },
+    "packages/gateway/src/connectors/fastmail-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 64.36
+    },
+    "packages/gateway/src/connectors/figma-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 62.16
+    },
+    "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74.03
+    },
+    "packages/gateway/src/connectors/flagsmith-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 60.38
+    },
+    "packages/gateway/src/connectors/github-index-repos.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
     },
     "packages/gateway/src/connectors/gmail-sync.ts": {
-      "min_coverage_pct": 78.91
+      "min_line_pct": 80,
+      "min_branch_pct": 60.87
+    },
+    "packages/gateway/src/connectors/google-drive-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.38
+    },
+    "packages/gateway/src/connectors/google-meet-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.31
+    },
+    "packages/gateway/src/connectors/google-photos-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 64.44
+    },
+    "packages/gateway/src/connectors/google-sync-shared.ts": {
+      "min_line_pct": 76.32,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/connectors/great-expectations-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 63.29
+    },
+    "packages/gateway/src/connectors/iac-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/connectors/jira-sync.ts": {
+      "min_line_pct": 75.19,
+      "min_branch_pct": 52.76
+    },
+    "packages/gateway/src/connectors/json-unknown.ts": {
+      "min_line_pct": 66.67,
+      "min_branch_pct": 80
+    },
+    "packages/gateway/src/connectors/launchdarkly-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.68
+    },
+    "packages/gateway/src/connectors/linear-sync.ts": {
+      "min_line_pct": 78.7,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/connectors/metabase-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 68.57
+    },
+    "packages/gateway/src/connectors/microsoft-graph-sync-shared.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 67.57
+    },
+    "packages/gateway/src/connectors/notion-sync.ts": {
+      "min_line_pct": 78.46,
+      "min_branch_pct": 58.16
+    },
+    "packages/gateway/src/connectors/obsidian-daily-note.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.78
+    },
+    "packages/gateway/src/connectors/obsidian-parsing.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.63
+    },
+    "packages/gateway/src/connectors/onedrive-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.68
+    },
+    "packages/gateway/src/connectors/openapi-indexer-config.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.38
+    },
+    "packages/gateway/src/connectors/outlook-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 56.41
+    },
+    "packages/gateway/src/connectors/pagerduty-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.47
+    },
+    "packages/gateway/src/connectors/prefect-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.17
+    },
+    "packages/gateway/src/connectors/semgrep-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 64
+    },
+    "packages/gateway/src/connectors/snyk-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 68.42
+    },
+    "packages/gateway/src/connectors/sonarqube-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/connectors/storybook-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.57
+    },
+    "packages/gateway/src/connectors/superset-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74.36
+    },
+    "packages/gateway/src/connectors/testflight-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.68
+    },
+    "packages/gateway/src/connectors/user-mcp-store.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.22
+    },
+    "packages/gateway/src/connectors/zoom-sync.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.88
+    },
+    "packages/gateway/src/db/audit-verify.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/db/backup-manifest.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/db/latency-ring-buffer.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 65.63
+    },
+    "packages/gateway/src/db/metrics.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.78
+    },
+    "packages/gateway/src/db/query-guard.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/db/repair.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/db/snapshot.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 62.96
+    },
+    "packages/gateway/src/db/verify.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 74.07
+    },
+    "packages/gateway/src/db/write.ts": {
+      "min_line_pct": 76.19,
+      "min_branch_pct": 80
+    },
+    "packages/gateway/src/embedding/chunker.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.31
+    },
+    "packages/gateway/src/embedding/create-embedding-runtime.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.76
+    },
+    "packages/gateway/src/embedding/create-routing-runtime.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.78
+    },
+    "packages/gateway/src/embedding/model.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.92
+    },
+    "packages/gateway/src/embedding/pipeline.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 69.23
+    },
+    "packages/gateway/src/engine/coordinator.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/engine/planner.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/engine/run-ask.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.98
+    },
+    "packages/gateway/src/engine/search-ranking.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/extensions/auto-update-apply.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.08
+    },
+    "packages/gateway/src/extensions/auto-update-init.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 67.86
+    },
+    "packages/gateway/src/extensions/auto-update-orchestrate.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/extensions/auto-update-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70.31
+    },
+    "packages/gateway/src/extensions/auto-update.ts": {
+      "min_line_pct": 77.32,
+      "min_branch_pct": 58.57
+    },
+    "packages/gateway/src/extensions/install-from-local.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70
+    },
+    "packages/gateway/src/extensions/publisher-keys.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.57
+    },
+    "packages/gateway/src/extensions/verify-extensions.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.85
+    },
+    "packages/gateway/src/federation/federation-server.ts": {
+      "min_line_pct": 78.26,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/federation/peer-pairing.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/graph/graph-populator.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 79.79
+    },
+    "packages/gateway/src/identity/deprovision.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/identity/identity-boot.ts": {
+      "min_line_pct": 79.41,
+      "min_branch_pct": 62.5
+    },
+    "packages/gateway/src/identity/identity-runtime.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 61.11
+    },
+    "packages/gateway/src/identity/identity-test-helpers.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/identity/oidc-device-flow.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.08
+    },
+    "packages/gateway/src/identity/verifier.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 69.57
+    },
+    "packages/gateway/src/index/drift-hints.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.26
+    },
+    "packages/gateway/src/index/item-store.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.74
+    },
+    "packages/gateway/src/index/local-index.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.17
+    },
+    "packages/gateway/src/index/migrations/runner.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70.37
+    },
+    "packages/gateway/src/index/sqlite-vec-load.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 68.42
+    },
+    "packages/gateway/src/ipc/_lib/dispatch-by-method.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/ipc/agents-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.33
+    },
+    "packages/gateway/src/ipc/connector-rpc-handlers/removal.ts": {
+      "min_line_pct": 65.52,
+      "min_branch_pct": 53.33
+    },
+    "packages/gateway/src/ipc/consent.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.19
+    },
+    "packages/gateway/src/ipc/data-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.91
+    },
+    "packages/gateway/src/ipc/federation-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.08
+    },
+    "packages/gateway/src/ipc/http-write-routes.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.22
+    },
+    "packages/gateway/src/ipc/index-reembed-rpc.ts": {
+      "min_line_pct": 71.67,
+      "min_branch_pct": 60.42
+    },
+    "packages/gateway/src/ipc/jsonrpc.ts": {
+      "min_line_pct": 79.17,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/ipc/lan-client.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 51.47
+    },
+    "packages/gateway/src/ipc/lan-server.ts": {
+      "min_line_pct": 79.63,
+      "min_branch_pct": 72
+    },
+    "packages/gateway/src/ipc/metrics-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.67
+    },
+    "packages/gateway/src/ipc/openapi-loader.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/ipc/security-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75.41
+    },
+    "packages/gateway/src/ipc/server/dispatchers.ts": {
+      "min_line_pct": 70.7,
+      "min_branch_pct": 69.01
+    },
+    "packages/gateway/src/ipc/server/rpc-error.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/ipc/server/server.ts": {
+      "min_line_pct": 77.55,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/ipc/session.ts": {
+      "min_line_pct": 55.1,
+      "min_branch_pct": 33.33
+    },
+    "packages/gateway/src/ipc/updater-rpc.ts": {
+      "min_line_pct": 52.38,
+      "min_branch_pct": 38.46
+    },
+    "packages/gateway/src/ipc/voice-rpc.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 60
+    },
+    "packages/gateway/src/llm/llamacpp-provider.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/llm/ollama-provider.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 69.23
+    },
+    "packages/gateway/src/memory/session-memory-store.ts": {
+      "min_line_pct": 75.81,
+      "min_branch_pct": 51.52
+    },
+    "packages/gateway/src/metrics/dora-config.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 72.73
+    },
+    "packages/gateway/src/metrics/dora.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.12
+    },
+    "packages/gateway/src/people/parse-from-header.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 78.26
+    },
+    "packages/gateway/src/people/person-id.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 66.67
+    },
+    "packages/gateway/src/people/person-store.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.23
+    },
+    "packages/gateway/src/platform/assemble-sync-registrations.ts": {
+      "min_line_pct": 51.79,
+      "min_branch_pct": 80
+    },
+    "packages/gateway/src/platform/dirs.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/platform/gateway-log-file.ts": {
+      "min_line_pct": 66.04,
+      "min_branch_pct": 42.31
+    },
+    "packages/gateway/src/platform/register-user-mcp-sync.ts": {
+      "min_line_pct": 66.67,
+      "min_branch_pct": 80
+    },
+    "packages/gateway/src/platform/sandbox/seccomp-filter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/preflight/preflight.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/gateway/src/search/dual-search.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70
+    },
+    "packages/gateway/src/search/hybrid-internal.ts": {
+      "min_line_pct": 79.56,
+      "min_branch_pct": 58.62
+    },
+    "packages/gateway/src/search/vec-store.ts": {
+      "min_line_pct": 70,
+      "min_branch_pct": 57.14
+    },
+    "packages/gateway/src/sync/rate-limiter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 77.78
+    },
+    "packages/gateway/src/sync/scheduler.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 73.2
+    },
+    "packages/gateway/src/telemetry/flush-scheduler.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 65.85
+    },
+    "packages/gateway/src/updater/public-key.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70
+    },
+    "packages/gateway/src/updater/updater-test-fixtures.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 50
+    },
+    "packages/gateway/src/updater/updater.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 69.64
+    },
+    "packages/gateway/src/voice/stt.ts": {
+      "min_line_pct": 71.43,
+      "min_branch_pct": 48
+    },
+    "packages/mcp-connectors/dataprofile/src/profile.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 71.3
+    },
+    "packages/mcp-connectors/flux/src/search-filter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/mcp-connectors/launchdarkly/src/search-filter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 75
+    },
+    "packages/mcp-connectors/ramp/src/search-filter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 70
+    },
+    "packages/mcp-connectors/zoom/src/search-filter.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 76.47
+    },
+    "packages/sdk/src/crypto/app-store-connect-jwt.ts": {
+      "min_line_pct": 80,
+      "min_branch_pct": 0
+    },
+    "packages/sdk/src/server.ts": {
+      "min_line_pct": 66.67,
+      "min_branch_pct": 50
     }
   }
 }
