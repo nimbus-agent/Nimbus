@@ -1,7 +1,7 @@
 # True Coverage Program Design Review
 
 **Date:** 2026-06-07
-**Target:** [2026-06-07-true-coverage-program-design.md](file:///C:/gitrep/Nimbus/docs/superpowers/specs/2026-06-07-true-coverage-program-design.md)
+**Target:** [2026-06-07-true-coverage-program-design.md](./2026-06-07-true-coverage-program-design.md)
 
 ## Open Questions & Suggestions
 
@@ -27,6 +27,6 @@
 
 ## Alignment with Invariants
 
-- Separating the instrumented coverage run into a separate CI job protects the local dev loop and PR gate latency, matching the local-first and developer-experience principles.
-- The use of a v2 baseline schema with a v1->v2 read shim ensures smooth migrations and backward compatibility.
-- Exclusions rules are maintained properly.
+* Separating the instrumented coverage run into a separate CI job protects the local dev loop and PR gate latency, matching the local-first and developer-experience principles.
+* The use of a v2 baseline schema with a v1->v2 read shim ensures smooth migrations and backward compatibility.
+* Exclusions rules are maintained properly.

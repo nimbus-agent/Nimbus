@@ -1,7 +1,7 @@
 # Branch-Coverage Foundation Plan Review
 
 **Date:** 2026-06-07
-**Target:** [2026-06-07-true-coverage-foundation.md](file:///C:/gitrep/Nimbus/.claude/worktrees/dev+asafgolombek+true-coverage-program/docs/superpowers/plans/2026-06-07-true-coverage-foundation.md)
+**Target:** [2026-06-07-true-coverage-foundation.md](./2026-06-07-true-coverage-foundation.md)
 
 ## Open Questions & Suggestions
 

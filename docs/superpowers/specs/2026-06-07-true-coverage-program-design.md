@@ -58,7 +58,7 @@ scratch dirs (not theorized). Full evidence in the session transcript.
 | Per-package `cd $pkg` runs don't see root bunfig | Pass `--preload <REPO_ROOT-anchored abs path>` per package |
 | Broad onLoad filter crashes Babel (`_helperCompilationTargets().default is not a function`) | Narrow runtime scope-gate: instrument first-party src only, never `node_modules`/`*.test.*`; import plugin/preset as **direct function refs**, not string names |
 | `onLoad` returning `undefined` aborts the run | Always return an object (`{contents: source, loader:'ts'}` for skipped files) |
-| Coverage flush | Global `afterAll` from `bun:test` — **not** `process.on('exit'|'beforeExit')` (never fire under `bun test`) |
+| Coverage flush | Global `afterAll` from `bun:test` — **not** `process.on('exit'\|'beforeExit')` (never fire under `bun test`) |
 | `.tsx` returned as `js` loader → `Unexpected <` | Return Bun's `jsx` loader for `.tsx` |
 | Windows `SF:` paths use backslashes | Normalize to forward slashes (CI is Linux; matters for local Windows runs) |
 
@@ -96,7 +96,7 @@ carries line **and** branch data, fed into the **existing** `audit:coverage-floo
 (now dual-axis) and Sonar. The fast dev-loop `bun test` and the fast PR gate stay
 **uninstrumented** — zero added latency on the critical path.
 
-```
+```text
 bun test (per package, --preload istanbul-register.ts)
   └─ onLoad plugin: Babel preset-typescript + babel-plugin-istanbul (retainLines)
         instruments first-party src only → counters on globalThis.__coverage__

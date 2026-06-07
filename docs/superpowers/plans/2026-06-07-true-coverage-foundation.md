@@ -23,6 +23,7 @@
 ## File map (created / modified)
 
 **Created:**
+
 - `scripts/coverage/instrument-scope.ts` — `shouldInstrument(absPath)` predicate (first-party src only).
 - `scripts/coverage/instrument-scope.test.ts` — its tests.
 - `scripts/coverage/istanbul-register.ts` — the instrumentation preload (Babel + istanbul onLoad).
@@ -32,6 +33,7 @@
 - `scripts/coverage/__fixtures__/sample/` — a tiny instrumented-coverage fixture (Task 4 verification).
 
 **Modified:**
+
 - `scripts/coverage-floor/lcov-parse.ts` (+ `.test.ts`) — parse `BRDA` → `branchPct`.
 - `scripts/coverage-floor/baseline.ts` (+ `.test.ts`) — v2 `{line,branch}` schema + v1→v2 read shim + dual-axis `computeBaselineDiff`.
 - `scripts/coverage-floor/check.ts` — dual-axis `evaluateCheck`/`computeUpdatedBaseline` + dimension-tagged violations.
@@ -47,14 +49,17 @@
 ## Task 0: Install pinned dev dependencies
 
 **Files:**
+
 - Modify: `package.json` (devDependencies)
 
 - [ ] **Step 1: Run the dependency-safety pre-flight mindset, then add the deps (dev-only, exact-pinned)**
 
 Run:
+
 ```bash
 bun add -d -E @babel/core @babel/preset-typescript babel-plugin-istanbul istanbul-lib-coverage istanbul-lib-report istanbul-reports @types/babel__core @types/istanbul-lib-coverage @types/istanbul-lib-report @types/istanbul-reports
 ```
+
 `-E` pins exact versions. These are dev-only (never shipped). The `@types/*` packages are required because the repo bans `any` (CLAUDE.md non-negotiable #7) and `istanbul-lib-*` ship no types. If `bun add` rewrites unrelated `overrides`, revert those hunks.
 
 - [ ] **Step 2: Verify they resolved and typecheck still passes**
@@ -74,6 +79,7 @@ git commit -m "build(coverage): add pinned dev deps for istanbul branch instrume
 ## Task 1: Parse BRDA branch coverage in `lcov-parse.ts`
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/lcov-parse.ts`
 - Test: `scripts/coverage-floor/lcov-parse.test.ts`
 
@@ -239,6 +245,7 @@ git commit -m "feat(coverage): parse BRDA branch records into branchPct"
 ## Task 2: v2 baseline schema + v1→v2 read shim + dual-axis diff
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/baseline.ts`
 - Test: `scripts/coverage-floor/baseline.test.ts`
 
@@ -508,6 +515,7 @@ git commit -m "feat(coverage): v2 line+branch baseline schema with v1 read shim"
 ## Task 3: Dual-axis `check.ts` (evaluate + update + dimension-tagged output)
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/check.ts`
 - Test: `scripts/coverage-floor/check.test.ts` (create if absent)
 
@@ -787,6 +795,7 @@ git commit -m "feat(coverage): dual line+branch floor gate in check.ts"
 ## Task 4: Istanbul instrumentation preload + scope predicate
 
 **Files:**
+
 - Create: `scripts/coverage/instrument-scope.ts`, `scripts/coverage/instrument-scope.test.ts`, `scripts/coverage/istanbul-register.ts`
 - Create (fixture): `scripts/coverage/__fixtures__/sample/m.ts`, `.../m.test.ts`
 
@@ -957,10 +966,12 @@ afterAll(() => {
 - [ ] **Step 7: Verify the preload produces branch data (the linchpin check)**
 
 Run:
+
 ```bash
 bun test --preload ./scripts/coverage/__fixtures__/preload-fixture.ts scripts/coverage/__fixtures__/sample/m.test.ts
 bun -e "const c=require('./coverage/.fixture/cov.json'); const f=Object.values(c)[0]; console.log('branches:', Object.keys(f.b).length, 'hit-vectors:', JSON.stringify(Object.values(f.b)));"
 ```
+
 Expected: the printed coverage has a non-empty `b` (branch) map with at least one all-zero hit vector (the unexercised `n<0` / `n>100` branches). If `b` is empty, the instrumentation is broken — STOP and debug the preload before continuing.
 
 - [ ] **Step 8: Commit**
@@ -975,6 +986,7 @@ git commit -m "feat(coverage): istanbul instrumentation preload + scope predicat
 ## Task 5: Coverage flush preload (`report-coverage.ts`)
 
 **Files:**
+
 - Create: `scripts/coverage/report-coverage.ts`
 
 - [ ] **Step 1: Implement the flush preload**
@@ -1005,11 +1017,13 @@ afterAll(() => {
 - [ ] **Step 2: Smoke-test it produces a shard**
 
 Run:
+
 ```bash
 rm -rf coverage/.nyc-tmp
 bun test --preload ./scripts/coverage/istanbul-register.ts --preload ./scripts/coverage/report-coverage.ts scripts/coverage-floor/lcov-parse.test.ts
 ls coverage/.nyc-tmp
 ```
+
 Expected: at least one `<pid>.json` file exists. (The instrumented modules here are the `scripts/coverage-floor/*` sources imported by the test — note `scripts/` is not first-party `src`, so `__coverage__` may be empty and no shard is written; that's fine for the smoke test. To force a shard, temporarily run a gateway test: `bun test --preload ./scripts/coverage/istanbul-register.ts --preload ./scripts/coverage/report-coverage.ts packages/gateway/src/engine/tool-output-envelope.test.ts` and confirm a shard appears.)
 
 - [ ] **Step 3: Commit**
@@ -1024,6 +1038,7 @@ git commit -m "feat(coverage): per-process coverage flush preload"
 ## Task 6: Merge shards into `coverage/lcov.info`
 
 **Files:**
+
 - Create: `scripts/coverage/merge-coverage.ts`, `scripts/coverage/merge-coverage.test.ts`
 - Modify: `package.json` (add `coverage:merge` script)
 
@@ -1149,6 +1164,7 @@ git commit -m "feat(coverage): merge istanbul shards into branch-aware lcov"
 ## Task 7: Wire the local `build-lcov.sh` end-to-end
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/build-lcov.sh`
 
 - [ ] **Step 1: Switch the per-package run to the instrumented preloads + merge**
@@ -1215,6 +1231,7 @@ git commit -m "build(coverage): drive build-lcov via istanbul preloads + merge"
 ## Task 8: Wire the CI coverage job (`_test-suite.yml`)
 
 **Files:**
+
 - Modify: `.github/workflows/_test-suite.yml`
 
 - [ ] **Step 1: Linux per-package run — swap to preloads**
@@ -1258,9 +1275,11 @@ In the **"Unit tests (with coverage) — macOS/Windows (retry once)"** step, cha
 - [ ] **Step 4: Validate the workflow YAML (best-effort; CI is authoritative)**
 
 The push in Task 10 is the authoritative YAML validator (GitHub rejects/serially-errors a malformed workflow). Do **not** add a dependency just to check locally. Optionally, if `yaml` already resolves in the repo (it's a common transitive dep), do a quick parse:
+
 ```bash
 bun -e "import('yaml').then(async m => { m.parse(await Bun.file('.github/workflows/_test-suite.yml').text()); console.log('yaml ok'); }).catch(e => console.log('skip local check:', e.message))"
 ```
+
 Expected: `yaml ok`, or `skip local check: ...` if `yaml` isn't installed (fine — rely on CI). Either way, re-read your diff by eye for indentation before pushing.
 
 - [ ] **Step 5: Commit**
@@ -1275,6 +1294,7 @@ git commit -m "ci(coverage): instrument the Linux coverage job for branch data"
 ## Task 9: Exclude worker entry trees + keep exclusion-parity
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/exclusions.ts`
 - Modify: `sonar-project.properties` (mirror, to keep `audit:exclusion-parity` green)
 
@@ -1322,10 +1342,12 @@ git push -u origin dev/asafgolombek/true-coverage-program
 - [ ] **Step 2: Wait for the Linux coverage job, then download its lcov**
 
 Run:
+
 ```bash
 gh run list --branch dev/asafgolombek/true-coverage-program --limit 1
 gh run download <run-id> --name coverage-lcov-merged --dir coverage
 ```
+
 Expected: `coverage/lcov.info` from CI is on disk, containing `BRDA:` records. Confirm: `grep -c '^BRDA:' coverage/lcov.info` is non-zero.
 
 **No `gh` CLI?** (plan review #2) Open the run on github.com → the workflow run page → the **Artifacts** section → download **`coverage-lcov-merged`** → unzip it and place `lcov.info` at `coverage/lcov.info` in the worktree. The rest of Task 10 is identical.
@@ -1335,10 +1357,12 @@ Expected: `coverage/lcov.info` from CI is on disk, containing `BRDA:` records. C
 The v2 reseed must start **fresh**, not ratchet the legacy v1 baseline. The measurement methodology itself changed (bun-native line coverage → istanbul source instrumentation), and istanbul counts executable lines differently — so a few v1 line watermarks (e.g. `_lib/gmail/history.ts` 78.64% native → 68.52% istanbul) sit *above* the new istanbul actual. The v1→v2 read shim carries those stale watermarks forward and `update-baseline`'s ratchet (`max(existing, actual)`) keeps them, producing a false `regression` the gate can never clear. (Verified in the Docker-Linux dry-run: ratcheting the v1 baseline → 1 false regression; fresh reseed → green.)
 
 So first replace the baseline with an empty v2, then regenerate:
+
 ```bash
 printf '{\n  "version": 2,\n  "generated_at": "%s",\n  "files": {}\n}\n' "$(date -u +%Y-%m-%dT00:00:00.000Z)" > docs/structure-audit/coverage-baseline.json
 COVERAGE_LCOV_PATH=coverage/lcov.info bun run audit:coverage-floor:update-baseline
 ```
+
 Expected: `docs/structure-audit/coverage-baseline.json` is rewritten as `version: 2` with `{min_line_pct, min_branch_pct}` entries — **many** entries (~180; the large day-1 branch baseline, by design).
 
 - [ ] **Step 4: Verify the gate now passes against CI's lcov**
@@ -1380,6 +1404,7 @@ Run these on the CI-Linux output (download artifacts as in Task 10) before decla
 ```bash
 gh pr create --fill --base main
 ```
+
 Title: `feat(coverage): branch-coverage foundation (true-coverage Sub-project A)`. In the body, link the design spec and note the day-1 branch baseline size + the §5.7 gate results.
 
 ---
@@ -1400,4 +1425,3 @@ Addressing [the plan review](./2026-06-07-true-coverage-foundation-review.md):
 2. **`gh` CLI fallback — FIXED (doc).** Added the manual github.com → Artifacts → `coverage-lcov-merged` download path to Task 10 Step 2.
 3. **YAML check dependency — FIXED.** Reframed Task 8 Step 4 as a best-effort local parse (graceful skip if `yaml` isn't installed — no dep added) with the Task 10 push as the authoritative validator.
 4. **Zero-branch files — ACKNOWLEDGED.** `branches===0 ? 100` is correct/standard and Sonar-aligned; left as-is. The only failure mode it could mask (instrumentation emits no `BRDA` for a file that has branches → false 100%) is caught by the canary/global `BRF>0` guard — Task 11 Step 5 now states this explicitly and points to codifying it in `check.ts` (spec §5.3).
-```
