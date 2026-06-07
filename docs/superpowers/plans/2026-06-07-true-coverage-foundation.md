@@ -1330,10 +1330,16 @@ Expected: `coverage/lcov.info` from CI is on disk, containing `BRDA:` records. C
 
 **No `gh` CLI?** (plan review #2) Open the run on github.com → the workflow run page → the **Artifacts** section → download **`coverage-lcov-merged`** → unzip it and place `lcov.info` at `coverage/lcov.info` in the worktree. The rest of Task 10 is identical.
 
-- [ ] **Step 3: Regenerate the v2 baseline from CI's lcov**
+- [ ] **Step 3: Regenerate the v2 baseline from CI's lcov — from a CLEAN slate**
 
-Run: `COVERAGE_LCOV_PATH=coverage/lcov.info bun run audit:coverage-floor:update-baseline`
-Expected: `docs/structure-audit/coverage-baseline.json` is rewritten as `version: 2` with `{min_line_pct, min_branch_pct}` entries — likely **many** entries (the large day-1 branch baseline, by design).
+The v2 reseed must start **fresh**, not ratchet the legacy v1 baseline. The measurement methodology itself changed (bun-native line coverage → istanbul source instrumentation), and istanbul counts executable lines differently — so a few v1 line watermarks (e.g. `_lib/gmail/history.ts` 78.64% native → 68.52% istanbul) sit *above* the new istanbul actual. The v1→v2 read shim carries those stale watermarks forward and `update-baseline`'s ratchet (`max(existing, actual)`) keeps them, producing a false `regression` the gate can never clear. (Verified in the Docker-Linux dry-run: ratcheting the v1 baseline → 1 false regression; fresh reseed → green.)
+
+So first replace the baseline with an empty v2, then regenerate:
+```bash
+printf '{\n  "version": 2,\n  "generated_at": "%s",\n  "files": {}\n}\n' "$(date -u +%Y-%m-%dT00:00:00.000Z)" > docs/structure-audit/coverage-baseline.json
+COVERAGE_LCOV_PATH=coverage/lcov.info bun run audit:coverage-floor:update-baseline
+```
+Expected: `docs/structure-audit/coverage-baseline.json` is rewritten as `version: 2` with `{min_line_pct, min_branch_pct}` entries — **many** entries (~180; the large day-1 branch baseline, by design).
 
 - [ ] **Step 4: Verify the gate now passes against CI's lcov**
 
