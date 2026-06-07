@@ -283,6 +283,50 @@ Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` n
 
 ---
 
+### `federation.*` — Team federation (Phase 6 Slice 1)
+
+Consent-scoped peer-to-peer federated query over the E2EE LAN channel. Over-the-wire answering goes through the `query-gate.ts` leak-proof gate (`I17`). LAN admits **only** `federation.query` / `federation.expertise`; all management methods are local/Tauri-only (`I5`), and `federation.pair` is CLI-only (out-of-band pairing code, same class as `lan.pair`).
+
+| Method | Type | Description |
+|---|---|---|
+| `federation.query` | request | **Over-the-wire** — answer an inbound federated query; grant + role + consent + namespace-filter scoped (`I17`). Answering `peerId` is forced from the authenticated session, never the request body (I17/R1) |
+| `federation.expertise` | request | **Over-the-wire** — content-free expertise ranking ("who knows `auth.ts`?"); returns ranks only, never item bodies |
+| `federation.ask` / `federation.askExpertise` | request | **Outbound** — send a federated query / expertise request to a paired peer |
+| `federation.discover` | request | Discover peers (mDNS + manual fallback). Renderer-callable |
+| `federation.peers` | request | List paired peers. Renderer-callable |
+| `federation.namespace.grant` / `.publish` / `.revoke` | request | Per-peer namespace RBAC grants. Renderer-callable |
+| `federation.consentRespond` | request | Owner's local consent decision for an over-the-wire query (`federation.consentRequest` is a notification delivered to the renderer) |
+| `federation.pair` | request | Mutual-approval peer pairing. **CLI-only** — transmits an out-of-band pairing code |
+
+---
+
+### `identity.*` — SSO / OIDC identity (Phase 6 Slice 3)
+
+OIDC device-code SSO; tokens validated only in `identity/verifier.ts`, raw tokens Vault-only (`I18`). The four read+login methods are renderer-callable; the credential-mutating `identity.bind` / `identity.unbind` are **CLI-only**.
+
+| Method | Type | Description |
+|---|---|---|
+| `identity.login` | request | Begin OIDC device-code login |
+| `identity.status` | request | Current identity / session status |
+| `identity.logout` | request | Clear the local identity session |
+| `identity.listBindings` | request | List operator ↔ identity bindings |
+| `identity.bind` / `identity.unbind` | request | Bind/unbind an operator identity. **CLI-only** — not in the Tauri allowlist; tokens Vault-only (`I18`) |
+
+---
+
+### `scim.*` — SCIM provisioning (Phase 6 Slice 3)
+
+SCIM v2 user-provisioning admin surface. The two read methods are renderer-callable; `scim.setToken` / `scim.deprovision` are **CLI-only**. (Inbound SCIM writes arrive over the HTTP `/scim/v2/Users` routes on the `I13` write allowlist — not these IPC methods.)
+
+| Method | Type | Description |
+|---|---|---|
+| `scim.status` | request | SCIM provisioning status |
+| `scim.listUsers` | request | List SCIM-provisioned users |
+| `scim.setToken` | request | Set the SCIM bearer token (Vault). **CLI-only** |
+| `scim.deprovision` | request | Deprovision a user. **CLI-only** |
+
+---
+
 ### `audit.*` — Audit log (read-only; CLI-only)
 
 | Method | Type | Description |

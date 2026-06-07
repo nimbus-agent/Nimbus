@@ -31,7 +31,7 @@
 - [Subsystem 4: The Extension Registry](#subsystem-4-the-extension-registry)
 - [Phase 4 Subsystems](#phase-4-subsystems)
 - [Built-in Agents Pattern](#built-in-agents-pattern)
-- [Phase 6+ Subsystems (Planned)](#phase-6-subsystems-planned)
+- [Phase 6+ Subsystems](#phase-6-subsystems)
 - [Nimbus Gateway: Process Lifecycle](#nimbus-gateway-process-lifecycle)
 - [Local Database Schema](#local-database-schema)
 - [Testing Architecture](#testing-architecture)
@@ -1078,7 +1078,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 
 ---
 
-## Phase 6+ Subsystems (Planned)
+## Phase 6+ Subsystems
 
 The phases beyond Phase 5 each introduce subsystems that **extend, not replace**, the Phase 4 multi-agent + connector-mesh foundation: no new Gateway IPC transport, no new process model. New work surfaces as new item types + new connectors + new built-in agents that follow the existing patterns ([Built-in Agents Pattern](#built-in-agents-pattern), [Connector Tool Contract](#connector-tool-contract)).
 
@@ -1180,6 +1180,14 @@ const streamReq: JSONRPCRequest = {
 //   emits security.scanProgress / security.scanDone / security.scanError; CLI-only, FORBIDDEN_OVER_LAN (ipc/security-rpc.ts)
 // index.reembed / index.reembedCancel — long-running re-embed job; CLI-only (I5/I7);
 //   emits index.reembedProgress / index.reembedDone / index.reembedError (ipc/index-reembed-rpc.ts)
+//
+// Phase 6 surfaces (Team; full signatures in the nimbus-ipc skill registry):
+// federation.* — consent-scoped peer federation; LAN admits ONLY federation.query / federation.expertise
+//   (answered through query-gate.ts, I17); management methods local/Tauri-only (I5), federation.pair CLI-only
+// identity.*   — OIDC device-code SSO; identity.{login,status,logout,listBindings} renderer-callable,
+//   identity.bind / identity.unbind CLI-only; raw tokens Vault-only (I18)
+// scim.*       — SCIM provisioning; scim.{status,listUsers} renderer-callable, scim.{setToken,deprovision} CLI-only;
+//   inbound SCIM writes arrive via the /scim/v2/Users routes on the I13 write allowlist
 ```
 
 ### AbortController scope in `engine.cancelStream`
@@ -1200,7 +1208,7 @@ The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / 
 - Hybrid search rides two vec tables: `vec_items_384` (local MiniLM) and `vec_items_1536` (OpenAI), routed per `(service, type)` — see [§ Memory Layer](#memory-layer).
 - `audit_log` is the BLAKE3-chained tamper-evident trail (V18 `row_hash`/`prev_hash`); `tool_call_log` (V29) is the forensic complement to invariant `I11`, bounded by a daily retention prune (`[audit].tool_call_log_retention_days`) that only **appends** a `tool_call_log.pruned` entry to the chain (never rewrites it). `git_blame_line` (V32) backs `nimbus security scan` v2's line-level "who introduced the secret" attribution — populated during git-aware filesystem sync, read at scan time as a pure indexed lookup (no `git` subprocess in the scan path).
 - The Phase 6 Slice 1 **federation** tables (`federation_namespaces` / `federation_namespace_filters` / `federation_grants`, V33) back the consent-scoped federated query primitive (enforced by invariant `I17`). The same V33 migration adds a nullable `audit_log.federation_json` column, folded into the BLAKE3 chain **only when present** so legacy rows hash identically (backward-compatible).
-- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V33** (federation namespaces/filters/grants + `audit_log.federation_json`; `CURRENT_SCHEMA_VERSION` in `index/local-index.ts`). Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
+- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V34** (V33 federation namespaces/filters/grants + `audit_log.federation_json`; V34 identity/SCIM tables — Phase 6 Slice 3; `CURRENT_SCHEMA_VERSION` in `index/local-index.ts`). Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
 - **SQLite write boundary:** every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `db/write.ts` (invariant `I14`, static gate `D12`).
 
 Planned Phase 6+ tables (`service` / `scorecard` / `security_finding` / `llm_trace` / …) are tracked in [`roadmap.md` § Planned](./roadmap.md#planned).
@@ -1214,7 +1222,7 @@ The Gateway is a single OS process, but several SQLite handles are open against 
 | Main writer | `platform/assemble.ts` | read-write; `PRAGMA busy_timeout = 8000` |
 | Embedding worker | `embedding/embedding-worker.ts` | its **own** connection; `busy_timeout = 8000`; `foreign_keys = ON` |
 | Read-only HTTP API | `ipc/http-server.ts` | `SQLITE_OPEN_READONLY` + `PRAGMA query_only = ON` |
-| HTTP write surface (`I13`) | `ipc/http-server.ts` | dedicated read-write handle; the single allowlisted `POST /v1/deployments` route only |
+| HTTP write surface (`I13`) | `ipc/http-server.ts` | dedicated read-write handle; the allowlisted write routes only (`POST /v1/deployments` + the three SCIM `/scim/v2/Users` routes) |
 | Raw-SQL guard | `db/query-guard.ts` | separate handle (Layer-2 isolation for `nimbus query --sql`) |
 
 The intended model is **WAL journaling** (so readers never block the writer and vice versa), with `busy_timeout = 8000` as the contention backstop when two write paths (delta sync, embedding backfill, the `I13` deploy-annotation route) briefly compete. Every write goes through `dbRun` / `dbExec` / `dbStmtRun` (invariant `I14`), which translates `SQLITE_FULL` into a typed `DiskFullError` rather than a silently swallowed write. On clean shutdown the index issues `PRAGMA wal_checkpoint(TRUNCATE)` to fold the WAL back into the main file.
@@ -1302,9 +1310,9 @@ A new structural defense lands as a *triple*: the production wiring, an entry in
 
 ### Active invariants summary
 
-The canonical invariant table (currently **I1–I16**) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
+The canonical invariant table (currently **I1–I18**) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
 
-A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`D12` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), and I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
+A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`D12` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`), I17 (`D13` — federation modules other than `query-gate.ts` may not import the item-list query), and I18 (`D14` — identity-token Vault-key literals are forbidden outside `identity/`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
 
 ### Threat-to-mitigation table
 

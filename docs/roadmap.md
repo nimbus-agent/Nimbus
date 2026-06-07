@@ -4,7 +4,7 @@ This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 
-> **Last updated:** 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) remains active. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
+> **Last updated:** 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) is now ✅ complete (2026-06-04); Phase 6 (Team) is the active phase — Slices 1 (Federation Core) and 3 (Identity/SSO/SCIM) shipped 2026-06-05. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
 ---
 
@@ -13,9 +13,9 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Guiding Principles](#guiding-principles)
 - [Commercial Roadmap](#commercial-roadmap)
 - [Status Overview](#status-overview)
-- [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4
-- [Active](#active) — Phase 5
-- [Planned](#planned) — Phases 6 through 20 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+- [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4, 5
+- [Active](#active) — Phase 6 (Team, in progress)
+- [Planned](#planned) — Phases 7 through 20 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -56,7 +56,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
 | Phase 4 | Presence | ✅ Complete |
 | Phase 5 | The Extended Surface | ✅ Complete |
-| Phase 6 | Team | Planned |
+| Phase 6 | Team | 🚧 In progress |
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
 | Phase 9 | AI Engineering Loop | Planned |
@@ -474,8 +474,6 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 ---
 
-## Active
-
 ### Phase 5 — The Extended Surface ✅
 
 > **Status: ✅ Complete (2026-06-04).** All workstreams shipped — T1–T6, Wave A, Wave B, and Tiers 1–5. The remaining unchecked connectors are documented non-gating deferrals: **Pocket** (Mozilla shut it down — dead upstream, API disabled 2025-11-12), **Loom** / **Expensify** (no public token-auth read API), **Microsoft App Center** (retired by Microsoft 2025-03-31), **Chromatic** (no listable builds API), **LogRocket / FullStory / Datadog RUM** + **Web-vitals watcher** (Wave B stretch, "does not gate Phase 5 completion"). The `nimbus security scan` v2 and `tool_call_log` retention items closed the last buildable work (see [`docs/CHANGELOG.md`](./CHANGELOG.md)). The community-extension Marketplace acceptance criterion is tracked in **Phase 9.5** and does not gate Phase 5.
@@ -703,9 +701,11 @@ Connector breadth for mobile and frontend engineering disciplines that didn't fi
 
 ---
 
-## Planned
+## Active
 
 ### Phase 6 — Team
+
+> **Status: 🚧 In progress (current active phase).** Slices 1 (Federation Core) and 3 (Identity — SSO/OIDC + SCIM) shipped 2026-06-05 (see [`docs/CHANGELOG.md`](./CHANGELOG.md)); Slice 2 (Team Vault + Quorum HITL) is in active development. Remaining slices (4–9) are planned.
 
 **Goal:** Make Nimbus a collaborative layer for engineering teams — shared intelligence without surrendering local sovereignty.
 
@@ -865,6 +865,8 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 - Expertise routing returns a ranked peer list for "who knows `auth.ts`?" without transmitting any indexed item content from the answering peers — verified by asserting the federated response payload contains only ranks, not item bodies
 
 ---
+
+## Planned
 
 ### Phase 7 — Engineering Excellence
 

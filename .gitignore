@@ -129,6 +129,7 @@ playwright/.cache/
 
 # --- Git worktrees ---
 .worktrees/
+.claude/worktrees/
 
 # --- Superpowers brainstorming artifacts ---
 .superpowers/

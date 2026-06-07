@@ -20,7 +20,7 @@ These are **load-bearing constraints**, not style preferences. Check every new f
 3. **No plaintext credentials** — Vault only. Never in logs, IPC responses, config files, or env vars persisted outside spawn context. The structured logger auto-redacts `*.token`, `*.secret`, `oauth.*`.
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly. Every integration is an MCP server. Engine ↔ connector boundary is always MCP.
 5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change.
-6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 5 (The Extended Surface)**. Phase 4 (Presence) is ✅ complete.
+6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 6 (Team)** (🚧 in progress — Slices 1 & 3 shipped). Phase 5 (The Extended Surface) is ✅ complete.
 
 ---
 

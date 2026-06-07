@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-Nimbus is in active development (**Phase 5 — The Extended Surface**; Phase 4 Presence is complete). Security fixes land on `main` and are folded into the next `v0.1.x` patch release.
+Nimbus is in active development (**Phase 6 — Team**, in progress; **Phase 5 — The Extended Surface** is complete). Security fixes land on `main` and are folded into the next `v0.5.x` patch release.
 
 | Branch / Tag | Supported |
 |---|---|
 | `main` (HEAD) | ✅ Yes — tracks the upcoming version |
-| `v0.1.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
-| Older `v0.1.x` patches | ❌ No — upgrade to the latest patch |
+| `v0.5.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
+| Older `v0.x` releases (`v0.1`–`v0.4`) | ❌ No — upgrade to the latest patch |
 | Pre-`v0.1.0` commits | ❌ No |
 
 ### Linux runtime support — glibc floor
@@ -76,7 +76,7 @@ This boundary is the reason certain issue classes are listed as out of scope bel
 
 | Audit | Date | Scope | Outcome |
 |---|---|---|---|
-| **B1 — Phase 4 internal audit** | 2026-04-25 | 8 trust surfaces (HITL, Vault, LAN, Tauri allowlist, raw SQL, Updater, Extension sandbox, MCP boundary) + cross-surface chains | 78 unique findings filed (0 Critical / 16 High / 28 Medium / 34 Low). All High and Medium findings closed by PRs `#112` / `#113` / commit `806453a`. Three Low items remain scoped to Phase 4 as pre-`v0.1.0` blockers (S4-F6, S4-F8, S6-F1). The two Phase 5 items have shipped — S8-F10 closed by T6 PR 2 (2026-05-15, V29 `tool_call_log`) and S5-F4 closed by T6 PR 4 (2026-05-16, typed `dbRun` / `dbExec` migration + invariant `I14`). One item remains tracked under Phase 10 (S3-F8 LAN forward secrecy). |
+| **B1 — Phase 4 internal audit** | 2026-04-25 | 8 trust surfaces (HITL, Vault, LAN, Tauri allowlist, raw SQL, Updater, Extension sandbox, MCP boundary) + cross-surface chains | 78 unique findings filed (0 Critical / 16 High / 28 Medium / 34 Low). All High and Medium findings closed by PRs `#112` / `#113` / commit `806453a`. Of those three Low items, S6-F1 closed in `v0.1.0`; the two Tauri-specific items (S4-F6, S4-F8) are deferred to Phase 13 alongside the desktop release vehicle (`desktop-v0.1.0`). The two Phase 5 items have shipped — S8-F10 closed by T6 PR 2 (2026-05-15, V29 `tool_call_log`) and S5-F4 closed by T6 PR 4 (2026-05-16, typed `dbRun` / `dbExec` migration + invariant `I14`). One item remains tracked under Phase 10 (S3-F8 LAN forward secrecy). |
 
 The B1 audit also surfaced three orphaned defenses (`extensionProcessEnv`, `checkLanMethodAllowed`, the `<tool_output>` envelope) that were defined but never wired in production. To prevent recurrence, every structural defense Nimbus relies on is now paired with a production wiring site and a regression test in `packages/gateway/src/security-invariants.test.ts`. The full list lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md). The audit's durable conclusions — Vault threat surface, LAN trust model, acknowledged residual risks — have been folded into this document; the original per-surface design specs were archived once their substantive content was migrated.
 
