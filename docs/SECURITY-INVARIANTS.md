@@ -350,6 +350,58 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I19 — team-vault secret injection is intrinsic to the invoke gate; leak-proof and fail-closed
+
+**Statement:** A team-scoped credential is consumed ONLY through `federation/invoke-gate.ts` (`answerFederatedInvoke`): identity (I18) → live RBAC grant check → quorum (if configured) → run the tool. The secret bytes are never in the gate's scope — they are read from the OS Vault under the `teamvault.<entry>.<connectorKey>` keyspace and injected into an EPHEMERAL connector subprocess's env by `teamvault/team-tool-invoke.ts` + `teamvault/team-tool-spawn.ts`, which reuse the existing per-service spawners (so `extensionProcessEnv` (I1) and `wrapServerSpec` (I15) still apply). The gate returns only `{ ok, result }`; the secret is never returned, logged, or placed on any outbound payload. The path is **fail-closed**: a missing team secret, an OAuth-only/unknown service, or a missing grant aborts BEFORE any spawn — it never falls through to the operator's own local credential.
+
+**Wired at:**
+
+- `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke` — the sole consumption path; consulted by `federation.invoke` in `ipc/federation-rpc.ts`.
+- `packages/gateway/src/teamvault/team-tool-invoke.ts` — fail-closed secret resolution; the secret value never enters this scope or the return.
+- `packages/gateway/src/teamvault/team-vault-view.ts` — read-only Vault overlay scoping reads to one entry's keyspace; never falls through to the operator's key, never writes.
+- `packages/gateway/src/teamvault/team-vault-keys.ts` — the ONLY module that composes the `teamvault.` Vault-key prefix.
+- Enforced statically by **D15** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `team-vault-keys.ts` (non-test) that composes the `"teamvault."` key prefix literal causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I19` describe block (gate routing + fail-closed-before-spawn).
+
+**Anti-pattern:** reading a team secret into the gate/IPC scope or returning it; running a team tool with the operator's own credential when the team secret is absent; composing a `teamvault.` key outside `team-vault-keys.ts`; a team-tool path that bypasses `answerFederatedInvoke`.
+
+**How to comply:** add team-tool execution only behind `answerFederatedInvoke`; resolve team secrets only via the read-only view; keep the `teamvault.` prefix in `team-vault-keys.ts`; fail closed on any missing input.
+
+---
+
+## I20 — a delegated HITL approval is honored only from a live, in-scope, identity-valid delegate
+
+**Statement:** When a HITL action is routed to a delegate, `engine/delegated-approval.ts` (`resolveDelegatedApproval`) honors the remote answer ONLY when the answering peer is (a) a live, in-scope delegate per the `DelegationStore` and (b) identity-valid (I18). A forged peer id, an invalid operator identity, or a timeout/offline delegate all return `fallback_to_owner`, which routes back to the local owner consent prompt. The wire is never trusted; the executor gate (`engine/executor.ts`) consults this before falling back, preserving I2/I3/I4.
+
+**Wired at:**
+
+- `packages/gateway/src/engine/delegated-approval.ts` `resolveDelegatedApproval` — the authority check.
+- `packages/gateway/src/engine/executor.ts` `gate()` — tries delegation before the local prompt; honors only `approved`/`rejected`, else falls back.
+- `packages/gateway/src/engine/delegation-store.ts` — live-checked, time-boxed, revocable delegations.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I20` describe block (forged peer / invalid identity / timeout all fall back).
+
+**Anti-pattern:** honoring a remote approval based on a body-supplied peer id, without an active-delegate check, or without the identity-valid check; treating a timeout as an approval.
+
+**How to comply:** every delegated approval goes through `resolveDelegatedApproval`; never trust a wire-supplied responder identity for the authority decision.
+
+---
+
+## I21 — quorum counts only DISTINCT authenticated peers; a denial fails closed
+
+**Statement:** `engine/quorum/quorum-coordinator.ts` (`QuorumCoordinator`) resolves `approved` only after N **distinct** peer ids approve within the window — a `Set` dedupes, so the same peer voting twice cannot satisfy a 2-of-N quorum. A single explicit denial aborts immediately (`denied`), and window expiry yields `failed`. The responder peer id is the NaCl-authenticated session id forced by the LAN transport (I17/R1) — never trusted from the request body — so a remote peer cannot impersonate a second approver.
+
+**Wired at:**
+
+- `packages/gateway/src/engine/quorum/quorum-coordinator.ts` — distinct-peer `Set`, deny-aborts, window timeout.
+- `packages/gateway/src/ipc/federation-rpc.ts` `federation.quorumRespond` — feeds the coordinator with the transport-forced authenticated peer id.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I21` describe block (a peer approving twice does not satisfy a 2-of-N quorum).
+
+**Anti-pattern:** counting approvals by request count rather than distinct peer id; trusting a body-supplied responder id for quorum; treating a timeout or a partial set as approval.
+
+**How to comply:** count distinct authenticated peers only; force the responder id from the authenticated session; fail closed on denial or timeout.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.
