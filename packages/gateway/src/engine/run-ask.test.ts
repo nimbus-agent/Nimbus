@@ -399,6 +399,13 @@ describe("runAsk", () => {
     );
     const localIndex = new LocalIndex(db);
     const chunks: string[] = [];
+    let dispatched = false;
+    const dispatcher: ConnectorDispatcher = {
+      async dispatch(): Promise<unknown> {
+        dispatched = true;
+        return null;
+      },
+    };
 
     const out = await runAsk({
       input: "move ./a.txt to ./b.txt",
@@ -407,7 +414,7 @@ describe("runAsk", () => {
       paths: stubPaths,
       consentCoordinator: stubConsent, // requestConsent -> false: the gate denies the move
       localIndex,
-      dispatcher: stubDispatcher,
+      dispatcher,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_organize",
@@ -419,6 +426,7 @@ describe("runAsk", () => {
 
     expect(out.reply).toContain("Rejected");
     expect(chunks.some((c) => c.includes("Running: file.move"))).toBe(true);
+    expect(dispatched).toBe(false); // HITL gate denies BEFORE the connector is ever called
     localIndex.close();
   });
 });
