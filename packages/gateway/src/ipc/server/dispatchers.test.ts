@@ -33,6 +33,7 @@ import {
   tryDispatchDeploymentRpc,
   tryDispatchDiagnosticsRpc,
   tryDispatchFederationRpc,
+  tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
   tryDispatchLanRpc,
   tryDispatchLlmRpc,
@@ -43,6 +44,7 @@ import {
   tryDispatchProfileRpc,
   tryDispatchReindexRpc,
   tryDispatchSessionRpc,
+  tryDispatchTeamVaultRpc,
   tryDispatchUpdaterRpc,
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
@@ -106,6 +108,14 @@ describe("tryDispatchLlmRpc", () => {
     const { ctx } = makeCtx();
     expect(await tryDispatchLlmRpc(ctx, "llm.listModels", {})).toBe(phase4RpcSkipped);
   });
+  test("enters the dispatch path when a registry is present and rejects an unknown llm method", async () => {
+    // A registry being present (not its internals) is what gates the dispatch+catch body; an unknown
+    // llm.* method falls through to a method-not-found error.
+    const { ctx } = makeCtx({
+      llmRegistry: {} as unknown as NonNullable<ServerCtx["options"]["llmRegistry"]>,
+    });
+    await expect(tryDispatchLlmRpc(ctx, "llm.__nope__", {})).rejects.toBeDefined();
+  });
 });
 
 describe("tryDispatchAgentsRpc", () => {
@@ -139,6 +149,40 @@ describe("tryDispatchVoiceRpc", () => {
   test("skips when voiceService is undefined", async () => {
     const { ctx } = makeCtx();
     expect(await tryDispatchVoiceRpc(ctx, "voice.startListening", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchTeamVaultRpc", () => {
+  test("skips non-teamvault methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchTeamVaultRpc(ctx, "engine.ask", {}, "c")).toBe(phase4RpcSkipped);
+  });
+  test("skips when localIndex is undefined", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchTeamVaultRpc(ctx, "teamvault.list", {}, "c")).toBe(phase4RpcSkipped);
+  });
+  test("dispatches a non-gated read (teamvault.list) when the index is present", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchTeamVaultRpc(ctx, "teamvault.list", {}, "c");
+    expect(out).toMatchObject({ entries: [] });
+  });
+});
+
+describe("tryDispatchHitlRpc", () => {
+  test("skips non-hitl methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchHitlRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when localIndex is undefined", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchHitlRpc(ctx, "hitl.listDelegations", {})).toBe(phase4RpcSkipped);
+  });
+  test("dispatches hitl.listDelegations when the index is present", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchHitlRpc(ctx, "hitl.listDelegations", {});
+    expect(out).toMatchObject({ delegations: [] });
   });
 });
 

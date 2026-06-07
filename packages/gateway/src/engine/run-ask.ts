@@ -10,7 +10,7 @@ import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
-import { bindConsentChannel, ToolExecutor } from "./executor.ts";
+import { bindConsentChannel, type ExecutorDelegationDep, ToolExecutor } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import { type ClassifiedIntent, classifyIntent } from "./router.ts";
@@ -36,6 +36,9 @@ export type RunAskParams = {
   llmRouter?: LlmRouter;
   sessionMemoryStore?: SessionMemoryStore;
   classify?: (input: string) => Promise<ClassifiedIntent>;
+  // Owner-side delegated HITL (Slice 2, I20). When present, the executor gate routes a HITL action's
+  // approval to an active in-scope delegate over federation before falling back to the local prompt.
+  delegation?: ExecutorDelegationDep;
 };
 
 const EMPTY_INDEX_GUIDANCE = `No data indexed yet.
@@ -165,7 +168,7 @@ async function runActionsPlan(
   actions: PlannedAction[],
 ): Promise<{ reply: string }> {
   const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
-  const executor = new ToolExecutor(consent, p.localIndex, p.dispatcher);
+  const executor = new ToolExecutor(consent, p.localIndex, p.dispatcher, p.delegation);
   const summaries: string[] = [];
   const structured: unknown[] = [];
 

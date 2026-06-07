@@ -8,13 +8,14 @@ Items marked **Automated** run in CI; **Manual** require human sign-off before a
 | Trivy on dependency / config surface | **Automated** | `security.yml` job `Trivy vulnerability scan` (filesystem scan of repo root; includes all workspace `package.json` and lockfiles) |
 | `cargo audit` (Tauri / `Cargo.lock`) | **Automated** | `security.yml` job `Cargo audit (Tauri)` (`packages/ui/src-tauri`) |
 | `cargo deny` (licenses + advisories + bans) | **Automated** | `security.yml` job `Cargo deny (licenses + advisories + bans)` (AGPL-compatibility + unmaintained-crate bans + registry pinning) |
+| JS dependency license compliance (workspace-wide) | **Automated** | `security.yml` job `JS license compliance` |
 | Gitleaks secret scan (PRs + nightly) | **Automated** | `security.yml` job `Gitleaks secret scan` |
 | CodeQL JavaScript/TypeScript and Rust | **Automated** | `.github/workflows/codeql.yml` (entire monorepo, including MCP connector packages; security-extended queries for both languages) |
 | OpenSSF Scorecard (supply chain SARIF) | **Automated** | `.github/workflows/scorecard.yml`; see [`SECURITY.md`](./SECURITY.md) for **Security-Policy** and items that need GitHub settings (branch protection, reviews) or external programs (OSS-Fuzz, CII badge) |
 | Build provenance attestation (release artifacts) | **Automated** | `.github/workflows/release.yml` `actions/attest-build-provenance` step (Gateway + CLI binaries on all four platforms); verify with `gh attestation verify` |
 | CycloneDX SBOM on release | **Automated** | `release.yml` `anchore/sbom-action` step; SBOM published as `nimbus-v<ver>-sbom.cdx.json` release asset |
 | `@nimbus-dev/client` npm provenance | **Automated** | `.github/workflows/publish-client.yml` `npm publish --provenance` (sigstore / GitHub OIDC); verify with `npm audit signatures` |
-| Static-time invariant audit (I1 spawn rule + vault-key allow-list + I14 `D12` direct `db.run`/`db.exec` ban + I15 `D10` `wrapServerSpec` sandbox routing) | **Automated** | `.github/workflows/_structure.yml` reusable workflow runs `bun run audit:invariants` (`scripts/structure-audit/check-nimbus-invariants.ts`); the runtime invariant tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative |
+| Static-time invariant audit (I1 spawn rule + vault-key allow-list + I14 `D12` direct `db.run`/`db.exec` ban + I15 `D10` `wrapServerSpec` sandbox routing + I17 `D13` federation item-read import gate + I18 `D14` identity-token Vault-key gate) | **Automated** | `.github/workflows/_structure.yml` reusable workflow runs `bun run audit:invariants` (`scripts/structure-audit/check-nimbus-invariants.ts`); the runtime invariant tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative |
 | `pkce.ts` — no secrets in exchange-failure exceptions | **Automated** | `packages/gateway/src/auth/pkce.test.ts` (Google + Microsoft invalid_grant paths) |
 | `pkce.ts` / IPC / logs — full manual pass | **Manual** | Spot-check on material PKCE or IPC changes |
 | Connector layout — no per-connector `auth.ts` | **Automated** | `packages/gateway/test/e2e/scenarios/mcp-connector-structure.contract.test.ts` |

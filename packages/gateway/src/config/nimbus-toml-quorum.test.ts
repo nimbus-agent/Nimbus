@@ -1,0 +1,57 @@
+import { describe, expect, it } from "bun:test";
+import { parseQuorumConfig } from "./nimbus-toml.ts";
+
+describe("[hitl.quorum] config", () => {
+  it("parses action-type -> {approvers, windowSeconds}", () => {
+    const raw = [
+      '[hitl.quorum."iac.terraform.destroy"]',
+      "approvers = 2",
+      "window_seconds = 300",
+    ].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.get("iac.terraform.destroy")).toEqual({ approvers: 2, windowSeconds: 300 });
+  });
+
+  it("defaults to empty when absent (quorum off)", () => {
+    expect(parseQuorumConfig("").size).toBe(0);
+  });
+
+  it("ignores malformed rows — non-numeric approvers", () => {
+    const raw = ['[hitl.quorum."x.y"]', "approvers = bad", "window_seconds = 300"].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.has("x.y")).toBe(false);
+  });
+
+  it("ignores malformed rows — approvers < 1", () => {
+    const raw = ['[hitl.quorum."x.y"]', "approvers = 0", "window_seconds = 300"].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.has("x.y")).toBe(false);
+  });
+
+  it("ignores malformed rows — window_seconds <= 0", () => {
+    const raw = ['[hitl.quorum."x.y"]', "approvers = 2", "window_seconds = 0"].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.has("x.y")).toBe(false);
+  });
+
+  it("parses multiple action-type sub-tables", () => {
+    const raw = [
+      '[hitl.quorum."iac.terraform.destroy"]',
+      "approvers = 2",
+      "window_seconds = 300",
+      "",
+      '[hitl.quorum."db.schema.drop"]',
+      "approvers = 3",
+      "window_seconds = 600",
+    ].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.size).toBe(2);
+    expect(cfg.get("iac.terraform.destroy")).toEqual({ approvers: 2, windowSeconds: 300 });
+    expect(cfg.get("db.schema.drop")).toEqual({ approvers: 3, windowSeconds: 600 });
+  });
+
+  it("skips sections that are not [hitl.quorum.*]", () => {
+    const raw = ["[other.section]", "approvers = 2", "window_seconds = 300"].join("\n");
+    expect(parseQuorumConfig(raw).size).toBe(0);
+  });
+});

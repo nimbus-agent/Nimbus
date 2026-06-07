@@ -124,6 +124,8 @@ No inline comments were mapped to I6 in the triage. No additional subsection nee
 
 **Phase 6 Slice 1 additions (2026-06-05):** `federation.discover`, `federation.namespace.grant`, `federation.namespace.publish`, `federation.namespace.revoke`, and `federation.peers` joined the allowlist (62 → 67). `federation.pair` is deliberately absent (CLI-only, transmits an out-of-band pairing code — same class as `lan.pair`). `federation.query` and `federation.expertise` are over-the-wire answering methods routed through `query-gate.ts` (I17) and are never renderer-callable. `federation.consentRespond` (the owner's local consent-decision reply for the over-the-wire federation flow) also joined the allowlist (67 → 68); `federation.consentRequest` remains a notification delivered to the renderer, not a renderer-callable method.
 
+**Phase 6 Slice 3 additions (2026-06-05):** the six identity/SCIM read+login methods — `identity.login`, `identity.status`, `identity.logout`, `identity.listBindings`, `scim.status`, `scim.listUsers` — joined the allowlist (68 → 74, the current `allowlist_exact_size`). The credential-mutating `identity.bind` / `identity.unbind` and `scim.setToken` / `scim.deprovision` stay CLI-only (same class as `vault.*`). The size assertion is checked by the `I7` / `I18` describe blocks in `packages/gateway/src/security-invariants.test.ts`, which grep the `.rs` source for `ALLOWED_METHODS.len(), N`.
+
 ### Migrated rationale (2026-05-28)
 
 The comment at `ui/src-tauri/src/gateway_bridge.rs:152` notes the `NO_TIMEOUT_METHODS` sub-list (currently 4 entries: `data.export`, `data.import`, `llm.pullModel`, `updater.applyUpdate`) and its size assertion. Comments at `vscode-extension/src/extension.ts:248,260,490,515,520` document that the VS Code extension proxies IPC over the domain socket directly and does **not** go through the Tauri bridge, so ALLOWED_METHODS is irrelevant for the VS Code surface — but those files still assert that any write-class method must be HITL-gated before any client calls it. The comment at `vscode-extension/src/chat/webview/render.ts:88` notes that the VS Code webview renderer sanitizes HTML from tool results using DOMPurify before display, a defense-in-depth complement to I11. The comment at `ui/src/components/PendingUpdates.tsx:9` confirms that the update prompt only calls `updater.checkNow` (read-only) — the `applyUpdate` action requires a separate user confirmation step to prevent accidental one-click updates.
@@ -342,11 +344,63 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 - `packages/gateway/src/federation/query-gate.ts` — `answerFederatedQuery` consults `isOperatorValid()` before answering when identity is enabled.
 - `packages/gateway/src/identity/identity-vault.ts` — the only module that constructs the `identity.oidc.*` / `identity.scim.bearer` Vault keys; tokens never leave the Vault.
 - Enforced statically by **D14** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `packages/gateway/src/identity/` (and not a `.test.ts`) that references an identity token Vault-key string literal causes `audit:invariants` to exit 1.
-- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I18` describe block (Tauri allowlist surface for the identity/scim read+login methods, size assertion 73, and the query-gate `isOperatorValid` consult).
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I18` describe block (Tauri allowlist surface for the identity/scim read+login methods, size assertion 74, and the query-gate `isOperatorValid` consult).
 
 **Anti-pattern:** validating an ID token anywhere other than `verifier.ts`; placing a token field on an IPC/wire/notification shape or a DB column; reading `identity.oidc.*` / `identity.scim.bearer` outside `identity/`; a federation answer path that skips the `isOperatorValid()` consult when identity is enabled. Note: the renderer-callable surface exposes only the read/login methods (`identity.login`/`status`/`logout`/`listBindings`, `scim.status`/`listUsers`); the credential-mutating methods (`identity.bind`/`unbind`, `scim.setToken`/`deprovision`) stay CLI-only and out of the Tauri allowlist (I7).
 
 **How to comply:** route every ID-token check through `IdTokenVerifier.validateIdToken`; keep raw tokens in the Vault via `identity-vault.ts`; have any new peer-answer path consult `isOperatorValid()` when identity is enabled.
+
+---
+
+## I19 — team-vault secret injection is intrinsic to the invoke gate; leak-proof and fail-closed
+
+**Statement:** A team-scoped credential is consumed ONLY through `federation/invoke-gate.ts` (`answerFederatedInvoke`): identity (I18) → live RBAC grant check → quorum (if configured) → run the tool. The secret bytes are never in the gate's scope — they are read from the OS Vault under the `teamvault.<entry>.<connectorKey>` keyspace and injected into an EPHEMERAL connector subprocess's env by `teamvault/team-tool-invoke.ts` + `teamvault/team-tool-spawn.ts`, which reuse the existing per-service spawners (so `extensionProcessEnv` (I1) and `wrapServerSpec` (I15) still apply). The gate returns only `{ ok, result }`; the secret is never returned, logged, or placed on any outbound payload. The path is **fail-closed**: a missing team secret, an OAuth-only/unknown service, or a missing grant aborts BEFORE any spawn — it never falls through to the operator's own local credential.
+
+**Wired at:**
+
+- `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke` — the sole consumption path; consulted by `federation.invoke` in `ipc/federation-rpc.ts`.
+- `packages/gateway/src/teamvault/team-tool-invoke.ts` — fail-closed secret resolution; the secret value never enters this scope or the return.
+- `packages/gateway/src/teamvault/team-vault-view.ts` — read-only Vault overlay scoping reads to one entry's keyspace; never falls through to the operator's key, never writes.
+- `packages/gateway/src/teamvault/team-vault-keys.ts` — the ONLY module that composes the `teamvault.` Vault-key prefix.
+- Enforced statically by **D15** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `team-vault-keys.ts` (non-test) that composes the `"teamvault."` key prefix literal causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I19` describe block (gate routing + fail-closed-before-spawn).
+
+**Anti-pattern:** reading a team secret into the gate/IPC scope or returning it; running a team tool with the operator's own credential when the team secret is absent; composing a `teamvault.` key outside `team-vault-keys.ts`; a team-tool path that bypasses `answerFederatedInvoke`.
+
+**How to comply:** add team-tool execution only behind `answerFederatedInvoke`; resolve team secrets only via the read-only view; keep the `teamvault.` prefix in `team-vault-keys.ts`; fail closed on any missing input.
+
+---
+
+## I20 — a delegated HITL approval is honored only from a live, in-scope, identity-valid delegate
+
+**Statement:** When a HITL action is routed to a delegate, `engine/delegated-approval.ts` (`resolveDelegatedApproval`) honors the remote answer ONLY when the answering peer is (a) a live, in-scope delegate per the `DelegationStore` and (b) identity-valid (I18). A forged peer id, an invalid operator identity, or a timeout/offline delegate all return `fallback_to_owner`, which routes back to the local owner consent prompt. The wire is never trusted; the executor gate (`engine/executor.ts`) consults this before falling back, preserving I2/I3/I4.
+
+**Wired at:**
+
+- `packages/gateway/src/engine/delegated-approval.ts` `resolveDelegatedApproval` — the authority check.
+- `packages/gateway/src/engine/executor.ts` `gate()` — tries delegation before the local prompt; honors only `approved`/`rejected`, else falls back.
+- `packages/gateway/src/engine/delegation-store.ts` — live-checked, time-boxed, revocable delegations.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I20` describe block (forged peer / invalid identity / timeout all fall back).
+
+**Anti-pattern:** honoring a remote approval based on a body-supplied peer id, without an active-delegate check, or without the identity-valid check; treating a timeout as an approval.
+
+**How to comply:** every delegated approval goes through `resolveDelegatedApproval`; never trust a wire-supplied responder identity for the authority decision.
+
+---
+
+## I21 — quorum counts only DISTINCT authenticated peers; a denial fails closed
+
+**Statement:** `engine/quorum/quorum-coordinator.ts` (`QuorumCoordinator`) resolves `approved` only after N **distinct** peer ids approve within the window — a `Set` dedupes, so the same peer voting twice cannot satisfy a 2-of-N quorum. A single explicit denial aborts immediately (`denied`), and window expiry yields `failed`. The responder peer id is the NaCl-authenticated session id forced by the LAN transport (I17/R1) — never trusted from the request body — so a remote peer cannot impersonate a second approver.
+
+**Wired at:**
+
+- `packages/gateway/src/engine/quorum/quorum-coordinator.ts` — distinct-peer `Set`, deny-aborts, window timeout.
+- `packages/gateway/src/ipc/federation-rpc.ts` `federation.quorumRespond` — feeds the coordinator with the transport-forced authenticated peer id.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I21` describe block (a peer approving twice does not satisfy a 2-of-N quorum).
+
+**Anti-pattern:** counting approvals by request count rather than distinct peer id; trusting a body-supplied responder id for quorum; treating a timeout or a partial set as approval.
+
+**How to comply:** count distinct authenticated peers only; force the responder id from the authenticated session; fail closed on denial or timeout.
 
 ---
 

@@ -4,6 +4,8 @@ import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
+import type { DelegationStore } from "./delegation-store.ts";
 import type {
   ActionResult,
   AuditSink,
@@ -99,6 +101,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "connector.reindex",
   "vault.set",
   "vault.delete",
+  "teamvault.put",
+  "teamvault.delete",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({
@@ -166,12 +170,45 @@ function auditPayload(
   return redactAuditPayload(extras === undefined ? { action } : { action, ...extras });
 }
 
+/**
+ * Optional multi-user/delegated-HITL wiring (Slice 2). When present, the gate routes a HITL
+ * action's approval to an active in-scope delegate before falling back to the local owner prompt.
+ */
+export interface ExecutorDelegationDep {
+  readonly store: DelegationStore;
+  /** I18: the answering delegate's operator identity must be valid. */
+  readonly isOperatorValid: () => boolean;
+  /** Route the approval request to the delegate over federation; resolve with their answer. */
+  readonly requestRemote: (actionType: string) => Promise<RemoteApprovalOutcome>;
+}
+
 export class ToolExecutor {
   constructor(
     private readonly consent: ConsentChannel,
     private readonly audit: AuditSink,
     private readonly connectors: ConnectorDispatcher,
+    private readonly delegation?: ExecutorDelegationDep,
   ) {}
+
+  /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
+   *  live in-scope, identity-valid answerer; otherwise fall back to the local owner prompt. */
+  private async tryDelegatedApproval(
+    action: PlannedAction,
+  ): Promise<"approved" | "rejected" | "fallback"> {
+    if (this.delegation === undefined) return "fallback";
+    const del = this.delegation;
+    const service = action.type.split(".")[0] ?? "";
+    const now = Date.now();
+    if (del.store.activeDelegateePeer(action.type, service, now) === undefined) return "fallback";
+    const outcome = await resolveDelegatedApproval({
+      isActiveDelegate: (peerId) =>
+        del.store.activeDelegateFor("action_type", action.type, peerId, now) ||
+        del.store.activeDelegateFor("service", service, peerId, now),
+      isOperatorValid: del.isOperatorValid,
+      requestRemote: () => del.requestRemote(action.type),
+    });
+    return outcome === "fallback_to_owner" ? "fallback" : outcome;
+  }
 
   async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
     const requiresHITL = HITL_REQUIRED.has(action.type);
@@ -182,11 +219,17 @@ export class ToolExecutor {
 
     try {
       if (requiresHITL) {
-        const details =
-          action.payload === undefined
-            ? undefined
-            : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
-        const approved = await this.consent.requestApproval(formatConsentPrompt(action), details);
+        const delegated = await this.tryDelegatedApproval(action);
+        let approved: boolean;
+        if (delegated === "fallback") {
+          const details =
+            action.payload === undefined
+              ? undefined
+              : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
+          approved = await this.consent.requestApproval(formatConsentPrompt(action), details);
+        } else {
+          approved = delegated === "approved";
+        }
         hitlStatus = approved ? "approved" : "rejected";
         if (!approved) rejectReason = "User declined consent gate.";
       } else {

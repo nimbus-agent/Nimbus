@@ -1,4 +1,5 @@
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import type { ExecutorDelegationDep } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
@@ -31,5 +32,8 @@ export interface PlatformServices {
   sessionMemoryStore?: SessionMemoryStore;
   llmRegistry: LlmRegistry;
   sandboxRunner: SandboxRunner;
+  // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate
+  // routes a HITL action's approval to an active in-scope delegate before the local owner prompt.
+  executorDelegation?: ExecutorDelegationDep;
   disposeSidecars?: () => void;
 }

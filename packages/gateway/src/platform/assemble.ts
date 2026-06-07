@@ -18,6 +18,7 @@ import {
   loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
+  loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   resolveNimbusTomlForProfile,
@@ -25,6 +26,7 @@ import {
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
 import { defaultSyncIntervalMsForService } from "../connectors/connector-catalog.ts";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import {
   migrateToPerServiceOAuthKeys,
   readConnectorSecret,
@@ -43,15 +45,18 @@ import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import { startToolCallLogRetention } from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
+import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
+import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
+import { DelegationStore } from "../engine/delegation-store.ts";
+import type { ExecutorDelegationDep } from "../engine/executor.ts";
+import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
-
 import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
-
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -69,6 +74,8 @@ import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
+import { invokeTeamTool } from "../teamvault/team-tool-invoke.ts";
+import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
@@ -332,11 +339,11 @@ async function bootFederationIntoIpcOpts(
   localIndex: LocalIndex,
   ipcOpts: Parameters<typeof createIpcServer>[0],
   sidecarStops: Array<() => void>,
-): Promise<boolean> {
-  if (!federationCfg.enabled) return false;
+): Promise<ExecutorDelegationDep | undefined> {
+  if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
   const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
-  if (federationRuntime === undefined) return false;
+  if (federationRuntime === undefined) return undefined;
   void federationRuntime.discovery.start();
   sidecarStops.push(() => void federationRuntime.discovery.stop());
   ipcOpts.federationDiscovery = federationRuntime.discovery;
@@ -345,6 +352,39 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  // Team Vault (Slice 2): the anchor's invoke backing. quorumFor reads the [hitl.quorum] table;
+  // runTool resolves the team secret (teamvault.<entry>.*) and runs the tool in an ephemeral
+  // team-credentialed connector (I19 — secret stays in the subprocess env, never returned).
+  const quorumConfig = loadNimbusQuorumFromConfigDir(paths.configDir);
+  const teamVault = {
+    quorumFor: (toolId: string) => quorumConfig.get(toolId),
+    runTool: (input: { entry: string; service: string; toolId: string; args: unknown }) =>
+      invokeTeamTool(
+        {
+          vault,
+          sandboxCwd: paths.dataDir,
+          requiredSecretKeysFor: (service: string) =>
+            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          spawnAndCall: spawnTeamToolAndCall,
+        },
+        input,
+      ),
+  };
+  ipcOpts.teamVault = teamVault;
+  // Delegated HITL (Slice 2, I20). As a DELEGATE, this gateway answers an owner's routed approval by
+  // prompting its own local clients via the delegated-approval broker (CLI/UI `team approve` →
+  // federation.approvalRespond resolves it). As an OWNER, the executor gate routes a HITL action to
+  // an active delegate over the wire (delegationDep, threaded into run-ask).
+  const delegationStore = new DelegationStore(db);
+  const delegationDep: ExecutorDelegationDep = {
+    store: delegationStore,
+    isOperatorValid: () => true,
+    requestRemote: buildDelegatedRequestRemote({
+      store: delegationStore,
+      index: localIndex,
+      selfIdentity: identity,
+    }),
+  };
   const built = buildFederationLanServer({
     db,
     index: localIndex,
@@ -360,6 +400,14 @@ async function bootFederationIntoIpcOpts(
     notify: () => {},
     discovery: federationRuntime.discovery,
     pairing: federationRuntime.pairing,
+    teamVault,
+    delegateApproval: async ({ actionType }) => {
+      const r = await delegatedApprovalBroker.request(
+        { prompt: `Approve delegated action: ${actionType}?` },
+        federationRuntime.consentTimeoutSeconds * 1000,
+      );
+      return r.kind === "answered" ? r.approved : false;
+    },
   });
   // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
   sidecarStops.push(() => void built.lanServer.stop());
@@ -370,7 +418,7 @@ async function bootFederationIntoIpcOpts(
   }
   ipcOpts.lanServer = built.lanServer;
   ipcOpts.lanPairingWindow = built.pairingWindow;
-  return true;
+  return delegationDep;
 }
 
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
@@ -546,6 +594,15 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     federationConsent.setBroadcast((method, params) =>
       ipc.broadcast(method, asBroadcastParams(params)),
     );
+    // Quorum (I21) + delegated-approval (I20) requests reach subscribers (local owner UI / approver
+    // poll) via the same broadcast channel as consent; remote responders answer over the wire
+    // through federation.quorumRespond / federation.approvalRespond.
+    quorumCoordinator.setBroadcast((requestId) =>
+      ipc.broadcast("federation.quorumRequest", { requestId }),
+    );
+    delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
+      ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
+    );
   }
   // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
   identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
@@ -595,6 +652,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     sandboxRunner,
     llmRegistry,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
+    ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {

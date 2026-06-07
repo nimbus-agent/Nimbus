@@ -1,8 +1,12 @@
 import type { Database } from "bun:sqlite";
+import { appendAuditEntry } from "../db/audit-chain.ts";
+import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
+import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
 import { scoreExpertise } from "../federation/expertise.ts";
+import { answerFederatedInvoke } from "../federation/invoke-gate.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
 import type { ConsentPrompter } from "../federation/query-gate.ts";
@@ -14,6 +18,7 @@ import type {
   NamespaceFilter,
 } from "../federation/types.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
+import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
@@ -38,6 +43,25 @@ export interface FederationRpcContext {
   readonly selfIdentity?: BoxKeypair;
   // I18: when identity is enabled, the answerer's own operator identity must be valid to federate.
   readonly identityGuard?: { enabled: boolean; isOperatorValid: () => boolean };
+  // Team Vault (Slice 2). Present on the answering (anchor) dispatch path.
+  readonly teamVault?: {
+    readonly quorumFor: (
+      toolId: string,
+    ) => { approvers: number; windowSeconds: number } | undefined;
+    readonly runTool: (input: {
+      entry: string;
+      service: string;
+      toolId: string;
+      args: unknown;
+    }) => Promise<unknown>;
+  };
+  // Delegated HITL (Slice 2, I20). Present on the answering (delegate) dispatch path: the delegate's
+  // local decision for an owner's routed approval. The handler audits the decision on the DELEGATE's
+  // gateway; absent → fail-closed deny.
+  readonly delegateApproval?: (req: {
+    actionType: string;
+    ownerPeerId: string;
+  }) => Promise<boolean>;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -224,6 +248,113 @@ export async function dispatchFederationRpc(
         "federation.expertise",
         { query: requireString(rec, "query"), purpose: requireString(rec, "purpose") },
       );
+    },
+    // Asker-side: ask the trust anchor (a paired peer) to run a team-vault tool OVER THE WIRE. The
+    // anchor answers via federation.invoke (I19). Local-only entrypoint (forbidden over LAN, I5).
+    "federation.askInvoke": async (p) => {
+      const rec = asRecord(p);
+      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      return sendFederatedOverWire(
+        row.host_ip as string,
+        row.host_port as number,
+        selfIdentity,
+        row.peer_pubkey,
+        "federation.invoke",
+        {
+          entry: requireString(rec, "entry"),
+          toolId: requireString(rec, "toolId"),
+          purpose: requireString(rec, "purpose"),
+          args: rec["args"],
+        },
+      );
+    },
+    // Anchor-side: a teammate asks the trust anchor to run a named team-vault tool. The secret is
+    // injected inside teamVault.runTool (never in this scope); I19 gate enforces RBAC + quorum.
+    // SECURITY (I17/R1): `peerId` here is NOT trusted from the request body. The LAN transport
+    // (federation-server.ts onMessage) overwrites it with the NaCl-authenticated session id BEFORE
+    // dispatch — `const forced = { ...body, peerId: peer.peerId }`. The same forcing protects
+    // federation.query. These handlers (invoke RBAC subject; *Respond quorum/delegate identity)
+    // are therefore spoof-proof over the wire. They MUST only be reached via a transport that forces
+    // peerId; never dispatch them with a caller-supplied peerId (see Task 17 local-path note).
+    "federation.invoke": async (p) => {
+      const rec = asRecord(p);
+      if (ctx.teamVault === undefined) {
+        throw new FederationRpcError(-32603, "ERR_TEAMVAULT_UNAVAILABLE: not the trust anchor");
+      }
+      const tv = ctx.teamVault;
+      return answerFederatedInvoke(
+        {
+          db: ctx.db,
+          store: new TeamVaultStore(ctx.db),
+          quorumFor: tv.quorumFor,
+          runQuorum: (rule) =>
+            quorumCoordinator.collect({
+              approvers: rule.approvers,
+              windowMs: rule.windowSeconds * 1000,
+            }),
+          runTool: tv.runTool,
+          ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
+        },
+        {
+          peerId: requireString(rec, "peerId"),
+          entry: requireString(rec, "entry"),
+          toolId: requireString(rec, "toolId"),
+          purpose: requireString(rec, "purpose"),
+          args: rec["args"],
+        },
+      );
+    },
+    // Quorum approver's response (over the wire) → feeds the QuorumCoordinator singleton.
+    "federation.quorumRespond": (p) => {
+      const rec = asRecord(p);
+      if (typeof rec["approved"] !== "boolean") {
+        throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
+      }
+      const matched = quorumCoordinator.respond(
+        requireString(rec, "requestId"),
+        requireString(rec, "peerId"),
+        rec["approved"],
+      );
+      return { ok: true, matched };
+    },
+    // Delegate's approval response (over the wire) → feeds the delegated-approval broker singleton.
+    "federation.approvalRespond": (p) => {
+      const rec = asRecord(p);
+      if (typeof rec["approved"] !== "boolean") {
+        throw new FederationRpcError(-32602, "ERR_INVALID_PARAMS: approved must be a boolean");
+      }
+      const matched = delegatedApprovalBroker.respond(
+        requireString(rec, "requestId"),
+        requireString(rec, "peerId"),
+        rec["approved"],
+      );
+      return { ok: true, matched };
+    },
+    // Delegate-side: an owner routes a HITL approval to this peer (I20). `peerId` is the OWNER's
+    // forced authenticated id (I17/R1). The delegate decides locally and AUDITS its own decision on
+    // THIS gateway (so the approval is recorded in both the owner's and the delegate's logs).
+    "federation.requestApproval": async (p) => {
+      const rec = asRecord(p);
+      const actionType = requireString(rec, "actionType");
+      const ownerPeerId = requireString(rec, "peerId");
+      const decide = ctx.delegateApproval ?? (async () => false); // no prompter → fail-closed deny
+      const approved = await decide({ actionType, ownerPeerId });
+      // I4: `hitlStatus` is consent-gate-output-only — never written as approved/rejected outside
+      // `executor.gate()`. This row records the *delegate's* answer to a federated request, not a
+      // local HITL-gated action, so the row is `not_required` and the decision lives in
+      // `federationJson.decision` (the owner's own audit row carries the real gate-set hitlStatus).
+      appendAuditEntry(ctx.db, {
+        actionType: "hitl.delegate.answered",
+        hitlStatus: "not_required",
+        actionJson: JSON.stringify({ method: "federation.requestApproval", actionType }),
+        timestamp: Date.now(),
+        federationJson: JSON.stringify({
+          peer_id: ownerPeerId,
+          action_type: actionType,
+          decision: approved ? "approved" : "rejected",
+        }),
+      });
+      return { approved };
     },
   });
 }

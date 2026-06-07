@@ -15,6 +15,7 @@ import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
+import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
@@ -27,6 +28,7 @@ import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
 import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
+import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import {
@@ -224,6 +226,7 @@ export async function tryDispatchFederationRpc(
       ...(ctx.options.federationIdentity === undefined
         ? {}
         : { selfIdentity: ctx.options.federationIdentity }),
+      ...(ctx.options.teamVault === undefined ? {} : { teamVault: ctx.options.teamVault }),
       ...(idStore !== undefined && idIssuer !== undefined
         ? {
             identityGuard: {
@@ -238,6 +241,64 @@ export async function tryDispatchFederationRpc(
     if (e instanceof FederationRpcError) {
       throw new RpcMethodError(e.rpcCode, e.message);
     }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+export async function tryDispatchTeamVaultRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("teamvault.")) return phase4RpcSkipped;
+  const index = ctx.options.localIndex;
+  if (index === undefined) return phase4RpcSkipped;
+  // I2: HITL-gate the secret-writing methods before any vault write (mirrors dispatchVaultGated).
+  if (method === "teamvault.put" || method === "teamvault.delete") {
+    const stubDispatcher: ConnectorDispatcher = {
+      dispatch: () => Promise.reject(new Error("team-vault gate does not dispatch to MCP")),
+    };
+    const toolExecutor = new ToolExecutor(
+      bindConsentChannel(ctx.consentImpl, clientId),
+      index,
+      stubDispatcher,
+    );
+    const rec = asRecord(params);
+    const entry = rec !== undefined && typeof rec["entry"] === "string" ? rec["entry"] : "";
+    const gateResult = await toolExecutor.gate({ type: method, payload: { entry } });
+    if (gateResult !== "proceed" && gateResult.status === "rejected") {
+      throw new RpcMethodError(-32000, gateResult.reason);
+    }
+  }
+  try {
+    const out = await dispatchTeamVaultRpc(method, params, {
+      db: index.getDatabase(),
+      vault: ctx.options.vault,
+      operator: "owner",
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof TeamVaultRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+export async function tryDispatchHitlRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("hitl.")) return phase4RpcSkipped;
+  const index = ctx.options.localIndex;
+  if (index === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchHitlRpc(method, params, { db: index.getDatabase() });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof HitlRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;
@@ -593,6 +654,10 @@ export async function tryDispatchPhase4Rpc(
   if (securityOutcome !== phase4RpcSkipped) return securityOutcome;
   const federationOutcome = await tryDispatchFederationRpc(ctx, method, params);
   if (federationOutcome !== phase4RpcSkipped) return federationOutcome;
+  const teamVaultOutcome = await tryDispatchTeamVaultRpc(ctx, method, params, clientId);
+  if (teamVaultOutcome !== phase4RpcSkipped) return teamVaultOutcome;
+  const hitlOutcome = await tryDispatchHitlRpc(ctx, method, params);
+  if (hitlOutcome !== phase4RpcSkipped) return hitlOutcome;
   const identityOutcome = await tryDispatchIdentityRpc(ctx, method, params);
   if (identityOutcome !== phase4RpcSkipped) return identityOutcome;
   const metricsOutcome = await tryDispatchMetricsRpc(ctx, method, params);
