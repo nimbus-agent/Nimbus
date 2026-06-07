@@ -62,4 +62,11 @@ describe("mergeShardsToLcov", () => {
     // Shard dir must still be cleaned up even when a shard was skipped.
     expect(existsSync(tmp)).toBe(false);
   });
+
+  test("returns 0 without throwing when there is no shard directory", () => {
+    // No coverage/.nyc-tmp exists. The merge attempts the scan and tolerates the
+    // missing dir (ENOENT) rather than pre-checking with existsSync (TOCTOU).
+    const repoRoot = mkdtempSync(join(tmpdir(), "cov-merge-none-"));
+    expect(mergeShardsToLcov(repoRoot)).toBe(0);
+  });
 });
