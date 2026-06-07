@@ -85,12 +85,16 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "extension.list",
     "extension.remove",
     "extension.update",
+    "federation.approvalRespond",
     "federation.consentRespond",
     "federation.discover",
     "federation.namespace.grant",
     "federation.namespace.publish",
     "federation.namespace.revoke",
     "federation.peers",
+    "federation.quorumRespond",
+    "hitl.listDelegations",
+    "hitl.pendingQueue",
     "identity.listBindings",
     "identity.login",
     "identity.logout",
@@ -110,6 +114,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "profile.switch",
     "scim.listUsers",
     "scim.status",
+    "teamvault.list",
     "telemetry.getStatus",
     "telemetry.setEnabled",
     "updater.applyUpdate",
@@ -439,7 +444,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 74);
+        assert_eq!(ALLOWED_METHODS.len(), 79);
     }
 
     #[test]

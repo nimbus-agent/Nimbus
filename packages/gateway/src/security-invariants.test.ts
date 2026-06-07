@@ -503,9 +503,35 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 74", async () => {
+  test("allowlist_exact_size assertion is 79", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*74\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*79\s*\)/);
+  });
+
+  test("Slice 2: renderer-SAFE team methods are allowed; secret/RCE-class ones stay absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of [
+      "federation.approvalRespond",
+      "federation.quorumRespond",
+      "hitl.listDelegations",
+      "hitl.pendingQueue",
+      "teamvault.list",
+    ]) {
+      expect(rust).toContain(`"${m}"`);
+    }
+    // Secret-writing / out-of-band / RCE-class team methods must NOT be renderer-callable.
+    for (const m of [
+      "teamvault.put",
+      "teamvault.delete",
+      "teamvault.grant",
+      "teamvault.revoke",
+      "hitl.delegate",
+      "hitl.revokeDelegation",
+      "federation.invoke",
+      "federation.askInvoke",
+    ]) {
+      expect(rust).not.toMatch(new RegExp(`^\\s*"${m.replace(".", "\\.")}",\\s*$`, "m"));
+    }
   });
 });
 
