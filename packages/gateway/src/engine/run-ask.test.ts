@@ -353,4 +353,72 @@ describe("runAsk", () => {
     expect(routerPrompts).toEqual([]);
     localIndex.close();
   });
+
+  test("executes a non-HITL planned action through the executor (actions-plan path)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    let dispatched = false;
+    const dispatcher: ConnectorDispatcher = {
+      async dispatch() {
+        dispatched = true;
+        return { hits: [] };
+      },
+    };
+
+    const out = await runAsk({
+      input: "find files named *.md",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher,
+      sendChunk: () => {},
+      classify: async () => ({
+        intent: "file_search",
+        entities: { pattern: "*.md" },
+        requiresHITL: false,
+        confidence: 0.9,
+      }),
+    });
+
+    expect(dispatched).toBe(true);
+    expect(out.reply).toContain("OK: filesystem_search_files");
+    localIndex.close();
+  });
+
+  test("reports a rejection when the consent gate denies a HITL action (actions-plan path)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    const chunks: string[] = [];
+
+    const out = await runAsk({
+      input: "move ./a.txt to ./b.txt",
+      stream: true,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent, // requestConsent -> false: the gate denies the move
+      localIndex,
+      dispatcher: stubDispatcher,
+      sendChunk: (t) => chunks.push(t),
+      classify: async () => ({
+        intent: "file_organize",
+        entities: { source: "./a.txt", destination: "./b.txt" },
+        requiresHITL: true,
+        confidence: 0.9,
+      }),
+    });
+
+    expect(out.reply).toContain("Rejected");
+    expect(chunks.some((c) => c.includes("Running: file.move"))).toBe(true);
+    localIndex.close();
+  });
 });

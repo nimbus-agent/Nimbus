@@ -125,4 +125,42 @@ describe("assemblePlatformServices — in-process assembly", () => {
       processEnvSet("NIMBUS_METRICS_PORT", originalMetricsPort);
     }
   });
+
+  it("boots the federation block and exposes executorDelegation for owner-side HITL (I20)", async () => {
+    const paths = makePaths();
+    // Bind the LAN server to an ephemeral free port on loopback; mDNS off so no multicast traffic.
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+    const lanPort = probe.port;
+    probe.stop();
+    if (typeof lanPort !== "number") throw new Error("could not reserve a free LAN port");
+
+    const tomlPath = join(paths.configDir, "nimbus.toml");
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      tomlPath,
+      [
+        "[federation]",
+        "enabled = true",
+        "consent_timeout_seconds = 15",
+        "mdns_enabled = false",
+        'mdns_bind = "127.0.0.1"',
+        "",
+        "[lan]",
+        `port = ${String(lanPort)}`,
+        'bind = "127.0.0.1"',
+      ].join("\n"),
+    );
+
+    services = await assemblePlatformServices(paths);
+
+    // The owner-side delegation dep is built only when federation is enabled (I20). The executor
+    // gate uses it to route a HITL action to an active delegate before the local owner prompt.
+    expect(services.executorDelegation).toBeDefined();
+    expect(typeof services.executorDelegation?.requestRemote).toBe("function");
+    expect(services.executorDelegation?.isOperatorValid()).toBe(true);
+    // No delegate configured → requestRemote falls back to a timeout (owner-prompt fallback).
+    const outcome = await services.executorDelegation?.requestRemote("email.send");
+    expect(outcome).toEqual({ kind: "timeout" });
+  });
 });
