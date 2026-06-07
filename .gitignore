@@ -45,6 +45,9 @@ packages/vscode-extension/media/webview.css
 
 # --- Coverage / CI test reports ---
 coverage/
+# scripts/coverage/ holds the istanbul instrumentation source (NOT generated output) —
+# the bare `coverage/` glob above would otherwise ignore it. Keep it tracked.
+!scripts/coverage/
 # JUnit XML for CI lives under junit-reports/ (not ignored — dorny/test-reporter uses fast-glob with gitignore).
 reports/
 .nyc_output/
