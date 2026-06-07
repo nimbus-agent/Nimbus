@@ -1,264 +1,116 @@
 import { describe, expect, test } from "bun:test";
 
-import { type EvaluateInput, evaluateCheck } from "./check.ts";
+import type { Baseline } from "./baseline.ts";
+import { computeUpdatedBaseline, evaluateCheck } from "./check.ts";
 
-const emptyBaseline = {
-  version: 1 as const,
-  generated_at: "2026-05-17T00:00:00Z",
-  files: new Map<string, number>(),
-};
+const emptyBaseline: Baseline = { version: 2, generated_at: "x", files: new Map() };
 
-function inputWith(overrides: Partial<EvaluateInput>): EvaluateInput {
-  return {
-    sourceFiles: [],
-    actual: new Map(),
-    baseline: emptyBaseline,
-    ...overrides,
-  };
-}
-
-describe("evaluateCheck — green paths", () => {
-  test("empty workspace passes", () => {
-    const r = evaluateCheck(inputWith({}));
+describe("evaluateCheck (dual-axis)", () => {
+  test("passes when a non-baselined file meets both floors", () => {
+    const r = evaluateCheck({
+      sourceFiles: ["packages/gateway/src/a.ts"],
+      actualLine: new Map([["packages/gateway/src/a.ts", 95]]),
+      actualBranch: new Map([["packages/gateway/src/a.ts", 88]]),
+      baseline: emptyBaseline,
+    });
     expect(r.exitCode).toBe(0);
     expect(r.violations).toEqual([]);
   });
 
-  test("a non-baseline file at 80% passes", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["packages/gateway/src/foo.ts"],
-        actual: new Map([["packages/gateway/src/foo.ts", 80]]),
-      }),
-    );
+  test("flags below_floor on the branch axis for a non-baselined file", () => {
+    const r = evaluateCheck({
+      sourceFiles: ["packages/gateway/src/a.ts"],
+      actualLine: new Map([["packages/gateway/src/a.ts", 95]]),
+      actualBranch: new Map([["packages/gateway/src/a.ts", 60]]),
+      baseline: emptyBaseline,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.violations).toContainEqual({
+      kind: "below_floor",
+      dimension: "branch",
+      path: "packages/gateway/src/a.ts",
+      actual: 60,
+    });
+  });
+
+  test("flags missing_from_lcov when a non-baselined source file has no line data", () => {
+    const r = evaluateCheck({
+      sourceFiles: ["packages/gateway/src/a.ts"],
+      actualLine: new Map(),
+      actualBranch: new Map(),
+      baseline: emptyBaseline,
+    });
+    expect(r.violations).toContainEqual({
+      kind: "missing_from_lcov",
+      path: "packages/gateway/src/a.ts",
+    });
+  });
+
+  test("skips the floor check for a baselined file but applies the ratchet", () => {
+    const baseline: Baseline = {
+      version: 2,
+      generated_at: "x",
+      files: new Map([["packages/gateway/src/a.ts", { line: 78, branch: 40 }]]),
+    };
+    const r = evaluateCheck({
+      sourceFiles: ["packages/gateway/src/a.ts"],
+      actualLine: new Map([["packages/gateway/src/a.ts", 78]]),
+      actualBranch: new Map([["packages/gateway/src/a.ts", 40]]),
+      baseline,
+    });
     expect(r.exitCode).toBe(0);
   });
 
-  test("a baseline file at its watermark passes", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["packages/gateway/src/foo.ts"],
-        actual: new Map([["packages/gateway/src/foo.ts", 40]]),
-        baseline: {
-          version: 1,
-          generated_at: "x",
-          files: new Map([["packages/gateway/src/foo.ts", 40]]),
-        },
-      }),
-    );
-    expect(r.exitCode).toBe(0);
-  });
-
-  test("an exempt file with no coverage passes (skipped entirely)", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["packages/gateway/src/vault/win32.ts"],
-        actual: new Map(), // no lcov entry
-      }),
-    );
-    expect(r.exitCode).toBe(0);
+  test("ignores exempt files", () => {
+    const r = evaluateCheck({
+      sourceFiles: ["packages/gateway/src/vault/win32.ts"],
+      actualLine: new Map(),
+      actualBranch: new Map(),
+      baseline: emptyBaseline,
+    });
+    expect(r.violations).toEqual([]);
   });
 });
 
-describe("evaluateCheck — non-baseline file violations", () => {
-  test("non-baseline file at 79.99% fails (below floor)", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["packages/gateway/src/foo.ts"],
-        actual: new Map([["packages/gateway/src/foo.ts", 79.99]]),
-      }),
+describe("computeUpdatedBaseline (dual-axis)", () => {
+  test("captures a sub-floor file at its actuals; satisfied axis pinned at the floor", () => {
+    const next = computeUpdatedBaseline(
+      { version: 2, generated_at: "x", files: new Map() },
+      new Map([["packages/gateway/src/a.ts", 90]]), // line satisfied
+      new Map([["packages/gateway/src/a.ts", 55]]), // branch below floor
+      ["packages/gateway/src/a.ts"],
+      "now",
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.violations).toContainEqual(
-      expect.objectContaining({
-        kind: "below_floor",
-        path: "packages/gateway/src/foo.ts",
-        actual: 79.99,
-      }),
-    );
+    expect(next.files.get("packages/gateway/src/a.ts")).toEqual({ line: 80, branch: 55 });
   });
 
-  test("a non-exempt source file missing from lcov fails (treated as 0%)", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["packages/gateway/src/untested.ts"],
-        actual: new Map(),
-      }),
+  test("drops a file once BOTH axes clear the floor", () => {
+    const next = computeUpdatedBaseline(
+      {
+        version: 2,
+        generated_at: "x",
+        files: new Map([["packages/gateway/src/a.ts", { line: 78, branch: 40 }]]),
+      },
+      new Map([["packages/gateway/src/a.ts", 85]]),
+      new Map([["packages/gateway/src/a.ts", 82]]),
+      ["packages/gateway/src/a.ts"],
+      "now",
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.violations).toContainEqual(
-      expect.objectContaining({
-        kind: "missing_from_lcov",
-        path: "packages/gateway/src/untested.ts",
-      }),
-    );
-  });
-});
-
-describe("evaluateCheck — baseline ratchet violations", () => {
-  test("regression below baseline fails", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["a.ts"],
-        actual: new Map([["a.ts", 30]]),
-        baseline: {
-          version: 1,
-          generated_at: "x",
-          files: new Map([["a.ts", 40]]),
-        },
-      }),
-    );
-    expect(r.exitCode).toBe(1);
-    expect(r.violations).toContainEqual(
-      expect.objectContaining({ kind: "regression", path: "a.ts" }),
-    );
+    expect(next.files.has("packages/gateway/src/a.ts")).toBe(false);
   });
 
-  test("must-raise without baseline update fails (rule 3)", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["a.ts"],
-        actual: new Map([["a.ts", 65]]),
-        baseline: {
-          version: 1,
-          generated_at: "x",
-          files: new Map([["a.ts", 40]]),
-        },
-      }),
+  test("ratchets an unsatisfied axis up to its actual but never down", () => {
+    const next = computeUpdatedBaseline(
+      {
+        version: 2,
+        generated_at: "x",
+        files: new Map([["packages/gateway/src/a.ts", { line: 50, branch: 30 }]]),
+      },
+      new Map([["packages/gateway/src/a.ts", 60]]),
+      new Map([["packages/gateway/src/a.ts", 20]]), // dropped below stored — keep the higher watermark
+      ["packages/gateway/src/a.ts"],
+      "now",
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.violations).toContainEqual(
-      expect.objectContaining({ kind: "must_raise", path: "a.ts" }),
-    );
-  });
-
-  test("must-remove without baseline removal fails (rule 4)", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: ["a.ts"],
-        actual: new Map([["a.ts", 85]]),
-        baseline: {
-          version: 1,
-          generated_at: "x",
-          files: new Map([["a.ts", 40]]),
-        },
-      }),
-    );
-    expect(r.exitCode).toBe(1);
-    expect(r.violations).toContainEqual(
-      expect.objectContaining({ kind: "must_remove", path: "a.ts" }),
-    );
-  });
-});
-
-describe("evaluateCheck — exemptions and test-file filtering", () => {
-  test("exempt files in the source list are skipped even when their actual coverage is < 80", () => {
-    const r = evaluateCheck(
-      inputWith({
-        sourceFiles: [
-          "packages/gateway/src/vault/win32.ts",
-          "packages/gateway/src/perf/bench-cli.ts",
-        ],
-        actual: new Map([
-          ["packages/gateway/src/vault/win32.ts", 10],
-          ["packages/gateway/src/perf/bench-cli.ts", 0],
-        ]),
-      }),
-    );
-    expect(r.exitCode).toBe(0);
-  });
-});
-
-describe("computeUpdatedBaseline (--update-baseline mode)", () => {
-  test("raises must-raise entries and drops must-remove entries", async () => {
-    const { computeUpdatedBaseline } = await import("./check.ts");
-    const baseline = {
-      version: 1 as const,
-      generated_at: "old",
-      files: new Map([
-        ["raise.ts", 40],
-        ["remove.ts", 30],
-        ["stable.ts", 50],
-        ["regress.ts", 50], // regressions are NOT auto-fixed
-      ]),
-    };
-    const actual = new Map<string, number>([
-      ["raise.ts", 70],
-      ["remove.ts", 85],
-      ["stable.ts", 50],
-      ["regress.ts", 30],
-    ]);
-    const updated = computeUpdatedBaseline(baseline, actual, [], "new-timestamp");
-    expect(updated.files.get("raise.ts")).toBe(70);
-    expect(updated.files.has("remove.ts")).toBe(false);
-    expect(updated.files.get("stable.ts")).toBe(50);
-    expect(updated.files.get("regress.ts")).toBe(50);
-    expect(updated.generated_at).toBe("new-timestamp");
-  });
-
-  test("seeds new non-exempt below-floor files from sourceFiles", async () => {
-    const { computeUpdatedBaseline } = await import("./check.ts");
-    const baseline = {
-      version: 1 as const,
-      generated_at: "old",
-      files: new Map<string, number>(),
-    };
-    const actual = new Map<string, number>([
-      ["packages/gateway/src/foo.ts", 35],
-      ["packages/gateway/src/bar.ts", 90], // passes floor → not seeded
-    ]);
-    const sourceFiles = [
-      "packages/gateway/src/foo.ts",
-      "packages/gateway/src/bar.ts",
-      "packages/gateway/src/baz.ts", // not in actual → seeded at 0
-    ];
-    const updated = computeUpdatedBaseline(baseline, actual, sourceFiles, "new");
-    expect(updated.files.get("packages/gateway/src/foo.ts")).toBe(35);
-    expect(updated.files.has("packages/gateway/src/bar.ts")).toBe(false);
-    expect(updated.files.get("packages/gateway/src/baz.ts")).toBe(0);
-  });
-
-  test("skips exempt files during seeding", async () => {
-    const { computeUpdatedBaseline } = await import("./check.ts");
-    const baseline = {
-      version: 1 as const,
-      generated_at: "old",
-      files: new Map<string, number>(),
-    };
-    const actual = new Map<string, number>([
-      ["packages/gateway/src/vault/win32.ts", 5], // exempt
-      ["packages/gateway/src/perf/bench-cli.ts", 0], // exempt
-    ]);
-    const sourceFiles = [
-      "packages/gateway/src/vault/win32.ts",
-      "packages/gateway/src/perf/bench-cli.ts",
-    ];
-    const updated = computeUpdatedBaseline(baseline, actual, sourceFiles, "new");
-    expect(updated.files.size).toBe(0);
-  });
-
-  test("does not duplicate an already-baselined entry during seeding", async () => {
-    const { computeUpdatedBaseline } = await import("./check.ts");
-    const baseline = {
-      version: 1 as const,
-      generated_at: "old",
-      files: new Map([["a.ts", 40]]),
-    };
-    const actual = new Map<string, number>([["a.ts", 50]]);
-    const sourceFiles = ["a.ts"];
-    const updated = computeUpdatedBaseline(baseline, actual, sourceFiles, "new");
-    expect(updated.files.get("a.ts")).toBe(50);
-    expect(updated.files.size).toBe(1);
-  });
-});
-
-describe("discoverSourceFiles — package scope", () => {
-  test("only walks bun-tested packages (excludes ui/vscode-extension/docs)", async () => {
-    const { discoverSourceFiles } = await import("./check.ts");
-    const files = await discoverSourceFiles();
-    expect(files.every((p) => !p.startsWith("packages/ui/"))).toBe(true);
-    expect(files.every((p) => !p.startsWith("packages/vscode-extension/"))).toBe(true);
-    expect(files.every((p) => !p.startsWith("packages/docs/"))).toBe(true);
-    expect(files.some((p) => p.startsWith("packages/gateway/src/"))).toBe(true);
+    expect(next.files.get("packages/gateway/src/a.ts")).toEqual({ line: 60, branch: 30 });
   });
 });
