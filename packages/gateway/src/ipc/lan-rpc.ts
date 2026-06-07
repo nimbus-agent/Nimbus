@@ -41,8 +41,11 @@ const FORBIDDEN_OVER_LAN = new Set([
   "federation.askExpertise", // local-only asker entrypoint; not answerable
   "federation.askInvoke", // local-only asker entrypoint (Slice 2 team-vault invoke); not answerable
   // Team Vault + multi-user/quorum HITL (Slice 2). The management surfaces are local/CLI/Tauri-only;
-  // only the three wire methods federation.invoke / federation.quorumRespond /
-  // federation.approvalRespond are answerable over the wire (gated by I19 RBAC + quorum).
+  // only the wire methods federation.invoke / federation.quorumRespond / federation.approvalRespond /
+  // federation.requestApproval are answerable over the wire (federation.invoke gated by I19 RBAC +
+  // quorum; federation.requestApproval is the delegate answering an owner's routed HITL approval —
+  // it forces the owner peerId from the authenticated session (I17/R1), audits its own decision, and
+  // returns only { approved }, never secret material; the owner re-checks delegate authority via I20).
   "teamvault", // teamvault.put/delete/grant/revoke/list — secret + RBAC management, never over LAN
   "hitl", // hitl.delegate/revokeDelegation/listDelegations/pendingQueue — local owner control only
   // Identity & SCIM (Slice 3): all management/read methods are local/CLI/Tauri-only — never over LAN.

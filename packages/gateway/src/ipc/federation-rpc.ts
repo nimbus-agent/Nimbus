@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -54,6 +55,13 @@ export interface FederationRpcContext {
       args: unknown;
     }) => Promise<unknown>;
   };
+  // Delegated HITL (Slice 2, I20). Present on the answering (delegate) dispatch path: the delegate's
+  // local decision for an owner's routed approval. The handler audits the decision on the DELEGATE's
+  // gateway; absent → fail-closed deny.
+  readonly delegateApproval?: (req: {
+    actionType: string;
+    ownerPeerId: string;
+  }) => Promise<boolean>;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -321,6 +329,28 @@ export async function dispatchFederationRpc(
         rec["approved"],
       );
       return { ok: true, matched };
+    },
+    // Delegate-side: an owner routes a HITL approval to this peer (I20). `peerId` is the OWNER's
+    // forced authenticated id (I17/R1). The delegate decides locally and AUDITS its own decision on
+    // THIS gateway (so the approval is recorded in both the owner's and the delegate's logs).
+    "federation.requestApproval": async (p) => {
+      const rec = asRecord(p);
+      const actionType = requireString(rec, "actionType");
+      const ownerPeerId = requireString(rec, "peerId");
+      const decide = ctx.delegateApproval ?? (async () => false); // no prompter → fail-closed deny
+      const approved = await decide({ actionType, ownerPeerId });
+      appendAuditEntry(ctx.db, {
+        actionType: "hitl.delegate.answered",
+        hitlStatus: approved ? "approved" : "rejected",
+        actionJson: JSON.stringify({ method: "federation.requestApproval", actionType }),
+        timestamp: Date.now(),
+        federationJson: JSON.stringify({
+          peer_id: ownerPeerId,
+          action_type: actionType,
+          decision: approved ? "approved" : "rejected",
+        }),
+      });
+      return { approved };
     },
   });
 }

@@ -31,6 +31,8 @@ export interface BuildFederationLanServerDeps {
   // federation.invoke is answered here (I19). I18: operator identity must be valid to serve.
   readonly teamVault?: FederationRpcContext["teamVault"];
   readonly identityGuard?: FederationRpcContext["identityGuard"];
+  // Delegated HITL (Slice 2, I20): the delegate's local decision for an owner's routed approval.
+  readonly delegateApproval?: FederationRpcContext["delegateApproval"];
 }
 
 export interface FederationLanServer {
@@ -88,6 +90,7 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         pairing: deps.pairing ?? ({ listPeers: () => [] } as unknown as PeerPairing),
         ...(deps.teamVault === undefined ? {} : { teamVault: deps.teamVault }),
         ...(deps.identityGuard === undefined ? {} : { identityGuard: deps.identityGuard }),
+        ...(deps.delegateApproval === undefined ? {} : { delegateApproval: deps.delegateApproval }),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;

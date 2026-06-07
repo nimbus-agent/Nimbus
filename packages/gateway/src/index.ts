@@ -76,6 +76,9 @@ async function main(): Promise<void> {
       ...(platform.sessionMemoryStore === undefined
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),
+      ...(platform.executorDelegation === undefined
+        ? {}
+        : { delegation: platform.executorDelegation }),
     }),
   );
 

@@ -46,6 +46,9 @@ import { startToolCallLogRetention } from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
+import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
+import { DelegationStore } from "../engine/delegation-store.ts";
+import type { ExecutorDelegationDep } from "../engine/executor.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
@@ -336,11 +339,11 @@ async function bootFederationIntoIpcOpts(
   localIndex: LocalIndex,
   ipcOpts: Parameters<typeof createIpcServer>[0],
   sidecarStops: Array<() => void>,
-): Promise<boolean> {
-  if (!federationCfg.enabled) return false;
+): Promise<ExecutorDelegationDep | undefined> {
+  if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
   const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
-  if (federationRuntime === undefined) return false;
+  if (federationRuntime === undefined) return undefined;
   void federationRuntime.discovery.start();
   sidecarStops.push(() => void federationRuntime.discovery.stop());
   ipcOpts.federationDiscovery = federationRuntime.discovery;
@@ -368,6 +371,20 @@ async function bootFederationIntoIpcOpts(
       ),
   };
   ipcOpts.teamVault = teamVault;
+  // Delegated HITL (Slice 2, I20). As a DELEGATE, this gateway answers an owner's routed approval by
+  // prompting its own local clients via the delegated-approval broker (CLI/UI `team approve` →
+  // federation.approvalRespond resolves it). As an OWNER, the executor gate routes a HITL action to
+  // an active delegate over the wire (delegationDep, threaded into run-ask).
+  const delegationStore = new DelegationStore(db);
+  const delegationDep: ExecutorDelegationDep = {
+    store: delegationStore,
+    isOperatorValid: () => true,
+    requestRemote: buildDelegatedRequestRemote({
+      store: delegationStore,
+      index: localIndex,
+      selfIdentity: identity,
+    }),
+  };
   const built = buildFederationLanServer({
     db,
     index: localIndex,
@@ -384,6 +401,13 @@ async function bootFederationIntoIpcOpts(
     discovery: federationRuntime.discovery,
     pairing: federationRuntime.pairing,
     teamVault,
+    delegateApproval: async ({ actionType }) => {
+      const r = await delegatedApprovalBroker.request(
+        { prompt: `Approve delegated action: ${actionType}?` },
+        federationRuntime.consentTimeoutSeconds * 1000,
+      );
+      return r.kind === "answered" ? r.approved : false;
+    },
   });
   // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
   sidecarStops.push(() => void built.lanServer.stop());
@@ -394,7 +418,7 @@ async function bootFederationIntoIpcOpts(
   }
   ipcOpts.lanServer = built.lanServer;
   ipcOpts.lanPairingWindow = built.pairingWindow;
-  return true;
+  return delegationDep;
 }
 
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
@@ -628,6 +652,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     sandboxRunner,
     llmRegistry,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
+    ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {
