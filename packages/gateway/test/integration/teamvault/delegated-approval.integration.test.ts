@@ -113,12 +113,15 @@ test("a delegated HITL approval is recorded in BOTH the owner's and the delegate
       .get() as { hitl_status: string } | null;
     expect(aRow?.hitl_status).toBe("approved"); // owner's log
 
+    // The delegate's row records its answer in federation_json (I4: hitl_status is gate-output-only,
+    // so this non-HITL-gated meta-record stays `not_required` — the decision is the federation field).
     const bRow = bDb
       .query(
-        `SELECT hitl_status FROM audit_log WHERE action_type = 'hitl.delegate.answered' ORDER BY id DESC LIMIT 1`,
+        `SELECT hitl_status, federation_json FROM audit_log WHERE action_type = 'hitl.delegate.answered' ORDER BY id DESC LIMIT 1`,
       )
-      .get() as { hitl_status: string } | null;
-    expect(bRow?.hitl_status).toBe("approved"); // delegate's log
+      .get() as { hitl_status: string; federation_json: string } | null;
+    expect(bRow?.hitl_status).toBe("not_required"); // I4: never gate-forged outside executor
+    expect(JSON.parse(bRow?.federation_json ?? "{}").decision).toBe("approved"); // delegate's decision
 
     // --- Offline: stop B → the wire request fails → A falls back to the local owner prompt (D10). ---
     await bBuilt.lanServer.stop();

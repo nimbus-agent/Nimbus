@@ -339,9 +339,13 @@ export async function dispatchFederationRpc(
       const ownerPeerId = requireString(rec, "peerId");
       const decide = ctx.delegateApproval ?? (async () => false); // no prompter → fail-closed deny
       const approved = await decide({ actionType, ownerPeerId });
+      // I4: `hitlStatus` is consent-gate-output-only — never written as approved/rejected outside
+      // `executor.gate()`. This row records the *delegate's* answer to a federated request, not a
+      // local HITL-gated action, so the row is `not_required` and the decision lives in
+      // `federationJson.decision` (the owner's own audit row carries the real gate-set hitlStatus).
       appendAuditEntry(ctx.db, {
         actionType: "hitl.delegate.answered",
-        hitlStatus: approved ? "approved" : "rejected",
+        hitlStatus: "not_required",
         actionJson: JSON.stringify({ method: "federation.requestApproval", actionType }),
         timestamp: Date.now(),
         federationJson: JSON.stringify({
