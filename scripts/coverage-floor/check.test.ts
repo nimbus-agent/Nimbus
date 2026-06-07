@@ -1,9 +1,27 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Baseline } from "./baseline.ts";
-import { computeUpdatedBaseline, evaluateCheck } from "./check.ts";
+import { computeUpdatedBaseline, evaluateCheck, lcovHasBranchData } from "./check.ts";
+import { parseLcov } from "./lcov-parse.ts";
 
 const emptyBaseline: Baseline = { version: 2, generated_at: "x", files: new Map() };
+
+describe("lcovHasBranchData (instrumentation canary)", () => {
+  test("true when at least one file carries BRDA branch records", () => {
+    const parsed = parseLcov("SF:packages/gateway/src/a.ts\nDA:1,1\nBRDA:1,0,0,1\nend_of_record\n");
+    expect(lcovHasBranchData(parsed)).toBe(true);
+  });
+
+  test("false when files have line data but ZERO branch records (broken instrumentation → false 100%)", () => {
+    const parsed = parseLcov("SF:packages/gateway/src/a.ts\nDA:1,1\nDA:2,1\nend_of_record\n");
+    expect(parsed.size).toBe(1);
+    expect(lcovHasBranchData(parsed)).toBe(false);
+  });
+
+  test("true for an empty lcov (a different failure — handled by missing_from_lcov / lcov-not-found)", () => {
+    expect(lcovHasBranchData(parseLcov(""))).toBe(true);
+  });
+});
 
 describe("evaluateCheck (dual-axis)", () => {
   test("passes when a non-baselined file meets both floors", () => {

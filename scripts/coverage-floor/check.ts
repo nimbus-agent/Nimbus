@@ -143,6 +143,21 @@ function lcovToBranchPctMap(map: ReturnType<typeof parseLcov>): Map<string, numb
   return out;
 }
 
+// Instrumentation canary (spec §5.3/§5.7). A real instrumented run emits tens of
+// thousands of BRDA records. If the lcov carries source files but ZERO branch
+// records total, istanbul instrumentation silently produced no branch data —
+// `branchPct` then defaults to 100 for every file, so the branch floor would be
+// a no-op and pass falsely. Returns false ONLY in that broken case; an entirely
+// empty lcov is a different failure (lcov-not-found / missing_from_lcov) and
+// returns true here so those paths report it.
+export function lcovHasBranchData(map: ReturnType<typeof parseLcov>): boolean {
+  if (map.size === 0) return true;
+  for (const fc of map.values()) {
+    if (fc.branches > 0) return true;
+  }
+  return false;
+}
+
 function printViolations(violations: ReadonlyArray<Violation>): void {
   for (const v of violations) {
     switch (v.kind) {
@@ -194,6 +209,12 @@ async function main(): Promise<void> {
 
   const lcovText = await Bun.file(absLcov).text();
   const parsed = parseLcov(lcovText);
+  if (!lcovHasBranchData(parsed)) {
+    console.error(
+      `coverage-floor: lcov at ${lcovPath} has source files but ZERO branch (BRDA) records — istanbul instrumentation is broken; every file would read as a false 100% branch. Aborting (re-check the [test].preload wiring).`,
+    );
+    process.exit(2);
+  }
   const actualLine = lcovToLinePctMap(parsed);
   const actualBranch = lcovToBranchPctMap(parsed);
   const baseline = existsSync(absBaseline)
