@@ -66,4 +66,16 @@ export type CreateIpcServerOptions = {
   identityGraceSeconds?: number;
   identityStartLogin?: () => { jobId: string };
   identityVault?: NimbusVault; // for scim.setToken
+  // Team Vault (Phase 6 Slice 2). The anchor's invoke backing: per-action quorum lookup + the
+  // credential-injecting runTool. Present only when [federation].enabled; the federation dispatcher
+  // throws ERR_TEAMVAULT_UNAVAILABLE when unset, and teamvault.*/hitl.* dispatch skips cleanly.
+  teamVault?: {
+    quorumFor: (toolId: string) => { approvers: number; windowSeconds: number } | undefined;
+    runTool: (input: {
+      entry: string;
+      service: string;
+      toolId: string;
+      args: unknown;
+    }) => Promise<unknown>;
+  };
 };

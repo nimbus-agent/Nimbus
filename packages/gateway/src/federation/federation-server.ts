@@ -27,6 +27,10 @@ export interface BuildFederationLanServerDeps {
   readonly notify: (method: string, params: unknown) => void;
   readonly discovery?: DiscoveryProvider;
   readonly pairing?: PeerPairing;
+  // Team Vault (Slice 2): the anchor's invoke backing. When set, an authenticated peer's
+  // federation.invoke is answered here (I19). I18: operator identity must be valid to serve.
+  readonly teamVault?: FederationRpcContext["teamVault"];
+  readonly identityGuard?: FederationRpcContext["identityGuard"];
 }
 
 export interface FederationLanServer {
@@ -82,6 +86,8 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         notify: deps.notify,
         discovery: deps.discovery ?? ({ list: async () => [] } as unknown as DiscoveryProvider),
         pairing: deps.pairing ?? ({ listPeers: () => [] } as unknown as PeerPairing),
+        ...(deps.teamVault === undefined ? {} : { teamVault: deps.teamVault }),
+        ...(deps.identityGuard === undefined ? {} : { identityGuard: deps.identityGuard }),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;
