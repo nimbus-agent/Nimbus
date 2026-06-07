@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build coverage/lcov.info by running bun test --coverage --coverage-reporter=lcov
-# from inside each bun-tested workspace package and merging the per-package
-# shards with SF: paths rewritten to be repo-root-relative.
+# Build coverage/lcov.info by running bun test with istanbul preloads
+# (istanbul-register.ts + report-coverage.ts) per package and merging
+# the per-package nyc shards via merge-coverage.ts.  Emits BRDA branch
+# records in addition to line/function coverage.
 #
 # Mirrors the per-package merge in .github/workflows/_test-suite.yml
 # ("Unit tests (with coverage) — Linux" step). Run locally before
@@ -14,8 +15,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
 rm -rf coverage
-mkdir -p coverage
-: > coverage/lcov.info
+mkdir -p coverage/.nyc-tmp
+
+REGISTER="${REPO_ROOT}/scripts/coverage/istanbul-register.ts"
+REPORT="${REPO_ROOT}/scripts/coverage/report-coverage.ts"
 
 run_pkg () {
   local pkg="$1"
@@ -26,11 +29,8 @@ run_pkg () {
   echo "=== ${pkg} ==="
   (
     cd "${pkg}"
-    bun test --coverage --coverage-reporter=lcov
-  ) || true  # tolerate failing tests; whatever lcov was emitted still merges
-  if [[ -f "${pkg}/coverage/lcov.info" ]]; then
-    sed "s|^SF:|SF:${pkg}/|" "${pkg}/coverage/lcov.info" >> coverage/lcov.info
-  fi
+    bun test --preload "${REGISTER}" --preload "${REPORT}"
+  ) || true  # tolerate failing tests; whatever coverage was collected still merges
 }
 
 for pkg in packages/gateway packages/cli packages/sdk packages/client; do
@@ -43,5 +43,7 @@ for pkg in packages/mcp-connectors/*; do
   fi
 done
 
+bun "${REPO_ROOT}/scripts/coverage/merge-coverage.ts"
+
 echo "---"
-echo "coverage/lcov.info: $(wc -l < coverage/lcov.info) lines, $(grep -c '^SF:' coverage/lcov.info) source files indexed"
+echo "coverage/lcov.info: $(wc -l < coverage/lcov.info) lines, $(grep -c '^SF:' coverage/lcov.info) source files, $(grep -c '^BRDA:' coverage/lcov.info) branch records"
