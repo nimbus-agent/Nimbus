@@ -1,7 +1,7 @@
 # Phase 6 Slice 2 — Team Vault + Multi-user/Quorum HITL — Design Review
 
 **Date:** 2026-06-06
-**Target:** [2026-06-06-phase6-slice2-team-vault-quorum-hitl-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/dev+asafgolombek+phase6-slice2-team-vault-quorum-hitl/docs/superpowers/specs/2026-06-06-phase6-slice2-team-vault-quorum-hitl-design.md)
+**Target:** [2026-06-06-phase6-slice2-team-vault-quorum-hitl-design.md](2026-06-06-phase6-slice2-team-vault-quorum-hitl-design.md)
 
 ## Open Questions & Suggestions
 

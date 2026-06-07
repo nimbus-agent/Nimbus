@@ -60,7 +60,7 @@ execution**:
 
 ## 4. Architecture
 
-```
+```text
                     TRUST-ANCHOR GATEWAY (holds team secrets in its own OS Vault)
                     ┌──────────────────────────────────────────────────────────────┐
  PEER B             │  federation.invoke  →  answerFederatedInvoke  (NEW gate)       │
@@ -142,6 +142,7 @@ is untouched.
 ## 5. Data flow
 
 **Flow A — Team Vault invoke (no quorum).**
+
 1. Peer B's cred-injection resolves to a team-vault binding → B calls
    `federation.invoke{ entry, toolId, args, purpose }` over the NaCl channel.
 2. Anchor A's `onMessage` forces `peerId = peerIdFor(authPubkey)` (I17/R1 — body peerId cannot

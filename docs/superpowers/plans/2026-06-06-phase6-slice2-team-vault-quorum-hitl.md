@@ -83,6 +83,7 @@
 A fresh worktree fails the gateway typecheck on `@nimbus-dev/client` until `packages/client` is built (known trap).
 
 Run:
+
 ```bash
 bun install
 cd packages/client && bun run build && cd ../..
@@ -105,6 +106,7 @@ Expected: PASS.
 ### Task 1: V35 schema SQL constant
 
 **Files:**
+
 - Create: `packages/gateway/src/index/team-vault-v35-sql.ts`
 - Test: `packages/gateway/src/index/team-vault-v35-sql.test.ts`
 
@@ -197,6 +199,7 @@ git commit -m "feat(teamvault): V35 schema constant (team_vault_entries/grants +
 ### Task 2: Wire V35 into the migration runner
 
 **Files:**
+
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - Test: `packages/gateway/src/index/migrations/team-vault-v35-migration.test.ts`
 
@@ -236,11 +239,13 @@ Expected: FAIL — `runIndexedSchemaMigrations(db, 35)` throws "Unsupported loca
 - [ ] **Step 4: Add the import, the step, and the backfill label**
 
 In `runner.ts`, add the import beside the V34 import (line ~38):
+
 ```ts
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 ```
 
 Append to `INDEXED_SCHEMA_STEPS` (after the `simpleStep(33, 34, …)` entry, line ~382):
+
 ```ts
   simpleStep(
     34,
@@ -251,6 +256,7 @@ Append to `INDEXED_SCHEMA_STEPS` (after the `simpleStep(33, 34, …)` entry, lin
 ```
 
 Append the matching label to `BACKFILL_LABELS` (after the V34 identity label, line ~419) — **the array index must equal version-1, so this MUST be the 35th entry**:
+
 ```ts
   "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
 ```
@@ -286,6 +292,7 @@ git commit -m "feat(teamvault): wire V35 migration into the indexed schema runne
 ### Task 3: Team Vault key derivation (D15 home)
 
 **Files:**
+
 - Create: `packages/gateway/src/teamvault/team-vault-keys.ts`
 - Test: `packages/gateway/src/teamvault/team-vault-keys.test.ts`
 
@@ -364,6 +371,7 @@ git commit -m "feat(teamvault): team-vault-keys derivation (D15 keyspace home)"
 ### Task 4: TeamVaultStore (entries + live-checked grants)
 
 **Files:**
+
 - Create: `packages/gateway/src/teamvault/team-vault-store.ts`
 - Test: `packages/gateway/src/teamvault/team-vault-store.test.ts`
 
@@ -539,6 +547,7 @@ git commit -m "feat(teamvault): TeamVaultStore (entries + live-checked per-(entr
 ### Task 5: `[hitl.quorum]` config loader
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Test: `packages/gateway/src/config/nimbus-toml-quorum.test.ts`
 
@@ -625,6 +634,7 @@ git commit -m "feat(hitl): [hitl.quorum] config loader (action-type -> approvers
 ### Task 6: QuorumCoordinator (I21 — distinct-peer, deny-aborts, timeout)
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/quorum/quorum-coordinator.ts`
 - Test: `packages/gateway/src/engine/quorum/quorum-coordinator.test.ts`
 
@@ -782,6 +792,7 @@ git commit -m "feat(hitl): QuorumCoordinator (I21 distinct-peer counting, fail-c
 ### Task 7: DelegationStore (scoped + time-boxed)
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/delegation-store.ts`
 - Test: `packages/gateway/src/engine/delegation-store.test.ts`
 
@@ -969,6 +980,7 @@ git commit -m "feat(hitl): DelegationStore (scoped + time-boxed, live-checked ac
 ### Task 8: resolveDelegatedApproval (I20 authority check)
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/delegated-approval.ts`
 - Test: `packages/gateway/src/engine/delegated-approval.test.ts`
 
@@ -1083,6 +1095,7 @@ git commit -m "feat(hitl): resolveDelegatedApproval (I20 delegate authority + id
 ### Task 8b: Integrate delegated approval into the executor gate
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/delegation-store.ts` (add `activeDelegateePeer`)
 - Modify: `packages/gateway/src/engine/executor.ts` (constructor dep + `gate()` delegation branch)
 - Test: `packages/gateway/src/engine/executor-delegation.test.ts`
@@ -1092,6 +1105,7 @@ Without this task the `DelegationStore`/`resolveDelegatedApproval` pieces from T
 - [ ] **Step 1: Add `activeDelegateePeer` to DelegationStore (with test)**
 
 Add to `delegation-store.ts`:
+
 ```ts
   /** The peer a HITL request for this action should route to, if any active delegation matches
    *  either the action-type scope or the service scope. (Both-scopes resolution.) */
@@ -1110,6 +1124,7 @@ Add to `delegation-store.ts`:
 ```
 
 Add to `delegation-store.test.ts`:
+
 ```ts
 it("activeDelegateePeer resolves via action_type OR service scope", () => {
   store.create({ delegatePeer: "peer:bob", scopeKind: "service", scopeValue: "aws", expiresAt: 9e9, nowMs: 1 });
@@ -1190,12 +1205,14 @@ Expected: FAIL — `ToolExecutor` has no 4th constructor argument.
 - [ ] **Step 4: Add the optional delegation dep + the gate branch**
 
 In `executor.ts`, add imports:
+
 ```ts
 import { resolveDelegatedApproval, type RemoteApprovalOutcome } from "./delegated-approval.ts";
 import type { DelegationStore } from "./delegation-store.ts";
 ```
 
 Add the dep type (near the other types):
+
 ```ts
 export interface ExecutorDelegationDep {
   readonly store: DelegationStore;
@@ -1205,6 +1222,7 @@ export interface ExecutorDelegationDep {
 ```
 
 Extend the constructor (append an optional 4th param — backward compatible with existing call sites):
+
 ```ts
   constructor(
     private readonly consent: ConsentChannel,
@@ -1215,6 +1233,7 @@ Extend the constructor (append an optional 4th param — backward compatible wit
 ```
 
 Add the private helper:
+
 ```ts
   /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
    *  live in-scope, identity-valid answerer; otherwise fall back to the local owner prompt. */
@@ -1238,6 +1257,7 @@ Add the private helper:
 ```
 
 Modify the `requiresHITL` branch inside `gate()` so it tries delegation before the local prompt:
+
 ```ts
       if (requiresHITL) {
         const delegated = await this.tryDelegatedApproval(action);
@@ -1270,7 +1290,7 @@ git add packages/gateway/src/engine/executor.ts packages/gateway/src/engine/dele
 git commit -m "feat(hitl): wire delegated approval into the executor gate (both-scopes, owner fallback)"
 ```
 
-> **Task 17 addendum:** when constructing `ToolExecutor` in `assemble.ts`, pass the 4th `delegation` arg: `{ store: new DelegationStore(db), isOperatorValid, requestRemote: (actionType) => delegatedApprovalBroker.request({ prompt: \`approve ${actionType}?\` }, consentTimeoutMs) }`. The broker's broadcast is what surfaces the request to the delegate's `hitl.pendingQueue`.
+> **Task 17 addendum:** when constructing `ToolExecutor` in `assemble.ts`, pass the 4th `delegation` arg: `{ store: new DelegationStore(db), isOperatorValid, requestRemote: (actionType) => delegatedApprovalBroker.request({ prompt: \`approve ${actionType}?\` }, consentTimeoutMs) }`. The broker's broadcast is what surfaces the request to the delegate's`hitl.pendingQueue`.
 
 ---
 
@@ -1279,6 +1299,7 @@ git commit -m "feat(hitl): wire delegated approval into the executor gate (both-
 ### Task 9: Team-vault audit append
 
 **Files:**
+
 - Create: `packages/gateway/src/teamvault/team-vault-audit.ts`
 - Test: `packages/gateway/src/teamvault/team-vault-audit.test.ts`
 
@@ -1375,6 +1396,7 @@ git commit -m "feat(teamvault): tamper-evident audit append for invoke decisions
 ### Task 10: answerFederatedInvoke gate (I19) — RBAC + quorum + leak-proof result
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/invoke-gate.ts`
 - Test: `packages/gateway/src/federation/invoke-gate.test.ts`
 
@@ -1624,6 +1646,7 @@ git commit -m "feat(teamvault): answerFederatedInvoke gate (I19 identity+RBAC+qu
 ### Task 11: Add the three over-the-wire methods to the federation dispatcher
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/federation-rpc.ts`
 - Test: `packages/gateway/src/ipc/federation-rpc-invoke.test.ts`
 
@@ -1676,6 +1699,7 @@ Expected: FAIL — `teamVault` not on context / method returns miss.
 - [ ] **Step 3: Extend the context interface**
 
 In `federation-rpc.ts`, add to `FederationRpcContext` (after the `identityGuard` field, ~line 40):
+
 ```ts
   // Team Vault (Slice 2). Present on the answering (anchor) dispatch path.
   readonly teamVault?: {
@@ -1690,6 +1714,7 @@ In `federation-rpc.ts`, add to `FederationRpcContext` (after the `identityGuard`
 ```
 
 Add imports at the top:
+
 ```ts
 import { answerFederatedInvoke } from "../federation/invoke-gate.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
@@ -1771,6 +1796,7 @@ git commit -m "feat(teamvault): federation.invoke/quorumRespond/approvalRespond 
 ### Task 12: Quorum singleton + broadcast wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/quorum/quorum-singleton.ts`
 - Test: `packages/gateway/src/engine/quorum/quorum-singleton.test.ts`
 
@@ -1835,6 +1861,7 @@ git commit -m "feat(hitl): quorumCoordinator process singleton with late-bound b
 ### Task 13: Delegated-approval broker singleton
 
 **Files:**
+
 - Create: `packages/gateway/src/engine/delegated-approval-broker.ts`
 - Test: `packages/gateway/src/engine/delegated-approval-broker.test.ts`
 
@@ -1928,6 +1955,7 @@ git commit -m "feat(hitl): delegatedApprovalBroker (broadcast + resolve, mirror 
 ### Task 14: Team Vault management dispatcher (`teamvault.*`) + HITL gating
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/teamvault-rpc.ts`
 - Modify: `packages/gateway/src/engine/executor.ts` (add to `HITL_REQUIRED_BACKING`)
 - Test: `packages/gateway/src/ipc/teamvault-rpc.test.ts`
@@ -1937,6 +1965,7 @@ Local-only methods: `teamvault.put` (writes secret keys to the OS Vault + entry 
 - [ ] **Step 1: Add the two action types to `HITL_REQUIRED_BACKING`**
 
 In `executor.ts`, inside the `HITL_REQUIRED_BACKING` set (after `"vault.delete",` line 101):
+
 ```ts
   "teamvault.put",
   "teamvault.delete",
@@ -2117,6 +2146,7 @@ git commit -m "feat(teamvault): teamvault.* management dispatcher + HITL-gate pu
 ### Task 15: HITL delegation management dispatcher (`hitl.*`)
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/hitl-rpc.ts`
 - Test: `packages/gateway/src/ipc/hitl-rpc.test.ts`
 
@@ -2269,6 +2299,7 @@ git commit -m "feat(hitl): hitl.* delegation management dispatcher + pendingQueu
 ### Task 16: LAN admittance (I5) — admit the 3 wire methods, forbid management
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/lan-rpc.ts` (the I5 allow/forbid mechanism — read it first)
 - Modify: `packages/gateway/src/security-invariants.test.ts` (I5 case)
 - Test: covered by the I5 case + a new admittance assertion
@@ -2318,6 +2349,7 @@ git commit -m "feat(teamvault): admit federation.invoke/*Respond over LAN; forbi
 ### Task 17: assemble.ts — construct stores, wire dispatchers + ctx
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts` callers if not already at 35 (done in Task 2)
 - Test: a focused smoke test, e.g. `packages/gateway/test/integration/teamvault/assemble-teamvault.test.ts`
@@ -2364,6 +2396,7 @@ git commit -m "feat(teamvault): boot wiring — stores, broadcasts, dispatchers,
 ### Task 18: CLI — `nimbus team vault put|grant|revoke|list`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/team.ts`
 - Modify: the CLI registry (`COMMAND_NAMES`) AND `index.ts` `COMMAND_HANDLERS` if `team` subcommands are individually registered (read `team.ts` first)
 - Test: `packages/cli/src/commands/team-vault.test.ts`
@@ -2415,6 +2448,7 @@ git commit -m "feat(cli): nimbus team vault put|grant|revoke|list"
 ### Task 19: CLI — `nimbus team invoke`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/team.ts`
 - Test: `packages/cli/src/commands/team-invoke.test.ts`
 
@@ -2461,6 +2495,7 @@ git commit -m "feat(cli): nimbus team invoke (asker-side federation.askInvoke)"
 ### Task 20: CLI — `nimbus team delegate|delegations|approve|deny`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/team.ts`
 - Test: `packages/cli/src/commands/team-delegate.test.ts`
 
@@ -2518,19 +2553,22 @@ git commit -m "feat(cli): nimbus team delegate|delegations|approve|deny"
 ### Task 21: Tauri allowlist (I7)
 
 **Files:**
+
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs`
 - Modify: `packages/gateway/src/security-invariants.test.ts` (count mirror)
 
 > **Read `gateway_bridge.rs` ALLOWED_METHODS first** (currently 74). Add the renderer-SAFE methods; keep secret-writing renderer-FORBIDDEN.
 
 - [ ] **Step 1: Add the renderer-safe methods** (alphabetized) to `ALLOWED_METHODS`:
-```
+
+```rust
 "federation.approvalRespond",
 "federation.quorumRespond",
 "hitl.listDelegations",
 "hitl.pendingQueue",
 "teamvault.list",
 ```
+
 Do NOT add: `teamvault.put`, `teamvault.delete`, `teamvault.grant`, `teamvault.revoke`, `hitl.delegate`, `hitl.revokeDelegation`, `federation.invoke`, `federation.askInvoke` (RCE-class / out-of-band — renderer-forbidden, like `vault.set`/`federation.pair`).
 
 - [ ] **Step 2: Update the Rust count assertion** `assert_eq!(ALLOWED_METHODS.len(), 74)` → `79` (74 + 5). Verify by counting your additions.
@@ -2556,6 +2594,7 @@ git commit -m "feat(teamvault): expose renderer-safe team-vault/HITL read method
 ### Task 22: I19 runtime test + D15 static check
 
 **Files:**
+
 - Modify: `packages/gateway/src/security-invariants.test.ts` (I19)
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (D15 + run wiring)
 - Test: the static check gets a unit test in `scripts/structure-audit/check-nimbus-invariants.test.ts`
@@ -2630,6 +2669,7 @@ export function checkTeamVaultKeyInvariant(files: readonly FileEntry[]): Violati
 ```
 
 Wire it into `run()` alongside D14 (in the `binary-only || all` block):
+
 ```ts
   if (mode === "binary-only" || mode === "all") {
     const v = checkTeamVaultKeyInvariant(files);
@@ -2657,6 +2697,7 @@ git commit -m "feat(security): I19 + static D15 (team-vault secret leak-proof in
 ### Task 23: I20 + I21 runtime invariant tests
 
 **Files:**
+
 - Modify: `packages/gateway/src/security-invariants.test.ts`
 
 - [ ] **Step 1: Add the I20 + I21 cases** (these assert the production wiring, not just the unit logic):
@@ -2695,6 +2736,7 @@ git commit -m "test(security): I20 (delegated authority) + I21 (distinct-peer qu
 ### Task 24: Docs — SECURITY-INVARIANTS.md + CLAUDE.md/GEMINI.md I-list
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md`
 - Modify: `CLAUDE.md` + `GEMINI.md` (the I1–I18 list → add I19–I21)
 
@@ -2707,6 +2749,7 @@ git commit -m "test(security): I20 (delegated authority) + I21 (distinct-peer qu
 - **I20** — delegated approval honored only for a live in-scope delegate + valid operator identity · `engine/delegated-approval.ts`
 - **I21** — distinct-peer quorum counting intrinsic to `QuorumCoordinator` · `engine/quorum/quorum-coordinator.ts`
 ```
+
 Also extend the "Static complement" sentence to mention D15.
 
 - [ ] **Step 3: Validate doc links** — `bun run audit:doc-refs` (or the equivalent) and `markdownlint-cli2 --fix` the changed docs (superpowers + repo docs are linted in full preflight).
@@ -2725,6 +2768,7 @@ git commit -m "docs(security): document I19-I21 + D15 (team vault + quorum/deleg
 ### Task 25: Two-gateway invoke integration (anchor-proxy happy path + revocation)
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/teamvault/two-gateway-invoke.integration.test.ts`
 
 > Mirror `test/integration/federation/two-gateway-wire.integration.test.ts` (two in-process runtimes over a real loopback NaCl socket). Anchor B holds a team secret for a mock connector; peer A pairs, B grants A a tool, A calls `federation.askInvoke` → over the wire → B runs the mock tool with the injected secret → A receives only the result.
@@ -2745,6 +2789,7 @@ git commit -m "test(teamvault): two-gateway anchor-proxy invoke + revocation int
 ### Task 26: Three-gateway quorum integration (acceptance: single approval stays locked)
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/teamvault/quorum-invoke.integration.test.ts`
 
 - [ ] **Step 1: Write the test:** anchor C with `[hitl.quorum]` requiring 2 approvers for the mock tool's action-type; peer A invokes; approvers B + D answer `federation.quorumRespond`.
@@ -2764,6 +2809,7 @@ git commit -m "test(teamvault): three-gateway quorum invoke acceptance (single a
 ### Task 27: Delegated-approval audit-in-both-logs acceptance
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/teamvault/delegated-approval.integration.test.ts`
 
 - [ ] **Step 1: Write the test:** owner A delegates an action-type to delegate B; an action needing HITL fires on A; the request routes to B; B approves; assert the decision is recorded in BOTH A's and B's local audit logs (the acceptance criterion). Also assert that if B is offline, A falls back to a local owner prompt (D10).
@@ -2784,6 +2830,7 @@ git commit -m "test(hitl): delegated approval recorded in both audit logs + offl
 ### Task 28: Coverage-floor exclusions (local + Sonar parity)
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/exclusions.ts`
 - Modify: `sonar-project.properties`
 
@@ -2806,6 +2853,7 @@ git commit -m "chore(teamvault): coverage-floor exclusions for glue/CLI files (l
 ### Task 29: CHANGELOG + full preflight
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 
 - [ ] **Step 1: Add a dated Slice 2 delivery entry** to `docs/CHANGELOG.md` (do NOT touch the CLAUDE.md/GEMINI.md status line — convention). Summarize: Team Vault anchor-proxy invoke, quorum + delegated HITL, V35, I19–I21/D15, new `federation.invoke`/`teamvault.*`/`hitl.*` surfaces.
