@@ -100,9 +100,10 @@ carries line **and** branch data, fed into the **existing** `audit:coverage-floo
 bun test (per package, --preload istanbul-register.ts)
   └─ onLoad plugin: Babel preset-typescript + babel-plugin-istanbul (retainLines)
         instruments first-party src only → counters on globalThis.__coverage__
-  └─ global afterAll: __coverage__ → istanbul-lib-coverage map → istanbul-reports lcovonly
-        → coverage/lcov.info (DA + FN + BRDA)
-  └─ SF: paths rewritten repo-root-relative + forward-slash normalized, packages merged
+  └─ global afterAll: dump globalThis.__coverage__ → coverage/.nyc-tmp/<pid>.json (raw, idempotent)
+        ↓  (once, after ALL per-package runs)
+  merge-coverage.ts: glob .nyc-tmp/*.json → istanbul-lib-coverage merge → single coverage/lcov.info
+        (SF repo-root-relative + forward-slash; DA + FN + BRDA)
         ↓
   audit:coverage-floor (dual-axis: line ≥80, branch ≥80, ratcheting baseline v2)
         ↓
@@ -117,15 +118,55 @@ bun test (per package, --preload istanbul-register.ts)
     `*.test.*`/`*.spec.*`/`node_modules`); everything else returns `{contents: source, loader}`
     unchanged.
   - Transform via Babel with `presets:[[presetTypescript,{ allExtensions:true, isTSX:<from ext> }]]`,
-    `plugins:[[babelPluginIstanbul, { … }]]`, `retainLines:true`, `babelrc:false`, `configFile:false`,
-    plugin/preset passed as **imported function references**.
+    `plugins:[[babelPluginIstanbul, { … }]]`, `retainLines:true`, `sourceMaps:'inline'`,
+    `babelrc:false`, `configFile:false`, plugin/preset passed as **imported function references**.
+  - `sourceMaps:'inline'` keeps test-failure stack traces mapped back to the original `.ts`
+    (columns/expression locations shift under instrumentation even with `retainLines`). The
+    gate-critical *line* attribution in the lcov comes from `retainLines` (already spike-validated);
+    the inline map is for stack-trace DX, checked by §5.7 gate 2.
   - Return `loader:'jsx'` for `.tsx`, else `'js'`.
 - **`scripts/coverage/report-coverage.ts`** — second preload registering a global `afterAll`
-  that reads `globalThis.__coverage__`, builds a coverage map, and writes per-package
-  `coverage/lcov.info` via `istanbul-lib-report` + `istanbul-reports` (`lcovonly`), SF paths
-  forward-slash normalized.
+  that dumps the **raw** `globalThis.__coverage__` to a unique per-process file
+  `coverage/.nyc-tmp/<process.pid>.json` (overwrite-idempotent). It does **not** write lcov
+  directly — see §5.2.1. Counters accumulate on the shared `globalThis` across all files in a
+  single `bun test` invocation, so the last write per pid is the complete map for that package.
+- **`scripts/coverage/merge-coverage.ts`** — a standalone post-step (run **once** after all
+  per-package `bun test` invocations) that globs `coverage/.nyc-tmp/*.json`, merges them via
+  `istanbul-lib-coverage` `createCoverageMap().merge()`, and emits the single `coverage/lcov.info`
+  (`istanbul-lib-report` + `istanbul-reports` `lcovonly`), SF paths rewritten repo-root-relative +
+  forward-slash normalized (the maps are keyed by absolute path).
 - **(optional) `scripts/coverage/instrument-scope.ts`** — shared predicate for "is this a
   first-party src file to instrument," imported by both the plugin and tests.
+
+### 5.2.1 Concurrency-safe aggregation (why temp-JSON + merge)
+
+`bun test` today runs all files of one package in a **single process**, so `globalThis.__coverage__`
+is shared and the spike's `onLoad` fired once per unique module. But this gate blocks CI, and Bun
+is actively adding test concurrency/sharding, so the design must not depend on single-process
+semantics. The robust, industry-standard pattern (how `nyc` works) is: **each process writes a raw
+coverage JSON to a unique temp file, and a separate step merges them.** That stays correct whether
+`afterAll` fires once or per-file, and whether Bun runs one process or many:
+
+- The per-pid file is **overwrite-idempotent** — repeated `afterAll` fires within one process just
+  rewrite the same cumulative map; no double-count, no race on a shared `lcov.info`.
+- Cross-package/cross-pid merge uses istanbul's `createCoverageMap().merge()` (union by file, sum
+  hits). The floor only cares *covered vs not-covered*, so a summed hit count never misclassifies.
+- The per-package `cd $pkg` runs are already separate invocations (separate pids → separate temp
+  files), so the merge step replaces the old `sed`-concat of per-package lcovs.
+
+`coverage/.nyc-tmp/` lives under the existing `coverage/` output tree and is wiped at the start of
+each coverage run.
+
+### 5.2.2 Pinned dev dependencies
+
+All dev-only (never in the shipped surface), pinned to exact versions, added per the
+dependency-safety pre-flight (`nimbus-commands` skill — run it before `bun add`):
+
+- `@babel/core`, `@babel/preset-typescript`, `babel-plugin-istanbul` — the instrumentation transform.
+- `istanbul-lib-coverage`, `istanbul-lib-report`, `istanbul-reports` — map merge + lcov emit.
+
+`istanbul-lib-instrument` is **not** used — the Babel-plugin path is the fidelity-safe one (the
+`Bun.Transpiler → istanbul-lib-instrument` shortcut skews lines; see §2).
 
 ### 5.3 Modified files (the 6)
 
@@ -133,8 +174,12 @@ bun test (per package, --preload istanbul-register.ts)
    `branches`, `branchesHit`, `branchPct`. Parse `BRDA:line,block,branch,taken`: every `BRDA`
    is a branch obligation; `taken === '-' || parseInt(taken) <= 0` ⇒ not covered. Emit
    `branchPct = branches === 0 ? 100 : round(100*branchesHit/branches, 2)` at `end_of_record`.
-   Line metrics stay byte-identical. Add a sanity assertion path (warn if a file has `LF>0`
-   but `BRF===0` where branches are expected — guards against silent branch-data loss).
+   Line metrics stay byte-identical. Files with **zero branches are legitimate** (pure constants,
+   re-exports, single-expression modules) and correctly yield `branchPct = 100`; they must never
+   be flagged. Guard against *silent total branch-data loss* with a **global + canary** check, not
+   a per-file one: assert the merged lcov's total `BRF > 0` **and** that a designated branch-heavy
+   canary file (e.g. `engine/executor.ts`) reports `BRF ≥ <threshold>`. A per-file
+   "`LF>0 && BRF===0`" rule would false-positive on every branchless file — do not use it.
 2. **`scripts/coverage-floor/baseline.ts`** — bump to `version: 2`; `Baseline.files` becomes
    `Map<string, { line: number; branch: number }>`; JSON entry `{ min_line_pct, min_branch_pct }`.
    Keep a **v1→v2 read shim** mapping `{min_coverage_pct: x}` → `{line: x, branch: 0}` so old
@@ -158,7 +203,11 @@ bun test (per package, --preload istanbul-register.ts)
 Also: **`scripts/coverage-floor/exclusions.ts`** — unchanged; existing exemptions apply to the
 branch axis uniformly. Add the 2 Worker entry-point trees (`embedding-worker.ts`,
 `query-guard-worker.ts` + transitive-only-from-worker imports) to exclusions if not already
-covered, since they run in a realm the preload can't reach (parity with native coverage).
+covered, since they run in a realm the preload can't reach (parity with native coverage — Bun's
+native `--coverage` misses them too). **Deferred investigation (Sub-project D):** whether a Bun
+`Worker` can inherit instrumentation (a worker-side bootstrap that re-registers the plugin, or a
+preload-equivalent for the worker realm). If cheap, instrument the 2 workers; otherwise the
+documented exclusion stands as the accepted fallback (the reviewer concurred this is solid).
 
 ### 5.4 Baseline migration (atomic)
 
@@ -191,10 +240,11 @@ instrumented run.
 
 These are explicit go/no-go checks, run on **CI-Linux**, not the Windows dev box:
 
-1. **Multi-file merge correctness** — Bun runs test files concurrently; confirm
-   `globalThis.__coverage__` *accumulates* across all files in a package (not overwrites) and
-   the global `afterAll` flushes exactly once after all files (and on suite failure, partial
-   coverage is acceptable but must not crash).
+1. **Aggregation correctness** (§5.2.1) — confirm `globalThis.__coverage__` accumulates across all
+   files in an invocation, each per-pid JSON dump is the complete map, and `merge-coverage.ts`
+   unions across packages/pids without overwrite or covered/not-covered misclassification. Verify
+   the `afterAll` may fire per-file yet stays correct (overwrite-idempotent), and a suite failure
+   still leaves a usable partial dump without crashing.
 2. **Source-map fidelity on real gateway files** — spot-check `BRDA` line attribution against
    original `.ts` for a handful of non-trivial files (multi-line expressions, ternaries).
 3. **Perf** — measure the instrumented job wall-clock on CI-Linux vs the ~70s baseline; confirm
@@ -207,8 +257,9 @@ These are explicit go/no-go checks, run on **CI-Linux**, not the Windows dev box
 | Risk | Mitigation |
 |---|---|
 | Babel ESM-interop crash (broad filter) | Narrow runtime scope-gate + direct function refs (mandatory) |
-| Wrong preload key → silent 0% instrumentation (false green) | Use `[test].preload`/`--preload`; sanity-assert `BRF>0` on known-branchy files |
-| Worker blind spot | Exempt the 2 worker trees; parity with native coverage; document |
+| Wrong preload key → silent 0% instrumentation (false green) | Use `[test].preload`/`--preload`; global+canary `BRF>0` assert (§5.3) |
+| Concurrent/multi-process coverage loss or race | Per-pid temp-JSON dump + istanbul merge (§5.2.1); no shared-file writes |
+| Worker blind spot | Exempt the 2 worker trees; parity with native coverage; document; defer instrument probe to Sub-project D |
 | Branch baseline huge on day 1 | Expected (aggressive policy); ratchet grinds it down over sub-project B |
 | Per-OS branch skew | Seed baseline from CI-Linux only; platform files already exempt |
 | Istanbul vs Bun line-count drift | Reseed both axes together from first CI-Linux instrumented run |
@@ -274,3 +325,24 @@ ceiling. Designed in detail with the flagship spec.
   separate `coverage-targets.json`) — resolved in the flagship spec.
 - Confirm `@hughescr/stryker-bun-runner` still tracks current Bun/Stryker at the time Sub-project C
   starts (it's experimental) — fall back to the `command` runner on a tiny scope if it has bit-rotted.
+
+## 12. Review dispositions (2026-06-07)
+
+Addressing [the design review](./2026-06-07-true-coverage-program-design-review.md):
+
+1. **Concurrency & `__coverage__` aggregation — FIXED.** The reviewer's premise (Bun forks a
+   process per test file) isn't true of Bun's current single-process model — but the suggested
+   pattern is the right robust design regardless. Adopted per-pid raw-JSON dump + a dedicated
+   `merge-coverage.ts` (§5.1 diagram, §5.2, §5.2.1, §5.7 gate 1, §5.8). Removes all dependence on
+   `afterAll`/process-count semantics and future-proofs against Bun test sharding.
+2. **Stack-trace / source-map fidelity — FIXED (light).** Added `sourceMaps:'inline'` to the Babel
+   config (§5.2) for accurate stack traces. The gate-critical *line* attribution already comes from
+   `retainLines` (spike-validated); the inline map is a DX improvement, checked by §5.7 gate 2.
+3. **Pinned Babel/istanbul deps — FIXED.** Explicit dev-only, exact-pinned dependency list added
+   (§5.2.2) with the dependency-safety pre-flight reference.
+4. **Worker instrumentation — DEFERRED (with rationale).** Kept as a documented exclusion (parity
+   with native coverage, which also misses workers); the reviewer agreed this is a solid fallback.
+   Added a deferred probe in Sub-project D to test whether a worker can inherit the preload (§5.3).
+5. **Sanity-check false positives — FIXED.** Replaced the per-file "`LF>0 && BRF===0`" idea with a
+   global-total + canary-file `BRF>0` check; branchless files legitimately report `branchPct=100`
+   and are never flagged (§5.3, §5.8). Good catch.
