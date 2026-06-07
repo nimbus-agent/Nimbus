@@ -599,3 +599,67 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     expect(gate).toContain("isOperatorValid");
   });
 });
+
+describe("I19 — team-vault secret injection is leak-proof + fail-closed", () => {
+  test("federation.invoke routes through the answerFederatedInvoke gate (sole consumption path)", async () => {
+    const rpc = await read("packages/gateway/src/ipc/federation-rpc.ts");
+    expect(rpc).toContain("answerFederatedInvoke");
+  });
+
+  test("a missing team secret fails CLOSED before any spawn (never the operator credential)", async () => {
+    const { invokeTeamTool } = await import("./teamvault/team-tool-invoke.ts");
+    const vault = {
+      get: async () => null, // team entry has no secret
+      set: async () => {},
+      delete: async () => {},
+      listKeys: async () => [],
+    };
+    let spawned = false;
+    await expect(
+      invokeTeamTool(
+        {
+          vault,
+          sandboxCwd: "/tmp",
+          requiredSecretKeysFor: () => ["github.pat"],
+          spawnAndCall: async () => {
+            spawned = true;
+            return {};
+          },
+        },
+        { entry: "e", service: "github", toolId: "t", args: {} },
+      ),
+    ).rejects.toThrow();
+    expect(spawned).toBe(false);
+  });
+});
+
+describe("I20 — a delegated approval is honored only from a live, identity-valid delegate", () => {
+  test("forged peer / invalid identity / timeout all fall back to the local owner", async () => {
+    const { resolveDelegatedApproval } = await import("./engine/delegated-approval.ts");
+    const base = { isActiveDelegate: (p: string) => p === "peer:bob", isOperatorValid: () => true };
+    const forged = await resolveDelegatedApproval({
+      ...base,
+      requestRemote: async () => ({ kind: "answered", peerId: "peer:eve", approved: true }),
+    });
+    const badId = await resolveDelegatedApproval({
+      ...base,
+      isOperatorValid: () => false,
+      requestRemote: async () => ({ kind: "answered", peerId: "peer:bob", approved: true }),
+    });
+    expect(forged).toBe("fallback_to_owner");
+    expect(badId).toBe("fallback_to_owner");
+  });
+});
+
+describe("I21 — quorum counts only DISTINCT authenticated peers", () => {
+  test("the same peer approving twice does not satisfy a 2-of-N quorum", async () => {
+    const { QuorumCoordinator } = await import("./engine/quorum/quorum-coordinator.ts");
+    const ids: string[] = [];
+    const coord = new QuorumCoordinator((requestId: string) => ids.push(requestId));
+    const p = coord.collect({ approvers: 2, windowMs: 30 });
+    coord.respond(ids[0] ?? "", "peer:a", true);
+    coord.respond(ids[0] ?? "", "peer:a", true); // duplicate — must NOT count
+    const r = await p;
+    expect(r.outcome).toBe("failed"); // window elapses with only 1 distinct approver
+  });
+});

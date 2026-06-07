@@ -231,6 +231,39 @@ export function checkIdentityTokenVaultInvariant(files: readonly FileEntry[]): V
   return out;
 }
 
+// D15 (I19) — the team-vault Vault keyspace prefix `teamvault.` is composed ONLY in
+// team-vault-keys.ts (the single home for team secret-key derivation). Any other file that writes
+// the exact literal `"teamvault."` is constructing a team-secret vault key out of band — a leak /
+// keyspace-corruption vector. Matches the exact prefix literal (a trailing-dot then quote), so the
+// audit action-type `teamvault.invoke.<decision>` and the `teamvault.*` IPC method names do NOT
+// false-fail (they never close the quote immediately after the first dot).
+const TEAM_VAULT_KEYS_HOME = "packages/gateway/src/teamvault/team-vault-keys.ts";
+const TEAM_VAULT_PREFIX_LITERAL_RE = /['"`]teamvault\.['"`]/;
+
+export function checkTeamVaultPrefixInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath === TEAM_VAULT_KEYS_HOME || f.relPath.endsWith(".test.ts")) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      // `startsWith("teamvault.")` is IPC method-name routing, not a vault-key construction — the
+      // method namespace and the key prefix happen to share the literal. Only key construction leaks.
+      if (line.includes("startsWith")) continue;
+      if (TEAM_VAULT_PREFIX_LITERAL_RE.test(line)) {
+        out.push({
+          rule: "D15-teamvault-prefix",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -319,6 +352,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D14 identity token key used outside identity/ — I18 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkTeamVaultPrefixInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D15 teamvault. prefix composed outside team-vault-keys.ts — I19 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
