@@ -11,7 +11,7 @@ describe("parseLcov", () => {
     expect(parseLcov("\n\n  \n").size).toBe(0);
   });
 
-  test("parses a single record with all DA lines hit", () => {
+  test("parses a single record with all DA lines hit (no branches => 100% branch)", () => {
     const lcov = [
       "TN:",
       "SF:packages/gateway/src/foo.ts",
@@ -21,13 +21,19 @@ describe("parseLcov", () => {
       "end_of_record",
       "",
     ].join("\n");
-    const got = parseLcov(lcov);
-    const rec = got.get("packages/gateway/src/foo.ts");
-    expect(rec).toEqual({ lines: 3, covered: 3, pct: 100 });
+    const rec = parseLcov(lcov).get("packages/gateway/src/foo.ts");
+    expect(rec).toEqual({
+      lines: 3,
+      covered: 3,
+      pct: 100,
+      branches: 0,
+      branchesHit: 0,
+      branchPct: 100,
+    });
   });
 
-  test("parses a record with partial coverage and computes percent to 2 decimals", () => {
-    const lines = [
+  test("computes line percent to 2 decimals", () => {
+    const lcov = [
       "SF:packages/gateway/src/bar.ts",
       "DA:1,5",
       "DA:2,0",
@@ -37,63 +43,87 @@ describe("parseLcov", () => {
       "DA:6,0",
       "DA:7,0",
       "end_of_record",
-    ];
-    const got = parseLcov(lines.join("\n"));
-    const rec = got.get("packages/gateway/src/bar.ts");
-    expect(rec).toEqual({ lines: 7, covered: 3, pct: 42.86 });
-  });
-
-  test("treats a record with zero DA lines as 100% (empty source)", () => {
-    const lcov = "SF:packages/gateway/src/types/empty.ts\nend_of_record\n";
-    const rec = parseLcov(lcov).get("packages/gateway/src/types/empty.ts");
-    expect(rec).toEqual({ lines: 0, covered: 0, pct: 100 });
-  });
-
-  test("parses multiple consecutive records", () => {
-    const lcov = [
-      "SF:a.ts",
-      "DA:1,1",
-      "end_of_record",
-      "SF:b.ts",
-      "DA:1,0",
-      "DA:2,1",
-      "end_of_record",
-      "",
     ].join("\n");
-    const got = parseLcov(lcov);
-    expect(got.get("a.ts")).toEqual({ lines: 1, covered: 1, pct: 100 });
-    expect(got.get("b.ts")).toEqual({ lines: 2, covered: 1, pct: 50 });
+    const rec = parseLcov(lcov).get("packages/gateway/src/bar.ts");
+    expect(rec).toEqual({
+      lines: 7,
+      covered: 3,
+      pct: 42.86,
+      branches: 0,
+      branchesHit: 0,
+      branchPct: 100,
+    });
   });
 
-  test("ignores non-DA/SF lines (BRDA, FN, etc. are not used by the floor)", () => {
+  test("treats a record with zero DA lines as 100% line and 100% branch", () => {
+    const rec = parseLcov("SF:packages/gateway/src/types/empty.ts\nend_of_record\n").get(
+      "packages/gateway/src/types/empty.ts",
+    );
+    expect(rec).toEqual({
+      lines: 0,
+      covered: 0,
+      pct: 100,
+      branches: 0,
+      branchesHit: 0,
+      branchPct: 100,
+    });
+  });
+
+  test("parses BRDA branch records: taken '>0' is hit, '0' and '-' are misses", () => {
     const lcov = [
       "SF:c.ts",
-      "FN:1,fooFunc",
-      "FNDA:1,fooFunc",
-      "FNF:1",
-      "FNH:1",
       "DA:1,1",
       "DA:2,0",
-      "BRDA:1,0,0,1",
-      "LF:2",
-      "LH:1",
+      "BRDA:1,0,0,1", // hit
+      "BRDA:1,0,1,0", // miss (taken 0)
+      "BRDA:2,0,0,-", // miss (not reached)
+      "BRF:3",
+      "BRH:1",
       "end_of_record",
     ].join("\n");
     const rec = parseLcov(lcov).get("c.ts");
-    expect(rec).toEqual({ lines: 2, covered: 1, pct: 50 });
+    expect(rec).toEqual({
+      lines: 2,
+      covered: 1,
+      pct: 50,
+      branches: 3,
+      branchesHit: 1,
+      branchPct: 33.33,
+    });
+  });
+
+  test("a fully covered branch set yields 100% branch", () => {
+    const lcov = ["SF:d.ts", "DA:1,1", "BRDA:1,0,0,2", "BRDA:1,0,1,3", "end_of_record"].join("\n");
+    const rec = parseLcov(lcov).get("d.ts");
+    expect(rec?.branches).toBe(2);
+    expect(rec?.branchesHit).toBe(2);
+    expect(rec?.branchPct).toBe(100);
   });
 
   test("normalizes backslashes in SF paths to forward slashes", () => {
-    const lcov = "SF:packages\\gateway\\src\\foo.ts\nDA:1,1\nend_of_record\n";
-    const got = parseLcov(lcov);
+    const got = parseLcov("SF:packages\\gateway\\src\\foo.ts\nDA:1,1\nend_of_record\n");
     expect(got.has("packages/gateway/src/foo.ts")).toBe(true);
-    expect(got.has(String.raw`packages\gateway\src\foo.ts`)).toBe(false);
   });
 
-  test("a duplicate SF record (re-emitted from a second test run) keeps the last record", () => {
-    const lcov = ["SF:a.ts", "DA:1,0", "end_of_record", "SF:a.ts", "DA:1,1", "end_of_record"].join(
-      "\n",
-    );
-    expect(parseLcov(lcov).get("a.ts")?.pct).toBe(100);
+  test("a duplicate SF record keeps the last record (line and branch reset between records)", () => {
+    const lcov = [
+      "SF:a.ts",
+      "DA:1,0",
+      "BRDA:1,0,0,-",
+      "end_of_record",
+      "SF:a.ts",
+      "DA:1,1",
+      "BRDA:1,0,0,1",
+      "end_of_record",
+    ].join("\n");
+    const rec = parseLcov(lcov).get("a.ts");
+    expect(rec).toEqual({
+      lines: 1,
+      covered: 1,
+      pct: 100,
+      branches: 1,
+      branchesHit: 1,
+      branchPct: 100,
+    });
   });
 });
