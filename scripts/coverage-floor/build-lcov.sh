@@ -29,7 +29,11 @@ run_pkg () {
   echo "=== ${pkg} ==="
   (
     cd "${pkg}"
-    bun test --preload "${REGISTER}" --preload "${REPORT}"
+    # Istanbul instrumentation makes heavy tests ~2-3x slower; raise the
+    # per-test timeout (default 5000ms) so slow integration tests don't flake
+    # out and drop coverage on the files they cover. The fast dev-loop
+    # `bun test` (no preloads) keeps the default.
+    bun test --timeout 60000 --preload "${REGISTER}" --preload "${REPORT}"
   ) || true  # tolerate failing tests; whatever coverage was collected still merges
 }
 
