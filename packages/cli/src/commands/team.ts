@@ -13,7 +13,34 @@ export type TeamCommand =
   | { kind: "query"; namespace: string; peerId: string; purpose: string }
   | { kind: "whoKnows"; peerId: string; query: string }
   | { kind: "consent"; requestId: string; approved: boolean }
-  | { kind: "listen" };
+  | { kind: "listen" }
+  // Team Vault (Slice 2)
+  | { kind: "vaultPut"; entry: string; service: string; secrets: Record<string, string> }
+  | { kind: "vaultGrant"; entry: string; peerId: string; toolId: string }
+  | { kind: "vaultRevoke"; entry: string; peerId: string; toolId: string }
+  | { kind: "vaultList" }
+  | {
+      kind: "invoke";
+      peerId: string;
+      entry: string;
+      toolId: string;
+      purpose: string;
+      args: unknown;
+    }
+  | {
+      kind: "delegate";
+      delegatePeer: string;
+      scopeKind: string;
+      scopeValue: string;
+      expires: number;
+    }
+  | { kind: "delegations" }
+  | { kind: "respond"; requestId: string; approved: boolean; as: string };
+
+/** Minimal IPC surface the team-vault/invoke/delegation subcommands need (injectable for tests). */
+export interface TeamRpcClient {
+  call<T = unknown>(method: string, params?: unknown): Promise<T>;
+}
 
 function collectFilters(args: string[]): Array<{ kind: string; value: string }> {
   const filters: Array<{ kind: string; value: string }> = [];
@@ -90,6 +117,87 @@ function parseConsent(rest: string[]): TeamCommand {
   return { kind: "consent", requestId, approved: verb === "approve" };
 }
 
+function parseSecrets(args: string[]): Record<string, string> {
+  const secrets: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--secret") {
+      const kv = args[i + 1];
+      const eq = typeof kv === "string" ? kv.indexOf("=") : -1;
+      if (typeof kv !== "string" || eq <= 0) throw new Error("--secret requires key=value");
+      secrets[kv.slice(0, eq)] = kv.slice(eq + 1);
+      i += 1;
+    }
+  }
+  return secrets;
+}
+
+function parseVault(rest: string[]): TeamCommand {
+  const action = rest[0];
+  if (action === "put") {
+    const [entry, service] = [rest[1], rest[2]];
+    if (!entry || !service)
+      throw new Error("Usage: nimbus team vault put <entry> <service> --secret key=value");
+    const secrets = parseSecrets(rest.slice(3));
+    if (Object.keys(secrets).length === 0)
+      throw new Error("vault put requires at least one --secret key=value");
+    return { kind: "vaultPut", entry, service, secrets };
+  }
+  if (action === "grant" || action === "revoke") {
+    const [entry, peerId, toolId] = [rest[1], rest[2], rest[3]];
+    if (!entry || !peerId || !toolId)
+      throw new Error(`Usage: nimbus team vault ${action} <entry> <peerId> <toolId>`);
+    return action === "grant"
+      ? { kind: "vaultGrant", entry, peerId, toolId }
+      : { kind: "vaultRevoke", entry, peerId, toolId };
+  }
+  if (action === "list") return { kind: "vaultList" };
+  throw new Error("Usage: nimbus team vault [put|grant|revoke|list] ...");
+}
+
+function flagValue(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+function parseInvoke(rest: string[]): TeamCommand {
+  const [peerId, entry, toolId] = [rest[0], rest[1], rest[2]];
+  if (!peerId || !entry || !toolId)
+    throw new Error(
+      'Usage: nimbus team invoke <peerId> <entry> <toolId> --purpose "<why>" [--args <json>]',
+    );
+  const purpose = flagValue(rest, "--purpose") ?? "";
+  const argsRaw = flagValue(rest, "--args");
+  let args: unknown = {};
+  if (argsRaw !== undefined) {
+    try {
+      args = JSON.parse(argsRaw);
+    } catch {
+      throw new Error("--args must be valid JSON");
+    }
+  }
+  return { kind: "invoke", peerId, entry, toolId, purpose, args };
+}
+
+function parseDelegate(rest: string[]): TeamCommand {
+  const delegatePeer = rest[0];
+  const scope = flagValue(rest, "--scope");
+  const expiresRaw = flagValue(rest, "--expires");
+  const colon = typeof scope === "string" ? scope.indexOf(":") : -1;
+  if (!delegatePeer || typeof scope !== "string" || colon <= 0 || expiresRaw === undefined) {
+    throw new Error("Usage: nimbus team delegate <peerId> --scope kind:value --expires <seconds>");
+  }
+  const expires = Number.parseInt(expiresRaw, 10);
+  if (!Number.isFinite(expires) || expires <= 0)
+    throw new Error("--expires must be a positive number of seconds");
+  return {
+    kind: "delegate",
+    delegatePeer,
+    scopeKind: scope.slice(0, colon),
+    scopeValue: scope.slice(colon + 1),
+    expires,
+  };
+}
+
 export function parseTeamArgs(argv: string[]): TeamCommand {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -108,9 +216,28 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
       return parseConsent(rest);
     case "listen":
       return { kind: "listen" };
+    case "vault":
+      return parseVault(rest);
+    case "invoke":
+      return parseInvoke(rest);
+    case "delegate":
+      return parseDelegate(rest);
+    case "delegations":
+      return { kind: "delegations" };
+    case "approve":
+    case "deny": {
+      const requestId = rest[0];
+      if (!requestId) throw new Error(`Usage: nimbus team ${sub} <requestId> [--as <peerId>]`);
+      return {
+        kind: "respond",
+        requestId,
+        approved: sub === "approve",
+        as: flagValue(rest, "--as") ?? "self",
+      };
+    }
     default:
       throw new Error(
-        `Unknown subcommand: ${sub}\nUsage: nimbus team [discover|pair|namespace|query|who-knows]`,
+        `Unknown subcommand: ${sub}\nUsage: nimbus team [discover|pair|namespace|query|who-knows|vault|invoke|delegate|delegations|approve|deny]`,
       );
   }
 }
@@ -177,6 +304,105 @@ async function runConsentListener(client: IPCClient): Promise<void> {
   await new Promise<void>(() => {}); // run until interrupted (Ctrl-C)
 }
 
+/**
+ * Executes the Slice-2 team-vault / invoke / delegation subcommands over an injected IPC client.
+ * Returns true if it handled `cmd`, false otherwise (so `runTeam` falls through to the federation
+ * subcommands). Exported (with `runTeamCommand`) so tests can drive it with a fake client.
+ */
+export async function runTeamVaultRpc(client: TeamRpcClient, cmd: TeamCommand): Promise<boolean> {
+  switch (cmd.kind) {
+    case "vaultPut": {
+      await client.call("teamvault.put", {
+        entry: cmd.entry,
+        service: cmd.service,
+        secrets: cmd.secrets,
+      });
+      process.stdout.write(
+        `Stored ${Object.keys(cmd.secrets).length} secret(s) for ${cmd.entry}\n`,
+      );
+      return true;
+    }
+    case "vaultGrant": {
+      await client.call("teamvault.grant", {
+        entry: cmd.entry,
+        peerId: cmd.peerId,
+        toolId: cmd.toolId,
+      });
+      process.stdout.write(`Granted ${cmd.peerId} use of ${cmd.toolId} on ${cmd.entry}\n`);
+      return true;
+    }
+    case "vaultRevoke": {
+      await client.call("teamvault.revoke", {
+        entry: cmd.entry,
+        peerId: cmd.peerId,
+        toolId: cmd.toolId,
+      });
+      process.stdout.write(`Revoked ${cmd.peerId} from ${cmd.toolId} on ${cmd.entry}\n`);
+      return true;
+    }
+    case "vaultList": {
+      const r = await client.call<unknown>("teamvault.list", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      return true;
+    }
+    case "invoke": {
+      const r = await client.call<unknown>("federation.askInvoke", {
+        peerId: cmd.peerId,
+        entry: cmd.entry,
+        toolId: cmd.toolId,
+        purpose: cmd.purpose,
+        args: cmd.args,
+      });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      return true;
+    }
+    case "delegate": {
+      // expires is seconds-from-now; the gateway stores an absolute expiresAt (ms).
+      const expiresAt = Date.now() + cmd.expires * 1000;
+      const r = await client.call<unknown>("hitl.delegate", {
+        delegatePeer: cmd.delegatePeer,
+        scopeKind: cmd.scopeKind,
+        scopeValue: cmd.scopeValue,
+        expiresAt,
+      });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      return true;
+    }
+    case "delegations": {
+      const r = await client.call<unknown>("hitl.listDelegations", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      return true;
+    }
+    case "respond": {
+      // A response may resolve either a quorum vote or a delegated approval — try both brokers.
+      await client.call("federation.approvalRespond", {
+        requestId: cmd.requestId,
+        peerId: cmd.as,
+        approved: cmd.approved,
+      });
+      await client.call("federation.quorumRespond", {
+        requestId: cmd.requestId,
+        peerId: cmd.as,
+        approved: cmd.approved,
+      });
+      process.stdout.write(`${cmd.approved ? "approved" : "denied"} ${cmd.requestId}\n`);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+/** Parse + execute a team subcommand over an injected client (test entry point). */
+export async function runTeamCommand(
+  argv: string[],
+  deps: { client: TeamRpcClient },
+): Promise<void> {
+  const cmd = parseTeamArgs(argv);
+  const handled = await runTeamVaultRpc(deps.client, cmd);
+  if (!handled) throw new Error(`runTeamCommand does not handle subcommand: ${cmd.kind}`);
+}
+
 export async function runTeam(argv: string[]): Promise<void> {
   let cmd: TeamCommand;
   try {
@@ -194,6 +420,10 @@ export async function runTeam(argv: string[]): Promise<void> {
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
+    // Slice-2 team-vault / invoke / delegation subcommands first; fall through to federation below.
+    if (await runTeamVaultRpc(client, cmd)) {
+      return;
+    }
     switch (cmd.kind) {
       case "discover": {
         const r = await client.call<{ peers: unknown[] }>("federation.discover", {});

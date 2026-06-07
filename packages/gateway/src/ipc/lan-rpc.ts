@@ -39,6 +39,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "federation.consentRespond", // local/Tauri-only owner action — never answerable over the wire
   "federation.ask", // local-only asker entrypoint (sends over the wire to a peer); not answerable
   "federation.askExpertise", // local-only asker entrypoint; not answerable
+  "federation.askInvoke", // local-only asker entrypoint (Slice 2 team-vault invoke); not answerable
   // Team Vault + multi-user/quorum HITL (Slice 2). The management surfaces are local/CLI/Tauri-only;
   // only the three wire methods federation.invoke / federation.quorumRespond /
   // federation.approvalRespond are answerable over the wire (gated by I19 RBAC + quorum).

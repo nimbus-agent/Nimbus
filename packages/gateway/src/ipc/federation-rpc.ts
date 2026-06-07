@@ -241,6 +241,25 @@ export async function dispatchFederationRpc(
         { query: requireString(rec, "query"), purpose: requireString(rec, "purpose") },
       );
     },
+    // Asker-side: ask the trust anchor (a paired peer) to run a team-vault tool OVER THE WIRE. The
+    // anchor answers via federation.invoke (I19). Local-only entrypoint (forbidden over LAN, I5).
+    "federation.askInvoke": async (p) => {
+      const rec = asRecord(p);
+      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      return sendFederatedOverWire(
+        row.host_ip as string,
+        row.host_port as number,
+        selfIdentity,
+        row.peer_pubkey,
+        "federation.invoke",
+        {
+          entry: requireString(rec, "entry"),
+          toolId: requireString(rec, "toolId"),
+          purpose: requireString(rec, "purpose"),
+          args: rec["args"],
+        },
+      );
+    },
     // Anchor-side: a teammate asks the trust anchor to run a named team-vault tool. The secret is
     // injected inside teamVault.runTool (never in this scope); I19 gate enforces RBAC + quorum.
     // SECURITY (I17/R1): `peerId` here is NOT trusted from the request body. The LAN transport
