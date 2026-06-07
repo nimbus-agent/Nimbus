@@ -2308,6 +2308,8 @@ CREATE INDEX IF NOT EXISTS idx_gdpr_request_pending ON gdpr_purge_request (statu
 `;
 ```
 
+> **Ledger retention (spec §9.1):** these rows are the compliance ledger — **retained indefinitely**, never pruned, and **not** subject to the `retention.min_days` floor (that governs `tool_call_log` only). No deletion logic is added for them.
+
 Wire V37 into `runner.ts` (`simpleStep(37, GDPR_V37_SQL)` + `[37, "gdpr purge ledger"]`) and bump `CURRENT_SCHEMA_VERSION = 37`.
 
 - [ ] **Step 3: Write `gdpr-purge-store.ts`**
@@ -2651,7 +2653,7 @@ describe("dispatchPolicyRpc", () => {
 
 - [ ] **Step 2: Run → FAIL → implement `policy-rpc.ts`** using the `dispatchByMethod` helper (`ipc/_lib/dispatch-by-method.ts`). `policy.sign` and `team.purge` guard on `ctx.isAnchor`/operator and throw if not permitted. Register the dispatcher in the IPC server.
 
-- [ ] **Step 3: Add CLI commands.** `nimbus policy show|verify` (read), `nimbus policy sign|push|trust` (local/anchor), `nimbus admin status` (prints the snapshot), `nimbus admin console` (prints `http://127.0.0.1:<port>/admin#token=<bearer>` — token in the fragment so it never reaches the server logs), `nimbus team purge --user <id> [--status <jobId>]`, `nimbus team audit`.
+- [ ] **Step 3: Add CLI commands.** `nimbus policy show|verify` (read), `nimbus policy sign|push|trust` (local/anchor), `nimbus admin status` (prints the snapshot), `nimbus admin console` (prints `http://127.0.0.1:<port>/admin#token=<bearer>` — token in the fragment so it never reaches the server logs), `nimbus admin token` (prints ONLY the read-surface bearer, for a Prometheus `bearer_token_file`), `nimbus team purge --user <id> [--status <jobId>]`, `nimbus team audit`.
 
 - [ ] **Step 4: Run dispatcher test → PASS.** Typecheck gateway + cli. Lint + commit.
 

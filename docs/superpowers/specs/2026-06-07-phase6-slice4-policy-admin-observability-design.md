@@ -117,6 +117,14 @@ function both `sign()` and `verify()` call. Canonical form:
 The signature covers `canonicalize(toml)`. The `.sig` is base64; the `.toml` on disk may carry either
 line-ending style without affecting validity.
 
+`canonicalize` is deliberately **byte-level, not a TOML AST round-trip** — it normalizes line endings /
+BOM / trailing whitespace but does **not** reformat the document, so it avoids fragile AST
+reconstruction. The consequence: **any semantically-invisible edit** (a changed comment, reordered keys,
+added blank line *between* keys) still changes the signed bytes and invalidates the `.sig`. Therefore
+the anchor must **re-sign after every edit** — the console policy editor (`PUT /v1/admin/policy`) signs
+automatically on save, and the manual path is `nimbus policy sign`. A policy whose `.sig` does not match
+its current bytes is treated as unsigned (fail-closed, §4.3 R1).
+
 ```toml
 [policy]
 version    = 1
@@ -239,6 +247,11 @@ Exposed three ways from the **same** snapshot:
   configures it via the standard `authorization` / `bearer_token_file` scrape-config keys
   (`Authorization: Bearer <token>`). The gateway already binds `127.0.0.1` by default (I6), so the token
   is the second layer, not the only one.
+  **Token retrieval:** the bearer is the existing HTTP read-surface token (the same one SCIM/`/v1/*`
+  already use — persisted in `<configDir>` and managed by the existing HTTP-auth code, not a new
+  secret). To wire a scraper, the operator obtains it with **`nimbus admin token`** (prints just the
+  bearer, suitable for piping into a `bearer_token_file`); `nimbus admin console` prints the same token
+  embedded in the console URL fragment. No new storage mechanism is introduced.
 
 ## 7. Admin Console
 
@@ -325,6 +338,13 @@ time, and the returned signed deletion record. The purge **never blocks on offli
   with the blast-radius philosophy). The per-peer signed deletion records are the durable proof of exactly
   what was purged and when.
 
+**Ledger lifecycle.** The `gdpr_purge_job` / `gdpr_purge_request` rows are **retained indefinitely** —
+they are the compliance ledger of who was purged, when, and with which signed records. They are
+**deliberately not subject to** the `retention.min_days` floor (which governs `tool_call_log` only) and
+are never pruned. The size impact is negligible: purge events are rare and each row is a handful of
+small fields plus one base64 signature. (The aggregate `team.purge.completed` entry also lands in the
+audit chain; the table rows remain as the queryable per-peer detail behind `nimbus team purge --status`.)
+
 ## 10. Security invariant I22 (triple rule)
 
 **I22** — *Org policy is applied only from a signature-verified bundle, and only ever makes enforcement
@@ -352,7 +372,7 @@ I22's wiring + docs + test land in the **same commit** (triple rule).
 
 - **IPC:** `admin.status`, `policy.show`, `policy.sign` (anchor-only), `policy.trust`, `policy.refetch`,
   `team.auditMerged`, `team.purge`.
-- **CLI:** `nimbus policy {show,sign,push,trust,verify}` · `nimbus admin {status,console}` · `nimbus team {audit,purge}`.
+- **CLI:** `nimbus policy {show,sign,push,trust,verify}` · `nimbus admin {status,console,token}` (`token` prints the read-surface bearer for scraper config) · `nimbus team {audit,purge}`.
 - **HTTP (read surface):** `GET /v1/admin/status`, `GET /metrics`, `GET /admin/*` (static console). Policy
   edit-on-anchor adds one `WRITE_ROUTE_ALLOWLIST` entry: `PUT /v1/admin/policy` (bearer + audit,
   anchor-only — validates, then locally signs).
@@ -426,3 +446,21 @@ Resolutions to [the design review](./2026-06-07-phase6-slice4-policy-admin-obser
 
 The review's "Alignment with Invariants" section (I22, I7 Tauri exclusions, audit-shipper metadata-only)
 recorded **no** required changes.
+
+### 15.1 Second-round considerations (all addressed; none deferred)
+
+The follow-up review confirmed the five above and raised three **minor** points — all documentation/clarity
+(plus one tiny CLI affordance); none change the architecture:
+
+6. **Purge ledger lifecycle & DB growth** — *Documented.* §9.1 now states the `gdpr_purge_job`/`_request`
+   rows are retained **indefinitely** as the compliance ledger, are **not** subject to `retention.min_days`
+   (which governs `tool_call_log` only), are never pruned, and have negligible footprint (purge events are
+   rare). Behavior was already correct; the decision is now explicit.
+7. **TOML canonicalization is byte-level, not semantic** — *Documented.* §4.2.1 now notes canonicalization
+   normalizes line endings/BOM/trailing-whitespace but does not reformat TOML, so *any* edit (including
+   comments / inter-key whitespace) invalidates the `.sig` and requires re-signing — automatic on the
+   anchor console editor's save, manual via `nimbus policy sign`. This is the intended trade-off (no fragile
+   AST round-trip).
+8. **Prometheus scraper token retrieval** — *Fixed (doc + small affordance).* §6 documents that `/metrics`
+   uses the existing HTTP read-surface bearer (no new secret) and adds **`nimbus admin token`** to print it
+   for a `bearer_token_file`; §11 adds `token` to the `nimbus admin` subcommands.
