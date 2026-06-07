@@ -56,4 +56,64 @@ describe("teamvault-rpc", () => {
     expect(g.kind).toBe("hit");
     if (g.kind === "hit") expect(g.value).toEqual({ ok: true });
   });
+
+  it("delete removes the named secret keys from the vault, leaving others", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      {
+        entry: "prod-aws",
+        service: "aws",
+        secrets: { "aws.access_key_id": "x", "aws.secret_access_key": "y" },
+      },
+      ctx(db, vault),
+    );
+
+    const out = await dispatchTeamVaultRpc(
+      "teamvault.delete",
+      { entry: "prod-aws", keys: ["aws.access_key_id", 123] }, // non-string keys are skipped
+      ctx(db, vault),
+    );
+
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") expect(out.value).toEqual({ ok: true });
+    expect(vault.has(teamVaultKey("prod-aws", "aws.access_key_id"))).toBe(false);
+    expect(vault.has(teamVaultKey("prod-aws", "aws.secret_access_key"))).toBe(true);
+  });
+
+  it("revoke returns ok after a grant", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      { entry: "prod-aws", service: "aws", secrets: { "aws.access_key_id": "x" } },
+      ctx(db, vault),
+    );
+    await dispatchTeamVaultRpc(
+      "teamvault.grant",
+      { entry: "prod-aws", peerId: "peer:abc", toolId: "aws.ec2.instance.stop" },
+      ctx(db, vault),
+    );
+
+    const r = await dispatchTeamVaultRpc(
+      "teamvault.revoke",
+      { entry: "prod-aws", peerId: "peer:abc", toolId: "aws.ec2.instance.stop" },
+      ctx(db, vault),
+    );
+
+    expect(r.kind).toBe("hit");
+    if (r.kind === "hit") expect(r.value).toEqual({ ok: true });
+  });
+
+  it("rejects invalid params with a TeamVaultRpcError (-32602)", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await expect(dispatchTeamVaultRpc("teamvault.put", null, ctx(db, vault))).rejects.toThrow(
+      /ERR_INVALID_PARAMS/,
+    );
+  });
 });
