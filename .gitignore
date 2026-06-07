@@ -130,6 +130,9 @@ playwright/.cache/
 # --- Git worktrees ---
 .worktrees/
 
+# --- Local, machine-specific dev helpers (not product code; platform-equality N/A) ---
+scripts/local/
+
 # --- Superpowers brainstorming artifacts ---
 .superpowers/
 
