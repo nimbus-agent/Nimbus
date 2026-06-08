@@ -41,10 +41,10 @@ cbc264f51fdc7082c86a4564ec37cfc9066ee260:packages/gateway/test/unit/ipc/connecto
 317c6f12a4435a3497314d9a9ab8c8fc79d80819:docs/superpowers/plans/2026-05-21-nimbus-security-scan.md:private-key:235
 317c6f12a4435a3497314d9a9ab8c8fc79d80819:docs/superpowers/plans/2026-05-21-nimbus-security-scan.md:private-key:237
 
-# Phase 6 Slice 4 (2026-06-07) — `const { privkeyB64: <name> } = await ensureAnchorKeypair(vault)`
-# in assemble.ts. The Ed25519 anchor signing seed is resolved from the Vault at runtime; the
-# destructuring-rename shape (`privkeyB64: purgePrivkeyB64`) trips gitleaks `generic-api-key`.
-# It is NOT a literal secret — no key value appears in source. HEAD carries inline
-# `gitleaks:allow` markers; the historical commits are pinned here.
+# Phase 6 Slice 4 (2026-06-07) — the Ed25519 anchor signing seed is destructured from
+# ensureAnchorKeypair(vault) in assemble.ts and resolved from the Vault at runtime. The
+# renamed-destructuring shape trips gitleaks generic-api-key, but no literal key value
+# appears in source. HEAD carries inline gitleaks-allow markers; the historical commits
+# are pinned below.
 ff3ab297ae365f7e2a499b21ffbb3111a79f9cc8:packages/gateway/src/platform/assemble.ts:generic-api-key:523
 457ed8bf52502b20b0c4f9d2a142348639093075:packages/gateway/src/platform/assemble.ts:generic-api-key:660
