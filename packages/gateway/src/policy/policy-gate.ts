@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { QuorumRule } from "../config/nimbus-toml.ts";
-import { verifyPolicy } from "./policy-signing.ts";
+import { canonicalize, verifyPolicy } from "./policy-signing.ts";
 import type { PersistedPolicy, PolicyStore } from "./policy-store.ts";
 import { parsePolicyToml } from "./policy-toml.ts";
 import type { OrgPolicy, PolicyState } from "./types.ts";
@@ -59,7 +59,9 @@ export function computeEnforced(policy: OrgPolicy, base: LocalBaseline): Enforce
  */
 export function verifyCandidate(toml: string, sig: string, pinnedPubkey: string): OrgPolicy | null {
   if (!verifyPolicy(toml, sig, pinnedPubkey)) return null;
-  return parsePolicyToml(toml);
+  // Parse the SAME canonical bytes the signature was verified over, never the raw input,
+  // so a verify/parse representation drift can never admit a different policy.
+  return parsePolicyToml(canonicalize(toml));
 }
 
 /**
@@ -71,10 +73,20 @@ export class PolicyGate {
   private active: OrgPolicy | undefined;
   private state: PolicyState = { signatureValid: false, pendingRestart: false, source: "none" };
 
+  /** Copy the baseline + its collections so external mutation can never alter enforcement. */
+  private static cloneBaseline(base: LocalBaseline): LocalBaseline {
+    return {
+      retentionDays: base.retentionDays,
+      hitlRequired: new Set(base.hitlRequired),
+      quorum: new Map(base.quorum),
+    };
+  }
+
   constructor(
     private readonly store: PolicyStore,
     private baseline: LocalBaseline,
   ) {
+    this.baseline = PolicyGate.cloneBaseline(baseline);
     this.rehydrate();
   }
 
@@ -109,15 +121,15 @@ export class PolicyGate {
   }
 
   setBaseline(base: LocalBaseline): void {
-    this.baseline = base;
+    this.baseline = PolicyGate.cloneBaseline(base);
   }
 
   enforced(): EnforcedPolicy {
     if (this.active === undefined) {
       return {
         retentionDays: this.baseline.retentionDays,
-        hitlRequired: this.baseline.hitlRequired,
-        quorum: this.baseline.quorum,
+        hitlRequired: new Set(this.baseline.hitlRequired),
+        quorum: new Map(this.baseline.quorum),
       };
     }
     return computeEnforced(this.active, this.baseline);

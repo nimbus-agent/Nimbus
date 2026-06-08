@@ -122,8 +122,6 @@ function start(token: string): void {
     return;
   }
   const client = makeClient(token);
-  // Default to showing the policy editor; the PUT endpoint enforces authority.
-  const isAnchor = true;
   let current: Route = "overview";
   let latest: GatewayStatus | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -132,6 +130,9 @@ function start(token: string): void {
     if (app === null || latest === null) {
       return;
     }
+    // Only the anchor may author policy. Peers render the editor read-only; the PUT
+    // endpoint is the authoritative server-side gate regardless of this UI hint.
+    const isAnchor = latest.policy.source === "anchor";
     app.innerHTML = renderView(current, latest, isAnchor);
     if (current === "policy") {
       wirePolicySave(client);

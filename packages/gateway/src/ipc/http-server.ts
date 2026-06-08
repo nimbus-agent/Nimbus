@@ -458,10 +458,14 @@ export function startReadOnlyHttpServer(
 
   // Single writable DB (I13). Opened when ANY write surface is enabled — deployment writes, SCIM
   // provisioning, OR the anchor policy write — each must work independently of the others.
+  // The policy write surface mounts only when BOTH authorPolicy AND resolveAdminToken
+  // are wired (see the `policy` gate below). Opening the writable handle on authorPolicy
+  // alone would over-elevate the server when the admin token is absent and the surface is
+  // not actually mountable — so require both for the policy branch.
   const writeDb =
     opts.resolveDeploymentToken === undefined &&
     opts.resolveScimToken === undefined &&
-    opts.authorPolicy === undefined
+    (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
       : new Database(dbPath, { create: false, readwrite: true });
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });

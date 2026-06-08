@@ -12,6 +12,12 @@ export interface PersistedPolicy {
   readonly source: PolicySource;
 }
 
+/** The `org_policy_state.source` column is plain TEXT (no CHECK). Validate against the
+ * allowed set before trusting it; fail closed to "none" (ungoverned) on any unexpected value. */
+function toPolicySource(value: string): PolicySource {
+  return value === "anchor" || value === "peer" || value === "none" ? value : "none";
+}
+
 interface PolicyRow {
   toml: string;
   sig: string;
@@ -54,7 +60,7 @@ export class PolicyStore {
       version: row.version,
       ...(row.issued_at === null ? {} : { issuedAt: row.issued_at }),
       fetchedAt: row.fetched_at,
-      source: row.source as PolicySource,
+      source: toPolicySource(row.source),
     };
   }
 

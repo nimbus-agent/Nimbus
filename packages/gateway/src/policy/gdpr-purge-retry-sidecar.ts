@@ -69,10 +69,19 @@ export function startGdprPurgeRetry(
 ): GdprPurgeRetryHandle {
   const deps = buildGdprPurgeRetryDeps(db, opts);
   const interval = opts.intervalMs ?? GDPR_PURGE_RETRY_INTERVAL_MS;
+  let inFlight = false;
   const tick = (): void => {
-    void retryPendingPurges(deps).catch(() => {
-      // Best-effort maintenance — never crash the scheduler.
-    });
+    // Skip this tick if a previous async pass is still running — overlapping passes
+    // could duplicate peer requests and race completion/audit writes.
+    if (inFlight) return;
+    inFlight = true;
+    void retryPendingPurges(deps)
+      .catch(() => {
+        // Best-effort maintenance — never crash the scheduler.
+      })
+      .finally(() => {
+        inFlight = false;
+      });
   };
   tick();
   const timer = setInterval(tick, interval);

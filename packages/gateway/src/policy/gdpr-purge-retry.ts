@@ -13,9 +13,13 @@ export async function retryPendingPurges(deps: RetryDeps): Promise<void> {
   for (const jobId of deps.store.openJobIds()) {
     for (const req of deps.store.pendingRequests(jobId)) {
       deps.store.incrementAttempt(jobId, req.peerId, deps.nowMs());
-      const record = await deps.requestPurge(req.peerId);
-      if (record !== null) {
-        deps.store.markDone(jobId, req.peerId, record, deps.nowMs());
+      try {
+        const record = await deps.requestPurge(req.peerId);
+        if (record !== null) {
+          deps.store.markDone(jobId, req.peerId, record, deps.nowMs());
+        }
+      } catch {
+        // Keep this request pending; a failed peer must not abort the rest of the tick.
       }
     }
     if (deps.store.allDone(jobId)) {

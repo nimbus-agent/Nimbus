@@ -520,6 +520,15 @@ export async function dispatchFederationRpc(
       // guard runs ahead of the delete, not after it. No signer → return an error, delete NOTHING.
       const signer = ctx.purgeSign;
       if (signer === undefined) {
+        // Approved but blocked: audit the fail-closed outcome so the refusal is not lost
+        // from the compliance ledger (delete NOTHING).
+        appendAuditEntry(ctx.db, {
+          actionType: "federation.purge",
+          hitlStatus: "rejected",
+          actionJson: JSON.stringify({ method: "federation.purge" }),
+          timestamp: Date.now(),
+          federationJson: JSON.stringify({ peer_id: peerId, decision: "signer_unavailable" }),
+        });
         return { kind: "error", error: "purge_signer_unavailable" } as const;
       }
 

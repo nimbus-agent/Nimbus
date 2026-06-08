@@ -10,8 +10,14 @@ export function makeClient(token: string): AdminClient {
   return {
     status: async () => {
       const res = await fetch("/v1/admin/status", { headers: h });
-      const body = (await res.json()) as { data: GatewayStatus };
-      return body.data;
+      if (!res.ok) {
+        throw new Error(`Status request failed (HTTP ${res.status})`);
+      }
+      const body: unknown = await res.json();
+      if (typeof body !== "object" || body === null || !("data" in body)) {
+        throw new Error("Invalid status response shape");
+      }
+      return (body as { data: GatewayStatus }).data;
     },
     savePolicy: (toml: string) =>
       fetch("/v1/admin/policy", {

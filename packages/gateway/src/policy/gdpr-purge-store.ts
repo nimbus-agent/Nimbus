@@ -59,8 +59,27 @@ export class GdprPurgeStore {
   }
 
   openJobIds(): string[] {
+    // Drive off the job table so zero-peer jobs (opened with peers: [], which have no
+    // request rows) are still surfaced and can be closed. A job is open while it has no
+    // closed_at AND either has a pending request or has no request rows at all.
     const rows = this.db
-      .query("SELECT DISTINCT job_id FROM gdpr_purge_request WHERE status = 'pending'")
+      .query(
+        `SELECT j.job_id
+         FROM gdpr_purge_job j
+         WHERE j.closed_at IS NULL
+           AND (
+             EXISTS (
+               SELECT 1
+               FROM gdpr_purge_request r
+               WHERE r.job_id = j.job_id AND r.status = 'pending'
+             )
+             OR NOT EXISTS (
+               SELECT 1
+               FROM gdpr_purge_request r2
+               WHERE r2.job_id = j.job_id
+             )
+           )`,
+      )
       .all() as { job_id: string }[];
     return rows.map((r) => r.job_id);
   }
