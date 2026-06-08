@@ -118,8 +118,9 @@ export function serializePolicyToml(p: OrgPolicy): string {
       `window_seconds = ${rule.windowSeconds}`,
     );
   }
-  if (p.audit.shipTo !== undefined) {
-    lines.push("", "[policy.audit]", `ship_to = "${p.audit.shipTo}"`);
+  if (p.audit.shipTo !== undefined || p.audit.shipFormat !== undefined) {
+    lines.push("", "[policy.audit]");
+    if (p.audit.shipTo !== undefined) lines.push(`ship_to = "${p.audit.shipTo}"`);
     if (p.audit.shipFormat !== undefined) lines.push(`ship_format = "${p.audit.shipFormat}"`);
   }
   return `${lines.join("\n")}\n`;

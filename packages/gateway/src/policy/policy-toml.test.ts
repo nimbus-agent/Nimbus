@@ -50,4 +50,13 @@ describe("parsePolicyToml", () => {
     const p = parsePolicyToml(SAMPLE);
     expect(parsePolicyToml(serializePolicyToml(p))).toEqual(p);
   });
+
+  test("round-trips audit.shipFormat without shipTo", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n[policy.audit]\nship_format = "ndjson"\n`,
+    );
+    expect(p.audit.shipFormat).toBe("ndjson");
+    expect(p.audit.shipTo).toBeUndefined();
+    expect(parsePolicyToml(serializePolicyToml(p))).toEqual(p);
+  });
 });
