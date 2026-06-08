@@ -47,7 +47,14 @@ for pkg in packages/mcp-connectors/*; do
   fi
 done
 
-bun "${REPO_ROOT}/scripts/coverage/merge-coverage.ts"
+if ! bun "${REPO_ROOT}/scripts/coverage/merge-coverage.ts"; then
+  echo "ERROR: coverage merge failed" >&2
+  exit 1
+fi
+if [[ ! -f coverage/lcov.info ]]; then
+  echo "ERROR: coverage/lcov.info was not generated (no shards merged?)" >&2
+  exit 1
+fi
 
 echo "---"
 echo "coverage/lcov.info: $(wc -l < coverage/lcov.info) lines, $(grep -c '^SF:' coverage/lcov.info) source files, $(grep -c '^BRDA:' coverage/lcov.info) branch records"
