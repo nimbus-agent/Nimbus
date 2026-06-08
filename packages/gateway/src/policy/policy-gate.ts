@@ -3,7 +3,7 @@ import type { QuorumRule } from "../config/nimbus-toml.ts";
 import { canonicalize, verifyPolicy } from "./policy-signing.ts";
 import type { PersistedPolicy, PolicyStore } from "./policy-store.ts";
 import { parsePolicyToml } from "./policy-toml.ts";
-import type { OrgPolicy, PolicyState } from "./types.ts";
+import type { ChatopsPolicy, OrgPolicy, PolicyState } from "./types.ts";
 
 /** The local config/default floor that policy can only tighten, never loosen. */
 export interface LocalBaseline {
@@ -20,6 +20,7 @@ export interface EnforcedPolicy {
   readonly quorum: ReadonlyMap<string, QuorumRule>;
   readonly auditShipTo?: string;
   readonly auditShipFormat?: string;
+  readonly chatops: ChatopsPolicy;
 }
 
 /** Pure monotonic-stricter resolution against the local baseline. */
@@ -49,6 +50,7 @@ export function computeEnforced(policy: OrgPolicy, base: LocalBaseline): Enforce
     quorum,
     ...(policy.audit.shipTo === undefined ? {} : { auditShipTo: policy.audit.shipTo }),
     ...(policy.audit.shipFormat === undefined ? {} : { auditShipFormat: policy.audit.shipFormat }),
+    chatops: policy.chatops,
   };
 }
 
@@ -130,6 +132,7 @@ export class PolicyGate {
         retentionDays: this.baseline.retentionDays,
         hitlRequired: new Set(this.baseline.hitlRequired),
         quorum: new Map(this.baseline.quorum),
+        chatops: { channels: new Map(), ownership: new Map() },
       };
     }
     return computeEnforced(this.active, this.baseline);

@@ -7,6 +7,7 @@ const policy: EnforcedPolicy = {
   retentionDays: 30,
   hitlRequired: new Set(["db.drop"]),
   quorum: new Map(),
+  chatops: { channels: new Map(), ownership: new Map() },
 };
 
 describe("resolveEffectiveConfig", () => {
@@ -29,6 +30,7 @@ describe("resolveEffectiveConfig", () => {
       retentionDays: 30,
       hitlRequired: new Set(["db.drop"]),
       quorum: new Map(),
+      chatops: { channels: new Map(), ownership: new Map() },
     };
     const e = resolveEffectiveConfig(
       { enabledConnectors: ["x", "y"], retentionDays: 5 },

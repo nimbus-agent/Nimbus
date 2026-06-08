@@ -9,6 +9,7 @@ const enforced: EnforcedPolicy = {
   quorum: new Map<string, QuorumRule>([
     ["terraform.destroy", { approvers: 2, windowSeconds: 3600 }],
   ]),
+  chatops: { channels: new Map(), ownership: new Map() },
 };
 
 describe("resolveQuorumRule", () => {

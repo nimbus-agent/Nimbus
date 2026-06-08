@@ -7,9 +7,11 @@ import {
   splitKeyValue,
   stripComment,
 } from "../config/toml-primitives.ts";
-import type { OrgPolicy } from "./types.ts";
+import type { ChatopsChannelBinding, ChatopsPolicy, OrgPolicy, UnmappedMode } from "./types.ts";
 
 const QUORUM_PREFIX = '[policy.hitl.quorum."';
+const CHATOPS_CHANNEL_PREFIX = '[policy.chatops.channel."';
+const CHATOPS_OWNERSHIP_HEADER = "[policy.chatops.ownership]";
 
 /** Mutable accumulator threaded through the per-section key handlers. */
 interface PolicyAccum {
@@ -23,6 +25,8 @@ interface PolicyAccum {
   shipFormat: string | undefined;
   /** Raw key/value pairs per quorum id, finalized after the scan. */
   quorumAccum: Map<string, Record<string, string>>;
+  chatopsChannels: Map<string, Record<string, string>>;
+  chatopsOwnership: Map<string, string>;
 }
 
 function applyPolicyKey(acc: PolicyAccum, key: string, valRaw: string): void {
@@ -64,6 +68,7 @@ function dispatchKey(
   acc: PolicyAccum,
   section: string,
   quorumId: string | undefined,
+  chatopsChannelId: string | undefined,
   key: string,
   valRaw: string,
 ): void {
@@ -86,19 +91,39 @@ function dispatchKey(
     case "quorum":
       applyQuorumKey(acc, quorumId, key, valRaw);
       break;
+    case "chatopsChannel": {
+      if (chatopsChannelId !== undefined) {
+        const bucket = acc.chatopsChannels.get(chatopsChannelId);
+        if (bucket !== undefined) bucket[key] = valRaw;
+      }
+      break;
+    }
+    case "chatopsOwnership":
+      acc.chatopsOwnership.set(parseString(key), parseString(valRaw));
+      break;
     default:
       break;
   }
 }
 
-/** Resolve a table header into the next section + active quorum id (if any). */
-function readHeader(acc: PolicyAccum, trimmed: string): { section: string; quorumId?: string } {
+/** Resolve a table header into the next section + active quorum/chatops-channel id (if any). */
+function readHeader(
+  acc: PolicyAccum,
+  trimmed: string,
+): { section: string; quorumId?: string; chatopsChannelId?: string } {
   if (trimmed.startsWith(QUORUM_PREFIX) && trimmed.endsWith('"]')) {
     const id = trimmed.slice(QUORUM_PREFIX.length, -2);
     if (id.length === 0) return { section: "quorum" };
     if (!acc.quorumAccum.has(id)) acc.quorumAccum.set(id, {});
     return { section: "quorum", quorumId: id };
   }
+  if (trimmed.startsWith(CHATOPS_CHANNEL_PREFIX) && trimmed.endsWith('"]')) {
+    const id = trimmed.slice(CHATOPS_CHANNEL_PREFIX.length, -2);
+    if (id.length === 0) return { section: "chatopsChannel" };
+    if (!acc.chatopsChannels.has(id)) acc.chatopsChannels.set(id, {});
+    return { section: "chatopsChannel", chatopsChannelId: id };
+  }
+  if (trimmed === CHATOPS_OWNERSHIP_HEADER) return { section: "chatopsOwnership" };
   return { section: trimmed };
 }
 
@@ -113,6 +138,23 @@ function finalizeQuorum(quorumAccum: Map<string, Record<string, string>>): Map<s
   return quorum;
 }
 
+/** Finalize accumulated chatops buckets into the ChatopsPolicy shape. */
+function finalizeChatops(
+  channels: Map<string, Record<string, string>>,
+  ownership: Map<string, string>,
+): ChatopsPolicy {
+  const out = new Map<string, ChatopsChannelBinding>();
+  for (const [id, kv] of channels) {
+    const ns = kv["namespace"] === undefined ? "" : parseString(kv["namespace"]);
+    if (ns === "") continue; // a binding with no namespace is inert (fail-closed)
+    const unmappedRaw = kv["unmapped"] === undefined ? "refuse" : parseString(kv["unmapped"]);
+    const unmapped: UnmappedMode = unmappedRaw === "public-read" ? "public-read" : "refuse";
+    const notify = kv["notify"] === undefined ? [] : [...parseStringArray(kv["notify"])];
+    out.set(id, { namespace: ns, unmapped, notify });
+  }
+  return { channels: out, ownership: new Map(ownership) };
+}
+
 /** Parse a canonicalized nimbus.policy.toml string into an OrgPolicy. */
 export function parsePolicyToml(source: string): OrgPolicy {
   const acc: PolicyAccum = {
@@ -125,10 +167,13 @@ export function parsePolicyToml(source: string): OrgPolicy {
     shipTo: undefined,
     shipFormat: undefined,
     quorumAccum: new Map<string, Record<string, string>>(),
+    chatopsChannels: new Map<string, Record<string, string>>(),
+    chatopsOwnership: new Map<string, string>(),
   };
 
   let section = "";
   let quorumId: string | undefined;
+  let chatopsChannelId: string | undefined;
 
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
@@ -137,11 +182,12 @@ export function parsePolicyToml(source: string): OrgPolicy {
       const header = readHeader(acc, trimmed);
       section = header.section;
       quorumId = header.quorumId;
+      chatopsChannelId = header.chatopsChannelId;
       continue;
     }
     const kv = splitKeyValue(trimmed);
     if (kv === undefined) continue;
-    dispatchKey(acc, section, quorumId, kv.key, kv.valRaw);
+    dispatchKey(acc, section, quorumId, chatopsChannelId, kv.key, kv.valRaw);
   }
 
   const quorum = finalizeQuorum(acc.quorumAccum);
@@ -157,6 +203,7 @@ export function parsePolicyToml(source: string): OrgPolicy {
       ...(acc.shipTo === undefined ? {} : { shipTo: acc.shipTo }),
       ...(acc.shipFormat === undefined ? {} : { shipFormat: acc.shipFormat }),
     },
+    chatops: finalizeChatops(acc.chatopsChannels, acc.chatopsOwnership),
   };
 }
 

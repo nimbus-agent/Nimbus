@@ -2,6 +2,21 @@ import type { QuorumRule } from "../config/nimbus-toml.ts";
 
 export type { QuorumRule };
 
+export type UnmappedMode = "refuse" | "public-read";
+
+export interface ChatopsChannelBinding {
+  readonly namespace: string;
+  readonly unmapped: UnmappedMode;
+  readonly notify: readonly string[];
+}
+
+export interface ChatopsPolicy {
+  /** channelId -> binding. */
+  readonly channels: ReadonlyMap<string, ChatopsChannelBinding>;
+  /** ownership glob pattern -> owner email (insertion order preserved). */
+  readonly ownership: ReadonlyMap<string, string>;
+}
+
 /** The parsed org policy (anchor-authored). Optional fields = "no constraint". */
 export interface OrgPolicy {
   readonly version: number;
@@ -14,6 +29,7 @@ export interface OrgPolicy {
     readonly quorum: ReadonlyMap<string, QuorumRule>;
   };
   readonly audit: { readonly shipTo?: string; readonly shipFormat?: string };
+  readonly chatops: ChatopsPolicy;
 }
 
 /** Where a persisted policy came from. */

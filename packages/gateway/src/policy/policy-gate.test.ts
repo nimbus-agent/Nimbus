@@ -120,6 +120,7 @@ describe("computeEnforced — monotonic stricter", () => {
         ]),
       },
       audit: {},
+      chatops: { channels: new Map(), ownership: new Map() },
     };
     const e = computeEnforced(policy, baseline);
     // local window 600 survives because policy contributed no positive window
@@ -138,6 +139,7 @@ describe("computeEnforced — monotonic stricter", () => {
         quorum: new Map<string, QuorumRule>([["db.drop", { approvers: 2, windowSeconds: 0 }]]),
       },
       audit: {},
+      chatops: { channels: new Map(), ownership: new Map() },
     };
     const e = computeEnforced(policy, baseline);
     expect(e.quorum.get("db.drop")).toEqual({ approvers: 2, windowSeconds: 0 });
