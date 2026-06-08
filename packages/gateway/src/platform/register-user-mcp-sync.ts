@@ -7,7 +7,7 @@ import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export function registerUserMcpSyncablesFromDatabase(
   db: Database,
-  syncScheduler: SyncScheduler,
+  syncScheduler: Pick<SyncScheduler, "register">,
   mesh: LazyConnectorMesh,
 ): void {
   for (const row of listUserMcpConnectors(db)) {

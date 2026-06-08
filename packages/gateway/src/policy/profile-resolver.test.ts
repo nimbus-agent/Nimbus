@@ -25,9 +25,14 @@ describe("resolveEffectiveConfig", () => {
   });
 
   test("policy.connectorAllow undefined => profile passes through unbounded", () => {
+    const policyNoAllow: EnforcedPolicy = {
+      retentionDays: 30,
+      hitlRequired: new Set(["db.drop"]),
+      quorum: new Map(),
+    };
     const e = resolveEffectiveConfig(
       { enabledConnectors: ["x", "y"], retentionDays: 5 },
-      { ...policy, connectorAllow: undefined },
+      policyNoAllow,
     );
     expect(e.enabledConnectors).toEqual(["x", "y"]);
   });

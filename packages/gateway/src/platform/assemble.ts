@@ -296,10 +296,22 @@ async function createSchedulerWithMesh(
     isConnectorAllowed,
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
-  registerConnectorMeshSyncables(syncScheduler, connectorMesh, {
+  // Policy connector-allowlist (I22): a blocked connector must never SYNC, not just be hidden from
+  // tool exposure. Filter at the single mesh/user-MCP registration seam so blocked syncables are
+  // never registered with the scheduler. fs/openapi/obsidian syncables are not policy connectors and
+  // are registered directly on the real scheduler above.
+  const policyFilteredRegistrar: Pick<SyncScheduler, "register"> = {
+    register: (connector, intervalOverrideMs) => {
+      if (!isConnectorAllowed(connector.serviceId)) {
+        return;
+      }
+      syncScheduler.register(connector, intervalOverrideMs);
+    },
+  };
+  registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
     pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
   });
-  registerUserMcpSyncablesFromDatabase(db, syncScheduler, connectorMesh);
+  registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
   syncScheduler.start();
   evaluateWatchersStartupCatchUp(db, Date.now(), (t, b) => notifications.show(t, b), watcherOpts);
   return { syncScheduler, connectorMesh };

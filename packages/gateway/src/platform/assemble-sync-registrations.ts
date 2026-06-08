@@ -91,7 +91,7 @@ export type ConnectorMeshSyncableOptions = {
 };
 
 export function registerConnectorMeshSyncables(
-  syncScheduler: SyncScheduler,
+  syncScheduler: Pick<SyncScheduler, "register">,
   connectorMesh: LazyConnectorMesh,
   options: ConnectorMeshSyncableOptions,
 ): void {
