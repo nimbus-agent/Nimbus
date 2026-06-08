@@ -55,6 +55,7 @@ impl Default for HitlInbox {
 }
 
 pub const ALLOWED_METHODS: &[&str] = &[
+    "admin.status",
     "agents.catchup",
     "agents.expert",
     "agents.impact",
@@ -108,12 +109,14 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "llm.pullModel",
     "llm.setDefault",
     "llm.unloadModel",
+    "policy.show",
     "profile.create",
     "profile.delete",
     "profile.list",
     "profile.switch",
     "scim.listUsers",
     "scim.status",
+    "team.auditMerged",
     "teamvault.list",
     "telemetry.getStatus",
     "telemetry.setEnabled",
@@ -443,8 +446,23 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_slice4_read_only_surface() {
+        assert!(is_method_allowed("admin.status"));
+        assert!(is_method_allowed("policy.show"));
+        assert!(is_method_allowed("team.auditMerged"));
+    }
+
+    #[test]
+    fn allowlist_rejects_slice4_privileged_methods() {
+        assert!(!is_method_allowed("policy.sign"));
+        assert!(!is_method_allowed("policy.trust"));
+        assert!(!is_method_allowed("policy.refetch"));
+        assert!(!is_method_allowed("team.purge"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 79);
+        assert_eq!(ALLOWED_METHODS.len(), 82);
     }
 
     #[test]
