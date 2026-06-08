@@ -31,7 +31,10 @@ mkdir -p coverage
 echo "--- docker: build instrumented lcov (oven/bun:latest) ---"
 # Stream tracked + untracked working-tree files (node_modules/.git/coverage/dist excluded)
 # into the container, extract, install, build the client, run build-lcov.sh, copy lcov out.
-tar --exclude=node_modules --exclude=.git --exclude=coverage --exclude=dist \
+# NB: `./coverage` is anchored to the repo root so it excludes the top-level output dir
+# WITHOUT excluding `scripts/coverage/` (the istanbul preloads live there, force-tracked
+# past .gitignore). A bare `--exclude=coverage` would drop the preloads → "preload not found".
+tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
     --exclude=.claude -c -C "${REPO_ROOT}" . \
   | docker run --rm -i \
       -v "${CACHE_VOL}:/root/.bun/install/cache" \
