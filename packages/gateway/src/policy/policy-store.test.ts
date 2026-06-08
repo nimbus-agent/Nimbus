@@ -68,4 +68,27 @@ describe("PolicyStore", () => {
   test("getAnchorPubkey returns undefined when unpinned", () => {
     expect(new PolicyStore(freshDb()).getAnchorPubkey()).toBeUndefined();
   });
+
+  test("load() preserves issued_at when present (line 61 false side)", () => {
+    const store = new PolicyStore(db);
+    store.persist({
+      toml: "a\n",
+      sig: "S",
+      org: "acme",
+      version: 1,
+      source: "anchor",
+      fetchedAt: 1,
+      issuedAt: "2026-06-08T00:00:00Z",
+    });
+    expect(store.load()?.issuedAt).toBe("2026-06-08T00:00:00Z");
+  });
+
+  test("load() coerces an unrecognized source value to 'none' (toPolicySource fallback)", () => {
+    // The source column is plain TEXT (no CHECK); write a value outside the allowed set directly.
+    db.query(
+      `INSERT INTO org_policy_state (id, toml, sig, org, version, issued_at, fetched_at, source)
+       VALUES (1, 'a', 'S', 'acme', 1, NULL, 1, 'bogus')`,
+    ).run();
+    expect(new PolicyStore(db).load()?.source).toBe("none");
+  });
 });

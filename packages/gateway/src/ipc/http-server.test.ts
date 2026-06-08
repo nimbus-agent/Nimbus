@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -26,7 +26,13 @@ function makeEmptyDb(dbPath: string, targetVersion = 28): void {
 
 /** Path to the real built admin-console dist (packages/admin-console/dist). */
 function builtConsoleDist(): string {
-  return join(import.meta.dir, "..", "..", "..", "admin-console", "dist");
+  // A self-contained dummy "built" console (index.html present) so resolveConsoleDist() resolves
+  // on CI regardless of whether the real packages/admin-console/dist was built — the previous
+  // version pointed at the real dist, which is absent on CI runners → the route returned 503
+  // (not-built) instead of reaching the safeAssetPath traversal-rejection branch under test.
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-admin-console-dist-"));
+  writeFileSync(join(dir, "index.html"), "<!doctype html><title>nimbus admin (test)</title>");
+  return dir;
 }
 
 /**

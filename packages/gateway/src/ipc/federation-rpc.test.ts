@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
@@ -518,4 +519,252 @@ test("federation.purge APPROVE but NO signer → purge_signer_unavailable and NE
   }
   // No signer ⇒ no signed receipt possible ⇒ nothing was deleted.
   expect(deleteCalls).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// team.auditMerged — the asker-side team-wide merged federation-audit timeline.
+// Always includes THIS gateway's local federation-audit slice (tagged "local");
+// fans out to paired peers only when asker-side transport (index + identity) is
+// wired; an unreachable / malformed peer is SKIPPED (best-effort), never fatal.
+// ---------------------------------------------------------------------------
+
+/** Seed a federation.% audit row so exportFederationAudit returns at least one entry. */
+function seedFederationAudit(at: number): void {
+  appendAuditEntry(db, {
+    actionType: "federation.query",
+    hitlStatus: "approved",
+    actionJson: JSON.stringify({ method: "federation.query" }),
+    timestamp: at,
+    federationJson: JSON.stringify({ peer_id: "peer:x", decision: "answered" }),
+  });
+}
+
+test("team.auditMerged with NO peers returns the merged LOCAL stream", async () => {
+  seedFederationAudit(100);
+  seedFederationAudit(200);
+  // ctx() has no index/selfIdentity wired → the fan-out loop is skipped entirely.
+  const res = await dispatchFederationRpc("team.auditMerged", { namespace: "ns" }, ctx());
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { entries: Array<{ peerId: string; timestamp: number }> };
+    expect(v.entries.length).toBe(2);
+    // All entries are tagged "local" and sorted ascending by timestamp.
+    expect(v.entries.every((e) => e.peerId === "local")).toBe(true);
+    expect(v.entries[0]?.timestamp).toBe(100);
+    expect(v.entries[1]?.timestamp).toBe(200);
+  }
+});
+
+test("team.auditMerged sinceMs filters the local slice", async () => {
+  seedFederationAudit(50);
+  seedFederationAudit(500);
+  const res = await dispatchFederationRpc(
+    "team.auditMerged",
+    { namespace: "ns", sinceMs: 100 },
+    ctx(),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { entries: Array<{ timestamp: number }> };
+    expect(v.entries.length).toBe(1);
+    expect(v.entries[0]?.timestamp).toBe(500);
+  }
+});
+
+test("team.auditMerged SKIPS a host-less peer and an unreachable peer (best-effort), keeps local", async () => {
+  seedFederationAudit(300);
+  // Asker-wired ctx (index + selfIdentity) so the fan-out loop runs.
+  const selfKp = generateBoxKeypair();
+  // Peer 1: no host address → the `continue` branch (host_ip null) skips it.
+  index.addLanPeer({
+    peerId: "peer:nohost",
+    peerPubkey: new Uint8Array(32).fill(1),
+    direction: "inbound",
+    hostIp: "127.0.0.1", // hostPort omitted → host_port = null → continue
+  });
+  // Peer 2: a host address that nothing is listening on → sendFederatedOverWire throws → catch skips.
+  index.addLanPeer({
+    peerId: "peer:dead",
+    peerPubkey: new Uint8Array(32).fill(2),
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: 1, // port 1 → connection refused
+  });
+  const askCtx: FederationRpcContext = {
+    ...ctx(),
+    index,
+    selfIdentity: selfKp,
+  };
+  const res = await dispatchFederationRpc("team.auditMerged", { namespace: "ns" }, askCtx);
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { entries: Array<{ peerId: string }> };
+    // Only the local slice survives — both peers were skipped, never fatal.
+    expect(v.entries.length).toBe(1);
+    expect(v.entries[0]?.peerId).toBe("local");
+  }
+});
+
+test("team.auditMerged merges a reachable peer's slice OVER THE WIRE (extractAuditEntries happy path)", async () => {
+  const peerIdFor = (pub: Uint8Array) => `peer:${bytesToHex(pub.subarray(0, 8))}`;
+  const makeCtx = (
+    ctxDb: Database,
+    ctxIndex: LocalIndex,
+    asker?: { index: LocalIndex; selfIdentity: ReturnType<typeof generateBoxKeypair> },
+  ): FederationRpcContext => ({
+    db: ctxDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(ctxIndex),
+    ...(asker === undefined ? {} : { index: asker.index, selfIdentity: asker.selfIdentity }),
+  });
+
+  // --- Responder B: has a federation-audit slice + grants the asker on a published namespace ---
+  const bDb = new Database(":memory:");
+  runIndexedSchemaMigrations(bDb, 33);
+  const bIndex = new LocalIndex(bDb);
+  appendAuditEntry(bDb, {
+    actionType: "federation.query",
+    hitlStatus: "approved",
+    actionJson: JSON.stringify({ method: "federation.query" }),
+    timestamp: 999,
+    federationJson: JSON.stringify({ peer_id: "peer:b", decision: "answered" }),
+  });
+  const bIdentity = generateBoxKeypair();
+  const askerKp = generateBoxKeypair();
+  bIndex.addLanPeer({
+    peerId: peerIdFor(askerKp.publicKey),
+    peerPubkey: askerKp.publicKey,
+    direction: "inbound",
+    hostIp: "127.0.0.1",
+  });
+  const bBuilt = buildFederationLanServer({
+    db: bDb,
+    index: bIndex,
+    identity: bIdentity,
+    lan: {
+      bind: "127.0.0.1",
+      port: 0,
+      pairingWindowSeconds: 60,
+      maxFailedAttempts: 3,
+      lockoutSeconds: 60,
+    },
+    consentTimeoutMs: 1000,
+    notify: () => {},
+  });
+  await bBuilt.lanServer.start();
+  const bPort = bBuilt.lanServer.listenAddr()?.port as number;
+  const bCtx = makeCtx(bDb, bIndex);
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-audit", filters: [{ kind: "type", value: "pull_request" }] },
+    bCtx,
+  );
+  await dispatchFederationRpc(
+    "federation.namespace.grant",
+    {
+      namespace: "ns-audit",
+      peerId: peerIdFor(askerKp.publicKey),
+      role: "viewer",
+      standingConsent: true,
+    },
+    bCtx,
+  );
+
+  // --- Asker A: a local federation-audit slice + B paired as an outbound peer ---
+  const aDb = new Database(":memory:");
+  runIndexedSchemaMigrations(aDb, 33);
+  const aIndex = new LocalIndex(aDb);
+  appendAuditEntry(aDb, {
+    actionType: "federation.query",
+    hitlStatus: "approved",
+    actionJson: JSON.stringify({ method: "federation.query" }),
+    timestamp: 1,
+    federationJson: JSON.stringify({ peer_id: "peer:a", decision: "answered" }),
+  });
+  aIndex.addLanPeer({
+    peerId: peerIdFor(bIdentity.publicKey),
+    peerPubkey: bIdentity.publicKey,
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: bPort,
+  });
+  const aCtx = makeCtx(aDb, aIndex, { index: aIndex, selfIdentity: askerKp });
+
+  try {
+    const res = await dispatchFederationRpc(
+      "team.auditMerged",
+      { namespace: "ns-audit", purpose: "team-audit" },
+      aCtx,
+    );
+    expect(res.kind).toBe("hit");
+    if (res.kind === "hit") {
+      const v = res.value as { entries: Array<{ peerId: string; timestamp: number }> };
+      const bPeerId = peerIdFor(bIdentity.publicKey);
+      // The merge includes A's local slice (ts 1, tagged "local") AND B's remote slice fetched over
+      // the wire (the seeded ts-999 row, tagged with B's peerId). B may also surface its own freshly
+      // written auditExport "answered" row, so assert presence + sort order, not an exact count.
+      expect(v.entries.length).toBeGreaterThanOrEqual(2);
+      expect(v.entries[0]?.peerId).toBe("local");
+      expect(v.entries[0]?.timestamp).toBe(1);
+      const remote = v.entries.filter((e) => e.peerId === bPeerId);
+      expect(remote.length).toBeGreaterThanOrEqual(1);
+      expect(remote.some((e) => e.timestamp === 999)).toBe(true);
+      // Sorted ascending by timestamp across the whole merged stream.
+      for (let i = 1; i < v.entries.length; i++) {
+        expect((v.entries[i]?.timestamp ?? 0) >= (v.entries[i - 1]?.timestamp ?? 0)).toBe(true);
+      }
+    }
+  } finally {
+    await bBuilt.lanServer.stop();
+    bIndex.close();
+    aIndex.close();
+  }
+});
+
+test("federation.auditExport over the wire is consent-gated (no_grant without a grant)", async () => {
+  // Drives the federation.auditExport dispatch arm directly (local path) → no_grant gate.
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-ax", filters: [{ kind: "type", value: "pull_request" }] },
+    ctx(),
+  );
+  const res = await dispatchFederationRpc(
+    "federation.auditExport",
+    { peerId: "stranger", namespace: "ns-ax", purpose: "audit", sinceMs: 0 },
+    ctx(),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { kind: string; error?: string };
+    expect(v.kind).toBe("error");
+    expect(v.error).toBe("no_grant");
+  }
+});
+
+test("federation.auditExport returns the metadata-only slice for a standing grant", async () => {
+  seedFederationAudit(700);
+  const c = ctx();
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-ax2", filters: [{ kind: "type", value: "pull_request" }] },
+    c,
+  );
+  await dispatchFederationRpc(
+    "federation.namespace.grant",
+    { namespace: "ns-ax2", peerId: "peer:grantee", role: "viewer", standingConsent: true },
+    c,
+  );
+  const res = await dispatchFederationRpc(
+    "federation.auditExport",
+    { peerId: "peer:grantee", namespace: "ns-ax2", purpose: "audit" },
+    c,
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { kind: string; entries: Array<{ actionType: string }> };
+    expect(v.kind).toBe("ok");
+    expect(v.entries.some((e) => e.actionType.startsWith("federation."))).toBe(true);
+  }
 });

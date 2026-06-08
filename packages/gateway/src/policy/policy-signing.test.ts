@@ -40,4 +40,10 @@ describe("signPolicy / verifyPolicy", () => {
     );
     expect(verifyPolicy("x = 1\n", encodeBase64(new Uint8Array(64)), "!!!")).toBe(false);
   });
+
+  test("signPolicy throws on a non-32-byte seed (line 25 true side)", () => {
+    expect(() => signPolicy("x = 1\n", encodeBase64(new Uint8Array(16)))).toThrow(
+      /expected 32-byte seed/,
+    );
+  });
 });

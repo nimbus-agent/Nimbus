@@ -51,6 +51,90 @@ describe("parsePolicyToml", () => {
     expect(parsePolicyToml(serializePolicyToml(p))).toEqual(p);
   });
 
+  test("empty quorum id header is ignored (line 37 false side)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n[policy.hitl.quorum.""]\napprovers = 2\nwindow_seconds = 60\n`,
+    );
+    // empty id => quorumId stays undefined => no rule accumulated
+    expect(p.hitl.quorum.size).toBe(0);
+  });
+
+  test("duplicate quorum section for the same id merges into one accumulator (line 39 false side)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n` +
+        `[policy.hitl.quorum."t.d"]\napprovers = 2\n` +
+        `[policy.hitl.quorum."t.d"]\nwindow_seconds = 90\n`,
+    );
+    expect(p.hitl.quorum.get("t.d")).toEqual({ approvers: 2, windowSeconds: 90 });
+  });
+
+  test("a line with no '=' under a section is skipped (line 48 kv===undefined true side)", () => {
+    const p = parsePolicyToml(`[policy]\nversion = 1\norg = "x"\nbarewordnoequals\n`);
+    expect(p.version).toBe(1);
+    expect(p.org).toBe("x");
+  });
+
+  test("unknown section falls through the switch default (line 50 default arm)", () => {
+    const p = parsePolicyToml(`[policy]\nversion = 1\norg = "x"\n[policy.unknown]\nfoo = "bar"\n`);
+    expect(p.version).toBe(1);
+  });
+
+  test("unrecognized keys within each section are ignored (else arms)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\nstray = "z"\n` +
+        `[policy.connectors]\nbogus = "y"\n` +
+        `[policy.retention]\nbogus = 1\n` +
+        `[policy.hitl]\nbogus = []\n` +
+        `[policy.audit]\nbogus = "y"\n`,
+    );
+    expect(p.version).toBe(1);
+    expect(p.org).toBe("x");
+    expect(p.connectors.allow).toBeUndefined();
+    expect(p.retention.minDays).toBe(0);
+    expect(p.hitl.require).toEqual([]);
+    expect(p.audit.shipTo).toBeUndefined();
+    expect(p.audit.shipFormat).toBeUndefined();
+  });
+
+  test("[policy] issued_at present is captured (line 54 issued_at arm true)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\nissued_at = "2026-06-08T00:00:00Z"\n`,
+    );
+    expect(p.issuedAt).toBe("2026-06-08T00:00:00Z");
+  });
+
+  test("quorum rule missing fields defaults to 0 and is dropped (lines 81-83 default + filter arms)", () => {
+    // No approvers/window keys: parseIntDec("") -> undefined -> ?? 0 -> approvers 0 -> filtered out.
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n[policy.hitl.quorum."t.d"]\nirrelevant = "v"\n`,
+    );
+    expect(p.hitl.quorum.size).toBe(0);
+  });
+
+  test("quorum with approvers but window_seconds 0 is dropped (line 83 windowSeconds>0 false)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n[policy.hitl.quorum."t.d"]\napprovers = 2\nwindow_seconds = 0\n`,
+    );
+    expect(p.hitl.quorum.size).toBe(0);
+  });
+
+  test("serialize emits audit block when only shipFormat is set (lines 121/123/124 arms)", () => {
+    const p = parsePolicyToml(
+      `[policy]\nversion = 1\norg = "x"\n[policy.audit]\nship_format = "ndjson"\n`,
+    );
+    const out = serializePolicyToml(p);
+    expect(out).toContain("[policy.audit]");
+    expect(out).toContain('ship_format = "ndjson"');
+    expect(out).not.toContain("ship_to");
+  });
+
+  test("serialize emits audit block when only shipTo is set (line 124 ship_format false arm)", () => {
+    const p = parsePolicyToml(`[policy]\nversion = 1\norg = "x"\n[policy.audit]\nship_to = "u"\n`);
+    const out = serializePolicyToml(p);
+    expect(out).toContain('ship_to = "u"');
+    expect(out).not.toContain("ship_format");
+  });
+
   test("round-trips audit.shipFormat without shipTo", () => {
     const p = parsePolicyToml(
       `[policy]\nversion = 1\norg = "x"\n[policy.audit]\nship_format = "ndjson"\n`,

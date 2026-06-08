@@ -49,6 +49,13 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // `team.ts` runTeam is a CLI IPC command shell (no injection seam); the testable
   // parseTeamArgs is covered by team.test.ts. Same exemption class as start/repl/doctor.
   { kind: "exact", path: "packages/cli/src/commands/team.ts" },
+  // `policy.ts` / `admin.ts` (Phase 6 Slice 4): the testable cores (parsePolicyArgs/
+  // parseAdminArgs + runPolicyCommand/runAdminCommand, injected `client`) are covered by
+  // policy.test.ts / admin.test.ts; the residual uncovered lines are the runPolicy/runAdmin
+  // wrappers — CLI IPC shells that construct a real `IPCClient` + `process.exit`, no seam.
+  // Same exemption class as team.ts.
+  { kind: "exact", path: "packages/cli/src/commands/policy.ts" },
+  { kind: "exact", path: "packages/cli/src/commands/admin.ts" },
 
   // Test-only support files (imported solely by *.test.ts; not shipped logic). Verified
   // 2026-06-08 by import grep. Sub-project B0; D may relocate these under a `testing/` dir

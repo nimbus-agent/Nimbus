@@ -180,4 +180,65 @@ describe("answerFederatedAuditExport — gate paths (mirrors query-gate)", () =>
     if (res.kind === "error") expect(res.error).toBe("consent_denied");
     expect(auditExportRows(db)).toEqual([{ decision: "consent_denied" }]);
   });
+
+  test("(e) unknown namespace => namespace_unknown, audited, no entries leak", async () => {
+    const db = gateDb();
+    const store = new NamespaceStore(db);
+    // Nothing published for project:zurich.
+    const res = await answerFederatedAuditExport(gateCtx(db, store), req);
+    expect(res.kind).toBe("error");
+    if (res.kind === "error") expect(res.error).toBe("namespace_unknown");
+    expect((res as unknown as Record<string, unknown>)["entries"]).toBeUndefined();
+    expect(auditExportRows(db)).toEqual([{ decision: "namespace_unknown" }]);
+  });
+
+  test("(f) non-standing grant, no cache => prompts; APPROVED caches + returns ok entries", async () => {
+    const db = gateDb();
+    const store = new NamespaceStore(db);
+    store.publish("project:zurich", [{ kind: "service", value: "github" }]);
+    store.grant("project:zurich", "peerA", "viewer", false); // non-standing => prompts
+    const cache = new SessionConsentCache();
+    let prompted = 0;
+    const consent: ConsentPrompter = async () => {
+      prompted++;
+      return "approved";
+    };
+    const res = await answerFederatedAuditExport(gateCtx(db, store, { cache, consent }), req);
+    expect(prompted).toBe(1);
+    expect(res.kind).toBe("ok");
+    if (res.kind === "ok") {
+      expect(res.entries.map((e) => e.actionType)).toContain("federation.query");
+    }
+    // Approval was cached for the session.
+    expect(cache.get("peerA", "project:zurich")).toBe(true);
+    expect(auditExportRows(db).map((r) => r.decision)).toContain("answered");
+  });
+
+  test("(g) non-standing grant, no cache => prompts; DENIED caches false + consent_denied", async () => {
+    const db = gateDb();
+    const store = new NamespaceStore(db);
+    store.publish("project:zurich", [{ kind: "service", value: "github" }]);
+    store.grant("project:zurich", "peerA", "viewer", false);
+    const cache = new SessionConsentCache();
+    const consent: ConsentPrompter = async () => "denied";
+    const res = await answerFederatedAuditExport(gateCtx(db, store, { cache, consent }), req);
+    expect(res.kind).toBe("error");
+    if (res.kind === "error") expect(res.error).toBe("consent_denied");
+    expect(cache.get("peerA", "project:zurich")).toBe(false);
+    expect(auditExportRows(db)).toEqual([{ decision: "consent_denied" }]);
+  });
+
+  test("(h) consent prompt that never resolves => timeout, audited as timeout", async () => {
+    const db = gateDb();
+    const store = new NamespaceStore(db);
+    store.publish("project:zurich", [{ kind: "service", value: "github" }]);
+    store.grant("project:zurich", "peerA", "viewer", false);
+    // A prompter that never resolves => the withTimeout race resolves to "timeout".
+    const consent: ConsentPrompter = () => new Promise<never>(() => {});
+    const ctx = { ...gateCtx(db, store, { consent }), consentTimeoutMs: 10 };
+    const res = await answerFederatedAuditExport(ctx, req);
+    expect(res.kind).toBe("error");
+    if (res.kind === "error") expect(res.error).toBe("timeout_waiting_for_consent");
+    expect(auditExportRows(db)).toEqual([{ decision: "timeout" }]);
+  });
 });

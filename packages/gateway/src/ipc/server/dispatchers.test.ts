@@ -6,12 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProfileManager } from "../../config/profiles.ts";
+import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
+import { PeerPairing } from "../../federation/peer-pairing.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
+import type { StatusReaders } from "../admin-status-rpc.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { PairingWindow } from "../lan-pairing.ts";
+import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -25,6 +29,7 @@ import {
   sessionRpcSkipped,
 } from "./context.ts";
 import {
+  tryDispatchAdminRpc,
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
   tryDispatchAutomationRpc,
@@ -40,6 +45,7 @@ import {
   tryDispatchMetricsRpc,
   tryDispatchPeopleRpc,
   tryDispatchPhase4Rpc,
+  tryDispatchPolicyRpc,
   tryDispatchPreflightRpc,
   tryDispatchProfileRpc,
   tryDispatchReindexRpc,
@@ -48,6 +54,43 @@ import {
   tryDispatchUpdaterRpc,
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
+
+function makePolicyRpcCtx(overrides: Partial<PolicyRpcCtx> = {}): PolicyRpcCtx {
+  return {
+    showPolicy: () => ({
+      org: "acme",
+      version: 1,
+      signatureValid: true,
+      pendingRestart: false,
+      source: "peer",
+    }),
+    signPolicy: () => {
+      throw new Error("anchor-only");
+    },
+    trustPubkey: () => {},
+    refetch: async () => ({ applied: true }),
+    purge: async () => ({ jobId: "j1", localDeleted: 0 }),
+    isAnchor: false,
+    ...overrides,
+  };
+}
+
+const statusReadersFixture: StatusReaders = {
+  policyState: () => ({
+    org: "acme",
+    version: 1,
+    signatureValid: true,
+    pendingRestart: false,
+    source: "peer",
+  }),
+  peers: () => [{ peerId: "peer:aa", reachable: true }],
+  connectors: () => [{ id: "github", enabled: true, blockedByPolicy: false, health: "ok" }],
+  namespaces: () => [],
+  audit: () => ({ chainLength: 1, lastHash: "h", appendRate1h: 0 }),
+  hitl: () => ({ pendingApprovals: 0, pendingQuorum: 0 }),
+  identity: () => ({ operatorValid: true }),
+  syncFreshnessMs: () => 0,
+};
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -663,5 +706,91 @@ describe("tryDispatchPhase4Rpc", () => {
   test("audit.verify falls through audit chain when not configured", async () => {
     const { ctx } = makeCtx();
     await expect(tryDispatchPhase4Rpc(ctx, "audit.verify", {}, "c1")).rejects.toBeDefined();
+  });
+  test("policy.show hit through chain", async () => {
+    const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx() });
+    const out = await tryDispatchPhase4Rpc(ctx, "policy.show", {}, "c1");
+    expect(out).toMatchObject({ org: "acme" });
+  });
+  test("admin.status hit through chain", async () => {
+    const { ctx } = makeCtx({ statusReaders: statusReadersFixture });
+    const out = (await tryDispatchPhase4Rpc(ctx, "admin.status", {}, "c1")) as Record<
+      string,
+      unknown
+    >;
+    expect(out["connectors"]).toBeDefined();
+  });
+  test("team.auditMerged hit through chain (local-only stream)", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const { ctx } = makeCtx({
+      localIndex,
+      federationDiscovery: new InMemoryDiscoveryProvider(),
+      federationPairing: new PeerPairing(localIndex),
+    });
+    const out = (await tryDispatchPhase4Rpc(
+      ctx,
+      "team.auditMerged",
+      { namespace: "ns" },
+      "c1",
+    )) as Record<string, unknown>;
+    expect(Array.isArray(out["entries"])).toBe(true);
+  });
+});
+
+describe("tryDispatchPolicyRpc", () => {
+  test("skips a non-policy method", async () => {
+    const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx() });
+    expect(await tryDispatchPolicyRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when policyRpcCtx is not wired", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchPolicyRpc(ctx, "policy.show", {})).toBe(phase4RpcSkipped);
+  });
+  test("dispatches policy.show when the ctx is wired", async () => {
+    const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx() });
+    const out = await tryDispatchPolicyRpc(ctx, "policy.show", {});
+    expect(out).toMatchObject({ org: "acme", signatureValid: true });
+  });
+  test("routes team.purge through the shared seam (anchor-only fail-closed)", async () => {
+    const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx({ isAnchor: false }) });
+    await expect(tryDispatchPolicyRpc(ctx, "team.purge", { externalId: "u1" })).rejects.toThrow(
+      /ERR_NOT_PERMITTED/,
+    );
+  });
+  test("an unknown policy.* method falls through to skipped", async () => {
+    const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx() });
+    expect(await tryDispatchPolicyRpc(ctx, "policy.__nope__", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchAdminRpc", () => {
+  test("skips a non-admin.status method", () => {
+    const { ctx } = makeCtx({ statusReaders: statusReadersFixture });
+    expect(tryDispatchAdminRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when statusReaders is not wired", () => {
+    const { ctx } = makeCtx();
+    expect(tryDispatchAdminRpc(ctx, "admin.status", {})).toBe(phase4RpcSkipped);
+  });
+  test("builds the status snapshot when readers are wired", () => {
+    const { ctx } = makeCtx({ statusReaders: statusReadersFixture });
+    const out = tryDispatchAdminRpc(ctx, "admin.status", {}) as Record<string, unknown>;
+    expect(Array.isArray(out["connectors"])).toBe(true);
+    expect(Array.isArray(out["peers"])).toBe(true);
+  });
+});
+
+describe("tryDispatchFederationRpc team.auditMerged (local stream)", () => {
+  test("dispatches team.auditMerged when federation services are wired", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const { ctx } = makeCtx({
+      localIndex,
+      federationDiscovery: new InMemoryDiscoveryProvider(),
+      federationPairing: new PeerPairing(localIndex),
+    });
+    const out = (await tryDispatchFederationRpc(ctx, "team.auditMerged", {
+      namespace: "ns",
+    })) as Record<string, unknown>;
+    expect(Array.isArray(out["entries"])).toBe(true);
   });
 });

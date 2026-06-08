@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -7,6 +8,8 @@ import { dispatchFederationRpc, type FederationRpcContext } from "../ipc/federat
 import { outboundPairHandshake, sendFederatedOverWire } from "../ipc/lan-client.ts";
 import { generateBoxKeypair } from "../ipc/lan-crypto.ts";
 import { generatePairingCode } from "../ipc/lan-pairing.ts";
+import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
+import { federationConsent } from "./consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "./discovery.ts";
 import { buildFederationLanServer } from "./federation-server.ts";
 import { PeerPairing } from "./peer-pairing.ts";
@@ -15,6 +18,7 @@ let stop: (() => Promise<void>) | undefined;
 afterEach(async () => {
   await stop?.();
   stop = undefined;
+  federationConsent.setBroadcast(() => {});
 });
 
 test("buildFederationLanServer registers an inbound peer on a valid pair handshake", async () => {
@@ -180,6 +184,72 @@ test("onMessage throws on an unhandled federation method (-32601 miss)", async (
     threw = true;
   }
   expect(threw).toBe(true);
+
+  await testStop();
+  index.close();
+});
+
+test("buildFederationLanServer threads purgeSign + deletePurgeContributions into the dispatch ctx", async () => {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 33);
+  const index = new LocalIndex(db);
+
+  // Auto-approve the local-operator consent prompt the answerer raises on federation.purge.
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, true));
+  });
+
+  const identity = generateBoxKeypair();
+  const signerKp = generateEd25519Keypair();
+  let deleteCalls = 0;
+  const built = buildFederationLanServer({
+    db,
+    index,
+    identity,
+    lan: {
+      bind: "127.0.0.1",
+      port: 0,
+      pairingWindowSeconds: 60,
+      maxFailedAttempts: 3,
+      lockoutSeconds: 60,
+    },
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    // The two new Slice-4 ctx fields whose conditional spreads must both be taken (set side):
+    purgeSign: { privkeyB64: encodeBase64(signerKp.privkey), selfPeerId: "peer:answerer" },
+    deletePurgeContributions: (externalId, _peerId) => {
+      expect(externalId).toBe("user-99");
+      deleteCalls++;
+      return 3;
+    },
+  });
+  await built.lanServer.start();
+  const testStop = () => built.lanServer.stop();
+  const port = built.lanServer.listenAddr()?.port as number;
+
+  // Pair the asker so the encrypted hello handshake authenticates it.
+  const code = generatePairingCode();
+  built.pairingWindow.open(code);
+  const askerKp = generateBoxKeypair();
+  await outboundPairHandshake("127.0.0.1", port, code, askerKp);
+
+  // Send federation.purge over the wire — the answerer approves (auto-consent), deletes via the
+  // threaded accessor, and returns a signed DeletionRecord attesting selfPeerId.
+  const res = (await sendFederatedOverWire(
+    "127.0.0.1",
+    port,
+    askerKp,
+    identity.publicKey,
+    "federation.purge",
+    { externalId: "user-99" },
+  )) as { kind: string; record: DeletionRecord; sig: string };
+
+  expect(res.kind).toBe("ok");
+  expect(res.record.deletedCount).toBe(3);
+  expect(res.record.peerId).toBe("peer:answerer");
+  expect(verifyDeletionRecord(res.record, res.sig, encodeBase64(signerKp.pubkey))).toBe(true);
+  expect(deleteCalls).toBe(1);
 
   await testStop();
   index.close();

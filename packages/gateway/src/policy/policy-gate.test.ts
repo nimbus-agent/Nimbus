@@ -105,6 +105,55 @@ describe("computeEnforced — monotonic stricter", () => {
     expect(fresh.quorum.get("db.drop")?.windowSeconds).toBe(900);
   });
 
+  test("policy quorum window_seconds <= 0 is ignored; falls back to local window (line 39 false side)", () => {
+    // parsePolicyToml drops rules with window<=0, so feed computeEnforced a hand-built policy
+    // whose quorum window is 0 to exercise the `pol.windowSeconds > 0 ? ... : undefined` false arm.
+    const policy = {
+      version: 1,
+      org: "x",
+      connectors: {},
+      retention: { minDays: 0 },
+      hitl: {
+        require: [] as string[],
+        quorum: new Map<string, QuorumRule>([
+          ["terraform.destroy", { approvers: 2, windowSeconds: 0 }],
+        ]),
+      },
+      audit: {},
+    };
+    const e = computeEnforced(policy, baseline);
+    // local window 600 survives because policy contributed no positive window
+    expect(e.quorum.get("terraform.destroy")).toEqual({ approvers: 2, windowSeconds: 600 });
+  });
+
+  test("no defined positive windows yields windowSeconds 0 (line 41 false side)", () => {
+    // baseline has NO rule for this id and policy window is 0 -> windows array empty -> 0
+    const policy = {
+      version: 1,
+      org: "x",
+      connectors: {},
+      retention: { minDays: 0 },
+      hitl: {
+        require: [] as string[],
+        quorum: new Map<string, QuorumRule>([["db.drop", { approvers: 2, windowSeconds: 0 }]]),
+      },
+      audit: {},
+    };
+    const e = computeEnforced(policy, baseline);
+    expect(e.quorum.get("db.drop")).toEqual({ approvers: 2, windowSeconds: 0 });
+  });
+
+  test("audit shipTo + shipFormat present pass through (lines 50/51 false sides)", () => {
+    const e = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.audit]\nship_to="https://siem/ingest"\nship_format="ndjson"\n`,
+      ),
+      baseline,
+    );
+    expect(e.auditShipTo).toBe("https://siem/ingest");
+    expect(e.auditShipFormat).toBe("ndjson");
+  });
+
   test("baseline-only quorum action (absent from policy) survives untouched", () => {
     // policy defines quorum only for db.drop; baseline's terraform.destroy must be preserved verbatim
     const e = computeEnforced(
@@ -183,6 +232,35 @@ describe("PolicyGate", () => {
     expect(gate.status().pendingRestart).toBe(true);
     expect(gate.status().source).toBe("anchor");
     expect(gate.enforced().retentionDays).toBe(45);
+  });
+
+  test("rehydrate maps persisted source 'none' to 'peer' (line 106 true side)", () => {
+    const store = freshStore();
+    const kp = generateEd25519Keypair();
+    const toml = `[policy]\nversion=2\norg="acme"\n[policy.retention]\nmin_days=30\n`;
+    store.pinAnchorPubkey(encodeBase64(kp.pubkey), "manual", 1);
+    store.persist({
+      toml,
+      sig: signPolicy(toml, encodeBase64(kp.privkey)),
+      org: "acme",
+      version: 2,
+      source: "none",
+      fetchedAt: 5,
+    });
+    const gate = new PolicyGate(store, baseline);
+    expect(gate.status().signatureValid).toBe(true);
+    expect(gate.status().source).toBe("peer");
+  });
+
+  test("applyVerified maps persisted source 'none' to 'peer' (line 119 true side)", () => {
+    const gate = new PolicyGate(freshStore(), baseline);
+    const policy = parsePolicyToml(`[policy]\nversion=3\norg="acme"\n`);
+    gate.applyVerified(
+      policy,
+      { toml: "x", sig: "y", org: "acme", version: 3, source: "none", fetchedAt: 9 },
+      false,
+    );
+    expect(gate.status().source).toBe("peer");
   });
 
   test("verifyCandidate returns null for a tampered bundle, parsed policy for a valid one", () => {
