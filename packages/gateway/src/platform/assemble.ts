@@ -525,16 +525,19 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     [...CONNECTOR_SERVICE_IDS],
     enforcedConnectorAllow,
   );
+  const blockedAt = Date.now();
   for (const id of blockedConnectors) {
     appendAuditEntry(db, {
       actionType: "policy.connector.blocked",
       hitlStatus: "not_required",
       actionJson: JSON.stringify({ connector: id }),
-      timestamp: Date.now(),
+      timestamp: blockedAt,
     });
   }
-  const isConnectorAllowed = (serviceId: string): boolean =>
-    enforcedConnectorAllow === undefined || enforcedConnectorAllow.includes(serviceId);
+  const isConnectorAllowed = (serviceId: string): boolean => {
+    const allow = policyGate.enforced().connectorAllow;
+    return allow === undefined || allow.includes(serviceId);
+  };
 
   // Retention floor (Task 8): effective retention = max(local config, policy floor); policy can only
   // LENGTHEN retention. Started after the gate so it can read `enforced().retentionDays`.
