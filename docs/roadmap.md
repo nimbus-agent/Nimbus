@@ -743,6 +743,8 @@ Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; S
 
 > **Over-the-wire seams delivered (2026-06-05):** the three previously-deferred Slice-1 seams are now wired — outbound LAN pair/query client (`ipc/lan-client.ts`), `LanServer` constructed and started at gateway boot (`federation/federation-server.ts` `buildFederationLanServer` + `platform/assemble.ts`, gated on `[federation].enabled`), and the owner-consent round-trip (`federation/consent-broker.ts` + `federation.consentRespond`). Two gateways can now exchange federated queries over the NaCl-box channel. The answering `peerId` is forced from the NaCl-authenticated session (I17/R1).
 
+**Slice 4 — Org Policy + Admin + Observability + Team Audit + GDPR Purge: ✅ delivered (2026-06-07).** The org-governance layer ships: the `policy/` subsystem (`nimbus.policy.toml` schema+parser, Ed25519 sign/verify over canonical bytes, V36 `org_policy_state` + `policy_anchor_pin`, a `PolicyStore`, and the **I22 `PolicyGate`** that resolves a monotonic-stricter `EnforcedPolicy` — tighten-only, fail-closed to last-valid/baseline — driving connector-allowlist + retention-floor + quorum/HITL enforcement, peer distribution via `federation.policy` + pubkey pinning + `nimbus policy trust`, and an audit-log shipper `federation.auditExport`); GDPR purge (V37 `gdpr_purge_job` + `gdpr_purge_request` ledger, `team.purge` orchestration, HITL-gated `federation.purge` serve emitting signed deletion records, sync-cycle retry); the `status/` subsystem (`GatewayStatus` snapshot + Prometheus exposition at `GET /metrics`); and the dependency-free `packages/admin-console` served at `GET /admin/*`. Wired through `policy.*` / `team.purge` / `team.auditMerged` / `admin.status` IPC, the HTTP read routes + the `PUT /v1/admin/policy` write route (**I13**; `WRITE_ROUTE_ALLOWLIST` 4 → 5), the Tauri renderer allowlist (read-only `admin.status` / `policy.show` / `team.auditMerged`; privileged `policy.sign` / `trust` / `refetch` + `team.purge` stay CLI-only — I7), invariant **I22** (runtime test + static **D16**), and `CURRENT_SCHEMA_VERSION` → 37.
+
 #### Dependencies
 
 - Phase 4 encrypted LAN remote access (E2EE channel foundation for Nimbus-to-Nimbus)
@@ -792,8 +794,8 @@ Depends on Team Vault (above) so service-account / SSO credentials can be shared
 - [ ] **Team "Huddle" Briefing** — aggregate morning briefing summarizing team achievements across PRs, tickets, and incidents without manual status reporting
 - [ ] **Tribal-knowledge extraction** — agent watches Slack / Teams for repeated questions ("how do I deploy X?") and proactively suggests saving the answer to a shared Notion / Confluence page or as a Phase 7 Wave 4 automation template; upstream pattern detector that feeds the automation library
 - [ ] **Cross-team blast-radius pre-flight** — before merging a PR, the upstream service owner's agent sends a "preflight request" to the agents of downstream service owners; downstream agents simulate the change against their local integration tests / environments only after the downstream owner approves via their HITL queue (no auto-execution on the upstream owner's say-so); aggregated results return to the upstream PR; stops cascading failures across team boundaries without a centralised staging environment
-- [ ] **Org-level policy engine** — `nimbus.policy.toml` enforces: connector allowlists, `retentionDays` floor, HITL threshold overrides, audit log shipping destination; interacts with per-user profile config from Phase 3.5
-- [ ] **Policy enforcement at the Gateway** — policy loaded on startup; connectors not in the allowlist disabled before the mesh starts; violations logged to audit trail
+- [x] **Org-level policy engine** — `nimbus.policy.toml` enforces: connector allowlists, `retentionDays` floor, HITL threshold overrides, audit log shipping destination; interacts with per-user profile config from Phase 3.5 *(Slice 4: signature-verified `nimbus.policy.toml` (Ed25519 over canonical bytes) → `PolicyGate` resolves a monotonic-stricter `EnforcedPolicy`; V36 `org_policy_state` + `policy_anchor_pin`; invariant **I22** / static **D16**)*
+- [x] **Policy enforcement at the Gateway** — policy loaded on startup; connectors not in the allowlist disabled before the mesh starts; violations logged to audit trail *(Slice 4: connector allowlist + retention floor + quorum/HITL resolver all read `EnforcedPolicy` (fail-closed to last-valid/baseline); distributed via `federation.policy` serve + pubkey pinning + `nimbus policy trust`, with an audit-log shipper)*
 
 #### ChatOps
 
@@ -804,9 +806,9 @@ Depends on Team Vault (above) so service-account / SSO credentials can be shared
 
 #### Admin & Observability
 
-- [ ] **Admin console** — web UI served locally by the Gateway: user list, namespace health, connector status across the team, audit log viewer, policy editor
-- [ ] **Team audit log** — federation events appended to each member's local audit log; owner can request a merged view
-- [ ] **GDPR/compliance at org level** — `nimbus team purge --user <id>` removes a user's contributions from all shared namespaces; writes a signed deletion record
+- [x] **Admin console** — web UI served locally by the Gateway: user list, namespace health, connector status across the team, audit log viewer, policy editor *(Slice 4: dependency-free static console — `packages/admin-console`, served bearer-gated at `GET /admin/*`; backed by `admin.status` (a `GatewayStatus` snapshot from the new `status/` subsystem) + `policy.show` + `team.auditMerged`)*
+- [x] **Team audit log** — federation events appended to each member's local audit log; owner can request a merged view *(Slice 4: `team.auditMerged` IPC + the `federation.auditExport` audit-log shipper)*
+- [x] **GDPR/compliance at org level** — `nimbus team purge --user <id>` removes a user's contributions from all shared namespaces; writes a signed deletion record *(Slice 4: `team.purge` orchestration over the V37 `gdpr_purge_job` + `gdpr_purge_request` ledger; HITL-gated `federation.purge` serve emits signed deletion records, with sync-cycle retry)*
 
 #### Share & Virality Primitives
 

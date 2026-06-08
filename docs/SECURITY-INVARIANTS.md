@@ -645,6 +645,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `scripts/structure-audit/check-nimbus-invariants.ts:66` | I14 | D12 rule: direct db.run/db.exec outside DB_RUN_EXEC_ALLOW_LIST causes exit 1 |
 | `scripts/structure-audit/check-nimbus-invariants.ts:72` | I1 | D1 rule: spawn under connectors/ without extensionProcessEnv causes exit 1 |
 | `scripts/structure-audit/check-nimbus-invariants.ts:73` | I15 | D10 rule: ServerSpec under connectors/lazy-mesh/ without wrapServerSpec causes exit 1 |
+| `scripts/structure-audit/check-nimbus-invariants.ts:274` | I22 | D16 rule: `parsePolicyToml` imported outside `packages/gateway/src/policy/` causes exit 1 (enforcement must read EnforcedPolicy via policy-gate.ts) |
 | `packages/cli/src/commands/extension-sync.test.ts:85` | I10 | Test verifies extension sync token comparison uses constantTimeStringEqual |
 | `packages/gateway/src/agents/impact.test.ts:71` | I10 | impact.test.ts verifies no timing-sensitive comparison uses === |
 | `packages/gateway/src/automation/graph-predicate.ts:149` | I2 | countItemsMatchingGraphPredicate does not leak item content or secrets; returns count only |
