@@ -45,6 +45,7 @@ import {
 } from "../obsidian-notes-v26-sql.ts";
 import { PERSON_HANDLES_V5_ALTER_SQL } from "../person-handles-v5-sql.ts";
 import { PERSON_LINKED_V4_ALTER_SQL } from "../person-linked-v4-sql.ts";
+import { POLICY_V36_SQL } from "../policy-v36-sql.ts";
 import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.ts";
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
@@ -387,6 +388,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35)",
     V35_TEAM_VAULT_SQL,
   ),
+  simpleStep(35, 36, "org_policy_state + policy_anchor_pin (policy v36)", POLICY_V36_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -425,6 +427,7 @@ const BACKFILL_LABELS: readonly string[] = [
   "federation namespaces/filters/grants + audit_log.federation_json (federation v33) (backfilled)",
   "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34) (backfilled)",
   "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
+  "org_policy_state + policy_anchor_pin (policy v36) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
