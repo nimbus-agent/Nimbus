@@ -44,10 +44,18 @@ tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
       "${IMAGE}" \
       bash -c '
         set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        # Match the CI coverage job (_test-suite.yml unit-coverage): the ubuntu runner ships git
+        # and installs libsecret-tools + gnome-keyring + dbus, then runs the suite inside a D-Bus
+        # session via run-with-optional-dbus.sh. oven/bun:latest has none of these, so the PAL /
+        # vault tests and the assemblePlatformServices boot fail — which falsely un-covers every
+        # subsystem they exercise (scheduler, graph-populator, latency-ring-buffer,
+        # delegated-request-remote, and the filesystem-v2-sync git path). Install + wrap to match.
+        apt-get update -qq && apt-get install -y -qq git libsecret-tools gnome-keyring dbus >/dev/null
         mkdir -p /src && tar -x -C /src
         bun install --frozen-lockfile
         (cd packages/client && bun run build)
-        bash scripts/coverage-floor/build-lcov.sh
+        bash scripts/ci/run-with-optional-dbus.sh bash scripts/coverage-floor/build-lcov.sh
         cp coverage/lcov.info /out/lcov.info
       '
 
