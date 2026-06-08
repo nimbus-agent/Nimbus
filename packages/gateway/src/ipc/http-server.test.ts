@@ -360,6 +360,18 @@ describe("startReadOnlyHttpServer — observability surface (admin.status + /met
     await res.text();
   });
 
+  it("GET /metrics returns 401 when the admin token is empty (fail-closed)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/metrics`, {
+      headers: { authorization: "Bearer anything" },
+    });
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
   it("GET /v1/admin/status returns 404 when the surface is not mounted", async () => {
     handle = startReadOnlyHttpServer(dbPath, 0);
     const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`);
