@@ -24,6 +24,43 @@ function makeEmptyDb(dbPath: string, targetVersion = 28): void {
   db.close();
 }
 
+/** Path to the real built admin-console dist (packages/admin-console/dist). */
+function builtConsoleDist(): string {
+  return join(import.meta.dir, "..", "..", "..", "admin-console", "dist");
+}
+
+/**
+ * Issue a raw HTTP/1.1 GET over a TCP socket so the path is sent verbatim — `fetch` normalizes
+ * `..` segments out of the URL, which would defeat the traversal-rejection assertion.
+ */
+async function rawGet(port: number, path: string, token: string): Promise<{ status: number }> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let received = "";
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        open(socket): void {
+          socket.write(
+            `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${token}\r\nConnection: close\r\n\r\n`,
+          );
+        },
+        data(_socket, data): void {
+          received += new TextDecoder().decode(data);
+        },
+        close(): void {
+          const statusLine = received.split("\r\n", 1)[0] ?? "";
+          const code = Number.parseInt(statusLine.split(" ")[1] ?? "0", 10);
+          resolvePromise({ status: code });
+        },
+        error(_socket, err): void {
+          rejectPromise(err);
+        },
+      },
+    }).catch(rejectPromise);
+  });
+}
+
 describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
   let tmpDir: string;
   let dbPath: string;
@@ -375,6 +412,81 @@ describe("startReadOnlyHttpServer — observability surface (admin.status + /met
   it("GET /v1/admin/status returns 404 when the surface is not mounted", async () => {
     handle = startReadOnlyHttpServer(dbPath, 0);
     const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`);
+    expect(res.status).toBe(404);
+    await res.text();
+  });
+});
+
+describe("startReadOnlyHttpServer — admin console assets (/admin/*)", () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let handle: ReturnType<typeof startReadOnlyHttpServer> | undefined;
+  let prevDist: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-console-"));
+    dbPath = join(tmpDir, "nimbus.db");
+    makeEmptyDb(dbPath);
+    prevDist = process.env["NIMBUS_ADMIN_CONSOLE_DIST"];
+  });
+
+  afterEach(() => {
+    handle?.stop();
+    handle = undefined;
+    if (prevDist === undefined) {
+      delete process.env["NIMBUS_ADMIN_CONSOLE_DIST"];
+    } else {
+      process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = prevDist;
+    }
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
+  });
+
+  it("GET /admin returns 401 without a bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/admin`);
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /admin returns 503 with a valid bearer when the console is not built", async () => {
+    // Force resolveConsoleDist → undefined by pointing the override at a path with no index.html.
+    process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = join(tmpDir, "no-console-here");
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/admin`, {
+      headers: { authorization: "Bearer admin-token" },
+    });
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("not built");
+  });
+
+  it("rejects encoded-slash traversal (/admin/..%2f..%2fetc) with 400 under a valid bearer", async () => {
+    // Point the override at a real built dist so resolveConsoleDist resolves, exercising the
+    // safeAssetPath traversal rejection (400) rather than the 503 not-built branch.
+    process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = builtConsoleDist();
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    // URL parsing collapses literal ".." segments before our handler sees them; the surviving
+    // attack is an encoded slash (%2f) so the ".." reaches url.pathname intact. fetch would also
+    // normalize, so issue the raw request line on the socket directly.
+    const raw = await rawGet(handle.port, "/admin/..%2f..%2fetc%2fpasswd", "admin-token");
+    expect(raw.status).toBe(400);
+  });
+
+  it("GET /admin returns 404 when the surface is not mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/admin`);
     expect(res.status).toBe(404);
     await res.text();
   });

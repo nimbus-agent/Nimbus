@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { dbRun } from "../db/write.ts";
@@ -8,6 +8,7 @@ import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
+import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
 import { requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
@@ -276,6 +277,46 @@ async function handleMetrics(
   });
 }
 
+// Admin console static assets (Task 17). Bearer-gated by the SAME resolveAdminToken used by
+// /v1/admin/status: absent surface (no resolveAdminToken) → null (404, surface not mounted);
+// invalid bearer → 401; console not built → 503; traversal → 400. GET-only, path-traversal-safe.
+async function handleAdminConsole(
+  req: Request,
+  url: URL,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  if (opts.resolveAdminToken === undefined) return null;
+  const expectedToken = await opts.resolveAdminToken();
+  if (!requireBearer(req, { expectedToken }).ok) {
+    return new Response("unauthorized\n", {
+      status: 401,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const dist = resolveConsoleDist(import.meta.dir);
+  if (dist === undefined) {
+    return new Response(
+      "admin console not built — run: bun --filter @nimbus-dev/admin-console build\n",
+      {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      },
+    );
+  }
+  const rel = safeAssetPath(url.pathname);
+  if (rel === undefined) {
+    return new Response("bad request\n", {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const file = Bun.file(join(dist, rel));
+  if (!(await file.exists())) {
+    return new Response("Not Found", { status: 404 });
+  }
+  return new Response(file, { headers: { "content-type": contentTypeFor(rel) } });
+}
+
 async function dispatchReadOnlyGet(
   req: Request,
   path: string,
@@ -319,6 +360,10 @@ async function dispatchReadOnlyGet(
   }
   if (path === "/metrics") {
     const res = await handleMetrics(req, opts);
+    if (res !== null) return res;
+  }
+  if (path === "/admin" || path.startsWith("/admin/")) {
+    const res = await handleAdminConsole(req, url, opts);
     if (res !== null) return res;
   }
   return new Response("Not Found", { status: 404 });
