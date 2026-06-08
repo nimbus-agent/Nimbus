@@ -48,3 +48,6 @@ cbc264f51fdc7082c86a4564ec37cfc9066ee260:packages/gateway/test/unit/ipc/connecto
 # are pinned below.
 ff3ab297ae365f7e2a499b21ffbb3111a79f9cc8:packages/gateway/src/platform/assemble.ts:generic-api-key:523
 457ed8bf52502b20b0c4f9d2a142348639093075:packages/gateway/src/platform/assemble.ts:generic-api-key:660
+# Commit 8896570d's version of THIS file briefly carried a secret-shaped example in the
+# comment above (since rewritten); gitleaks full-history scan still flags that old revision.
+8896570d0ebd24206fcaeb6503fb5abb5abcae56:.gitleaksignore:generic-api-key:46

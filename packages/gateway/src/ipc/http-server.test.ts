@@ -605,7 +605,13 @@ describe("startReadOnlyHttpServer — admin console assets (/admin/*)", () => {
     // attack is an encoded slash (%2f) so the ".." reaches url.pathname intact. fetch would also
     // normalize, so issue the raw request line on the socket directly.
     const raw = await rawGet(handle.port, "/admin/..%2f..%2fetc%2fpasswd", "admin-token");
-    expect(raw.status).toBe(400);
+    // Cross-platform: depending on the runtime's URL parser, the encoded slash either survives so
+    // ".." reaches safeAssetPath (→ 400 rejection) or is decoded/normalized to a clean non-existent
+    // asset path (→ 404). BOTH prevent the traversal — the route must never serve the target. The
+    // security property is "never 200 / never serves /etc/passwd"; the deterministic safeAssetPath
+    // unit tests (admin-console-assets.test.ts) cover the rejection logic directly.
+    expect(raw.status).not.toBe(200);
+    expect([400, 404]).toContain(raw.status);
   });
 
   it("GET /admin returns 404 when the surface is not mounted", async () => {
