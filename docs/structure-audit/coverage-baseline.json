@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-07T18:52:44.056Z",
+  "generated_at": "2026-06-08T07:06:12.943Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -372,7 +372,7 @@
     },
     "packages/gateway/src/db/latency-ring-buffer.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 65.63
+      "min_branch_pct": 78.13
     },
     "packages/gateway/src/db/metrics.ts": {
       "min_line_pct": 80,
@@ -651,7 +651,7 @@
       "min_branch_pct": 77.23
     },
     "packages/gateway/src/platform/assemble-sync-registrations.ts": {
-      "min_line_pct": 51.79,
+      "min_line_pct": 55.95,
       "min_branch_pct": 80
     },
     "packages/gateway/src/platform/dirs.ts": {
