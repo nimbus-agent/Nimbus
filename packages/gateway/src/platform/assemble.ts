@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import { startAuditShipper } from "../audit/audit-shipper.ts";
 import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
@@ -647,6 +648,18 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ),
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
+
+  // Audit shipper (Task 19, I22): when policy configures an org SIEM endpoint
+  // (`enforced().auditShipTo`), ship audit_log entries there as metadata-only
+  // NDJSON — NEVER `action_json` (the no-leak guarantee; the SELECT omits it).
+  // Forward-only: the shipper baselines on the current MAX(id) at start and
+  // ships only entries created afterwards, so no persisted-cursor migration is
+  // needed. Started after the gate so it reads the enforced policy.
+  const auditShipTo = policyGate.enforced().auditShipTo;
+  if (auditShipTo !== undefined && auditShipTo.length > 0) {
+    const auditShipper = startAuditShipper(db, { shipTo: auditShipTo });
+    sidecarStops.push(() => auditShipper.stop());
+  }
 
   const { syncScheduler, connectorMesh } = await createSchedulerWithMesh(
     paths,
