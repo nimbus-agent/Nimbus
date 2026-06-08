@@ -70,4 +70,65 @@ describe("refreshPolicy (peer side)", () => {
     expect(out.applied).toBe(false);
     expect(out.reason).toBe("no_bundle");
   });
+
+  test("a fetch() that throws propagates and leaves the store untouched (no partial write)", async () => {
+    const kp = generateEd25519Keypair();
+    const pub = encodeBase64(kp.pubkey);
+    const { store, gate } = setup();
+    store.pinAnchorPubkey(pub, "manual", 1);
+    await expect(
+      refreshPolicy({
+        store,
+        gate,
+        pinnedPubkey: pub,
+        nowMs: 1,
+        fetch: async () => {
+          throw new Error("LAN down");
+        },
+      }),
+    ).rejects.toThrow("LAN down");
+    expect(store.load()).toBeUndefined(); // nothing persisted
+    expect(gate.status().signatureValid).toBe(false);
+  });
+
+  test("pendingRestart fires only when the connector allowlist changes", async () => {
+    const kp = generateEd25519Keypair();
+    const pub = encodeBase64(kp.pubkey);
+    const { store, gate } = setup();
+    store.pinAnchorPubkey(pub, "manual", 1);
+    let restarts = 0;
+    const onConnectorAllowChanged = () => {
+      restarts++;
+    };
+    const v1 = `[policy]\nversion=1\norg="acme"\n[policy.connectors]\nallow=["github"]\n`;
+    await refreshPolicy({
+      store,
+      gate,
+      pinnedPubkey: pub,
+      nowMs: 1,
+      onConnectorAllowChanged,
+      fetch: async () => ({ toml: v1, sig: signPolicy(v1, encodeBase64(kp.privkey)) }),
+    });
+    // change ONLY retention -> connector allow unchanged -> no restart
+    const v2 = `[policy]\nversion=2\norg="acme"\n[policy.connectors]\nallow=["github"]\n[policy.retention]\nmin_days=30\n`;
+    await refreshPolicy({
+      store,
+      gate,
+      pinnedPubkey: pub,
+      nowMs: 2,
+      onConnectorAllowChanged,
+      fetch: async () => ({ toml: v2, sig: signPolicy(v2, encodeBase64(kp.privkey)) }),
+    });
+    // change connector allow -> restart
+    const v3 = `[policy]\nversion=3\norg="acme"\n[policy.connectors]\nallow=["github","slack"]\n[policy.retention]\nmin_days=30\n`;
+    await refreshPolicy({
+      store,
+      gate,
+      pinnedPubkey: pub,
+      nowMs: 3,
+      onConnectorAllowChanged,
+      fetch: async () => ({ toml: v3, sig: signPolicy(v3, encodeBase64(kp.privkey)) }),
+    });
+    expect(restarts).toBe(2); // v1 (undefined->["github"]) and v3 (["github"]->["github","slack"]); v2 no change
+  });
 });

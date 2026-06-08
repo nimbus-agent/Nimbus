@@ -1,6 +1,7 @@
 import type { PolicyBundle } from "./policy-distribution.ts";
 import { type PolicyGate, verifyCandidate } from "./policy-gate.ts";
 import type { PolicyStore } from "./policy-store.ts";
+import { parsePolicyToml } from "./policy-toml.ts";
 
 export interface RefreshDeps {
   readonly store: PolicyStore;
@@ -13,7 +14,7 @@ export interface RefreshDeps {
 
 export interface RefreshOutcome {
   readonly applied: boolean;
-  readonly reason?: "no_bundle" | "bad_signature" | "unchanged";
+  readonly reason?: "no_bundle" | "bad_signature";
 }
 
 /** Peer refresh: fetch → verify → persist → re-enforce. Fail-closed on bad sig (keep last-valid). */
@@ -24,9 +25,11 @@ export async function refreshPolicy(deps: RefreshDeps): Promise<RefreshOutcome> 
   if (parsed === null) return { applied: false, reason: "bad_signature" }; // keep last-valid
 
   const prev = deps.store.load();
-  // pendingRestart when the connector allowlist changes (sync re-registration is boot-time).
-  const prevAllow = JSON.stringify(prev === undefined ? null : prev.toml);
-  const connectorAllowChanged = prevAllow !== JSON.stringify(bundle.toml);
+  // pendingRestart only when the connector allowlist changes (sync re-registration is boot-time;
+  // tool-exposure is already live for other policy fields).
+  const prevAllow = prev === undefined ? undefined : parsePolicyToml(prev.toml).connectors.allow;
+  const connectorAllowChanged =
+    JSON.stringify(prevAllow ?? null) !== JSON.stringify(parsed.connectors.allow ?? null);
   const pendingRestart = connectorAllowChanged && deps.onConnectorAllowChanged !== undefined;
 
   const persisted = {

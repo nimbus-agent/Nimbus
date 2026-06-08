@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
@@ -7,6 +8,8 @@ import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { signPolicy } from "../policy/policy-signing.ts";
+import { PolicyStore } from "../policy/policy-store.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
 import { dispatchFederationRpc } from "./federation-rpc.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
@@ -376,4 +379,38 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
     bIndex.close();
     aIndex.close();
   }
+});
+
+test("federation.policy returns the persisted bundle and null when none is stored", async () => {
+  const policyDb = new Database(":memory:");
+  runIndexedSchemaMigrations(policyDb, 36);
+  const policyIndex = new LocalIndex(policyDb);
+  const policyCtx: FederationRpcContext = {
+    db: policyDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(policyIndex),
+  };
+
+  // No policy persisted yet → null.
+  const emptyRes = await dispatchFederationRpc("federation.policy", {}, policyCtx);
+  expect(emptyRes.kind).toBe("hit");
+  expect((emptyRes as { kind: "hit"; value: unknown }).value).toBeNull();
+
+  // Persist a signed bundle via PolicyStore.
+  const kp = generateEd25519Keypair();
+  const toml = `[policy]\nversion=1\norg="acme"\n[policy.connectors]\nallow=["github"]\n`;
+  const sig = signPolicy(toml, encodeBase64(kp.privkey));
+  const store = new PolicyStore(policyDb);
+  store.persist({ toml, sig, org: "acme", version: 1, fetchedAt: 1, source: "peer" });
+
+  // Now federation.policy should return {toml, sig}.
+  const bundleRes = await dispatchFederationRpc("federation.policy", {}, policyCtx);
+  expect(bundleRes.kind).toBe("hit");
+  const bundle = (bundleRes as { kind: "hit"; value: { toml: string; sig: string } }).value;
+  expect(bundle.toml).toBe(toml);
+  expect(bundle.sig).toBe(sig);
+
+  policyIndex.close();
 });
