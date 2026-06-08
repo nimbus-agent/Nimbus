@@ -72,7 +72,12 @@ const HANDLERS: RpcMethodHandlerMap<PolicyRpcCtx> = {
     }
     return ctx.signPolicy({ toml: requireString(params, "toml") });
   },
+  // Privileged (anchor-only): pinning a foreign anchor pubkey is a trust decision.
+  // Fail-closed here BEFORE touching the injected trust store.
   "policy.trust": (params: unknown, ctx: PolicyRpcCtx): { ok: true } => {
+    if (!ctx.isAnchor) {
+      throw new PolicyRpcError(-32000, "ERR_NOT_ANCHOR: policy.trust requires the org anchor");
+    }
     ctx.trustPubkey({ pubkey: requireString(params, "pubkey") });
     return { ok: true } as const;
   },

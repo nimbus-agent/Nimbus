@@ -869,9 +869,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         {
           store: purgeJobStore,
           resolvePeer: (extId) => identityBoot?.store.activePeerIdsFor(extId)[0],
-          revokeAllGrants: (peerId) => {
-            purgeNamespaceStore.revokeAllForPeer(peerId, Date.now());
-          },
+          // Grant revocation is the confirmed local effect of a purge; performed once in
+          // deleteLocalContributions (which returns the count). No separate item-level
+          // deletion accessor exists yet, so revokeAllGrants is a no-op to avoid double-sweeping.
+          revokeAllGrants: () => {},
           deleteLocalContributions: (peerId) =>
             purgeNamespaceStore.revokeAllForPeer(peerId, Date.now()),
           knownPeers: () => localIndex.listLanPeers().map((p) => p.peer_id),

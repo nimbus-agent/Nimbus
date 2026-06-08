@@ -41,8 +41,17 @@ describe("dispatchPolicyRpc", () => {
     expect(out.kind).toBe("hit");
   });
   test("policy.trust pins the pubkey (hit)", async () => {
-    const out = await dispatchPolicyRpc("policy.trust", { pubkey: "abc" }, ctx());
+    const out = await dispatchPolicyRpc(
+      "policy.trust",
+      { pubkey: "abc" },
+      { ...ctx(), isAnchor: true },
+    );
     expect(out.kind).toBe("hit");
+  });
+  test("policy.trust on a non-anchor fails closed", async () => {
+    await expect(
+      dispatchPolicyRpc("policy.trust", { pubkey: "x" }, { ...ctx(), isAnchor: false }),
+    ).rejects.toThrow();
   });
   test("policy.refetch returns the refresh outcome (hit)", async () => {
     const out = await dispatchPolicyRpc("policy.refetch", {}, ctx());

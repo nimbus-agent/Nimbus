@@ -37,7 +37,7 @@ export type TeamCommand =
   | { kind: "delegations" }
   | { kind: "respond"; requestId: string; approved: boolean; as: string }
   | { kind: "audit"; namespace: string; purpose: string; sinceMs: number }
-  | { kind: "purge"; externalId: string };
+  | { kind: "purge"; externalId: string; yes: boolean };
 
 /** Minimal IPC surface the team-vault/invoke/delegation subcommands need (injectable for tests). */
 export interface TeamRpcClient {
@@ -219,9 +219,9 @@ function parseAudit(rest: string[]): TeamCommand {
 function parsePurge(rest: string[]): TeamCommand {
   const externalId = flagValue(rest, "--user");
   if (typeof externalId !== "string" || externalId.length === 0) {
-    throw new Error("Usage: nimbus team purge --user <externalId>");
+    throw new Error("Usage: nimbus team purge --user <externalId> [--yes]");
   }
-  return { kind: "purge", externalId };
+  return { kind: "purge", externalId, yes: rest.includes("--yes") || rest.includes("--force") };
 }
 
 export function parseTeamArgs(argv: string[]): TeamCommand {
@@ -442,6 +442,16 @@ export async function runTeamVaultRpc(client: TeamRpcClient, cmd: TeamCommand): 
       return true;
     }
     case "purge": {
+      // GDPR purge is irreversible: confirm before dispatching unless --yes/--force was passed.
+      if (!cmd.yes) {
+        const ok = await confirm({
+          message: `Purge ALL data for user "${cmd.externalId}" across the team? This is irreversible.`,
+        });
+        if (isCancel(ok) || ok !== true) {
+          process.stdout.write("aborted\n");
+          return true;
+        }
+      }
       const r = await client.call<{ jobId?: string; localDeleted?: number }>("team.purge", {
         externalId: cmd.externalId,
       });
