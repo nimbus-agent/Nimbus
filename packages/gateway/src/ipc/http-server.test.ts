@@ -100,15 +100,16 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     await res.text();
   });
 
-  it("PUT returns 405 with Allow: GET, POST when write surface IS mounted", async () => {
+  it("PUT to an unknown write path 404s (PUT is now the policy write method)", async () => {
     handle = startReadOnlyHttpServer(dbPath, 0, {
       resolveDeploymentToken: async () => "test-token",
     });
     const res = await fetch(`http://127.0.0.1:${handle.port}/v1/items`, {
       method: "PUT",
     });
-    expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("GET, POST");
+    // PUT now flows through the I13 write dispatcher (it carries PUT /v1/admin/policy); an
+    // unrecognized write path resolves to 404, mirroring POST to an unknown path.
+    expect(res.status).toBe(404);
     await res.text();
   });
 
@@ -169,6 +170,77 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBe("internal_error");
+  });
+
+  it("PUT /v1/admin/policy 404s when the policy surface is not mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, { resolveDeploymentToken: async () => "t" });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer t" },
+      body: JSON.stringify({ toml: "x" }),
+    });
+    expect(res.status).toBe(404);
+    await res.text();
+  });
+
+  it("PUT /v1/admin/policy is 401 without a bearer when mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveAdminToken: async () => "admin-token",
+      authorPolicy: async (toml) => ({
+        ok: true,
+        bundle: { toml, sig: "SIG" },
+        org: "acme",
+        version: 1,
+      }),
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ toml: '[policy]\norg = "acme"\n' }),
+    });
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("PUT /v1/admin/policy applies a valid policy with a valid bearer (200, no privkey)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveAdminToken: async () => "admin-token",
+      authorPolicy: async (toml) => ({
+        ok: true,
+        bundle: { toml, sig: "SIG" },
+        org: "acme",
+        version: 3,
+      }),
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer admin-token" },
+      body: JSON.stringify({ toml: '[policy]\norg = "acme"\nversion = 3\n' }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("privkey");
+    const body = JSON.parse(text) as { data: { applied: boolean; org: string; version: number } };
+    expect(body.data).toEqual({ applied: true, org: "acme", version: 3 });
+  });
+
+  it("PUT /v1/admin/policy returns 400 on an invalid body (no toml string)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveAdminToken: async () => "admin-token",
+      authorPolicy: async (toml) => ({
+        ok: true,
+        bundle: { toml, sig: "SIG" },
+        org: "acme",
+        version: 1,
+      }),
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "Bearer admin-token" },
+      body: JSON.stringify({ notToml: true }),
+    });
+    expect(res.status).toBe(400);
+    await res.text();
   });
 });
 

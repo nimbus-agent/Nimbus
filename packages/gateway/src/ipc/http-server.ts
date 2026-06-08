@@ -12,7 +12,11 @@ import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-conso
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
 import { requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
-import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
+import {
+  dispatchWriteRoute,
+  type PolicyAuthorResult,
+  WRITE_ROUTE_ALLOWLIST,
+} from "./http-write-routes.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "./metrics-rpc.ts";
 import { loadOpenApiJsonBytes } from "./openapi-loader.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "./preflight-rpc.ts";
@@ -27,6 +31,11 @@ export type ReadOnlyHttpServerOptions = {
   // resolveAdminToken(). Absent either → the routes 404 (surface not mounted).
   readonly statusReaders?: StatusReaders;
   readonly resolveAdminToken?: () => Promise<string>;
+  // Anchor policy write surface (Task 18b). When BOTH are present, PUT /v1/admin/policy is mounted
+  // on the I13 write dispatcher (bearer = resolveAdminToken). `authorPolicy` is a policy/-resident
+  // closure that validates+signs (Vault-only anchor key)+persists+applies — the route never parses
+  // TOML itself (D16). Absent either → the route 404s (surface not mounted).
+  readonly authorPolicy?: (toml: string) => Promise<PolicyAuthorResult>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -397,6 +406,15 @@ async function handleWrite(
             store: new NamespaceStore(writeDb),
             identity: new IdentityStore(writeDb),
           };
+    // Policy write surface: present only when an admin token resolver AND an authorPolicy closure
+    // are both wired. The bearer is the SAME admin token used by /v1/admin/status + /metrics.
+    const policy =
+      opts.authorPolicy === undefined || opts.resolveAdminToken === undefined
+        ? undefined
+        : {
+            token: await opts.resolveAdminToken(),
+            authorPolicy: opts.authorPolicy,
+          };
     return await dispatchWriteRoute(req, {
       writeDb,
       expectedToken,
@@ -404,6 +422,7 @@ async function handleWrite(
       nowMs: opts.nowMs ?? ((): number => Date.now()),
       knownServices,
       ...(scim === undefined ? {} : { scim }),
+      ...(policy === undefined ? {} : { policy }),
     });
   } catch {
     return json({ error: "internal_error" }, 500);
@@ -435,10 +454,12 @@ export function startReadOnlyHttpServer(
   const db = new Database(dbPath, { readonly: true, create: false });
   dbRun(db, "PRAGMA query_only = ON");
 
-  // Single writable DB (I13). Opened when EITHER the deployment-write surface OR the SCIM
-  // provisioning surface is enabled — SCIM must work on a gateway that has not enabled deployment writes.
+  // Single writable DB (I13). Opened when ANY write surface is enabled — deployment writes, SCIM
+  // provisioning, OR the anchor policy write — each must work independently of the others.
   const writeDb =
-    opts.resolveDeploymentToken === undefined && opts.resolveScimToken === undefined
+    opts.resolveDeploymentToken === undefined &&
+    opts.resolveScimToken === undefined &&
+    opts.authorPolicy === undefined
       ? null
       : new Database(dbPath, { create: false, readwrite: true });
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });
@@ -458,8 +479,13 @@ export function startReadOnlyHttpServer(
         const scimToken = await opts.resolveScimToken();
         return dispatchScimRead(req, { identity: new IdentityStore(writeDb), scimToken });
       }
-      // All writes (deployment POST + SCIM POST/PATCH/DELETE) → the single I13 dispatcher.
-      if (req.method === "POST" || req.method === "PATCH" || req.method === "DELETE") {
+      // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
+      if (
+        req.method === "POST" ||
+        req.method === "PATCH" ||
+        req.method === "DELETE" ||
+        req.method === "PUT"
+      ) {
         return handleWrite(req, writeDb, rateLimiter, opts);
       }
       if (req.method !== "GET") {

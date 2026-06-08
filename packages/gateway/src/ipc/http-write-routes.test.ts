@@ -40,13 +40,14 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at the deployment + 3 SCIM routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(4);
+  it("keeps the I13 allowlist at the deployment + 3 SCIM + admin-policy routes", () => {
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(5);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
       "PATCH /scim/v2/Users/{id}",
       "DELETE /scim/v2/Users/{id}",
+      "PUT /v1/admin/policy",
     ]);
   });
 });
@@ -154,5 +155,85 @@ describe("dispatchWriteRoute — SCIM writes flow through the I13 pipeline", () 
       ctx,
     );
     expect(res.status).toBe(401);
+  });
+});
+
+function policyContext(authored: string[]) {
+  const db = openSeededInMemoryDb(36);
+  return {
+    writeDb: db,
+    expectedToken: "deploy-token",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: (): readonly string[] => [],
+    policy: {
+      token: "admin-secret",
+      authorPolicy: async (
+        toml: string,
+      ): Promise<
+        | { ok: true; bundle: { toml: string; sig: string }; org: string; version: number }
+        | { ok: false; error: string }
+      > => {
+        authored.push(toml);
+        if (!toml.includes("org")) return { ok: false, error: "policy.org is required" };
+        return { ok: true, bundle: { toml, sig: "SIG" }, org: "acme", version: 2 };
+      },
+    },
+  };
+}
+
+describe("dispatchWriteRoute — PUT /v1/admin/policy (anchor policy write)", () => {
+  it("404s when the policy surface is not wired", async () => {
+    const { policy: _p, ...noPolicy } = policyContext([]);
+    const res = await dispatchWriteRoute(
+      scimReq("PUT", "/v1/admin/policy", "admin-secret", { toml: "org" }),
+      noPolicy,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a missing bearer with 401", async () => {
+    const ctx = policyContext([]);
+    const res = await dispatchWriteRoute(
+      scimReq("PUT", "/v1/admin/policy", undefined, { toml: "org" }),
+      ctx,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("applies a valid policy with a valid bearer (200, never the privkey)", async () => {
+    const authored: string[] = [];
+    const ctx = policyContext(authored);
+    const res = await dispatchWriteRoute(
+      scimReq("PUT", "/v1/admin/policy", "admin-secret", { toml: '[policy]\norg = "acme"\n' }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { applied: boolean; org: string; version: number } };
+    expect(body.data.applied).toBe(true);
+    expect(body.data.org).toBe("acme");
+    expect(body.data.version).toBe(2);
+    expect(authored).toHaveLength(1);
+  });
+
+  it("rejects a missing/non-string toml with 400 (audit row)", async () => {
+    const ctx = policyContext([]);
+    const res = await dispatchWriteRoute(
+      scimReq("PUT", "/v1/admin/policy", "admin-secret", { toml: 123 }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(auditCount(ctx.writeDb, "policy.applied_rejected")).toBe(1);
+  });
+
+  it("surfaces an author validation failure as 400", async () => {
+    const ctx = policyContext([]);
+    const res = await dispatchWriteRoute(
+      scimReq("PUT", "/v1/admin/policy", "admin-secret", { toml: "version = 1" }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("org");
   });
 });

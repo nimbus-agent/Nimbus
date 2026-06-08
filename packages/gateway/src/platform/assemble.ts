@@ -82,7 +82,9 @@ import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
+import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { type AuthorResult, authorPolicy } from "../policy/policy-author.ts";
 import { buildPolicyGate, type PolicyGate } from "../policy/policy-gate.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
@@ -329,6 +331,7 @@ interface HttpSidecarOpts {
   resolveScimToken?: () => Promise<string>;
   statusReaders?: StatusReaders;
   resolveAdminToken?: () => Promise<string>;
+  authorPolicy?: (toml: string) => Promise<AuthorResult>;
 }
 
 function collectSidecarsFromEnv(
@@ -353,6 +356,7 @@ function collectSidecarsFromEnv(
           ...(httpOpts.resolveAdminToken === undefined
             ? {}
             : { resolveAdminToken: httpOpts.resolveAdminToken }),
+          ...(httpOpts.authorPolicy === undefined ? {} : { authorPolicy: httpOpts.authorPolicy }),
         }).stop,
       );
     }
@@ -765,6 +769,18 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // mechanism; "" (key absent) → requireBearer fails closed (surfaceDisabled), routes 401.
   httpSidecarOpts.resolveAdminToken = async (): Promise<string> =>
     (await vault.get(HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY)) ?? "";
+
+  // Anchor policy write surface (Task 18b): PUT /v1/admin/policy. The closure resolves the
+  // Vault-only anchor signing keypair (generated on first use) and delegates all validate+sign+
+  // persist+apply logic to policy/policy-author.ts — the HTTP route never parses TOML (D16). The
+  // privkey stays inside this closure's call frame: never persisted, returned, or logged.
+  httpSidecarOpts.authorPolicy = async (toml: string): Promise<AuthorResult> => {
+    const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
+    return authorPolicy(
+      { store: policyStore, gate: policyGate, db, privkeyB64, pubkeyB64, nowMs: Date.now() },
+      toml,
+    );
+  };
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 

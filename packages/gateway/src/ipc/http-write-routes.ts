@@ -15,18 +15,22 @@ const ROUTE_DEPLOY = "POST /v1/deployments";
 const ROUTE_SCIM_CREATE = "POST /scim/v2/Users";
 const ROUTE_SCIM_PATCH = "PATCH /scim/v2/Users/{id}";
 const ROUTE_SCIM_DELETE = "DELETE /scim/v2/Users/{id}";
+const ROUTE_ADMIN_POLICY = "PUT /v1/admin/policy";
 
 /**
  * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
  * auth, per-token rate-limit, body cap, and audit-on-rejection. `POST /v1/deployments` is the CI
  * deploy-annotation route; the three `/scim/v2/Users` routes are the SCIM provisioning surface
- * (own bearer = `identity.scim.bearer`). No other HTTP method may write.
+ * (own bearer = `identity.scim.bearer`); `PUT /v1/admin/policy` is the admin-console anchor policy
+ * write surface (own bearer = the admin token; signs the org policy with the Vault-only anchor key).
+ * No other HTTP method may write.
  */
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_DEPLOY,
   ROUTE_SCIM_CREATE,
   ROUTE_SCIM_PATCH,
   ROUTE_SCIM_DELETE,
+  ROUTE_ADMIN_POLICY,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
@@ -38,12 +42,30 @@ const SCIM_DISABLED_HINT = "set identity.scim.bearer via 'nimbus identity scim s
 
 const DEPLOY_REJECT_ACTION = "deployment.annotation_rejected";
 const SCIM_REJECT_ACTION = "scim.provision_rejected";
+const POLICY_DISABLED_HINT =
+  "set the admin token via 'nimbus vault set http_api.deployment_token <value>'";
+const POLICY_REJECT_ACTION = "policy.applied_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
   readonly token: string;
   readonly store: NamespaceStore;
   readonly identity: IdentityStore;
+}
+
+/** Result of the anchor policy author closure (mirrors policy/policy-author.ts AuthorResult). */
+export type PolicyAuthorResult =
+  | { ok: true; bundle: { toml: string; sig: string }; org: string; version: number }
+  | { ok: false; error: string };
+
+/**
+ * Anchor policy write seam — present only when the admin policy surface is enabled. `authorPolicy`
+ * validates+signs (Vault-only anchor key)+persists+applies the submitted org-policy TOML; it lives
+ * under `policy/` so D16 (parsePolicyToml import scoping) is respected — this route never parses TOML.
+ */
+export interface PolicyWriteSurface {
+  readonly token: string;
+  readonly authorPolicy: (toml: string) => Promise<PolicyAuthorResult>;
 }
 
 export interface WriteRouteContext {
@@ -54,9 +76,10 @@ export interface WriteRouteContext {
   readonly deployEnvironments?: readonly string[];
   readonly knownServices: () => readonly string[];
   readonly scim?: ScimWriteSurface;
+  readonly policy?: PolicyWriteSurface;
 }
 
-type RouteKind = "deployment" | "scim";
+type RouteKind = "deployment" | "scim" | "policy";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -136,6 +159,18 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
       expectedToken: ctx.expectedToken,
       disabledHint: DEPLOY_DISABLED_HINT,
       rejectAction: DEPLOY_REJECT_ACTION,
+      hasBody: true,
+    };
+  }
+  if (path === "/v1/admin/policy") {
+    if (method !== "PUT") return methodNotAllowed("PUT");
+    if (ctx.policy === undefined) return new Response("Not Found", { status: 404 });
+    return {
+      key: ROUTE_ADMIN_POLICY,
+      kind: "policy",
+      expectedToken: ctx.policy.token,
+      disabledHint: POLICY_DISABLED_HINT,
+      rejectAction: POLICY_REJECT_ACTION,
       hasBody: true,
     };
   }
@@ -415,6 +450,65 @@ async function runScimRoute(
   }
 }
 
+/** Extracts a string `toml` field from the parsed body, or undefined if missing/wrong type. */
+function extractToml(parsed: unknown): string | undefined {
+  if (parsed !== null && typeof parsed === "object" && "toml" in parsed) {
+    const t = (parsed as { toml?: unknown }).toml;
+    return typeof t === "string" ? t : undefined;
+  }
+  return undefined;
+}
+
+async function runPolicyRoute(
+  ctx: WriteRouteContext,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  parsed: unknown,
+): Promise<Response> {
+  // resolveRoute guarantees ctx.policy is defined for every policy-kind route.
+  const policy = ctx.policy as PolicyWriteSurface;
+  const toml = extractToml(parsed);
+  if (toml === undefined) {
+    recordRejection(ctx, {
+      actionType: POLICY_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 400,
+      reason: "invalid_body",
+    });
+    return jsonResponse({ error: "invalid_body", detail: "body.toml (string) is required" }, 400, {
+      ...rateLimitHeaders(limit),
+    });
+  }
+  let result: PolicyAuthorResult;
+  try {
+    result = await policy.authorPolicy(toml);
+  } catch {
+    recordRejection(ctx, {
+      actionType: POLICY_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+  if (!result.ok) {
+    recordRejection(ctx, {
+      actionType: POLICY_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 400,
+      reason: "invalid_policy",
+    });
+    return jsonResponse({ error: result.error }, 400, rateLimitHeaders(limit));
+  }
+  // The privkey is NEVER in the response — only the applied org/version summary (the {toml, sig}
+  // bundle is public, but the response intentionally returns just the applied summary).
+  return jsonResponse(
+    { data: { applied: true, org: result.org, version: result.version } },
+    200,
+    rateLimitHeaders(limit),
+  );
+}
+
 export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): Promise<Response> {
   const url = new URL(req.url);
   const route = resolveRoute(req, url, ctx);
@@ -448,6 +542,9 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
       return svcRes;
     }
     return runDeploymentRoute(ctx, auth.fingerprint, limit, parsed, svc);
+  }
+  if (route.kind === "policy") {
+    return runPolicyRoute(ctx, auth.fingerprint, limit, parsed);
   }
   return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }
