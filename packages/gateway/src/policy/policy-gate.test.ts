@@ -72,4 +72,31 @@ describe("computeEnforced — monotonic stricter", () => {
     );
     expect(e.connectorAllow).toEqual(["github"]);
   });
+
+  test("quorum window = min of defined positive windows (shorter is stricter; policy cannot lengthen)", () => {
+    // policy window 3600 vs local 600 -> 600 (policy cannot loosen by lengthening)
+    const longer = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.hitl.quorum."terraform.destroy"]\napprovers=2\nwindow_seconds=3600\n`,
+      ),
+      baseline,
+    );
+    expect(longer.quorum.get("terraform.destroy")?.windowSeconds).toBe(600);
+    // policy window 120 vs local 600 -> 120 (policy tightens the window)
+    const shorter = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.hitl.quorum."terraform.destroy"]\napprovers=2\nwindow_seconds=120\n`,
+      ),
+      baseline,
+    );
+    expect(shorter.quorum.get("terraform.destroy")?.windowSeconds).toBe(120);
+    // action with no local baseline rule -> takes policy window
+    const fresh = computeEnforced(
+      parsePolicyToml(
+        `[policy]\nversion=1\norg="x"\n[policy.hitl.quorum."db.drop"]\napprovers=2\nwindow_seconds=900\n`,
+      ),
+      baseline,
+    );
+    expect(fresh.quorum.get("db.drop")?.windowSeconds).toBe(900);
+  });
 });

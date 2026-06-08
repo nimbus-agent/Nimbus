@@ -31,8 +31,14 @@ export function computeEnforced(policy: OrgPolicy, base: LocalBaseline): Enforce
   for (const [id, pol] of policy.hitl.quorum) {
     const local = quorum.get(id);
     const approvers = Math.max(local?.approvers ?? 0, pol.approvers);
-    const windowSeconds =
-      pol.windowSeconds > 0 ? pol.windowSeconds : (local?.windowSeconds ?? pol.windowSeconds);
+    // Stricter wins for the window too: a SHORTER window is harder to satisfy
+    // (quorum is fail-closed — expiry denies), so take the min of the defined
+    // positive windows. Policy can only tighten, never lengthen, the window (I22).
+    const windows = [
+      local?.windowSeconds,
+      pol.windowSeconds > 0 ? pol.windowSeconds : undefined,
+    ].filter((w): w is number => w !== undefined && w > 0);
+    const windowSeconds = windows.length > 0 ? Math.min(...windows) : 0;
     quorum.set(id, { approvers, windowSeconds });
   }
 
