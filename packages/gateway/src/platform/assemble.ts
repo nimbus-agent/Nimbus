@@ -79,8 +79,9 @@ import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
-import { buildPolicyGate } from "../policy/policy-gate.ts";
+import { buildPolicyGate, type PolicyGate } from "../policy/policy-gate.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
+import { resolveQuorumRule } from "../policy/quorum-override.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -363,6 +364,7 @@ async function bootFederationIntoIpcOpts(
   localIndex: LocalIndex,
   ipcOpts: Parameters<typeof createIpcServer>[0],
   sidecarStops: Array<() => void>,
+  policyGate: PolicyGate,
 ): Promise<ExecutorDelegationDep | undefined> {
   if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
@@ -376,12 +378,13 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
-  // Team Vault (Slice 2): the anchor's invoke backing. quorumFor reads the [hitl.quorum] table;
-  // runTool resolves the team secret (teamvault.<entry>.*) and runs the tool in an ephemeral
-  // team-credentialed connector (I19 — secret stays in the subprocess env, never returned).
-  const quorumConfig = loadNimbusQuorumFromConfigDir(paths.configDir);
+  // Team Vault (Slice 2): the anchor's invoke backing. quorumFor resolves the authoritative quorum
+  // rule via EnforcedPolicy (Task 9) — max(local [hitl.quorum] baseline, org policy); ungoverned it
+  // returns the local baseline verbatim, governed it tightens. runTool resolves the team secret
+  // (teamvault.<entry>.*) and runs the tool in an ephemeral team-credentialed connector
+  // (I19 — secret stays in the subprocess env, never returned).
   const teamVault = {
-    quorumFor: (toolId: string) => quorumConfig.get(toolId),
+    quorumFor: (toolId: string) => resolveQuorumRule(policyGate.enforced(), toolId),
     runTool: (input: { entry: string; service: string; toolId: string; args: unknown }) =>
       invokeTeamTool(
         {
@@ -622,6 +625,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     localIndex,
     ipcOpts,
     sidecarStops,
+    policyGate,
   );
 
   // Identity & Access (Phase 6 Slice 3). Mirrors the federation block: build the boot, wire the
