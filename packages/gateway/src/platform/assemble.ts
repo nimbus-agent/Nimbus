@@ -85,6 +85,7 @@ import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { startGdprPurgeRetry } from "../policy/gdpr-purge-retry-sidecar.ts";
 import { type AuthorResult, authorPolicy } from "../policy/policy-author.ts";
 import { buildPolicyGate, type PolicyGate } from "../policy/policy-gate.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
@@ -648,6 +649,17 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ),
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
+
+  // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
+  // requests durable in the gdpr_purge ledger; when all of a job's requests are
+  // done, close it with an aggregate signed completion record + a
+  // `team.purge.completed` audit entry. The anchor seed stays inside this closure
+  // (never persisted/returned/logged). The concrete over-the-wire `requestPurge`
+  // lands in Task 26; until then this is a no-op retry that keeps the loop,
+  // attempt-counting, and job-completion machinery live.
+  const { privkeyB64: anchorPrivkeyB64 } = await ensureAnchorKeypair(vault);
+  const gdprPurgeRetry = startGdprPurgeRetry(db, { anchorPrivkeyB64 });
+  sidecarStops.push(() => gdprPurgeRetry.stop());
 
   // Audit shipper (Task 19, I22): when policy configures an org SIEM endpoint
   // (`enforced().auditShipTo`), ship audit_log entries there as metadata-only
