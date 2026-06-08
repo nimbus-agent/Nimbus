@@ -19,6 +19,7 @@
 - **Reseed is Linux-authoritative** — generate the reseed lcov only via Docker (`reseed-docker.sh`) or CI, never a raw Windows run.
 - **Per-test timeout** under instrumentation is `--timeout 60000` (already in `build-lcov.sh`); the fast dev-loop `bun test` stays at 5000ms.
 - **Fresh/restored worktree:** run `bun install` + `cd packages/client && bun run build` before any local typecheck/merge step.
+- **Commit trailers:** the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer in every commit message below is a Claude Code harness requirement for commits *this* agent authors. An executor running under a different harness/identity (a human, another model) should substitute their own attribution per their git config — the trailer is not a project convention, just the authoring agent's mandated footer.
 
 ---
 
@@ -50,9 +51,11 @@
 
 **Files:**
 - Modify: `scripts/coverage-floor/exclusions.ts`
-- Modify: the exclusion parity-count test (locate it — Step 2)
+- Modify: `scripts/coverage-floor/exclusions.test.ts` (add `isExempt` regression cases — Step 3)
 
 The 4 files were verified test-only on 2026-06-08 (imported only by `*.test.ts`): `tui/test-helpers/context.ts`, `commands/cli-test-helpers.ts`, `identity/identity-test-helpers.ts`, `updater/updater-test-fixtures.ts`. (`tui/ipc-context.ts` was rejected — it is production code; do **not** exclude it.)
+
+> **Note (verified 2026-06-08):** `exclusions.test.ts` asserts specific `isExempt(path)` results + the frozen-registry shape — there is **no `EXCLUSIONS.length` count assertion** to bump. `check-exclusion-parity.ts` is one-directional (it only checks every Sonar `sonar.coverage.exclusions` pattern has a covering *local* exemption), so adding *local-only* exclusions cannot break parity and needs no `sonar-project.properties` change. Add positive `isExempt` regression tests instead (Step 3).
 
 - [ ] **Step 1: Re-verify test-only status (guard against drift)**
 
@@ -66,15 +69,7 @@ done
 ```
 Expected: no output under any file (all importers are `*.test.ts`). If any production importer appears, STOP and report — that file is not excludable.
 
-- [ ] **Step 2: Find and read the exclusion parity-count test**
-
-Run:
-```bash
-grep -rn "EXCLUSIONS.length\|exclusion" scripts/coverage-floor/*.test.ts
-```
-Note the file + the expected count literal (e.g. `expect(EXCLUSIONS.length).toBe(41)`). You will bump it by 4 in Step 4.
-
-- [ ] **Step 3: Add the 4 exclusions**
+- [ ] **Step 2: Add the 4 exclusions**
 
 In `scripts/coverage-floor/exclusions.ts`, inside the `EXCLUSIONS` array (next to the other `exact` entries), add:
 ```ts
@@ -87,26 +82,45 @@ In `scripts/coverage-floor/exclusions.ts`, inside the `EXCLUSIONS` array (next t
   { kind: "exact", path: "packages/gateway/src/updater/updater-test-fixtures.ts" },
 ```
 
-- [ ] **Step 4: Bump the parity-count test by 4**
+- [ ] **Step 3: Add `isExempt` regression tests for the 4 new exclusions**
 
-Edit the count literal found in Step 2 (e.g. `41` → `45`). Add a comment `// +4 test-helper exclusions (B0)`.
+In `scripts/coverage-floor/exclusions.test.ts`, add a new `describe` block (mirroring the existing per-category blocks) so the exemption is locked by a test:
+```ts
+describe("isExempt — test-only support files (B0)", () => {
+  test("tui/test-helpers/context.ts is exempt", () => {
+    expect(isExempt("packages/cli/src/tui/test-helpers/context.ts")).toBe(true);
+  });
+  test("commands/cli-test-helpers.ts is exempt", () => {
+    expect(isExempt("packages/cli/src/commands/cli-test-helpers.ts")).toBe(true);
+  });
+  test("identity/identity-test-helpers.ts is exempt", () => {
+    expect(isExempt("packages/gateway/src/identity/identity-test-helpers.ts")).toBe(true);
+  });
+  test("updater/updater-test-fixtures.ts is exempt", () => {
+    expect(isExempt("packages/gateway/src/updater/updater-test-fixtures.ts")).toBe(true);
+  });
+  test("ipc-context.ts (production) is NOT exempt", () => {
+    expect(isExempt("packages/cli/src/tui/ipc-context.ts")).toBe(false);
+  });
+});
+```
 
-- [ ] **Step 5: Run the exclusions unit tests**
+- [ ] **Step 4: Run the exclusions unit tests**
 
 Run:
 ```bash
 bun test scripts/coverage-floor/exclusions.test.ts
 ```
-Expected: PASS (parity count matches; the 4 new paths resolve as `isExempt`).
+Expected: PASS, including the 5 new cases (4 exempt, 1 not-exempt).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/coverage-floor/exclusions.ts scripts/coverage-floor/exclusions.test.ts
 git commit -m "test(coverage): exempt 4 test-only helper files from the coverage floor (B0)
 
 Imported solely by *.test.ts; verified test-only 2026-06-08. ipc-context.ts
-was rejected as production code.
+was rejected as production code. Adds isExempt regression cases.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -161,11 +175,25 @@ It streams the working tree (node_modules excluded) into `oven/bun:latest`, inst
 # Sub-project B PR so the ratchet sees Linux branch percentages, never per-OS-skewed local
 # numbers. The host's node_modules is never touched (working tree is streamed in; install
 # happens inside the container against a named cache volume).
+#
+# Usage: scripts/coverage-floor/reseed-docker.sh [--clean|-c]
+#   --clean / -c   drop + recreate the bun-cache volume first (use if deps changed or the
+#                  cache is corrupt; the next run re-installs from scratch).
 set -euo pipefail
+
+# Git Bash / MSYS on Windows rewrites container-internal paths (/out, /src, /root/...) and
+# the `-v host:container` colon args into Windows paths, breaking docker. Disable that.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="oven/bun:latest"        # bun 1.3.14 == CI
 CACHE_VOL="nimbus-bun-cache"   # named volume: bun install cache, paid once
+
+if [[ "${1:-}" == "--clean" || "${1:-}" == "-c" ]]; then
+  echo "--- cleaning bun-cache volume ${CACHE_VOL} ---"
+  docker volume rm "${CACHE_VOL}" 2>/dev/null || true
+fi
 
 cd "${REPO_ROOT}"
 docker volume create "${CACHE_VOL}" >/dev/null
