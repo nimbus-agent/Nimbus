@@ -18,6 +18,8 @@ import type {
   NamespaceFilter,
 } from "../federation/types.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
+import { servePolicy } from "../policy/policy-distribution.ts";
+import { PolicyStore } from "../policy/policy-store.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
@@ -215,6 +217,13 @@ export async function dispatchFederationRpc(
         purpose: requireString(rec, "purpose"),
       };
       return scoreExpertise(ctx.db, req);
+    },
+    // Anchor-side: serve the persisted signed org-policy bundle so paired peers can fetch it.
+    // Read-only and public — the bundle is the signed TOML + signature, never a secret (the
+    // signature lets peers verify authenticity; I22 enforces verification on the fetching side).
+    // Takes no params; returns PolicyBundle | null (null when this gateway holds no policy).
+    "federation.policy": () => {
+      return servePolicy(new PolicyStore(ctx.db));
     },
     // Asker-side: look up the paired peer and send the federated query OVER THE WIRE.
     "federation.ask": async (p) => {

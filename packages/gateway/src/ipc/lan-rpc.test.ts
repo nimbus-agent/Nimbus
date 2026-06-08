@@ -126,6 +126,10 @@ describe("federation over LAN (I5 + I17)", () => {
     expect(() => checkLanMethodAllowed("federation.expertise", peer)).not.toThrow();
   });
 
+  test("federation.policy is admitted over LAN (read-only signed bundle)", () => {
+    expect(() => checkLanMethodAllowed("federation.policy", peer)).not.toThrow();
+  });
+
   test("federation management methods are forbidden over LAN", () => {
     for (const m of [
       "federation.discover",
