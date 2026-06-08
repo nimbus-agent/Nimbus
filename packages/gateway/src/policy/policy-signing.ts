@@ -4,7 +4,10 @@ import nacl from "tweetnacl";
 /** Canonical byte form for signing/verifying (CRLF/BOM/trailing-ws/EOF-newline stable). */
 export function canonicalize(toml: string): string {
   let s = toml;
-  s = s.replace(/﻿/g, ""); // strip BOM / zero-width no-break space anywhere
+  // Strip ONLY a leading BOM (an encoding artifact). A mid-document U+FEFF can be
+  // meaningful content (e.g. inside a string value), so stripping it globally would let
+  // two semantically-different payloads collapse to the same signed bytes (collision).
+  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
   s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   s = s
     .split("\n")
