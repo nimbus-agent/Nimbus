@@ -255,9 +255,9 @@ Exposed three ways from the **same** snapshot:
 
 ## 7. Admin Console
 
-Served by the Gateway HTTP server: `GET /admin/*` returns the static bundle's `dist/` (index + `bundle.js`
-+ `styles.css`); bearer-authed with the same token as the HTTP read surface. `nimbus admin console` prints
-the local URL and the bearer token.
+Served by the Gateway HTTP server: `GET /admin/*` returns the static bundle's `dist/`
+(`index.html`, `bundle.js`, `styles.css`); bearer-authed with the same token as the HTTP read surface.
+`nimbus admin console` prints the local URL and the bearer token.
 
 **Shell:** left sidebar (the 6 views) + a top status bar (org · policy signature state · operator
 validity). Read-mostly; the Policy editor is the single write surface and is **active only on the anchor**
@@ -276,7 +276,7 @@ The bundle is plain HTML/CSS + vanilla TS compiled to one JS file (no framework)
 into **pure functions** (`renderOverview(status)`, etc.) so they unit-test without a DOM driver; a thin
 `main.ts` wires fetch + DOM mount.
 
-#### 7.1 Build & deploy lifecycle
+### 7.1 Build & deploy lifecycle
 
 `packages/admin-console` carries a `build` script (`bun build src/main.ts --outdir dist --minify` +
 copy `index.html`/`styles.css` to `dist/`). No framework, no Vite — Bun's bundler only.
@@ -321,7 +321,7 @@ nimbus team purge --user <id>
        audit chain (action: team.purge.completed) and close the job
 ```
 
-#### 9.1 Durability across offline / partitioned peers
+### 9.1 Durability across offline / partitioned peers
 
 GDPR is a high-reliability operation, so purge state is **persisted**, not session-only. A new
 `gdpr_purge_job` + `gdpr_purge_request` pair (own migration, owned by `policy-store`/`gdpr-purge.ts`)
@@ -452,15 +452,15 @@ recorded **no** required changes.
 The follow-up review confirmed the five above and raised three **minor** points — all documentation/clarity
 (plus one tiny CLI affordance); none change the architecture:
 
-6. **Purge ledger lifecycle & DB growth** — *Documented.* §9.1 now states the `gdpr_purge_job`/`_request`
+1. **Purge ledger lifecycle & DB growth** — *Documented.* §9.1 now states the `gdpr_purge_job`/`_request`
    rows are retained **indefinitely** as the compliance ledger, are **not** subject to `retention.min_days`
    (which governs `tool_call_log` only), are never pruned, and have negligible footprint (purge events are
    rare). Behavior was already correct; the decision is now explicit.
-7. **TOML canonicalization is byte-level, not semantic** — *Documented.* §4.2.1 now notes canonicalization
+2. **TOML canonicalization is byte-level, not semantic** — *Documented.* §4.2.1 now notes canonicalization
    normalizes line endings/BOM/trailing-whitespace but does not reformat TOML, so *any* edit (including
    comments / inter-key whitespace) invalidates the `.sig` and requires re-signing — automatic on the
    anchor console editor's save, manual via `nimbus policy sign`. This is the intended trade-off (no fragile
    AST round-trip).
-8. **Prometheus scraper token retrieval** — *Fixed (doc + small affordance).* §6 documents that `/metrics`
+3. **Prometheus scraper token retrieval** — *Fixed (doc + small affordance).* §6 documents that `/metrics`
    uses the existing HTTP read-surface bearer (no new secret) and adds **`nimbus admin token`** to print it
    for a `bearer_token_file`; §11 adds `token` to the `nimbus admin` subcommands.

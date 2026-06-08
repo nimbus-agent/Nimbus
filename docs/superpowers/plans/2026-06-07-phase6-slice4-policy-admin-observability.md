@@ -50,6 +50,7 @@
 ### Task 1: Policy schema types + `nimbus.policy.toml` parser
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/types.ts`
 - Create: `packages/gateway/src/policy/policy-toml.ts`
 - Test: `packages/gateway/src/policy/policy-toml.test.ts`
@@ -302,6 +303,7 @@ git commit -m "feat(policy): nimbus.policy.toml schema types + parser"
 ### Task 2: Signature canonicalization + Ed25519 sign/verify
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/policy-signing.ts`
 - Test: `packages/gateway/src/policy/policy-signing.test.ts`
 
@@ -410,6 +412,7 @@ git commit -m "feat(policy): canonicalization + Ed25519 sign/verify (cross-platf
 ### Task 3: V36 migration + policy persistence store
 
 **Files:**
+
 - Create: `packages/gateway/src/index/policy-v36-sql.ts`
 - Create: `packages/gateway/src/policy/policy-store.ts`
 - Test: `packages/gateway/src/policy/policy-store.test.ts`
@@ -595,6 +598,7 @@ git commit -m "feat(policy): V36 migration + PolicyStore (persist last-valid + p
 ### Task 4: Policy gate — verify → load → EnforcedPolicy (monotonic-stricter, fail-closed)
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/policy-gate.ts`
 - Test: `packages/gateway/src/policy/policy-gate.test.ts`
 
@@ -807,6 +811,7 @@ git commit -m "feat(policy): PolicyGate + EnforcedPolicy (monotonic-stricter, fa
 ### Task 5: Invariant I22 — security test + static D16 + vault key allow-list
 
 **Files:**
+
 - Modify: `packages/gateway/src/security-invariants.test.ts` (add I22 cases)
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (add `policy.signing.privkey` to `VAULT_KEY_ALLOW_LIST`; add D16 check)
 - Modify: `docs/SECURITY-INVARIANTS.md` (new I22 row) — **same commit (triple rule)**
@@ -898,6 +903,7 @@ git commit -m "feat(policy): invariant I22 (signed policy + monotonic-stricter) 
 ### Task 6: Profile resolver (policy × Phase 3.5 profile, monotonic-stricter)
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/profile-resolver.ts`
 - Test: `packages/gateway/src/policy/profile-resolver.test.ts`
 
@@ -977,6 +983,7 @@ git commit -m "feat(policy): profile×policy resolver (policy clamps profile, mo
 ### Task 7: Connector allowlist enforced before the mesh starts
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/connector-allowlist.ts`
 - Test: `packages/gateway/src/policy/connector-allowlist.test.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (gate connector registration on the allowlist)
@@ -1069,6 +1076,7 @@ git commit -m "feat(policy): connector allowlist enforced before mesh start (aud
 ### Task 8: Retention floor
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/tool-call-log-retention.ts` (accept a floor; effective = max)
 - Modify: `packages/gateway/src/platform/assemble.ts` (pass `policyGate.enforced().retentionDays`)
 - Test: `packages/gateway/src/db/tool-call-log-retention.test.ts` (add a floor case)
@@ -1111,6 +1119,7 @@ git commit -m "feat(policy): retention floor (effective = max(local, policy floo
 ### Task 9: HITL / quorum override wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/quorum-override.ts`
 - Test: `packages/gateway/src/policy/quorum-override.test.ts`
 - Modify: the quorum-size resolution call site (read first — Task 0 located `parseQuorumConfig` consumer + `quorum-coordinator.ts`)
@@ -1183,6 +1192,7 @@ git commit -m "feat(policy): authoritative quorum/HITL resolver from EnforcedPol
 ### Task 10: `federation.policy` — anchor serves the signed bundle
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/policy-distribution.ts`
 - Test: `packages/gateway/src/policy/policy-distribution.test.ts`
 - Modify: `packages/gateway/src/federation/federation-server.ts` (dispatch `federation.policy`)
@@ -1256,6 +1266,7 @@ git commit -m "feat(policy): federation.policy — anchor serves the signed bund
 ### Task 11: Peer fetch → verify → persist → re-enforce (`policy-runtime`)
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/policy-runtime.ts`
 - Test: `packages/gateway/src/policy/policy-runtime.test.ts`
 
@@ -1385,6 +1396,7 @@ git commit -m "feat(policy): peer refresh — fetch/verify/persist/re-enforce (f
 ### Task 12: Pubkey pinning at pair-approval + `policy.trust` manual fallback
 
 **Files:**
+
 - Modify: the pair-approval path (read `federation/peer-pairing.ts` — find where an approved peer's claims are recorded) to pin the anchor policy pubkey when the handshake carries one.
 - Create: `packages/gateway/src/policy/policy-trust.ts` (manual pin)
 - Test: `packages/gateway/src/policy/policy-trust.test.ts`
@@ -1456,6 +1468,7 @@ git commit -m "feat(policy): pin anchor pubkey at pairing + nimbus policy trust 
 ### Task 13: `GatewayStatus` snapshot builder
 
 **Files:**
+
 - Create: `packages/gateway/src/status/types.ts`
 - Create: `packages/gateway/src/status/gateway-status.ts`
 - Test: `packages/gateway/src/status/gateway-status.test.ts`
@@ -1559,6 +1572,7 @@ git commit -m "feat(status): GatewayStatus snapshot builder"
 ### Task 14: Prometheus text exposition
 
 **Files:**
+
 - Create: `packages/gateway/src/status/prometheus-format.ts`
 - Test: `packages/gateway/src/status/prometheus-format.test.ts`
 
@@ -1649,6 +1663,7 @@ git commit -m "feat(status): Prometheus /metrics text exposition"
 ### Task 15: HTTP `/v1/admin/status` + `/metrics` (bearer) + `admin.status` IPC
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-server.ts` (routes; reuse `http-auth` bearer)
 - Create: `packages/gateway/src/ipc/admin-status-rpc.ts` (assemble real `StatusInputs` from stores)
 - Test: `packages/gateway/src/ipc/admin-status-rpc.test.ts`
@@ -1755,6 +1770,7 @@ git commit -m "feat(observability): /v1/admin/status + bearer-gated /metrics + a
 ### Task 16: Console package scaffold + `bun build` + pure render functions
 
 **Files:**
+
 - Create: `packages/admin-console/package.json`
 - Create: `packages/admin-console/tsconfig.json`
 - Create: `packages/admin-console/index.html`
@@ -1881,6 +1897,7 @@ git commit -m "feat(admin-console): scaffold + bun build + pure render functions
 ### Task 17: Gateway serves `/admin/*` with runtime asset resolution + 503-when-unbuilt
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/admin-console-assets.ts`
 - Test: `packages/gateway/src/ipc/admin-console-assets.test.ts`
 - Modify: `packages/gateway/src/ipc/http-server.ts` (serve `/admin/*`)
@@ -1974,6 +1991,7 @@ git commit -m "feat(admin-console): gateway serves /admin/* (bearer, 503-when-un
 ### Task 18: Console client — fetch + mount + the 6 views + policy editor
 
 **Files:**
+
 - Create: `packages/admin-console/src/client.ts` (typed fetch wrapper with bearer)
 - Create: `packages/admin-console/src/main.ts` (DOM mount + sidebar routing)
 - Create: `packages/admin-console/src/views.ts` (the remaining 5 render functions)
@@ -2021,6 +2039,7 @@ git commit -m "feat(admin-console): 6 views + client + anchor policy editor (PUT
 ### Task 19: Audit-log shipper (metadata-only NDJSON POST)
 
 **Files:**
+
 - Create: `packages/gateway/src/audit/audit-shipper.ts`
 - Test: `packages/gateway/src/audit/audit-shipper.test.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (start the shipper when `enforced().auditShipTo` is set; push its stop handle onto the sidecar stop list)
@@ -2109,6 +2128,7 @@ git commit -m "feat(policy): audit-log shipper (metadata-only NDJSON to policy s
 ### Task 20: `federation.auditExport` — consent-gated, metadata-only
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/audit-export.ts`
 - Test: `packages/gateway/src/federation/audit-export.test.ts`
 - Modify: `federation/federation-server.ts` (`federation.auditExport` case) + `ipc/lan-server.ts` (admit it, consent-gated like `federation.query`)
@@ -2182,6 +2202,7 @@ git commit -m "feat(federation): federation.auditExport (consent-gated, metadata
 ### Task 21: `team.auditMerged` aggregation + IPC + CLI
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/audit-merge.ts`
 - Test: `packages/gateway/src/federation/audit-merge.test.ts`
 - Modify: IPC dispatcher (`team.auditMerged`) + CLI (`nimbus team audit`)
@@ -2240,6 +2261,7 @@ git commit -m "feat(federation): team.auditMerged aggregation + nimbus team audi
 ### Task 22: V37 migration + `GdprPurgeStore`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/gdpr-v37-sql.ts`
 - Create: `packages/gateway/src/policy/gdpr-purge-store.ts`
 - Test: `packages/gateway/src/policy/gdpr-purge-store.test.ts`
@@ -2379,6 +2401,7 @@ git commit -m "feat(gdpr): V37 purge ledger + GdprPurgeStore (durable per-peer s
 ### Task 23: Purge orchestration — local revoke + delete + open job
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/gdpr-purge.ts`
 - Test: `packages/gateway/src/policy/gdpr-purge.test.ts`
 
@@ -2458,6 +2481,7 @@ git commit -m "feat(gdpr): purge orchestration (local revoke+delete, open durabl
 ### Task 24: `federation.purge` serve — HITL-queued + signed deletion record
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/deletion-record.ts`
 - Test: `packages/gateway/src/policy/deletion-record.test.ts`
 - Modify: `federation/federation-server.ts` (`federation.purge` → enqueue HITL) + `ipc/lan-server.ts`
@@ -2530,6 +2554,7 @@ git commit -m "feat(gdpr): federation.purge (HITL-queued) + signed deletion reco
 ### Task 25: Sync-cycle retry + job completion + aggregate signed record
 
 **Files:**
+
 - Create: `packages/gateway/src/policy/gdpr-purge-retry.ts`
 - Test: `packages/gateway/src/policy/gdpr-purge-retry.test.ts`
 - Modify: the sync scheduler (`sync/scheduler.ts`) to call the retry tick each cycle
@@ -2614,6 +2639,7 @@ git commit -m "feat(gdpr): sync-cycle retry of pending purges + job completion r
 ### Task 26: CLI + IPC dispatcher registration
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/policy-rpc.ts` (`policy.show`, `policy.sign`, `policy.trust`, `policy.refetch`, `team.purge`)
 - Test: `packages/gateway/src/ipc/policy-rpc.test.ts`
 - Modify: the IPC server dispatcher to mount the new namespace (see `nimbus-ipc` skill; reuse `dispatchByMethod` helper)
@@ -2669,6 +2695,7 @@ git commit -m "feat(policy): policy.* / team.purge IPC + nimbus policy/admin/tea
 ### Task 27: Tauri allowlist (I7)
 
 **Files:**
+
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs` (`ALLOWED_METHODS`)
 - Modify: the Rust allowlist test (count + membership)
 
@@ -2688,6 +2715,7 @@ git commit -m "feat(policy): expose read-only admin.status/policy.show/team.audi
 ### Task 28: Docs — architecture, CHANGELOG, roadmap (CLAUDE/GEMINI/SECURITY-INVARIANTS I22 landed in Task 5)
 
 **Files:**
+
 - Modify: `docs/architecture.md` (new `policy/` + `status/` subsystems; the `policy.*`/`admin.*`/`team.*` IPC catalogue rows; the V36/V37 schema rows; `/v1/admin/status`, `/metrics`, `/admin/*` HTTP routes)
 - Modify: `docs/CHANGELOG.md` (Slice 4 entry — per the connector-docs→CHANGELOG convention; do NOT touch the CLAUDE.md status line)
 - Modify: `docs/roadmap.md` (check the Slice 4 boxes: org policy engine, policy enforcement, admin console, team audit log, GDPR purge; mark the Slice 4 delivery row delivered with the date 2026-06-07)
@@ -2712,6 +2740,7 @@ git commit -m "docs: Slice 4 — policy/admin/observability architecture + roadm
 ### Task 29: Integration acceptance + preflight + branch finish
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/phase6-slice4-policy.test.ts` (or the repo's integration test dir — confirm location from a Slice 1–3 acceptance test)
 
 - [ ] **Step 1: Write the acceptance test** — two in-process gateways (anchor + peer) over the existing test LAN harness:

@@ -6,6 +6,7 @@
 ## Status Update (2026-06-07)
 
 The design has been updated to address all 5 open points from the initial review:
+
 1. **Line ending normalization:** Solved in §4.2.1 via `policy-signing.canonicalize(toml)` (LF conversion, BOM-stripping, trailing whitespace cleanup).
 2. **Monotonicity policy updates:** Clarified in §4.3 R3 (stricter relative to the local baseline, allowing admins to scale back down to defaults without a high-water mark lock-in).
 3. **GDPR purge offline peer durability:** Solved in §9.1 via a database-persisted job/request queue in `policy-store` retried during sync cycles.
