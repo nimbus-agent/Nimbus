@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { canonicalize, signPolicy, verifyPolicy } from "./policy-signing.ts";
-
-// generateEd25519Keypair() returns { privkey: Uint8Array; pubkey: Uint8Array }
-// (32-byte raw Ed25519 seed / public key). signPolicy/verifyPolicy accept these
-// Uint8Arrays directly.
 
 describe("canonicalize", () => {
   test("CRLF, BOM, trailing whitespace, and extra EOF newlines all normalize identically", () => {
@@ -17,17 +13,23 @@ describe("canonicalize", () => {
 
 describe("signPolicy / verifyPolicy", () => {
   test("a signature over canonical bytes verifies regardless of on-disk line endings", () => {
-    const kp = generateEd25519Keypair(); // { privkey, pubkey } as Uint8Array
-    const tomlLf = "x = 1\n";
-    const sig = signPolicy(tomlLf, kp.privkey);
-    expect(verifyPolicy("x = 1\r\n\r\n", sig, kp.pubkey)).toBe(true);
-    expect(verifyPolicy("x = 2\n", sig, kp.pubkey)).toBe(false); // tampered
+    const kp = generateEd25519Keypair();
+    const priv = encodeBase64(kp.privkey);
+    const pub = encodeBase64(kp.pubkey);
+    const sig = signPolicy("x = 1\n", priv);
+    expect(verifyPolicy("x = 1\r\n\r\n", sig, pub)).toBe(true);
+    expect(verifyPolicy("x = 2\n", sig, pub)).toBe(false);
   });
 
   test("wrong key fails", () => {
     const a = generateEd25519Keypair();
     const b = generateEd25519Keypair();
-    const sig = signPolicy("q = 1\n", a.privkey);
-    expect(verifyPolicy("q = 1\n", sig, b.pubkey)).toBe(false);
+    const sig = signPolicy("q = 1\n", encodeBase64(a.privkey));
+    expect(verifyPolicy("q = 1\n", sig, encodeBase64(b.pubkey))).toBe(false);
+  });
+
+  test("malformed base64 inputs return false, never throw", () => {
+    const kp = generateEd25519Keypair();
+    expect(verifyPolicy("x = 1\n", "!!!", encodeBase64(kp.pubkey))).toBe(false);
   });
 });
