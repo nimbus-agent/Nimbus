@@ -162,5 +162,8 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // No delegate configured → requestRemote falls back to a timeout (owner-prompt fallback).
     const outcome = await services.executorDelegation?.requestRemote("email.send");
     expect(outcome).toEqual({ kind: "timeout" });
-  });
+    // Booting the full federation block (LAN server + delegation deps) runs ~6s
+    // on slow Windows CI runners, over the 5s default — raise this test's timeout
+    // so it doesn't flake (it's a known intermittent failure in pr-quality-cross-platform).
+  }, 30000);
 });
