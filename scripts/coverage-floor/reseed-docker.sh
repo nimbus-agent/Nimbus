@@ -37,6 +37,7 @@ echo "--- docker: build instrumented lcov (oven/bun:latest) ---"
 tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
     --exclude=.claude -c -C "${REPO_ROOT}" . \
   | docker run --rm -i \
+      -e CI=true \
       -v "${CACHE_VOL}:/root/.bun/install/cache" \
       -v "${REPO_ROOT}/coverage:/out" \
       -w /src \
