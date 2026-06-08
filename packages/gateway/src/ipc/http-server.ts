@@ -326,13 +326,14 @@ async function handleAdminConsole(
   return new Response(file, { headers: { "content-type": contentTypeFor(rel) } });
 }
 
-async function dispatchReadOnlyGet(
-  req: Request,
+// Read-only data routes (no bearer gate, never fall through). Returns null when `path` matches no
+// data route, so the caller can try the bearer-gated admin routes before 404.
+function dispatchReadOnlyDataGet(
   path: string,
   url: URL,
   db: Database,
   opts: ReadOnlyHttpServerOptions,
-): Promise<Response> {
+): Promise<Response> | Response | null {
   if (path === "/v1/health") {
     return json({ status: "ok", gateway: "read_only_http" });
   }
@@ -363,19 +364,77 @@ async function dispatchReadOnlyGet(
   if (path === "/v1/openapi.json") {
     return handleOpenApiJson();
   }
+  return null;
+}
+
+// Bearer-gated admin routes (Task 15/17). Each handler returns null when its surface is not mounted
+// (so the route falls through to 404); a non-null response (200/401/503/400) is served verbatim.
+async function dispatchAdminGet(
+  req: Request,
+  path: string,
+  url: URL,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
   if (path === "/v1/admin/status") {
-    const res = await handleAdminStatus(req, opts);
-    if (res !== null) return res;
+    return handleAdminStatus(req, opts);
   }
   if (path === "/metrics") {
-    const res = await handleMetrics(req, opts);
-    if (res !== null) return res;
+    return handleMetrics(req, opts);
   }
   if (path === "/admin" || path.startsWith("/admin/")) {
-    const res = await handleAdminConsole(req, url, opts);
-    if (res !== null) return res;
+    return handleAdminConsole(req, url, opts);
+  }
+  return null;
+}
+
+async function dispatchReadOnlyGet(
+  req: Request,
+  path: string,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const dataRes = dispatchReadOnlyDataGet(path, url, db, opts);
+  if (dataRes !== null) {
+    return dataRes;
+  }
+  const adminRes = await dispatchAdminGet(req, path, url, opts);
+  if (adminRes !== null) {
+    return adminRes;
   }
   return new Response("Not Found", { status: 404 });
+}
+
+type ScimWriteDeps = NonNullable<Parameters<typeof dispatchWriteRoute>[1]["scim"]>;
+type PolicyWriteDeps = NonNullable<Parameters<typeof dispatchWriteRoute>[1]["policy"]>;
+
+// SCIM provisioning seam — present only when a SCIM bearer resolver is wired.
+async function resolveScimWriteDeps(
+  writeDb: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<ScimWriteDeps | undefined> {
+  if (opts.resolveScimToken === undefined) {
+    return undefined;
+  }
+  return {
+    token: await opts.resolveScimToken(),
+    store: new NamespaceStore(writeDb),
+    identity: new IdentityStore(writeDb),
+  };
+}
+
+// Policy write surface: present only when an admin token resolver AND an authorPolicy closure are
+// both wired. The bearer is the SAME admin token used by /v1/admin/status + /metrics.
+async function resolvePolicyWriteDeps(
+  opts: ReadOnlyHttpServerOptions,
+): Promise<PolicyWriteDeps | undefined> {
+  if (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined) {
+    return undefined;
+  }
+  return {
+    token: await opts.resolveAdminToken(),
+    authorPolicy: opts.authorPolicy,
+  };
 }
 
 // Every HTTP write (deployment annotation + SCIM provisioning) flows through the single I13
@@ -398,23 +457,8 @@ async function handleWrite(
       cfgDir === undefined
         ? (): readonly string[] => []
         : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
-    const scim =
-      opts.resolveScimToken === undefined
-        ? undefined
-        : {
-            token: await opts.resolveScimToken(),
-            store: new NamespaceStore(writeDb),
-            identity: new IdentityStore(writeDb),
-          };
-    // Policy write surface: present only when an admin token resolver AND an authorPolicy closure
-    // are both wired. The bearer is the SAME admin token used by /v1/admin/status + /metrics.
-    const policy =
-      opts.authorPolicy === undefined || opts.resolveAdminToken === undefined
-        ? undefined
-        : {
-            token: await opts.resolveAdminToken(),
-            authorPolicy: opts.authorPolicy,
-          };
+    const scim = await resolveScimWriteDeps(writeDb, opts);
+    const policy = await resolvePolicyWriteDeps(opts);
     return await dispatchWriteRoute(req, {
       writeDb,
       expectedToken,

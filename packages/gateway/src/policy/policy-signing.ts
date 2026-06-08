@@ -7,8 +7,8 @@ export function canonicalize(toml: string): string {
   // Strip ONLY a leading BOM (an encoding artifact). A mid-document U+FEFF can be
   // meaningful content (e.g. inside a string value), so stripping it globally would let
   // two semantically-different payloads collapse to the same signed bytes (collision).
-  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
-  s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (s.codePointAt(0) === 0xfeff) s = s.slice(1);
+  s = s.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   s = s
     .split("\n")
     .map((line) => line.replace(/[ \t]+$/g, ""))

@@ -144,7 +144,7 @@ export function startAuditShipper(
       }
       const shipped = await shipBatch(rows, { shipTo: opts.shipTo, post });
       if (shipped === rows.length) {
-        const last = rows[rows.length - 1];
+        const last = rows.at(-1);
         if (last !== undefined) {
           cursor = last.id;
         }

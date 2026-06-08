@@ -259,16 +259,54 @@ function maybeAttachSessionMemoryStore(
   return sessionMemoryStore;
 }
 
-async function createSchedulerWithMesh(
-  paths: PlatformPaths,
-  vault: NimbusVault,
-  db: Database,
-  syncContext: SyncContext,
+// Register the filesystem-root-backed syncables (filesystem-v2 / openapi-indexer / obsidian) on the
+// real scheduler. These are NOT policy connectors, so they register directly (no allowlist filter).
+function registerFilesystemRootSyncables(
+  syncScheduler: SyncScheduler,
   localIndex: LocalIndex,
-  notifications: NotificationService,
-  syncLogger: Logger,
-  isConnectorAllowed: (serviceId: string) => boolean,
+  configDir: string,
+  fsV2Roots: ReturnType<typeof loadNimbusFilesystemRootsFromConfigDir>,
+): void {
+  if (fsV2Roots.length === 0) {
+    return;
+  }
+  localIndex.ensureConnectorSchedulerRegistration("filesystem", 10 * 60 * 1000, Date.now());
+  syncScheduler.register(createFilesystemV2Syncable({ roots: fsV2Roots }));
+  localIndex.ensureConnectorSchedulerRegistration("openapi", 10 * 60 * 1000, Date.now());
+  syncScheduler.register(
+    createOpenapiIndexerSyncable({
+      roots: fsV2Roots,
+      config: loadOpenapiConfig(configDir),
+    }),
+  );
+  localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
+  syncScheduler.register(createObsidianSyncable({ roots: fsV2Roots }));
+}
+
+interface SchedulerWithMeshOpts {
+  paths: PlatformPaths;
+  vault: NimbusVault;
+  db: Database;
+  syncContext: SyncContext;
+  localIndex: LocalIndex;
+  notifications: NotificationService;
+  syncLogger: Logger;
+  isConnectorAllowed: (serviceId: string) => boolean;
+}
+
+async function createSchedulerWithMesh(
+  opts: SchedulerWithMeshOpts,
 ): Promise<{ syncScheduler: SyncScheduler; connectorMesh: LazyConnectorMesh }> {
+  const {
+    paths,
+    vault,
+    db,
+    syncContext,
+    localIndex,
+    notifications,
+    syncLogger,
+    isConnectorAllowed,
+  } = opts;
   const syncAnomaly = new AnomalyDetectorStub({
     windowSize: 64,
     onNotify: (e) => {
@@ -294,19 +332,7 @@ async function createSchedulerWithMesh(
     },
   });
   const fsV2Roots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
-  if (fsV2Roots.length > 0) {
-    localIndex.ensureConnectorSchedulerRegistration("filesystem", 10 * 60 * 1000, Date.now());
-    syncScheduler.register(createFilesystemV2Syncable({ roots: fsV2Roots }));
-    localIndex.ensureConnectorSchedulerRegistration("openapi", 10 * 60 * 1000, Date.now());
-    syncScheduler.register(
-      createOpenapiIndexerSyncable({
-        roots: fsV2Roots,
-        config: loadOpenapiConfig(paths.configDir),
-      }),
-    );
-    localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
-    syncScheduler.register(createObsidianSyncable({ roots: fsV2Roots }));
-  }
+  registerFilesystemRootSyncables(syncScheduler, localIndex, paths.configDir, fsV2Roots);
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
     healthDb: db,
@@ -463,18 +489,23 @@ function asBroadcastParams(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
 }
 
+interface BootFederationOpts {
+  federationCfg: ReturnType<typeof loadNimbusFederationFromConfigDir>;
+  paths: PlatformPaths;
+  vault: NimbusVault;
+  db: Database;
+  localIndex: LocalIndex;
+  ipcOpts: Parameters<typeof createIpcServer>[0];
+  sidecarStops: Array<() => void>;
+  policyGate: PolicyGate;
+}
+
 /** Boot the federation LAN server + discovery into ipcOpts when enabled. Returns true if booted
  *  (so the caller can wire the consent broadcast after the IPC server exists). */
 async function bootFederationIntoIpcOpts(
-  federationCfg: ReturnType<typeof loadNimbusFederationFromConfigDir>,
-  paths: PlatformPaths,
-  vault: NimbusVault,
-  db: Database,
-  localIndex: LocalIndex,
-  ipcOpts: Parameters<typeof createIpcServer>[0],
-  sidecarStops: Array<() => void>,
-  policyGate: PolicyGate,
+  opts: BootFederationOpts,
 ): Promise<ExecutorDelegationDep | undefined> {
+  const { federationCfg, paths, vault, db, localIndex, ipcOpts, sidecarStops, policyGate } = opts;
   if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
   const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
@@ -695,7 +726,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     sidecarStops.push(() => auditShipper.stop());
   }
 
-  const { syncScheduler, connectorMesh } = await createSchedulerWithMesh(
+  const { syncScheduler, connectorMesh } = await createSchedulerWithMesh({
     paths,
     vault,
     db,
@@ -704,7 +735,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     notifications,
     syncLogger,
     isConnectorAllowed,
-  );
+  });
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
@@ -766,7 +797,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   }
 
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
-  const federationBooted = await bootFederationIntoIpcOpts(
+  const federationBooted = await bootFederationIntoIpcOpts({
     federationCfg,
     paths,
     vault,
@@ -775,7 +806,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ipcOpts,
     sidecarStops,
     policyGate,
-  );
+  });
 
   // Identity & Access (Phase 6 Slice 3). Mirrors the federation block: build the boot, wire the
   // IPC-facing seams onto ipcOpts, and (when [scim].enabled) hand the SCIM bearer resolver to the

@@ -56,9 +56,9 @@ export function renderNamespaces(namespaces: GatewayStatus["namespaces"]): strin
 export function renderUsers(identity: GatewayStatus["identity"]): string {
   const status = identity.operatorValid ? "valid ✓" : "invalid ✗";
   const ext =
-    identity.externalId !== undefined
-      ? `<p>external id: <code>${esc(identity.externalId)}</code></p>`
-      : "";
+    identity.externalId === undefined
+      ? ""
+      : `<p>external id: <code>${esc(identity.externalId)}</code></p>`;
   return ["<h2>Users</h2>", `<p>operator: <b>${esc(status)}</b></p>`, ext].join("");
 }
 
