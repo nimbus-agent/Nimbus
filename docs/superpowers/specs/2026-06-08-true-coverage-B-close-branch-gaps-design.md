@@ -24,13 +24,15 @@ reseeds the baseline.
    `engine` → `identity` → `ipc` → `db` → `extensions`, **then** the 59 connector mappers,
    then `cli` / `tui` / `search` / `embedding` / `index` / `platform` / remainder. Highest-trust
    code gets covered first; early PRs stay small.
-2. **Test-support files = exclude now.** A handful of baseline entries are test-only helpers/
-   fixtures (only imported by tests, not shipped logic): `cli/src/tui/test-helpers/context.ts`
-   (branch 0), `cli/src/commands/cli-test-helpers.ts`, `cli/src/tui/ipc-context.ts`,
+2. **Test-support files = exclude now.** Four baseline entries are test-only helpers/fixtures
+   (imported only by `*.test.ts`, not shipped logic), verified 2026-06-08 by import grep:
+   `cli/src/tui/test-helpers/context.ts` (branch 0), `cli/src/commands/cli-test-helpers.ts`,
    `gateway/src/identity/identity-test-helpers.ts`, `gateway/src/updater/updater-test-fixtures.ts`.
    Add them to `exclusions.ts` with a justification comment (arguably Sub-project D scope, but
-   cheap and removes noise from B's grind). **Verify each is genuinely test-only at PR time**
-   (grep for non-test importers) before excluding.
+   cheap and removes noise from B's grind). **Verification correction:** `cli/src/tui/ipc-context.ts`
+   was initially considered but is **production code** (exports `IpcContext`/`useIpc()` consumed by
+   `App.tsx`/`tui.tsx`/`SubTaskPane.tsx`) — it is **not** excluded; it stays in the baseline for the
+   B10 tui PR. Always grep for non-test importers before excluding.
 3. **Reseed loop = Docker-local.** The baseline is **Linux-authoritative** (per-OS branch skew).
    Generate the reseed lcov by running the full instrumented suite in `oven/bun:latest`
    (bun 1.3.14 = CI, validated in Sub-project A) locally, reseed, and gate green **before**
