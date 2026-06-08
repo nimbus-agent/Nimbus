@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# reseed-docker.sh — generate a CI-Linux-authoritative coverage/lcov.info via Docker,
+# then reseed the branch-coverage baseline + run the gate on the host. Use before every
+# Sub-project B PR so the ratchet sees Linux branch percentages, never per-OS-skewed local
+# numbers. The host's node_modules is never touched (working tree is streamed in; install
+# happens inside the container against a named cache volume).
+#
+# Usage: scripts/coverage-floor/reseed-docker.sh [--clean|-c]
+#   --clean / -c   drop + recreate the bun-cache volume first (use if deps changed or the
+#                  cache is corrupt; the next run re-installs from scratch).
+set -euo pipefail
+
+# Git Bash / MSYS on Windows rewrites container-internal paths (/out, /src, /root/...) and
+# the `-v host:container` colon args into Windows paths, breaking docker. Disable that.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+IMAGE="oven/bun:latest"        # bun 1.3.14 == CI
+CACHE_VOL="nimbus-bun-cache"   # named volume: bun install cache, paid once
+
+if [[ "${1:-}" == "--clean" || "${1:-}" == "-c" ]]; then
+  echo "--- cleaning bun-cache volume ${CACHE_VOL} ---"
+  docker volume rm "${CACHE_VOL}" 2>/dev/null || true
+fi
+
+cd "${REPO_ROOT}"
+docker volume create "${CACHE_VOL}" >/dev/null
+mkdir -p coverage
+
+echo "--- docker: build instrumented lcov (oven/bun:latest) ---"
+# Stream tracked + untracked working-tree files (node_modules/.git/coverage/dist excluded)
+# into the container, extract, install, build the client, run build-lcov.sh, copy lcov out.
+tar --exclude=node_modules --exclude=.git --exclude=coverage --exclude=dist \
+    --exclude=.claude -c -C "${REPO_ROOT}" . \
+  | docker run --rm -i \
+      -v "${CACHE_VOL}:/root/.bun/install/cache" \
+      -v "${REPO_ROOT}/coverage:/out" \
+      -w /src \
+      "${IMAGE}" \
+      bash -c '
+        set -euo pipefail
+        mkdir -p /src && tar -x -C /src
+        bun install --frozen-lockfile
+        (cd packages/client && bun run build)
+        bash scripts/coverage-floor/build-lcov.sh
+        cp coverage/lcov.info /out/lcov.info
+      '
+
+echo "--- host: reseed baseline + gate (lcov is Docker/Linux) ---"
+bun run audit:coverage-floor:update-baseline
+bun run audit:coverage-floor
