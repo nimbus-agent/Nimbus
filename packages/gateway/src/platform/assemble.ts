@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Logger } from "pino";
 import { startAuditShipper } from "../audit/audit-shipper.ts";
 import {
@@ -513,10 +514,19 @@ async function bootFederationIntoIpcOpts(
       selfIdentity: identity,
     }),
   };
+  // GDPR purge signer (Slice 4, spec D11). Resolve the Ed25519 anchor keypair once (Vault-only seed)
+  // and pass the privkey seed + this gateway's federation selfPeerId so an approved federation.purge
+  // can return a valid signed DeletionRecord. selfPeerId is derived from the federation box identity's
+  // public key the same way peers are identified (peer:<first-8-bytes-hex>). deletePurgeContributions
+  // is intentionally NOT passed yet (the real local-delete accessor lands in Task 26) — until then
+  // deletedCount stays 0, but the signer is wired so an approved purge yields a valid signed receipt.
+  const { privkeyB64: purgePrivkeyB64 } = await ensureAnchorKeypair(vault);
+  const selfPeerId = `peer:${bytesToHex(identity.publicKey.subarray(0, 8))}`;
   const built = buildFederationLanServer({
     db,
     index: localIndex,
     identity,
+    purgeSign: { privkeyB64: purgePrivkeyB64, selfPeerId },
     lan: {
       bind: lanCfg.bind,
       port: lanCfg.port,

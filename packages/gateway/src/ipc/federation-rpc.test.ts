@@ -8,6 +8,7 @@ import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
 import { signPolicy } from "../policy/policy-signing.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
@@ -413,4 +414,108 @@ test("federation.policy returns the persisted bundle and null when none is store
   expect(bundle.sig).toBe(sig);
 
   policyIndex.close();
+});
+
+// ---------------------------------------------------------------------------
+// federation.purge — HITL gate (Slice 4, spec D11). HITL is STRUCTURAL: the
+// consent broker must approve BEFORE any deletion, and a signer must be present
+// BEFORE any deletion (fail-closed — no delete without a signed receipt).
+// ---------------------------------------------------------------------------
+
+/** A ctx wired with a delete-spy and (optionally) a purge signer. */
+function purgeCtx(
+  deleteSpy: (externalId: string, peerId: string) => number,
+  signer?: { privkeyB64: string; selfPeerId: string },
+): FederationRpcContext {
+  return {
+    db,
+    consentTimeoutMs: 1000,
+    notify: (method, params) => notes.push({ method, params }),
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(index),
+    deletePurgeContributions: deleteSpy,
+    ...(signer === undefined ? {} : { purgeSign: signer }),
+  };
+}
+
+test("federation.purge DENY: consent denied → purge_denied and NEVER deletes (HITL fires first)", async () => {
+  // Broker denies the consent request as soon as it is broadcast.
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, false));
+  });
+  let deleteCalls = 0;
+  const spy = () => {
+    deleteCalls++;
+    return 5;
+  };
+  const kp = generateEd25519Keypair();
+  const res = await dispatchFederationRpc(
+    "federation.purge",
+    { peerId: "peer:home", externalId: "user-42" },
+    purgeCtx(spy, { privkeyB64: encodeBase64(kp.privkey), selfPeerId: "peer:self" }),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    expect((res.value as { kind: string; error?: string }).error).toBe("purge_denied");
+  }
+  // The HITL gate fired BEFORE deletion: the delete accessor was never called.
+  expect(deleteCalls).toBe(0);
+});
+
+test("federation.purge APPROVE: deletes, returns a verifiable signed record with selfPeerId", async () => {
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, true));
+  });
+  let deleteCalls = 0;
+  const spy = (externalId: string, peerId: string) => {
+    expect(externalId).toBe("user-42");
+    expect(peerId).toBe("peer:home"); // the delete is keyed by the REQUESTING peer
+    deleteCalls++;
+    return 2;
+  };
+  const kp = generateEd25519Keypair();
+  const selfPeerId = "peer:answerer";
+  const res = await dispatchFederationRpc(
+    "federation.purge",
+    { peerId: "peer:home", externalId: "user-42" },
+    purgeCtx(spy, { privkeyB64: encodeBase64(kp.privkey), selfPeerId }),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { kind: string; record: DeletionRecord; sig: string };
+    expect(v.kind).toBe("ok");
+    expect(v.record.deletedCount).toBe(2);
+    // The record attests WHO deleted: this answering gateway's selfPeerId, not the requester's.
+    expect(v.record.peerId).toBe(selfPeerId);
+    expect(v.record.externalId).toBe("user-42");
+    expect(verifyDeletionRecord(v.record, v.sig, encodeBase64(kp.pubkey))).toBe(true);
+  }
+  // Deletion happened only AFTER approval.
+  expect(deleteCalls).toBe(1);
+});
+
+test("federation.purge APPROVE but NO signer → purge_signer_unavailable and NEVER deletes (fail-closed)", async () => {
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, true));
+  });
+  let deleteCalls = 0;
+  const spy = () => {
+    deleteCalls++;
+    return 7;
+  };
+  // No `purgeSign` wired → the signer guard must fail closed BEFORE any deletion.
+  const res = await dispatchFederationRpc(
+    "federation.purge",
+    { peerId: "peer:home", externalId: "user-42" },
+    purgeCtx(spy),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    expect((res.value as { kind: string; error?: string }).error).toBe("purge_signer_unavailable");
+  }
+  // No signer ⇒ no signed receipt possible ⇒ nothing was deleted.
+  expect(deleteCalls).toBe(0);
 });

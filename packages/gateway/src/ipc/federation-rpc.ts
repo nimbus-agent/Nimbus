@@ -515,25 +515,27 @@ export async function dispatchFederationRpc(
         return { kind: "error", error: "purge_denied" } as const;
       }
 
-      // Step 2 (post-approval): delete the user's local contributions. The concrete delete accessor
-      // is threaded in (Task 26 wires the real one); absent → 0 deleted (no rows touched here).
+      // FAIL-CLOSED: verify the signer is available BEFORE touching any data. A purge must never
+      // delete a single row unless it can also produce a signed deletion receipt — so the signer
+      // guard runs ahead of the delete, not after it. No signer → return an error, delete NOTHING.
+      const signer = ctx.purgeSign;
+      if (signer === undefined) {
+        return { kind: "error", error: "purge_signer_unavailable" } as const;
+      }
+
+      // Step 2 (post-approval, signer confirmed): delete the user's local contributions. The concrete
+      // delete accessor is threaded in (Task 26 wires the real one); absent → 0 deleted.
       const deletedCount = ctx.deletePurgeContributions?.(externalId, peerId) ?? 0;
 
       // Step 3: sign a DeletionRecord with this gateway's Ed25519 anchor key (the federation IDENTITY
-      // is an X25519 BOX keypair and CANNOT sign — see report). selfPeerId is this gateway's id.
+      // is an X25519 BOX keypair and CANNOT sign). The record attests WHO performed the deletion, so
+      // its peerId is THIS answering gateway's own id (signer.selfPeerId), not the requesting peer's.
       const record: DeletionRecord = {
         externalId,
-        peerId,
+        peerId: signer.selfPeerId,
         deletedCount,
         at: Date.now(),
       };
-      const signer = ctx.purgeSign;
-      if (signer === undefined) {
-        throw new FederationRpcError(
-          -32603,
-          "ERR_PURGE_SIGNER_UNAVAILABLE: no anchor sign key wired",
-        );
-      }
       const sig = signDeletionRecord(record, signer.privkeyB64);
 
       // Audit the approved purge (decision + count only; never user content).

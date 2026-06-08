@@ -33,6 +33,12 @@ export interface BuildFederationLanServerDeps {
   readonly identityGuard?: FederationRpcContext["identityGuard"];
   // Delegated HITL (Slice 2, I20): the delegate's local decision for an owner's routed approval.
   readonly delegateApproval?: FederationRpcContext["delegateApproval"];
+  // GDPR purge (Slice 4, spec D11): the Ed25519 anchor signer (privkey seed + this gateway's
+  // selfPeerId) that signs the DeletionRecord, and the concrete local-delete accessor. Without the
+  // signer wired, an approved federation.purge fails closed (purge_signer_unavailable) and deletes
+  // nothing. `deletePurgeContributions` is deferred to Task 26 (undefined → deletedCount stays 0).
+  readonly purgeSign?: FederationRpcContext["purgeSign"];
+  readonly deletePurgeContributions?: FederationRpcContext["deletePurgeContributions"];
 }
 
 export interface FederationLanServer {
@@ -91,6 +97,10 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         ...(deps.teamVault === undefined ? {} : { teamVault: deps.teamVault }),
         ...(deps.identityGuard === undefined ? {} : { identityGuard: deps.identityGuard }),
         ...(deps.delegateApproval === undefined ? {} : { delegateApproval: deps.delegateApproval }),
+        ...(deps.purgeSign === undefined ? {} : { purgeSign: deps.purgeSign }),
+        ...(deps.deletePurgeContributions === undefined
+          ? {}
+          : { deletePurgeContributions: deps.deletePurgeContributions }),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;
