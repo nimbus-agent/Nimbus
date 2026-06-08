@@ -67,6 +67,23 @@ test("grant with standing consent round-trips standingConsent=true", () => {
   expect(g?.role).toBe("owner");
 });
 
+test("revokeAllForPeer revokes every active grant a peer holds and returns the count", () => {
+  store.publish("ns1", [{ kind: "type", value: "issue" }]);
+  store.publish("ns2", [{ kind: "type", value: "pull_request" }]);
+  store.grant("ns1", "peerA", "viewer", false);
+  store.grant("ns2", "peerA", "owner", true);
+  store.grant("ns1", "peerB", "viewer", false);
+
+  const revoked = store.revokeAllForPeer("peerA");
+  expect(revoked).toBe(2);
+  expect(store.getActiveGrant("ns1", "peerA")).toBeUndefined();
+  expect(store.getActiveGrant("ns2", "peerA")).toBeUndefined();
+  // peerB's grant is untouched.
+  expect(store.getActiveGrant("ns1", "peerB")?.role).toBe("viewer");
+  // Idempotent: a second sweep revokes nothing.
+  expect(store.revokeAllForPeer("peerA")).toBe(0);
+});
+
 test("publish with an empty filter set yields a namespace with no declared types/services", () => {
   store.publish("empty", []);
   expect(store.getByName("empty")?.filters).toEqual([]);

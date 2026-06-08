@@ -1,3 +1,4 @@
+export { runAdmin } from "./admin.ts";
 export { runAsk } from "./ask.ts";
 export { runAudit } from "./audit.ts";
 export { runBench } from "./bench.ts";
@@ -20,6 +21,7 @@ export { runLlm } from "./llm.ts";
 export { runMcpServer } from "./mcp-server.ts";
 export { runMetricsCli } from "./metrics.ts";
 export { runPeople } from "./people.ts";
+export { runPolicy } from "./policy.ts";
 export { runProfile } from "./profile.ts";
 export { runQuery } from "./query.ts";
 export { runRepl } from "./repl.ts";

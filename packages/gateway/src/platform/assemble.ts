@@ -66,6 +66,7 @@ import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
+import { NamespaceStore } from "../federation/namespace-store.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import {
@@ -80,16 +81,22 @@ import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
+import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { startPurge } from "../policy/gdpr-purge.ts";
 import { startGdprPurgeRetry } from "../policy/gdpr-purge-retry-sidecar.ts";
+import { GdprPurgeStore } from "../policy/gdpr-purge-store.ts";
 import { type AuthorResult, authorPolicy } from "../policy/policy-author.ts";
+import { servePolicy } from "../policy/policy-distribution.ts";
 import { buildPolicyGate, type PolicyGate } from "../policy/policy-gate.ts";
+import { refreshPolicy } from "../policy/policy-runtime.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
+import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
@@ -517,16 +524,21 @@ async function bootFederationIntoIpcOpts(
   // GDPR purge signer (Slice 4, spec D11). Resolve the Ed25519 anchor keypair once (Vault-only seed)
   // and pass the privkey seed + this gateway's federation selfPeerId so an approved federation.purge
   // can return a valid signed DeletionRecord. selfPeerId is derived from the federation box identity's
-  // public key the same way peers are identified (peer:<first-8-bytes-hex>). deletePurgeContributions
-  // is intentionally NOT passed yet (the real local-delete accessor lands in Task 26) — until then
-  // deletedCount stays 0, but the signer is wired so an approved purge yields a valid signed receipt.
+  // public key the same way peers are identified (peer:<first-8-bytes-hex>).
+  // deletePurgeContributions (Task 26): after the LOCAL operator approves an inbound federation.purge,
+  // delete the requesting peer's local contributions. The confirmed local effect is revoking ALL of
+  // that peer's federation grants (NamespaceStore.revokeAllForPeer); its count is the deletedCount in
+  // the signed receipt. Item-level row deletion has no confirmed accessor — see Task 26 report.
   const { privkeyB64: purgePrivkeyB64 } = await ensureAnchorKeypair(vault);
   const selfPeerId = `peer:${bytesToHex(identity.publicKey.subarray(0, 8))}`;
+  const purgeNamespaceStore = new NamespaceStore(db);
   const built = buildFederationLanServer({
     db,
     index: localIndex,
     identity,
     purgeSign: { privkeyB64: purgePrivkeyB64, selfPeerId },
+    deletePurgeContributions: (_externalId, peerId) =>
+      purgeNamespaceStore.revokeAllForPeer(peerId, Date.now()),
     lan: {
       bind: lanCfg.bind,
       port: lanCfg.port,
@@ -816,6 +828,65 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       toml,
     );
   };
+
+  // policy.* + team.purge IPC namespace (Task 26, Lanes A–G integration hub). The local IPC socket is
+  // operator/owner-trusted, so isAnchor is true for local calls (signing makes this gateway an anchor;
+  // a purge is operator-only). The GDPR purge deps wire the REAL local-side capabilities:
+  //   resolvePeer            → identity binding store (externalId → active peer ids; first wins)
+  //   revokeAllGrants        → NamespaceStore.revokeAllForPeer (confirmed grant-revocation sweep)
+  //   deleteLocalContributions → same sweep's count (item-level row deletion has no confirmed accessor;
+  //                              grant-revocation is the confirmed local effect — see report)
+  //   knownPeers             → localIndex.listLanPeers (paired peers fan out one purge request each)
+  // resolvePeer returns undefined when identity is disabled / unbound → startPurge throws (fail-closed).
+  const purgeNamespaceStore = new NamespaceStore(db);
+  const purgeJobStore = new GdprPurgeStore(db);
+  let purgeJobCounter = 0;
+  const policyRpcCtx: PolicyRpcCtx = {
+    showPolicy: () => policyGate.status(),
+    trustPubkey: ({ pubkey }) => trustAnchorPubkey(policyStore, pubkey, Date.now()),
+    refetch: () =>
+      refreshPolicy({
+        store: policyStore,
+        gate: policyGate,
+        pinnedPubkey: policyStore.getAnchorPubkey() ?? "",
+        nowMs: Date.now(),
+        // Best-effort: no inbound anchor bundle source is wired at the IPC layer, so refetch is a
+        // local no-op (returns the locally-served bundle, or null when ungoverned). The over-the-wire
+        // peer fetch is the federation runtime's job; here we surface "no_bundle" rather than fabricate.
+        fetch: async () => servePolicy(policyStore),
+      }),
+    signPolicy: async ({ toml }) => {
+      const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
+      const r = authorPolicy(
+        { store: policyStore, gate: policyGate, db, privkeyB64, pubkeyB64, nowMs: Date.now() },
+        toml,
+      );
+      if (!r.ok) throw new Error(r.error);
+      return { org: r.org, version: r.version };
+    },
+    purge: ({ externalId }) =>
+      startPurge(
+        {
+          store: purgeJobStore,
+          resolvePeer: (extId) => identityBoot?.store.activePeerIdsFor(extId)[0],
+          revokeAllGrants: (peerId) => {
+            purgeNamespaceStore.revokeAllForPeer(peerId, Date.now());
+          },
+          deleteLocalContributions: (peerId) =>
+            purgeNamespaceStore.revokeAllForPeer(peerId, Date.now()),
+          knownPeers: () => localIndex.listLanPeers().map((p) => p.peer_id),
+          newJobId: () => {
+            purgeJobCounter += 1;
+            return `gdpr-${Date.now()}-${purgeJobCounter}`;
+          },
+          nowMs: () => Date.now(),
+        },
+        externalId,
+      ),
+    // Local IPC socket is operator/owner-trusted (see ipc/server): treat local calls as the anchor.
+    isAnchor: true,
+  };
+  ipcOpts.policyRpcCtx = policyRpcCtx;
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 

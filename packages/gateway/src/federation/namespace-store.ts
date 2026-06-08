@@ -136,6 +136,25 @@ export class NamespaceStore {
     );
   }
 
+  /**
+   * Revoke ALL active grants a peer holds across every namespace (the GDPR-purge sweep). Returns the
+   * number of grants revoked. Uses the `idx_fed_grants_peer` index; idempotent (already-revoked rows
+   * are skipped via the `revoked_at IS NULL` predicate).
+   */
+  revokeAllForPeer(peerId: string, nowMs = Date.now()): number {
+    const before = this.db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM federation_grants WHERE peer_id = ? AND revoked_at IS NULL`,
+      )
+      .get(peerId);
+    dbRun(
+      this.db,
+      `UPDATE federation_grants SET revoked_at = ? WHERE peer_id = ? AND revoked_at IS NULL`,
+      [nowMs, peerId],
+    );
+    return before?.n ?? 0;
+  }
+
   /** Live-checked: returns the grant ONLY if it exists and is not revoked. */
   getActiveGrant(name: string, peerId: string): NamespaceGrant | undefined {
     const id = namespaceIdFor(name);

@@ -23,6 +23,7 @@ import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
+import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
 import { dispatchProfileRpc, ProfileRpcError } from "../profile-rpc.ts";
 import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
@@ -635,6 +636,24 @@ export async function tryDispatchLanRpc(
   return handleLanLocalRpc(ctx, method, params);
 }
 
+export async function tryDispatchPolicyRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  // policy.* + the team.purge GDPR entrypoint share one dependency seam.
+  if (!method.startsWith("policy.") && method !== "team.purge") return phase4RpcSkipped;
+  if (ctx.options.policyRpcCtx === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchPolicyRpc(method, params, ctx.options.policyRpcCtx);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof PolicyRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -682,6 +701,8 @@ export async function tryDispatchPhase4Rpc(
   if (profileOutcome !== phase4RpcSkipped) return profileOutcome;
   const indexReembedOutcome = await tryDispatchIndexReembedRpc(ctx, method, params);
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
+  const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);
+  if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const adminOutcome = tryDispatchAdminRpc(ctx, method, params);
   if (adminOutcome !== phase4RpcSkipped) return adminOutcome;
   return tryDispatchReindexRpc(ctx, method, params, clientId);

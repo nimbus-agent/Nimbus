@@ -36,7 +36,8 @@ export type TeamCommand =
     }
   | { kind: "delegations" }
   | { kind: "respond"; requestId: string; approved: boolean; as: string }
-  | { kind: "audit"; namespace: string; purpose: string; sinceMs: number };
+  | { kind: "audit"; namespace: string; purpose: string; sinceMs: number }
+  | { kind: "purge"; externalId: string };
 
 /** Minimal IPC surface the team-vault/invoke/delegation subcommands need (injectable for tests). */
 export interface TeamRpcClient {
@@ -215,6 +216,14 @@ function parseAudit(rest: string[]): TeamCommand {
   return { kind: "audit", namespace, purpose, sinceMs };
 }
 
+function parsePurge(rest: string[]): TeamCommand {
+  const externalId = flagValue(rest, "--user");
+  if (typeof externalId !== "string" || externalId.length === 0) {
+    throw new Error("Usage: nimbus team purge --user <externalId>");
+  }
+  return { kind: "purge", externalId };
+}
+
 export function parseTeamArgs(argv: string[]): TeamCommand {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -243,6 +252,8 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
       return { kind: "delegations" };
     case "audit":
       return parseAudit(rest);
+    case "purge":
+      return parsePurge(rest);
     case "approve":
     case "deny": {
       const requestId = rest[0];
@@ -256,7 +267,7 @@ export function parseTeamArgs(argv: string[]): TeamCommand {
     }
     default:
       throw new Error(
-        `Unknown subcommand: ${sub}\nUsage: nimbus team [discover|pair|namespace|query|who-knows|vault|invoke|delegate|delegations|approve|deny|audit]`,
+        `Unknown subcommand: ${sub}\nUsage: nimbus team [discover|pair|namespace|query|who-knows|vault|invoke|delegate|delegations|approve|deny|audit|purge]`,
       );
   }
 }
@@ -428,6 +439,15 @@ export async function runTeamVaultRpc(client: TeamRpcClient, cmd: TeamCommand): 
         approved: cmd.approved,
       });
       process.stdout.write(`${cmd.approved ? "approved" : "denied"} ${cmd.requestId}\n`);
+      return true;
+    }
+    case "purge": {
+      const r = await client.call<{ jobId?: string; localDeleted?: number }>("team.purge", {
+        externalId: cmd.externalId,
+      });
+      process.stdout.write(
+        `GDPR purge started for ${cmd.externalId}: job ${r.jobId ?? "?"} (${r.localDeleted ?? 0} local grant(s) revoked)\n`,
+      );
       return true;
     }
     default:

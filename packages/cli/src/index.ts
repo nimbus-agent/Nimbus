@@ -2,6 +2,7 @@ import { intro, outro } from "@clack/prompts";
 
 import {
   printHelp,
+  runAdmin,
   runAsk,
   runAudit,
   runBench,
@@ -23,6 +24,7 @@ import {
   runMcpServer,
   runMetricsCli,
   runPeople,
+  runPolicy,
   runProfile,
   runQuery,
   runRepl,
@@ -100,6 +102,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   team: runTeam,
   identity: runIdentity,
   scim: runScim,
+  policy: runPolicy,
+  admin: runAdmin,
   "mcp-server": runMcpServer,
 };
 
