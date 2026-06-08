@@ -529,7 +529,7 @@ async function bootFederationIntoIpcOpts(
   // delete the requesting peer's local contributions. The confirmed local effect is revoking ALL of
   // that peer's federation grants (NamespaceStore.revokeAllForPeer); its count is the deletedCount in
   // the signed receipt. Item-level row deletion has no confirmed accessor — see Task 26 report.
-  const { privkeyB64: purgePrivkeyB64 } = await ensureAnchorKeypair(vault);
+  const { privkeyB64: purgePrivkeyB64 } = await ensureAnchorKeypair(vault); // gitleaks:allow — Vault-resolved seed, not a literal
   const selfPeerId = `peer:${bytesToHex(identity.publicKey.subarray(0, 8))}`;
   const purgeNamespaceStore = new NamespaceStore(db);
   const built = buildFederationLanServer({
@@ -679,7 +679,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // (never persisted/returned/logged). The concrete over-the-wire `requestPurge`
   // lands in Task 26; until then this is a no-op retry that keeps the loop,
   // attempt-counting, and job-completion machinery live.
-  const { privkeyB64: anchorPrivkeyB64 } = await ensureAnchorKeypair(vault);
+  const { privkeyB64: anchorPrivkeyB64 } = await ensureAnchorKeypair(vault); // gitleaks:allow — Vault-resolved seed, not a literal
   const gdprPurgeRetry = startGdprPurgeRetry(db, { anchorPrivkeyB64 });
   sidecarStops.push(() => gdprPurgeRetry.stop());
 

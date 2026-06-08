@@ -1,7 +1,7 @@
 # Phase 6 Slice 4 Design Review
 
 **Date:** 2026-06-07
-**Target:** [2026-06-07-phase6-slice4-policy-admin-observability-design.md](file:///C:/gitrep/Nimbus/.worktrees/phase6-slice4-policy-admin-observability/docs/superpowers/specs/2026-06-07-phase6-slice4-policy-admin-observability-design.md)
+**Target:** [2026-06-07-phase6-slice4-policy-admin-observability-design.md](./2026-06-07-phase6-slice4-policy-admin-observability-design.md)
 
 ## Status Update (2026-06-07)
 

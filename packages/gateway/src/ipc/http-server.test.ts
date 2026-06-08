@@ -33,9 +33,29 @@ function builtConsoleDist(): string {
  * Issue a raw HTTP/1.1 GET over a TCP socket so the path is sent verbatim — `fetch` normalizes
  * `..` segments out of the URL, which would defeat the traversal-rejection assertion.
  */
-async function rawGet(port: number, path: string, token: string): Promise<{ status: number }> {
+/** One raw-socket HTTP GET attempt. Resolves as soon as a complete status line arrives
+ * (independent of close timing — under load `close` could fire before the status was read,
+ * which previously yielded a misleading status 0). Times out and fails loudly otherwise. */
+function rawGetOnce(port: number, path: string, token: string): Promise<{ status: number }> {
   return new Promise((resolvePromise, rejectPromise) => {
     let received = "";
+    let settled = false;
+    const settleOk = (status: number, socket?: { end(): void }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket?.end();
+      resolvePromise({ status });
+    };
+    const settleErr = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      rejectPromise(err instanceof Error ? err : new Error(String(err)));
+    };
+    const timer = setTimeout(() => settleErr(new Error("rawGet timeout")), 5000);
+    const parseStatus = (): number =>
+      Number.parseInt((received.split("\r\n", 1)[0] ?? "").split(" ")[1] ?? "0", 10);
     Bun.connect({
       hostname: "127.0.0.1",
       port,
@@ -45,20 +65,34 @@ async function rawGet(port: number, path: string, token: string): Promise<{ stat
             `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${token}\r\nConnection: close\r\n\r\n`,
           );
         },
-        data(_socket, data): void {
+        data(socket, data): void {
           received += new TextDecoder().decode(data);
+          if (received.includes("\r\n")) settleOk(parseStatus(), socket);
         },
         close(): void {
-          const statusLine = received.split("\r\n", 1)[0] ?? "";
-          const code = Number.parseInt(statusLine.split(" ")[1] ?? "0", 10);
-          resolvePromise({ status: code });
+          if (received !== "") settleOk(parseStatus());
+          else settleErr(new Error("rawGet: connection closed with no response"));
         },
         error(_socket, err): void {
-          rejectPromise(err);
+          settleErr(err);
         },
       },
-    }).catch(rejectPromise);
+    }).catch(settleErr);
   });
+}
+
+/** Retry the raw GET a few times so a transient connection reset under full-suite
+ * concurrency doesn't flake the assertion (the parsed status itself is deterministic). */
+async function rawGet(port: number, path: string, token: string): Promise<{ status: number }> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await rawGetOnce(port, path, token);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
