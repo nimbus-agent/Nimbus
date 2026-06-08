@@ -20,7 +20,7 @@ export interface RefreshOutcome {
 /** Canonical form of a connector allowlist for change detection: deduped + sorted, or null. */
 function normalizeAllowlist(allow: readonly string[] | undefined): string[] | null {
   if (allow === undefined) return null;
-  return [...new Set(allow)].sort();
+  return [...new Set(allow)].sort((a, b) => a.localeCompare(b));
 }
 
 /** Peer refresh: fetch → verify → persist → re-enforce. Fail-closed on bad sig (keep last-valid). */
