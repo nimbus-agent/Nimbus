@@ -43,7 +43,7 @@ const SCIM_DISABLED_HINT = "set identity.scim.bearer via 'nimbus identity scim s
 const DEPLOY_REJECT_ACTION = "deployment.annotation_rejected";
 const SCIM_REJECT_ACTION = "scim.provision_rejected";
 const POLICY_DISABLED_HINT =
-  "set the admin token via 'nimbus vault set http_api.deployment_token <value>'";
+  "policy write surface disabled — set the bearer via 'nimbus vault set http_api.deployment_token <value>'";
 const POLICY_REJECT_ACTION = "policy.applied_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */

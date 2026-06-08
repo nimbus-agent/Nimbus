@@ -436,8 +436,10 @@ async function handleGet(
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
   const path = url.pathname;
-  if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${path}`))) {
-    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  const matchedRoute = WRITE_ROUTE_ALLOWLIST.find((r) => r.endsWith(` ${path}`));
+  if (matchedRoute !== undefined) {
+    const allow = matchedRoute.split(" ")[0] ?? "POST";
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: allow } });
   }
   try {
     return await dispatchReadOnlyGet(req, path, url, db, opts);

@@ -135,6 +135,24 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     await res.text();
   });
 
+  it("GET on the PUT-only path /v1/admin/policy returns 405 with Allow: PUT", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveAdminToken: async () => "admin-token",
+      authorPolicy: async (toml) => ({
+        ok: true,
+        bundle: { toml, sig: "SIG" },
+        org: "acme",
+        version: 1,
+      }),
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/policy`, {
+      method: "GET",
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("PUT");
+    await res.text();
+  });
+
   it("GET on an unknown path returns 404", async () => {
     handle = startReadOnlyHttpServer(dbPath, 0);
     const res = await fetch(`http://127.0.0.1:${handle.port}/no-such-path`);
