@@ -1,7 +1,7 @@
 import type { GatewayStatus } from "./types.ts";
 
 function esc(v: string): string {
-  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
 /** Render a GatewayStatus as Prometheus text exposition (v0.0.4). */

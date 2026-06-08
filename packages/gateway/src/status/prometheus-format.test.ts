@@ -33,4 +33,14 @@ describe("formatPrometheus", () => {
     const out = formatPrometheus(s);
     expect(out).toContain('nimbus_peer_reachable{peer="pe\\"er\\\\x"} 1');
   });
+
+  test("escapes newlines in label values", () => {
+    const s: GatewayStatus = { ...status, peers: [{ peerId: "pe\ner", reachable: true }] };
+    const out = formatPrometheus(s);
+    expect(out).toContain('nimbus_peer_reachable{peer="pe\\ner"} 1');
+    // the metric line must not be split by the raw newline:
+    expect(
+      out.split("\n").some((line) => line.startsWith('nimbus_peer_reachable{peer="pe\\ner"}')),
+    ).toBe(true);
+  });
 });
