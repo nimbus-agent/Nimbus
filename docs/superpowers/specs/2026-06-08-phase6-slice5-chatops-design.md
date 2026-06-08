@@ -63,7 +63,25 @@ shortcut auto-registration UIs; rich Block Kit / Adaptive Cards beyond a plain a
 Approve/Reject card; editing resource ownership *via chat* (ownership is edited only via signed
 policy on the anchor); resolving owner from anything other than the policy glob (no
 git-CODEOWNERS / service-catalog lookup — that is Slice 6/7 territory); the Phase 7 `@nimbus
-excellence` shortcut; SAML-mapped identities (Slice 3 deferred SAML); arbitrary outbound DMs.
+excellence` shortcut; SAML-mapped identities (Slice 3 deferred SAML); arbitrary outbound DMs;
+**group / distribution-list / multi-owner resource ownership** (an owner is a single SCIM email this
+slice — review Q3, deferred to whenever a service-catalog owner source lands).
+
+### 3.2 Review resolutions (2026-06-08)
+
+Dispositions of the design-review items in
+[`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phase6-slice5-chatops-review.md):
+
+| Item | Disposition | Where |
+|------|-------------|-------|
+| **Q1** identity-mapping cache / freshness | **Fixed** | §4.4 — TTL+LRU cache of `userId→email`; authorization re-checked **live** locally each message; deprovision evicts + flips local state (no stale-auth window). |
+| **Q2** Teams webhook auth vs local-first | **Fixed (corrected an error)** | §7 — Bot Framework **Microsoft-signed JWT** validated via the existing `identity/jwks-cache.ts` RS256 pattern; "bearer-or-HMAC" was wrong; Slack Socket Mode needs no inbound signature. |
+| **Q3a** owner glob collisions | **Fixed** | §5 — deterministic precedence (exact → longest literal prefix → `*`); equal-specificity collision ⇒ **refuse + audit**. |
+| **Q3b** multi-owner / group owner × quorum | **Deferred** | §3.1 — owner = single SCIM email this slice; quorum (I21) composes orthogonally on top. |
+| **Q3c** owner == requester (self-approval) | **Fixed** | §5 — self-approval allowed only when no quorum applies; under quorum the requester is at most one distinct peer (cannot satisfy alone). |
+| **S1** Slack/Teams text normalization | **Fixed** | §4.5 — normalization pass (mentions, link syntax, smart quotes, backticks) before the `run` grammar. |
+| **S2** Socket Mode reconnect/backoff | **Fixed** | §4.5 — fresh-before-close, ping/pong health, exponential backoff + jitter, at-least-once + `(channel,ts)` idempotency. |
+| **S3** audit/warn on ownership refusal | **Fixed** | §5 — every policy refusal emits an audit entry (reason code) + a one-line in-channel "why". |
 
 ## 4. Architecture
 
@@ -78,7 +96,7 @@ packages/gateway/src/chatops/
   types.ts                       # ChatMessage, ChatCommand, ChatIdentity, ReplyTarget, wire shapes
   chatops-config.ts              # [chatops] nimbus.toml: enabled, platforms, channel bindings
   chatops-service.ts             # lifecycle: start/stop adapters, hold the router; built at boot
-  command-parser.ts              # NL-vs-`run` split; structured write grammar → ParsedCommand
+  command-parser.ts              # normalize → NL-vs-`run` split; structured write grammar → ParsedCommand
   intent-router.ts               # route read→engine / write→executor.gate; assemble reply
   identity-mapper.ts             # Slack/Teams user → email → SCIM/OIDC Nimbus identity (Slice 3)
   owner-resolver.ts              # resource → owner identity via EnforcedPolicy ownership globs
@@ -153,6 +171,41 @@ separable: the owner ≠ requester is the normal case.
 The mapping is **never** trusted from message text; only the platform-asserted (signature-verified)
 user id is used as the lookup key.
 
+**Caching + freshness (review Q1).** The `userId → email` resolution (step 1, a cloud round-trip) is
+**cached** with a bounded TTL (default 15 min, `[chatops].identity_cache_ttl_seconds`) and an LRU cap,
+keyed by `(platform, userId)`. This is safe to cache because it is *stable* identity data, not
+authorization. **Authorization is re-evaluated live on every message** against the **local** identity
+store: step 2's `isOperatorValid` (I18) + SCIM `active` flag are local reads, so a deprovision —
+which flips `setScimActive(externalId, false)` in `identity/deprovision.ts` — takes effect on the
+very next message with **no stale-auth window**, regardless of the email cache. An email change in the
+IdP is bounded by the TTL (worst case: one TTL window resolving to a since-changed email, which still
+gates on the *local* identity validity). Deprovision also proactively evicts the user's cache entry
+via the existing deprovision cascade hook. Net: the cache removes the per-message cloud round-trip and
+rate-limit pressure without ever caching an authorization decision.
+
+### 4.5 Input normalization & transport resilience
+
+**Command normalization (review S1).** Chat platforms mangle raw text, and the structured `run`
+grammar must parse against the *user's intent*, not the platform's rendering. `command-parser.ts`
+runs a **normalization pass before tokenizing**: strip the leading `@nimbus` mention
+(`<@Ubotid>` / `<at>Nimbus</at>`), unwrap Slack link syntax `<http://x|x>` / `<http://x>` → `x` and
+`<@U123>` / `<#C123|name>` → their plain form, convert smart quotes `“ ” ‘ ’` → ASCII `" '`, strip
+surrounding backticks / code fences, and collapse non-breaking spaces. Only after normalization is the
+`run <action> k=v…` grammar applied. Normalization is **read-only and total** (never invents tokens);
+an input that doesn't parse cleanly after normalization is **refused** (D5: never guessed). Unit tests
+cover each decorator class for both Slack and Teams renderings.
+
+**Socket Mode resilience (review S2).** `slack-socket-adapter.ts` treats the WebSocket as
+**disposable** — the local-first reality is laptops sleeping, Wi-Fi roaming, VPN flaps. It: (1) honors
+Slack's `disconnect` (warning / refresh) frames by opening a fresh socket *before* closing the old one
+where possible; (2) runs a **ping/pong health check**; (3) on drop, **reconnects with exponential
+backoff + jitter** (base 1s → cap 60s) so an outage never hammers `apps.connections.open`; (4) surfaces
+state via `chatops.status` (`connected` / `reconnecting` / `down` + `lastEventAt`). Inbound events are
+processed **at-least-once**; the parser/router are **idempotent on `(channel, ts)`** so a redelivered
+event after reconnect cannot double-execute a write (the executor's pending-approval keying also
+dedupes). Teams (request/response webhook) needs no socket lifecycle — Microsoft retries failed
+deliveries, and the same `(channel, ts)` idempotency guards double-processing.
+
 ## 5. Policy schema extension (Slice 4)
 
 Added to `policy-toml.ts` + `EnforcedPolicy` (still signed + monotonic-stricter + fail-closed, I22):
@@ -172,8 +225,25 @@ notify    = ["C0SLACK1"]                   # channels the dispatcher may push no
 Resolution rules:
 - **Channel → namespace:** exact channel-id match; no match → channel is not ChatOps-enabled →
   message ignored (fail-closed; the bot only acts in explicitly-bound channels).
-- **Resource → owner:** longest/most-specific glob wins; the `*` fallback is required for any write
-  to be approvable (no fallback + no specific match → **refuse**, fail-closed).
+- **Resource → owner:** ownership resolves to **exactly one** owner identity. Match precedence is
+  deterministic: (1) exact literal match; (2) otherwise the glob with the longest literal prefix
+  before its first wildcard; (3) the `*` fallback. The `*` fallback is required for any unmatched
+  write to be approvable (no fallback + no specific match → **refuse**, fail-closed). **Collision
+  tie-break (review Q3):** if two patterns are *equally* specific (same literal-prefix length) and
+  both match, resolution is **ambiguous → refuse + audit** (fail-closed; never silently pick one) —
+  the operator must disambiguate in policy. Group/distribution-list owners and multiple owners per
+  resource are **out of scope** for this slice (see §3.1); an owner value is a single SCIM email.
+- **Self-approval × quorum (review Q3):** when the resolved owner *is* the requester and **no quorum
+  rule applies** to the action type, self-approval is allowed (this is exactly today's single-approver
+  HITL — the actor confirming their own action). When a quorum rule **does** apply (I21), the
+  requester's own approval counts as **at most one** of the N *distinct authenticated peers*, so a
+  requester can never satisfy a quorum alone — quorum and owner-routing compose orthogonally
+  (owner-routing decides *who the primary card goes to*; quorum decides *how many distinct peers must
+  approve*). A `deny` from any peer still aborts (I21, fail-closed).
+- **Refusal observability (review S3):** every write refused for a policy reason — unbound channel,
+  unmapped user under `refuse`, missing fallback owner, ambiguous-owner collision, or unknown action —
+  emits an **audit-log entry** (reason code + channel + namespace, no secrets) and a one-line
+  in-channel reply stating *why*, so operators can diagnose "the bot is ignoring me" immediately.
 - Monotonic-stricter still holds: ChatOps policy can only *add* constraints; it never loosens an
   existing HITL/quorum requirement. A missing `[policy.chatops]` block means ChatOps is ungoverned
   → **all channels closed** (fail-closed: ChatOps does nothing until policy binds a channel).
@@ -212,9 +282,21 @@ Tauri allowlist (I7): only `chatops.status` is renderer-callable (read-only); st
 CLI-only. LAN forbidden-set (I5): the whole `chatops.*` namespace is added to `FORBIDDEN_OVER_LAN`.
 
 **Teams inbound route (I13):** `POST /v1/messaging/teams/events` added to `WRITE_ROUTE_ALLOWLIST`
-(5→6 after Slice 4's policy route), bearer-or-HMAC authenticated at the route, body-size capped,
-rejections audited.
-Slack needs no inbound route (Socket Mode is outbound).
+(5→6 after Slice 4's policy route). **Authentication (review Q2):** Teams Bot Framework activities
+carry a **Microsoft-signed JWT** (`Authorization: Bearer`) issued by `login.botframework.com`. The
+route validates that JWT — signature against the Bot Framework OpenID metadata/JWKS, plus issuer +
+the `aud` claim equal to the bot's own app id — by **reusing the existing `identity/jwks-cache.ts` +
+RS256 verifier pattern** from Slice 3 (I18). This is *not* a new local-first violation: fetching an
+IdP/Bot-Framework JWKS for token validation is the same outbound-for-verification the OIDC verifier
+already does (local-first = the index is the source of truth, not "the gateway never reaches an IdP");
+the JWKS is cached, and the route fails closed (401) if validation can't complete. The earlier
+"bearer-or-HMAC" phrasing was wrong — there is **no** shared-secret/proxy mode; validation is
+in-gateway. Body-size capped, rejections audited.
+
+**Slack inbound:** **no inbound route and no inbound signature check** — Socket Mode events arrive on
+the *outbound* WebSocket the gateway opened, authenticated by the Slack **app-level token** presented
+at connect time. (Slack's HMAC signing-secret model applies only to the Events-API HTTP webhook,
+which this design deliberately does not use.)
 
 ## 8. Connector additions (Slice-6 MCP, AGPL)
 
@@ -240,9 +322,16 @@ unexpected write surface.
 - **I23** runtime test + static D17 (bounded destination; dispatcher is sole operational-post path).
 - **Identity mapping** fail-closed: unmapped → refuse / public-read per channel; non-identity-valid →
   no write authorised.
-- **Command parser:** read vs `run` split; unknown/ambiguous write → refused; grammar edge cases.
-- **Owner routing:** correct owner resolved by glob; non-owner Approve click rejected; quorum stacks;
-  audit records approver identity; fallback-owner-absent → refuse.
+- **Command parser:** normalization (mentions, `<url|text>`, smart quotes, backticks — Slack & Teams
+  renderings) precedes parsing; read vs `run` split; unknown/ambiguous write → refused; grammar edges.
+- **Owner routing:** correct owner resolved by glob precedence; equal-specificity collision → refuse +
+  audit; non-owner Approve click rejected; self-approval allowed only sans quorum; quorum stacks (a
+  requester counts as ≤1 distinct peer); audit records approver identity; fallback-owner-absent →
+  refuse; every refusal path emits its audit entry (S3).
+- **Identity cache (Q1):** TTL eviction; deprovision mid-session → next message authorization fails
+  live despite a warm email cache.
+- **Transport (Q2/S2):** Teams Bot Framework JWT validated via the jwks-cache pattern (bad/expired
+  token → 401); Socket Mode reconnect with backoff; redelivered `(channel, ts)` does not double-execute.
 - **Policy:** channel→namespace binding; unbound channel ignored; monotonic-stricter preserved.
 - **E2E:** real Gateway subprocess + **mock Slack Socket Mode server + mock Teams webhook**; no real
   cloud. Asserts: read answered & scoped; write produces a card to the owner; approve → executes;
@@ -289,12 +378,14 @@ Documented in `docs/cli-reference.md`.
 
 1. **Spike + types** — `chatops/types.ts`, `transport/transport.ts`, Socket-Mode-shape decision (§8).
 2. **Policy extension** — `[policy.chatops.*]` parse + `EnforcedPolicy` fields + resolution + tests.
-3. **Identity mapper + owner resolver** — Slice 3 / policy lookups + fail-closed tests.
-4. **Command parser** — NL/`run` split + write grammar + refusal tests.
+3. **Identity mapper + owner resolver** — Slice 3 / policy lookups; userId→email cache (Q1); glob
+   precedence + collision-refuse (Q3a); self-approval×quorum (Q3c); fail-closed + refusal-audit tests.
+4. **Command parser** — normalization pass (S1) + NL/`run` split + write grammar + refusal tests.
 5. **Reply dispatcher + I23/D17** — bounded post + invariant test + static check + docs row.
 6. **Intent router + approval presenter** — read→engine, write→gate (I20 owner-routing), card lifecycle.
 7. **Connector tools** — slack/teams additions + vault keys + contract tests.
-8. **Transports** — Slack Socket Mode adapter; Teams webhook route (I13 allowlist 5→6).
+8. **Transports** — Slack Socket Mode adapter (reconnect/backoff + idempotency, S2); Teams webhook
+   route (I13 allowlist 5→6) with Bot Framework JWT validation via the jwks-cache pattern (Q2).
 9. **IPC + CLI + Tauri/LAN allowlists** — `chatops.*` + `nimbus chatops`.
 10. **Watcher notification routing** — extend `notify` callback → dispatcher.
 11. **E2E + docs** — mock-cloud E2E; roadmap row check; SECURITY-INVARIANTS I23; CHANGELOG; cli-reference.
