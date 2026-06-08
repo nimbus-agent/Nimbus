@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-08T09:25:47.639Z",
+  "generated_at": "2026-06-08T15:06:51.885Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -452,7 +452,7 @@
     },
     "packages/gateway/src/federation/federation-server.ts": {
       "min_line_pct": 78.26,
-      "min_branch_pct": 75
+      "min_branch_pct": 79.17
     },
     "packages/gateway/src/federation/peer-pairing.ts": {
       "min_line_pct": 80,
@@ -524,7 +524,7 @@
     },
     "packages/gateway/src/ipc/federation-rpc.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 73.08
+      "min_branch_pct": 77.66
     },
     "packages/gateway/src/ipc/hitl-rpc.ts": {
       "min_line_pct": 74.19,
@@ -532,7 +532,7 @@
     },
     "packages/gateway/src/ipc/http-write-routes.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 72.22
+      "min_branch_pct": 76.15
     },
     "packages/gateway/src/ipc/index-reembed-rpc.ts": {
       "min_line_pct": 71.67,
@@ -563,8 +563,8 @@
       "min_branch_pct": 75.41
     },
     "packages/gateway/src/ipc/server/dispatchers.ts": {
-      "min_line_pct": 70.7,
-      "min_branch_pct": 69.01
+      "min_line_pct": 71.62,
+      "min_branch_pct": 70.51
     },
     "packages/gateway/src/ipc/server/rpc-error.ts": {
       "min_line_pct": 80,
@@ -623,7 +623,7 @@
       "min_branch_pct": 77.23
     },
     "packages/gateway/src/platform/assemble-sync-registrations.ts": {
-      "min_line_pct": 51.79,
+      "min_line_pct": 54.76,
       "min_branch_pct": 80
     },
     "packages/gateway/src/platform/dirs.ts": {

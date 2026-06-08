@@ -239,6 +239,150 @@ describe("SyncScheduler", () => {
     expect(t1 - t0).toBeLessThan(200);
   });
 
+  test("setInterval validates the interval argument", () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const c: Syncable = {
+      serviceId: "iv",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        return {
+          cursor: null,
+          itemsUpserted: 0,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: 0,
+        };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    // < 1 branch
+    expect(() => sched.setInterval("iv", 0)).toThrow();
+    // negative branch
+    expect(() => sched.setInterval("iv", -5)).toThrow();
+    // !Number.isFinite branch
+    expect(() => sched.setInterval("iv", Number.NaN)).toThrow();
+    expect(() => sched.setInterval("iv", Number.POSITIVE_INFINITY)).toThrow();
+    // valid branch (both predicates false)
+    expect(() => sched.setInterval("iv", 5_000)).not.toThrow();
+    const row = loadSchedulerState(db, "iv");
+    expect(row?.interval_ms).toBe(5_000);
+  });
+
+  test("forceSync formats varied connector failures into the error message", async () => {
+    const cases: Array<{ id: string; thrown: unknown; expected: string }> = [
+      // Error with empty message -> uses err.name
+      { id: "emptymsg", thrown: new Error(""), expected: "Error" },
+      // non-Error object -> String(err) === "[object Object]" -> generic message
+      { id: "objerr", thrown: {}, expected: "Sync failed" },
+      // string rejection
+      { id: "strerr", thrown: "string failure", expected: "string failure" },
+      // long message -> truncated with ellipsis suffix
+      {
+        id: "longerr",
+        thrown: new Error("z".repeat(3000)),
+        expected: `${"z".repeat(2048)}…`,
+      },
+    ];
+    for (const { id, thrown, expected } of cases) {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const c: Syncable = {
+        serviceId: id,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          throw thrown;
+        },
+      };
+      const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+      sched.register(c);
+      try {
+        await sched.forceSync(id);
+        throw new Error("expected forceSync to reject");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect((e as Error).message).toBe(expected);
+      }
+      await sched.stop();
+      const row = loadSchedulerState(db, id);
+      expect(row?.error_msg).toBe(expected);
+      expect(row?.status).toBe("backoff");
+    }
+  });
+
+  test("getStatus reflects paused/error/backoff and ignores unknown services", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const c: Syncable = {
+      serviceId: "stat",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        return {
+          cursor: null,
+          itemsUpserted: 0,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: 0,
+        };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+
+    // unknown service -> empty
+    expect(sched.getStatus("does-not-exist")).toEqual([]);
+
+    // error status branch
+    db.run(`UPDATE scheduler_state SET status = 'error' WHERE service_id = ?`, ["stat"]);
+    expect(sched.getStatus("stat")[0]?.status).toBe("error");
+
+    // backoff status branch
+    db.run(`UPDATE scheduler_state SET status = 'backoff' WHERE service_id = ?`, ["stat"]);
+    expect(sched.getStatus("stat")[0]?.status).toBe("backoff");
+
+    // paused branch (and resume() while not started is a no-op for tick)
+    sched.pause("stat");
+    expect(sched.getStatus("stat")[0]?.status).toBe("paused");
+    expect(sched.getStatus("stat")[0]?.enabled).toBe(false);
+    sched.resume("stat");
+    expect(sched.getStatus("stat")[0]?.status).not.toBe("paused");
+
+    // no serviceId -> returns all known services
+    expect(sched.getStatus().length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("start() is a no-op after stop()", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "noop",
+      defaultIntervalMs: 10,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return {
+          cursor: null,
+          itemsUpserted: 0,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: 0,
+        };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    await sched.stop();
+    // started=false but stopped=true -> early return, no interval armed
+    sched.start();
+    await sleep(40);
+    expect(runs).toBe(0);
+  });
+
   test("fifth consecutive failure notifies and sets error status", async () => {
     const db = openMemoryIndexDatabase();
     const ctx = testContext(db);
