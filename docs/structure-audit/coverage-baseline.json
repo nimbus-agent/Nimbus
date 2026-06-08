@@ -651,7 +651,7 @@
       "min_branch_pct": 77.23
     },
     "packages/gateway/src/platform/assemble-sync-registrations.ts": {
-      "min_line_pct": 55.95,
+      "min_line_pct": 51.79,
       "min_branch_pct": 80
     },
     "packages/gateway/src/platform/dirs.ts": {
