@@ -40,7 +40,9 @@ export class PolicyStore {
 
   load(): PersistedPolicy | undefined {
     const row = this.db
-      .query("SELECT * FROM org_policy_state WHERE id = 1")
+      .query(
+        "SELECT toml, sig, org, version, issued_at, fetched_at, source FROM org_policy_state WHERE id = 1",
+      )
       .get() as PolicyRow | null;
     if (row === null) {
       return undefined;
