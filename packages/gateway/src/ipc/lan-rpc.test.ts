@@ -130,6 +130,10 @@ describe("federation over LAN (I5 + I17)", () => {
     expect(() => checkLanMethodAllowed("federation.policy", peer)).not.toThrow();
   });
 
+  test("federation.auditExport is admitted over LAN (consent-gated, metadata-only slice)", () => {
+    expect(() => checkLanMethodAllowed("federation.auditExport", peer)).not.toThrow();
+  });
+
   test("federation management methods are forbidden over LAN", () => {
     for (const m of [
       "federation.discover",

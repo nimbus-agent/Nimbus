@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
+import { answerFederatedAuditExport } from "../federation/audit-export.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
@@ -199,6 +200,32 @@ export async function dispatchFederationRpc(
           ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
         { peerId: requireString(rec, "peerId"), request },
+      );
+    },
+    // Anchor/answerer-side: serve THIS gateway's FEDERATION-only, METADATA-only audit slice so the
+    // team can build a merged audit view. Leak-proof — only `federation.%` action types, NEVER
+    // `action_json`. Consent-gated IDENTICALLY to federation.query (I18 identity guard → namespace
+    // grant → standing/cached/prompted consent) via answerFederatedAuditExport; fail-closed on any
+    // unmet gate. `peerId` is the NaCl-authenticated session id forced by the LAN transport (I17/R1).
+    "federation.auditExport": async (p) => {
+      const rec = asRecord(p);
+      const sinceMsRaw = rec["sinceMs"];
+      const sinceMs = typeof sinceMsRaw === "number" ? sinceMsRaw : 0;
+      return answerFederatedAuditExport(
+        {
+          db: ctx.db,
+          store,
+          consentCache: sessionConsent,
+          prompt: makePrompter(ctx),
+          consentTimeoutMs: ctx.consentTimeoutMs,
+          ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
+        },
+        {
+          peerId: requireString(rec, "peerId"),
+          namespace: requireString(rec, "namespace"),
+          purpose: requireString(rec, "purpose"),
+          sinceMs,
+        },
       );
     },
     "federation.consentRespond": (p) => {
