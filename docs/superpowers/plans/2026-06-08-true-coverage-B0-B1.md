@@ -26,12 +26,14 @@
 ## File Structure
 
 **B0 creates/modifies:**
+
 - Create: `scripts/coverage-floor/reseed-docker.sh` — Docker-Linux lcov generator + host reseed/gate. One responsibility: produce a CI-authoritative `coverage/lcov.info` and run the gate.
 - Modify: `scripts/coverage-floor/exclusions.ts` — add 4 `exact` test-helper exclusions.
 - Modify: `scripts/coverage-floor/exclusions.test.ts` (or wherever the parity-count test lives) — bump expected count.
 - Modify: `docs/structure-audit/coverage-baseline.json` — remove the 4 excluded entries.
 
 **B1 modifies (per engine file: its co-located `.test.ts`) + the baseline:**
+
 - `packages/gateway/src/engine/delegated-approval-broker.test.ts`
 - `packages/gateway/src/engine/delegation-store.test.ts`
 - `packages/gateway/src/engine/search-ranking.test.ts`
@@ -43,13 +45,14 @@
 
 ---
 
-# PR B0 — Test-helper exclusions + reseed helper
+## PR B0 — Test-helper exclusions + reseed helper
 
 **Branch:** `dev/asafgolombek/true-coverage-B0` (already created; worktree `.claude/worktrees/tc-B0`). The B-design spec + review are already committed here. Continue on this branch.
 
 ### Task B0.1: Exclude the 4 test-only helper files
 
 **Files:**
+
 - Modify: `scripts/coverage-floor/exclusions.ts`
 - Modify: `scripts/coverage-floor/exclusions.test.ts` (add `isExempt` regression cases — Step 3)
 
@@ -60,6 +63,7 @@ The 4 files were verified test-only on 2026-06-08 (imported only by `*.test.ts`)
 - [ ] **Step 1: Re-verify test-only status (guard against drift)**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-B0
 for f in "tui/test-helpers/context" "commands/cli-test-helpers" "identity/identity-test-helpers" "updater/updater-test-fixtures"; do
@@ -67,11 +71,13 @@ for f in "tui/test-helpers/context" "commands/cli-test-helpers" "identity/identi
   grep -rln "$f" packages --include=*.ts --include=*.tsx | grep -vE "\.test\.(ts|tsx)$" | grep -v "$f.ts"
 done
 ```
+
 Expected: no output under any file (all importers are `*.test.ts`). If any production importer appears, STOP and report — that file is not excludable.
 
 - [ ] **Step 2: Add the 4 exclusions**
 
 In `scripts/coverage-floor/exclusions.ts`, inside the `EXCLUSIONS` array (next to the other `exact` entries), add:
+
 ```ts
   // Test-only support files (imported solely by *.test.ts; not shipped logic). Verified
   // 2026-06-08 by import grep. Sub-project B0; D may relocate these under a `testing/` dir
@@ -85,6 +91,7 @@ In `scripts/coverage-floor/exclusions.ts`, inside the `EXCLUSIONS` array (next t
 - [ ] **Step 3: Add `isExempt` regression tests for the 4 new exclusions**
 
 In `scripts/coverage-floor/exclusions.test.ts`, add a new `describe` block (mirroring the existing per-category blocks) so the exemption is locked by a test:
+
 ```ts
 describe("isExempt — test-only support files (B0)", () => {
   test("tui/test-helpers/context.ts is exempt", () => {
@@ -108,9 +115,11 @@ describe("isExempt — test-only support files (B0)", () => {
 - [ ] **Step 4: Run the exclusions unit tests**
 
 Run:
+
 ```bash
 bun test scripts/coverage-floor/exclusions.test.ts
 ```
+
 Expected: PASS, including the 5 new cases (4 exempt, 1 not-exempt).
 
 - [ ] **Step 5: Commit**
@@ -128,6 +137,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task B0.2: Drop the 4 excluded entries from the baseline
 
 **Files:**
+
 - Modify: `docs/structure-audit/coverage-baseline.json`
 
 The baseline still lists these 4 files. Because they are now exempt, they must leave the baseline. This is a purely subtractive hand-edit (safe; relaxes nothing else) — main's verified watermarks for all other files stay byte-identical, so the gate stays green on CI without a reseed.
@@ -135,7 +145,8 @@ The baseline still lists these 4 files. Because they are now exempt, they must l
 - [ ] **Step 1: Remove the 4 entries**
 
 Delete these 4 keys (and their `{min_line_pct, min_branch_pct}` objects) from `coverage-baseline.json`:
-```
+
+```text
 packages/cli/src/tui/test-helpers/context.ts
 packages/cli/src/commands/cli-test-helpers.ts
 packages/gateway/src/identity/identity-test-helpers.ts
@@ -145,9 +156,11 @@ packages/gateway/src/updater/updater-test-fixtures.ts
 - [ ] **Step 2: Verify the JSON is valid and the count dropped by 4**
 
 Run:
+
 ```bash
 node -e 'const b=require("./docs/structure-audit/coverage-baseline.json"); console.log("entries:", Object.keys(b.files).length); ["packages/cli/src/tui/test-helpers/context.ts","packages/cli/src/commands/cli-test-helpers.ts","packages/gateway/src/identity/identity-test-helpers.ts","packages/gateway/src/updater/updater-test-fixtures.ts"].forEach(k=>{if(b.files[k])throw new Error("still present: "+k)}); console.log("4 removed OK")'
 ```
+
 Expected: `entries: 185` then `4 removed OK` (189 − 4).
 
 - [ ] **Step 3: Commit**
@@ -162,6 +175,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task B0.3: Author `reseed-docker.sh`
 
 **Files:**
+
 - Create: `scripts/coverage-floor/reseed-docker.sh`
 
 It streams the working tree (node_modules excluded) into `oven/bun:latest`, installs with a **named cache volume** (bun install paid once), runs `build-lcov.sh`, copies the lcov back to the host, then reseeds + gates on the host. Streaming the working tree (not bind-mounting the repo) keeps the host's Windows `node_modules` untouched.
@@ -226,11 +240,13 @@ bun run audit:coverage-floor
 - [ ] **Step 2: Make it executable + Biome/format check**
 
 Run:
+
 ```bash
 chmod +x scripts/coverage-floor/reseed-docker.sh
 bunx biome check scripts/coverage-floor/reseed-docker.sh || true   # shell file: biome ignores; no error expected
 bash -n scripts/coverage-floor/reseed-docker.sh && echo "shell syntax OK"
 ```
+
 Expected: `shell syntax OK`.
 
 - [ ] **Step 3: Commit**
@@ -252,26 +268,32 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Run the reseed helper (first real Docker run — validates the script)**
 
 Run:
+
 ```bash
 bash scripts/coverage-floor/reseed-docker.sh
 ```
+
 Expected: a `coverage/lcov.info` is produced; the final line prints `coverage-floor: ok (...)`. The `build-lcov.sh` summary should report thousands of `BRDA` records (e.g. ~24000) and ~700+ source files. If Docker errors on the tar stream or `bun install`, fix the script and re-commit (amend Task B0.3).
 
 - [ ] **Step 2: Confirm the 4 excluded files are absent from the fresh lcov gate**
 
 Run:
+
 ```bash
 git diff --stat docs/structure-audit/coverage-baseline.json
 ```
+
 Expected: **either no change** (the Docker reseed reproduced main's watermarks exactly — keep the hand-edited baseline from B0.2) **or** only watermark jitter on unrelated files. If the reseed reintroduced any of the 4 excluded keys, the exclusion wiring is wrong — STOP and re-check Task B0.1. If it produced large unrelated drift, discard it (`git checkout docs/structure-audit/coverage-baseline.json`) and rely on the hand-edited baseline + CI.
 
 - [ ] **Step 3: Restore the hand-edited baseline if the reseed only jittered**
 
 The hand-edited baseline (B0.2) matches main's verified watermarks. Unless the Docker reseed produced a *materially better* baseline (real coverage gains — there are none in B0), keep the hand-edit:
+
 ```bash
 git checkout docs/structure-audit/coverage-baseline.json   # only if Step 2 showed jitter-only drift
 bun run audit:coverage-floor                               # re-confirm green against the existing lcov
 ```
+
 Expected: `coverage-floor: ok`.
 
 - [ ] **Step 4: Open the B0 PR**
@@ -286,11 +308,12 @@ See docs/superpowers/specs/2026-06-08-true-coverage-B-close-branch-gaps-design.m
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
+
 Expected: CI `Unit + Coverage` job green in one round (subtractive change). The chronic `Cross-platform (gateway, windows-2025)` flake may be red — rerun it, it is not B0's.
 
 ---
 
-# PR B1 — engine subsystem to ≥80% branch
+## PR B1 — engine subsystem to ≥80% branch
 
 **Branch:** `dev/asafgolombek/true-coverage-B1` from fresh main **after B0 merges** (so B0's exclusions + the reseed helper are present).
 
@@ -323,15 +346,18 @@ bun install && (cd packages/client && bun run build)
 - [ ] **Step 2: Generate a baseline engine lcov to read uncovered branches from**
 
 Run the helper once to get a current `coverage/lcov.info` (this also reseeds, but discard that — we only want the lcov to read BRDA from):
+
 ```bash
 bash scripts/coverage-floor/reseed-docker.sh
 git checkout docs/structure-audit/coverage-baseline.json   # keep main's baseline; we reseed for real after writing tests
 ```
+
 Expected: `coverage/lcov.info` exists.
 
 - [ ] **Step 3: Extract uncovered branches for the 7 engine files**
 
 For each engine file, list its `BRDA` records whose `taken` is `-` or `0` (uncovered), mapped to line numbers:
+
 ```bash
 for f in delegated-approval-broker delegation-store search-ranking coordinator planner delegated-request-remote run-ask; do
   echo "=== engine/$f.ts uncovered branches (line,block,branch) ==="
@@ -342,11 +368,13 @@ for f in delegated-approval-broker delegation-store search-ranking coordinator p
   ' coverage/lcov.info
 done
 ```
+
 Keep this output — it is the work-list for Tasks B1.1–B1.7. (`BRDA:<line>,<block>,<branch>,<taken>`.)
 
 ### Task B1.1: `delegated-approval-broker.ts` → 100% branch (worked exemplar)
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/delegated-approval-broker.test.ts`
 
 Source is 47 lines. The existing test (`delegated-approval-broker.test.ts`) covers the happy `respond()` path and the timeout path. The uncovered branch is `respond()` when the `requestId` is unknown — `if (p === undefined) return false;` (broker.ts:39) — and `listPending()` (broker.ts:19-21) is never called.
@@ -354,6 +382,7 @@ Source is 47 lines. The existing test (`delegated-approval-broker.test.ts`) cove
 - [ ] **Step 1: Write the failing tests**
 
 Append inside the `describe("delegatedApprovalBroker", …)` block in `delegated-approval-broker.test.ts`:
+
 ```ts
   it("respond() to an unknown requestId returns false (no pending entry)", () => {
     const ok = delegatedApprovalBroker.respond("does-not-exist", "peer:bob", true);
@@ -375,17 +404,21 @@ Append inside the `describe("delegatedApprovalBroker", …)` block in `delegated
 - [ ] **Step 2: Run to verify they pass against current source (coverage-only; behavior already exists)**
 
 Run:
+
 ```bash
 bun test packages/gateway/src/engine/delegated-approval-broker.test.ts
 ```
+
 Expected: PASS (these assert existing behavior on previously-uncovered branches). If `respond()` of an unknown id returned anything but `false`, that is a real bug — STOP and report per systematic-debugging.
 
 - [ ] **Step 3: Confirm no `any` / types clean**
 
 Run:
+
 ```bash
 bunx biome check packages/gateway/src/engine/delegated-approval-broker.test.ts
 ```
+
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -410,6 +443,7 @@ For each of `delegation-store.ts`, `search-ranking.ts`, `coordinator.ts`, `plann
   Run: `bunx biome check packages/gateway/src/engine/<file>.test.ts`
   Expected: no errors.
 - [ ] **Step 5 (per file): Commit.**
+
   ```bash
   git add packages/gateway/src/engine/<file>.test.ts
   git commit -m "test(engine): cover <file> uncovered branches (B1)
@@ -418,6 +452,7 @@ For each of `delegation-store.ts`, `search-ranking.ts`, `coordinator.ts`, `plann
   ```
 
 Per-file notes (current watermarks, to right-size effort):
+
 - `delegation-store.ts` (br 60, 105 lines): a CRUD-ish store; expect uncovered branches in not-found / empty-result / duplicate guards.
 - `search-ranking.ts` (br 66.67): ranking math; expect uncovered tie-break / empty-input / clamp branches.
 - `coordinator.ts`, `planner.ts` (br 75): orchestration; expect uncovered error/empty-plan/degenerate-input branches — these may need DI of a fake sub-agent/connector (follow existing `*.test.ts` patterns, prefer DI over `mock.module`).
@@ -427,6 +462,7 @@ Per-file notes (current watermarks, to right-size effort):
 ### Task B1.8: Reseed the baseline (Linux) + verify the gate + open PR
 
 **Files:**
+
 - Modify: `docs/structure-audit/coverage-baseline.json`
 
 - [ ] **Step 1: Keep current with main**
@@ -438,25 +474,31 @@ git merge origin/main   # resolve a baseline conflict via spec §3.2 (checkout -
 - [ ] **Step 2: Reseed from a fresh Docker-Linux lcov**
 
 Run:
+
 ```bash
 bash scripts/coverage-floor/reseed-docker.sh
 ```
+
 Expected final line: `coverage-floor: ok (...)`. The 7 engine files should now either show a **raised** branch watermark (still <80 but higher) or be **absent** from the baseline (cleared both floors).
 
 - [ ] **Step 3: Confirm the baseline shrank / engine files improved**
 
 Run:
+
 ```bash
 node -e 'const b=require("./docs/structure-audit/coverage-baseline.json"); const e=Object.entries(b.files).filter(([f])=>f.includes("/engine/")); console.log("engine entries remaining:", e.length); e.forEach(([f,v])=>console.log(v.min_branch_pct, f)); console.log("total entries:", Object.keys(b.files).length)'
 ```
+
 Expected: fewer engine entries than the 7 we started with (those that hit ≥80 are gone), and total entries ≤ the pre-B1 count. Any engine file *still* listed must have a **raised** branch watermark vs the table above (the ratchet went up).
 
 - [ ] **Step 4: Final local gate**
 
 Run:
+
 ```bash
 bun run audit:coverage-floor
 ```
+
 Expected: `coverage-floor: ok`.
 
 - [ ] **Step 5: Commit the reseeded baseline + open the PR**
@@ -472,6 +514,7 @@ gh pr create --base main --title "test(coverage): B1 — engine subsystem to ≥
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
+
 Expected: `Unit + Coverage` green in one round. Rerun the chronic windows-2025 cross-platform flake if red.
 
 ---

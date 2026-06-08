@@ -12,6 +12,7 @@
 2. **Named Volume Lifecycle in `reseed-docker.sh`**
    * **Problem:** The `reseed-docker.sh` script relies on a persistent named Docker volume `nimbus-bun-cache` to avoid repeated package installations. If dependencies change or the cache gets corrupted, there's no easy way to clear it.
    * **Suggestion:** Add support for a `--clean` or `-c` flag in `reseed-docker.sh` to remove the named volume and recreate it for a completely fresh run.
+
      ```bash
      if [[ "${1:-}" == "--clean" || "${1:-}" == "-c" ]]; then
        echo "Cleaning named Docker volume ${CACHE_VOL}..."

@@ -55,6 +55,7 @@ reseeds the baseline.
 ```
 
 **Invariants of the loop:**
+
 - The reseed lcov is **always a full-suite run** (all bun-tested packages). A partial run omits
   files → `discoverSourceFiles()` flags them `missing_from_lcov`. (A lesson.)
 - `git merge origin/main` **before** reseeding, every PR — CI runs the PR merged with main, so
