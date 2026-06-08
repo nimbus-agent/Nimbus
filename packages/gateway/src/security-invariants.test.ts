@@ -1,6 +1,12 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
+import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
+import { signPolicy } from "./policy/policy-signing.ts";
+import { PolicyStore } from "./policy/policy-store.ts";
 
 const SRC_ROOT = import.meta.dir;
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
@@ -661,5 +667,44 @@ describe("I21 — quorum counts only DISTINCT authenticated peers", () => {
     coord.respond(ids[0] ?? "", "peer:a", true); // duplicate — must NOT count
     const r = await p;
     expect(r.outcome).toBe("failed"); // window elapses with only 1 distinct approver
+  });
+});
+
+describe("I22 — org policy applied only from a signature-verified bundle, monotonic-stricter", () => {
+  const baseline: LocalBaseline = {
+    retentionDays: 7,
+    hitlRequired: new Set(["git.force_push_main"]),
+    quorum: new Map(),
+  };
+
+  function gateWith(toml: string, sig: string, pubkeyB64: string): PolicyGate {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 36);
+    const store = new PolicyStore(db);
+    store.pinAnchorPubkey(pubkeyB64, "manual", 1);
+    store.persist({ toml, sig, org: "acme", version: 1, source: "peer", fetchedAt: 1 });
+    return new PolicyGate(store, baseline);
+  }
+
+  test("(a) a tampered policy is rejected; the gate stays ungoverned (falls back to baseline)", () => {
+    const kp = generateEd25519Keypair();
+    const good = `[policy]\nversion=1\norg="acme"\n[policy.retention]\nmin_days=30\n`;
+    const sig = signPolicy(good, encodeBase64(kp.privkey));
+    const tampered = good.replace("min_days=30", "min_days=99");
+    const gate = gateWith(tampered, sig, encodeBase64(kp.pubkey));
+    expect(gate.status().signatureValid).toBe(false);
+    expect(gate.enforced().retentionDays).toBe(7); // baseline, NOT 99
+  });
+
+  test("(b) a valid policy below baseline cannot weaken HITL/quorum/retention", () => {
+    const kp = generateEd25519Keypair();
+    const toml = `[policy]\nversion=1\norg="acme"\n[policy.retention]\nmin_days=3\n[policy.hitl]\nrequire=[]\n`;
+    const gate = gateWith(
+      toml,
+      signPolicy(toml, encodeBase64(kp.privkey)),
+      encodeBase64(kp.pubkey),
+    );
+    expect(gate.enforced().retentionDays).toBe(7);
+    expect(gate.enforced().hitlRequired.has("git.force_push_main")).toBe(true);
   });
 });

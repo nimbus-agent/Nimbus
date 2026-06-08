@@ -402,6 +402,24 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I22 — org policy applied only from a signature-verified bundle, resolved monotonic-stricter
+
+**Statement:** An org policy bundle (`nimbus.policy.toml` + detached Ed25519 signature) is applied ONLY after its signature verifies against the locally-pinned anchor pubkey, and it can only **tighten** the local baseline — never loosen it. Resolution is **monotonic-stricter**: retention takes `max(baseline, policy)`, the required-HITL set is a union (policy adds, never removes), and quorum takes the stricter approver count + the shorter window. A tampered, unsigned, or wrong-key bundle is rejected and the gate falls back to the last-valid policy or the local baseline — **fail-closed** (an unverified policy never relaxes a control). Enforcement sites read the resolved `EnforcedPolicy` from `policy/policy-gate.ts`; no site outside `policy/` re-parses the raw policy TOML (which would bypass both the signature check and the stricter-resolution).
+
+**Wired at:**
+
+- `packages/gateway/src/policy/policy-signing.ts` — `signPolicy` / `verifyPolicy`: detached Ed25519 over the canonical policy bytes.
+- `packages/gateway/src/policy/policy-gate.ts` — `verifyCandidate` (verify-then-parse; returns `null` on bad signature), `computeEnforced` (pure monotonic-stricter resolution), and `PolicyGate.rehydrate` (a persisted copy that fails verification leaves the gate ungoverned → baseline; fail-closed).
+- `packages/gateway/src/policy/policy-store.ts` — pinned anchor pubkey + persisted last-valid bundle.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I22` describe block: (a) a tampered policy is rejected and the gate falls back to baseline retention; (b) a valid policy below baseline cannot weaken HITL/quorum/retention.
+- Enforced statically by **D16** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `packages/gateway/src/policy/` (and not a `.test.ts`) that imports/uses `parsePolicyToml` causes `audit:invariants` to exit 1, forcing enforcement to read `EnforcedPolicy` via `policy-gate.ts`.
+
+**Anti-pattern:** applying a policy whose signature was not checked (or checked against a non-pinned key); resolving policy values by overwrite rather than stricter-wins (letting a policy *lower* retention, *shorten* nothing while *removing* a required-HITL action, or *reduce* a quorum); re-parsing the raw `nimbus.policy.toml` at an enforcement site (bypasses verification + resolution); treating a missing/invalid bundle as "no constraints" instead of falling back to the last-valid/baseline floor.
+
+**How to comply:** apply policy only through `verifyCandidate` + `PolicyGate`; read controls only via `PolicyGate.enforced()` (the `EnforcedPolicy` view); keep `parsePolicyToml` confined to `policy/`; ensure every resolution is monotonic-stricter and every failure path falls back to the local baseline.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

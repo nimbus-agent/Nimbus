@@ -18,6 +18,13 @@ export const VAULT_KEY_ALLOW_LIST = [
   "packages/gateway/src/extensions/publisher-keys.ts",
 ];
 
+/**
+ * Non-connector Vault keys that are part of the platform keyspace (I22 org-policy signing
+ * material). Registered here so the keyspace is documented in one place; these live in the
+ * Vault only and never appear in logs/IPC/config (Non-Negotiable #3).
+ */
+export const PLATFORM_VAULT_KEYS = ["policy.signing.privkey", "policy.signing.pubkey"] as const;
+
 const SPAWN_RE = /\b(?:Bun\.spawn|Bun\.spawnSync|child_process\.spawn|spawn)\s*\(/;
 
 export function checkSpawnInvariant(files: readonly FileEntry[]): Violation[] {
@@ -264,6 +271,35 @@ export function checkTeamVaultPrefixInvariant(files: readonly FileEntry[]): Viol
   return out;
 }
 
+// D16 (I22) — `parsePolicyToml` (raw org-policy TOML parsing) may be imported ONLY by files under
+// `packages/gateway/src/policy/`. Enforcement elsewhere must read the resolved `EnforcedPolicy` via
+// `policy/policy-gate.ts`; re-parsing raw TOML at an enforcement site bypasses signature verification
+// and the monotonic-stricter resolution (I22). Test files are exempt.
+const POLICY_DIR = "packages/gateway/src/policy/";
+const PARSE_POLICY_IMPORT_RE =
+  /\bparsePolicyToml\b|from\s+["'][^"']*(?:\.\/policy-toml|policy\/policy-toml)["']/;
+
+export function checkPolicyTomlImportInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.startsWith(POLICY_DIR) || f.relPath.endsWith(".test.ts")) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (PARSE_POLICY_IMPORT_RE.test(line)) {
+        out.push({
+          rule: "D16-policy-toml-import",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -361,6 +397,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D15 teamvault. prefix composed outside team-vault-keys.ts — I19 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkPolicyTomlImportInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D16 parsePolicyToml imported outside policy/ — read EnforcedPolicy via policy-gate.ts; I22 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

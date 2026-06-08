@@ -50,8 +50,9 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - **I19** — team-vault secrets consumed only via `invoke-gate.ts` (`answerFederatedInvoke`) → ephemeral team-credentialed connector; leak-proof result, fail-closed on missing secret (static D15) · `federation/invoke-gate.ts`, `teamvault/team-tool-invoke.ts`
 - **I20** — a delegated HITL approval is honored only from a live, in-scope, identity-valid delegate; else fall back to the local owner · `engine/delegated-approval.ts`
 - **I21** — quorum counts only DISTINCT authenticated peers (deny aborts, fail-closed) · `engine/quorum/quorum-coordinator.ts`
+- **I22** — signature-verified org policy + monotonic-stricter resolution (tighten-only; fail-closed to last-valid/baseline); enforcement reads `EnforcedPolicy`, never raw policy TOML (static D16) · `policy/policy-gate.ts`
 
-**Static complement:** `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (fails first; runtime tests stay authoritative). It enforces I1, the vault-key allow-list, I14 (D12), I15 (D10), I17 (D13), I18 (D14), I19 (D15) at static time.
+**Static complement:** `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (fails first; runtime tests stay authoritative). It enforces I1, the vault-key allow-list, I14 (D12), I15 (D10), I17 (D13), I18 (D14), I19 (D15), I22 (D16) at static time.
 
 ---
 
@@ -103,6 +104,6 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 
 - [`docs/architecture.md`](./docs/architecture.md) — subsystem design, IPC method catalogue, schema reference. Read before modifying any subsystem.
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
-- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I21 rationale + anti-patterns.
+- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I22 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
 - `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in CLAUDE.md's Skill References table): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-agent-patterns`.
