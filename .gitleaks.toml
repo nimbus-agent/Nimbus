@@ -18,6 +18,17 @@
 #        is the only durable suppression. Plans never carried real
 #        credentials.
 #
+#   3. .claude/agents/**/*.md
+#      — Nimbus dev-subagent instruction docs (PR #540) quote SonarCloud / CI
+#        auth command examples. These use shell-variable placeholders
+#        (`$SONAR_TOKEN`), never real credentials, but the default
+#        `curl-auth-user` rule fires on the curl basic-auth form (`-u`)
+#        regardless. nimbus-sonar-gate.md now uses a Bearer header
+#        (gitleaks-safe), yet the `-u` form is baked into historical commit
+#        bc77f751 on `main` that the full-history scan still sees — a path
+#        allowlist is the durable suppression (same rationale as the plans
+#        tree above).
+#
 # Why path-based instead of fingerprint pins in `.gitleaksignore`:
 # fingerprints are `<commit-sha>:<path>:<rule>:<line>`. Squash-merges rewrite
 # the SHA, rebases shift line numbers, and the pin then misses the (now
@@ -29,8 +40,9 @@
 useDefault = true
 
 [allowlist]
-description = "Synthetic fixtures for the secret-pattern unit tests + pruned plan docs (historical commits)"
+description = "Synthetic fixtures for the secret-pattern unit tests + pruned plan docs + dev-subagent instruction docs (historical commits)"
 paths = [
   '''packages/gateway/src/security/secret-patterns\.test\.ts''',
   '''docs/superpowers/plans/.*\.md''',
+  '''\.claude/agents/.*\.md''',
 ]
