@@ -21,6 +21,7 @@ import type {
   NamespaceFilter,
 } from "../federation/types.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
+import { type DeletionRecord, signDeletionRecord } from "../policy/deletion-record.ts";
 import { servePolicy } from "../policy/policy-distribution.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
@@ -67,6 +68,15 @@ export interface FederationRpcContext {
     actionType: string;
     ownerPeerId: string;
   }) => Promise<boolean>;
+  // GDPR purge serve (Slice 4, spec D11). When peer A purges a user, it sends federation.purge
+  // {externalId} to this gateway (peer B). HITL is STRUCTURAL: we NEVER auto-delete on receipt — we
+  // ask THIS gateway's LOCAL operator to approve first (via the consent broker, the same local-human
+  // round-trip federation.query uses). On approval we delete that user's local contributions and
+  // return a record signed with the gateway's Ed25519 anchor key; on denial/timeout we delete
+  // nothing. `purgeSign` threads the signer (privkey seed + peerId), `deletePurgeContributions`
+  // threads the concrete local-delete (Task 26 wires the real accessor; default 0 = nothing deleted).
+  readonly purgeSign?: { privkeyB64: string; selfPeerId: string };
+  readonly deletePurgeContributions?: (externalId: string, peerId: string) => number;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -464,6 +474,78 @@ export async function dispatchFederationRpc(
         }),
       });
       return { approved };
+    },
+    // Answerer-side GDPR purge (Slice 4, spec D11). A paired peer (the user's home/origin gateway)
+    // asks THIS gateway to erase that user's federated contributions. HITL is STRUCTURAL — we do NOT
+    // auto-delete on receipt. We ask THIS gateway's LOCAL operator to approve via the consent broker
+    // (the same local-human round-trip federation.query uses); NOTHING is deleted before approval.
+    // SECURITY (I17/R1): `peerId` is the NaCl-authenticated session id forced by the LAN transport,
+    // never trusted from the request body. On denial/timeout → { kind: "error", error: "purge_denied" }
+    // and zero deletions. On approval → delete the user's local contributions, sign a DeletionRecord
+    // with this gateway's Ed25519 anchor key, and return { kind: "ok", record, sig }. Either outcome is
+    // audited (decision only; no user content).
+    "federation.purge": async (p) => {
+      const rec = asRecord(p);
+      const peerId = requireString(rec, "peerId");
+      const externalId = requireString(rec, "externalId");
+
+      // Step 1 (HITL, no auto-exec): ask the LOCAL operator. The consent broker broadcasts
+      // federation.consentRequest to local clients and resolves on federation.consentRespond; the
+      // TTL safety-net denies on no answer. Purpose names the destructive action so the operator
+      // sees what they are approving. role:"purge" disambiguates from query consent prompts.
+      const decision = await federationConsent.request(
+        {
+          peerId,
+          namespace: `gdpr-purge:${externalId}`,
+          purpose: `Erase all federated contributions from ${peerId} (GDPR purge)`,
+          role: "purge",
+        },
+        ctx.consentTimeoutMs + 5000,
+      );
+
+      if (decision !== "approved") {
+        // Denial / timeout: delete NOTHING. Audit the refusal (no user content).
+        appendAuditEntry(ctx.db, {
+          actionType: "federation.purge",
+          hitlStatus: "rejected",
+          actionJson: JSON.stringify({ method: "federation.purge" }),
+          timestamp: Date.now(),
+          federationJson: JSON.stringify({ peer_id: peerId, decision: "denied" }),
+        });
+        return { kind: "error", error: "purge_denied" } as const;
+      }
+
+      // Step 2 (post-approval): delete the user's local contributions. The concrete delete accessor
+      // is threaded in (Task 26 wires the real one); absent → 0 deleted (no rows touched here).
+      const deletedCount = ctx.deletePurgeContributions?.(externalId, peerId) ?? 0;
+
+      // Step 3: sign a DeletionRecord with this gateway's Ed25519 anchor key (the federation IDENTITY
+      // is an X25519 BOX keypair and CANNOT sign — see report). selfPeerId is this gateway's id.
+      const record: DeletionRecord = {
+        externalId,
+        peerId,
+        deletedCount,
+        at: Date.now(),
+      };
+      const signer = ctx.purgeSign;
+      if (signer === undefined) {
+        throw new FederationRpcError(
+          -32603,
+          "ERR_PURGE_SIGNER_UNAVAILABLE: no anchor sign key wired",
+        );
+      }
+      const sig = signDeletionRecord(record, signer.privkeyB64);
+
+      // Audit the approved purge (decision + count only; never user content).
+      appendAuditEntry(ctx.db, {
+        actionType: "federation.purge",
+        hitlStatus: "approved",
+        actionJson: JSON.stringify({ method: "federation.purge", deletedCount }),
+        timestamp: record.at,
+        federationJson: JSON.stringify({ peer_id: peerId, decision: "approved", deletedCount }),
+      });
+
+      return { kind: "ok", record, sig } as const;
     },
   });
 }
