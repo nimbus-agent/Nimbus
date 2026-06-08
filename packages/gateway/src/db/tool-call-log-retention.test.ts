@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { GENESIS_HASH } from "./audit-chain.ts";
 import { writeToolCallLog } from "./tool-call-log.ts";
-import { pruneToolCallLog, startToolCallLogRetention } from "./tool-call-log-retention.ts";
+import {
+  effectiveRetentionDays,
+  pruneToolCallLog,
+  startToolCallLogRetention,
+} from "./tool-call-log-retention.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -110,6 +114,27 @@ describe("pruneToolCallLog", () => {
   test("missing tool_call_log table is a no-op (returns 0)", () => {
     const bare = new Database(":memory:");
     expect(pruneToolCallLog(bare, { retentionDays: 90, nowMs: now })).toBe(0);
+  });
+
+  test("policy floor lengthens retention: effective = max(local, floor)", () => {
+    // local config says 7 days, policy floor says 30 -> a 20-day-old row must be KEPT
+    seedCall(db, now - 20 * DAY_MS);
+    pruneToolCallLog(db, { retentionDays: effectiveRetentionDays(7, 30), nowMs: now });
+    expect(countCalls(db)).toBe(1); // kept, because effective retention is 30, not 7
+  });
+});
+
+describe("effectiveRetentionDays", () => {
+  test("policy floor lengthens retention when higher than local", () => {
+    expect(effectiveRetentionDays(7, 30)).toBe(30);
+  });
+
+  test("local wins when already longer than the floor", () => {
+    expect(effectiveRetentionDays(90, 30)).toBe(90);
+  });
+
+  test("a zero floor never shortens local retention", () => {
+    expect(effectiveRetentionDays(7, 0)).toBe(7);
   });
 });
 

@@ -15,6 +15,11 @@ export interface PruneToolCallLogOptions {
   nowMs: number;
 }
 
+/** Policy retention floor: effective retention is at least the floor (keep longer). */
+export function effectiveRetentionDays(localDays: number, policyFloorDays: number): number {
+  return Math.max(localDays, policyFloorDays);
+}
+
 function toolCallLogExists(db: Database): boolean {
   const row = db
     .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tool_call_log'")

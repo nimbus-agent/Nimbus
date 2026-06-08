@@ -46,7 +46,10 @@ import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
-import { startToolCallLogRetention } from "../db/tool-call-log-retention.ts";
+import {
+  effectiveRetentionDays,
+  startToolCallLogRetention,
+} from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
@@ -501,15 +504,12 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
 
   const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
-  const toolCallLogRetention = startToolCallLogRetention(db, {
-    retentionDays: auditCfg.toolCallLogRetentionDays,
-  });
-  sidecarStops.push(() => toolCallLogRetention.stop());
 
   // Org policy (I22): the gate rehydrates last-valid from the store (ungoverned when none). The
   // baseline is the local floor policy can only TIGHTEN. `policyGate` is the shared instance reused
   // by the retention floor (Task 8), quorum (Task 9), and the audit shipper (Task 19) — keep it in
-  // scope even though Part C of this task only consumes `enforced().connectorAllow`.
+  // scope even though Part C of this task only consumes `enforced().connectorAllow`. Built BEFORE
+  // the retention sidecar so the latter can honor `enforced().retentionDays` (the monotonic floor).
   const policyStore = new PolicyStore(db);
   const policyGate = buildPolicyGate(db, policyStore, {
     retentionDays: auditCfg.toolCallLogRetentionDays,
@@ -532,6 +532,16 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   }
   const isConnectorAllowed = (serviceId: string): boolean =>
     enforcedConnectorAllow === undefined || enforcedConnectorAllow.includes(serviceId);
+
+  // Retention floor (Task 8): effective retention = max(local config, policy floor); policy can only
+  // LENGTHEN retention. Started after the gate so it can read `enforced().retentionDays`.
+  const toolCallLogRetention = startToolCallLogRetention(db, {
+    retentionDays: effectiveRetentionDays(
+      auditCfg.toolCallLogRetentionDays,
+      policyGate.enforced().retentionDays,
+    ),
+  });
+  sidecarStops.push(() => toolCallLogRetention.stop());
 
   const { syncScheduler, connectorMesh } = await createSchedulerWithMesh(
     paths,
