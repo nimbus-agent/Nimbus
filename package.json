@@ -12,6 +12,7 @@
     "@mastra/mcp": "1.9.1"
   },
   "workspaces": [
+    "packages/admin-console",
     "packages/gateway",
     "packages/cli",
     "packages/ui",

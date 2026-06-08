@@ -1,0 +1,16 @@
+{
+  "name": "@nimbus-dev/admin-console",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/main.ts --outdir dist --minify && bun run copy:static",
+    "copy:static": "bun -e \"import {cpSync} from 'node:fs';cpSync('index.html','dist/index.html');cpSync('src/styles.css','dist/styles.css')\"",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
