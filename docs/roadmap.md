@@ -15,7 +15,7 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 - [Status Overview](#status-overview)
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4, 5
 - [Active](#active) — Phase 6 (Team, in progress)
-- [Planned](#planned) — Phases 7 through 20 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation), plus near-term & cross-phase initiatives (M1–M8 north-stars + S — Standards track)
+- [Planned](#planned) — Phases 7 through 27 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation, and the 21–27 Sovereign-Proof arc — 21 Trust Substrate, 22 Proof Layer, 23 Inert to Injection, 24 Agent Archaeology, 25 Confidential Mesh Compute, 26 Provable Governance, 27 The Agent Society), plus near-term & cross-phase initiatives (M1–M12 north-stars + S — Standards track)
 - [How to Update This Document](#how-to-update-this-document)
 
 ---
@@ -41,8 +41,11 @@ Nimbus is open source (AGPL-3.0) for individual engineers. Commercial tiers fund
 | **Open Source** | Now | Full single-user Gateway, all connectors, CLI, local LLM, VS Code extension |
 | **Team** | Phase 6 | Team Vault, shared index namespaces, LAN federation, multi-user HITL, SSO/OIDC |
 | **Enterprise** | Phase 12 | SCIM provisioning, audit log shipping (SIEM), Helm/Docker, compliance tooling, SLA support |
+| **Sovereign / Auditor** | Phase 21–22 + 12.5 | *Auditor-in-a-Box* read-only profile (HTTP write surface disabled via `I13`, no HITL-eligible actions, `I16`-signed) + per-answer **Verifiable-Negative** receipts an auditor or cyber/E&O insurer verifies offline with `eaf-verify` — a read-only *profile* of the Enterprise/12.5 substrate, not a parallel engineering line |
 
 Commercial license also available now for organizations that need to embed Nimbus in a product or require compliance guarantees before Phase 12 ships — contact the maintainers.
+
+**New buying centers (the Phase 21–26 consequence, not a parallel product line).** The proof layer unlocks constituencies the engineer-tool competitors structurally don't address: the **CISO / GRC auditor**, who installs the read-only *Auditor-in-a-Box* profile and runs `eaf-verify` against the fleet — receiving signed egress ledgers, never content, subject to the same `I17` per-peer grant/role/consent filter as any federated query — and the **cyber / E&O insurer**, for whom a signed, externally-anchorable record that no remote inference host was contacted measurably lowers modeled exfiltration loss (enabling a premium conversation; the actuarial-adoption leg is an outside-the-codebase bet, like the S — Standards track's adoption framing). **BYO-compute pricing:** flat-unlimited holds for `[llm].prefer_local` / BYO-provider-key deployments (≈ zero inference-relay marginal cost), with support/SLA tiers priced separately; a future Nimbus-hosted inference relay is explicitly out of the no-meter guarantee. Air-gapped / SCIF deployments reuse the existing Phase 12 air-gapped bundle + clean-room topology — commercial framing, not new engineering. (MSP white-label consoles and BYO-Index OEM are deliberately *not* pursued as wedges — they are me-too surfaces a cloud vendor can match, and the latter is already the existing "embed Nimbus in a product" commercial-license path.)
 
 ---
 
@@ -74,6 +77,13 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 18 | Vertical Personas | Planned |
 | Phase 19 | Ambient Surfaces | Planned |
 | Phase 20 | Personal & Household Federation | Planned |
+| Phase 21 | Sovereign Trust Substrate | Planned |
+| Phase 22 | The Proof Layer (Verifiable Negatives) | Planned |
+| Phase 23 | Inert to Injection (The Unexfiltratable Agent) | Planned |
+| Phase 24 | Agent Archaeology | Planned |
+| Phase 25 | Confidential Mesh Compute | Planned |
+| Phase 26 | Provable Governance | Planned |
+| Phase 27 | The Agent Society | Planned |
 
 ---
 
@@ -1986,6 +1996,259 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 ---
 
+> **Phases 21–27 — the Sovereign-Proof arc.** Seven phases that promote the local-first thesis from a *property* into a *product*: a root of trust (21), then verifiable negatives (22), structural injection-inertness (23), counterfactual/provenance cognition (24), surveillance-free collective intelligence (25), provable governance (26), and accountable always-on autonomy (27). Sequenced so **21 ships first** — every downstream attestation roots its key, clock, and index there. The competitive thesis: cloud agents share one architecture (private data + untrusted content + a live egress vector in a multi-tenant process behind a vendor-controlled API), and that architecture makes each of these categories structurally impossible for them. None of these phases bump the *wired* invariant count (`I1`–`I21`) or North-Star count until their triples land; the new invariants (`I22`–`I24`) and pillars (`M9`–`M12`) are **planned**, recorded here and wired with their phase per the triple rule. **Suggested build order:** 21 (root of trust) → 23 (the taint cut — which also lands the per-connector provenance-tag mechanism Phases 10/24/27 all depend on) → 22, then 24/25/26/27; all seven are listed as planned, but the build is staged behind 21 + 23 rather than committed as one push.
+
+### Phase 21 — Sovereign Trust Substrate
+
+**Goal:** Ship the root of trust every downstream proof silently assumes. `M7`'s egress ledger, the EAF verifier, the Phase 12.5 bundle, and the Phase 22–26 attestation surfaces all sign with a gateway key and stamp a timestamp — yet nothing today says how an auditor anchors that key offline, what the timestamp is worth against a same-UID attacker who can rewind the clock, or whether the local index a claim reasons over was complete. This phase supplies the missing halves: key transparency, verifiable time, index freshness, and proof ergonomics. **It ships before Phases 22–27 — their attestations are only as trustworthy as the key, clock, and index underneath them.**
+
+> **Composes with `M7` + S — Standards/EAF + Phase 12:** Phase 21 makes `M7`'s "proof this agent touched only these hosts" rest on a key an auditor anchored out-of-band and a clock they can trust; EAF v0.2 gains a key-transparency-inclusion field and a time-anchor field. Phase 12's external append-only sink remains the single public-anchoring path (KT heads ride it).
+>
+> **Composes with Phase 6 / Phase 11:** the relay-free NaCl-box channel + out-of-band peer pairing are how a box identity reaches a peer today; the KT log gossips identities over that same channel so a third gateway / auditor / insurer verifies a peer's key without a fresh pairing ceremony. Endpoint/measured-boot integrity is delivered in Phase 11 (hardware-vault home), not here.
+
+#### Dependencies
+
+- Phase 4 BLAKE3 audit chain (the chain verifiable time folds into; `db/audit-chain.ts`)
+- Phase 6 federation NaCl-box gateway identity + out-of-band peer pairing (`federation/federation-identity.ts`, `federation/peer-pairing.ts`)
+- `I16` verify-every-boot pattern; `I12` Vault (rotation key material, never on disk in the clear)
+- S — Standards track: EAF v0.1 + `eaf-verify` (the verifier this phase extends)
+
+#### Non-negotiable guardrails
+
+- **No new trusted third party.** Key transparency is gossiped over the relay-free mesh; public-log anchoring is optional and additive (a witness, never a dependency). An air-gapped gateway still produces and verifies a complete attestation against its local mirror.
+- **Fail-closed on trust ambiguity.** An attestation whose issuer key is absent/revoked in the verifier's KT view fails verification (never "warns"); a claim that cannot establish index freshness is emitted with explicit `freshness: unknown`, never silently treated as fresh.
+- **Vault-only key material** (`I12`) — only public keys + signatures cross IPC / log / config boundaries.
+
+#### Wave 1 — Key Transparency (the root)
+
+- [ ] **Append-only key-transparency log (`kt_log`)** — a BLAKE3-chained, append-only log of `(subject, pubkey, valid_from, valid_to, supersedes)` for gateway + operator identities, via a generic `computeChainRowHash(prevHash, fields[])` factored out of the audit-chain writer (audit chain and `kt_log` both call it — the chain *pattern* is reused, not the fixed audit tuple). Proposes invariant **`I22`** (KT append-only + monotone head; triple when wired).
+- [ ] **Offline trust-anchor (`nimbus trust export/import-anchor`)** — the keystone: a signed, human-fingerprinted one-pager (pubkey + KT genesis + BIP39-style out-of-band phrase) that lets an auditor / insurer / peer establish trust in a gateway key over a side channel with **zero network round-trip**; thereafter every EAF artifact verifies offline. No cloud attestor can answer "how does an air-gapped auditor trust your key with no network at all" — they root in an online CA / OIDC handshake / transparency-log fetch.
+- [ ] **Gossiped mesh mirror + split-view detection** — KT heads + inclusion proofs propagate over the relay-free NaCl-box channel; a third gateway verifies a peer's current key + rotation lineage from its local mirror. Honest bound: split-view detection is **multi-peer-only**; a solo / air-gapped gateway gets monotone-head-only.
+- [ ] **Rotation + revocation with cryptographic continuity (`I23`)** — the outgoing key signs its successor; a revoked key invalidates exactly its signing window (`supersedes` lineage). Recovery when an outgoing key is lost falls back to the out-of-band re-pairing flow (the downgrade seam is stated, not hidden). Proposes invariant **`I23`** (revocation-with-continuity).
+
+#### Wave 2 — Verifiable Time
+
+- [ ] **Monotonic high-water-mark in the chain** — a Vault-persisted monotonic counter folded into each BLAKE3 link; `verifyAuditChain` rejects a non-advancing counter. The offline guarantee is stated precisely: it detects **chronological inversion relative to the last-written row**, not absolute wall-clock duration.
+- [ ] **Optional roughtime anchor** — opt-in, additive trusted-timestamp anchor (carved out of the `M7` background-call quota like the existing user-initiated fetches); offline installs degrade to monotonic-only with a clearly-labeled attestation. Lease / quorum / standing-approval expiry **fail-closed** when the system-clock↔counter delta crosses a safety threshold.
+- [ ] **`Date.now()` ban in security-decision paths** — a static lint (sibling to the structure-audit D-checks) forbidding wall-clock reads in a named allow-list (quorum / delegation / standing-approval / lease expiry). *(Verifiable time is shipped as substrate hardening + an EAF field, **not** a standalone invariant — `eaf-verify` already checks timestamp monotonicity and the Phase 15 lease design depends on a wall-clock `expires_at`, which this reconciles rather than forbids.)*
+
+#### Wave 3 — Freshness & Proof Ergonomics
+
+- [ ] **Index freshness & completeness attestation** — a per-connector `synced_fraction` / staleness / `known_gaps` signal (with a per-connector-class definition: paginated REST cursor vs `[[filesystem.roots]]` walk). Every downstream provenance / oracle / "lie-detector" claim cites it; a claim that can't establish it emits `freshness: unknown`. Proposes the freshness-contract invariant (single `attachFreshness()` seam + a static rule that no export path bypasses it).
+- [ ] **Index-at-rest tamper-evidence** — `nimbus index attest` produces a signed Merkle root over the index; `nimbus index verify` checks it; a mismatch sets the freshness contract to `tampered` (one detection, two outputs — single seam).
+- [ ] **Roll-up verification (`eaf-verify`)** — human-legible aggregate verdicts over many receipts so a non-cryptographer auditor can triage volume; receipt expiry / revocation is surfaced. *(Sampled audit deferred to whichever phase first emits proof volume.)*
+
+#### Acceptance Criteria
+
+- An auditor on an air-gapped machine imports a gateway's trust anchor over a side channel, then verifies an EAF artifact offline with `eaf-verify`, zero network round-trip; a tampered or revoked-key artifact fails closed.
+- A same-UID clock rewind followed by an audit append fails `nimbus audit verify` (the monotonic counter breaks the chain); the offline guarantee is documented as inversion-detection, not absolute-time.
+- `nimbus index attest` then a mutation of an index row sets the freshness contract to `tampered`; a claim built on a `tampered` / `unknown` connector is emitted with that contract, never as fresh.
+- A key rotation carries a continuity proof and a revocation invalidates exactly the post-revocation window (pre-revocation artifacts still verify), proven by an enforcement test.
+
+---
+
+### Phase 22 — The Proof Layer (Verifiable Negatives)
+
+**Goal:** Promote EAF from a Phase 12.5 bundle artifact to a **per-answer live primitive** — portable, offline-checkable receipts that prove *what did not happen*. Anchors North-Star **`M9` (Verifiable Negatives)**. A relay vendor *is* the egress and *is* the data sink, so it can only assert non-egress / non-disclosure in a PDF; only a local-first, no-relay, `I15`-sandboxed, HITL-gated gateway can mint a credible negative.
+
+> **Composes with Phase 21 (every receipt roots its key + clock there — hard blocker), `M7` (the egress negative is `M7` presented), S — Standards/EAF (receipts are EAF payload types verified by the same `eaf-verify` binary — hard blocker), `I17` (the non-disclosure receipt), Phase 12.5 (the deletion plan becomes a signed proof).**
+
+#### Dependencies
+
+- **Phase 21 substrate (hard blocker)** + **EAF v0.1 + `eaf-verify` (hard blocker)**
+- `I17` query gate (non-disclosure receipt); the `I15` egress chokepoint (proof-of-silence)
+
+#### Wave 1 — Receipts on already-shipped primitives
+
+- [ ] **Notarized Non-Disclosure Receipt (headline)** — the answering peer hands the asker a portable, offline-verifiable proof that a federated query disclosed nothing beyond the declared `I17` shape. The one artifact a relay architecture *structurally cannot* produce (there is no relay that could have seen the bodies). **Bound to the query nonce / session** over the NaCl-box channel so it cannot be detached and replayed to vouch for a later leaky query.
+- [ ] **Counterfactual Consent Receipt** — proof of an irreversible action the agent was about to take but didn't, backed by the gate's `hitlStatus` (`I4`) + the frozen `action.type` + a declared blast radius. *(The `M3`-trace-enriched version is stretch — `M3`'s reasoning trace is unbuilt substrate.)*
+
+#### Wave 2 — Receipts needing new instrumentation
+
+- [ ] **Egress-event instrumentation (prerequisite, net-new work)** — instrument the `I15` sandbox to emit per-query host-connect events. Cross-platform reality: per-host gating is degraded on Windows (AppContainer all-or-nothing; the spawn FFI is a tracked follow-up) and helper-dependent on Linux — so any receipt **fails closed to `indeterminate`** where the chokepoint cannot attribute.
+- [ ] **Proof-of-Silence receipt (`nimbus prove --receipt`)** — a **new subcommand in the existing `nimbus prove` namespace** (Phase 11 ships the interactive before/after egress display; this adds the durable signed artifact) emitting `outbound_egress_events: 0` (connect()-level, **not** packet-level), `local_rows_read: N`, verifiable offline. Emits `indeterminate` (never a green zero) on a degraded platform; the acceptance corpus pins a fully-gated platform. Proposes the invariant: the negative is computed only from the chokepoint, never connector self-report, in a leak-proof receipt shape.
+- [ ] **Provable Forgetting** — a signed deletion certificate proving a datum is gone **and** (citing the `M7` ledger for its lifetime) was never replicated; the non-replication leg emits `unprovable-before-T` if the datum predates ledger genesis or arrived via the non-`I15` filesystem path.
+- [ ] **Receipt metadata hygiene** — bucket counts (`rows read: 10–50`), add issuance jitter, and rate/granularity-bound the publishable set (mirrors `I17` returning ranks, not raw scores) so the receipt itself is not a side-channel.
+
+> **Cut / folded (per stress-test):** the Provable Air-Gap Beacon → an `M7`-export flag (`nimbus egress --beacon`), it is the empty-egress special case of the same scheduled export; the TEE-attested LLM-hop receipt → a stated non-goal ("we do not attest off-box hops; the canonical path is zero off-box hops via the router air-gap"), a hardware-vendor trust root contradicts the thesis. zk-EAF → a research note (one-fixture prototype at most).
+
+#### Acceptance Criteria
+
+- A federated query returns under the `I17` shape; the asker receives a Non-Disclosure receipt that `eaf-verify` validates offline against the answerer's Phase-21-anchored key; a replayed receipt from a prior query fails verification.
+- On a fully-gated platform, `nimbus prove --receipt` over a local-only query emits a signed `outbound_egress_events: 0` artifact verifiable offline; on a degraded platform the same query emits `indeterminate`, never a false zero.
+- A `nimbus dsr` deletion executed with `--execute` yields a deletion certificate whose non-replication leg reads `unprovable-before-T` for data older than the egress-ledger genesis.
+
+---
+
+### Phase 23 — Inert to Injection (The Unexfiltratable Agent)
+
+**Goal:** Make prompt-injection **structurally inert, not filtered** — a successful injection can make the agent reason wrong but cannot exfiltrate, because the local process severs egress capability the moment attacker-influenceable content enters a turn, and proves it with a buyer-rerunnable conformance bundle that needs zero vendor trust. Competitors' best documented defense is sanitizers / MCP-gateways with **measured 60–72% attack-success rates**.
+
+> **Composes with `M7` (the `I15` chokepoint), `I11` (the provenance seam — extended here), Phase 10 (the standing-approval taint-barrier proposal — *subsumed* by `I24` here, one invariant not two), Phase 8 (honeytokens + egress ledger), S — Standards/EAF (the attestation is an EAF payload). Distinct from `M7`, which proves *where* the agent went; this proves the agent *could not have leaked* while compromised.**
+
+#### Dependencies
+
+- `I11` wrapToolOutput envelope (extended here with a provenance tag); `I15` sandbox; Phase 4 multi-agent / `sub_task_results` plumbing; Phase 21 signing
+
+#### Non-negotiable guardrails
+
+- **Fail-closed on a degraded sandbox:** where the platform cannot prove the host-scoped cut, the network-bound action is **refused**, never silently allowed.
+- **Untagged provenance = untrusted** (fail-closed) — but only once the tag-production mechanism exists (owned here).
+- **Out of scope (stated honestly):** covert channels through an allowlisted-and-still-permitted host (DNS-name encoding, request timing) — `I24` cuts network-*write* capability, not every side channel.
+
+#### Wave 1 — The cut
+
+- [ ] **Provenance-tag production mechanism** — manifest-declared read-tool taint classes + an executor-side default, so a connector *declares* `trusted` / `untrusted` on the `I11` envelope (Phase 10 only *consumed* an undefined tag). Owned here so "fail-closed on untagged" is buildable without bricking every connector on day one.
+- [ ] **Capability-revocation-on-taint (proposes `I24`)** — a **turn-scoped capability state object** in `engine/executor.ts`: the instant a turn ingests `untrusted` content, the executor **refuses further network-tool dispatch for the rest of the turn** — a *dispatch-time* gate (cross-platform, lives in the engine today), not a live mutation of the OS-sandbox network allowlist. **Subsumes the Phase 10 standing-approval taint barrier.** The gate consults the provenance tag only, never the tool name / payload (mirrors `I3`). Static complement (next free D-descriptor) + enforcement test.
+- [ ] **Re-entry / re-clean path (own acceptance-gated sub-spec)** — when egress is severed mid-task, the re-clean gesture shows the write payload **verbatim + provenance-diffed against the untrusted source** (anti-laundering — a human approving a plausible ticket is exactly how injection launders), opening a fresh clean-provenance turn. The make-or-break UX; the canonical "read untrusted email → file ticket" workflow is the gating test.
+
+#### Wave 2 — The proof
+
+- [ ] **Signed per-response attestation** — a "this turn could not have exfiltrated" EAF payload (reuses the envelope / signing / verifier from `M7` + S — Standards; anchored outside the local chain per the same-UID caveat).
+- [ ] **Buyer-rerunnable adversarial conformance bundle (headline)** — a signed binary the customer runs against **their own** gateway, with their connectors + data: it first **attests the sandbox-enforcement tier honestly**, then drives an injection corpus and shows the egress cut fire where the platform can prove it. "We are not asking you to believe a benchmark." Guards the corpus against supply-chain poisoning and never red-teams a live API in a way that abuses the user's real account.
+
+> **Deferred out:** active honeytoken plant + scan → **Phase 8 W5** (Phase 8 already ships synthetic-credential honeytokens + the egress ledger; only the connector-quarantine state machine is net-new — land it there); the auditor-mode "behavior without data" appliance → a research bet (an unbounded information-flow problem).
+
+#### Acceptance Criteria
+
+- On a fully-gated platform, a turn that ingests an `untrusted`-tagged tool result cannot subsequently reach any allowlisted host (enforcement test); on a degraded platform the network action is refused, not silently passed.
+- The conformance bundle, run on a fresh independently-provisioned gateway, reports the sandbox-enforcement tier and demonstrates the cut where provable; a seeded canary-exfil payload is blocked and the connector quarantined with a signed incident record.
+- The "read untrusted email → file ticket" workflow completes through the re-clean path with the write payload shown verbatim + provenance-diffed; an untagged tool result is treated as `untrusted` (fail-closed).
+
+---
+
+### Phase 24 — Agent Archaeology
+
+**Goal:** Put the past and the present in one process — replay the agent's reasoning *as of* any timestamp, re-litigate the incident corpus against today's code, and bind every asserted fact to a signed, replayable derivation. Anchors **`M10` (Causal Twin)** + **`M11` (Provenance-Bound Cognition)**.
+
+> **Composes with `M8` (`item_history` state), `M5` (the static causal floor — the overlap is acknowledged, not re-minted), `M3` (the reasoning / evidence trace), `M1` (living memory), Phase 17 (the blast-radius engine), Phase 9 (calibration), Phase 12.5 (Article-22).**
+
+#### Dependencies
+
+- **`M8` `item_history` (hard prerequisite)** — the `--at` point-in-time recall must exist first (Phase 10 ships the flag; this phase standardizes on `--at` and keeps `--as-of` as a back-compat alias)
+- `M3` reasoning / evidence trace; Phase 3 dependency graph; Phase 21 signing (federated leaves)
+
+#### Wave 1 — Reasoning replay
+
+- [ ] **`nimbus ask --at <t>`** (alias `--as-of`) — replays the agent's **decision + evidence-leaf set** against the `item_history` view at `t`, with a "what I knew then vs now" split. **Determinism is scoped to the decision + retrieved rows + recorded tool I/O** — any LLM-re-invoking step is labeled `modeled, not replayed` (LLM output is not byte-deterministic; this also corrects the existing roadmap's unqualified "reconstructs deterministically"). A recorded model no longer loadable → `model-substituted, not faithful`. The replay executor is **egress-incapable**: a replay path that attempts a connector call aborts fail-closed at `gate()`.
+
+#### Wave 2 — The counterfactual court (anchor demo)
+
+- [ ] **Merge-time extinction ledger** — a standing watcher re-runs the historical incident corpus against today's code via the `M5` static simulator on every merge and posts mechanical verdicts: *"incident class X is now extinct — PR #4412 removed the null path; class Y would still page."* **Incremental** (re-litigates only classes whose causal path touches the merged diff; a corpus / time ceiling lives in `[archaeology]`). An `extinct` verdict carries **coverage / blind-spots** ("extinct within statically-reachable paths; N dynamic paths unanalyzed") — a false extinction is dangerous, so it bears an asymmetric honesty bar. Feeds `M2`'s "incidents prevented" with a real signal. Verdicts are `I11`-untrusted / advisory and can never satisfy a standing rule (the taint barrier already covers replay output).
+
+#### Wave 3 — Provenance-bound cognition (`M11`)
+
+- [ ] **Per-claim evidence DAG** — every asserted fact in an admissible artifact ships a content-addressed, replayable evidence DAG, **default-collapsed and lazily computed** (ordinary answers untaxed). Per-leaf signing is **federated-only** (intra-box leaves are covered by the BLAKE3 chain; cross-gateway leaves carry the originating gateway's `I16` signature). A claim with no retrieved leaf is emitted `ungrounded` and is **structurally barred from carrying a signature** (proposes the evidence-DAG invariant). Exported DAGs pass an `I17`-style leak-proof shape (ranks / hashes / declared shape, not bodies / raw row IDs unless grant-scoped).
+- [ ] **Erasure reconciliation** — the append-only DAG / memory vs GDPR erasure (Phase 12.5 Article-17) is reconciled via tombstone-with-proof / salted hashes / chain-segment rotation; evidence leaves eligible for admissible artifacts pin against the `M8` prune via `[archaeology].evidence_pin_retention_days`.
+
+> **Deferred out:** HITL-dialog enrichment / surprise-detection → **Phase 17** (keep only "render blast-radius inside `gate()` for all gated actions", reuse Phase 17's engine); the learned dynamics twin → a research flag (needs a metric / trace TSDB the item-shaped index lacks; gated on a go/no-go Brier-score floor); chained agent memory → **Phase 10** episodic-memory hardening; the legally-admissible decision record → a one-line cross-reference from Phase 12.5 Article-22 to the evidence-DAG invariant.
+
+#### Acceptance Criteria
+
+- `nimbus ask --at <t> "<incident question>"` reconstructs the decision + evidence-leaf set against the `item_history` view at `t`; LLM-re-invoking steps are labeled `modeled`; a replay that attempts a write aborts fail-closed.
+- A seeded merge that removes a null path flips the matching incident class to `extinct` with the citing PR and a stated coverage caveat; a distant change that silently revives a path does **not** produce a false `extinct`.
+- A `nimbus dsr` / Article-22 artifact carries a per-claim evidence DAG whose leaves verify offline; an `ungrounded` claim cannot be signed; an exported DAG carries no item body or raw row ID outside its declared shape.
+
+---
+
+### Phase 25 — Confidential Mesh Compute
+
+**Goal:** Cross-org learning where there is **no operator who could see member data** — because there is no operator. The substrate that finally realizes North-Star **`M4`**. A cloud benchmarker that can tell you "47 orgs had this" *is* the operator that saw 47 orgs' incidents; Nimbus answers over the relay-free mesh carrying only sketches and aggregates, never bodies.
+
+> **Composes with `M4` (its delivery home), `M2` (cross-org preventive ops), `I21` (DISTINCT-peer counting), `I17` (the leak-proof discipline — this is *stricter*, see below), Phase 15 (the cross-org lease envelope), Phase 21 (the eventual Sybil-resistance root), `M7` (each round attestable as relay-free).**
+
+#### Dependencies
+
+- Phase 6 federation (NaCl-box channel); `I20` / `I21` identity-valid + DISTINCT-peer quorum
+- Phase 21 key-transparency (the eventual Sybil root) — but the security-critical floor **also stands on the shipped `I18` + Phase 6 peer-pairing** so it does not hard-depend on a later phase
+
+#### Non-negotiable guardrails
+
+- **Opt-in at the team / org level via `nimbus.policy.toml`, off by default, never per-engineer** (per `M4`).
+- **Body-free by construction** — frames carry only fixed-width sketch / secret-share / PSI-token / DP-scalar shapes, with a **size + structure bound** (not just a "no body field" name-check, so a compressed body can't ride inside an opaque blob). Note this is **stricter than `I17`**, whose query gate deliberately shares a 280-char snippet under consent — *not* an extension of it.
+
+#### Wave 1 — Sketch tier (ships first; herd immunity)
+
+- [ ] **Federated incident-pattern Bloom/MinHash mesh** — `nimbus mesh seen <fingerprint>`: "has anyone seen this change-fingerprint / incident-signature?", carrying only sketches. **Surveillance-free herd immunity** (extends `M2`): "this fingerprint preceded outages at 47 *distinct* peers (real `I21` count), pattern only — never a single peer's incident." Honest threat model: MinHash leaks similarity by design, so the claim is bounded ("reveals no more than declared similarity to a probe a peer already holds; no literal path / identifier string") and a **probe-budget per asking peer** prevents sweeping the fingerprint space (the membership-oracle hole — and this is the tier that ships first).
+- [ ] **Body-free frame invariant** — every mesh-compute frame routes through one `federation/mesh-compute-gate.ts`; proposes the invariant + a static complement.
+
+#### Wave 2 — Secure aggregation (research deliverable)
+
+- [ ] **Additive-secret-sharing reference round** — a single protocol-level deliverable (small-N reference round + a published threat model) under **experimental-exit criteria, not phase-completion criteria**. DP budget is tracked at a **per-box global ceiling** (composition across overlapping cohorts, not per-cohort); the k-anonymity floor states its honest-but-curious assumption (it collapses under k-1 colluding members). *(PSI, the k-anon DORA benchmark CLI, and the DP model-routing commons are cut as me-too / lowest-confidence; MTTR-as-aggregate survives only as an example inside the DP item.)*
+
+#### Wave 3 — Trust floor
+
+- [ ] **Sybil-resistant admission + Byzantine-robust aggregation** — a contribution is admitted only from an attested identity (`I18` + peer-pairing now; a KT-inclusion proof once Phase 21 lands); rounds use robust estimators (trimmed mean / coordinate-wise median) + share-consistency checks bounding any single peer's influence; a deny / abort / malformed share fails the whole round (reuses `I21` fail-closed). Cross-peer round integrity rests on the per-box Phase 12 external-sink push (a same-UID peer can truncate its own view).
+
+#### Acceptance Criteria
+
+- A peer queries `nimbus mesh seen <fingerprint>` and learns a DISTINCT-peer match count with no item body, query string, or peer identity disclosed; a peer exceeding its probe budget is throttled; a frame carrying a body field is rejected at the federation boundary.
+- An injected poisoning peer cannot move a released aggregate beyond the proven influence bound and a single abort fails the round; a contribution from an unattested / Sybil key is dropped and audit-logged.
+
+---
+
+### Phase 26 — Provable Governance
+
+**Goal:** Turn governance from advisory middleware into **structural, attestable law** — policy compiled *into* the same gate that backs `I2`, with an offline-verifiable proof that the running gate-set equals the signed policy. Anchors **`M12` (Provable Governance)**. Cloud "guardrails" are server-side filters an admin configures away; the gate is the only place actions execute, so compiled policy is unbypassable and the boot attestation is checkable with no vendor trust.
+
+> **Composes with Phase 6 org-policy + Phase 12 policy-as-code (adds the enforcement attestation neither has), Phase 16 (generalizes + *subsumes* the skill-pack "cannot loosen HITL" rule — load-time → boot-attested), `I20` / `I21` (quorum), Phase 15 (leases), Phase 17 (rollback), Phase 21 (anchoring).**
+
+#### Non-negotiable guardrails
+
+- **Break-glass can suspend a policy-added class only — never an `I2` frozen-set member, never the irreversible boundary**; rate-ceilinged.
+- **Drift / attestation evidence anchored outside the local chain** (same-UID truncation), else it proves nothing against a post-RCE adversary.
+
+#### Wave 1 — Compiled gate + attestation
+
+- [ ] **Signed `nimbus.governance.toml` → compiled gate (proposes the policy-boot-attestation invariant)** — the signed policy compiles at boot into additional HITL classes / quorum thresholds / reversibility floors enforced by the same `gate()` as `I2` / `I3` / `I4`; the compiler is **loosening-incapable** (may only add to the effective set / raise thresholds; rejects any attempt to remove from the frozen `HITL_REQUIRED` set). Generalizes and subsumes the Phase 16 skill-pack rule (the load-time check becomes its fast-fail). A boot attestation binds `BLAKE3(compiled gate-set) == BLAKE3(signed policy)`, verifiable offline. On a single-user install with no signed external policy it attests against the baked-in frozen set (a tamper-evidence check, not an authority check).
+- [ ] **Dry-run simulator + break-glass** — `nimbus policy simulate` shows what a policy would block before it goes live (the gate is unbypassable, so a misconfigured policy could brick an on-call engineer); the mandatory break-glass escape suspends a single policy-added class for one incident, witnessed by quorum. (`nimbus policy explain` is folded into this UX, not a separate command — it duplicates Phase 16's `nimbus config explain`.)
+- [ ] **Drift Sentinel** — a low-frequency loop re-emits the boot attestation and fails the affected capability **closed** on any divergence between the running gate-set and the certified policy, writing a `governance_drift` entry (anchored externally).
+
+#### Wave 2 — Bounded autonomy primitives
+
+- [ ] **Witnessed quorum without a server** — true M-of-N threshold signatures over the action payload (extends `I20` / `I21` from counting to crypto proof; a trusted-dealer bootstrap ships, DKG is stretch); fail-closed on an under-threshold / duplicate-signer proof.
+- [ ] **Capability leases + egress-budgeted autonomy** — time-boxed, revocable, signed grants of what the agent may *do*, and a spendable network-calls envelope decremented **at the `I15` boundary** (extends `I15` / static D10, fail-closed mid-action, checked immediately before the connector call); reuses the Phase 10 standing-approval storage (one grant system, not two).
+- [ ] **Reversibility insurance** — pre-commit undo snapshots + a **provable** undo-coverage-% computed from per-connector inverse-op availability; writes with no inverse (`email.send`, `repo.push`, `pipeline.trigger`) are **0% = irreversible by construction** and never asserted reversible (per Phase 17's "never claim reversible it can't prove").
+
+#### Acceptance Criteria
+
+- An org ships a signed `nimbus.governance.toml`; on boot the gateway compiles it into the gate and emits an attestation an auditor verifies offline that the running gate-set == the policy hash; a policy attempting to remove a frozen-set member is rejected at compile.
+- An irreversible action gated by M-of-N quorum unlocks only when a valid threshold signature verifies; an under-threshold / duplicate-signer proof fails closed; break-glass cannot touch a frozen-set member.
+- An autonomous task's egress budget is decremented at the `I15` boundary and refuses the over-budget call fail-closed; a write with no connector inverse is classified irreversible (0% coverage).
+
+---
+
+### Phase 27 — The Agent Society
+
+**Goal:** Exploit zero-marginal, rate-limit-free local compute to run what metered clouds can't — a tireless tier-0 on-call Captain and a standing agent organization — **made safe only by the structural irreversible boundary + a do-no-harm host scheduler**. Embodies **`M3` (Accountable Autonomy)** (not a new North-Star). The killer demo, productized.
+
+> **Composes with Phase 26 (leases / egress budgets / reversibility floors — hard dependency), Phase 17 (the interactive copilot it escalates from), Phase 10 (standing approvals + the taint barrier), Phase 4 (multi-agent), Phase 11 (biometric irreversible-edge HITL), Phase 23 (`I24` taint barrier).**
+
+#### Non-negotiable guardrails
+
+- **The taint barrier is a hard dependency:** a Captain mitigation whose trigger derived from attacker-influenceable content (a poisoned log line) **falls back to HITL** — injected content can never drive an autonomous action, even a reversible one (`I24`). *(The single most important guardrail in this phase.)*
+- **Rotation-slot accountability:** the human on-call is always notified the Captain holds / held the slot; the Captain hands the slot back / escalates within a bounded timeout; no silent autonomous tenure.
+- **Do-no-harm to the host:** autonomy yields to the user's real work; an incident lease carries precedence over background society tasks.
+
+#### Wave 1 — The Captain
+
+- [ ] **Autonomous on-call Captain** — Phase 17's copilot **minus the human-in-the-loop on reversible actions**: it receives the page, runs the Phase 17 investigation (referenced, not recapitulated), performs pre-authorized reversible mitigations bounded by a Phase 26 capability lease + egress budget + bonded undo + reversibility floor, and pulls a human in via Phase 11 biometric HITL **only at the irreversible edge** with a confidence + cited-evidence brief. Safe only because the executor structurally forbids crossing the irreversible boundary.
+
+#### Wave 2 — The society + its economy
+
+- [ ] **Local compute economy (load-bearing prerequisite)** — one PAL-resident scheduler: probe host class (laptop / workstation / NPU) → select a capability tier → admit / defer per live battery / thermal / contention, with graceful degradation. "Free FLOPs" is real on an idle workstation and a thermal / UX disaster on a laptop on battery; this scheduler is what makes standing autonomy honest.
+- [ ] **Nimbus Guild** — a persistent local multi-agent org with roles + a tamper-evident minutes book (anchored externally); every Guild item inherits the `I11` / `I24` taint constraint and runs as a host-idle society task (including `M1` / Phase-10 memory consolidation — not a separate "dream loop").
+
+> **Deferred / cut:** on-device speculative-reasoning ensembles → stretch (unproven on local FLOPs; value hinges on a trustworthy verifier — the open problem); a nightly "dream" loop → folded into Phase 10 memory + the idle scheduler; energy-attested autonomy → cut (per-process joule telemetry isn't uniform across the win32 / darwin / linux PAL backends → fails platform equality by construction).
+
+#### Acceptance Criteria
+
+- On a seeded reversible bad-deploy incident, the Captain investigates, performs the pre-authorized reversible rollback within its lease + egress budget, and surfaces an irreversible follow-up step for biometric HITL only; `nimbus audit replay <incident-id>` reconstructs every step and the human on-call was notified the Captain held the slot.
+- A Captain mitigation whose trigger derived from `untrusted`-tagged incident content falls back to HITL (does not auto-act); an over-budget or lease-expired action aborts before the connector.
+- On a battery-constrained host the scheduler defers non-incident society tasks while an incident lease still runs (precedence stated); the Guild minutes book is anchored externally.
+
+---
+
 ### North-Star Capabilities (cross-phase)
 
 Audience-agnostic "no other tool does this" pillars, each enabled **because** of local-first / no-relay / HITL / audit. They thread through several phases rather than living in one; M1 and M3 are each strong enough to anchor a late phase.
@@ -1993,11 +2256,15 @@ Audience-agnostic "no other tool does this" pillars, each enabled **because** of
 - [ ] **M1 — The Org's Living Memory** — the org's permanent, queryable institutional memory (*"why did we choose Kafka in 2024?"*, *"we tried this migration before — why did it fail?"*). Extends Phase 7 ADR drafter + Phase 10 episodic/point-in-time + Phase 16 collective Q&A.
 - [ ] **M2 — Preventive Ops** — learns from *your own* incident history the patterns that precede outages and warns at change time; headline signal **incidents prevented** (a heuristic — pattern-match + engineer-acted-on-warning — not a provable counterfactual). Extends Phase 17 W1 + Phase 9 local fine-tune.
 - [ ] **M3 — Accountable Autonomy** — multi-step loops end-to-end, HITL only at irreversible steps, **every decision replayable** (`nimbus audit replay`). *(Substrate: faithful replay needs the agent's reasoning/evidence trace captured, not just actions + HITL status — an extension beyond `audit_log` + `tool_call_log`, designed with the replay feature.)* Extends Phase 10 + Phase 14.
-- [ ] **M4 — Surveillance-Free Collective Intelligence** — cross-team/cross-org benchmarking + shared incident-pattern learning via secure aggregation over the relay-free mesh, **with nobody's data leaving their machine. Opt-in at the team/org level via `nimbus.policy.toml`, off by default, never per-engineer.** Extends Phase 6/11/15.
+- [ ] **M4 — Surveillance-Free Collective Intelligence** — cross-team/cross-org benchmarking + shared incident-pattern learning via secure aggregation over the relay-free mesh, **with nobody's data leaving their machine. Opt-in at the team/org level via `nimbus.policy.toml`, off by default, never per-engineer.** Extends Phase 6/11/15; **delivered by Phase 25 (Confidential Mesh Compute)** — the sketch/secure-aggregation substrate + the Sybil-resistant, Byzantine-robust trust floor.
 - [ ] **M5 — Counterfactual / Time-Travel Ops** — v1 is *static/causal analysis* (config + code paths + dependency graph + indexed integration-test history); live simulation of stateful external systems is out of scope. Extends Phase 10 point-in-time + Phase 14.
 - [ ] **M6 — The Self-Extending Agent** — notices its own gaps (toil heatmap) and **drafts its own connector/automation**: read-only by default, contract-tested against the SDK, generated only against an authoritative published spec (never hallucinated), sandboxed (`I15`), HITL-installed + `I16`-signed; never auto-tests writes against a live API. Extends Phase 14 + Phase 16.
 - [ ] **M7 — Provable Locality** — a continuous, cryptographically-attestable **egress ledger**: every network host the gateway and each sandboxed connector contacted, exportable as an auditor-grade artifact (*"proof this agent touched only these hosts this quarter"*). Uncopyable **because** of local-first + no-relay + `I15` — the sandbox already enforces a per-host network allowlist per connector, so the ledger is a faithful record, not a self-report; a cloud competitor (which *is* the egress) structurally cannot produce one. Promotes the killer demo's "0 outbound network calls" from a demo flourish to a product. Extends Phase 8 (the ledger + `nimbus egress` + signed report) and Phase 12 (auditor-grade compliance export); built on `I15` + the BLAKE3 audit chain. The chain is tamper-*evident*, not tamper-*proof* (a same-UID attacker could truncate + regenerate it); the Phase 12 export is **scheduled and pushed to an external append-only sink**, and that cadence — not the local store — is what bounds the rewrite window.
-- [ ] **M8 — Time-Travel** — point-in-time queries over the structured `item` table: `nimbus ask --as-of "2026-04-15T14:00Z" "..."`. The local index becomes an append-only audit-grade timeline of every change to every connected system the user touched. Scoped narrowly: **structured items only**, not vectors (vector-index snapshots blow up disk — 1M items × delta × 365 days is hundreds of GB before compression). 30-day default retention; configurable via `[index].timetravel_retention_days`. Use cases: incident retrospectives ("what did our deploy state look like 30 seconds before the alert fired?"), legal discovery, post-mortem reconstruction, "what did we know when we made this decision." Uncopyable **because** local-first plus the BLAKE3 chain — cloud agents discard intermediate states; only the user's own machine has the raw history. Extends Phase 10 point-in-time + the existing audit chain; relates to M5 (counterfactual) which uses M8 as substrate. Implementation: per-write snapshot row to a `item_history` shadow table with TTL-driven prune; vector recall stays current-state-only.
+- [ ] **M8 — Time-Travel** — point-in-time queries over the structured `item` table: `nimbus ask --at "2026-04-15T14:00Z" "..."` (alias `--as-of`; `--at` is the shipped Phase 10 flag). The local index becomes an append-only audit-grade timeline of every change to every connected system the user touched. Scoped narrowly: **structured items only**, not vectors (vector-index snapshots blow up disk — 1M items × delta × 365 days is hundreds of GB before compression). 30-day default retention; configurable via `[index].timetravel_retention_days`. Use cases: incident retrospectives ("what did our deploy state look like 30 seconds before the alert fired?"), legal discovery, post-mortem reconstruction, "what did we know when we made this decision." Uncopyable **because** local-first plus the BLAKE3 chain — cloud agents discard intermediate states; only the user's own machine has the raw history. Extends Phase 10 point-in-time + the existing audit chain; relates to M5 (counterfactual) which uses M8 as substrate. Implementation: per-write snapshot row to a `item_history` shadow table with TTL-driven prune; vector recall stays current-state-only.
+- [ ] **M9 — Verifiable Negatives** — portable, offline-checkable receipts that prove *what did not happen*. The egress negative is **M7 presented as a negation**; the net-new surface is the **taint negative** ("no untrusted-tagged content crossed into a privileged action" — hard-depends on the Phase 23 provenance tag; **fail-closed/unprovable when the tag is absent, never vacuously true**) and the **residency negative** ("this subject's data never left the box"). Uncopyable **because** an architecture that *is* the network cannot sign "I didn't egress." Delivered by Phase 22 on the Phase 21 substrate; verified offline with `eaf-verify`. Same-UID caveat: a receipt is only as strong as the external-sink anchor cadence (per M7).
+- [ ] **M10 — Causal Twin / Counterfactual Cognition** — past and present in one process. The net-new atom is the **merge-time extinction ledger** (mechanically asserting an incident class extinct-or-surviving against today's code, with a stated coverage caveat), not a new simulator: the **floor** is M5's static causal analysis over M8 state with the M3 trace (the overlap is acknowledged, not re-minted); the **ceiling** is a learned per-customer dynamics twin (research, gated behind Phase 9 calibration so confidence is always shown). Determinism is scoped to the decision + evidence-leaf set; any LLM-re-invoking step is `modeled, not replayed`. Delivered by Phase 24.
+- [ ] **M11 — Provenance-Bound Cognition** — every asserted fact bound to a content-addressed, replayable evidence DAG; agent memory append-only + BLAKE3-chained; the agent emits `ungrounded` (and **refuses to sign**) rather than confabulating when a leaf can't be reconstructed. Per-leaf signing is **federated-only** (intra-box leaves are covered by the chain). Uncopyable **because** only the local machine holds per-leaf provenance back to the raw indexed source. Delivered by Phase 24; extends M3 + M1 + Phase 12.5 Article-22.
+- [ ] **M12 — Provable Governance** — policy compiled *into* the consent gate (not advisory middleware) with an offline-verifiable boot attestation that the running gate-set equals the signed policy hash. Uncopyable **because** the gate lives in the executor and a cloud agent *is* the runtime (its attestation would be self-attested). Sits beside M7: M7 proves *where bytes went*; M12 proves *what the gate would and wouldn't allow*. Delivered by Phase 26.
 
 **Connective tissue** (the substrates that make the above one product): the **proactive meta-agent** ("what should I look at right now?" — routes to the right brief by context across ~15 built-in agents); the **Impact Ledger** (one tamper-evident measurement spine feeding the team ROI report, the evaluator "look what it did this week," and M2); a **causal/temporal event spine** (under M1/M2/M5); a first-class **transparency surface** (always-visible "Local Only" egress indicator — M7 is its signed, exportable form — plus inspect/delete-everything + decision replay); and the **"when the agent is wrong" backbone** (calibrated confidence with the humility to say "I'm not sure," one-keystroke undo, wrong-recommendation feedback that lowers future confidence — shared with Phase 17's remediation).
 
