@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { SessionConsentCache } from "./consent-cache.ts";
+import { appendFederationAudit } from "./federation-audit.ts";
 import type { NamespaceStore } from "./namespace-store.ts";
 import type { ConsentDecision, ConsentPrompter } from "./query-gate.ts";
-import type { FederationWireError } from "./types.ts";
+import type { FederationDecision, FederationWireError } from "./types.ts";
 
 export interface FederationAuditEntry {
   readonly actionType: string;
@@ -40,6 +41,7 @@ export interface AuditExportGateCtx {
   readonly consentCache: SessionConsentCache;
   readonly prompt: ConsentPrompter;
   readonly consentTimeoutMs: number;
+  readonly now?: () => number;
   /** I18: when identity is enabled, the answerer's own operator identity must be valid to federate. */
   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
 }
@@ -54,6 +56,20 @@ export interface InboundAuditExport {
 export type AuditExportResult =
   | { readonly kind: "ok"; readonly entries: FederationAuditEntry[] }
   | { readonly kind: "error"; readonly error: FederationWireError };
+
+/** Audit one gate decision, mirroring query-gate's `audit()` — federation metadata only, never
+ *  any exported audit_log row content (the slice itself is never logged). */
+function audit(ctx: AuditExportGateCtx, q: InboundAuditExport, decision: FederationDecision): void {
+  const nowMs = (ctx.now ?? Date.now)();
+  appendFederationAudit(ctx.db, {
+    peerId: q.peerId,
+    namespace: q.namespace,
+    purpose: q.purpose,
+    decision,
+    method: "federation.auditExport",
+    timestamp: nowMs,
+  });
+}
 
 function withTimeout(p: Promise<ConsentDecision>, ms: number): Promise<ConsentDecision> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,18 +96,21 @@ export async function answerFederatedAuditExport(
   q: InboundAuditExport,
 ): Promise<AuditExportResult> {
   if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
-    // Opaque denial — same shape as no_grant, no identity-state leak (matches query-gate).
+    // Audited precisely; over the wire we return the SAME opaque denial as no_grant (matches query-gate).
+    audit(ctx, q, "identity_invalid");
     return { kind: "error", error: "no_grant" };
   }
 
   const ns = ctx.store.getByName(q.namespace);
   if (ns === undefined) {
+    audit(ctx, q, "namespace_unknown");
     return { kind: "error", error: "namespace_unknown" };
   }
 
   // Live-checked grant — revocation takes effect immediately.
   const grant = ctx.store.getActiveGrant(q.namespace, q.peerId);
   if (grant === undefined) {
+    audit(ctx, q, "no_grant");
     return { kind: "error", error: "no_grant" };
   }
 
@@ -99,6 +118,7 @@ export async function answerFederatedAuditExport(
   if (!grant.standingConsent) {
     const cached = ctx.consentCache.get(q.peerId, q.namespace);
     if (cached === false) {
+      audit(ctx, q, "consent_denied");
       return { kind: "error", error: "consent_denied" };
     }
     if (cached === undefined) {
@@ -112,15 +132,18 @@ export async function answerFederatedAuditExport(
         ctx.consentTimeoutMs,
       );
       if (decision === "timeout") {
+        audit(ctx, q, "timeout");
         return { kind: "error", error: "timeout_waiting_for_consent" };
       }
       const approved = decision === "approved";
       ctx.consentCache.set(q.peerId, q.namespace, approved);
       if (!approved) {
+        audit(ctx, q, "consent_denied");
         return { kind: "error", error: "consent_denied" };
       }
     }
   }
 
+  audit(ctx, q, "answered");
   return { kind: "ok", entries: exportFederationAudit(ctx.db, { sinceMs: q.sinceMs }) };
 }

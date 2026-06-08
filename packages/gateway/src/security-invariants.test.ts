@@ -565,7 +565,7 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
     }
   });
 
-  test("only federation.query and federation.expertise are admitted over LAN (mgmt methods forbidden)", async () => {
+  test("only read-only federation answers (query/expertise/policy/auditExport) are admitted over LAN; management/asker methods + the team namespace are forbidden", async () => {
     const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
     for (const m of [
       "federation.namespace.publish",
@@ -581,6 +581,9 @@ describe("I17 — federated answering is intrinsic to the query gate", () => {
     ]) {
       expect(src).toContain(`"${m}"`); // present in FORBIDDEN_OVER_LAN
     }
+    // The whole `team` namespace (team.auditMerged — the local-only asker that fans out
+    // federation.auditExport) is forbidden over LAN; only the answerer side is admitted.
+    expect(src).toContain('"team"');
   });
 
   test("I17/R1 — the over-the-wire answerer forces peerId from the authenticated session (not the request body)", async () => {

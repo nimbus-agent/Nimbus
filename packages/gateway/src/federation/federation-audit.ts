@@ -7,7 +7,7 @@ export interface FederationAuditFields {
   readonly namespace: string;
   readonly purpose: string;
   readonly decision: FederationDecision;
-  readonly method: "federation.query" | "federation.expertise";
+  readonly method: "federation.query" | "federation.expertise" | "federation.auditExport";
   readonly timestamp: number;
 }
 
