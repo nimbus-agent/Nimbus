@@ -7,6 +7,9 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
+import { formatPrometheus } from "../status/prometheus-format.ts";
+import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
+import { requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "./metrics-rpc.ts";
@@ -18,6 +21,11 @@ export type ReadOnlyHttpServerOptions = {
   readonly nowMs?: () => number;
   readonly resolveDeploymentToken?: () => Promise<string>;
   readonly resolveScimToken?: () => Promise<string>;
+  // Observability snapshot (Task 15). When BOTH are present, GET /v1/admin/status (JSON) and
+  // GET /metrics (Prometheus text) are served, gated by a constant-time bearer check against
+  // resolveAdminToken(). Absent either → the routes 404 (surface not mounted).
+  readonly statusReaders?: StatusReaders;
+  readonly resolveAdminToken?: () => Promise<string>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -233,7 +241,43 @@ async function handleDeployPreflight(
   return json(out.value);
 }
 
+// Observability (Task 15). The admin snapshot + Prometheus metrics share one bearer-gated surface:
+// both require statusReaders + a resolveAdminToken. The bearer check is the EXACT I13 mechanism
+// (requireBearer → constantTimeStringEqual) — a missing/empty token fails closed (surfaceDisabled).
+async function handleAdminStatus(
+  req: Request,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  const readers = opts.statusReaders;
+  if (readers === undefined || opts.resolveAdminToken === undefined) return null;
+  const expectedToken = await opts.resolveAdminToken();
+  if (!requireBearer(req, { expectedToken }).ok) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return json({ data: buildStatus(readers) });
+}
+
+async function handleMetrics(
+  req: Request,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  const readers = opts.statusReaders;
+  if (readers === undefined || opts.resolveAdminToken === undefined) return null;
+  const expectedToken = await opts.resolveAdminToken();
+  if (!requireBearer(req, { expectedToken }).ok) {
+    return new Response("unauthorized\n", {
+      status: 401,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  return new Response(formatPrometheus(buildStatus(readers)), {
+    status: 200,
+    headers: { "content-type": "text/plain; version=0.0.4; charset=utf-8" },
+  });
+}
+
 async function dispatchReadOnlyGet(
+  req: Request,
   path: string,
   url: URL,
   db: Database,
@@ -268,6 +312,14 @@ async function dispatchReadOnlyGet(
   }
   if (path === "/v1/openapi.json") {
     return handleOpenApiJson();
+  }
+  if (path === "/v1/admin/status") {
+    const res = await handleAdminStatus(req, opts);
+    if (res !== null) return res;
+  }
+  if (path === "/metrics") {
+    const res = await handleMetrics(req, opts);
+    if (res !== null) return res;
   }
   return new Response("Not Found", { status: 404 });
 }
@@ -314,6 +366,7 @@ async function handleWrite(
 }
 
 async function handleGet(
+  req: Request,
   url: URL,
   db: Database,
   opts: ReadOnlyHttpServerOptions,
@@ -323,7 +376,7 @@ async function handleGet(
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
   }
   try {
-    return await dispatchReadOnlyGet(path, url, db, opts);
+    return await dispatchReadOnlyGet(req, path, url, db, opts);
   } catch {
     return json({ error: "internal_error" }, 500);
   }
@@ -368,7 +421,7 @@ export function startReadOnlyHttpServer(
         const allow = writeDb === null ? "GET" : "GET, POST";
         return new Response("Method Not Allowed", { status: 405, headers: { Allow: allow } });
       }
-      return handleGet(url, db, opts);
+      return handleGet(req, url, db, opts);
     },
   });
 

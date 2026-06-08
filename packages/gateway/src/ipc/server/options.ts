@@ -13,6 +13,7 @@ import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
+import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
@@ -32,6 +33,9 @@ export type CreateIpcServerOptions = {
   syncScheduler?: SyncScheduler;
   connectorMesh?: LazyConnectorMesh;
   getEmbeddingStatus?: () => Record<string, unknown>;
+  // Observability snapshot (Task 15). The per-field readers behind `admin.status`. Present only when
+  // assembled at boot; the admin dispatcher skips cleanly (method-not-found) when unset.
+  statusReaders?: StatusReaders;
   startedAtMs?: number;
   agentInvoke?: AgentInvokeHandler;
   workflowRun?: WorkflowRunHandler;

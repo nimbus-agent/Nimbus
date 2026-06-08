@@ -7,6 +7,7 @@ import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
+import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
@@ -634,6 +635,13 @@ export async function tryDispatchLanRpc(
   return handleLanLocalRpc(ctx, method, params);
 }
 
+export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
+  if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
+    return phase4RpcSkipped;
+  }
+  return buildStatus(ctx.options.statusReaders);
+}
+
 export async function tryDispatchPhase4Rpc(
   ctx: ServerCtx,
   method: string,
@@ -674,6 +682,8 @@ export async function tryDispatchPhase4Rpc(
   if (profileOutcome !== phase4RpcSkipped) return profileOutcome;
   const indexReembedOutcome = await tryDispatchIndexReembedRpc(ctx, method, params);
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
+  const adminOutcome = tryDispatchAdminRpc(ctx, method, params);
+  if (adminOutcome !== phase4RpcSkipped) return adminOutcome;
   return tryDispatchReindexRpc(ctx, method, params, clientId);
 }
 

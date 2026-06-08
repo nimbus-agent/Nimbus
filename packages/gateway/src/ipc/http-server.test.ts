@@ -4,7 +4,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import type { StatusReaders } from "./admin-status-rpc.ts";
 import { startReadOnlyHttpServer } from "./http-server.ts";
+
+const STATUS_READERS: StatusReaders = {
+  policyState: () => ({ signatureValid: true, pendingRestart: false, source: "none" }),
+  peers: () => [{ peerId: "peer:aa", reachable: true }],
+  connectors: () => [{ id: "github", enabled: true, blockedByPolicy: false, health: "ok" }],
+  namespaces: () => [],
+  audit: () => ({ chainLength: 3, lastHash: "abc", appendRate1h: 1 }),
+  hitl: () => ({ pendingApprovals: 0, pendingQuorum: 0 }),
+  identity: () => ({ operatorValid: true }),
+  syncFreshnessMs: () => 0,
+};
 
 function makeEmptyDb(dbPath: string, targetVersion = 28): void {
   const db = new Database(dbPath);
@@ -253,6 +265,106 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     const body = (await res.json()) as { data: unknown[]; meta: { limit: number } };
     expect(Array.isArray(body.data)).toBe(true);
     expect(body.meta.limit).toBe(10);
+  });
+});
+
+describe("startReadOnlyHttpServer — observability surface (admin.status + /metrics)", () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let handle: ReturnType<typeof startReadOnlyHttpServer> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-admin-"));
+    dbPath = join(tmpDir, "nimbus.db");
+    makeEmptyDb(dbPath);
+  });
+
+  afterEach(() => {
+    handle?.stop();
+    handle = undefined;
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
+  });
+
+  it("GET /v1/admin/status returns 401 without a bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`);
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /v1/admin/status returns 401 with a wrong bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`, {
+      headers: { authorization: "Bearer nope" },
+    });
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /v1/admin/status returns the snapshot with a valid bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`, {
+      headers: { authorization: "Bearer admin-token" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { audit: { chainLength: number } } };
+    expect(body.data.audit.chainLength).toBe(3);
+  });
+
+  it("GET /metrics returns 401 text without a bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/metrics`);
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /metrics returns Prometheus text with a valid bearer token", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "admin-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/metrics`, {
+      headers: { authorization: "Bearer admin-token" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; version=0.0.4; charset=utf-8");
+    const body = await res.text();
+    expect(body).toContain("nimbus_audit_chain_length 3");
+  });
+
+  it("GET /v1/admin/status returns 401 when the admin token is empty (fail-closed)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      statusReaders: STATUS_READERS,
+      resolveAdminToken: async () => "",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`, {
+      headers: { authorization: "Bearer anything" },
+    });
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /v1/admin/status returns 404 when the surface is not mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/admin/status`);
+    expect(res.status).toBe(404);
+    await res.text();
   });
 });
 
