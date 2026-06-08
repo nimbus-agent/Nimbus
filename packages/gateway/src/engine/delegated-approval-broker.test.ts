@@ -15,4 +15,20 @@ describe("delegatedApprovalBroker", () => {
     const r = await delegatedApprovalBroker.request({ prompt: "x" }, 20);
     expect(r).toEqual({ kind: "timeout" });
   });
+
+  it("respond() to an unknown requestId returns false (no pending entry)", () => {
+    const ok = delegatedApprovalBroker.respond("does-not-exist", "peer:bob", true);
+    expect(ok).toBe(false);
+  });
+
+  it("listPending() reflects open requests and clears after respond()", () => {
+    const ids: string[] = [];
+    delegatedApprovalBroker.setBroadcast((requestId) => ids.push(requestId));
+    const p = delegatedApprovalBroker.request({ prompt: "ship it?" }, 5000);
+    const pending = delegatedApprovalBroker.listPending();
+    expect(pending.some((e) => e.requestId === ids[0] && e.prompt === "ship it?")).toBe(true);
+    delegatedApprovalBroker.respond(ids[0]!, "peer:ann", false);
+    expect(delegatedApprovalBroker.listPending().some((e) => e.requestId === ids[0])).toBe(false);
+    return p; // settle the pending promise so the test doesn't leak a timer
+  });
 });
