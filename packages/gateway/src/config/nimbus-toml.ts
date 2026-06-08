@@ -1058,6 +1058,81 @@ export function loadNimbusScimFromConfigDir(configDir: string): NimbusScimToml {
   );
 }
 
+// ---------------------------------------------------------------------------
+// [chatops] — ChatOps bridge (Phase 6 Slice 5)
+// ---------------------------------------------------------------------------
+
+export type NimbusChatopsToml = {
+  enabled: boolean;
+  slackEnabled: boolean;
+  teamsEnabled: boolean;
+  /** Team Vault entry name holding the bot tokens (Slice 2). */
+  botVaultEntry: string;
+  /** TTL for the platform-userId -> email mapping cache (authz is always re-checked live). */
+  identityCacheTtlSeconds: number;
+  /** Teams bot app id; the `aud` claim the Bot Framework JWT must carry. */
+  teamsBotAppId: string;
+};
+
+export const DEFAULT_NIMBUS_CHATOPS_TOML: NimbusChatopsToml = {
+  enabled: false,
+  slackEnabled: false,
+  teamsEnabled: false,
+  botVaultEntry: "chatops-bot",
+  identityCacheTtlSeconds: 900,
+  teamsBotAppId: "",
+};
+
+function applyNimbusChatopsKey(out: Partial<NimbusChatopsToml>, key: string, valRaw: string): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      break;
+    }
+    case "slack_enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.slackEnabled = b;
+      break;
+    }
+    case "teams_enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.teamsEnabled = b;
+      break;
+    }
+    case "bot_vault_entry":
+      out.botVaultEntry = parseString(valRaw);
+      break;
+    case "teams_bot_app_id":
+      out.teamsBotAppId = parseString(valRaw);
+      break;
+    case "identity_cache_ttl_seconds": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n >= 0) out.identityCacheTtlSeconds = n;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function parseNimbusChatopsToml(
+  raw: string,
+  defaults: NimbusChatopsToml = DEFAULT_NIMBUS_CHATOPS_TOML,
+): NimbusChatopsToml {
+  const out: Partial<NimbusChatopsToml> = {};
+  forEachSectionEntry(raw, "[chatops]", (key, valRaw) => applyNimbusChatopsKey(out, key, valRaw));
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusChatopsFromConfigDir(configDir: string): NimbusChatopsToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_CHATOPS_TOML,
+    parseNimbusChatopsToml,
+  );
+}
+
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
 // `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`
