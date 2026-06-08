@@ -32,4 +32,12 @@ describe("signPolicy / verifyPolicy", () => {
     const kp = generateEd25519Keypair();
     expect(verifyPolicy("x = 1\n", "!!!", encodeBase64(kp.pubkey))).toBe(false);
   });
+
+  test("wrong-length sig and malformed pubkey both return false", () => {
+    const kp = generateEd25519Keypair();
+    expect(verifyPolicy("x = 1\n", encodeBase64(new Uint8Array(10)), encodeBase64(kp.pubkey))).toBe(
+      false,
+    );
+    expect(verifyPolicy("x = 1\n", encodeBase64(new Uint8Array(64)), "!!!")).toBe(false);
+  });
 });
