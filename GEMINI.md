@@ -2,10 +2,10 @@
 
 ## Project Overview
 
-Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~70 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP (Model Context Protocol) connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
+Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~80 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP (Model Context Protocol) connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
 
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
-**Status:** Phase 4 ✅ · Phase 5 ✅ (2026-06-04; remaining connectors are documented non-gating deferrals). `v0.1.0` released 2026-05-09 (headless Gateway + CLI + VS Code extension; Tauri desktop release deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 5 ✅ (2026-06-04) · Phase 6 (Team) 🚧 in progress — Federation Core + Identity/SSO/SCIM shipped (Slices 1 & 3). Latest release `v0.5.0` (2026-06-04); `v0.1.0` was the first headless GA (2026-05-09; Gateway + CLI + VS Code extension; Tauri desktop deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 Companion context: [`CLAUDE.md`](./CLAUDE.md) (same project facts) — keep both aligned when changing commands, roadmap rows, or non-negotiables.
 
@@ -90,7 +90,7 @@ PRs gate on Ubuntu (`pr-quality`); pushes run the full Windows/macOS/Linux matri
 
 ## Development Workflow
 
-- **Worktrees:** `.worktrees/<branch-name>` (project-local, git-ignored).
+- **Worktrees:** `.claude/worktrees/<branch-name>` (project-local, git-ignored).
 - **Pre-flight before a PR:** `bun run preflight` (full CI parity) or `bun run preflight:fast` (~2-3 min, cheap static gates). **`test:ci` is only the test suite, NOT the full gate set — `preflight` is.** Gate manifest: `scripts/lib/preflight-gates.ts` (drift test fails if a CI gate is missing). See the `nimbus-preflight` skill.
 - **Branch hygiene:** never commit on `main`/`develop` — `git switch -c dev/<you>/<topic>` and verify `git rev-parse --abbrev-ref HEAD` first. `bun run hooks:install` adds a pre-commit guard + pre-push `preflight:fast`.
 - **Cross-platform:** build paths with `path.join()` / `os.tmpdir()`, never hardcoded separators; `bun run audit:cross-platform` flags Windows-separator path assertions (escape hatch: `// cross-platform-ok`).
@@ -106,4 +106,4 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
 - [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I22 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
-- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in CLAUDE.md's Skill References table): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-agent-patterns`.
+- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in CLAUDE.md's Skill References table): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-federation-identity`, `nimbus-agent-patterns`.

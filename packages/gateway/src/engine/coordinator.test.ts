@@ -160,6 +160,58 @@ describe("AgentCoordinator", () => {
     expect(executes).toBe(0);
   });
 
+  test("includes modelUsed in result when execute returns a modelUsed value (L68 branch)", async () => {
+    const coordinator = new AgentCoordinator({
+      sessionId: "sess-model",
+      parentId: "root",
+      depth: 1,
+      toolCallCount: { value: 0 },
+    });
+
+    const tasks: SubTask[] = [
+      {
+        taskType: "reasoning",
+        prompt: "Solve this",
+        execute: async () => ({
+          text: "answer",
+          tokensIn: 10,
+          tokensOut: 5,
+          modelUsed: "claude-3",
+        }),
+      },
+    ];
+
+    const results = await coordinator.run(tasks);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.status).toBe("done");
+    expect(results[0]?.modelUsed).toBe("claude-3");
+  });
+
+  test("converts non-Error thrown value to string in errorText (L75 branch)", async () => {
+    const coordinator = new AgentCoordinator({
+      sessionId: "sess-nonerr",
+      parentId: "root",
+      depth: 1,
+      toolCallCount: { value: 0 },
+    });
+
+    const tasks: SubTask[] = [
+      {
+        taskType: "classification",
+        prompt: "classify",
+        execute: async () => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw "plain string error";
+        },
+      },
+    ];
+
+    const results = await coordinator.run(tasks);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.status).toBe("error");
+    expect(results[0]?.errorText).toBe("plain string error");
+  });
+
   test("AgentCoordinator returns sibling status: done when one task throws", async () => {
     const ctx = {
       sessionId: "s1",

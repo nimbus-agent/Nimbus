@@ -9,6 +9,7 @@ export interface DelegatedRequestRemoteDeps {
   readonly index: LocalIndex;
   readonly selfIdentity: BoxKeypair;
   readonly now?: () => number;
+  readonly sendOverWire?: typeof sendFederatedOverWire;
 }
 
 /**
@@ -32,7 +33,8 @@ export function buildDelegatedRequestRemote(
       return { kind: "timeout" };
     }
     try {
-      const res = (await sendFederatedOverWire(
+      const send = deps.sendOverWire ?? sendFederatedOverWire;
+      const res = (await send(
         row.host_ip,
         row.host_port,
         deps.selfIdentity,

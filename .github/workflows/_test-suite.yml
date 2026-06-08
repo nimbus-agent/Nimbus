@@ -163,24 +163,18 @@ jobs:
       - name: Unit tests (with coverage) — Linux
         if: runner.os == 'Linux'
         shell: bash
-        # Bun's `--coverage --coverage-reporter=lcov` only writes
-        # `coverage/lcov.info` when `bun test` is invoked from inside a
-        # workspace package (the directory containing the `package.json` that
-        # Bun resolves the test files against). When invoked from the repo
-        # root with `packages/<pkg>` as a path argument, the tests run but no
-        # lcov is emitted — Codecov logs `not_found_files: coverage/lcov.info`
-        # and SonarCloud sees ~0% coverage on every non-UI file.
-        #
-        # Workaround: run `bun test --coverage` from inside each package,
-        # then merge the per-package lcov shards into a single
-        # `coverage/lcov.info` at repo root, rewriting `SF:` paths to be
-        # repo-root-relative (mirrors the rewrite the UI step does for
-        # Vitest output a few steps below).
+        # Branch coverage requires Istanbul source instrumentation: Bun's
+        # native `--coverage` emits no BRDA branch records (Bun #7100). Two
+        # [test] preloads do it instead — istanbul-register.ts babel-transforms
+        # first-party src on load (filling globalThis.__coverage__) and
+        # report-coverage.ts flushes a per-process shard to coverage/.nyc-tmp/.
+        # We still run `bun test` from inside each package (so Bun resolves the
+        # right package.json), then merge-coverage.ts unions all shards into a
+        # single repo-root coverage/lcov.info with repo-root-relative SF paths.
         run: |
           set -eo pipefail
           rm -rf coverage
-          mkdir -p coverage junit-reports
-          : > coverage/lcov.info
+          mkdir -p coverage/.nyc-tmp junit-reports
 
           run_pkg () {
             local pkg="$1"
@@ -198,17 +192,12 @@ jobs:
               cd "${pkg}"
               bash "${GITHUB_WORKSPACE}/scripts/ci/run-with-optional-dbus.sh" \
                 bun test \
-                --coverage \
-                --coverage-reporter=lcov \
+                --timeout 60000 \
+                --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" \
+                --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" \
                 --reporter=junit \
                 --reporter-outfile="${GITHUB_WORKSPACE}/junit-reports/junit-unit-${safe_name}.xml"
             )
-            if [ -f "${pkg}/coverage/lcov.info" ]; then
-              # Bun writes `SF:src/…` relative to its CWD; prepend the
-              # package path so SonarCloud and Codecov resolve the file from
-              # the repo root.
-              sed "s|^SF:|SF:${pkg}/|" "${pkg}/coverage/lcov.info" >> coverage/lcov.info
-            fi
             echo "::endgroup::"
           }
 
@@ -228,6 +217,11 @@ jobs:
           # package.json-less dir too — so shared utilities (bodystructure,
           # mail-core, mcp-tool-kit, run-cli-json, search-filter) are measured.
           run_pkg "packages/mcp-connectors/shared"
+
+          # Union the per-process istanbul shards (coverage/.nyc-tmp/*.json)
+          # written by the report-coverage preload into a single repo-root
+          # coverage/lcov.info carrying BRDA branch records.
+          bun "${GITHUB_WORKSPACE}/scripts/coverage/merge-coverage.ts"
 
           # `scripts/` is not a workspace package (no package.json). Its tests
           # ran without coverage attribution before this fix and still do —
@@ -253,7 +247,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun test packages/gateway packages/cli packages/sdk packages/client packages/mcp-connectors scripts --coverage --coverage-reporter=lcov --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
+            bun test packages/gateway packages/cli packages/sdk packages/client packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0

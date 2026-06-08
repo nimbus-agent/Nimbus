@@ -12,8 +12,8 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 ![Platforms](https://img.shields.io/badge/platforms-Windows_%7C_macOS_%7C_Linux-blue)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](../LICENSE)
-[![Release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.1.0)
-![Status: Phase 5 Complete](https://img.shields.io/badge/status-Phase_5_Complete-brightgreen)
+[![Release: v0.5.0](https://img.shields.io/badge/release-v0.5.0-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.5.0)
+![Status: Phase 6 In Progress](https://img.shields.io/badge/status-Phase_6_In_Progress-brightgreen)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-cast-dark.svg">
@@ -174,15 +174,15 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 3 (shipped):** Jenkins, GitHub Actions, CircleCI, GitLab CI, AWS, Azure, GCP, Kubernetes, Terraform/Pulumi/CloudFormation, Datadog, Grafana, Sentry, PagerDuty, New Relic
 
-**Phase 5 (in flight):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Remaining:** Tier-4 email (generic IMAP, Fastmail JMAP, ProtonMail Bridge) and Tier-5 local (DB schema indexing, filesystem-v2 profiling, Storybook). Local data-file profiling (Parquet / CSV / JSONL — header / footer / line counts only, never cell values) lands with Tier 5.
+**Phase 5 (✅ complete):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Remaining:** Tier-4 email (generic IMAP, Fastmail JMAP, ProtonMail Bridge) and Tier-5 local (DB schema indexing, filesystem-v2 profiling, Storybook). Local data-file profiling (Parquet / CSV / JSONL — header / footer / line counts only, never cell values) lands with Tier 5.
 
-**Phase 6 (planned, Team tier):** Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye (SSO-gated warehouse, BI, and data-quality connectors; depends on Team Vault)
+**Phase 6 (Team tier, 🚧 in progress):** Federation Core + Identity/SSO/SCIM shipped (Slices 1 & 3). The SSO-gated warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) are a later slice (Slice 7 — depends on Team Vault + Identity).
 
 See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 
 ### What's in v0.1.0
 
-`v0.1.0` shipped on **2026-05-09** as the headless Gateway + CLI + VS Code extension (the `desktop-v0.1.0` Tauri release vehicle is deferred to Phase 13 — see [§ Phase 13 → Desktop Release Vehicle in the roadmap](./roadmap.md#desktop-release-vehicle)). Phases 3.5 and 4 are ✅ complete; Phase 5 is now active. Highlights shipped in `v0.1.0`:
+`v0.1.0` shipped on **2026-05-09** as the headless Gateway + CLI + VS Code extension (the `desktop-v0.1.0` Tauri release vehicle is deferred to Phase 13 — see [§ Phase 13 → Desktop Release Vehicle in the roadmap](./roadmap.md#desktop-release-vehicle)). Phases 3.5–5 are ✅ complete; Phase 6 (Team) is now active. Highlights shipped in `v0.1.0`:
 
 **Observability & developer experience (Phase 3.5):**
 
@@ -212,7 +212,7 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 
 > **Not in `v0.1.0`:** the Tauri desktop UI is code-complete in Phase 4 but its release vehicle (signed installers + auto-update) ships separately as `desktop-v0.1.0` in Phase 13. See [§ Phase 13 → Desktop Release Vehicle in the roadmap](./roadmap.md#desktop-release-vehicle).
 
-**Landed since `v0.1.0` (Phase 5 in flight):**
+**Landed since `v0.1.0` (Phase 5, shipped):**
 
 *Team Intelligence built-in agents (T3, closed 2026-05-10):*
 
@@ -738,8 +738,8 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 3 | Intelligence (semantic search, CI/CD, cloud) | ✅ Complete |
 | 3.5 | Observability & Developer Experience | ✅ Complete |
 | 4 | Presence (local LLM, multi-agent, voice, VS Code extension, TUI; desktop UI code-complete) | ✅ Complete |
-| 5 | The Extended Surface | 🔵 Active |
-| 6 | Team | Planned |
+| 5 | The Extended Surface | ✅ Complete |
+| 6 | Team | 🚧 In progress |
 | 7–9 | Engineering Excellence → Security Engineering → AI Engineering Loop | Planned |
 | 10–12 | Autonomous Agent → Sovereign Mesh → Enterprise | Planned |
 | 13 | Desktop Distribution (*ships `desktop-v0.1.0`* Tauri signed installers + auto-update) | Planned |
@@ -790,7 +790,7 @@ For workflow, verification commands, and PR expectations, see [`CONTRIBUTING.md`
 | Tier | For | Status |
 |---|---|---|
 | **Open Source** | Individual engineers — AGPL-3.0, full feature set for single-user deployments | Available now |
-| **Team** | Shared index namespaces, Team Vault, multi-user HITL, LAN federation — Phase 6 | Planned |
+| **Team** | Shared index namespaces, Team Vault, multi-user HITL, LAN federation — Phase 6 | 🚧 In progress |
 | **Enterprise** | SSO/SCIM, compliance tooling, audit log shipping, Helm/Docker, SLA support — Phase 12 | Planned |
 
 The Extension SDK (`@nimbus-dev/sdk`) is MIT-licensed — extension authors have no copyleft obligation.

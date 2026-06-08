@@ -8,159 +8,178 @@ import {
 } from "./baseline.ts";
 
 describe("parseBaseline", () => {
-  test("parses a minimal valid baseline", () => {
+  test("parses a v2 baseline with line+branch floors", () => {
+    const json = JSON.stringify({
+      version: 2,
+      generated_at: "2026-06-07T00:00:00Z",
+      files: { "packages/gateway/src/foo.ts": { min_line_pct: 78.6, min_branch_pct: 40 } },
+    });
+    const got = parseBaseline(json);
+    expect(got.version).toBe(2);
+    expect(got.files.get("packages/gateway/src/foo.ts")).toEqual({ line: 78.6, branch: 40 });
+  });
+
+  test("reads a legacy v1 baseline, mapping min_coverage_pct -> {line, branch:0}", () => {
     const json = JSON.stringify({
       version: 1,
       generated_at: "2026-05-17T00:00:00Z",
-      files: { "packages/gateway/src/foo.ts": { min_coverage_pct: 4.35 } },
+      files: { "a.ts": { min_coverage_pct: 78.91 } },
     });
     const got = parseBaseline(json);
-    expect(got.files.get("packages/gateway/src/foo.ts")).toBe(4.35);
-    expect(got.version).toBe(1);
+    expect(got.version).toBe(2);
+    expect(got.files.get("a.ts")).toEqual({ line: 78.91, branch: 0 });
   });
 
   test("throws on missing version", () => {
     expect(() => parseBaseline(JSON.stringify({ files: {} }))).toThrow(/version/);
   });
 
-  test("throws on unsupported version", () => {
+  test("throws on an unsupported version (3)", () => {
     expect(() =>
-      parseBaseline(JSON.stringify({ version: 2, generated_at: "x", files: {} })),
+      parseBaseline(JSON.stringify({ version: 3, generated_at: "x", files: {} })),
     ).toThrow(/version/);
   });
 
   test("throws on missing generated_at", () => {
-    expect(() => parseBaseline(JSON.stringify({ version: 1, files: {} }))).toThrow(/generated_at/);
+    expect(() => parseBaseline(JSON.stringify({ version: 2, files: {} }))).toThrow(/generated_at/);
   });
 
-  test("throws on a min_coverage_pct outside 0..100", () => {
+  test("throws on a min_branch_pct outside 0..100", () => {
     const json = JSON.stringify({
-      version: 1,
-      generated_at: "2026-05-17T00:00:00Z",
-      files: { "a.ts": { min_coverage_pct: 101 } },
-    });
-    expect(() => parseBaseline(json)).toThrow(/min_coverage_pct/);
-  });
-
-  test("throws on invalid JSON", () => {
-    expect(() => parseBaseline("not json")).toThrow();
-  });
-
-  test("rejects backslash-separated paths with an actionable error", () => {
-    const json = JSON.stringify({
-      version: 1,
+      version: 2,
       generated_at: "x",
-      files: { "packages\\gateway\\src\\foo.ts": { min_coverage_pct: 50 } },
+      files: { "a.ts": { min_line_pct: 50, min_branch_pct: 101 } },
     });
-    expect(() => parseBaseline(json)).toThrow(/use forward slashes/);
+    expect(() => parseBaseline(json)).toThrow(/min_branch_pct/);
+  });
+
+  test("rejects backslash-separated paths", () => {
+    const json = JSON.stringify({
+      version: 2,
+      generated_at: "x",
+      files: { "packages\\gateway\\src\\foo.ts": { min_line_pct: 50, min_branch_pct: 0 } },
+    });
+    expect(() => parseBaseline(json)).toThrow(/forward slashes/);
   });
 });
 
 describe("serializeBaseline", () => {
-  test("round-trips through parseBaseline", () => {
+  test("round-trips a v2 baseline", () => {
     const original: Baseline = {
-      version: 1,
-      generated_at: "2026-05-17T00:00:00Z",
-      files: new Map([
-        ["packages/gateway/src/a.ts", 4.35],
-        ["packages/gateway/src/b.ts", 30],
-      ]),
+      version: 2,
+      generated_at: "2026-06-07T00:00:00Z",
+      files: new Map([["packages/gateway/src/a.ts", { line: 78.6, branch: 40 }]]),
     };
-    const text = serializeBaseline(original);
-    const reparsed = parseBaseline(text);
-    expect(reparsed.files.get("packages/gateway/src/a.ts")).toBe(4.35);
-    expect(reparsed.files.get("packages/gateway/src/b.ts")).toBe(30);
+    const reparsed = parseBaseline(serializeBaseline(original));
+    expect(reparsed.files.get("packages/gateway/src/a.ts")).toEqual({ line: 78.6, branch: 40 });
   });
 
-  test("sorts file entries alphabetically for stable diffs", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "2026-05-17T00:00:00Z",
-      files: new Map([
-        ["z/last.ts", 10],
-        ["a/first.ts", 20],
-        ["m/mid.ts", 30],
-      ]),
-    };
-    const text = serializeBaseline(baseline);
-    const firstIdx = text.indexOf("a/first.ts");
-    const midIdx = text.indexOf("m/mid.ts");
-    const lastIdx = text.indexOf("z/last.ts");
-    expect(firstIdx).toBeGreaterThan(-1);
-    expect(midIdx).toBeGreaterThan(firstIdx);
-    expect(lastIdx).toBeGreaterThan(midIdx);
-  });
-
-  test("ends with a single trailing newline", () => {
+  test("sorts entries alphabetically and ends with a single newline", () => {
     const text = serializeBaseline({
-      version: 1,
-      generated_at: "2026-05-17T00:00:00Z",
-      files: new Map(),
+      version: 2,
+      generated_at: "x",
+      files: new Map([
+        ["z.ts", { line: 1, branch: 1 }],
+        ["a.ts", { line: 2, branch: 2 }],
+      ]),
     });
+    expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("z.ts"));
     expect(text.endsWith("\n")).toBe(true);
     expect(text.endsWith("\n\n")).toBe(false);
   });
 });
 
-describe("computeBaselineDiff", () => {
-  test("returns empty diff when actual matches baseline", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "x",
-      files: new Map([["a.ts", 50]]),
-    };
-    const actual = new Map<string, number>([["a.ts", 50]]);
-    expect(computeBaselineDiff(baseline, actual)).toEqual({
-      regressions: [],
-      mustRaise: [],
-      mustRemove: [],
-      missingFromActual: [],
-    });
+describe("computeBaselineDiff (dual-axis, file-level)", () => {
+  const base = (line: number, branch: number): Baseline => ({
+    version: 2,
+    generated_at: "x",
+    files: new Map([["a.ts", { line, branch }]]),
   });
 
-  test("flags a regression when actual < baseline", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "x",
-      files: new Map([["a.ts", 50]]),
-    };
-    const actual = new Map<string, number>([["a.ts", 40]]);
-    const diff = computeBaselineDiff(baseline, actual);
-    expect(diff.regressions).toEqual([{ path: "a.ts", baseline: 50, actual: 40 }]);
+  test("no diff when both axes meet their stored floors and neither is fully clear", () => {
+    const diff = computeBaselineDiff(
+      base(50, 40),
+      new Map([["a.ts", 50]]),
+      new Map([["a.ts", 40]]),
+    );
+    expect(diff).toEqual({ regressions: [], mustRaise: [], mustRemove: [], missingFromActual: [] });
   });
 
-  test("flags must-raise when actual > baseline and < 80", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "x",
-      files: new Map([["a.ts", 40]]),
-    };
-    const actual = new Map<string, number>([["a.ts", 65]]);
-    const diff = computeBaselineDiff(baseline, actual);
-    expect(diff.mustRaise).toEqual([{ path: "a.ts", baseline: 40, actual: 65 }]);
+  test("flags a line regression", () => {
+    const diff = computeBaselineDiff(
+      base(50, 40),
+      new Map([["a.ts", 45]]),
+      new Map([["a.ts", 40]]),
+    );
+    expect(diff.regressions).toEqual([
+      { path: "a.ts", dimension: "line", baseline: 50, actual: 45 },
+    ]);
   });
 
-  test("flags must-remove when actual >= 80", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "x",
-      files: new Map([["a.ts", 40]]),
-    };
-    const actual = new Map<string, number>([["a.ts", 82.5]]);
-    const diff = computeBaselineDiff(baseline, actual);
-    expect(diff.mustRemove).toEqual([{ path: "a.ts", actual: 82.5 }]);
+  test("flags a branch regression", () => {
+    const diff = computeBaselineDiff(
+      base(50, 40),
+      new Map([["a.ts", 50]]),
+      new Map([["a.ts", 30]]),
+    );
+    expect(diff.regressions).toEqual([
+      { path: "a.ts", dimension: "branch", baseline: 40, actual: 30 },
+    ]);
+  });
+
+  test("flags must-remove only when BOTH axes clear the floor (>=80)", () => {
+    const diff = computeBaselineDiff(
+      base(50, 40),
+      new Map([["a.ts", 81]]),
+      new Map([["a.ts", 85]]),
+    );
+    expect(diff.mustRemove).toEqual([{ path: "a.ts" }]);
     expect(diff.mustRaise).toEqual([]);
   });
 
-  test("flags a baseline file missing from actual lcov (treated as 0%)", () => {
-    const baseline: Baseline = {
-      version: 1,
-      generated_at: "x",
-      files: new Map([["a.ts", 40]]),
-    };
-    const actual = new Map<string, number>();
-    const diff = computeBaselineDiff(baseline, actual);
-    expect(diff.regressions).toEqual([{ path: "a.ts", baseline: 40, actual: 0 }]);
+  test("flags must-raise (not remove) when only one axis improves and the other is still below floor", () => {
+    const diff = computeBaselineDiff(
+      base(50, 40),
+      new Map([["a.ts", 90]]),
+      new Map([["a.ts", 55]]),
+    );
+    expect(diff.mustRemove).toEqual([]);
+    expect(diff.mustRaise).toEqual([{ path: "a.ts" }]);
+  });
+
+  test("does NOT flag must-raise for a satisfied axis pinned at the floor (idempotent after a reseed)", () => {
+    // computeUpdatedBaseline pins a satisfied axis (>=80) down to the floor (80)
+    // while retaining a file for its other, sub-floor axis — e.g. a 95%-line /
+    // 55%-branch file is stored as {line: 80, branch: 55}. Re-checking the SAME
+    // actuals must be a no-op: the pinned line axis sitting at 95 (> the stored
+    // 80) must NOT demand a raise, or the gate could never be green right after
+    // `update-baseline` (every mixed file would loop forever on must_raise).
+    const diff = computeBaselineDiff(
+      base(80, 55),
+      new Map([["a.ts", 95]]),
+      new Map([["a.ts", 55]]),
+    );
+    expect(diff).toEqual({ regressions: [], mustRaise: [], mustRemove: [], missingFromActual: [] });
+  });
+
+  test("still flags must-raise when a genuinely sub-floor axis improves above its watermark", () => {
+    // The branch watermark (55) is below the floor, so a real improvement to 60
+    // must still ratchet — the pinned line axis (80) is untouched.
+    const diff = computeBaselineDiff(
+      base(80, 55),
+      new Map([["a.ts", 95]]),
+      new Map([["a.ts", 60]]),
+    );
+    expect(diff.mustRaise).toEqual([{ path: "a.ts" }]);
+    expect(diff.mustRemove).toEqual([]);
+  });
+
+  test("a baseline file missing from both actual maps is a 0% regression", () => {
+    const diff = computeBaselineDiff(base(50, 40), new Map(), new Map());
+    expect(diff.regressions).toEqual([
+      { path: "a.ts", dimension: "line", baseline: 50, actual: 0 },
+      { path: "a.ts", dimension: "branch", baseline: 40, actual: 0 },
+    ]);
     expect(diff.missingFromActual).toEqual(["a.ts"]);
   });
 });

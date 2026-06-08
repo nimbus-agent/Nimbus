@@ -6,6 +6,8 @@ import {
   flushLatencyBuffer,
   type LatencyRingBuffer,
   LatencyRingBuffer as LatencyRingBufferClass,
+  readLatencyPercentilesFromDb,
+  recordSlowQuery,
 } from "../../../src/db/latency-ring-buffer.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 
@@ -70,5 +72,114 @@ describe("computeLatencyPercentilesMs", () => {
     expect(p.p50Ms).toBeGreaterThan(0);
     expect(p.p95Ms).toBeGreaterThanOrEqual(p.p50Ms);
     expect(p.p99Ms).toBeGreaterThanOrEqual(p.p95Ms);
+  });
+});
+
+describe("recordSlowQuery", () => {
+  test("below threshold — no row inserted (line 164 true branch)", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    recordSlowQuery(db, {
+      queryText: "SELECT 1",
+      latencyMs: 100,
+      queryType: "sql",
+      recordedAt: Date.now(),
+      thresholdMs: 500,
+    });
+    const row = db.query("SELECT COUNT(*) AS c FROM slow_query_log").get() as { c: number };
+    expect(row.c).toBe(0);
+    db.close();
+  });
+
+  test("at/above threshold with table present — row inserted (line 164 false branch)", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    recordSlowQuery(db, {
+      queryText: "SELECT heavy",
+      latencyMs: 800,
+      queryType: "fts",
+      recordedAt: now,
+      thresholdMs: 500,
+    });
+    const row = db
+      .query("SELECT query_text, latency_ms, query_type, recorded_at FROM slow_query_log LIMIT 1")
+      .get() as {
+      query_text: string;
+      latency_ms: number;
+      query_type: string;
+      recorded_at: number;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row?.query_text).toBe("SELECT heavy");
+    expect(row?.latency_ms).toBe(800);
+    expect(row?.query_type).toBe("fts");
+    expect(row?.recorded_at).toBe(now);
+    db.close();
+  });
+
+  test("above threshold but slow_query_log table absent — returns without throwing (line 167 true branch)", () => {
+    // bare db: no ensureSchema, so slow_query_log does not exist
+    const db = new Database(":memory:");
+    expect(() => {
+      recordSlowQuery(db, {
+        queryText: "SELECT heavy",
+        latencyMs: 800,
+        queryType: "vector",
+        recordedAt: Date.now(),
+        thresholdMs: 500,
+      });
+    }).not.toThrow();
+    // confirm slow_query_log truly absent on a bare db
+    const exists = db
+      .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='slow_query_log'")
+      .get();
+    expect(exists).toBeNull();
+    db.close();
+  });
+});
+
+describe("readLatencyPercentilesFromDb", () => {
+  test("query_latency_log table absent — returns zeros (line 182 true branch)", () => {
+    const db = new Database(":memory:");
+    const result = readLatencyPercentilesFromDb(db);
+    expect(result).toEqual({ p50Ms: 0, p95Ms: 0, p99Ms: 0 });
+    db.close();
+  });
+
+  test("table present with recent rows — returns ordered non-zero percentiles (line 182 false branch)", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    // Insert 10 rows with distinct latencies so all three percentiles are non-zero
+    for (let i = 1; i <= 10; i += 1) {
+      db.run(
+        "INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (?, ?, ?)",
+        [i * 50, "sql", now],
+      );
+    }
+    const result = readLatencyPercentilesFromDb(db);
+    expect(result.p50Ms).toBeGreaterThan(0);
+    expect(result.p95Ms).toBeGreaterThanOrEqual(result.p50Ms);
+    expect(result.p99Ms).toBeGreaterThanOrEqual(result.p95Ms);
+    db.close();
+  });
+});
+
+describe("flushLatencyBuffer — table-absent guard", () => {
+  test("query_latency_log absent — drains buffer without throwing (line 120 true branch)", () => {
+    // bare db: no ensureSchema, so query_latency_log does not exist
+    const db = new Database(":memory:");
+    const buf: LatencyRingBuffer = new LatencyRingBufferClass();
+    buf.push(
+      { latencyMs: 10, queryType: "sql", recordedAt: Date.now() },
+      { latencyMs: 20, queryType: "fts", recordedAt: Date.now() },
+    );
+    expect(() => {
+      flushLatencyBuffer(db, buf);
+    }).not.toThrow();
+    // buffer must be drained even when the table is absent
+    expect(buf.snapshotOrdered()).toHaveLength(0);
+    db.close();
   });
 });
