@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-08T07:06:12.943Z",
+  "generated_at": "2026-06-08T09:25:47.639Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -417,34 +417,6 @@
     "packages/gateway/src/embedding/pipeline.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 69.23
-    },
-    "packages/gateway/src/engine/coordinator.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/engine/delegated-approval-broker.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/gateway/src/engine/delegated-request-remote.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.92
-    },
-    "packages/gateway/src/engine/delegation-store.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 60
-    },
-    "packages/gateway/src/engine/planner.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/engine/run-ask.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.98
-    },
-    "packages/gateway/src/engine/search-ranking.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
     },
     "packages/gateway/src/extensions/auto-update-apply.ts": {
       "min_line_pct": 80,
