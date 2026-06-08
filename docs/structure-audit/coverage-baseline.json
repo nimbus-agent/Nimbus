@@ -10,10 +10,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 72.73
     },
-    "packages/cli/src/commands/cli-test-helpers.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
     "packages/cli/src/commands/config.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 70.49
@@ -89,10 +85,6 @@
     "packages/cli/src/tui/state.ts": {
       "min_line_pct": 78.57,
       "min_branch_pct": 79.17
-    },
-    "packages/cli/src/tui/test-helpers/context.ts": {
-      "min_line_pct": 66.67,
-      "min_branch_pct": 0
     },
     "packages/cli/src/tui/useIpcPoll.ts": {
       "min_line_pct": 80,
@@ -510,10 +502,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 61.11
     },
-    "packages/gateway/src/identity/identity-test-helpers.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
     "packages/gateway/src/identity/oidc-device-flow.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 73.08
@@ -717,10 +705,6 @@
     "packages/gateway/src/updater/public-key.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 70
-    },
-    "packages/gateway/src/updater/updater-test-fixtures.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
     },
     "packages/gateway/src/updater/updater.ts": {
       "min_line_pct": 80,
