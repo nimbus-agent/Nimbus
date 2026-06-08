@@ -6,6 +6,7 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { CONNECTOR_SERVICE_IDS } from "../connector-catalog.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
   ensureBitbucketMcp,
@@ -41,6 +42,22 @@ import { type LazyMeshToolMap, listLazyMeshClientTools, mergeToolMapsOrThrow } f
 import { ensureUserMcpClient } from "./user-mcp.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
+// Service ids longest-first so a multi-underscore id (e.g. "google_drive") is matched before a
+// shorter prefix ("google_*" tools must not be mis-attributed). A tool key belongs to service `s`
+// when it equals `s` or starts with `s_` (the mesh names each MCP server by its service id, and
+// the MCP client prefixes every tool with `<serverKey>_`).
+const SERVICE_IDS_BY_LENGTH_DESC: readonly string[] = [...CONNECTOR_SERVICE_IDS].sort(
+  (a, b) => b.length - a.length,
+);
+
+/** The connector service id that owns a dispatcher tool key, or undefined if none matches. */
+function serviceIdForToolKey(toolKey: string): string | undefined {
+  for (const id of SERVICE_IDS_BY_LENGTH_DESC) {
+    if (toolKey === id || toolKey.startsWith(`${id}_`)) return id;
+  }
+  return undefined;
+}
+
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
   private readonly lazySlots = new Map<string, LazyMcpSlot>();
@@ -49,6 +66,7 @@ export class LazyConnectorMesh {
   private readonly healthDb: import("bun:sqlite").Database | undefined;
   private readonly auditDb: import("bun:sqlite").Database | undefined;
   private readonly logger: MeshLogger | undefined;
+  private readonly isConnectorAllowed: (serviceId: string) => boolean;
   private toolsEpoch = 0;
   private readonly spawnContext: MeshSpawnContext;
 
@@ -62,6 +80,7 @@ export class LazyConnectorMesh {
       logger?: MeshLogger;
       auditDb?: import("bun:sqlite").Database;
       obsidianVaultPaths?: readonly string[];
+      isConnectorAllowed?: (serviceId: string) => boolean;
     },
   ) {
     this.inactivityMs = options?.inactivityMs ?? 300_000;
@@ -69,6 +88,9 @@ export class LazyConnectorMesh {
     this.healthDb = options?.healthDb;
     this.auditDb = options?.auditDb;
     this.logger = options?.logger;
+    // Org-policy connector allowlist (I22). Default permits everything (ungoverned). A blocked
+    // connector's tools are filtered out at the universal dispatcher chokepoint below.
+    this.isConnectorAllowed = options?.isConnectorAllowed ?? (() => true);
     const fsBaseManifest = manifestForFirstParty("filesystem");
     const fsManifest = {
       ...fsBaseManifest,
@@ -394,9 +416,25 @@ export class LazyConnectorMesh {
     const builtIns = await this.collectBuiltInToolMaps();
     const userMcpMerged = await this.collectUserMcpToolMap();
     const merged = mergeToolMapsOrThrow([...builtIns, { map: userMcpMerged, name: "user-mcp" }]);
+    this.dropDisallowedConnectorTools(merged);
     const slotForTool = await this.buildSlotForToolMap();
     this.wrapMergedToolsWithRefcount(merged, slotForTool);
     return merged;
+  }
+
+  /**
+   * Org-policy connector allowlist enforcement (I22). Removes from the dispatcher tool map every
+   * tool whose owning connector service id is not permitted by policy. Tools that do not map to a
+   * known connector service (filesystem, user-MCP/extension tools) are left untouched — the policy
+   * allowlist governs first-party cloud connectors only.
+   */
+  private dropDisallowedConnectorTools(merged: LazyMeshToolMap): void {
+    for (const key of Object.keys(merged)) {
+      const serviceId = serviceIdForToolKey(key);
+      if (serviceId !== undefined && !this.isConnectorAllowed(serviceId)) {
+        delete merged[key];
+      }
+    }
   }
 
   async listTools(): Promise<
@@ -475,6 +513,7 @@ export async function createLazyConnectorMesh(
     auditDb?: import("bun:sqlite").Database;
     logger?: MeshLogger;
     obsidianVaultPaths?: readonly string[];
+    isConnectorAllowed?: (serviceId: string) => boolean;
   },
 ): Promise<LazyConnectorMesh> {
   return new LazyConnectorMesh(paths, vault, options);

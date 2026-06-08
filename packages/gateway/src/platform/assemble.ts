@@ -25,7 +25,10 @@ import {
 } from "../config/nimbus-toml.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
-import { defaultSyncIntervalMsForService } from "../connectors/connector-catalog.ts";
+import {
+  CONNECTOR_SERVICE_IDS,
+  defaultSyncIntervalMsForService,
+} from "../connectors/connector-catalog.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import {
   migrateToPerServiceOAuthKeys,
@@ -41,6 +44,7 @@ import {
 } from "../connectors/openapi-indexer-config.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import { startToolCallLogRetention } from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
@@ -71,6 +75,9 @@ import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
+import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { buildPolicyGate } from "../policy/policy-gate.ts";
+import { PolicyStore } from "../policy/policy-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -240,6 +247,7 @@ async function createSchedulerWithMesh(
   localIndex: LocalIndex,
   notifications: NotificationService,
   syncLogger: Logger,
+  isConnectorAllowed: (serviceId: string) => boolean,
 ): Promise<{ syncScheduler: SyncScheduler; connectorMesh: LazyConnectorMesh }> {
   const syncAnomaly = new AnomalyDetectorStub({
     windowSize: 64,
@@ -285,6 +293,7 @@ async function createSchedulerWithMesh(
     auditDb: db,
     logger: syncLogger,
     obsidianVaultPaths: fsV2Roots.map((r) => r.path),
+    isConnectorAllowed,
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   registerConnectorMeshSyncables(syncScheduler, connectorMesh, {
@@ -485,6 +494,33 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
 
+  // Org policy (I22): the gate rehydrates last-valid from the store (ungoverned when none). The
+  // baseline is the local floor policy can only TIGHTEN. `policyGate` is the shared instance reused
+  // by the retention floor (Task 8), quorum (Task 9), and the audit shipper (Task 19) — keep it in
+  // scope even though Part C of this task only consumes `enforced().connectorAllow`.
+  const policyStore = new PolicyStore(db);
+  const policyGate = buildPolicyGate(db, policyStore, {
+    retentionDays: auditCfg.toolCallLogRetentionDays,
+    hitlRequired: new Set<string>(),
+    quorum: loadNimbusQuorumFromConfigDir(paths.configDir),
+  });
+  // Connector allowlist enforcement: audit + block connectors not permitted by policy.
+  const enforcedConnectorAllow = policyGate.enforced().connectorAllow;
+  const { blocked: blockedConnectors } = partitionByAllowlist(
+    [...CONNECTOR_SERVICE_IDS],
+    enforcedConnectorAllow,
+  );
+  for (const id of blockedConnectors) {
+    appendAuditEntry(db, {
+      actionType: "policy.connector.blocked",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({ connector: id }),
+      timestamp: Date.now(),
+    });
+  }
+  const isConnectorAllowed = (serviceId: string): boolean =>
+    enforcedConnectorAllow === undefined || enforcedConnectorAllow.includes(serviceId);
+
   const { syncScheduler, connectorMesh } = await createSchedulerWithMesh(
     paths,
     vault,
@@ -493,6 +529,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     localIndex,
     notifications,
     syncLogger,
+    isConnectorAllowed,
   );
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
