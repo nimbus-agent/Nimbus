@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-08T15:06:51.885Z",
+  "generated_at": "2026-06-08T15:16:41.264Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -622,10 +622,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 77.23
     },
-    "packages/gateway/src/platform/assemble-sync-registrations.ts": {
-      "min_line_pct": 54.76,
-      "min_branch_pct": 80
-    },
     "packages/gateway/src/platform/dirs.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 50
@@ -661,10 +657,6 @@
     "packages/gateway/src/sync/rate-limiter.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/sync/scheduler.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.2
     },
     "packages/gateway/src/teamvault/team-vault-view.ts": {
       "min_line_pct": 80,
