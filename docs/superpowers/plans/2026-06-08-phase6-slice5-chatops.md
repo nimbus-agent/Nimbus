@@ -22,6 +22,17 @@
 
 ---
 
+## Plan review resolutions (2026-06-08)
+
+Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phase6-slice5-chatops-review.md):
+
+| Item | Disposition | Where |
+|------|-------------|-------|
+| **Q1** add per-method `@nimbus-dev/client` wrappers | **Declined (clarified)** — verified the client uses a generic `ipc.call(method, params)`; no per-method wrappers exist for `policy.*`/`identity.*`, so none are needed for `chatops.*`. Task 10 Step 6 now says so explicitly. |
+| **Q2** Teams JWKS offline / HMAC fallback | **Declined HMAC (conflicts with approved spec §7) + documented mitigation** — Teams bots are architecturally online; keys are disk-cached in `oidc_jwks_cache` with a long TTL and survive transient outages; cold-start-during-outage fails closed (correct). Task 9 Step 6. |
+| **S1** bound the Slack dedupe set | **Fixed** — Task 9 Step 3: `Set` + insertion-order queue capped at 1000, FIFO eviction, with a test. |
+| **S2** consolidate `slack_socket_open` | **Fixed** — Task 8 Step 4 now defines the full `slack_socket_open` tool contract (`{} → { url }`); Task 9 only consumes it. |
+
 ## File structure (created/modified)
 
 **New — `packages/gateway/src/chatops/`:**
@@ -1487,7 +1498,23 @@ reg(
   },
 );
 ```
-> If `slackInvokeJson` hardcodes the user token, extract a `slackInvokeJsonWithToken(token, method, body, label)` helper and have `slackInvokeJson` delegate with `requireProcessEnv("SLACK_USER_ACCESS_TOKEN")`. Add `slack_socket_open` per the Task 9 transport decision (its exact shape is fixed by the Step-0 spike there); register it only once that decision is recorded.
+> If `slackInvokeJson` hardcodes the user token, extract a `slackInvokeJsonWithToken(token, method, body, label)` helper and have `slackInvokeJson` delegate with `requireProcessEnv("SLACK_USER_ACCESS_TOKEN")`.
+
+**`slack_socket_open` — interface contract (review S2).** Define the tool here so the connector edits are self-contained; the adapter's *use* of it lands in Task 9. The tool keeps the cloud call inside the connector (MCP-only) and returns a short-lived Socket Mode URL the adapter then holds:
+```typescript
+// schema: no inputs; output: { url: string } (a wss:// URL valid for ~30s)
+const slackSocketOpenSchema = z.object({});
+reg(
+  "slack_socket_open",
+  "Open a Slack Socket Mode connection and return the short-lived wss:// URL (app-level token).",
+  slackSocketOpenSchema,
+  async () => {
+    const appToken = requireProcessEnv("SLACK_APP_TOKEN"); // xapp-… (Socket Mode)
+    return slackInvokeJsonWithToken(appToken, "apps.connections.open", {}, "Slack apps.connections.open");
+  },
+);
+```
+The adapter (Task 9) calls this tool, reads `result.url`, and opens `new WebSocket(url)`. The MCP call (`apps.connections.open`) stays in the connector; only the socket lifecycle is the adapter's. This contract is fixed regardless of the Task 9 Step-0 spike (the spike only chooses adapter-owned-WS vs streaming-notifications for *consuming* events — the open-URL tool is needed either way).
 
 - [ ] **Step 5: Add the Teams tools**
 
@@ -1640,7 +1667,9 @@ export class SlackEventNormalizer {
   }
 }
 ```
-> The class body of `SlackSocketAdapter implements ChatTransport` holds: a `Set<string>` of seen dedupe keys (bounded, FIFO-evicted), the `ws` handle, `start()` that calls the connector `slack_socket_open` to get `{ url }` then opens `new WebSocket(url)`, `onmessage` → normalize → dedupe → `handler(m)`, `onclose` → `setTimeout(reconnect, computeBackoffMs(attempt++))`, and a ping/pong keepalive. Implement it with these helpers; keep cloud calls in the connector.
+> The class body of `SlackSocketAdapter implements ChatTransport` holds: a **bounded FIFO dedupe set** (review S1), the `ws` handle, `start()` that calls the connector `slack_socket_open` to get `{ url }` then opens `new WebSocket(url)`, `onmessage` → normalize → dedupe → `handler(m)`, `onclose` → `setTimeout(reconnect, computeBackoffMs(attempt++))`, and a ping/pong keepalive. Implement it with these helpers; keep cloud calls in the connector.
+>
+> **Dedupe set eviction (review S1) — concrete strategy:** use a `Set<string>` plus an insertion-order queue capped at `MAX_DEDUPE = 1000`. On each new key: `if (seen.has(key)) return; // already processed` else `seen.add(key); queue.push(key); if (queue.length > MAX_DEDUPE) seen.delete(queue.shift()!);`. This bounds memory to ~1000 keys regardless of uptime. (Slack redelivers only recent events on reconnect, so a 1000-key window comfortably covers the retry horizon; no time-based expiry needed.) Add a unit test: inserting 1001 distinct keys evicts the oldest (key #1 is re-processable, key #1001 is deduped).
 
 - [ ] **Step 4: Write the failing test for Teams webhook normalization + JWT auth seam**
 
@@ -1721,6 +1750,8 @@ export interface TeamsEventsSurface {
 }
 ```
 > The `checkAuth` step currently always runs `requireBearer`; for `teamsEvents` skip the static-bearer check (return `{ fingerprint: "teams-bot" }`) and do the JWT validation inside `runTeamsEventsRoute`, mirroring how SCIM uses its own token. Keep body-cap + rate-limit + audit-on-reject.
+>
+> **Offline / restricted-network behavior (review Q2).** No separate offline mode and **no HMAC/static-secret fallback** — the latter was explicitly rejected in the spec design-review (spec §7: "there is no shared-secret/proxy mode; validation is in-gateway"), and a Teams Bot Framework bot is architecturally online by definition: it receives activities *from* Microsoft's cloud and must POST replies *back* to a Microsoft service URL with a Microsoft-issued app token, so it cannot operate without reaching Microsoft at all. The real resilience is already built in: `identity/jwks-cache.ts` persists fetched keys to the **on-disk `oidc_jwks_cache` SQLite table** with a TTL (`jwksMaxAgeSeconds`), and Microsoft's Bot Framework signing keys rotate slowly — so a cached key survives gateway restarts and transient outages; only a cold start during a full outage fails closed (401), which is the correct fail-closed posture. Set the Teams JWKS TTL generously (reuse the identity `jwksMaxAgeSeconds`, default 86400s). This is documented, not a code change.
 
 - [ ] **Step 7: Run tests; lint; commit**
 
@@ -1831,7 +1862,9 @@ export function dispatchChatopsRpc(method: string, params: unknown, ctx: Chatops
 
 - [ ] **Step 6: Add the `nimbus chatops` CLI subcommand**
 
-In the CLI command tree, add `chatops` with `status` (calls `chatops.status`, prints platforms + connected), `start`, `stop`, and `test "<message>"` (calls `chatops.test`). Follow the existing `nimbus policy` / `nimbus team` subcommand structure. Add a CLI unit test mirroring an existing subcommand test.
+In the CLI command tree, add `chatops` with `status` (calls `chatops.status`, prints platforms + connected), `start`, `stop`, and `test "<message>"` (calls `chatops.test`). Follow the existing `nimbus policy` / `nimbus team` subcommand structure. Add a CLI unit test mirroring an existing subcommand test (e.g. `commands/policy.test.ts`, which asserts `{ method: "policy.show", params: {} }`).
+
+> **No `packages/client` change needed (review Q1 — verified).** The typed `@nimbus-dev/client` exposes a **generic** `ipc.call<T>(method, params)` (see `nimbus-client.ts`); it does **not** carry per-method wrappers. Every Slice 3/4 method (`identity.bind`, `policy.show`, `connector.sync`, …) is invoked via `client.call("<method>", params)` — there is no `policy`/`identity` method on the client, and `grep` over `packages/client/src` finds none. So `chatops.*` is reached the same way (`c.call("chatops.status", {})`) and the CLI compiler will **not** fail on missing types. (Re-running `cd packages/client && bun run build` is only needed because of the worktree dist gotcha, not because of new methods.)
 
 - [ ] **Step 7: Run tests; lint; commit**
 
