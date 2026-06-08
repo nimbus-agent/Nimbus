@@ -422,6 +422,22 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I23 — ChatOps operational posts are bounded to server-derived destinations
+
+**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. Static **D17**.
+
+**Wired at:**
+
+- `packages/gateway/src/chatops/reply-dispatcher.ts` `ReplyDispatcher.send()` — the sole operational post path; takes a `ReplyTarget` (server-derived, not caller-supplied) and posts only to the channel it names.
+- Enforced statically by **D17** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `packages/gateway/src/chatops/reply-dispatcher.ts` and `packages/gateway/src/chatops/transport/` (excluding `.test.ts` files) that references `slack_chat_post` or `teams_chat_post` causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I23` describe block: (a) `ReplyDispatcher.send` signature takes a `ReplyTarget` (not a raw channel); (b) no chatops module outside `reply-dispatcher`/`transport/` references the connector post tools.
+
+**Anti-pattern:** accepting a destination channel as a command/tool argument on the operational path; importing `slack_chat_post` or `teams_chat_post` outside `reply-dispatcher.ts` or `transport/`; introducing a second "fast-path" post helper that bypasses `ReplyDispatcher.send`.
+
+**How to comply:** all chatops post calls go through `ReplyDispatcher.send(target, text)` where `target` is a server-derived `ReplyTarget`. Arbitrary-destination posts (channel id from a user command) must be routed through the HITL-gated `*.message.post` action type (I2) instead.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

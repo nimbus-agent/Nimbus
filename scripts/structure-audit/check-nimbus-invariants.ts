@@ -300,6 +300,38 @@ export function checkPolicyTomlImportInvariant(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// D17 (I23) — the connector operational-post tools (`slack_chat_post` / `teams_chat_post`) may be
+// referenced ONLY from `packages/gateway/src/chatops/reply-dispatcher.ts` and
+// `packages/gateway/src/chatops/transport/`. Any other module posting directly would bypass the
+// bounded-destination reply surface (I23) and could launder the HITL-gated `*.message.post` action.
+const CHATOPS_POST_ALLOWED_PREFIXES = [
+  "packages/gateway/src/chatops/reply-dispatcher.ts",
+  "packages/gateway/src/chatops/transport/",
+];
+const CHATOPS_POST_RE = /\b(?:slack_chat_post|teams_chat_post)\b/;
+
+export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (CHATOPS_POST_ALLOWED_PREFIXES.some((p) => f.relPath === p || f.relPath.startsWith(p)))
+      continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (CHATOPS_POST_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D17-chatops-reply-surface",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -406,6 +438,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D16 parsePolicyToml imported outside policy/ — read EnforcedPolicy via policy-gate.ts; I22 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkChatopsReplySurfaceInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D17 chatops post tool referenced outside reply-dispatcher/transport — bypasses I23: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

@@ -691,6 +691,35 @@ describe("I21 — quorum counts only DISTINCT authenticated peers", () => {
   });
 });
 
+describe("I23 — ChatOps operational posts are bounded to originating / policy-notify channels", () => {
+  test("(a) ReplyDispatcher derives the destination from a server-side ReplyTarget, not caller input", async () => {
+    const src = await readFile(resolve(import.meta.dir, "chatops/reply-dispatcher.ts"), "utf8");
+    expect(src).toMatch(/send\(target: ReplyTarget, text: string\)/);
+    expect(src).toMatch(/target\.kind === "originating"/);
+    expect(src).toMatch(/notifyChannelsFor\(target\.namespace\)/);
+  });
+
+  test("(b) no chatops module outside reply-dispatcher/transport references the connector post tools (D17)", async () => {
+    const dir = resolve(import.meta.dir, "chatops");
+    const offenders: string[] = [];
+    async function walk(d: string, rel: string): Promise<void> {
+      for (const ent of await readdir(d, { withFileTypes: true })) {
+        const childRel = rel === "" ? ent.name : `${rel}/${ent.name}`;
+        if (ent.isDirectory()) {
+          await walk(resolve(d, ent.name), childRel);
+          continue;
+        }
+        if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
+        if (childRel === "reply-dispatcher.ts" || childRel.startsWith("transport/")) continue;
+        const c = await readFile(resolve(d, ent.name), "utf8");
+        if (/\b(?:slack_chat_post|teams_chat_post)\b/.test(c)) offenders.push(childRel);
+      }
+    }
+    await walk(dir, "");
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("I22 — org policy applied only from a signature-verified bundle, monotonic-stricter", () => {
   const baseline: LocalBaseline = {
     retentionDays: 7,
