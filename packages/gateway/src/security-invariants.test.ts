@@ -271,8 +271,12 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
 describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
   test("http-server.ts imports dispatchWriteRoute from ./http-write-routes.ts", async () => {
     const src = await read("packages/gateway/src/ipc/http-server.ts");
+    // The named-import block may span multiple lines and carry sibling imports
+    // (e.g. `type PolicyAuthorResult`, `WRITE_ROUTE_ALLOWLIST`); assert the
+    // braced block both contains `dispatchWriteRoute` and resolves to the
+    // `./http-write-routes.ts` module.
     expect(src).toMatch(
-      /import\s*\{\s*dispatchWriteRoute\s*(?:,\s*\w+\s*)?\}\s*from\s*['"]\.\/http-write-routes\.ts['"]/,
+      /import\s*\{[\s\S]*?\bdispatchWriteRoute\b[\s\S]*?\}\s*from\s*['"]\.\/http-write-routes\.ts['"]/,
     );
   });
 
@@ -284,16 +288,18 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning routes", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
-    // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes.
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(4);
+    // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
+    // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b).
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(5);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
       "PATCH /scim/v2/Users/{id}",
       "DELETE /scim/v2/Users/{id}",
+      "PUT /v1/admin/policy",
     ]);
   });
 });
