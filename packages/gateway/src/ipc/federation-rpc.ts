@@ -2,7 +2,9 @@ import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
-import { answerFederatedAuditExport } from "../federation/audit-export.ts";
+import type { FederationAuditEntry } from "../federation/audit-export.ts";
+import { answerFederatedAuditExport, exportFederationAudit } from "../federation/audit-export.ts";
+import { mergeTeamAudit, type PeerAuditStream } from "../federation/audit-merge.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
@@ -83,6 +85,34 @@ function requireString(rec: Record<string, unknown>, key: string): string {
     throw new FederationRpcError(-32602, `ERR_INVALID_PARAMS: ${key} must be a non-empty string`);
   }
   return v;
+}
+
+/** Narrow an over-the-wire federation.auditExport result to its entries, or undefined on
+ *  an error/non-ok/malformed shape (the peer denied, or sent something unexpected → skip it). */
+function extractAuditEntries(result: unknown): FederationAuditEntry[] | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const r = result as { kind?: unknown; entries?: unknown };
+  if (r.kind !== "ok" || !Array.isArray(r.entries)) return undefined;
+  const out: FederationAuditEntry[] = [];
+  for (const e of r.entries) {
+    if (e === null || typeof e !== "object") return undefined;
+    const rec = e as Record<string, unknown>;
+    if (
+      typeof rec["actionType"] !== "string" ||
+      typeof rec["hitlStatus"] !== "string" ||
+      typeof rec["hash"] !== "string" ||
+      typeof rec["timestamp"] !== "number"
+    ) {
+      return undefined;
+    }
+    out.push({
+      actionType: rec["actionType"],
+      hitlStatus: rec["hitlStatus"],
+      hash: rec["hash"],
+      timestamp: rec["timestamp"],
+    });
+  }
+  return out;
 }
 
 function parseFilters(raw: unknown): NamespaceFilter[] {
@@ -227,6 +257,49 @@ export async function dispatchFederationRpc(
           sinceMs,
         },
       );
+    },
+    // Asker-side: build the TEAM-WIDE merged federation-audit timeline. Includes THIS gateway's
+    // local federation-audit slice (tagged "local") + each paired peer's slice fetched OVER THE WIRE
+    // via federation.auditExport (Task 20's consent-gated handler — requires the requester hold a
+    // grant on `namespace` at the peer). Best-effort: an unreachable / denying peer is SKIPPED, never
+    // fatal, so the local stream + every reachable peer still merges. Pure merge (sort+tag) is
+    // mergeTeamAudit. Local-only entrypoint (mirrors federation.ask: requires asker-side deps).
+    "team.auditMerged": async (p) => {
+      const rec = asRecord(p);
+      const sinceMsRaw = rec["sinceMs"];
+      const sinceMs = typeof sinceMsRaw === "number" ? sinceMsRaw : 0;
+      const namespace = requireString(rec, "namespace");
+      const purpose = typeof rec["purpose"] === "string" ? rec["purpose"] : "team-audit";
+
+      const streams: PeerAuditStream[] = [
+        { peerId: "local", entries: exportFederationAudit(ctx.db, { sinceMs }) },
+      ];
+
+      // Fan out to paired peers only when the asker-side transport is wired (index + identity).
+      if (ctx.index !== undefined && ctx.selfIdentity !== undefined) {
+        const selfIdentity = ctx.selfIdentity;
+        for (const row of ctx.index.listLanPeers()) {
+          if (row.host_ip === null || row.host_port === null) continue;
+          try {
+            const result = await sendFederatedOverWire(
+              row.host_ip,
+              row.host_port,
+              selfIdentity,
+              row.peer_pubkey,
+              "federation.auditExport",
+              { namespace, purpose, sinceMs },
+            );
+            const entries = extractAuditEntries(result);
+            if (entries !== undefined) {
+              streams.push({ peerId: row.peer_id, entries });
+            }
+          } catch {
+            // Best-effort: unreachable peer / wire error / consent denial → skip this peer.
+          }
+        }
+      }
+
+      return { entries: mergeTeamAudit(streams) };
     },
     "federation.consentRespond": (p) => {
       const rec = asRecord(p);

@@ -46,6 +46,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   // quorum; federation.requestApproval is the delegate answering an owner's routed HITL approval —
   // it forces the owner peerId from the authenticated session (I17/R1), audits its own decision, and
   // returns only { approved }, never secret material; the owner re-checks delegate authority via I20).
+  "team", // team.auditMerged — local-only asker entrypoint (fans out federation.auditExport); not answerable over LAN
   "teamvault", // teamvault.put/delete/grant/revoke/list — secret + RBAC management, never over LAN
   "hitl", // hitl.delegate/revokeDelegation/listDelegations/pendingQueue — local owner control only
   // Identity & SCIM (Slice 3): all management/read methods are local/CLI/Tauri-only — never over LAN.
