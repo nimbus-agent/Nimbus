@@ -32,6 +32,7 @@ import {
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
+import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
@@ -389,6 +390,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     V35_TEAM_VAULT_SQL,
   ),
   simpleStep(35, 36, "org_policy_state + policy_anchor_pin (policy v36)", POLICY_V36_SQL),
+  simpleStep(36, 37, "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37)", GDPR_V37_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -428,6 +430,7 @@ const BACKFILL_LABELS: readonly string[] = [
   "identity_session/scim_user/identity_binding/oidc_jwks_cache (identity v34) (backfilled)",
   "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
   "org_policy_state + policy_anchor_pin (policy v36) (backfilled)",
+  "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
