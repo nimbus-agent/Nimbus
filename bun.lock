@@ -90,7 +90,7 @@
       "name": "@nimbus/gateway",
       "version": "0.1.0",
       "dependencies": {
-        "@mastra/core": "^1.40.0",
+        "@mastra/core": "^1.41.0",
         "@mastra/mcp": "^1.9.1",
         "@nimbus-dev/sdk": "workspace:*",
         "@noble/hashes": "^2.2.0",
