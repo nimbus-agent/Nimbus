@@ -11,6 +11,7 @@ import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
+import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
@@ -654,6 +655,18 @@ export async function tryDispatchPolicyRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchChatopsRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("chatops.")) return phase4RpcSkipped;
+  if (ctx.options.chatopsRpcCtx === undefined) return phase4RpcSkipped;
+  const out = await dispatchChatopsRpc(method, params, ctx.options.chatopsRpcCtx);
+  if (out.kind === "hit") return out.value;
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -703,6 +716,8 @@ export async function tryDispatchPhase4Rpc(
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
   const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
+  const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
+  if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
   const adminOutcome = tryDispatchAdminRpc(ctx, method, params);
   if (adminOutcome !== phase4RpcSkipped) return adminOutcome;
   return tryDispatchReindexRpc(ctx, method, params, clientId);

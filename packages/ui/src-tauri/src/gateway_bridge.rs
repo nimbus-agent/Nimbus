@@ -63,6 +63,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "audit.getSummary",
     "audit.list",
     "audit.verify",
+    "chatops.status",
     "connector.list",
     "connector.listStatus",
     "connector.setConfig",
@@ -461,8 +462,18 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_chatops_status_read_only() {
+        // Slice 5: only the read-only status snapshot is renderer-callable; lifecycle
+        // (chatops.start/stop) and chatops.test stay off the Tauri surface (I7).
+        assert!(is_method_allowed("chatops.status"));
+        assert!(!is_method_allowed("chatops.start"));
+        assert!(!is_method_allowed("chatops.stop"));
+        assert!(!is_method_allowed("chatops.test"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 82);
+        assert_eq!(ALLOWED_METHODS.len(), 83);
     }
 
     #[test]

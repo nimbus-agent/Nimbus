@@ -9,7 +9,14 @@ describe("checkLanMethodAllowed", () => {
   });
 
   test("rejects forbidden namespaces regardless of grant-write", () => {
-    for (const method of ["vault.list", "updater.checkNow", "lan.grantWrite", "profile.create"]) {
+    for (const method of [
+      "vault.list",
+      "updater.checkNow",
+      "lan.grantWrite",
+      "profile.create",
+      "chatops.status",
+      "chatops.start",
+    ]) {
       expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
         LanError,
       );

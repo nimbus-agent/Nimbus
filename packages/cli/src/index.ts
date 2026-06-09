@@ -7,6 +7,7 @@ import {
   runAudit,
   runBench,
   runCatchupCli,
+  runChatops,
   runConfig,
   runConnector,
   runData,
@@ -103,6 +104,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   identity: runIdentity,
   scim: runScim,
   policy: runPolicy,
+  chatops: runChatops,
   admin: runAdmin,
   "mcp-server": runMcpServer,
 };

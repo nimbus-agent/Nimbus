@@ -12,6 +12,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "updater",
   "lan",
   "profile",
+  "chatops", // Slice 5 — local/Tauri-read-only bot lifecycle; never answerable over the wire
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace
   "security", // exfiltration-class — credential locations must not leak to LAN peers
