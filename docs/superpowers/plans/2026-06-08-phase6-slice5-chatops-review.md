@@ -1,6 +1,6 @@
 # Phase 6 Slice 5 — ChatOps Plan Review
 
-This document lists open questions, suggestions, and potential improvements identified during the review of the [2026-06-08-phase6-slice5-chatops.md](file:///C:/gitrep/Nimbus/.worktrees/phase6-slice5-chatops/docs/superpowers/plans/2026-06-08-phase6-slice5-chatops.md) implementation plan.
+This document lists open questions, suggestions, and potential improvements identified during the review of the [2026-06-08-phase6-slice5-chatops.md](./2026-06-08-phase6-slice5-chatops.md) implementation plan.
 
 ---
 
