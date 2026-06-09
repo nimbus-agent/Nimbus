@@ -1242,7 +1242,7 @@
         "@vitest/coverage-v8": "^4.1.8",
         "jsdom": "^29.1.1",
         "tailwindcss": "^4.3.0",
-        "vite": "^7.3.3",
+        "vite": "^7.3.5",
         "vitest": "^4.1.8",
       },
     },
