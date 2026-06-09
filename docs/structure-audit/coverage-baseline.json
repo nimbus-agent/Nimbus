@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-08T15:16:41.264Z",
+  "generated_at": "2026-06-09T17:56:01.856Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -461,26 +461,6 @@
     "packages/gateway/src/graph/graph-populator.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 79.79
-    },
-    "packages/gateway/src/identity/deprovision.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/gateway/src/identity/identity-boot.ts": {
-      "min_line_pct": 79.41,
-      "min_branch_pct": 62.5
-    },
-    "packages/gateway/src/identity/identity-runtime.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 61.11
-    },
-    "packages/gateway/src/identity/oidc-device-flow.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.08
-    },
-    "packages/gateway/src/identity/verifier.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 69.57
     },
     "packages/gateway/src/index/drift-hints.ts": {
       "min_line_pct": 80,

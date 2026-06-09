@@ -53,6 +53,33 @@ describe("deprovisionUser", () => {
     expect(ids.getScimUser("u-alice")?.active).toBe(false);
   });
 
+  test("skips continue branch for namespaces where peer has no active grant", () => {
+    const db = freshDb();
+    const ns = new NamespaceStore(db);
+    const ids = new IdentityStore(db);
+    // Publish two namespaces; grant the peer only in ns:has (ns:none has no grant).
+    ns.publish("ns:has", [{ kind: "service", value: "github" }]);
+    ns.publish("ns:none", [{ kind: "service", value: "github" }]);
+    ns.grant("ns:has", "peer:alice", "viewer", true);
+    ids.upsertScimUser(
+      { externalId: "u-alice", userName: "alice", email: "a@acme.com", active: true, attrs: {} },
+      1,
+    );
+    ids.bind("u-alice", "peer:alice", "admin", 1);
+
+    const revoked = deprovisionUser({ db, store: ns, identity: ids, nowMs: 2 }, "u-alice");
+
+    // The peer is still returned even though ns:none was skipped via continue.
+    expect(revoked).toContain("peer:alice");
+    // The grant in ns:has was revoked (continue was NOT taken here).
+    expect(ns.getActiveGrant("ns:has", "peer:alice")).toBeUndefined();
+    // The SCIM user was deactivated.
+    expect(ids.getScimUser("u-alice")?.active).toBe(false);
+    // ns:none had no grant, so the continue branch was taken — revoke was never called for it.
+    // Confirm it remains undefined (nothing to revoke, nothing changed).
+    expect(ns.getActiveGrant("ns:none", "peer:alice")).toBeUndefined();
+  });
+
   test("rolls back atomically — a mid-cascade failure leaves NO grant revoked (review P1)", () => {
     const db = freshDb();
     const ids = new IdentityStore(db);

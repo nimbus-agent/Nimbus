@@ -55,8 +55,9 @@ function realSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** `grant_type=refresh_token` POST mirroring the device-flow form helper. */
-async function refreshTokens(
+/** `grant_type=refresh_token` POST mirroring the device-flow form helper.
+ *  Exported for direct branch-coverage testing (B2); still used internally by buildProductionDeps. */
+export async function refreshTokens(
   d: OidcDiscovery,
   clientId: string,
   refreshToken: string,
