@@ -111,7 +111,7 @@
     "build": "bun run --filter '*' build",
     "build:debug": "bun scripts/build-debug.ts",
     "build:release": "bun scripts/build-release.ts",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' --sequential typecheck",
     "typecheck:no-docs": "bun run --filter '!@nimbus/docs' --sequential typecheck",
     "audit:high": "bun audit --audit-level high",
     "check-package": "bun scripts/check-package.ts",
