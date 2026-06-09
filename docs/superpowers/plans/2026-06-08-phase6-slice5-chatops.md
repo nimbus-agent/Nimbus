@@ -26,8 +26,8 @@
 
 Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phase6-slice5-chatops-review.md):
 
-| Item | Disposition | Where |
-|------|-------------|-------|
+| Item | Disposition |
+|------|-------------|
 | **Q1** add per-method `@nimbus-dev/client` wrappers | **Declined (clarified)** — verified the client uses a generic `ipc.call(method, params)`; no per-method wrappers exist for `policy.*`/`identity.*`, so none are needed for `chatops.*`. Task 10 Step 6 now says so explicitly. |
 | **Q2** Teams JWKS offline / HMAC fallback | **Declined HMAC (conflicts with approved spec §7) + documented mitigation** — Teams bots are architecturally online; keys are disk-cached in `oidc_jwks_cache` with a long TTL and survive transient outages; cold-start-during-outage fails closed (correct). Task 9 Step 6. |
 | **S1** bound the Slack dedupe set | **Fixed** — Task 9 Step 3: `Set` + insertion-order queue capped at 1000, FIFO eviction, with a test. |
@@ -36,6 +36,7 @@ Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phas
 ## File structure (created/modified)
 
 **New — `packages/gateway/src/chatops/`:**
+
 - `types.ts` — `ChatMessage`, `ParsedCommand`, `ChatIdentity`, `ReplyTarget`, `ChatPlatform`, `RefusalReason`.
 - `chatops-request-context.ts` — AsyncLocalStorage carrying the per-write owner-routing context.
 - `identity-mapper.ts` — platform userId → email (cached) → SCIM identity; live local authz recheck.
@@ -51,6 +52,7 @@ Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phas
 - (tests co-located as `*.test.ts`.)
 
 **Modified:**
+
 - `packages/gateway/src/policy/types.ts`, `policy/policy-toml.ts`, `policy/policy-gate.ts` — `chatops` policy fields.
 - `packages/gateway/src/config/nimbus-toml.ts` — `[chatops]` config section.
 - `packages/gateway/src/ipc/http-write-routes.ts` — Teams events route (I13 allowlist 5→6).
@@ -72,6 +74,7 @@ Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phas
 ## Task 1: ChatOps types + `[chatops]` config section
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/types.ts`
 - Create: `packages/gateway/src/chatops/types.test.ts`
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (add `NimbusChatopsToml` + parser, mirroring `[identity]`)
@@ -80,6 +83,7 @@ Dispositions of [`2026-06-08-phase6-slice5-chatops-review.md`](./2026-06-08-phas
 - [ ] **Step 1: Write the failing test for types + config defaults**
 
 `packages/gateway/src/config/nimbus-chatops-toml.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import {
@@ -120,6 +124,7 @@ Expected: FAIL — `parseNimbusChatopsToml`/`DEFAULT_NIMBUS_CHATOPS_TOML` not ex
 - [ ] **Step 3: Add the config section (mirror the `[identity]` idiom)**
 
 In `packages/gateway/src/config/nimbus-toml.ts`, add near the other section types (uses the existing `parseBool`, `parseString`, `parseIntDec`, `forEachSectionEntry`, `loadTomlSection` helpers already in that file):
+
 ```typescript
 export type NimbusChatopsToml = {
   enabled: boolean;
@@ -196,9 +201,11 @@ export function loadNimbusChatopsFromConfigDir(configDir: string): NimbusChatops
   );
 }
 ```
+
 > Note: confirm `parseIntDec` is exported in `nimbus-toml.ts`'s import list from `./toml-primitives.ts`; it is used by `[identity]`'s numeric keys. If named differently there, use the same helper the `[identity]` numeric keys use.
 
 - [ ] **Step 4: Write `chatops/types.ts`**
+
 ```typescript
 // packages/gateway/src/chatops/types.ts
 
@@ -256,6 +263,7 @@ export type RefusalReason =
 ```
 
 `packages/gateway/src/chatops/types.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import type { ChatMessage, ParsedCommand } from "./types.ts";
@@ -282,6 +290,7 @@ Run: `bun test packages/gateway/src/config/nimbus-chatops-toml.test.ts packages/
 Expected: PASS.
 
 - [ ] **Step 6: Lint + commit**
+
 ```bash
 bunx biome check packages/gateway/src/chatops packages/gateway/src/config/nimbus-toml.ts
 git add packages/gateway/src/chatops/types.ts packages/gateway/src/chatops/types.test.ts packages/gateway/src/config/nimbus-toml.ts packages/gateway/src/config/nimbus-chatops-toml.test.ts
@@ -293,6 +302,7 @@ git commit -m "feat(chatops): types + [chatops] config section"
 ## Task 2: Policy schema extension — channel binding + ownership
 
 **Files:**
+
 - Modify: `packages/gateway/src/policy/types.ts` (add `chatops` to `OrgPolicy` + `EnforcedPolicy`)
 - Modify: `packages/gateway/src/policy/policy-toml.ts` (parse `[policy.chatops.channel."<id>"]` + `[policy.chatops.ownership]`)
 - Modify: `packages/gateway/src/policy/policy-gate.ts` (`computeEnforced` carries chatops through; add resolver helpers)
@@ -302,6 +312,7 @@ git commit -m "feat(chatops): types + [chatops] config section"
 - [ ] **Step 1: Write the failing test for parsing + resolution**
 
 `packages/gateway/src/policy/chatops-policy.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { parsePolicyToml } from "./policy-toml.ts";
@@ -381,6 +392,7 @@ Expected: FAIL — `chatops` not on `OrgPolicy`; `resolveChannelBinding`/`resolv
 - [ ] **Step 3: Extend the policy types**
 
 In `packages/gateway/src/policy/types.ts`, add the shared shapes and extend `OrgPolicy` + `EnforcedPolicy`:
+
 ```typescript
 export type UnmappedMode = "refuse" | "public-read";
 
@@ -397,6 +409,7 @@ export interface ChatopsPolicy {
   readonly ownership: ReadonlyMap<string, string>;
 }
 ```
+
 Add `readonly chatops: ChatopsPolicy;` to `OrgPolicy` and `readonly chatops: ChatopsPolicy;` to `EnforcedPolicy`.
 
 > Because `OrgPolicy.chatops` is now required, update the `enforced()` baseline-only branch in `policy-gate.ts` (Step 5) and the empty-policy construction in `policy-toml.ts` (Step 4) to always produce an empty `ChatopsPolicy` (`{ channels: new Map(), ownership: new Map() }`).
@@ -404,6 +417,7 @@ Add `readonly chatops: ChatopsPolicy;` to `OrgPolicy` and `readonly chatops: Cha
 - [ ] **Step 4: Parse the new sections in `policy-toml.ts`**
 
 Add to the `PolicyAccum` interface:
+
 ```typescript
   /** chatops channel bindings keyed by channelId; finalized after the scan. */
   chatopsChannels: Map<string, Record<string, string>>;
@@ -411,17 +425,23 @@ Add to the `PolicyAccum` interface:
   chatopsOwnership: Map<string, string>;
   /** the channelId currently being filled (active [policy.chatops.channel."<id>"]). */
 ```
+
 Initialize them in `parsePolicyToml`'s `acc` literal:
+
 ```typescript
     chatopsChannels: new Map<string, Record<string, string>>(),
     chatopsOwnership: new Map<string, string>(),
 ```
+
 Extend `readHeader` to recognize the two new table forms (mirror the `QUORUM_PREFIX` idiom):
+
 ```typescript
 const CHATOPS_CHANNEL_PREFIX = '[policy.chatops.channel."';
 const CHATOPS_OWNERSHIP_HEADER = "[policy.chatops.ownership]";
 ```
+
 In `readHeader`, before the final `return { section: trimmed }`:
+
 ```typescript
   if (trimmed.startsWith(CHATOPS_CHANNEL_PREFIX) && trimmed.endsWith('"]')) {
     const id = trimmed.slice(CHATOPS_CHANNEL_PREFIX.length, -2);
@@ -431,7 +451,9 @@ In `readHeader`, before the final `return { section: trimmed }`:
   }
   if (trimmed === CHATOPS_OWNERSHIP_HEADER) return { section: "chatopsOwnership" };
 ```
+
 Thread a `chatopsChannelId` field alongside `quorumId` through `readHeader`'s return type, the main-loop locals, and `dispatchKey`. Add the dispatch arms:
+
 ```typescript
     case "chatopsChannel": {
       if (chatopsChannelId !== undefined) {
@@ -445,9 +467,11 @@ Thread a `chatopsChannelId` field alongside `quorumId` through `readHeader`'s re
       acc.chatopsOwnership.set(stripQuotes(key), parseString(valRaw));
       break;
 ```
+
 > `splitKeyValue` yields the raw key token; for the ownership table the key is a quoted glob like `"payment-*"`. Add a tiny local `stripQuotes(s)` (`s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s`) — or reuse `parseString` if it accepts a bare quoted token in this codebase; verify against `toml-primitives.ts`.
 
 Add a finalizer and include `chatops` in the returned `OrgPolicy`:
+
 ```typescript
 function finalizeChatops(
   channels: Map<string, Record<string, string>>,
@@ -465,6 +489,7 @@ function finalizeChatops(
   return { channels: out, ownership: new Map(ownership) };
 }
 ```
+
 In the return literal: `chatops: finalizeChatops(acc.chatopsChannels, acc.chatopsOwnership),`.
 
 - [ ] **Step 5: Carry `chatops` through `computeEnforced`; write `chatops-policy.ts`**
@@ -472,6 +497,7 @@ In the return literal: `chatops: finalizeChatops(acc.chatopsChannels, acc.chatop
 In `policy-gate.ts` `computeEnforced`, add to the returned object: `chatops: policy.chatops,` (chatops bindings are pass-through — not monotonic-merged; they are additive governance, and a binding can only *restrict* who may use a channel). In the `enforced()` ungoverned branch, add `chatops: { channels: new Map(), ownership: new Map() }`.
 
 `packages/gateway/src/policy/chatops-policy.ts`:
+
 ```typescript
 import type { ChatopsChannelBinding, ChatopsPolicy } from "./types.ts";
 
@@ -535,6 +561,7 @@ export function resolveOwner(chatops: ChatopsPolicy, resource: string): OwnerRes
 
 Run: `bun test packages/gateway/src/policy/chatops-policy.test.ts packages/gateway/src/policy`
 Expected: PASS (and existing policy tests stay green).
+
 ```bash
 bunx biome check packages/gateway/src/policy
 git add packages/gateway/src/policy
@@ -546,12 +573,14 @@ git commit -m "feat(chatops): signed-policy channel binding + owner resolution (
 ## Task 3: Identity mapper (cache + live-local authz recheck)
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/identity-mapper.ts`
 - Create: `packages/gateway/src/chatops/identity-mapper.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 `packages/gateway/src/chatops/identity-mapper.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { ChatopsIdentityMapper } from "./identity-mapper.ts";
@@ -643,6 +672,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement the mapper**
 
 `packages/gateway/src/chatops/identity-mapper.ts`:
+
 ```typescript
 import type { ChatIdentity, ChatPlatform } from "./types.ts";
 
@@ -724,6 +754,7 @@ export class ChatopsIdentityMapper {
 
 Run: `bun test packages/gateway/src/chatops/identity-mapper.test.ts`
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/chatops/identity-mapper.ts
 git add packages/gateway/src/chatops/identity-mapper.ts packages/gateway/src/chatops/identity-mapper.test.ts
@@ -735,12 +766,14 @@ git commit -m "feat(chatops): identity mapper with TTL email cache + live-local 
 ## Task 4: Command parser (normalization + NL/`run` split + write grammar)
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/command-parser.ts`
 - Create: `packages/gateway/src/chatops/command-parser.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 `packages/gateway/src/chatops/command-parser.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { normalizeChatText, parseCommand } from "./command-parser.ts";
@@ -801,6 +834,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement the parser**
 
 `packages/gateway/src/chatops/command-parser.ts`:
+
 ```typescript
 import type { ParsedCommand } from "./types.ts";
 
@@ -864,6 +898,7 @@ export function parseCommand(rawText: string, knownActions: ReadonlySet<string>)
 
 Run: `bun test packages/gateway/src/chatops/command-parser.test.ts`
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/chatops/command-parser.ts
 git add packages/gateway/src/chatops/command-parser.ts packages/gateway/src/chatops/command-parser.test.ts
@@ -875,6 +910,7 @@ git commit -m "feat(chatops): command parser — normalization + NL/run split + 
 ## Task 5: Reply dispatcher + invariant I23 + static D17
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/reply-dispatcher.ts`
 - Create: `packages/gateway/src/chatops/reply-dispatcher.test.ts`
 - Modify: `packages/gateway/src/security-invariants.test.ts` (add I23 block)
@@ -884,6 +920,7 @@ git commit -m "feat(chatops): command parser — normalization + NL/run split + 
 - [ ] **Step 1: Write the failing test for the dispatcher**
 
 `packages/gateway/src/chatops/reply-dispatcher.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { ReplyDispatcher } from "./reply-dispatcher.ts";
@@ -931,6 +968,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement the dispatcher (bounded destination)**
 
 `packages/gateway/src/chatops/reply-dispatcher.ts`:
+
 ```typescript
 import type { ChatPlatform, ReplyTarget } from "./types.ts";
 
@@ -975,6 +1013,7 @@ Expected: PASS.
 - [ ] **Step 5: Add the D17 static check**
 
 In `scripts/structure-audit/check-nimbus-invariants.ts`, add (mirroring the D16 `checkPolicyTomlImportInvariant` structure):
+
 ```typescript
 // D17 (I23) — the connector operational-post tools (`slack_chat_post` / `teams_chat_post`) and the
 // Socket-Mode post primitive may be referenced ONLY from `packages/gateway/src/chatops/reply-dispatcher.ts`
@@ -1007,7 +1046,9 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
   return out;
 }
 ```
+
 Register it in the main run loop next to the D16 block:
+
 ```typescript
   if (mode === "binary-only" || mode === "all") {
     const v = checkChatopsReplySurfaceInvariant(files);
@@ -1023,6 +1064,7 @@ Register it in the main run loop next to the D16 block:
 - [ ] **Step 6: Add the I23 runtime invariant test**
 
 In `packages/gateway/src/security-invariants.test.ts`, add (mirroring the existing source-scan invariant blocks; use `readFile`/`readdir` already imported there):
+
 ```typescript
 describe("I23 — ChatOps operational posts are bounded to originating / policy-notify channels", () => {
   test("(a) ReplyDispatcher derives the destination from a server-side ReplyTarget, not caller input", async () => {
@@ -1068,6 +1110,7 @@ Also update the "Static complement" sentence in `docs/SECURITY-INVARIANTS.md` an
 Run: `bun test packages/gateway/src/chatops/reply-dispatcher.test.ts && bun test packages/gateway/src/security-invariants.test.ts -t I23`
 Run: `bun scripts/structure-audit/check-nimbus-invariants.ts` (expect exit 0; D17 finds no offenders yet)
 Expected: PASS / exit 0.
+
 ```bash
 git add packages/gateway/src/chatops/reply-dispatcher.ts packages/gateway/src/chatops/reply-dispatcher.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.ts docs/SECURITY-INVARIANTS.md CLAUDE.md GEMINI.md
 git commit -m "feat(chatops): bounded reply dispatcher + invariant I23 + static D17 (triple)"
@@ -1078,6 +1121,7 @@ git commit -m "feat(chatops): bounded reply dispatcher + invariant I23 + static 
 ## Task 6: Owner-routing context + approval presenter
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/chatops-request-context.ts`
 - Create: `packages/gateway/src/chatops/approval-presenter.ts`
 - Create: `packages/gateway/src/chatops/approval-presenter.test.ts`
@@ -1087,6 +1131,7 @@ git commit -m "feat(chatops): bounded reply dispatcher + invariant I23 + static 
 - [ ] **Step 1: Write the failing test for the presenter + context**
 
 `packages/gateway/src/chatops/approval-presenter.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { runWithChatopsApprovalContext } from "./chatops-request-context.ts";
@@ -1140,6 +1185,7 @@ Expected: FAIL — modules missing.
 - [ ] **Step 3: Implement the request context**
 
 `packages/gateway/src/chatops/chatops-request-context.ts`:
+
 ```typescript
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -1170,6 +1216,7 @@ export function getChatopsApprovalContext(): ChatopsApprovalContext | undefined 
 - [ ] **Step 4: Implement the presenter**
 
 `packages/gateway/src/chatops/approval-presenter.ts`:
+
 ```typescript
 import { randomUUID } from "node:crypto";
 import type { RemoteApprovalOutcome } from "../engine/delegated-approval.ts";
@@ -1239,6 +1286,7 @@ export class ApprovalPresenter {
 
 Run: `bun test packages/gateway/src/chatops/approval-presenter.test.ts`
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/chatops
 git add packages/gateway/src/chatops/chatops-request-context.ts packages/gateway/src/chatops/approval-presenter.ts packages/gateway/src/chatops/approval-presenter.test.ts
@@ -1250,6 +1298,7 @@ git commit -m "feat(chatops): owner-routing request context + approval presenter
 ## Task 7: Intent router (read→engine, write→gate, refusal audit)
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/intent-router.ts`
 - Create: `packages/gateway/src/chatops/intent-router.test.ts`
 
@@ -1258,6 +1307,7 @@ git commit -m "feat(chatops): owner-routing request context + approval presenter
 - [ ] **Step 1: Write the failing test**
 
 `packages/gateway/src/chatops/intent-router.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { IntentRouter } from "./intent-router.ts";
@@ -1333,6 +1383,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement the router**
 
 `packages/gateway/src/chatops/intent-router.ts`:
+
 ```typescript
 import type { OwnerResolution } from "../policy/chatops-policy.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
@@ -1425,6 +1476,7 @@ export class IntentRouter {
 
 Run: `bun test packages/gateway/src/chatops/intent-router.test.ts`
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/chatops/intent-router.ts
 git add packages/gateway/src/chatops/intent-router.ts packages/gateway/src/chatops/intent-router.test.ts
@@ -1436,6 +1488,7 @@ git commit -m "feat(chatops): intent router (read→engine, write→owner-gated,
 ## Task 8: Connector tools (operational post + user lookup + socket open)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/slack/src/server.ts` (`slack_user_info`, `slack_chat_post`, `slack_socket_open`)
 - Modify: `packages/mcp-connectors/teams/src/server.ts` (`teams_user_info`, `teams_chat_post`)
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts` (bot-token keys)
@@ -1446,6 +1499,7 @@ git commit -m "feat(chatops): intent router (read→engine, write→owner-gated,
 - [ ] **Step 1: Add the manifest keys (failing typecheck/test first)**
 
 Add a test `packages/gateway/src/connectors/connector-secrets-manifest.chatops.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "./connector-secrets-manifest.ts";
@@ -1469,15 +1523,18 @@ Expected: FAIL.
 - [ ] **Step 3: Update the manifest**
 
 In `connector-secrets-manifest.ts`:
+
 ```typescript
   teams: ["teams.bot_app_id", "teams.bot_app_password"],
   slack: ["slack.oauth", "slack.bot_token", "slack.app_token"],
 ```
+
 > `slack.app_token` (xapp-…) is the Socket Mode app-level token; `slack.bot_token` (xoxb-…) is the bot user token used by `slack_chat_post`. Keep `slack.oauth` (existing user token).
 
 - [ ] **Step 4: Add the Slack tools**
 
 In `packages/mcp-connectors/slack/src/server.ts`, register (mirror the existing `reg(...)` idiom; read the bot token via `requireProcessEnv("SLACK_BOT_TOKEN")` and the app token via `requireProcessEnv("SLACK_APP_TOKEN")`):
+
 ```typescript
 const slackUserInfoSchema = z.object({ user: z.string() });
 reg(
@@ -1498,9 +1555,11 @@ reg(
   },
 );
 ```
+
 > If `slackInvokeJson` hardcodes the user token, extract a `slackInvokeJsonWithToken(token, method, body, label)` helper and have `slackInvokeJson` delegate with `requireProcessEnv("SLACK_USER_ACCESS_TOKEN")`.
 
 **`slack_socket_open` — interface contract (review S2).** Define the tool here so the connector edits are self-contained; the adapter's *use* of it lands in Task 9. The tool keeps the cloud call inside the connector (MCP-only) and returns a short-lived Socket Mode URL the adapter then holds:
+
 ```typescript
 // schema: no inputs; output: { url: string } (a wss:// URL valid for ~30s)
 const slackSocketOpenSchema = z.object({});
@@ -1514,11 +1573,13 @@ reg(
   },
 );
 ```
+
 The adapter (Task 9) calls this tool, reads `result.url`, and opens `new WebSocket(url)`. The MCP call (`apps.connections.open`) stays in the connector; only the socket lifecycle is the adapter's. This contract is fixed regardless of the Task 9 Step-0 spike (the spike only chooses adapter-owned-WS vs streaming-notifications for *consuming* events — the open-URL tool is needed either way).
 
 - [ ] **Step 5: Add the Teams tools**
 
 In `packages/mcp-connectors/teams/src/server.ts`:
+
 ```typescript
 const teamsUserInfoSchema = z.object({ userId: z.string() });
 reg(
@@ -1544,6 +1605,7 @@ reg(
   },
 );
 ```
+
 > `teamsBotSendActivity` uses `TEAMS_BOT_APP_ID` / `TEAMS_BOT_APP_PASSWORD` (injected from the bot-token vault keys) to acquire an app token and POST to the Bot Framework service URL. Implement it in a small `teams/src/bot-send.ts` helper.
 
 - [ ] **Step 6: Update contract tests**
@@ -1554,6 +1616,7 @@ In the existing slack/teams connector contract test(s), assert the new tool name
 
 Run: `bun test packages/gateway/src/connectors/connector-secrets-manifest.chatops.test.ts` and the connector contract tests (`bun test packages/mcp-connectors/slack packages/mcp-connectors/teams`).
 Expected: PASS.
+
 ```bash
 bunx biome check packages/mcp-connectors/slack packages/mcp-connectors/teams packages/gateway/src/connectors/connector-secrets-manifest.ts
 git add packages/mcp-connectors/slack packages/mcp-connectors/teams packages/gateway/src/connectors/connector-secrets-manifest.ts packages/gateway/src/connectors/connector-secrets-manifest.chatops.test.ts
@@ -1565,6 +1628,7 @@ git commit -m "feat(chatops): connector operational-post + user-lookup tools + b
 ## Task 9: Transport adapters (Slack Socket Mode + Teams webhook)
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/transport/transport.ts`
 - Create: `packages/gateway/src/chatops/transport/slack-socket-adapter.ts`
 - Create: `packages/gateway/src/chatops/transport/slack-socket-adapter.test.ts`
@@ -1579,6 +1643,7 @@ Before code, decide and record in the plan file (append a one-paragraph "Socket 
 - [ ] **Step 1: Write the failing test for the transport interface + Slack reconnect/idempotency**
 
 `packages/gateway/src/chatops/transport/slack-socket-adapter.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { dedupeKey, SlackEventNormalizer } from "./slack-socket-adapter.ts";
@@ -1619,6 +1684,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement transport interface + Slack adapter helpers**
 
 `packages/gateway/src/chatops/transport/transport.ts`:
+
 ```typescript
 import type { ChatMessage, ChatPlatform } from "../types.ts";
 
@@ -1633,6 +1699,7 @@ export interface ChatTransport {
 ```
 
 `packages/gateway/src/chatops/transport/slack-socket-adapter.ts` (helpers shown; the full adapter wires Bun `WebSocket` + reconnect + dedupe set, using these pure helpers):
+
 ```typescript
 import type { ChatMessage } from "../types.ts";
 
@@ -1667,6 +1734,7 @@ export class SlackEventNormalizer {
   }
 }
 ```
+
 > The class body of `SlackSocketAdapter implements ChatTransport` holds: a **bounded FIFO dedupe set** (review S1), the `ws` handle, `start()` that calls the connector `slack_socket_open` to get `{ url }` then opens `new WebSocket(url)`, `onmessage` → normalize → dedupe → `handler(m)`, `onclose` → `setTimeout(reconnect, computeBackoffMs(attempt++))`, and a ping/pong keepalive. Implement it with these helpers; keep cloud calls in the connector.
 >
 > **Dedupe set eviction (review S1) — concrete strategy:** use a `Set<string>` plus an insertion-order queue capped at `MAX_DEDUPE = 1000`. On each new key: `if (seen.has(key)) return; // already processed` else `seen.add(key); queue.push(key); if (queue.length > MAX_DEDUPE) seen.delete(queue.shift()!);`. This bounds memory to ~1000 keys regardless of uptime. (Slack redelivers only recent events on reconnect, so a 1000-key window comfortably covers the retry horizon; no time-based expiry needed.) Add a unit test: inserting 1001 distinct keys evicts the oldest (key #1 is re-processable, key #1001 is deduped).
@@ -1674,6 +1742,7 @@ export class SlackEventNormalizer {
 - [ ] **Step 4: Write the failing test for Teams webhook normalization + JWT auth seam**
 
 `packages/gateway/src/chatops/transport/teams-webhook-adapter.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { normalizeTeamsActivity } from "./teams-webhook-adapter.ts";
@@ -1705,6 +1774,7 @@ describe("Teams activity normalization", () => {
 - [ ] **Step 5: Implement the Teams normalizer**
 
 `packages/gateway/src/chatops/transport/teams-webhook-adapter.ts`:
+
 ```typescript
 import type { ChatMessage } from "../types.ts";
 
@@ -1728,20 +1798,27 @@ export function normalizeTeamsActivity(activity: unknown): ChatMessage | undefin
 - [ ] **Step 6: Add the Teams events route to the I13 allowlist**
 
 In `packages/gateway/src/ipc/http-write-routes.ts`:
+
 ```typescript
 const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
 ```
+
 Add `ROUTE_TEAMS_EVENTS` to `WRITE_ROUTE_ALLOWLIST` (now 6 entries). Add a `messaging?` surface to `WriteRouteContext`:
+
 ```typescript
   readonly messaging?: TeamsEventsSurface;
 ```
+
 Resolve the route in `resolveRoute` with `kind: "teamsEvents"`, `hasBody: true`, `expectedToken` unused (auth is the Bot Framework JWT — see below), `rejectAction: "messaging.teams.inbound"`. In `dispatchWriteRoute`, before the SCIM fallthrough:
+
 ```typescript
   if (route.kind === "teamsEvents") {
     return runTeamsEventsRoute(ctx, auth.fingerprint, limit, req, parsed);
   }
 ```
+
 `runTeamsEventsRoute` validates the **Bot Framework JWT** from the `Authorization: Bearer` header by reusing the JWKS-cache + RS256 verifier pattern (`identity/jwks-cache.ts` against `https://login.botframework.com/v1/.well-known/openidconfiguration` → JWKS uri; `aud` must equal `ctx.messaging.teamsBotAppId`), then calls `ctx.messaging.onActivity(parsed)`. On invalid token → 401 + `recordRejection`. Define:
+
 ```typescript
 export interface TeamsEventsSurface {
   readonly teamsBotAppId: string;
@@ -1749,6 +1826,7 @@ export interface TeamsEventsSurface {
   readonly onActivity: (activity: unknown) => Promise<void>;
 }
 ```
+
 > The `checkAuth` step currently always runs `requireBearer`; for `teamsEvents` skip the static-bearer check (return `{ fingerprint: "teams-bot" }`) and do the JWT validation inside `runTeamsEventsRoute`, mirroring how SCIM uses its own token. Keep body-cap + rate-limit + audit-on-reject.
 >
 > **Offline / restricted-network behavior (review Q2).** No separate offline mode and **no HMAC/static-secret fallback** — the latter was explicitly rejected in the spec design-review (spec §7: "there is no shared-secret/proxy mode; validation is in-gateway"), and a Teams Bot Framework bot is architecturally online by definition: it receives activities *from* Microsoft's cloud and must POST replies *back* to a Microsoft service URL with a Microsoft-issued app token, so it cannot operate without reaching Microsoft at all. The real resilience is already built in: `identity/jwks-cache.ts` persists fetched keys to the **on-disk `oidc_jwks_cache` SQLite table** with a TTL (`jwksMaxAgeSeconds`), and Microsoft's Bot Framework signing keys rotate slowly — so a cached key survives gateway restarts and transient outages; only a cold start during a full outage fails closed (401), which is the correct fail-closed posture. Set the Teams JWKS TTL generously (reuse the identity `jwksMaxAgeSeconds`, default 86400s). This is documented, not a code change.
@@ -1757,6 +1835,7 @@ export interface TeamsEventsSurface {
 
 Run: `bun test packages/gateway/src/chatops/transport packages/gateway/src/ipc/http-write-routes.test.ts`
 Expected: PASS (update the http-write-routes allowlist-count assertion to 6).
+
 ```bash
 bunx biome check packages/gateway/src/chatops/transport packages/gateway/src/ipc/http-write-routes.ts
 git add packages/gateway/src/chatops/transport packages/gateway/src/ipc/http-write-routes.ts
@@ -1768,6 +1847,7 @@ git commit -m "feat(chatops): Slack Socket Mode + Teams webhook (I13 5→6, Bot 
 ## Task 10: ChatOps service + IPC + LAN/Tauri allowlists + CLI
 
 **Files:**
+
 - Create: `packages/gateway/src/chatops/chatops-service.ts`
 - Create: `packages/gateway/src/chatops/chatops-service.test.ts`
 - Create: `packages/gateway/src/ipc/chatops-rpc.ts`
@@ -1782,6 +1862,7 @@ git commit -m "feat(chatops): Slack Socket Mode + Teams webhook (I13 5→6, Bot 
 - [ ] **Step 1: Write the failing test for `chatops-rpc.ts`**
 
 `packages/gateway/src/ipc/chatops-rpc.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { dispatchChatopsRpc } from "./chatops-rpc.ts";
@@ -1815,6 +1896,7 @@ Run: `bun test packages/gateway/src/ipc/chatops-rpc.test.ts`
 Expected: FAIL — module missing.
 
 - [ ] **Step 3: Implement `chatops-rpc.ts`** (mirror `policy-rpc.ts`)
+
 ```typescript
 import { dispatchByMethod, type RpcMethodHandlerMap, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
@@ -1871,6 +1953,7 @@ In the CLI command tree, add `chatops` with `status` (calls `chatops.status`, pr
 Run: `bun test packages/gateway/src/ipc/chatops-rpc.test.ts packages/gateway/src/chatops/chatops-service.test.ts packages/gateway/src/ipc/lan-rpc.test.ts`
 Run (Rust): `cargo test --manifest-path packages/ui/src-tauri/Cargo.toml allowed_methods` (or the repo's documented Rust test command).
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/chatops packages/gateway/src/ipc/chatops-rpc.ts
 git add packages/gateway/src/chatops/chatops-service.ts packages/gateway/src/chatops/chatops-service.test.ts packages/gateway/src/ipc/chatops-rpc.ts packages/gateway/src/ipc/chatops-rpc.test.ts packages/gateway/src/ipc/lan-rpc.ts packages/gateway/src/ipc/lan-rpc.test.ts packages/gateway/src/ipc/server/dispatchers.ts packages/ui/src-tauri/src/gateway_bridge.rs packages/cli/src
@@ -1882,6 +1965,7 @@ git commit -m "feat(chatops): service lifecycle + chatops.* IPC + LAN-forbidden 
 ## Task 11: Watcher notification routing → ChatOps channel
 
 **Files:**
+
 - Modify: `packages/gateway/src/automation/watcher-engine.ts` (allow a notify target that posts to a namespace's ChatOps notify channels)
 - Create/Modify: the watcher wiring site that constructs the `notify` callback (search for the caller of `evaluateWatchersAfterSync`)
 - Create: `packages/gateway/src/automation/watcher-chatops-notify.test.ts`
@@ -1889,6 +1973,7 @@ git commit -m "feat(chatops): service lifecycle + chatops.* IPC + LAN-forbidden 
 - [ ] **Step 1: Write the failing test**
 
 `packages/gateway/src/automation/watcher-chatops-notify.test.ts`:
+
 ```typescript
 import { describe, expect, test } from "bun:test";
 import { makeChatopsWatcherNotify } from "./watcher-engine.ts";
@@ -1924,6 +2009,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement the helper**
 
 Add to `watcher-engine.ts`:
+
 ```typescript
 export interface ChatopsWatcherNotifyDeps {
   /** Map the current watcher context to a namespace (or undefined for local-only). */
@@ -1943,12 +2029,14 @@ export function makeChatopsWatcherNotify(
   };
 }
 ```
+
 At the wiring site that calls `evaluateWatchersAfterSync`, compose the existing IPC-notify callback with this one (call both) when ChatOps is enabled and a notify channel exists for the namespace.
 
 - [ ] **Step 4: Run test; lint; commit**
 
 Run: `bun test packages/gateway/src/automation/watcher-chatops-notify.test.ts`
 Expected: PASS.
+
 ```bash
 bunx biome check packages/gateway/src/automation/watcher-engine.ts
 git add packages/gateway/src/automation/watcher-engine.ts packages/gateway/src/automation/watcher-chatops-notify.test.ts
@@ -1960,12 +2048,14 @@ git commit -m "feat(chatops): route watcher alerts to a namespace's ChatOps noti
 ## Task 12: End-to-end (mock Slack socket + mock Teams webhook)
 
 **Files:**
+
 - Create: `packages/gateway/test/e2e/chatops-e2e.test.ts` (follow the existing e2e harness location/pattern — search `packages/gateway/test/e2e` or the repo's e2e dir)
 - Create: `packages/gateway/test/e2e/_mocks/mock-slack-socket.ts`, `_mocks/mock-teams-webhook.ts` (or reuse existing mock-MCP harness)
 
 - [ ] **Step 1: Write the e2e test**
 
 The test boots a real Gateway subprocess with: ChatOps enabled, a signed test policy binding channel `C0` → namespace `project:pay` (`unmapped="refuse"`) + ownership `payment-service=alice@acme.com` + `*=oncall@acme.com`, a SCIM user bob (requester) + alice (owner) active, and mock Slack/Teams transports. Assert:
+
 ```typescript
 // 1. Read: bob asks "@nimbus who's on call for payment-service?" → a reply containing oncall info, no real cloud call.
 // 2. Write: bob "@nimbus run deployment.rollback service=payment-service version=v1.4"
@@ -1976,6 +2066,7 @@ The test boots a real Gateway subprocess with: ChatOps enabled, a signed test po
 // 5. An unmapped user in C0 → refusal reply + a refusal audit row.
 // 6. ReplyDispatcher never posts to a channel outside {originating, policy-notify} (I23 sanity).
 ```
+
 Use the existing e2e helpers for: spawning the gateway, seeding SCIM users, signing a policy (`signPolicy` + pin pubkey), and reading the audit chain. Mirror an existing federation/identity e2e test for the harness shape.
 
 - [ ] **Step 2: Run the e2e test**
@@ -1984,6 +2075,7 @@ Run: `bun test packages/gateway/test/e2e/chatops-e2e.test.ts`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
+
 ```bash
 git add packages/gateway/test/e2e/chatops-e2e.test.ts packages/gateway/test/e2e/_mocks
 git commit -m "test(chatops): e2e — read, owner-routed write approve/reject, unmapped refusal, I23"
@@ -1994,6 +2086,7 @@ git commit -m "test(chatops): e2e — read, owner-routed write approve/reject, u
 ## Task 13: Docs + CHANGELOG + roadmap + coverage verification
 
 **Files:**
+
 - Modify: `docs/roadmap.md` (mark the four ChatOps bullets `[x]` with a delivered summary, mirroring the Slice 4 summary paragraph)
 - Modify: `docs/CHANGELOG.md` (Slice 5 entry)
 - Modify: `docs/cli-reference.md` (`nimbus chatops`)
@@ -2017,6 +2110,7 @@ Expected: all green / exit 0.
 Use the `nimbus-coverage-floor` agent / the documented Docker recipe (`oven/bun:latest`, bun 1.3.14) to run `audit:coverage-floor` on a Linux-native checkout — **not** local `bun test --coverage`. Add targeted tests for any `chatops/` file below the ≥80% line+branch floor; update the baseline only if a file is legitimately glue. Re-run until green.
 
 - [ ] **Step 4: Commit**
+
 ```bash
 git add docs CLAUDE.md GEMINI.md
 git commit -m "docs(chatops): roadmap delivered summary + CHANGELOG + cli-reference + I23 prose"
@@ -2038,10 +2132,12 @@ Expected: green.
 Use the `nimbus-preflight-guard` agent for the go/no-go (it runs the memory-safe static gates + scoped tests + Docker dry-run for coverage/connectors/migrations touched). Fix any no-go before pushing.
 
 - [ ] **Step 3: Push + open PR**
+
 ```bash
 git push -u origin dev/asafgolombek/phase6-slice5-chatops
 gh pr create --title "Phase 6 Slice 5 — ChatOps (Slack/Teams bot, HITL-via-chat)" --body "<summary + spec link + I23 note>"
 ```
+
 If CI goes red, use the `nimbus-ci-doctor` agent; for the SonarCloud gate use `nimbus-sonar-gate`. The Windows cross-platform job is known-flaky (separate investigation) — don't block Slice 5 on it; confirm the Ubuntu `pr-quality` gate is green.
 
 ---
@@ -2049,6 +2145,7 @@ If CI goes red, use the `nimbus-ci-doctor` agent; for the SonarCloud gate use `n
 ## Self-review (against the spec)
 
 **Spec coverage:**
+
 - Bidirectional bot / `@nimbus` reads + writes → Tasks 4, 7, 9, 10, 12. ✓
 - Write→HITL, never bypass → Task 7 (`runGatedWrite` → `executor.gate`) + Task 6 (I20 reuse). ✓
 - HITL via chat (interactive approve/reject, approver identity in audit) → Task 6 + Task 12. ✓

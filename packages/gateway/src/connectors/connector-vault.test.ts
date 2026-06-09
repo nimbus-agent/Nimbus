@@ -76,7 +76,7 @@ describe("ConnectorSecretKeyOf — type pins", () => {
   // The earlier `@ts-expect-error` directives only assert that bad inputs are
   test("pins to manifest-derived bare-key suffixes (compile-time)", () => {
     assertEq<ConnectorSecretKeyOf<"github">, "pat">(true);
-    assertEq<ConnectorSecretKeyOf<"slack">, "oauth">(true);
+    assertEq<ConnectorSecretKeyOf<"slack">, "oauth" | "bot_token" | "app_token">(true);
     assertEq<ConnectorSecretKeyOf<"linear">, "api_key">(true);
     assertEq<ConnectorSecretKeyOf<"gitlab">, "pat" | "api_base">(true);
     assertEq<ConnectorSecretKeyOf<"datadog">, "api_key" | "app_key" | "site">(true);
@@ -88,7 +88,7 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"google_meet">, never>(true);
     assertEq<ConnectorSecretKeyOf<"onedrive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"outlook">, never>(true);
-    assertEq<ConnectorSecretKeyOf<"teams">, never>(true);
+    assertEq<ConnectorSecretKeyOf<"teams">, "bot_app_id" | "bot_app_password">(true);
     assertEq<ConnectorSecretKeyOf<"github_actions">, never>(true);
 
     // @ts-expect-error — `ConnectorSecretKeyOf<"github">` is `"pat"`, not `string`.

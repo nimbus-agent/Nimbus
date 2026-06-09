@@ -223,6 +223,7 @@ notify    = ["C0SLACK1"]                   # channels the dispatcher may push no
 ```
 
 Resolution rules:
+
 - **Channel → namespace:** exact channel-id match; no match → channel is not ChatOps-enabled →
   message ignored (fail-closed; the bot only acts in explicitly-bound channels).
 - **Resource → owner:** ownership resolves to **exactly one** owner identity. Match precedence is
