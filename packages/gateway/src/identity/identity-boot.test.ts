@@ -5,11 +5,21 @@ import type { NimbusIdentityToml, NimbusScimToml } from "../config/nimbus-toml.t
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { LongRunningEmit } from "../ipc/_lib/long-running.ts";
-import { buildIdentityBoot } from "./identity-boot.ts";
+import { buildIdentityBoot, refreshTokens } from "./identity-boot.ts";
 import type { IdentityRuntimeDeps } from "./identity-runtime.ts";
 import { fakeVault, makeSignedJwt } from "./identity-test-helpers.ts";
 import { IDENTITY_ID_TOKEN_KEY, IDENTITY_SCIM_BEARER_KEY } from "./identity-vault.ts";
 import type { DeviceAuthResponse, OidcDiscovery, TokenResponse, ValidatedClaims } from "./types.ts";
+
+// Shared discovery doc for the refreshTokens + opts.log tests (B2 branch coverage).
+const DISCO: OidcDiscovery = {
+  issuer: "https://acme",
+  deviceAuthorizationEndpoint: "https://acme/device",
+  tokenEndpoint: "https://acme/token",
+  jwksUri: "https://acme/jwks",
+};
+const jsonOk = (b: unknown): Response =>
+  new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
 
 const CFG: NimbusIdentityToml = {
   enabled: true,
@@ -163,5 +173,37 @@ describe("buildIdentityBoot", () => {
     expect(seenUrls.some((u) => u.endsWith("/jwks"))).toBe(true);
     expect(boot.store.getSession(issuer)?.externalId).toBe("user-boot");
     expect(store.get(IDENTITY_ID_TOKEN_KEY)).toBe(jwt);
+  });
+
+  // --- B2 branch-coverage additions ---
+
+  test("refreshTokens success — res.ok=true branch, returns parsed TokenResponse", async () => {
+    let capturedUrl: string | undefined;
+    const fakeFetch = (async (input: string | URL | Request): Promise<Response> => {
+      capturedUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return jsonOk({ id_token: "new-id", refresh_token: "new-rt", expires_in: 3600 });
+    }) as unknown as typeof fetch;
+
+    const result = await refreshTokens(DISCO, "c1", "old-rt", fakeFetch);
+
+    expect(capturedUrl).toBe("https://acme/token");
+    expect(result.idToken).toBe("new-id");
+    expect(result.refreshToken).toBe("new-rt");
+  });
+
+  test("refreshTokens failure — res.ok=false branch, throws with status", async () => {
+    const fakeFetch = (async (): Promise<Response> =>
+      new Response("", { status: 500 })) as unknown as typeof fetch;
+
+    await expect(refreshTokens(DISCO, "c1", "old-rt", fakeFetch)).rejects.toThrow(
+      /token refresh failed \(500\)/,
+    );
+  });
+
+  test("buildIdentityBoot with opts.log — log branch at line 150", () => {
+    const { vault } = fakeVault();
+    const boot = buildIdentityBoot(CFG, SCIM, freshIndex(), vault, { log: () => {} });
+    expect(boot.enabled).toBe(true);
   });
 });

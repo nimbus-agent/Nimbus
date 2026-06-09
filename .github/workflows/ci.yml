@@ -255,16 +255,31 @@ jobs:
 
       - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
         shell: bash
-        # Retry-once mirrors the macOS/Windows pattern in `_test-suite.yml`. Two
-        # tests in `packages/gateway/src/perf/` and `packages/gateway/src/platform/`
-        # observably exceed Bun's default 5 s timeout on cold Windows runners and
-        # come in under budget on a warm second attempt. Unlike the
-        # `_test-suite.yml` retry, this version PROPAGATES the failed exit code
-        # from attempt 2 — so a genuine regression actually fails the job.
+        # `--timeout 60000` matches every other Bun test invocation in the repo
+        # (`_test-suite.yml` runs these SAME gateway/cli suites at 60 s on the
+        # push 3-OS matrix + the Ubuntu PR gate, and passes). This step was the
+        # ONLY invocation left on Bun's per-test default: the root `bunfig.toml`
+        # sets `[test] timeout = 30000`, but Bun does NOT honor it for
+        # `bun test <path>` runs, so the effective default here was 5000 ms.
+        #
+        # The flake is systemic runner slowness, not two specific tests: on a
+        # loaded Windows runner the full combined suite (~3,800 tests / ~420
+        # files) starves random I/O-heavy tests — sqlite-vec dlopen, multi-step
+        # schema migrations, on-disk fixtures, latency sampling — past 5 s, and
+        # a DIFFERENT test trips each run. Per-test `}, 30000)` overrides were
+        # whack-a-mole (e.g. only the first of ~11 heavy embedding tests had
+        # one); the job-level timeout is the durable fix. These tests run in
+        # <300 ms on Linux/macOS — confirmed not logic bugs.
+        #
+        # Retry-once still tolerates a cold-start outlier and, unlike the
+        # `_test-suite.yml` retry, PROPAGATES attempt 2's exit code so a real
+        # regression fails the job. The job-level `timeout-minutes: 30` bounds a
+        # true hang; assertion failures fail in <1 s regardless of `--timeout`,
+        # so this does not mask logic bugs.
         run: |
           set +e
           for attempt in 1 2; do
-            bun test "packages/${{ matrix.pkg }}/src"
+            bun test "packages/${{ matrix.pkg }}/src" --timeout 60000
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0

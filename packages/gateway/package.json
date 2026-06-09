@@ -16,7 +16,7 @@
     "test:coverage:lan": "bun test --coverage src/ipc/lan-crypto.test.ts src/ipc/lan-pairing.test.ts src/ipc/lan-rate-limit.test.ts src/ipc/lan-rpc.test.ts src/ipc/lan-server.test.ts"
   },
   "dependencies": {
-    "@mastra/core": "^1.40.0",
+    "@mastra/core": "^1.41.0",
     "@mastra/mcp": "^1.9.1",
     "@nimbus-dev/sdk": "workspace:*",
     "@noble/hashes": "^2.2.0",
@@ -28,9 +28,9 @@
     "imapflow": "^1.3.5",
     "js-yaml": "^4.2.0",
     "pino": "^10.3.1",
-    "semver": "^7.8.0",
+    "semver": "^7.8.3",
     "sqlite-vec": "^0.1.6",
-    "tar": "^7.5.15",
+    "tar": "^7.5.16",
     "tweetnacl": "^1.0.3",
     "zod": "^4.4.2"
   },
