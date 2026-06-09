@@ -160,3 +160,25 @@ function evaluateOneWatcher(
   const snapshot = JSON.stringify({ matches: filtered, condition: w.condition_json });
   return { summary, snapshot };
 }
+
+export interface ChatopsWatcherNotifyDeps {
+  /** Map the current watcher context to a namespace (or undefined for local-only). */
+  readonly namespaceForWatcher: () => string | undefined;
+  /** Post to a namespace's ChatOps notify channels (ReplyDispatcher.send w/ a namespaceNotify target). */
+  readonly sendToNamespace: (namespace: string, text: string) => Promise<void>;
+}
+
+/**
+ * Build a watcher `notify(title, body)` callback that also routes to a ChatOps notify channel
+ * (Slice 5). Composes with the existing IPC-notify callback at the wiring site (both are called);
+ * when no namespace maps, this is a no-op (local-only watcher).
+ */
+export function makeChatopsWatcherNotify(
+  deps: ChatopsWatcherNotifyDeps,
+): (title: string, body: string) => Promise<void> {
+  return async (_title, body) => {
+    const ns = deps.namespaceForWatcher();
+    if (ns === undefined) return;
+    await deps.sendToNamespace(ns, body);
+  };
+}
