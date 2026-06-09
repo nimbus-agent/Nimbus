@@ -29,6 +29,13 @@ function readIncidentMetadata(db: Database, externalId: string): IncidentMetadat
   return JSON.parse(row.metadata) as IncidentMetadata;
 }
 
+// Cursor assertions need fixtures INSIDE the 30-day backfill window: a fresh
+// sync floors maxUpdated at now - initialSyncDepthDays, so a hardcoded
+// updated_at silently loses the lexicographic max once it ages past the floor.
+function isoHoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 3_600_000).toISOString();
+}
+
 function stubPagerdutyIncidents(incidents: unknown[]): void {
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
     const url = urlFromFetchInput(input);
@@ -282,12 +289,14 @@ describeWithFetchRestore("pagerduty-sync", () => {
   });
 
   test("cursor advancement still works with new metadata", async () => {
+    const updatedA = isoHoursAgo(26);
+    const updatedB = isoHoursAgo(24);
     const { result } = await runOneSyncWithResult([
       {
         id: "PT_A",
         title: "First",
-        created_at: "2026-05-10T10:00:00Z",
-        updated_at: "2026-05-10T10:01:00Z",
+        created_at: isoHoursAgo(27),
+        updated_at: updatedA,
         status: "triggered",
         priority: { name: "P1" },
         service: { id: "PJK1HJ8" },
@@ -295,8 +304,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
       {
         id: "PT_B",
         title: "Second (newer)",
-        created_at: "2026-05-10T11:00:00Z",
-        updated_at: "2026-05-10T11:05:00Z",
+        created_at: isoHoursAgo(25),
+        updated_at: updatedB,
         status: "acknowledged",
         priority: { name: "P2" },
         service: { id: "PJK1HJ8" },
@@ -309,7 +318,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const decodedJson = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString(
       "utf8",
     );
-    expect(JSON.parse(decodedJson)).toEqual({ lastUpdated: "2026-05-10T11:05:00Z" });
+    expect(JSON.parse(decodedJson)).toEqual({ lastUpdated: updatedB });
   });
 
   test("does not throw on entirely malformed row", async () => {
@@ -348,14 +357,17 @@ describeWithFetchRestore("pagerduty-sync", () => {
   });
 
   test("walks pages until parsed.more=false", async () => {
+    const updatedA = isoHoursAgo(26);
+    const updatedB = isoHoursAgo(25);
+    const updatedC = isoHoursAgo(24);
     const { calls } = stubPagerdutyPages([
       {
         incidents: [
           {
             id: "P_A",
             title: "A",
-            created_at: "2026-05-10T10:00:00Z",
-            updated_at: "2026-05-10T10:00:00Z",
+            created_at: updatedA,
+            updated_at: updatedA,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -368,8 +380,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
           {
             id: "P_B",
             title: "B",
-            created_at: "2026-05-10T11:00:00Z",
-            updated_at: "2026-05-10T11:00:00Z",
+            created_at: updatedB,
+            updated_at: updatedB,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -382,8 +394,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
           {
             id: "P_C",
             title: "C",
-            created_at: "2026-05-10T12:00:00Z",
-            updated_at: "2026-05-10T12:00:00Z",
+            created_at: updatedC,
+            updated_at: updatedC,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -404,18 +416,21 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: "2026-05-10T12:00:00Z" });
+    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedC });
   });
 
   test("respects maxPagesPerSync cap and emits hasMore=true", async () => {
+    const updatedA = isoHoursAgo(26);
+    const updatedB = isoHoursAgo(25);
+    const updatedC = isoHoursAgo(24);
     const { calls } = stubPagerdutyPages([
       {
         incidents: [
           {
             id: "P_A",
             title: "A",
-            created_at: "2026-05-10T10:00:00Z",
-            updated_at: "2026-05-10T10:00:00Z",
+            created_at: updatedA,
+            updated_at: updatedA,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -428,8 +443,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
           {
             id: "P_B",
             title: "B",
-            created_at: "2026-05-10T11:00:00Z",
-            updated_at: "2026-05-10T11:00:00Z",
+            created_at: updatedB,
+            updated_at: updatedB,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -442,8 +457,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
           {
             id: "P_C",
             title: "Never reached",
-            created_at: "2026-05-10T12:00:00Z",
-            updated_at: "2026-05-10T12:00:00Z",
+            created_at: updatedC,
+            updated_at: updatedC,
             status: "triggered",
             priority: { name: "P1" },
             service: { id: "PJK1HJ8" },
@@ -464,10 +479,11 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(true);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: "2026-05-10T11:00:00Z" });
+    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedB });
   });
 
   test("partial-failure preserves cursor progress from successful pages", async () => {
+    const updatedPage1 = isoHoursAgo(24);
     let call = 0;
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0]) => {
       call += 1;
@@ -478,8 +494,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
               {
                 id: "P_PAGE1",
                 title: "Page 1 row",
-                created_at: "2026-05-10T10:00:00Z",
-                updated_at: "2026-05-10T10:00:00Z",
+                created_at: updatedPage1,
+                updated_at: updatedPage1,
                 status: "triggered",
                 priority: { name: "P1" },
                 service: { id: "PJK1HJ8" },
@@ -500,6 +516,30 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: "2026-05-10T10:00:00Z" });
+    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedPage1 });
+  });
+
+  test("cursor floors at the backfill window start when every item is older than the window", async () => {
+    const staleUpdated = isoHoursAgo(45 * 24); // 45 days ago — outside the 30-day window
+    const before = Date.now();
+    const { result } = await runOneSyncWithResult([
+      {
+        id: "PT_STALE",
+        title: "Older than the backfill window",
+        created_at: staleUpdated,
+        updated_at: staleUpdated,
+        status: "resolved",
+        service: { id: "PJK1HJ8" },
+      },
+    ]);
+    const after = Date.now();
+    expect(result.itemsUpserted).toBe(1);
+    const cursor = result.cursor as string;
+    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const lastUpdated = (JSON.parse(decoded) as { lastUpdated: string }).lastUpdated;
+    const lastUpdatedMs = Date.parse(lastUpdated);
+    const BACKFILL_DAYS = 30;
+    expect(lastUpdatedMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(lastUpdatedMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
   });
 });
