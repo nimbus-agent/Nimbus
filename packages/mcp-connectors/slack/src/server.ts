@@ -42,17 +42,30 @@ async function slackApi(
   return { ok: okField === true && res.ok, json, text };
 }
 
-async function slackInvokeJson(
+async function slackInvokeJsonWithToken(
+  token: string,
   method: string,
   body: Record<string, unknown>,
   errorLabel: string,
 ): Promise<McpListResult> {
-  const token = requireProcessEnv("SLACK_USER_ACCESS_TOKEN");
   const res = await slackApi(token, method, body);
   if (!res.ok) {
     throw new Error(`${errorLabel}: ${res.text.slice(0, 400)}`);
   }
   return jsonResult(res.json);
+}
+
+async function slackInvokeJson(
+  method: string,
+  body: Record<string, unknown>,
+  errorLabel: string,
+): Promise<McpListResult> {
+  return slackInvokeJsonWithToken(
+    requireProcessEnv("SLACK_USER_ACCESS_TOKEN"),
+    method,
+    body,
+    errorLabel,
+  );
 }
 
 const slackConversationsHistorySchema = z.object({
@@ -271,6 +284,52 @@ reg(
     }
     return jsonResult({ open: open.json, post: post.json });
   },
+);
+
+// --- ChatOps operational tools (Slice 5) -------------------------------------------------------
+// These use the bot/app tokens (xoxb-/xapp-), distinct from the user token the read tools use.
+// Only `chatops/reply-dispatcher.ts` + `chatops/transport/` reference `slack_chat_post` (static D17).
+
+const slackUserInfoSchema = z.object({ user: z.string().min(1) });
+reg(
+  "slack_user_info",
+  "Fetch a Slack user's profile (incl. email) by user id (ChatOps identity mapping; bot token).",
+  slackUserInfoSchema,
+  async (parsed) =>
+    slackInvokeJsonWithToken(
+      requireProcessEnv("SLACK_BOT_TOKEN"),
+      "users.info",
+      { user: parsed.user },
+      "Slack users.info",
+    ),
+);
+
+const slackChatPostSchema = z.object({ channel: z.string().min(1), text: z.string().min(1) });
+reg(
+  "slack_chat_post",
+  "Post an operational bot message to a channel (ChatOps reply surface; bot token).",
+  slackChatPostSchema,
+  async (parsed) =>
+    slackInvokeJsonWithToken(
+      requireProcessEnv("SLACK_BOT_TOKEN"),
+      "chat.postMessage",
+      { channel: parsed.channel, text: parsed.text },
+      "Slack chat.postMessage",
+    ),
+);
+
+const slackSocketOpenSchema = z.object({});
+reg(
+  "slack_socket_open",
+  "Open a Slack Socket Mode connection and return the short-lived wss:// URL (app-level token).",
+  slackSocketOpenSchema,
+  async () =>
+    slackInvokeJsonWithToken(
+      requireProcessEnv("SLACK_APP_TOKEN"), // xapp-… (Socket Mode app-level token)
+      "apps.connections.open",
+      {},
+      "Slack apps.connections.open",
+    ),
 );
 
 const transport = new StdioServerTransport();

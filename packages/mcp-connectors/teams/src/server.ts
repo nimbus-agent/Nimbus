@@ -10,6 +10,7 @@ import {
   mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { teamsBotSendActivity } from "./bot-send.ts";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -187,6 +188,40 @@ reg(
         },
       }),
     });
+    return graphListResult(r);
+  },
+);
+
+// --- ChatOps operational tools (Slice 5) -------------------------------------------------------
+// `teams_chat_post` uses bot app credentials (Bot Framework), distinct from the user Graph token.
+// Only `chatops/reply-dispatcher.ts` + `chatops/transport/` reference `teams_chat_post` (static D17).
+
+const teamsUserInfoSchema = z.object({ userId: z.string().min(1) });
+reg(
+  "teams_user_info",
+  "Fetch a Teams/AAD user (incl. mail/userPrincipalName) by id (ChatOps identity mapping).",
+  teamsUserInfoSchema,
+  async (parsed) => {
+    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
+    const r = await teamsPagedGraph(
+      token,
+      undefined,
+      `/users/${encodeURIComponent(parsed.userId)}`,
+    );
+    return graphListResult(r);
+  },
+);
+
+const teamsChatPostSchema = z.object({
+  conversationId: z.string().min(1),
+  text: z.string().min(1),
+});
+reg(
+  "teams_chat_post",
+  "Post an operational bot message to a Teams conversation (ChatOps reply surface; bot app creds).",
+  teamsChatPostSchema,
+  async (parsed) => {
+    const r = await teamsBotSendActivity(parsed.conversationId, parsed.text);
     return graphListResult(r);
   },
 );

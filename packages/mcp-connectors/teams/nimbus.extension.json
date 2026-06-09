@@ -7,7 +7,12 @@
   "entrypoint": "dist/server.js",
   "runtime": "bun",
   "permissions": {
-    "network": ["graph.microsoft.com", "login.microsoftonline.com"]
+    "network": [
+      "graph.microsoft.com",
+      "login.microsoftonline.com",
+      "smba.trafficmanager.net",
+      "api.botframework.com"
+    ]
   },
   "hitlRequired": ["write", "delete"],
   "syncInterval": 300,
