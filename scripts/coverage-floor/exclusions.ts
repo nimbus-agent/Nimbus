@@ -63,6 +63,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/cli/src/commands/policy.ts" },
   { kind: "exact", path: "packages/cli/src/commands/admin.ts" },
 
+  // `chatops.ts` (Phase 6 Slice 5): the testable cores (parseChatopsArgs + runChatopsCommand
+  // with an injected `client`) are covered by chatops.test.ts; the residual uncovered lines are
+  // the runChatops wrapper — a CLI IPC shell that reads gateway state, constructs a real
+  // `IPCClient`, and calls `process.exit`, with no injection seam. Same exemption class as team.ts.
+  { kind: "exact", path: "packages/cli/src/commands/chatops.ts" },
+
   // Test-only support files (imported solely by *.test.ts; not shipped logic). Verified
   // 2026-06-08 by import grep. Sub-project B0; D may relocate these under a `testing/` dir
   // (which discoverSourceFiles already auto-skips) to make the exemption self-enforcing.
@@ -93,6 +99,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
 
   { kind: "basenameRegex", re: /^types\.ts$/ },
   { kind: "basenameRegex", re: /-types\.ts$/ },
+
+  // `transport.ts` is a types-only module (the `ChatTransport` interface + type re-exports, zero
+  // executable lines) — lcov emits no SF: record for it, so the gate reads it as 0%. Same
+  // type-only class as the `types.ts` basenameRegex above; excluded for the identical reason.
+  { kind: "exact", path: "packages/gateway/src/chatops/transport/transport.ts" },
 
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
 

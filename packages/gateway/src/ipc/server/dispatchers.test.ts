@@ -12,6 +12,7 @@ import { LocalIndex } from "../../index/local-index.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
+import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { PairingWindow } from "../lan-pairing.ts";
@@ -33,6 +34,7 @@ import {
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
   tryDispatchAutomationRpc,
+  tryDispatchChatopsRpc,
   tryDispatchConnectorRpc,
   tryDispatchDataRpc,
   tryDispatchDeploymentRpc,
@@ -71,6 +73,16 @@ function makePolicyRpcCtx(overrides: Partial<PolicyRpcCtx> = {}): PolicyRpcCtx {
     refetch: async () => ({ applied: true }),
     purge: async () => ({ jobId: "j1", localDeleted: 0 }),
     isAnchor: false,
+    ...overrides,
+  };
+}
+
+function makeChatopsRpcCtx(overrides: Partial<ChatopsRpcCtx> = {}): ChatopsRpcCtx {
+  return {
+    status: () => ({ enabled: true, platforms: [] }),
+    start: async () => {},
+    stop: async () => {},
+    testParse: (text: string) => ({ kind: "read", query: text }),
     ...overrides,
   };
 }
@@ -760,6 +772,26 @@ describe("tryDispatchPolicyRpc", () => {
   test("an unknown policy.* method falls through to skipped", async () => {
     const { ctx } = makeCtx({ policyRpcCtx: makePolicyRpcCtx() });
     expect(await tryDispatchPolicyRpc(ctx, "policy.__nope__", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchChatopsRpc", () => {
+  test("skips a non-chatops method", async () => {
+    const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
+    expect(await tryDispatchChatopsRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when chatopsRpcCtx is not wired", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchChatopsRpc(ctx, "chatops.status", {})).toBe(phase4RpcSkipped);
+  });
+  test("dispatches chatops.status when the ctx is wired", async () => {
+    const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
+    const out = await tryDispatchChatopsRpc(ctx, "chatops.status", {});
+    expect(out).toMatchObject({ enabled: true, platforms: [] });
+  });
+  test("an unknown chatops.* method falls through to skipped", async () => {
+    const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
+    expect(await tryDispatchChatopsRpc(ctx, "chatops.__nope__", {})).toBe(phase4RpcSkipped);
   });
 });
 

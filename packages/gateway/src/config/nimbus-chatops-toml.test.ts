@@ -23,4 +23,33 @@ describe("[chatops] config", () => {
     const cfg = parseNimbusChatopsToml(`[chatops]\nbogus=123\n`);
     expect(cfg.enabled).toBe(false);
   });
+
+  test("parses bot_vault_entry + teams_bot_app_id string overrides", () => {
+    const cfg = parseNimbusChatopsToml(
+      `[chatops]\nbot_vault_entry="acme-bot"\nteams_bot_app_id="app-123"\n`,
+    );
+    expect(cfg.botVaultEntry).toBe("acme-bot");
+    expect(cfg.teamsBotAppId).toBe("app-123");
+  });
+
+  test("malformed boolean leaves the default (parseBool undefined branch)", () => {
+    const cfg = parseNimbusChatopsToml(
+      `[chatops]\nenabled=maybe\nslack_enabled=yep\nteams_enabled=nah\n`,
+    );
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.slackEnabled).toBe(false);
+    expect(cfg.teamsEnabled).toBe(false);
+  });
+
+  test("negative / non-numeric ttl is rejected, default retained; zero accepted", () => {
+    expect(
+      parseNimbusChatopsToml(`[chatops]\nidentity_cache_ttl_seconds=-5\n`).identityCacheTtlSeconds,
+    ).toBe(900);
+    expect(
+      parseNimbusChatopsToml(`[chatops]\nidentity_cache_ttl_seconds=abc\n`).identityCacheTtlSeconds,
+    ).toBe(900);
+    expect(
+      parseNimbusChatopsToml(`[chatops]\nidentity_cache_ttl_seconds=0\n`).identityCacheTtlSeconds,
+    ).toBe(0);
+  });
 });

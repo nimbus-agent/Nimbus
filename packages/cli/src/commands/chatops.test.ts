@@ -47,6 +47,19 @@ describe("runChatopsCommand", () => {
     await runChatopsCommand(client, { kind: "status" });
     expect(calls).toEqual([{ method: "chatops.status", params: {} }]);
   });
+  it("status renders each platform (singular + plural channel labels, disabled state)", async () => {
+    const { client } = fakeClient([
+      {
+        enabled: false,
+        platforms: [
+          { name: "slack", connected: true, channels: 1 },
+          { name: "teams", connected: false, channels: 3 },
+        ],
+      },
+    ]);
+    // Exercises the platform loop body + the enabled/connected/plural-channel branches.
+    await expect(runChatopsCommand(client, { kind: "status" })).resolves.toBeUndefined();
+  });
   it("start/stop call their methods", async () => {
     const { client, calls } = fakeClient();
     await runChatopsCommand(client, { kind: "start" });

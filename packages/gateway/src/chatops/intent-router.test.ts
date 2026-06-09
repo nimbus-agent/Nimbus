@@ -82,4 +82,37 @@ describe("IntentRouter", () => {
     await r.handle(msg("@nimbus run deployment.rollback service=payment-service version=v1.4"));
     expect(audits.map((a) => a.reason)).toContain("no_owner");
   });
+
+  test("write with ambiguous ownership → refusal audited (ambiguous_owner)", async () => {
+    const { deps, audits } = baseDeps();
+    const r = new IntentRouter({ ...deps, resolveOwner: () => ({ kind: "ambiguous" }) });
+    await r.handle(msg("@nimbus run deployment.rollback service=payment-service version=v1.4"));
+    expect(audits.map((a) => a.reason)).toContain("ambiguous_owner");
+  });
+
+  test("write whose owner has no Nimbus identity → refusal audited (no_owner)", async () => {
+    const { deps, audits, gated } = baseDeps();
+    const r = new IntentRouter({ ...deps, ownerExternalIdFor: () => undefined });
+    await r.handle(msg("@nimbus run deployment.rollback service=payment-service version=v1.4"));
+    expect(audits.map((a) => a.reason)).toContain("no_owner");
+    expect(gated).toEqual([]);
+  });
+
+  test("refused parse (unknown action) for a mapped user → refusal audited", async () => {
+    const { deps, audits } = baseDeps();
+    await new IntentRouter(deps).handle(msg("@nimbus run deployment.nuke service=x"));
+    expect(audits.map((a) => a.reason)).toContain("unknown_action");
+  });
+
+  test("unmapped user issuing a read in a public-read channel → answered (no refusal)", async () => {
+    const { deps, replies, audits } = baseDeps();
+    const r = new IntentRouter({
+      ...deps,
+      resolveBinding: () => ({ namespace: "project:pay", unmapped: "public-read", notify: [] }),
+      resolveIdentity: async () => ({ kind: "unmapped" }),
+    });
+    await r.handle(msg("@nimbus who's on call?"));
+    expect(replies[0]?.text).toContain("oncall = alice");
+    expect(audits).toEqual([]);
+  });
 });

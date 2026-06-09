@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-08T15:16:41.264Z",
+  "generated_at": "2026-06-09T18:22:25.576Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -120,7 +120,7 @@
     },
     "packages/gateway/src/config/nimbus-toml.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 72.86
+      "min_branch_pct": 74.91
     },
     "packages/gateway/src/config/telemetry-toml.ts": {
       "min_line_pct": 80,
@@ -532,7 +532,7 @@
     },
     "packages/gateway/src/ipc/http-write-routes.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 76.15
+      "min_branch_pct": 77.69
     },
     "packages/gateway/src/ipc/index-reembed-rpc.ts": {
       "min_line_pct": 71.67,
@@ -563,8 +563,8 @@
       "min_branch_pct": 75.41
     },
     "packages/gateway/src/ipc/server/dispatchers.ts": {
-      "min_line_pct": 71.62,
-      "min_branch_pct": 70.51
+      "min_line_pct": 72.15,
+      "min_branch_pct": 70.87
     },
     "packages/gateway/src/ipc/server/rpc-error.ts": {
       "min_line_pct": 80,

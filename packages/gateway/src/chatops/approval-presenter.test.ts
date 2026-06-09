@@ -45,4 +45,32 @@ describe("ApprovalPresenter + request context", () => {
     const outcome = await runWithChatopsApprovalContext(ctx, () => presenter.requestApproval());
     expect(outcome.kind).toBe("timeout");
   });
+
+  test("no approval context in scope → resolves as timeout (no post)", async () => {
+    const posts: unknown[] = [];
+    const presenter = new ApprovalPresenter({
+      post: async () => {
+        posts.push(1);
+      },
+      ownerChannelFor: () => "C_ANY",
+    });
+    // Called outside any runWithChatopsApprovalContext → getChatopsApprovalContext() is undefined.
+    const outcome = await presenter.requestApproval();
+    expect(outcome).toEqual({ kind: "timeout" });
+    expect(posts).toEqual([]);
+  });
+
+  test("resolveClick for an unknown requestId returns false", () => {
+    const presenter = new ApprovalPresenter({
+      post: async () => {},
+      ownerChannelFor: () => "C_ANY",
+    });
+    expect(
+      presenter.resolveClick({
+        requestId: "no-such-id",
+        approverExternalId: "ext-alice",
+        approved: true,
+      }),
+    ).toBe(false);
+  });
 });
