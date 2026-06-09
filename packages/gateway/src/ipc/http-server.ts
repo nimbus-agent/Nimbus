@@ -15,6 +15,7 @@ import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import {
   dispatchWriteRoute,
   type PolicyAuthorResult,
+  type TeamsEventsSurface,
   WRITE_ROUTE_ALLOWLIST,
 } from "./http-write-routes.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "./metrics-rpc.ts";
@@ -36,6 +37,10 @@ export type ReadOnlyHttpServerOptions = {
   // closure that validates+signs (Vault-only anchor key)+persists+applies — the route never parses
   // TOML itself (D16). Absent either → the route 404s (surface not mounted).
   readonly authorPolicy?: (toml: string) => Promise<PolicyAuthorResult>;
+  // ChatOps Teams inbound surface (Slice 5). When present, POST /v1/messaging/teams/events is
+  // mounted on the I13 write dispatcher; auth is the Bot Framework JWT (validated in-route), not a
+  // static bearer. The surface (validateBotJwt + onActivity) is built by the ChatOps service.
+  readonly resolveTeamsEventsSurface?: () => Promise<TeamsEventsSurface | undefined>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -459,6 +464,10 @@ async function handleWrite(
         : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
     const scim = await resolveScimWriteDeps(writeDb, opts);
     const policy = await resolvePolicyWriteDeps(opts);
+    const messaging =
+      opts.resolveTeamsEventsSurface === undefined
+        ? undefined
+        : await opts.resolveTeamsEventsSurface();
     return await dispatchWriteRoute(req, {
       writeDb,
       expectedToken,
@@ -467,6 +476,7 @@ async function handleWrite(
       knownServices,
       ...(scim === undefined ? {} : { scim }),
       ...(policy === undefined ? {} : { policy }),
+      ...(messaging === undefined ? {} : { messaging }),
     });
   } catch {
     return json({ error: "internal_error" }, 500);
@@ -509,6 +519,7 @@ export function startReadOnlyHttpServer(
   const writeDb =
     opts.resolveDeploymentToken === undefined &&
     opts.resolveScimToken === undefined &&
+    opts.resolveTeamsEventsSurface === undefined &&
     (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
       : new Database(dbPath, { create: false, readwrite: true });

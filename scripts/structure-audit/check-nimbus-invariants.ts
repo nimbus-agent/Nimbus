@@ -304,9 +304,13 @@ export function checkPolicyTomlImportInvariant(files: readonly FileEntry[]): Vio
 // referenced ONLY from `packages/gateway/src/chatops/reply-dispatcher.ts` and
 // `packages/gateway/src/chatops/transport/`. Any other module posting directly would bypass the
 // bounded-destination reply surface (I23) and could launder the HITL-gated `*.message.post` action.
+// The connector server modules are the tools' DEFINITION home (the `reg("slack_chat_post", …)`
+// registration) — exempt, since defining the tool is not the same as invoking it from the gateway.
 const CHATOPS_POST_ALLOWED_PREFIXES = [
   "packages/gateway/src/chatops/reply-dispatcher.ts",
   "packages/gateway/src/chatops/transport/",
+  "packages/mcp-connectors/slack/src/server.ts",
+  "packages/mcp-connectors/teams/src/server.ts",
 ];
 const CHATOPS_POST_RE = /\b(?:slack_chat_post|teams_chat_post)\b/;
 

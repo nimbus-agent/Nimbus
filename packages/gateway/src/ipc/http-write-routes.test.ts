@@ -40,14 +40,75 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at the deployment + 3 SCIM + admin-policy routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(5);
+  it("teams-events: valid Bot Framework JWT → onActivity called, 200", async () => {
+    const got: unknown[] = [];
+    const ctx = {
+      ...freshContext(),
+      messaging: {
+        teamsBotAppId: "app-123",
+        validateBotJwt: async (h: string | null) => h === "Bearer good",
+        onActivity: async (a: unknown) => {
+          got.push(a);
+        },
+      },
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/messaging/teams/events", {
+        method: "POST",
+        headers: { authorization: "Bearer good", "content-type": "application/json" },
+        body: JSON.stringify({ type: "message", text: "hi" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(got).toEqual([{ type: "message", text: "hi" }]);
+  });
+
+  it("teams-events: invalid JWT → 401, onActivity not called", async () => {
+    const got: unknown[] = [];
+    const ctx = {
+      ...freshContext(),
+      messaging: {
+        teamsBotAppId: "app-123",
+        validateBotJwt: async () => false,
+        onActivity: async (a: unknown) => {
+          got.push(a);
+        },
+      },
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/messaging/teams/events", {
+        method: "POST",
+        headers: { authorization: "Bearer bad", "content-type": "application/json" },
+        body: JSON.stringify({ type: "message" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(401);
+    expect(got).toEqual([]);
+  });
+
+  it("teams-events: surface absent → 404", async () => {
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/messaging/teams/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      freshContext(),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("keeps the I13 allowlist at the deployment + 3 SCIM + admin-policy + teams-events routes", () => {
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(6);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
       "PATCH /scim/v2/Users/{id}",
       "DELETE /scim/v2/Users/{id}",
       "PUT /v1/admin/policy",
+      "POST /v1/messaging/teams/events",
     ]);
   });
 });

@@ -16,14 +16,16 @@ const ROUTE_SCIM_CREATE = "POST /scim/v2/Users";
 const ROUTE_SCIM_PATCH = "PATCH /scim/v2/Users/{id}";
 const ROUTE_SCIM_DELETE = "DELETE /scim/v2/Users/{id}";
 const ROUTE_ADMIN_POLICY = "PUT /v1/admin/policy";
+const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
 
 /**
  * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
  * auth, per-token rate-limit, body cap, and audit-on-rejection. `POST /v1/deployments` is the CI
  * deploy-annotation route; the three `/scim/v2/Users` routes are the SCIM provisioning surface
  * (own bearer = `identity.scim.bearer`); `PUT /v1/admin/policy` is the admin-console anchor policy
- * write surface (own bearer = the admin token; signs the org policy with the Vault-only anchor key).
- * No other HTTP method may write.
+ * write surface (own bearer = the admin token; signs the org policy with the Vault-only anchor key);
+ * `POST /v1/messaging/teams/events` is the ChatOps Teams inbound surface (auth = a Bot Framework
+ * JWT validated in-route, not a static bearer). No other HTTP method may write.
  */
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_DEPLOY,
@@ -31,6 +33,7 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_SCIM_PATCH,
   ROUTE_SCIM_DELETE,
   ROUTE_ADMIN_POLICY,
+  ROUTE_TEAMS_EVENTS,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
@@ -45,6 +48,9 @@ const SCIM_REJECT_ACTION = "scim.provision_rejected";
 const POLICY_DISABLED_HINT =
   "policy write surface disabled — set the bearer via 'nimbus vault set http_api.deployment_token <value>'";
 const POLICY_REJECT_ACTION = "policy.applied_rejected";
+const TEAMS_EVENTS_DISABLED_HINT =
+  "ChatOps Teams surface disabled — enable [chatops].teams_enabled";
+const TEAMS_EVENTS_REJECT_ACTION = "messaging.teams.inbound_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
@@ -68,6 +74,18 @@ export interface PolicyWriteSurface {
   readonly authorPolicy: (toml: string) => Promise<PolicyAuthorResult>;
 }
 
+/**
+ * ChatOps Teams inbound seam — present only when the ChatOps Teams surface is enabled. Auth is a
+ * Bot Framework JWT (validated in-route against the Bot Framework JWKS), NOT a static bearer; the
+ * `validateBotJwt` closure reuses the identity JWKS-cache + RS256 verifier and checks `aud ===
+ * teamsBotAppId`. `onActivity` hands the raw activity to the ChatOps service (normalize → route).
+ */
+export interface TeamsEventsSurface {
+  readonly teamsBotAppId: string;
+  readonly validateBotJwt: (authorizationHeader: string | null, nowMs: number) => Promise<boolean>;
+  readonly onActivity: (activity: unknown) => Promise<void>;
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -77,9 +95,10 @@ export interface WriteRouteContext {
   readonly knownServices: () => readonly string[];
   readonly scim?: ScimWriteSurface;
   readonly policy?: PolicyWriteSurface;
+  readonly messaging?: TeamsEventsSurface;
 }
 
-type RouteKind = "deployment" | "scim" | "policy";
+type RouteKind = "deployment" | "scim" | "policy" | "teamsEvents";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -186,6 +205,19 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
       hasBody: true,
     };
   }
+  if (path === "/v1/messaging/teams/events") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    if (ctx.messaging === undefined) return new Response("Not Found", { status: 404 });
+    return {
+      key: ROUTE_TEAMS_EVENTS,
+      kind: "teamsEvents",
+      // Auth is the Bot Framework JWT (validated in runTeamsEventsRoute); no static bearer.
+      expectedToken: "",
+      disabledHint: TEAMS_EVENTS_DISABLED_HINT,
+      rejectAction: TEAMS_EVENTS_REJECT_ACTION,
+      hasBody: true,
+    };
+  }
   const item = SCIM_ITEM_RE.exec(path);
   if (item !== null) {
     if (method !== "PATCH" && method !== "DELETE") return methodNotAllowed("PATCH, DELETE");
@@ -206,6 +238,11 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
 type AuthOk = { fingerprint: string };
 
 function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): Response | AuthOk {
+  // The Teams inbound route authenticates with a Bot Framework JWT (validated in-route), not a
+  // static bearer — skip requireBearer here; body-cap, rate-limit, and audit still apply.
+  if (route.kind === "teamsEvents") {
+    return { fingerprint: "teams-bot" };
+  }
   const auth = requireBearer(req, { expectedToken: route.expectedToken });
   if (auth.surfaceDisabled === true) {
     return jsonResponse({ error: "write_surface_disabled", hint: route.disabledHint }, 503);
@@ -509,6 +546,44 @@ async function runPolicyRoute(
   );
 }
 
+async function runTeamsEventsRoute(
+  ctx: WriteRouteContext,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  // resolveRoute guarantees ctx.messaging is defined for every teamsEvents-kind route.
+  const messaging = ctx.messaging as TeamsEventsSurface;
+  let valid: boolean;
+  try {
+    valid = await messaging.validateBotJwt(req.headers.get("authorization"), ctx.nowMs());
+  } catch {
+    valid = false; // fail closed on any verifier error (e.g. JWKS unreachable on cold start)
+  }
+  if (!valid) {
+    recordRejection(ctx, {
+      actionType: TEAMS_EVENTS_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 401,
+      reason: "invalid_bot_jwt",
+    });
+    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
+  }
+  try {
+    await messaging.onActivity(parsed);
+    return jsonResponse({ ok: true }, 200, rateLimitHeaders(limit));
+  } catch {
+    recordRejection(ctx, {
+      actionType: TEAMS_EVENTS_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+}
+
 export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): Promise<Response> {
   const url = new URL(req.url);
   const route = resolveRoute(req, url, ctx);
@@ -545,6 +620,9 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   }
   if (route.kind === "policy") {
     return runPolicyRoute(ctx, auth.fingerprint, limit, parsed);
+  }
+  if (route.kind === "teamsEvents") {
+    return runTeamsEventsRoute(ctx, auth.fingerprint, limit, req, parsed);
   }
   return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }

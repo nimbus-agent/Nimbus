@@ -288,18 +288,20 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy routes", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
     // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
-    // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b).
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(5);
+    // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b) +
+    // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT).
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(6);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
       "PATCH /scim/v2/Users/{id}",
       "DELETE /scim/v2/Users/{id}",
       "PUT /v1/admin/policy",
+      "POST /v1/messaging/teams/events",
     ]);
   });
 });
