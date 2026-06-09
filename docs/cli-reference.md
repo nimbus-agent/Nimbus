@@ -1057,6 +1057,37 @@ nimbus scim deprovision alice@acme.com
 
 ---
 
+## ChatOps
+
+A bidirectional Slack/Teams `@nimbus` bot (Phase 6 Slice 5). Read queries are answered from the shared index; structured write commands (`@nimbus run <action> service=<svc> …`) route to the resolved resource owner's HITL approval before executing — the bot never bypasses the consent gate (invariant `I23` bounds the operational reply surface). Disabled by default; enable via the `[chatops]` section in `nimbus.toml`. Channel↔namespace bindings and resource→owner ownership live in the signed org policy (`[policy.chatops.*]`). The subcommands are local/CLI-only (forbidden over the LAN wire); only `chatops.status` is exposed to the desktop UI.
+
+### `nimbus chatops status`
+
+Show whether ChatOps is enabled and, per platform, whether the transport is connected and how many policy-bound channels it serves. Default subcommand (`nimbus chatops` with no argument).
+
+```bash
+nimbus chatops status
+```
+
+### `nimbus chatops start` / `nimbus chatops stop`
+
+Start or stop the bot transports (Slack Socket Mode connection / Teams webhook dispatch).
+
+```bash
+nimbus chatops start
+nimbus chatops stop
+```
+
+### `nimbus chatops test "<message>"`
+
+Dry-run the command parser against a message without sending anything — prints the parsed `read` / `write` / `refused` result. Useful for checking how a phrasing is interpreted.
+
+```bash
+nimbus chatops test "run deployment.rollback service=payment-service version=v1.4"
+```
+
+---
+
 ## Local LLM
 
 ### `nimbus llm status`
