@@ -280,15 +280,22 @@ interface MergedAuditRow {
   timestamp?: unknown;
 }
 
+/** Audit rows arrive as untyped JSON — render only primitive cells, never "[object Object]". */
+function cellText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return "";
+}
+
 /** Renders the merged team-audit timeline as a fixed-width table (timestamp, peer, action, hitl, hash). */
 function renderAuditTable(entries: MergedAuditRow[]): string {
   const header = ["TIMESTAMP", "PEER", "ACTION", "HITL", "HASH"];
   const rows = entries.map((e) => [
-    typeof e.timestamp === "number" ? new Date(e.timestamp).toISOString() : String(e.timestamp),
-    String(e.peerId ?? ""),
-    String(e.actionType ?? ""),
-    String(e.hitlStatus ?? ""),
-    String(e.hash ?? "").slice(0, 12),
+    typeof e.timestamp === "number" ? new Date(e.timestamp).toISOString() : cellText(e.timestamp),
+    cellText(e.peerId),
+    cellText(e.actionType),
+    cellText(e.hitlStatus),
+    cellText(e.hash).slice(0, 12),
   ]);
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const fmt = (cols: string[]): string => cols.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ");

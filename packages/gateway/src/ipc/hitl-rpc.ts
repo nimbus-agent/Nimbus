@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
-import { type DelegationScopeKind, DelegationStore } from "../engine/delegation-store.ts";
+import { DelegationStore } from "../engine/delegation-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class HitlRpcError extends Error {
@@ -58,7 +58,7 @@ export async function dispatchHitlRpc(
       }
       const id = store.create({
         delegatePeer: str(r, "delegatePeer"),
-        scopeKind: scopeKind as DelegationScopeKind,
+        scopeKind,
         scopeValue: str(r, "scopeValue"),
         expiresAt,
         nowMs: now,

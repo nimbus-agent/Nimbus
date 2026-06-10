@@ -36,6 +36,24 @@ describe("Slack adapter helpers", () => {
     ).toBeUndefined();
   });
 
+  test("app_mention with a non-string field normalizes to undefined (type-guard short-circuit)", () => {
+    const n = new SlackEventNormalizer();
+    // channel present but not a string → the `||` guard returns undefined
+    expect(
+      n.normalize({
+        type: "events_api",
+        payload: { event: { type: "app_mention", channel: 42, user: "U1", text: "hi", ts: "1.2" } },
+      }),
+    ).toBeUndefined();
+    // ts missing → also undefined
+    expect(
+      n.normalize({
+        type: "events_api",
+        payload: { event: { type: "app_mention", channel: "C1", user: "U1", text: "hi" } },
+      }),
+    ).toBeUndefined();
+  });
+
   test("dedupeKey is stable for (channel, ts)", () => {
     expect(dedupeKey("C1", "1.2")).toBe(dedupeKey("C1", "1.2"));
     expect(dedupeKey("C1", "1.2")).not.toBe(dedupeKey("C1", "1.3"));
@@ -130,6 +148,98 @@ describe("SlackSocketAdapter", () => {
     sock.emit("not json");
     await Promise.resolve();
     expect(sock.sent).toEqual([]);
+  });
+
+  test("a non-object JSON frame is not acked and does not throw", async () => {
+    const sock = new FakeSocket();
+    const adapter = new SlackSocketAdapter({
+      openSocket: async () => ({ url: "wss://x" }),
+      socketFactory: () => sock,
+    });
+    adapter.onMessage(async () => {});
+    await adapter.start();
+    // valid JSON but not an object → skips the ack block (frame === object guard false)
+    sock.emit("123");
+    await Promise.resolve();
+    expect(sock.sent).toEqual([]);
+    await adapter.stop();
+  });
+
+  test("an object frame without envelope_id is processed but not acked", async () => {
+    const sock = new FakeSocket();
+    const got: ChatMessage[] = [];
+    const adapter = new SlackSocketAdapter({
+      openSocket: async () => ({ url: "wss://x" }),
+      socketFactory: () => sock,
+    });
+    adapter.onMessage(async (m) => {
+      got.push(m);
+    });
+    await adapter.start();
+    // app_mention with no envelope_id → no ack (typeof envelopeId !== "string"), still handled
+    sock.emit(
+      JSON.stringify({
+        type: "events_api",
+        payload: {
+          event: { type: "app_mention", channel: "C1", user: "U1", text: "hi", ts: "1.9" },
+        },
+      }),
+    );
+    await Promise.resolve();
+    expect(sock.sent).toEqual([]);
+    expect(got).toHaveLength(1);
+    await adapter.stop();
+  });
+
+  test("a non-mention frame is acked but yields no handler call (msg undefined)", async () => {
+    const sock = new FakeSocket();
+    const got: ChatMessage[] = [];
+    const adapter = new SlackSocketAdapter({
+      openSocket: async () => ({ url: "wss://x" }),
+      socketFactory: () => sock,
+    });
+    adapter.onMessage(async (m) => {
+      got.push(m);
+    });
+    await adapter.start();
+    sock.emit(JSON.stringify({ type: "events_api", envelope_id: "e1", payload: {} }));
+    await Promise.resolve();
+    expect(sock.sent).toEqual([JSON.stringify({ envelope_id: "e1" })]);
+    expect(got).toHaveLength(0);
+    await adapter.stop();
+  });
+
+  test("a valid mention with no handler registered is deduped without throwing", async () => {
+    const sock = new FakeSocket();
+    // intentionally do NOT call adapter.onMessage → this.handler stays undefined
+    const adapter = new SlackSocketAdapter({
+      openSocket: async () => ({ url: "wss://x" }),
+      socketFactory: () => sock,
+    });
+    await adapter.start();
+    sock.emit(appMentionFrame("e2", "2.0"));
+    await Promise.resolve();
+    expect(sock.sent).toEqual([JSON.stringify({ envelope_id: "e2" })]);
+    await adapter.stop();
+  });
+
+  test("onClose after stop() does not schedule a reconnect", async () => {
+    let scheduled = 0;
+    const sock = new FakeSocket();
+    const adapter = new SlackSocketAdapter({
+      openSocket: async () => ({ url: "wss://x" }),
+      socketFactory: () => sock,
+      scheduleReconnect: (_ms, fn) => {
+        scheduled++;
+        fn();
+      },
+    });
+    adapter.onMessage(async () => {});
+    await adapter.start();
+    await adapter.stop(); // sets stopped = true
+    sock.closeCb?.(); // close arriving after stop → the `if (this.stopped) return` guard
+    await Promise.resolve();
+    expect(scheduled).toBe(0);
   });
 
   test("close schedules a reconnect via the injected scheduler", async () => {

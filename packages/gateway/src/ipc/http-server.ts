@@ -410,8 +410,9 @@ async function dispatchReadOnlyGet(
   return new Response("Not Found", { status: 404 });
 }
 
-type ScimWriteDeps = NonNullable<Parameters<typeof dispatchWriteRoute>[1]["scim"]>;
-type PolicyWriteDeps = NonNullable<Parameters<typeof dispatchWriteRoute>[1]["policy"]>;
+type WriteRouteDeps = Parameters<typeof dispatchWriteRoute>[1];
+type ScimWriteDeps = NonNullable<WriteRouteDeps["scim"]>;
+type PolicyWriteDeps = NonNullable<WriteRouteDeps["policy"]>;
 
 // SCIM provisioning seam — present only when a SCIM bearer resolver is wired.
 async function resolveScimWriteDeps(
@@ -442,6 +443,38 @@ async function resolvePolicyWriteDeps(
   };
 }
 
+// Assembles the full I13 dispatcher dependency set. Each write seam (deployment token, SCIM,
+// policy, messaging) is resolved independently — a gateway can enable any surface alone.
+async function resolveWriteRouteDeps(
+  writeDb: Database,
+  rateLimiter: HttpWriteRateLimiter,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<WriteRouteDeps> {
+  const expectedToken =
+    opts.resolveDeploymentToken === undefined ? "" : await opts.resolveDeploymentToken();
+  const cfgDir = opts.configDir;
+  const knownServices =
+    cfgDir === undefined
+      ? (): readonly string[] => []
+      : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
+  const scim = await resolveScimWriteDeps(writeDb, opts);
+  const policy = await resolvePolicyWriteDeps(opts);
+  const messaging =
+    opts.resolveTeamsEventsSurface === undefined
+      ? undefined
+      : await opts.resolveTeamsEventsSurface();
+  return {
+    writeDb,
+    expectedToken,
+    rateLimiter,
+    nowMs: opts.nowMs ?? ((): number => Date.now()),
+    knownServices,
+    ...(scim === undefined ? {} : { scim }),
+    ...(policy === undefined ? {} : { policy }),
+    ...(messaging === undefined ? {} : { messaging }),
+  };
+}
+
 // Every HTTP write (deployment annotation + SCIM provisioning) flows through the single I13
 // dispatcher. The deployment token and the SCIM seam are resolved independently — a gateway can
 // enable either surface alone — and dispatchWriteRoute selects per route.
@@ -455,29 +488,7 @@ async function handleWrite(
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
   }
   try {
-    const expectedToken =
-      opts.resolveDeploymentToken === undefined ? "" : await opts.resolveDeploymentToken();
-    const cfgDir = opts.configDir;
-    const knownServices =
-      cfgDir === undefined
-        ? (): readonly string[] => []
-        : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
-    const scim = await resolveScimWriteDeps(writeDb, opts);
-    const policy = await resolvePolicyWriteDeps(opts);
-    const messaging =
-      opts.resolveTeamsEventsSurface === undefined
-        ? undefined
-        : await opts.resolveTeamsEventsSurface();
-    return await dispatchWriteRoute(req, {
-      writeDb,
-      expectedToken,
-      rateLimiter,
-      nowMs: opts.nowMs ?? ((): number => Date.now()),
-      knownServices,
-      ...(scim === undefined ? {} : { scim }),
-      ...(policy === undefined ? {} : { policy }),
-      ...(messaging === undefined ? {} : { messaging }),
-    });
+    return await dispatchWriteRoute(req, await resolveWriteRouteDeps(writeDb, rateLimiter, opts));
   } catch {
     return json({ error: "internal_error" }, 500);
   }

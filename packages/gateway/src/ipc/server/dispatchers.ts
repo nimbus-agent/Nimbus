@@ -674,11 +674,11 @@ export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unk
   return buildStatus(ctx.options.statusReaders);
 }
 
-export async function tryDispatchPhase4Rpc(
+/** First group of the phase-4 chain: llm → agents → voice → updater → audit → security → federation. */
+async function dispatchPhase4CoreGroup(
   ctx: ServerCtx,
   method: string,
   params: unknown,
-  clientId: string,
 ): Promise<unknown> {
   const llmOutcome = await tryDispatchLlmRpc(ctx, method, params);
   if (llmOutcome !== phase4RpcSkipped) return llmOutcome;
@@ -692,8 +692,20 @@ export async function tryDispatchPhase4Rpc(
   if (auditOutcome !== phase4RpcSkipped) return auditOutcome;
   const securityOutcome = await tryDispatchSecurityRpc(ctx, method, params);
   if (securityOutcome !== phase4RpcSkipped) return securityOutcome;
-  const federationOutcome = await tryDispatchFederationRpc(ctx, method, params);
-  if (federationOutcome !== phase4RpcSkipped) return federationOutcome;
+  return tryDispatchFederationRpc(ctx, method, params);
+}
+
+/**
+ * Second group: teamvault → hitl → identity → metrics → preflight → deployment → data.
+ * Metrics/preflight/deployment carry their own skip sentinels (unique symbols), so a
+ * non-sentinel outcome can never collide with `phase4RpcSkipped` in the caller.
+ */
+async function dispatchPhase4TeamMetricsGroup(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
   const teamVaultOutcome = await tryDispatchTeamVaultRpc(ctx, method, params, clientId);
   if (teamVaultOutcome !== phase4RpcSkipped) return teamVaultOutcome;
   const hitlOutcome = await tryDispatchHitlRpc(ctx, method, params);
@@ -706,8 +718,15 @@ export async function tryDispatchPhase4Rpc(
   if (preflightOutcome !== preflightRpcSkipped) return preflightOutcome;
   const deploymentOutcome = await tryDispatchDeploymentRpc(ctx, method, params);
   if (deploymentOutcome !== deploymentRpcSkipped) return deploymentOutcome;
-  const dataOutcome = await tryDispatchDataRpc(ctx, method, params, clientId);
-  if (dataOutcome !== phase4RpcSkipped) return dataOutcome;
+  return tryDispatchDataRpc(ctx, method, params, clientId);
+}
+
+/** Third group: lan → profile → index-reembed → policy → chatops → admin. */
+async function dispatchPhase4PlatformGroup(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
   const lanOutcome = await tryDispatchLanRpc(ctx, method, params);
   if (lanOutcome !== phase4RpcSkipped) return lanOutcome;
   const profileOutcome = await tryDispatchProfileRpc(ctx, method, params);
@@ -718,8 +737,21 @@ export async function tryDispatchPhase4Rpc(
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
   if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
-  const adminOutcome = tryDispatchAdminRpc(ctx, method, params);
-  if (adminOutcome !== phase4RpcSkipped) return adminOutcome;
+  return tryDispatchAdminRpc(ctx, method, params);
+}
+
+export async function tryDispatchPhase4Rpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  const coreOutcome = await dispatchPhase4CoreGroup(ctx, method, params);
+  if (coreOutcome !== phase4RpcSkipped) return coreOutcome;
+  const teamMetricsOutcome = await dispatchPhase4TeamMetricsGroup(ctx, method, params, clientId);
+  if (teamMetricsOutcome !== phase4RpcSkipped) return teamMetricsOutcome;
+  const platformOutcome = await dispatchPhase4PlatformGroup(ctx, method, params);
+  if (platformOutcome !== phase4RpcSkipped) return platformOutcome;
   return tryDispatchReindexRpc(ctx, method, params, clientId);
 }
 

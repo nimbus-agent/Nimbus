@@ -64,7 +64,7 @@ export class ChatopsIdentityMapper {
 
     // Authorization is ALWAYS live + local — never cached.
     const scim = this.deps.findScimByEmail(email);
-    if (scim === undefined || !scim.active) return { kind: "unmapped" };
+    if (!scim?.active) return { kind: "unmapped" };
     if (!this.deps.isOperatorValid(scim.issuer)) return { kind: "unmapped" };
     return {
       kind: "mapped",

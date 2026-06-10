@@ -256,6 +256,83 @@ function syncFilesystemPackageDeps(
   return { upserted, bytes };
 }
 
+function readFileTextOrUndefined(fp: string): string | undefined {
+  try {
+    return readFileSync(fp, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function fileMtimeOrFallback(fp: string, fallback: number): number {
+  try {
+    return statSync(fp).mtimeMs;
+  } catch {
+    return fallback;
+  }
+}
+
+function upsertCodeSymbolsForFile(
+  ctx: SyncContext,
+  src: string,
+  symbols: readonly { name: string; kind: string }[],
+  root: string,
+  relNorm: string,
+  rk: string,
+  mtime: number,
+  now: number,
+): { upserted: number; blameRanges: BlameRange[] } {
+  let upserted = 0;
+  const blameRanges: BlameRange[] = [];
+  for (const sym of symbols) {
+    const extId = `sym:${rk}:${relNorm}:${sym.name}:${sym.kind}`;
+    const { text: excerpt, startLine } = excerptWithStartLine(src, sym.name, 380);
+    const bodyPreview = excerpt === "" ? relNorm : `${relNorm}\n${excerpt}`;
+    const metadata: Record<string, unknown> = {
+      name: sym.name,
+      kind: sym.kind,
+      file: relNorm,
+      repoRoot: root,
+    };
+    if (startLine !== null) {
+      metadata["excerptStartLine"] = startLine;
+      blameRanges.push({ from: startLine, to: startLine + excerpt.split("\n").length - 1 });
+    }
+    upsertIndexedItemForSync(ctx, {
+      service: SERVICE_ID,
+      type: "code_symbol",
+      externalId: extId,
+      title: `${sym.name} (${sym.kind})`,
+      bodyPreview,
+      url: null,
+      canonicalUrl: null,
+      modifiedAt: mtime,
+      authorId: null,
+      metadata,
+      pinned: false,
+      syncedAt: now,
+    });
+    upserted += 1;
+  }
+  return { upserted, blameRanges };
+}
+
+// Blame the indexed excerpt ranges so a security-scan finding can be attributed
+// to the commit that introduced the line. Git-only; bounded by MAX_BLAME_LINES.
+async function blameIndexedExcerptRanges(
+  ctx: SyncContext,
+  root: string,
+  relNorm: string,
+  blameRanges: readonly BlameRange[],
+): Promise<void> {
+  const merged = mergeRanges(blameRanges);
+  const covered = merged.reduce((n, r) => n + (r.to - r.from + 1), 0);
+  if (covered <= MAX_BLAME_LINES) {
+    const rows = await gitBlameLinePorcelain(root, relNorm, merged);
+    if (rows.length > 0) upsertBlameLines(ctx.db, root, relNorm, rows);
+  }
+}
+
 async function syncFilesystemCodeSymbolsForRoot(
   ctx: SyncContext,
   root: string,
@@ -268,62 +345,18 @@ async function syncFilesystemCodeSymbolsForRoot(
   const gitAware = isGitRepo(root);
   const files = listCodeFiles(root, exclude, 120);
   for (const fp of files) {
-    let src: string;
-    try {
-      src = readFileSync(fp, "utf8");
-    } catch {
+    const src = readFileTextOrUndefined(fp);
+    if (src === undefined) {
       continue;
     }
     bytes += src.length;
-    const rel = relative(root, fp);
-    const relNorm = rel.replaceAll("\\", "/");
+    const relNorm = relative(root, fp).replaceAll("\\", "/");
     const symbols = extractExportedSymbols(src, fp);
-    let mtime = now;
-    try {
-      mtime = statSync(fp).mtimeMs;
-    } catch {
-      /* keep now */
-    }
-    const blameRanges: BlameRange[] = [];
-    for (const sym of symbols) {
-      const extId = `sym:${rk}:${relNorm}:${sym.name}:${sym.kind}`;
-      const { text: excerpt, startLine } = excerptWithStartLine(src, sym.name, 380);
-      const bodyPreview = excerpt === "" ? relNorm : `${relNorm}\n${excerpt}`;
-      const metadata: Record<string, unknown> = {
-        name: sym.name,
-        kind: sym.kind,
-        file: relNorm,
-        repoRoot: root,
-      };
-      if (startLine !== null) {
-        metadata["excerptStartLine"] = startLine;
-        blameRanges.push({ from: startLine, to: startLine + excerpt.split("\n").length - 1 });
-      }
-      upsertIndexedItemForSync(ctx, {
-        service: SERVICE_ID,
-        type: "code_symbol",
-        externalId: extId,
-        title: `${sym.name} (${sym.kind})`,
-        bodyPreview,
-        url: null,
-        canonicalUrl: null,
-        modifiedAt: mtime,
-        authorId: null,
-        metadata,
-        pinned: false,
-        syncedAt: now,
-      });
-      upserted += 1;
-    }
-    // Blame the indexed excerpt ranges so a security-scan finding can be attributed
-    // to the commit that introduced the line. Git-only; bounded by MAX_BLAME_LINES.
-    if (gitAware && blameRanges.length > 0) {
-      const merged = mergeRanges(blameRanges);
-      const covered = merged.reduce((n, r) => n + (r.to - r.from + 1), 0);
-      if (covered <= MAX_BLAME_LINES) {
-        const rows = await gitBlameLinePorcelain(root, relNorm, merged);
-        if (rows.length > 0) upsertBlameLines(ctx.db, root, relNorm, rows);
-      }
+    const mtime = fileMtimeOrFallback(fp, now);
+    const fileResult = upsertCodeSymbolsForFile(ctx, src, symbols, root, relNorm, rk, mtime, now);
+    upserted += fileResult.upserted;
+    if (gitAware && fileResult.blameRanges.length > 0) {
+      await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges);
     }
   }
   return { upserted, bytes };

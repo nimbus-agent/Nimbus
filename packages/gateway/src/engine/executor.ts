@@ -210,6 +210,20 @@ export class ToolExecutor {
     return outcome === "fallback_to_owner" ? "fallback" : outcome;
   }
 
+  /** Resolve a HITL action's approval: a delegated answer when one applies (I20), otherwise the
+   *  local owner consent prompt (payload shown redacted, for display only). */
+  private async resolveHitlApproval(action: PlannedAction): Promise<boolean> {
+    const delegated = await this.tryDelegatedApproval(action);
+    if (delegated === "fallback") {
+      const details =
+        action.payload === undefined
+          ? undefined
+          : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
+      return this.consent.requestApproval(formatConsentPrompt(action), details);
+    }
+    return delegated === "approved";
+  }
+
   async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
     const requiresHITL = HITL_REQUIRED.has(action.type);
 
@@ -219,17 +233,7 @@ export class ToolExecutor {
 
     try {
       if (requiresHITL) {
-        const delegated = await this.tryDelegatedApproval(action);
-        let approved: boolean;
-        if (delegated === "fallback") {
-          const details =
-            action.payload === undefined
-              ? undefined
-              : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
-          approved = await this.consent.requestApproval(formatConsentPrompt(action), details);
-        } else {
-          approved = delegated === "approved";
-        }
+        const approved = await this.resolveHitlApproval(action);
         hitlStatus = approved ? "approved" : "rejected";
         if (!approved) rejectReason = "User declined consent gate.";
       } else {

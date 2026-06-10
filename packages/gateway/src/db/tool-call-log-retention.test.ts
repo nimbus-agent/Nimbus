@@ -164,7 +164,8 @@ describe("startToolCallLogRetention", () => {
       nowMs: () => now,
     });
     handle.stop();
-    expect(true).toBe(true);
+    // The throwing tick was swallowed AND its transaction rolled back: the row survives.
+    expect(countCalls(db)).toBe(1);
   });
 
   test("retentionDays = 0 starts no timer and prunes nothing", () => {

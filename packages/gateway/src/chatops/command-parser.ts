@@ -7,17 +7,18 @@ import type { ParsedCommand } from "./types.ts";
  * backticks, non-breaking spaces, collapsed whitespace.
  */
 export function normalizeChatText(raw: string): string {
-  let s = raw.replace(/ /g, " ");
+  let s = raw.replaceAll("\u00A0", " ");
   // smart quotes -> ASCII
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-  // slack link <url|label> -> label ; <url> -> url
-  s = s.replace(/<([^|>]+)\|([^>]+)>/g, "$2").replace(/<(https?:[^>]+)>/g, "$1");
+  // slack link <url|label> -> label ; <url> -> url (classes exclude `<` so backtracking stays
+  // linear; Slack escapes a literal `<` as &lt; inside tokens, so nothing real is missed)
+  s = s.replace(/<([^<|>]+)\|([^<>]+)>/g, "$2").replace(/<(https?:[^<>]+)>/g, "$1");
   // user/channel mention tokens -> drop the wrapping; <#C123|name> -> name, <@U123> -> ""
-  s = s.replace(/<#[^|>]+\|([^>]+)>/g, "$1").replace(/<@[^>]+>/g, "");
+  s = s.replace(/<#[^<|>]+\|([^<>]+)>/g, "$1").replace(/<@[^<>]+>/g, "");
   // leading bot mention
   s = s.replace(/^\s*(?:@nimbus|<at>\s*nimbus\s*<\/at>)\s*/i, "");
   // strip backticks (inline code / fences)
-  s = s.replace(/```/g, "").replace(/`/g, "");
+  s = s.replaceAll("```", "").replaceAll("`", "");
   return s.replace(/\s+/g, " ").trim();
 }
 
