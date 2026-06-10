@@ -576,7 +576,17 @@ jobs:
         run: mkdir -p junit-reports
 
       - name: E2E Gateway tests
-        run: bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
+        # Linux: wrap in a D-Bus session + initialized keyring so the spawned gateway's libsecret
+        # Vault works (installing the packages above is not enough without a live session bus —
+        # mirrors the unit-coverage + Vault-gate steps). macOS/Windows use the unlocked keychain /
+        # DPAPI and need no wrapper.
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            bash scripts/ci/run-with-optional-dbus.sh bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
+          else
+            bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
+          fi
         env:
           CI: "true"
 
