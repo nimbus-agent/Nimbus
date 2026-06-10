@@ -52,6 +52,16 @@ describe("buildTeamsBotJwtValidator (I18 reuse; aud === teamsBotAppId; fail-clos
     expect(await validate(`Bearer ${jwt}`, 1_700_000_000_000)).toBe(true);
   });
 
+  test("accepts a case-insensitive `bearer` scheme (RFC 7235)", async () => {
+    const { jwt, jwk } = await mintedToken({});
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: fetchServing(jwk),
+    });
+    expect(await validate(`bearer ${jwt}`, 1_700_000_000_000)).toBe(true);
+  });
+
   test("rejects a token minted for a different audience", async () => {
     const { jwt, jwk } = await mintedToken({ aud: "someone-else" });
     const validate = buildTeamsBotJwtValidator({

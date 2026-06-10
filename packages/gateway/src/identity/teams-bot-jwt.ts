@@ -9,6 +9,8 @@ export const BOT_FRAMEWORK_OPENID_CONFIG =
   "https://login.botframework.com/v1/.well-known/openidconfiguration";
 
 const JWKS_MAX_AGE_SECONDS = 24 * 60 * 60;
+/** Hard deadline on the one-time OpenID discovery fetch so a stalled IdP can't hang validation. */
+const DISCOVERY_TIMEOUT_MS = 5000;
 
 export interface TeamsBotJwtDeps {
   readonly db: Database;
@@ -36,7 +38,16 @@ export function buildTeamsBotJwtValidator(
   async function resolveVerifier(): Promise<IdTokenVerifier | undefined> {
     if (verifier !== undefined) return verifier;
     try {
-      const res = await fetchLike(BOT_FRAMEWORK_OPENID_CONFIG);
+      // Bound the discovery fetch: an unbounded request would let a stalled IdP hang every Teams
+      // event handler (the route fails closed on any error/timeout — rediscovered next call).
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), DISCOVERY_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetchLike(BOT_FRAMEWORK_OPENID_CONFIG, { signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) return undefined;
       const cfg = (await res.json()) as { jwks_uri?: unknown };
       if (typeof cfg.jwks_uri !== "string" || cfg.jwks_uri === "") return undefined;
@@ -56,8 +67,11 @@ export function buildTeamsBotJwtValidator(
   }
 
   return async (authorizationHeader, nowMs) => {
-    if (authorizationHeader === null || !authorizationHeader.startsWith("Bearer ")) return false;
-    const token = authorizationHeader.slice("Bearer ".length).trim();
+    if (authorizationHeader === null) return false;
+    // RFC 7235: the auth scheme is case-insensitive (`Bearer` / `bearer`).
+    const match = /^Bearer\s+(.+)$/i.exec(authorizationHeader);
+    if (match === null) return false;
+    const token = (match[1] ?? "").trim();
     if (token === "") return false;
     const v = await resolveVerifier();
     if (v === undefined) return false; // fail-closed; rediscovered on the next call

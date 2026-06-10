@@ -12,7 +12,7 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,7 +124,9 @@ async function until<T>(probe: () => T | undefined, what: string, ms = 30_000): 
 }
 
 describe("chatops e2e (real gateway subprocess + mock connector sink)", () => {
-  const tmp = join(tmpdir(), `nimbus-chatops-e2e-${process.pid}-${randomUUID().slice(0, 8)}`);
+  // mkdtempSync (not join(tmpdir(), name)) — securely creates a unique 0700 dir, dodging the
+  // predictable-temp-path CodeQL/Sonar S5443 finding.
+  const tmp = mkdtempSync(join(tmpdir(), "nimbus-chatops-e2e-"));
   const dataDir = join(tmp, "data");
   const sinkDir = join(tmp, "sink");
   const sinkPath = join(sinkDir, "mock-chatops-sink.ndjson");
