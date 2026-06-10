@@ -120,7 +120,7 @@
     },
     "packages/gateway/src/config/nimbus-toml.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 74.91
+      "min_branch_pct": 75.09
     },
     "packages/gateway/src/config/telemetry-toml.ts": {
       "min_line_pct": 80,
@@ -236,7 +236,7 @@
     },
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 74.03
+      "min_branch_pct": 75.64
     },
     "packages/gateway/src/connectors/flagsmith-sync.ts": {
       "min_line_pct": 80,
@@ -490,10 +490,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 77.33
     },
-    "packages/gateway/src/ipc/connector-rpc-handlers/removal.ts": {
-      "min_line_pct": 65.52,
-      "min_branch_pct": 53.33
-    },
     "packages/gateway/src/ipc/consent.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76.19
@@ -514,61 +510,21 @@
       "min_line_pct": 80,
       "min_branch_pct": 77.69
     },
-    "packages/gateway/src/ipc/index-reembed-rpc.ts": {
-      "min_line_pct": 71.67,
-      "min_branch_pct": 60.42
-    },
     "packages/gateway/src/ipc/jsonrpc.ts": {
       "min_line_pct": 79.17,
       "min_branch_pct": 75
-    },
-    "packages/gateway/src/ipc/lan-client.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 51.47
-    },
-    "packages/gateway/src/ipc/lan-server.ts": {
-      "min_line_pct": 79.63,
-      "min_branch_pct": 72
     },
     "packages/gateway/src/ipc/metrics-rpc.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76.67
     },
-    "packages/gateway/src/ipc/openapi-loader.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
     "packages/gateway/src/ipc/security-rpc.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75.41
     },
-    "packages/gateway/src/ipc/server/dispatchers.ts": {
-      "min_line_pct": 72.15,
-      "min_branch_pct": 70.87
-    },
-    "packages/gateway/src/ipc/server/rpc-error.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/gateway/src/ipc/server/server.ts": {
-      "min_line_pct": 77.55,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/ipc/session.ts": {
-      "min_line_pct": 55.1,
-      "min_branch_pct": 33.33
-    },
     "packages/gateway/src/ipc/teamvault-rpc.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/ipc/updater-rpc.ts": {
-      "min_line_pct": 52.38,
-      "min_branch_pct": 38.46
-    },
-    "packages/gateway/src/ipc/voice-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 60
     },
     "packages/gateway/src/llm/llamacpp-provider.ts": {
       "min_line_pct": 80,
