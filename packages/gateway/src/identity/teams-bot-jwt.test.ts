@@ -73,6 +73,44 @@ describe("buildTeamsBotJwtValidator (I18 reuse; aud === teamsBotAppId; fail-clos
     expect(await validate("Bearer not.a.jwt", 0)).toBe(false);
   });
 
+  test("fail-closed: non-ok discovery response → false (no verifier built)", async () => {
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: ((_url: string | URL) =>
+        Promise.resolve(new Response("upstream down", { status: 503 }))) as typeof fetch,
+    });
+    expect(await validate("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
+  });
+
+  test("fail-closed: discovery doc missing a usable jwks_uri → false", async () => {
+    const noJwks = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: ((_url: string | URL) =>
+        Promise.resolve(Response.json({ jwks_uri: "" }))) as typeof fetch,
+    });
+    expect(await noJwks("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
+
+    const wrongType = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: ((_url: string | URL) =>
+        Promise.resolve(Response.json({ jwks_uri: 42 }))) as typeof fetch,
+    });
+    expect(await wrongType("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
+  });
+
+  test("default log sink: a discovery throw is swallowed without a provided logger", async () => {
+    // Omitting `log` exercises the `deps.log ?? (() => {})` default-sink branch.
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: ((_url: string | URL) => Promise.reject(new Error("offline"))) as typeof fetch,
+    });
+    expect(await validate("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
+  });
+
   test("fail-closed: discovery outage → false, and recovers on a later call", async () => {
     const { jwt, jwk } = await mintedToken({});
     let healthy = false;

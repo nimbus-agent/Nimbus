@@ -79,4 +79,15 @@ describe("chatopsTeamsBotServers (I1/I15 bot-credential spawn spec)", () => {
     );
     expect(servers?.["teams"]?.env["TEAMS_BOT_SERVICE_URL"]).toBe("https://smba.example/emea/");
   });
+
+  test("no microsoft.oauth in the bot entry → Graph lookup degrades (no MICROSOFT_OAUTH_ACCESS_TOKEN)", async () => {
+    // Graph-token enrichment is best-effort: with no microsoft.oauth credential the token resolve
+    // fails closed (caught) and the spawn env omits MICROSOFT_OAUTH_ACCESS_TOKEN — teams_user_info
+    // then fails closed in the connector and identity mapping reports the user unmapped.
+    const servers = await chatopsTeamsBotServers(
+      fakeVault({ "teams.bot_app_id": "app-1", "teams.bot_app_password": "pw-1" }),
+      "/cwd",
+    );
+    expect(servers?.["teams"]?.env["MICROSOFT_OAUTH_ACCESS_TOKEN"]).toBeUndefined();
+  });
 });

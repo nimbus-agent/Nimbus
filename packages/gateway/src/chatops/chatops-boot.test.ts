@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PlannedAction } from "../engine/types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
-import { buildChatopsBoot, type ChatopsBootDeps } from "./chatops-boot.ts";
+import { buildChatopsBoot, type ChatopsBootDeps, emailFromUserInfo } from "./chatops-boot.ts";
 import type { RunChatopsTool } from "./chatops-tool-runner.ts";
 import type { SocketLike } from "./transport/slack-socket-adapter.ts";
 
@@ -320,5 +320,87 @@ describe("buildChatopsBoot — full production graph", () => {
       },
     });
     expect(h.boot.teamsSurface).toBeUndefined();
+  });
+
+  test("slack socket open with no url → fail-closed throw (never connects to a bogus endpoint)", async () => {
+    // The slack transport's `openSocket` unwraps `slack_socket_open`; an empty url is rejected so
+    // the adapter never opens a socket to a bogus endpoint.
+    const h = buildHarness({
+      runTool: ((platform, toolId) => {
+        if (toolId === "slack_socket_open") return Promise.resolve({ url: "" });
+        throw new Error(`unexpected tool ${toolId} (${platform})`);
+      }) as RunChatopsTool,
+    });
+    await expect(h.boot.service.start()).rejects.toThrow(/returned no socket url/);
+    await h.boot.service.stop();
+  });
+
+  test("rpcCtx start/stop drive the underlying service lifecycle", async () => {
+    const h = buildHarness();
+    await h.boot.rpcCtx.start();
+    expect(h.boot.rpcCtx.status().platforms.map((p) => p.name)).toEqual(["slack"]);
+    await h.boot.rpcCtx.stop();
+    // After stop the slack socket adapter reports disconnected.
+    expect(h.boot.rpcCtx.status().platforms[0]?.connected).toBe(false);
+  });
+
+  test("user lookup tolerates an MCP content-envelope result (unwrapToolResult)", async () => {
+    // Slack `users.info` can arrive wrapped in an MCP `{ content: [{ text: "<json>" }] }` envelope;
+    // the boot must unwrap it before reading the profile email. A successful unwrap → mapped user →
+    // engine answer posted (no refusal audit row).
+    const localPosts: { channel: string; text: string }[] = [];
+    const h = buildHarness({
+      runTool: ((_platform, toolId, args) => {
+        if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+        if (toolId === "slack_user_info") {
+          const user = (args as { user: string }).user;
+          const email = SLACK_EMAILS[user];
+          return Promise.resolve({
+            content: [
+              {
+                text: JSON.stringify(
+                  email === undefined ? { user: {} } : { user: { profile: { email } } },
+                ),
+              },
+            ],
+          });
+        }
+        if (toolId === "slack_chat_post") {
+          const a = args as { channel: string; text: string };
+          localPosts.push({ channel: a.channel, text: a.text });
+          return Promise.resolve({ ok: true });
+        }
+        throw new Error(`unexpected tool ${toolId}`);
+      }) as RunChatopsTool,
+    });
+    await h.boot.service.start();
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call for payment-service?", "20"));
+    await until(() => localPosts.length === 1);
+    expect(localPosts[0]?.channel).toBe("C0");
+    expect(h.audits.find((a) => a.actionType === "chatops.refusal")).toBeUndefined();
+    await h.boot.service.stop();
+  });
+});
+
+describe("emailFromUserInfo", () => {
+  test("slack: reads user.profile.email; empty/missing → undefined", () => {
+    expect(emailFromUserInfo("slack", { user: { profile: { email: "a@b.com" } } })).toBe("a@b.com");
+    expect(emailFromUserInfo("slack", { user: { profile: { email: "" } } })).toBeUndefined();
+    expect(emailFromUserInfo("slack", { user: {} })).toBeUndefined();
+    expect(emailFromUserInfo("slack", null)).toBeUndefined();
+    expect(emailFromUserInfo("slack", "not-an-object")).toBeUndefined();
+  });
+
+  test("teams: reads mail / userPrincipalName from the top object or items/value lists", () => {
+    expect(emailFromUserInfo("teams", { mail: "t@b.com" })).toBe("t@b.com");
+    expect(emailFromUserInfo("teams", { userPrincipalName: "upn@b.com" })).toBe("upn@b.com");
+    expect(emailFromUserInfo("teams", { value: [{ mail: "v@b.com" }] })).toBe("v@b.com");
+    expect(emailFromUserInfo("teams", { items: [{ userPrincipalName: "i@b.com" }] })).toBe(
+      "i@b.com",
+    );
+    // Empty lists / no email anywhere → undefined.
+    expect(emailFromUserInfo("teams", { value: [], items: [] })).toBeUndefined();
+    expect(emailFromUserInfo("teams", { other: "x" })).toBeUndefined();
+    expect(emailFromUserInfo("teams", undefined)).toBeUndefined();
   });
 });

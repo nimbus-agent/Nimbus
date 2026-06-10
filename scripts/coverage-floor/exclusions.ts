@@ -69,6 +69,23 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // `IPCClient`, and calls `process.exit`, with no injection seam. Same exemption class as team.ts.
   { kind: "exact", path: "packages/cli/src/commands/chatops.ts" },
 
+  // `chatops-bot-spawn-call.ts` (Phase 6 Slice 5): the ephemeral bot-credentialed spawn-and-call —
+  // it constructs a real `new MCPClient(...)` and opens a connector subprocess with no injection
+  // seam. Identical untestable real-subprocess I/O shell as the already-exempt
+  // `teamvault/team-tool-spawn.ts` (`spawnTeamToolAndCall`), and lives under `chatops/` for the
+  // same reason (it only REUSES the lazy-mesh sandbox-wrapped spec builders, never authors a
+  // ServerSpec). The testable spec builders (`chatopsSlackBotServers` / `chatopsTeamsBotServers`)
+  // live in `chatops-bot-spawn.ts` and ARE covered; this glue is exercised end-to-end by the
+  // ChatOps e2e + chatops-bot-spawn.test.ts.
+  { kind: "exact", path: "packages/gateway/src/chatops/chatops-bot-spawn-call.ts" },
+
+  // `chatops-tool-runner-e2e-sink.ts` (Phase 6 Slice 5): a TEST-ONLY file-backed mock ChatOps
+  // transport, reachable only via the `NIMBUS_CHATOPS_E2E_SINK_DIR` env seam (same precedent class
+  // as `NIMBUS_SKIP_EMBEDDING_RUNTIME`). It stands in for the bot-credentialed connector subprocess
+  // so the ChatOps e2e can drive a REAL gateway without the OS sandbox spawn (verified independently
+  // by chatops-bot-spawn.test.ts). Not shipped logic — never exercised in a normal gateway boot.
+  { kind: "exact", path: "packages/gateway/src/chatops/chatops-tool-runner-e2e-sink.ts" },
+
   // Test-only support files (imported solely by *.test.ts; not shipped logic). Verified
   // 2026-06-08 by import grep. Sub-project B0; D may relocate these under a `testing/` dir
   // (which discoverSourceFiles already auto-skips) to make the exemption self-enforcing.

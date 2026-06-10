@@ -1,8 +1,10 @@
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
-import type { ChatopsBotToolRequest } from "../connectors/lazy-mesh/chatops-bot-spawn.ts";
-import { spawnChatopsBotToolAndCall } from "../connectors/lazy-mesh/chatops-bot-spawn.ts";
 import { createTeamVaultView } from "../teamvault/team-vault-view.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import {
+  type ChatopsBotToolRequest,
+  spawnChatopsBotToolAndCall,
+} from "./chatops-bot-spawn-call.ts";
 import type { ChatPlatform } from "./types.ts";
 
 /** Bot secrets each platform's ChatOps tools need. Composed only via `readConnectorSecret`

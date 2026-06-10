@@ -1,7 +1,3 @@
-import { randomUUID } from "node:crypto";
-
-import { MCPClient } from "@mastra/mcp";
-
 import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -9,7 +5,6 @@ import { readConnectorSecret } from "../connector-vault.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { mcpConnectorServerScript } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
-import { listLazyMeshClientTools } from "./tool-map.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 /**
@@ -90,40 +85,4 @@ export async function chatopsTeamsBotServers(
       sandboxCwd,
     ),
   };
-}
-
-export interface ChatopsBotToolRequest {
-  readonly platform: "slack" | "teams";
-  readonly toolId: string;
-  readonly args: unknown;
-  /** The chatops team-vault view (bare keys remapped to `teamvault.<entry>.*`). */
-  readonly vaultView: NimbusVault;
-  readonly sandboxCwd: string;
-  readonly teams?: ChatopsTeamsSpawnOpts;
-}
-
-/**
- * Ephemeral bot-credentialed spawn-and-call (mirrors `team-tool-spawn.ts`): spawn a throwaway
- * connector with the bot env, call the named tool, tear the instance down. The bot secret only
- * ever lives in the subprocess env — never returned to the caller.
- */
-export async function spawnChatopsBotToolAndCall(req: ChatopsBotToolRequest): Promise<unknown> {
-  const servers =
-    req.platform === "slack"
-      ? await chatopsSlackBotServers(req.vaultView, req.sandboxCwd)
-      : await chatopsTeamsBotServers(req.vaultView, req.sandboxCwd, req.teams);
-  if (servers === undefined) {
-    throw new Error(`chatops: bot credentials missing for "${req.platform}" (fail-closed)`);
-  }
-  const client = new MCPClient({ id: `nimbus-chatops-${req.platform}-${randomUUID()}`, servers });
-  try {
-    const tools = await listLazyMeshClientTools(client);
-    const tool = tools[req.toolId] ?? tools[`${req.platform}_${req.toolId}`];
-    if (tool?.execute === undefined) {
-      throw new Error(`chatops: tool "${req.toolId}" not found for platform "${req.platform}"`);
-    }
-    return await tool.execute(req.args);
-  } finally {
-    await client.disconnect().catch(() => {});
-  }
 }
