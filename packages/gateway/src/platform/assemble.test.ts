@@ -166,4 +166,39 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // on slow Windows CI runners, over the 5s default — raise this test's timeout
     // so it doesn't flake (it's a known intermittent failure in pr-quality-cross-platform).
   }, 30000);
+
+  it("boots the ChatOps graph when [chatops].enabled and exposes the chatops.* IPC ctx", async () => {
+    const paths = makePaths();
+    const tomlPath = join(paths.configDir, "nimbus.toml");
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      tomlPath,
+      ["[chatops]", "enabled = true", "slack_enabled = true", 'bot_vault_entry = "test-bot"'].join(
+        "\n",
+      ),
+    );
+
+    services = await assemblePlatformServices(paths);
+
+    expect(services.chatops).toBeDefined();
+    const status = services.chatops?.rpcCtx.status();
+    expect(status?.enabled).toBe(true);
+    expect(status?.platforms.map((p) => p.name)).toEqual(["slack"]);
+    // No Bot Framework JWT validator without teams_enabled + teams_bot_app_id (fail-closed I13 route).
+    expect(services.chatops?.teamsSurface).toBeUndefined();
+    // The known-write grammar is live (HITL_REQUIRED-backed).
+    const parsed = services.chatops?.rpcCtx.testParse("run deployment.rollback service=x") as {
+      kind: string;
+    };
+    expect(parsed.kind).toBe("write");
+  }, 30000);
+
+  it("does not boot ChatOps when [chatops] is absent", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths);
+    expect(services.chatops).toBeUndefined();
+  }, 30000);
 });

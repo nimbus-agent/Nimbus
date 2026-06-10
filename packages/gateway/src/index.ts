@@ -82,6 +82,28 @@ async function main(): Promise<void> {
     }),
   );
 
+  // ChatOps read path (Slice 5): `@nimbus <question>` answers run through the same runAsk
+  // pipeline as engine.ask (I11 envelope, HITL gate on any planned action). Per-namespace
+  // content filtering of local reads remains the slice's documented deferral.
+  platform.chatops?.bindAskEngine(async (query, _namespace) => {
+    const r = await runAsk({
+      input: query,
+      stream: false,
+      clientId: "chatops",
+      paths: platform.paths,
+      consentCoordinator: platform.ipc.consent,
+      localIndex: platform.localIndex,
+      dispatcher,
+      sendChunk: () => {},
+      conversationalAgent: engine.agentsByName.nimbus,
+      llmRouter: platform.llmRegistry.llmRouter,
+      ...(platform.sessionMemoryStore === undefined
+        ? {}
+        : { sessionMemoryStore: platform.sessionMemoryStore }),
+    });
+    return r.reply;
+  });
+
   platform.ipc.setWorkflowRunHandler(async (ctx) =>
     runWorkflowExecution({
       db: platform.localIndex.getDatabase(),

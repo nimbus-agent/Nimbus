@@ -8,10 +8,13 @@ import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
 } from "../automation/watcher-engine.ts";
+import { buildChatopsBoot, type ChatopsBoot } from "../chatops/chatops-boot.ts";
+import { buildChatopsToolRunner } from "../chatops/chatops-tool-runner.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
+  loadNimbusChatopsFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusFederationFromConfigDir,
@@ -38,6 +41,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
+import { createConnectorDispatcher } from "../connectors/index.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createObsidianSyncable } from "../connectors/obsidian-sync.ts";
 import {
@@ -68,6 +72,7 @@ import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
+import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import {
   LocalIndex,
@@ -79,6 +84,7 @@ import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
+import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
@@ -368,6 +374,7 @@ interface HttpSidecarOpts {
   statusReaders?: StatusReaders;
   resolveAdminToken?: () => Promise<string>;
   authorPolicy?: (toml: string) => Promise<AuthorResult>;
+  resolveTeamsEventsSurface?: () => Promise<TeamsEventsSurface | undefined>;
 }
 
 function collectSidecarsFromEnv(
@@ -393,6 +400,9 @@ function collectSidecarsFromEnv(
             ? {}
             : { resolveAdminToken: httpOpts.resolveAdminToken }),
           ...(httpOpts.authorPolicy === undefined ? {} : { authorPolicy: httpOpts.authorPolicy }),
+          ...(httpOpts.resolveTeamsEventsSurface === undefined
+            ? {}
+            : { resolveTeamsEventsSurface: httpOpts.resolveTeamsEventsSurface }),
         }).stop,
       );
     }
@@ -601,6 +611,9 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.lanPairingWindow = built.pairingWindow;
   return delegationDep;
 }
+
+/** How long the chatops local-owner fallback waits for a `nimbus team approve` answer. */
+const CHATOPS_LOCAL_CONSENT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
@@ -829,6 +842,73 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     }
   }
 
+  // ChatOps (Phase 6 Slice 5 boot wiring — the deferred follow-up of PR #559). When
+  // [chatops].enabled, build the Slack/Teams bot graph: bot-credentialed connector invocation
+  // (Team-Vault entry `[chatops].bot_vault_entry`, I19 pattern), identity mapping over the Slice 3
+  // SCIM store (I18), policy resolvers from the I22 gate, the real HITL executor (I2/I20), and the
+  // bounded I23 reply surface. The engine read path is late-bound in src/index.ts (the engine agent
+  // does not exist yet); the local-consent fallback binds to the delegated-approval broker after
+  // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
+  const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
+  let chatopsBoot: ChatopsBoot | undefined;
+  if (chatopsCfg.enabled) {
+    const identityBootRef = identityBoot;
+    chatopsBoot = buildChatopsBoot({
+      cfg: chatopsCfg,
+      policyGate,
+      ...(identityBootRef === undefined
+        ? {}
+        : {
+            identity: {
+              findScimByEmail: (email: string) => {
+                const scim = identityBootRef.store.findScimByEmail(email);
+                if (scim === undefined) return undefined;
+                return {
+                  externalId: scim.externalId,
+                  email: scim.email ?? email,
+                  active: scim.active,
+                  issuer: identityBootRef.issuer,
+                };
+              },
+              isOperatorValid: (issuer: string) =>
+                isOperatorValid(
+                  identityBootRef.store,
+                  issuer,
+                  Date.now(),
+                  identityBootRef.graceSeconds,
+                ),
+            },
+          }),
+      runTool: buildChatopsToolRunner({
+        vault,
+        botVaultEntry: chatopsCfg.botVaultEntry,
+        sandboxCwd: paths.dataDir,
+      }),
+      audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
+      dispatcher: createConnectorDispatcher({
+        listTools: () => connectorMesh.listToolsForDispatcher(),
+        getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+      }),
+      ...(chatopsCfg.teamsEnabled && chatopsCfg.teamsBotAppId !== ""
+        ? {
+            validateTeamsJwt: buildTeamsBotJwtValidator({
+              db,
+              teamsBotAppId: chatopsCfg.teamsBotAppId,
+              log: (m) => syncLogger.warn(m),
+            }),
+          }
+        : {}),
+      log: (m) => syncLogger.warn(m),
+    });
+    ipcOpts.chatopsRpcCtx = chatopsBoot.rpcCtx;
+    const teamsSurface = chatopsBoot.teamsSurface;
+    if (teamsSurface !== undefined) {
+      httpSidecarOpts.resolveTeamsEventsSurface = () => Promise.resolve(teamsSurface);
+    }
+    const stopChatops = chatopsBoot;
+    sidecarStops.push(() => void stopChatops.stop());
+  }
+
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every
   // subsystem is in scope. Wired into BOTH the IPC server (admin.status) and the read-only HTTP
   // server (GET /v1/admin/status + GET /metrics, bearer-gated). Real where one accessor away;
@@ -941,6 +1021,30 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
   identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
 
+  if (chatopsBoot !== undefined) {
+    // I20 fallback leg: when the chat-routed approval is not honored (timeout / non-owner /
+    // identity-invalid click), the executor falls back to the LOCAL owner — surfaced through the
+    // same delegated-approval broker the CLI/UI answer (`nimbus team approve`). No subscriber /
+    // timeout → false → the gate records a fail-closed rejection.
+    delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
+      ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
+    );
+    chatopsBoot.bindLocalConsent(async (prompt) => {
+      const r = await delegatedApprovalBroker.request({ prompt }, CHATOPS_LOCAL_CONSENT_TIMEOUT_MS);
+      return r.kind === "answered" ? r.approved : false;
+    });
+    // Headless gateway: the bot comes up with the gateway. A failed transport start (e.g. bot
+    // tokens not yet provisioned) is logged and retryable via `nimbus chatops start`.
+    void chatopsBoot.service
+      .start()
+      .catch((err: unknown) =>
+        syncLogger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "chatops: transport start failed (provision bot tokens, then `nimbus chatops start`)",
+        ),
+      );
+  }
+
   const updaterCfg = loadNimbusUpdaterFromConfigDir(paths.configDir);
   const updater = createUpdaterFromConfig({
     updaterCfg,
@@ -987,6 +1091,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     llmRegistry,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
+    ...(chatopsBoot === undefined ? {} : { chatops: chatopsBoot }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {
