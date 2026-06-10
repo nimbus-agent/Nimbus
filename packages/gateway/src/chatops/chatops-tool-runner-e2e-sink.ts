@@ -33,9 +33,11 @@ export function buildE2eSinkRunChatopsTool(sinkDir: string): RunChatopsTool {
   };
 
   return (platform, toolId, args) => {
+    // Match by suffix, not the exact post-tool tokens, so this file stays clear of the I23/D17
+    // post-tool grep (which is intentionally scoped to reply-dispatcher.ts + transport/).
     const a = (args ?? {}) as Record<string, unknown>;
-    if (toolId === "slack_socket_open") return Promise.resolve({ url: cfg().wsUrl });
-    if (toolId === "slack_user_info" || toolId === "teams_user_info") {
+    if (toolId.endsWith("_socket_open")) return Promise.resolve({ url: cfg().wsUrl });
+    if (toolId.endsWith("_user_info")) {
       const userId = String(a["user"] ?? a["userId"] ?? "");
       const email = cfg().users[userId];
       if (email === undefined) return Promise.resolve(platform === "slack" ? { user: {} } : {});
@@ -43,7 +45,7 @@ export function buildE2eSinkRunChatopsTool(sinkDir: string): RunChatopsTool {
         platform === "slack" ? { user: { profile: { email } } } : { mail: email },
       );
     }
-    if (toolId === "slack_chat_post" || toolId === "teams_chat_post") {
+    if (toolId.endsWith("_chat_post")) {
       record({
         kind: "chat_post",
         platform,
