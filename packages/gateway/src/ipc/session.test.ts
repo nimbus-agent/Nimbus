@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { IPC_MAX_LINE_BYTES } from "./jsonrpc.ts";
 import type { JsonRpcNotification, JsonRpcOutbound, JsonRpcRequest } from "./jsonrpc.ts";
+import { IPC_MAX_LINE_BYTES } from "./jsonrpc.ts";
 import { ClientSession } from "./session.ts";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,10 @@ function requestLine(method: string, id: number): string {
 
 /** Create a session wired to simple in-memory collectors. */
 function makeSession(
-  onRpc: (clientId: string, msg: JsonRpcRequest | JsonRpcNotification) => void | Promise<void> = () => {},
+  onRpc: (
+    clientId: string,
+    msg: JsonRpcRequest | JsonRpcNotification,
+  ) => void | Promise<void> = () => {},
 ): {
   session: ClientSession;
   written: string[];
@@ -86,47 +89,31 @@ describe("ClientSession.push — disposed guard", () => {
 // ---------------------------------------------------------------------------
 
 describe("ClientSession.push — reader parse error (sendParseFailure)", () => {
-  test(
-    "oversized chunk triggers JsonRpcParseError; writes -32700 with the error message and disposes (branch=0: e instanceof JsonRpcParseError)",
-    () => {
-      // A line > IPC_MAX_LINE_BYTES (1 MB) causes NdjsonLineReader to throw JsonRpcParseError
-      const oversized = "x".repeat(IPC_MAX_LINE_BYTES + 1) + "\n";
-      const { session, written, disposed } = makeSession();
-      session.push(enc(oversized));
-      expect(written).toHaveLength(1);
-      const parsed = JSON.parse(written[0] ?? "") as {
-        error: { code: number; message: string };
-      };
-      expect(parsed.error.code).toBe(-32700);
-      // The message should come from the JsonRpcParseError instance, not the fallback
-      expect(parsed.error.message).toBe("Message exceeds 1MB line limit");
-      expect(disposed).toEqual(["client-1"]);
-    },
-  );
+  test("oversized chunk triggers JsonRpcParseError; writes -32700 with the error message and disposes (branch=0: e instanceof JsonRpcParseError)", () => {
+    // A line > IPC_MAX_LINE_BYTES (1 MB) causes NdjsonLineReader to throw JsonRpcParseError
+    const oversized = "x".repeat(IPC_MAX_LINE_BYTES + 1) + "\n";
+    const { session, written, disposed } = makeSession();
+    session.push(enc(oversized));
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "") as {
+      error: { code: number; message: string };
+    };
+    expect(parsed.error.code).toBe(-32700);
+    // The message should come from the JsonRpcParseError instance, not the fallback
+    expect(parsed.error.message).toBe("Message exceeds 1MB line limit");
+    expect(disposed).toEqual(["client-1"]);
+  });
 
-  test(
-    "non-JsonRpcParseError from reader falls back to 'Parse error' (branch=1: other Error)",
-    () => {
-      // Directly construct a session whose reader throws a plain Error (not JsonRpcParseError).
-      // We need a seam: the NdjsonLineReader inside ClientSession is private, but we can use
-      // a subclass approach or simply verify the fallback via the `sendParseFailure` behaviour
-      // that IS observable: the flush path (endInput) accepts the same code path.
-      //
-      // Strategy: call endInput() with a non-empty, non-newline-terminated, oversized pending
-      // buffer — flush() will throw JsonRpcParseError (branch=0 for endInput flush-error path).
-      //
-      // For branch=1 of sendParseFailure (non-JsonRpcParseError), we need to get a different
-      // error out of the reader.  The NdjsonLineReader wrapped inside session.ts always uses
-      // JsonRpcParseError as its lineLimitCtor, so it will only ever throw JsonRpcParseError
-      // from its own checks — making the `else` arm of sendParseFailure a TS-narrowing artifact:
-      // there is no production input path that can deliver a non-JsonRpcParseError from the
-      // reader without modifying the constructor.
-      //
-      // This branch is therefore a Sub-project D candidate (see report).
-      // We skip it here and rely on the other 15 arms to clear 80%.
-      expect(true).toBe(true); // placeholder — branch left as D-candidate
-    },
-  );
+  // Sub-project D candidate — NOT covered here, and deliberately skipped so it does not
+  // masquerade as coverage in the green test output.
+  //
+  // The `else` arm of `sendParseFailure`'s `e instanceof JsonRpcParseError ? … : "Parse error"`
+  // (and the identical arm in dispatchLines' parse-error catch) is a TS-narrowing artifact: the
+  // NdjsonLineReader wrapped inside ClientSession always uses JsonRpcParseError as its
+  // lineLimitCtor and parseJsonRpcLine only ever throws JsonRpcParseError, so no production
+  // input can deliver a non-JsonRpcParseError to that catch. Reaching it would require a DI seam
+  // on the reader/parser ctor — deferred to Sub-project D. The other 16/18 arms clear the 80% floor.
+  test.skip("non-JsonRpcParseError from reader falls back to 'Parse error' (branch=1) — D candidate", () => {});
 });
 
 // ---------------------------------------------------------------------------
@@ -226,41 +213,35 @@ describe("ClientSession.writeOutbound — disposed guard", () => {
 // ---------------------------------------------------------------------------
 
 describe("ClientSession.push — dispatchLines parse error", () => {
-  test(
-    "invalid JSON line causes JsonRpcParseError; writes -32700 with error message and continues (branch=0: JsonRpcParseError from parseJsonRpcLine)",
-    async () => {
-      const { session, written, disposed } = makeSession();
-      // "not-json\n" will cause JSON.parse to throw → JsonRpcParseError("Invalid JSON")
-      session.push(enc("not-json\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(1);
-      const parsed = JSON.parse(written[0] ?? "") as {
-        error: { code: number; message: string };
-      };
-      expect(parsed.error.code).toBe(-32700);
-      // JsonRpcParseError message should be forwarded
-      expect(parsed.error.message).toBe("Invalid JSON");
-      // Session should NOT be disposed (parse errors in dispatchLines are recoverable)
-      expect(disposed).toHaveLength(0);
-    },
-  );
+  test("invalid JSON line causes JsonRpcParseError; writes -32700 with error message and continues (branch=0: JsonRpcParseError from parseJsonRpcLine)", async () => {
+    const { session, written, disposed } = makeSession();
+    // "not-json\n" will cause JSON.parse to throw → JsonRpcParseError("Invalid JSON")
+    session.push(enc("not-json\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "") as {
+      error: { code: number; message: string };
+    };
+    expect(parsed.error.code).toBe(-32700);
+    // JsonRpcParseError message should be forwarded
+    expect(parsed.error.message).toBe("Invalid JSON");
+    // Session should NOT be disposed (parse errors in dispatchLines are recoverable)
+    expect(disposed).toHaveLength(0);
+  });
 
-  test(
-    "JSON-RPC protocol violation causes JsonRpcParseError; message forwarded (branch=0 variant)",
-    async () => {
-      const { session, written, disposed } = makeSession();
-      // Valid JSON but bad JSON-RPC (missing jsonrpc field)
-      session.push(enc('{"method":"foo","id":1}\n'));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(1);
-      const parsed = JSON.parse(written[0] ?? "") as {
-        error: { code: number; message: string };
-      };
-      expect(parsed.error.code).toBe(-32700);
-      expect(parsed.error.message).toContain("jsonrpc");
-      expect(disposed).toHaveLength(0);
-    },
-  );
+  test("JSON-RPC protocol violation causes JsonRpcParseError; message forwarded (branch=0 variant)", async () => {
+    const { session, written, disposed } = makeSession();
+    // Valid JSON but bad JSON-RPC (missing jsonrpc field)
+    session.push(enc('{"method":"foo","id":1}\n'));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "") as {
+      error: { code: number; message: string };
+    };
+    expect(parsed.error.code).toBe(-32700);
+    expect(parsed.error.message).toContain("jsonrpc");
+    expect(disposed).toHaveLength(0);
+  });
 
   // branch=1 (non-JsonRpcParseError from parseJsonRpcLine): parseJsonRpcLine only ever throws
   // JsonRpcParseError — the else arm is a TS-narrowing artifact with no reachable production path.
@@ -272,43 +253,37 @@ describe("ClientSession.push — dispatchLines parse error", () => {
 // ---------------------------------------------------------------------------
 
 describe("ClientSession.push — dispatchLines onRpc error handling", () => {
-  test(
-    "onRpc throws Error; message is forwarded in -32603 response (branch=0: e instanceof Error)",
-    async () => {
-      const { session, written, disposed } = makeSession(async () => {
-        throw new Error("handler blew up");
-      });
-      session.push(enc(requestLine("foo", 2)));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(1);
-      const parsed = JSON.parse(written[0] ?? "") as {
-        error: { code: number; message: string };
-      };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("handler blew up");
-      // Session stays alive; the inner try/catch absorbs the error
-      expect(disposed).toHaveLength(0);
-    },
-  );
+  test("onRpc throws Error; message is forwarded in -32603 response (branch=0: e instanceof Error)", async () => {
+    const { session, written, disposed } = makeSession(async () => {
+      throw new Error("handler blew up");
+    });
+    session.push(enc(requestLine("foo", 2)));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "") as {
+      error: { code: number; message: string };
+    };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("handler blew up");
+    // Session stays alive; the inner try/catch absorbs the error
+    expect(disposed).toHaveLength(0);
+  });
 
-  test(
-    "onRpc throws a non-Error value; fallback message 'Internal error' used (branch=1: not instanceof Error)",
-    async () => {
-      const { session, written, disposed } = makeSession(async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
-        throw "a plain string, not an Error"; // non-Error throwable
-      });
-      session.push(enc(requestLine("bar", 3)));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(1);
-      const parsed = JSON.parse(written[0] ?? "") as {
-        error: { code: number; message: string };
-      };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("Internal error");
-      expect(disposed).toHaveLength(0);
-    },
-  );
+  test("onRpc throws a non-Error value; fallback message 'Internal error' used (branch=1: not instanceof Error)", async () => {
+    const { session, written, disposed } = makeSession(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw "a plain string, not an Error"; // non-Error throwable
+    });
+    session.push(enc(requestLine("bar", 3)));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "") as {
+      error: { code: number; message: string };
+    };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("Internal error");
+    expect(disposed).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -321,88 +296,82 @@ describe("ClientSession.push — dispatchLines onRpc error handling", () => {
 // ---------------------------------------------------------------------------
 
 describe("ClientSession.push — outer dispatchLines .catch (line 49)", () => {
-  test(
-    "dispatchLines .catch branch=0: write throws Error on call 2, succeeds on call 3 → -32603 written, session disposed",
-    async () => {
-      // Strategy: the write callback throws ONLY on call 2.
-      // • Call 1: first bad JSON line → writeOutbound at line 97 → -32700 written OK
-      // • Call 2: second bad JSON line → writeOutbound at line 97 → throws Error
-      //           dispatchLines() rejects → outer .catch fires (line 49)
-      //           e instanceof Error → branch=0 taken → message = e.message
-      // • Call 3: outer .catch calls this.write(-32603) → succeeds → this.dispose() called
-      let callCount = 0;
-      const written: string[] = [];
-      const disposed: string[] = [];
-      const throwingWrite = (line: string): void => {
-        callCount++;
-        if (callCount === 2) {
-          throw new Error("write channel broken");
-        }
-        written.push(line);
-      };
-      const session = new ClientSession(
-        "client-err",
-        throwingWrite,
-        () => {},
-        (id) => disposed.push(id),
-      );
+  test("dispatchLines .catch branch=0: write throws Error on call 2, succeeds on call 3 → -32603 written, session disposed", async () => {
+    // Strategy: the write callback throws ONLY on call 2.
+    // • Call 1: first bad JSON line → writeOutbound at line 97 → -32700 written OK
+    // • Call 2: second bad JSON line → writeOutbound at line 97 → throws Error
+    //           dispatchLines() rejects → outer .catch fires (line 49)
+    //           e instanceof Error → branch=0 taken → message = e.message
+    // • Call 3: outer .catch calls this.write(-32603) → succeeds → this.dispose() called
+    let callCount = 0;
+    const written: string[] = [];
+    const disposed: string[] = [];
+    const throwingWrite = (line: string): void => {
+      callCount++;
+      if (callCount === 2) {
+        throw new Error("write channel broken");
+      }
+      written.push(line);
+    };
+    const session = new ClientSession(
+      "client-err",
+      throwingWrite,
+      () => {},
+      (id) => disposed.push(id),
+    );
 
-      // Call 1: first bad JSON → -32700 written OK
-      session.push(enc("bad-json-1\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 30));
-      expect(written).toHaveLength(1);
+    // Call 1: first bad JSON → -32700 written OK
+    session.push(enc("bad-json-1\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(written).toHaveLength(1);
 
-      // Call 2: second bad JSON → write throws Error → dispatchLines rejects → outer .catch
-      // Call 3: outer .catch writes -32603 (succeeds) then calls dispose()
-      session.push(enc("bad-json-2\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      // outer .catch must have written a -32603 response
-      expect(written).toHaveLength(2);
-      const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("write channel broken");
-      // session must be disposed
-      expect(disposed).toEqual(["client-err"]);
-    },
-  );
+    // Call 2: second bad JSON → write throws Error → dispatchLines rejects → outer .catch
+    // Call 3: outer .catch writes -32603 (succeeds) then calls dispose()
+    session.push(enc("bad-json-2\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // outer .catch must have written a -32603 response
+    expect(written).toHaveLength(2);
+    const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("write channel broken");
+    // session must be disposed
+    expect(disposed).toEqual(["client-err"]);
+  });
 
-  test(
-    "dispatchLines .catch branch=1: write throws non-Error on call 2, succeeds on call 3 → 'dispatch error', session disposed",
-    async () => {
-      let callCount = 0;
-      const written: string[] = [];
-      const disposed: string[] = [];
-      const throwingWrite = (line: string): void => {
-        callCount++;
-        if (callCount === 2) {
-          // eslint-disable-next-line @typescript-eslint/only-throw-error
-          throw "non-error string thrown from write"; // non-Error throwable
-        }
-        written.push(line);
-      };
-      const session = new ClientSession(
-        "client-nonerr",
-        throwingWrite,
-        () => {},
-        (id) => disposed.push(id),
-      );
+  test("dispatchLines .catch branch=1: write throws non-Error on call 2, succeeds on call 3 → 'dispatch error', session disposed", async () => {
+    let callCount = 0;
+    const written: string[] = [];
+    const disposed: string[] = [];
+    const throwingWrite = (line: string): void => {
+      callCount++;
+      if (callCount === 2) {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw "non-error string thrown from write"; // non-Error throwable
+      }
+      written.push(line);
+    };
+    const session = new ClientSession(
+      "client-nonerr",
+      throwingWrite,
+      () => {},
+      (id) => disposed.push(id),
+    );
 
-      // Call 1: first bad JSON → -32700 written OK
-      session.push(enc("bad-json-x\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 30));
-      expect(written).toHaveLength(1);
+    // Call 1: first bad JSON → -32700 written OK
+    session.push(enc("bad-json-x\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(written).toHaveLength(1);
 
-      // Call 2: throws non-Error → dispatchLines rejects → outer .catch branch=1
-      // → message = "dispatch error" → Call 3: write -32603, then dispose
-      session.push(enc("bad-json-y\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(2);
-      const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("dispatch error");
-      expect(disposed).toEqual(["client-nonerr"]);
-    },
-  );
+    // Call 2: throws non-Error → dispatchLines rejects → outer .catch branch=1
+    // → message = "dispatch error" → Call 3: write -32603, then dispose
+    session.push(enc("bad-json-y\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(2);
+    const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("dispatch error");
+    expect(disposed).toEqual(["client-nonerr"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -411,87 +380,81 @@ describe("ClientSession.push — outer dispatchLines .catch (line 49)", () => {
 // ---------------------------------------------------------------------------
 
 describe("ClientSession.endInput — outer dispatchLines .catch (line 67)", () => {
-  test(
-    "dispatchLines .catch branch=0 (endInput): write throws Error on call 2, succeeds on call 3 → -32603 written, session disposed",
-    async () => {
-      // Same throw-on-call-2 strategy, but using the endInput() code path.
-      // • Call 1: bad JSON line via push → line 97 writeOutbound → written OK
-      // • Call 2: bad JSON flushed by endInput → line 97 writeOutbound → throws Error
-      //           dispatchLines rejects → line 67 outer .catch fires (branch=0)
-      //           e instanceof Error → message = e.message
-      // • Call 3: outer .catch calls this.write(-32603) → succeeds → dispose()
-      let callCount = 0;
-      const written: string[] = [];
-      const disposed: string[] = [];
-      const throwingWrite = (line: string): void => {
-        callCount++;
-        if (callCount === 2) {
-          throw new Error("write failed on endInput");
-        }
-        written.push(line);
-      };
-      const session = new ClientSession(
-        "client-end-err",
-        throwingWrite,
-        () => {},
-        (id) => disposed.push(id),
-      );
+  test("dispatchLines .catch branch=0 (endInput): write throws Error on call 2, succeeds on call 3 → -32603 written, session disposed", async () => {
+    // Same throw-on-call-2 strategy, but using the endInput() code path.
+    // • Call 1: bad JSON line via push → line 97 writeOutbound → written OK
+    // • Call 2: bad JSON flushed by endInput → line 97 writeOutbound → throws Error
+    //           dispatchLines rejects → line 67 outer .catch fires (branch=0)
+    //           e instanceof Error → message = e.message
+    // • Call 3: outer .catch calls this.write(-32603) → succeeds → dispose()
+    let callCount = 0;
+    const written: string[] = [];
+    const disposed: string[] = [];
+    const throwingWrite = (line: string): void => {
+      callCount++;
+      if (callCount === 2) {
+        throw new Error("write failed on endInput");
+      }
+      written.push(line);
+    };
+    const session = new ClientSession(
+      "client-end-err",
+      throwingWrite,
+      () => {},
+      (id) => disposed.push(id),
+    );
 
-      // Call 1: bad JSON via push → -32700 written OK
-      session.push(enc("bad-json-a\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 30));
-      expect(written).toHaveLength(1);
+    // Call 1: bad JSON via push → -32700 written OK
+    session.push(enc("bad-json-a\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(written).toHaveLength(1);
 
-      // Push partial invalid JSON (no newline) so it stays in the pending buffer
-      session.push(enc("bad-json-b")); // no newline → pending buffer
-      // endInput flushes → dispatchLines(["bad-json-b"]) → parse error →
-      // writeOutbound at line 97 → call 2 → throws Error → dispatchLines rejects
-      // → line 67 outer .catch fires
-      session.endInput();
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(2);
-      const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("write failed on endInput");
-      expect(disposed).toEqual(["client-end-err"]);
-    },
-  );
+    // Push partial invalid JSON (no newline) so it stays in the pending buffer
+    session.push(enc("bad-json-b")); // no newline → pending buffer
+    // endInput flushes → dispatchLines(["bad-json-b"]) → parse error →
+    // writeOutbound at line 97 → call 2 → throws Error → dispatchLines rejects
+    // → line 67 outer .catch fires
+    session.endInput();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(2);
+    const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("write failed on endInput");
+    expect(disposed).toEqual(["client-end-err"]);
+  });
 
-  test(
-    "dispatchLines .catch branch=1 (endInput): write throws non-Error on call 2, succeeds on call 3 → 'dispatch error', session disposed",
-    async () => {
-      let callCount = 0;
-      const written: string[] = [];
-      const disposed: string[] = [];
-      const throwingWrite = (line: string): void => {
-        callCount++;
-        if (callCount === 2) {
-          // eslint-disable-next-line @typescript-eslint/only-throw-error
-          throw 42; // non-Error throwable
-        }
-        written.push(line);
-      };
-      const session = new ClientSession(
-        "client-end-nonerr",
-        throwingWrite,
-        () => {},
-        (id) => disposed.push(id),
-      );
+  test("dispatchLines .catch branch=1 (endInput): write throws non-Error on call 2, succeeds on call 3 → 'dispatch error', session disposed", async () => {
+    let callCount = 0;
+    const written: string[] = [];
+    const disposed: string[] = [];
+    const throwingWrite = (line: string): void => {
+      callCount++;
+      if (callCount === 2) {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 42; // non-Error throwable
+      }
+      written.push(line);
+    };
+    const session = new ClientSession(
+      "client-end-nonerr",
+      throwingWrite,
+      () => {},
+      (id) => disposed.push(id),
+    );
 
-      session.push(enc("bad-json-c\n"));
-      await new Promise<void>((resolve) => setTimeout(resolve, 30));
-      expect(written).toHaveLength(1);
+    session.push(enc("bad-json-c\n"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(written).toHaveLength(1);
 
-      session.push(enc("bad-json-d")); // partial → pending buffer
-      session.endInput();
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(written).toHaveLength(2);
-      const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
-      expect(parsed.error.code).toBe(-32603);
-      expect(parsed.error.message).toBe("dispatch error");
-      expect(disposed).toEqual(["client-end-nonerr"]);
-    },
-  );
+    session.push(enc("bad-json-d")); // partial → pending buffer
+    session.endInput();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(written).toHaveLength(2);
+    const parsed = JSON.parse(written[1] ?? "") as { error: { code: number; message: string } };
+    expect(parsed.error.code).toBe(-32603);
+    expect(parsed.error.message).toBe("dispatch error");
+    expect(disposed).toEqual(["client-end-nonerr"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -517,7 +480,12 @@ describe("ClientSession.writeNotification", () => {
 describe("ClientSession.clientId", () => {
   test("clientId matches the value passed to the constructor", () => {
     const written: string[] = [];
-    const session = new ClientSession("my-client", (l) => written.push(l), () => {}, () => {});
+    const session = new ClientSession(
+      "my-client",
+      (l) => written.push(l),
+      () => {},
+      () => {},
+    );
     expect(session.clientId).toBe("my-client");
   });
 });
