@@ -5,7 +5,7 @@ import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
-import type { DelegationStore } from "./delegation-store.ts";
+import type { DelegationReader } from "./delegation-store.ts";
 import type {
   ActionResult,
   AuditSink,
@@ -175,7 +175,7 @@ function auditPayload(
  * action's approval to an active in-scope delegate before falling back to the local owner prompt.
  */
 export interface ExecutorDelegationDep {
-  readonly store: DelegationStore;
+  readonly store: DelegationReader;
   /** I18: the answering delegate's operator identity must be valid. */
   readonly isOperatorValid: () => boolean;
   /** Route the approval request to the delegate over federation; resolve with their answer. */

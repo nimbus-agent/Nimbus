@@ -31,7 +31,22 @@ interface Row {
   revoked_at: number | null;
 }
 
-export class DelegationStore {
+/**
+ * The read seam the executor's I20 gate consults. Implemented by the db-backed
+ * `DelegationStore` (federation delegations) and by virtual scope readers (e.g. the ChatOps
+ * owner-as-delegate adapter, whose "delegate" is the policy-resolved resource owner).
+ */
+export interface DelegationReader {
+  activeDelegateFor(
+    scopeKind: DelegationScopeKind,
+    scopeValue: string,
+    peerId: string,
+    nowMs: number,
+  ): boolean;
+  activeDelegateePeer(actionType: string, service: string, nowMs: number): string | undefined;
+}
+
+export class DelegationStore implements DelegationReader {
   constructor(private readonly db: Database) {}
 
   create(input: DelegationInput): string {
