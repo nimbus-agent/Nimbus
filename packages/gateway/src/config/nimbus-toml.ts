@@ -982,7 +982,16 @@ const HITL_QUORUM_TABLE_PREFIX = '[hitl.quorum."';
  * silently ignored. Returns an empty map when the section is absent (quorum off).
  */
 export function parseQuorumConfig(source: string): QuorumConfig {
-  // Accumulate raw kv strings per action-type id.
+  const out = new Map<string, QuorumRule>();
+  for (const [actionType, kv] of collectQuorumKvSections(source).entries()) {
+    const rule = toQuorumRule(kv);
+    if (rule !== undefined) out.set(actionType, rule);
+  }
+  return out;
+}
+
+/** Accumulates raw kv strings per `[hitl.quorum."<action-type>"]` sub-table. */
+function collectQuorumKvSections(source: string): Map<string, Record<string, string>> {
   const accum = new Map<string, Record<string, string>>();
   let currentId: string | undefined;
 
@@ -990,37 +999,51 @@ export function parseQuorumConfig(source: string): QuorumConfig {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
-      currentId = undefined;
-      if (trimmed.startsWith(HITL_QUORUM_TABLE_PREFIX) && trimmed.endsWith('"]')) {
-        const id = trimmed.slice(HITL_QUORUM_TABLE_PREFIX.length, -2);
-        if (id.length > 0) {
-          if (!accum.has(id)) accum.set(id, {});
-          currentId = id;
-        }
-      }
+      currentId = beginQuorumTable(accum, trimmed);
       continue;
     }
     if (currentId === undefined) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv !== undefined) {
-      const bucket = accum.get(currentId);
-      if (bucket !== undefined) bucket[kv.key] = kv.valRaw;
-    }
+    applyQuorumKvLine(accum.get(currentId), trimmed);
   }
 
-  const out = new Map<string, QuorumRule>();
-  for (const [actionType, kv] of accum.entries()) {
-    const approversRaw = kv["approvers"];
-    const windowRaw = kv["window_seconds"];
-    if (approversRaw === undefined || windowRaw === undefined) continue;
-    const approvers = parseIntDec(approversRaw);
-    const windowSeconds = parseIntDec(windowRaw);
-    if (approvers === undefined || windowSeconds === undefined) continue;
-    if (approvers < 1 || windowSeconds <= 0) continue;
-    out.set(actionType, { approvers, windowSeconds });
-  }
+  return accum;
+}
 
-  return out;
+/**
+ * If `trimmed` is a `[hitl.quorum."<action-type>"]` header with a non-empty id,
+ * ensures a bucket exists in `accum` and returns the id; otherwise returns undefined.
+ */
+function beginQuorumTable(
+  accum: Map<string, Record<string, string>>,
+  trimmed: string,
+): string | undefined {
+  if (!trimmed.startsWith(HITL_QUORUM_TABLE_PREFIX) || !trimmed.endsWith('"]')) return undefined;
+  const id = trimmed.slice(HITL_QUORUM_TABLE_PREFIX.length, -2);
+  if (id.length === 0) return undefined;
+  if (!accum.has(id)) accum.set(id, {});
+  return id;
+}
+
+/** Records a `key = value` line into the current sub-table's bucket, if any. */
+function applyQuorumKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
+  if (bucket === undefined) return;
+  const kv = splitKeyValue(trimmed);
+  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
+}
+
+/**
+ * Validates one sub-table's raw kv strings into a QuorumRule, or undefined when
+ * malformed (missing/non-numeric values, approvers < 1, window_seconds <= 0).
+ */
+function toQuorumRule(kv: Record<string, string>): QuorumRule | undefined {
+  const approversRaw = kv["approvers"];
+  const windowRaw = kv["window_seconds"];
+  if (approversRaw === undefined || windowRaw === undefined) return undefined;
+  const approvers = parseIntDec(approversRaw);
+  const windowSeconds = parseIntDec(windowRaw);
+  if (approvers === undefined || windowSeconds === undefined) return undefined;
+  if (approvers < 1 || windowSeconds <= 0) return undefined;
+  return { approvers, windowSeconds };
 }
 
 export function loadNimbusQuorumFromPath(tomlPath: string): QuorumConfig {

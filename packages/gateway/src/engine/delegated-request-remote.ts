@@ -29,7 +29,7 @@ export function buildDelegatedRequestRemote(
     const delegate = deps.store.activeDelegateePeer(actionType, service, now);
     if (delegate === undefined) return { kind: "timeout" };
     const row = deps.index.listLanPeers().find((r) => r.peer_id === delegate);
-    if (row === undefined || row.host_ip === null || row.host_port === null) {
+    if (row?.host_ip == null || row.host_port === null) {
       return { kind: "timeout" };
     }
     try {

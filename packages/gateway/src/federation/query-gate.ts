@@ -83,6 +83,65 @@ function emptyAnswer(ctx: QueryGateCtx, q: InboundQuery): AnswerResult {
   return { kind: "ok", response: { items: [] } };
 }
 
+/** Consent step: standing grant never prompts; otherwise use session cache or prompt with a
+ *  timeout. Returns the audited error result on denial/timeout, or undefined to proceed. */
+async function enforceConsent(
+  ctx: QueryGateCtx,
+  q: InboundQuery,
+  grant: { readonly standingConsent: boolean; readonly role: string },
+): Promise<AnswerResult | undefined> {
+  if (grant.standingConsent) {
+    return undefined;
+  }
+  const cached = ctx.consentCache.get(q.peerId, q.request.namespace);
+  if (cached === false) {
+    audit(ctx, q, "consent_denied");
+    return { kind: "error", error: "consent_denied" };
+  }
+  if (cached === undefined) {
+    const decision = await withTimeout(
+      ctx.prompt({
+        peerId: q.peerId,
+        namespace: q.request.namespace,
+        purpose: q.request.purpose,
+        role: grant.role,
+      }),
+      ctx.consentTimeoutMs,
+    );
+    if (decision === "timeout") {
+      audit(ctx, q, "timeout");
+      return { kind: "error", error: "timeout_waiting_for_consent" };
+    }
+    const approved = decision === "approved";
+    ctx.consentCache.set(q.peerId, q.request.namespace, approved);
+    if (!approved) {
+      audit(ctx, q, "consent_denied");
+      return { kind: "error", error: "consent_denied" };
+    }
+  }
+  return undefined;
+}
+
+/** Leak-proof effective-type computation. Returns the type filter to compile into the read, or
+ *  undefined when the peer requested ONLY undeclared types (caller must answer empty — never
+ *  reveal those items exist). [] means "unrestricted within declared services". */
+function computeEffectiveTypes(
+  declaredTypes: readonly string[],
+  requested: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (requested === undefined) {
+    // No peer narrowing: share the declared types. [] here means "unrestricted within declared services".
+    return declaredTypes;
+  }
+  if (declaredTypes.length === 0) {
+    // Namespace places no type restriction: narrow to exactly what the peer asked for.
+    return requested;
+  }
+  // Namespace restricts types: intersect requested with declared.
+  const intersected = declaredTypes.filter((t) => requested.includes(t));
+  return intersected.length === 0 ? undefined : intersected;
+}
+
 /**
  * I17 — the ONLY path that answers an inbound federated query. Enforces grant + role + consent +
  * the namespace's declared filter; returns only declared item types as FederatedItem; audits every outcome.
@@ -111,33 +170,9 @@ export async function answerFederatedQuery(
   }
 
   // Consent: standing grant never prompts; otherwise use session cache or prompt with a timeout.
-  if (!grant.standingConsent) {
-    const cached = ctx.consentCache.get(q.peerId, q.request.namespace);
-    if (cached === false) {
-      audit(ctx, q, "consent_denied");
-      return { kind: "error", error: "consent_denied" };
-    }
-    if (cached === undefined) {
-      const decision = await withTimeout(
-        ctx.prompt({
-          peerId: q.peerId,
-          namespace: q.request.namespace,
-          purpose: q.request.purpose,
-          role: grant.role,
-        }),
-        ctx.consentTimeoutMs,
-      );
-      if (decision === "timeout") {
-        audit(ctx, q, "timeout");
-        return { kind: "error", error: "timeout_waiting_for_consent" };
-      }
-      const approved = decision === "approved";
-      ctx.consentCache.set(q.peerId, q.request.namespace, approved);
-      if (!approved) {
-        audit(ctx, q, "consent_denied");
-        return { kind: "error", error: "consent_denied" };
-      }
-    }
+  const consentRefusal = await enforceConsent(ctx, q, grant);
+  if (consentRefusal !== undefined) {
+    return consentRefusal;
   }
 
   // --- LEAK-PROOF SCOPE COMPILATION ---
@@ -146,22 +181,11 @@ export async function answerFederatedQuery(
   // empty effective type set must be handled here, NOT passed through, or we'd leak undeclared items.
   const declaredServices = ctx.store.declaredServices(q.request.namespace);
   const declaredTypes = ctx.store.declaredTypes(q.request.namespace);
-  const requested = q.request.types;
 
-  let effectiveTypes: readonly string[];
-  if (requested === undefined) {
-    // No peer narrowing: share the declared types. [] here means "unrestricted within declared services".
-    effectiveTypes = declaredTypes;
-  } else if (declaredTypes.length === 0) {
-    // Namespace places no type restriction: narrow to exactly what the peer asked for.
-    effectiveTypes = requested;
-  } else {
-    // Namespace restricts types: intersect requested with declared.
-    effectiveTypes = declaredTypes.filter((t) => requested.includes(t));
-    if (effectiveTypes.length === 0) {
-      // Peer requested ONLY undeclared types -> empty (never reveal those items exist).
-      return emptyAnswer(ctx, q);
-    }
+  const effectiveTypes = computeEffectiveTypes(declaredTypes, q.request.types);
+  if (effectiveTypes === undefined) {
+    // Peer requested ONLY undeclared types -> empty (never reveal those items exist).
+    return emptyAnswer(ctx, q);
   }
 
   // Safety: a read with NO service filter AND NO type filter is an unconstrained full-index dump.

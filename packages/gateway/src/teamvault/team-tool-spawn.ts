@@ -53,7 +53,9 @@ export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<u
     sandboxCwd: req.sandboxCwd,
     clearLazyIdle: () => {},
     getLazyClient: (key) => clients.get(key),
-    setLazyClient: (key, client) => void clients.set(key, client),
+    setLazyClient: (key, client) => {
+      clients.set(key, client);
+    },
     bumpToolsEpoch: () => {},
     scheduleLazyDisconnect: () => {},
   };

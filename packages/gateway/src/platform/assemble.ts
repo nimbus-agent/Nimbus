@@ -78,7 +78,7 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
-import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
+import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
@@ -370,39 +370,52 @@ interface HttpSidecarOpts {
   authorPolicy?: (toml: string) => Promise<AuthorResult>;
 }
 
+/** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
+function parseSidecarPortEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
+  }
+  const port = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(port) && port > 0 ? port : undefined;
+}
+
+/** Assemble the read-only HTTP server options, spreading only the seams the caller wired. */
+function buildReadOnlyHttpServerOpts(
+  configDir: string,
+  httpOpts: HttpSidecarOpts,
+): ReadOnlyHttpServerOptions {
+  return {
+    configDir,
+    ...(httpOpts.resolveScimToken === undefined
+      ? {}
+      : { resolveScimToken: httpOpts.resolveScimToken }),
+    ...(httpOpts.statusReaders === undefined ? {} : { statusReaders: httpOpts.statusReaders }),
+    ...(httpOpts.resolveAdminToken === undefined
+      ? {}
+      : { resolveAdminToken: httpOpts.resolveAdminToken }),
+    ...(httpOpts.authorPolicy === undefined ? {} : { authorPolicy: httpOpts.authorPolicy }),
+  };
+}
+
 function collectSidecarsFromEnv(
   db: Database,
   paths: PlatformPaths,
   sidecarStops: Array<() => void>,
   httpOpts: HttpSidecarOpts = {},
 ): void {
-  const httpPortRaw = processEnvGet("NIMBUS_HTTP_PORT");
-  if (httpPortRaw !== undefined && httpPortRaw.trim() !== "") {
-    const hp = Number.parseInt(httpPortRaw.trim(), 10);
-    if (Number.isFinite(hp) && hp > 0) {
-      sidecarStops.push(
-        startReadOnlyHttpServer(join(paths.dataDir, "nimbus.db"), hp, {
-          configDir: paths.configDir,
-          ...(httpOpts.resolveScimToken === undefined
-            ? {}
-            : { resolveScimToken: httpOpts.resolveScimToken }),
-          ...(httpOpts.statusReaders === undefined
-            ? {}
-            : { statusReaders: httpOpts.statusReaders }),
-          ...(httpOpts.resolveAdminToken === undefined
-            ? {}
-            : { resolveAdminToken: httpOpts.resolveAdminToken }),
-          ...(httpOpts.authorPolicy === undefined ? {} : { authorPolicy: httpOpts.authorPolicy }),
-        }).stop,
-      );
-    }
+  const httpPort = parseSidecarPortEnv(processEnvGet("NIMBUS_HTTP_PORT"));
+  if (httpPort !== undefined) {
+    sidecarStops.push(
+      startReadOnlyHttpServer(
+        join(paths.dataDir, "nimbus.db"),
+        httpPort,
+        buildReadOnlyHttpServerOpts(paths.configDir, httpOpts),
+      ).stop,
+    );
   }
-  const metricsPortRaw = processEnvGet("NIMBUS_METRICS_PORT");
-  if (metricsPortRaw !== undefined && metricsPortRaw.trim() !== "") {
-    const mp = Number.parseInt(metricsPortRaw.trim(), 10);
-    if (Number.isFinite(mp) && mp > 0) {
-      sidecarStops.push(startMetricsServer(() => db, mp).stop);
-    }
+  const metricsPort = parseSidecarPortEnv(processEnvGet("NIMBUS_METRICS_PORT"));
+  if (metricsPort !== undefined) {
+    sidecarStops.push(startMetricsServer(() => db, metricsPort).stop);
   }
 }
 
@@ -602,18 +615,50 @@ async function bootFederationIntoIpcOpts(
   return delegationDep;
 }
 
-export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
-  const assemblyStartedMs = performance.now();
-  const sidecarStops: Array<() => void> = [];
-  await ensurePlatformDirectories(paths);
-  const vault = await createNimbusVault(paths);
-  const sandboxRunner = await createSandboxRunner();
-  const db = openGatewaySqlite(paths.dataDir, sidecarStops);
-  const notifications = createStubNotifications();
-  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
-  const rateLimiter = new ProviderRateLimiter();
-  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
-  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+/** Org policy boot (I22): the gate rehydrates last-valid from the store (ungoverned when none). The
+ *  baseline is the local floor policy can only TIGHTEN. `policyGate` is the shared instance reused
+ *  by the retention floor (Task 8), quorum (Task 9), and the audit shipper (Task 19) — keep it in
+ *  scope even though Part C of this task only consumes `enforced().connectorAllow`. Also enforces
+ *  the connector allowlist: audits + blocks connectors not permitted by policy. */
+function bootPolicyGateWithConnectorAllowlist(
+  db: Database,
+  configDir: string,
+  auditCfg: ReturnType<typeof loadNimbusAuditFromConfigDir>,
+): {
+  policyStore: PolicyStore;
+  policyGate: PolicyGate;
+  isConnectorAllowed: (serviceId: string) => boolean;
+} {
+  const policyStore = new PolicyStore(db);
+  const policyGate = buildPolicyGate(db, policyStore, {
+    retentionDays: auditCfg.toolCallLogRetentionDays,
+    hitlRequired: new Set<string>(),
+    quorum: loadNimbusQuorumFromConfigDir(configDir),
+  });
+  const enforcedConnectorAllow = policyGate.enforced().connectorAllow;
+  const { blocked: blockedConnectors } = partitionByAllowlist(
+    [...CONNECTOR_SERVICE_IDS],
+    enforcedConnectorAllow,
+  );
+  const blockedAt = Date.now();
+  for (const id of blockedConnectors) {
+    appendAuditEntry(db, {
+      actionType: "policy.connector.blocked",
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({ connector: id }),
+      timestamp: blockedAt,
+    });
+  }
+  const isConnectorAllowed = (serviceId: string): boolean => {
+    const allow = policyGate.enforced().connectorAllow;
+    return allow === undefined || allow.includes(serviceId);
+  };
+  return { policyStore, policyGate, isConnectorAllowed };
+}
+
+/** Load the [llm] config from the active TOML, apply the model overrides, and build the provider
+ *  registry (Ollama + llama.cpp local providers). */
+function buildLlmRegistryFromToml(db: Database, activeTomlPath: string): LlmRegistry {
   const llmToml = loadNimbusLlmFromPath(activeTomlPath);
   const llmTomlPartial = loadNimbusLlmPartialFromPath(activeTomlPath);
   const llmOverrides: { agentModel?: string; classifierModel?: string } = {};
@@ -639,6 +684,209 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   llmRegistry.addProvider(
     new LlamaCppProvider(llamacppBaseUrl === "" ? undefined : llamacppBaseUrl, llmToml.localModel),
   );
+  return llmRegistry;
+}
+
+/** Start the extensions auto-update daemon when `NIMBUS_EXTENSIONS_REGISTRY_URL` enables it (and
+ *  `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` does not veto). Returns the runtime (undefined when not
+ *  started) plus the disable flag for the IPC diag surface. */
+function maybeStartAutoUpdateRuntime(deps: {
+  db: Database;
+  vault: NimbusVault;
+  paths: PlatformPaths;
+  connectorMesh: LazyConnectorMesh;
+  sidecarStops: Array<() => void>;
+}): { runtime: AutoUpdateRuntime | undefined; disabled: boolean } {
+  const { db, vault, paths, connectorMesh, sidecarStops } = deps;
+  let autoUpdateRuntime: AutoUpdateRuntime | undefined;
+  const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
+  const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
+  if (autoUpdateRegistryUrl !== "" && !autoUpdateDisabled) {
+    const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
+    autoUpdateRuntime = createAutoUpdateRuntime({
+      db,
+      vault,
+      extensionsDir: paths.extensionsDir,
+      dataDir: paths.dataDir,
+      registryBaseUrl: autoUpdateRegistryUrl,
+      intervalHours: extensionsCfg.updateCheckIntervalHours,
+      enforceAirGap: false,
+      stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
+    });
+    void autoUpdateRuntime.daemon.start();
+    sidecarStops.push(() => {
+      autoUpdateRuntime?.abortController.abort();
+      void autoUpdateRuntime?.daemon.stop();
+    });
+  }
+  return { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled };
+}
+
+/** The auto-update slices of the IPC server options; empty when the daemon is not running. */
+function autoUpdateIpcOpts(
+  runtime: AutoUpdateRuntime | undefined,
+  configDir: string,
+  airGapBlocked: boolean,
+): Pick<
+  Parameters<typeof createIpcServer>[0],
+  "extensionsAutoUpdate" | "extensionsAutoUpdateDiag"
+> {
+  if (runtime === undefined) {
+    return {};
+  }
+  const autoUpdateDeps = runtime.deps;
+  return {
+    extensionsAutoUpdate: autoUpdateDeps,
+    extensionsAutoUpdateDiag: {
+      cachedUpdatesCount: (): number => autoUpdateDeps.cache.list().length,
+      intervalHours: loadNimbusExtensionsFromConfigDir(configDir).updateCheckIntervalHours,
+      airGapBlocked,
+    },
+  };
+}
+
+/** Identity & Access (Phase 6 Slice 3). Mirrors the federation block: build the boot, wire the
+ *  IPC-facing seams onto ipcOpts, and (when [scim].enabled) hand the SCIM bearer resolver to the
+ *  read-only HTTP server so the SCIM provisioning surface authenticates. */
+function bootIdentityIntoIpcOpts(deps: {
+  configDir: string;
+  localIndex: LocalIndex;
+  vault: NimbusVault;
+  syncLogger: Logger;
+  ipcOpts: Parameters<typeof createIpcServer>[0];
+  httpSidecarOpts: HttpSidecarOpts;
+}): ReturnType<typeof buildIdentityBoot> | undefined {
+  const { configDir, localIndex, vault, syncLogger, ipcOpts, httpSidecarOpts } = deps;
+  const identityCfg = loadNimbusIdentityFromConfigDir(configDir);
+  const scimCfg = loadNimbusScimFromConfigDir(configDir);
+  let identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
+  if (identityCfg.enabled && localIndex !== undefined) {
+    identityBoot = buildIdentityBoot(identityCfg, scimCfg, localIndex, vault, {
+      log: (m: string) => syncLogger.warn(m),
+    });
+    ipcOpts.identityStore = identityBoot.store;
+    ipcOpts.identityIssuer = identityBoot.issuer;
+    ipcOpts.identityGraceSeconds = identityBoot.graceSeconds;
+    ipcOpts.identityStartLogin = identityBoot.startLogin;
+    ipcOpts.identityVault = vault;
+    if (scimCfg.enabled) {
+      httpSidecarOpts.resolveScimToken = identityBoot.resolveScimToken;
+    }
+  }
+  return identityBoot;
+}
+
+/** Build the policy.* + team.purge IPC context (Task 26, Lanes A–G integration hub). The local IPC
+ *  socket is operator/owner-trusted, so isAnchor is true for local calls (signing makes this gateway
+ *  an anchor; a purge is operator-only). The GDPR purge deps wire the REAL local-side capabilities:
+ *    resolvePeer            → identity binding store (externalId → active peer ids; first wins)
+ *    revokeAllGrants        → NamespaceStore.revokeAllForPeer (confirmed grant-revocation sweep)
+ *    deleteLocalContributions → same sweep's count (item-level row deletion has no confirmed accessor;
+ *                               grant-revocation is the confirmed local effect — see report)
+ *    knownPeers             → localIndex.listLanPeers (paired peers fan out one purge request each)
+ *  resolvePeer returns undefined when identity is disabled / unbound → startPurge throws (fail-closed). */
+function buildPolicyRpcCtx(deps: {
+  db: Database;
+  vault: NimbusVault;
+  localIndex: LocalIndex;
+  policyStore: PolicyStore;
+  policyGate: PolicyGate;
+  identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
+}): PolicyRpcCtx {
+  const { db, vault, localIndex, policyStore, policyGate, identityBoot } = deps;
+  const purgeNamespaceStore = new NamespaceStore(db);
+  const purgeJobStore = new GdprPurgeStore(db);
+  let purgeJobCounter = 0;
+  return {
+    showPolicy: () => policyGate.status(),
+    trustPubkey: ({ pubkey }) => trustAnchorPubkey(policyStore, pubkey, Date.now()),
+    refetch: () =>
+      refreshPolicy({
+        store: policyStore,
+        gate: policyGate,
+        pinnedPubkey: policyStore.getAnchorPubkey() ?? "",
+        nowMs: Date.now(),
+        // Best-effort: no inbound anchor bundle source is wired at the IPC layer, so refetch is a
+        // local no-op (returns the locally-served bundle, or null when ungoverned). The over-the-wire
+        // peer fetch is the federation runtime's job; here we surface "no_bundle" rather than fabricate.
+        fetch: async () => servePolicy(policyStore),
+      }),
+    signPolicy: async ({ toml }) => {
+      const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
+      const r = authorPolicy(
+        { store: policyStore, gate: policyGate, db, privkeyB64, pubkeyB64, nowMs: Date.now() },
+        toml,
+      );
+      if (!r.ok) throw new Error(r.error);
+      return { org: r.org, version: r.version };
+    },
+    purge: ({ externalId }) =>
+      startPurge(
+        {
+          store: purgeJobStore,
+          resolvePeer: (extId) => identityBoot?.store.activePeerIdsFor(extId)[0],
+          // Grant revocation is the confirmed local effect of a purge; performed once in
+          // deleteLocalContributions (which returns the count). No separate item-level
+          // deletion accessor exists yet, so revokeAllGrants is a no-op to avoid double-sweeping.
+          revokeAllGrants: () => {},
+          deleteLocalContributions: (peerId) =>
+            purgeNamespaceStore.revokeAllForPeer(peerId, Date.now()),
+          knownPeers: () => localIndex.listLanPeers().map((p) => p.peer_id),
+          newJobId: () => {
+            purgeJobCounter += 1;
+            return `gdpr-${Date.now()}-${purgeJobCounter}`;
+          },
+          nowMs: () => Date.now(),
+        },
+        externalId,
+      ),
+    // Local IPC socket is operator/owner-trusted (see ipc/server): treat local calls as the anchor.
+    isAnchor: true,
+  };
+}
+
+/** Build the updater from config (when [updater] enables one), hand it to the IPC server, and run
+ *  the best-effort startup check. */
+function wireUpdaterIntoIpc(
+  configDir: string,
+  ipc: ReturnType<typeof createIpcServer>,
+  syncLogger: Logger,
+): void {
+  const updaterCfg = loadNimbusUpdaterFromConfigDir(configDir);
+  const updater = createUpdaterFromConfig({
+    updaterCfg,
+    currentVersion: GATEWAY_VERSION,
+    emit: (name, payload) => ipc.broadcast(name, payload ?? {}),
+    logger: syncLogger,
+  });
+  if (updater !== undefined) {
+    ipc.setUpdater(updater);
+    if (updaterCfg.checkOnStartup) {
+      void updater
+        .checkNow()
+        .catch((err: unknown) =>
+          syncLogger.warn(
+            { err: redactUrlUserinfo(err instanceof Error ? err.message : String(err)) },
+            "updater startup check failed",
+          ),
+        );
+    }
+  }
+}
+
+export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
+  const assemblyStartedMs = performance.now();
+  const sidecarStops: Array<() => void> = [];
+  await ensurePlatformDirectories(paths);
+  const vault = await createNimbusVault(paths);
+  const sandboxRunner = await createSandboxRunner();
+  const db = openGatewaySqlite(paths.dataDir, sidecarStops);
+  const notifications = createStubNotifications();
+  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
+  const rateLimiter = new ProviderRateLimiter();
+  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
+  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath);
 
   const { localIndex, scheduleItemEmbedding, rt } = await createLocalIndexWithEmbeddingRuntime(
     db,
@@ -662,36 +910,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
 
-  // Org policy (I22): the gate rehydrates last-valid from the store (ungoverned when none). The
-  // baseline is the local floor policy can only TIGHTEN. `policyGate` is the shared instance reused
-  // by the retention floor (Task 8), quorum (Task 9), and the audit shipper (Task 19) — keep it in
-  // scope even though Part C of this task only consumes `enforced().connectorAllow`. Built BEFORE
-  // the retention sidecar so the latter can honor `enforced().retentionDays` (the monotonic floor).
-  const policyStore = new PolicyStore(db);
-  const policyGate = buildPolicyGate(db, policyStore, {
-    retentionDays: auditCfg.toolCallLogRetentionDays,
-    hitlRequired: new Set<string>(),
-    quorum: loadNimbusQuorumFromConfigDir(paths.configDir),
-  });
-  // Connector allowlist enforcement: audit + block connectors not permitted by policy.
-  const enforcedConnectorAllow = policyGate.enforced().connectorAllow;
-  const { blocked: blockedConnectors } = partitionByAllowlist(
-    [...CONNECTOR_SERVICE_IDS],
-    enforcedConnectorAllow,
+  // Org policy (I22): built BEFORE the retention sidecar so the latter can honor
+  // `enforced().retentionDays` (the monotonic floor).
+  const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(
+    db,
+    paths.configDir,
+    auditCfg,
   );
-  const blockedAt = Date.now();
-  for (const id of blockedConnectors) {
-    appendAuditEntry(db, {
-      actionType: "policy.connector.blocked",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({ connector: id }),
-      timestamp: blockedAt,
-    });
-  }
-  const isConnectorAllowed = (serviceId: string): boolean => {
-    const allow = policyGate.enforced().connectorAllow;
-    return allow === undefined || allow.includes(serviceId);
-  };
 
   // Retention floor (Task 8): effective retention = max(local config, policy floor); policy can only
   // LENGTHEN retention. Started after the gate so it can read `enforced().retentionDays`.
@@ -739,27 +964,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
-  let autoUpdateRuntime: AutoUpdateRuntime | undefined;
-  const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
-  const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
-  if (autoUpdateRegistryUrl !== "" && !autoUpdateDisabled) {
-    const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
-    autoUpdateRuntime = createAutoUpdateRuntime({
-      db,
-      vault,
-      extensionsDir: paths.extensionsDir,
-      dataDir: paths.dataDir,
-      registryBaseUrl: autoUpdateRegistryUrl,
-      intervalHours: extensionsCfg.updateCheckIntervalHours,
-      enforceAirGap: false,
-      stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
-    });
-    void autoUpdateRuntime.daemon.start();
-    sidecarStops.push(() => {
-      autoUpdateRuntime?.abortController.abort();
-      void autoUpdateRuntime?.daemon.stop();
-    });
-  }
+  const { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled } = maybeStartAutoUpdateRuntime({
+    db,
+    vault,
+    paths,
+    connectorMesh,
+    sidecarStops,
+  });
 
   rt?.startBackgroundJobs();
   const ipcOpts: Parameters<typeof createIpcServer>[0] = {
@@ -775,17 +986,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     connectorMesh,
     sandboxRunner,
     llmRegistry,
-    ...(autoUpdateRuntime === undefined ? {} : { extensionsAutoUpdate: autoUpdateRuntime.deps }),
-    ...(autoUpdateRuntime === undefined
-      ? {}
-      : {
-          extensionsAutoUpdateDiag: {
-            cachedUpdatesCount: (): number => autoUpdateRuntime?.deps.cache.list().length ?? 0,
-            intervalHours: loadNimbusExtensionsFromConfigDir(paths.configDir)
-              .updateCheckIntervalHours,
-            airGapBlocked: autoUpdateDisabled,
-          },
-        }),
+    ...autoUpdateIpcOpts(autoUpdateRuntime, paths.configDir, autoUpdateDisabled),
   };
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;
@@ -808,26 +1009,15 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     policyGate,
   });
 
-  // Identity & Access (Phase 6 Slice 3). Mirrors the federation block: build the boot, wire the
-  // IPC-facing seams onto ipcOpts, and (when [scim].enabled) hand the SCIM bearer resolver to the
-  // read-only HTTP server so the SCIM provisioning surface authenticates.
-  const identityCfg = loadNimbusIdentityFromConfigDir(paths.configDir);
-  const scimCfg = loadNimbusScimFromConfigDir(paths.configDir);
-  let identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
   const httpSidecarOpts: HttpSidecarOpts = {};
-  if (identityCfg.enabled && localIndex !== undefined) {
-    identityBoot = buildIdentityBoot(identityCfg, scimCfg, localIndex, vault, {
-      log: (m: string) => syncLogger.warn(m),
-    });
-    ipcOpts.identityStore = identityBoot.store;
-    ipcOpts.identityIssuer = identityBoot.issuer;
-    ipcOpts.identityGraceSeconds = identityBoot.graceSeconds;
-    ipcOpts.identityStartLogin = identityBoot.startLogin;
-    ipcOpts.identityVault = vault;
-    if (scimCfg.enabled) {
-      httpSidecarOpts.resolveScimToken = identityBoot.resolveScimToken;
-    }
-  }
+  const identityBoot = bootIdentityIntoIpcOpts({
+    configDir: paths.configDir,
+    localIndex,
+    vault,
+    syncLogger,
+    ipcOpts,
+    httpSidecarOpts,
+  });
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every
   // subsystem is in scope. Wired into BOTH the IPC server (admin.status) and the read-only HTTP
@@ -860,65 +1050,15 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     );
   };
 
-  // policy.* + team.purge IPC namespace (Task 26, Lanes A–G integration hub). The local IPC socket is
-  // operator/owner-trusted, so isAnchor is true for local calls (signing makes this gateway an anchor;
-  // a purge is operator-only). The GDPR purge deps wire the REAL local-side capabilities:
-  //   resolvePeer            → identity binding store (externalId → active peer ids; first wins)
-  //   revokeAllGrants        → NamespaceStore.revokeAllForPeer (confirmed grant-revocation sweep)
-  //   deleteLocalContributions → same sweep's count (item-level row deletion has no confirmed accessor;
-  //                              grant-revocation is the confirmed local effect — see report)
-  //   knownPeers             → localIndex.listLanPeers (paired peers fan out one purge request each)
-  // resolvePeer returns undefined when identity is disabled / unbound → startPurge throws (fail-closed).
-  const purgeNamespaceStore = new NamespaceStore(db);
-  const purgeJobStore = new GdprPurgeStore(db);
-  let purgeJobCounter = 0;
-  const policyRpcCtx: PolicyRpcCtx = {
-    showPolicy: () => policyGate.status(),
-    trustPubkey: ({ pubkey }) => trustAnchorPubkey(policyStore, pubkey, Date.now()),
-    refetch: () =>
-      refreshPolicy({
-        store: policyStore,
-        gate: policyGate,
-        pinnedPubkey: policyStore.getAnchorPubkey() ?? "",
-        nowMs: Date.now(),
-        // Best-effort: no inbound anchor bundle source is wired at the IPC layer, so refetch is a
-        // local no-op (returns the locally-served bundle, or null when ungoverned). The over-the-wire
-        // peer fetch is the federation runtime's job; here we surface "no_bundle" rather than fabricate.
-        fetch: async () => servePolicy(policyStore),
-      }),
-    signPolicy: async ({ toml }) => {
-      const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
-      const r = authorPolicy(
-        { store: policyStore, gate: policyGate, db, privkeyB64, pubkeyB64, nowMs: Date.now() },
-        toml,
-      );
-      if (!r.ok) throw new Error(r.error);
-      return { org: r.org, version: r.version };
-    },
-    purge: ({ externalId }) =>
-      startPurge(
-        {
-          store: purgeJobStore,
-          resolvePeer: (extId) => identityBoot?.store.activePeerIdsFor(extId)[0],
-          // Grant revocation is the confirmed local effect of a purge; performed once in
-          // deleteLocalContributions (which returns the count). No separate item-level
-          // deletion accessor exists yet, so revokeAllGrants is a no-op to avoid double-sweeping.
-          revokeAllGrants: () => {},
-          deleteLocalContributions: (peerId) =>
-            purgeNamespaceStore.revokeAllForPeer(peerId, Date.now()),
-          knownPeers: () => localIndex.listLanPeers().map((p) => p.peer_id),
-          newJobId: () => {
-            purgeJobCounter += 1;
-            return `gdpr-${Date.now()}-${purgeJobCounter}`;
-          },
-          nowMs: () => Date.now(),
-        },
-        externalId,
-      ),
-    // Local IPC socket is operator/owner-trusted (see ipc/server): treat local calls as the anchor.
-    isAnchor: true,
-  };
-  ipcOpts.policyRpcCtx = policyRpcCtx;
+  // policy.* + team.purge IPC namespace (Task 26, Lanes A–G integration hub) — see buildPolicyRpcCtx.
+  ipcOpts.policyRpcCtx = buildPolicyRpcCtx({
+    db,
+    vault,
+    localIndex,
+    policyStore,
+    policyGate,
+    identityBoot,
+  });
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 
@@ -941,26 +1081,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
   identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
 
-  const updaterCfg = loadNimbusUpdaterFromConfigDir(paths.configDir);
-  const updater = createUpdaterFromConfig({
-    updaterCfg,
-    currentVersion: GATEWAY_VERSION,
-    emit: (name, payload) => ipc.broadcast(name, payload ?? {}),
-    logger: syncLogger,
-  });
-  if (updater !== undefined) {
-    ipc.setUpdater(updater);
-    if (updaterCfg.checkOnStartup) {
-      void updater
-        .checkNow()
-        .catch((err: unknown) =>
-          syncLogger.warn(
-            { err: redactUrlUserinfo(err instanceof Error ? err.message : String(err)) },
-            "updater startup check failed",
-          ),
-        );
-    }
-  }
+  wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
 
   const gatewayAssemblyMs = Math.max(0, Math.round(performance.now() - assemblyStartedMs));
   const telemetryStop = startTelemetryFlushScheduler({

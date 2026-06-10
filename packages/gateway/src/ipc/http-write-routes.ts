@@ -166,73 +166,96 @@ function recordRejection(
   }
 }
 
+function notFound(): Response {
+  return new Response("Not Found", { status: 404 });
+}
+
+/** `POST /v1/deployments` (always-on surface; bearer = `http_api.deployment_token`). */
+function resolveDeploymentRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  return {
+    key: ROUTE_DEPLOY,
+    kind: "deployment",
+    expectedToken: ctx.expectedToken,
+    disabledHint: DEPLOY_DISABLED_HINT,
+    rejectAction: DEPLOY_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
+/** `PUT /v1/admin/policy` (404 unless the policy seam is enabled). */
+function resolvePolicyRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "PUT") return methodNotAllowed("PUT");
+  if (ctx.policy === undefined) return notFound();
+  return {
+    key: ROUTE_ADMIN_POLICY,
+    kind: "policy",
+    expectedToken: ctx.policy.token,
+    disabledHint: POLICY_DISABLED_HINT,
+    rejectAction: POLICY_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
+/** `POST /scim/v2/Users` (404 unless the SCIM seam is enabled). */
+function resolveScimCreateRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.scim === undefined) return notFound();
+  return {
+    key: ROUTE_SCIM_CREATE,
+    kind: "scim",
+    expectedToken: ctx.scim.token,
+    disabledHint: SCIM_DISABLED_HINT,
+    rejectAction: SCIM_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
+/** `POST /v1/messaging/teams/events` (404 unless the ChatOps Teams seam is enabled). */
+function resolveTeamsEventsRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.messaging === undefined) return notFound();
+  return {
+    key: ROUTE_TEAMS_EVENTS,
+    kind: "teamsEvents",
+    // Auth is the Bot Framework JWT (validated in runTeamsEventsRoute); no static bearer.
+    expectedToken: "",
+    disabledHint: TEAMS_EVENTS_DISABLED_HINT,
+    rejectAction: TEAMS_EVENTS_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
+/** `PATCH|DELETE /scim/v2/Users/{id}` (404 unless the SCIM seam is enabled). */
+function resolveScimItemRoute(
+  method: string,
+  id: string,
+  ctx: WriteRouteContext,
+): ResolvedRoute | Response {
+  if (method !== "PATCH" && method !== "DELETE") return methodNotAllowed("PATCH, DELETE");
+  if (ctx.scim === undefined) return notFound();
+  return {
+    key: method === "PATCH" ? ROUTE_SCIM_PATCH : ROUTE_SCIM_DELETE,
+    kind: "scim",
+    expectedToken: ctx.scim.token,
+    disabledHint: SCIM_DISABLED_HINT,
+    rejectAction: SCIM_REJECT_ACTION,
+    hasBody: method === "PATCH",
+    id,
+  };
+}
+
 /** Resolves the request to an allowlisted route, or a 404/405 Response. Does NOT consult auth. */
 function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedRoute | Response {
   const { method } = req;
   const path = url.pathname;
-  if (path === "/v1/deployments") {
-    if (method !== "POST") return methodNotAllowed("POST");
-    return {
-      key: ROUTE_DEPLOY,
-      kind: "deployment",
-      expectedToken: ctx.expectedToken,
-      disabledHint: DEPLOY_DISABLED_HINT,
-      rejectAction: DEPLOY_REJECT_ACTION,
-      hasBody: true,
-    };
-  }
-  if (path === "/v1/admin/policy") {
-    if (method !== "PUT") return methodNotAllowed("PUT");
-    if (ctx.policy === undefined) return new Response("Not Found", { status: 404 });
-    return {
-      key: ROUTE_ADMIN_POLICY,
-      kind: "policy",
-      expectedToken: ctx.policy.token,
-      disabledHint: POLICY_DISABLED_HINT,
-      rejectAction: POLICY_REJECT_ACTION,
-      hasBody: true,
-    };
-  }
-  if (path === "/scim/v2/Users") {
-    if (method !== "POST") return methodNotAllowed("POST");
-    if (ctx.scim === undefined) return new Response("Not Found", { status: 404 });
-    return {
-      key: ROUTE_SCIM_CREATE,
-      kind: "scim",
-      expectedToken: ctx.scim.token,
-      disabledHint: SCIM_DISABLED_HINT,
-      rejectAction: SCIM_REJECT_ACTION,
-      hasBody: true,
-    };
-  }
-  if (path === "/v1/messaging/teams/events") {
-    if (method !== "POST") return methodNotAllowed("POST");
-    if (ctx.messaging === undefined) return new Response("Not Found", { status: 404 });
-    return {
-      key: ROUTE_TEAMS_EVENTS,
-      kind: "teamsEvents",
-      // Auth is the Bot Framework JWT (validated in runTeamsEventsRoute); no static bearer.
-      expectedToken: "",
-      disabledHint: TEAMS_EVENTS_DISABLED_HINT,
-      rejectAction: TEAMS_EVENTS_REJECT_ACTION,
-      hasBody: true,
-    };
-  }
+  if (path === "/v1/deployments") return resolveDeploymentRoute(method, ctx);
+  if (path === "/v1/admin/policy") return resolvePolicyRoute(method, ctx);
+  if (path === "/scim/v2/Users") return resolveScimCreateRoute(method, ctx);
+  if (path === "/v1/messaging/teams/events") return resolveTeamsEventsRoute(method, ctx);
   const item = SCIM_ITEM_RE.exec(path);
-  if (item !== null) {
-    if (method !== "PATCH" && method !== "DELETE") return methodNotAllowed("PATCH, DELETE");
-    if (ctx.scim === undefined) return new Response("Not Found", { status: 404 });
-    return {
-      key: method === "PATCH" ? ROUTE_SCIM_PATCH : ROUTE_SCIM_DELETE,
-      kind: "scim",
-      expectedToken: ctx.scim.token,
-      disabledHint: SCIM_DISABLED_HINT,
-      rejectAction: SCIM_REJECT_ACTION,
-      hasBody: method === "PATCH",
-      id: item[1] as string,
-    };
-  }
-  return new Response("Not Found", { status: 404 });
+  if (item !== null) return resolveScimItemRoute(method, item[1] as string, ctx);
+  return notFound();
 }
 
 type AuthOk = { fingerprint: string };
