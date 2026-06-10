@@ -26,6 +26,8 @@ export type IndexReembedRpcContext = {
   paths: Pick<PlatformPaths, "dataDir">;
   logger: Logger;
   notify: (method: string, params: unknown) => void;
+  /** @internal test seam: override pipeline construction in runReembed */
+  _sinkFactory?: (embedder: Embedder) => ReembedSink;
 };
 
 type ReembedParams = {
@@ -44,12 +46,12 @@ const MAX_BATCH = 256;
 const DEFAULT_BATCH = 100;
 const FALLBACK_RETRY_AFTER_MS = 2000;
 
-function clampBatchSize(raw: number | undefined): number {
+export function clampBatchSize(raw: number | undefined): number {
   const n = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_BATCH;
   return Math.min(MAX_BATCH, Math.max(MIN_BATCH, n));
 }
 
-function parseReembedParams(params: unknown): ReembedParams {
+export function parseReembedParams(params: unknown): ReembedParams {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new IndexReembedRpcError(-32602, "params must be an object");
   }
@@ -78,7 +80,10 @@ function parseReembedParams(params: unknown): ReembedParams {
   return out;
 }
 
-async function resolveEmbedder(model: string, ctx: IndexReembedRpcContext): Promise<Embedder> {
+export async function resolveEmbedder(
+  model: string,
+  ctx: IndexReembedRpcContext,
+): Promise<Embedder> {
   if (model.startsWith("openai:")) {
     const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
     let apiKey = envKey;
@@ -101,7 +106,7 @@ async function resolveEmbedder(model: string, ctx: IndexReembedRpcContext): Prom
   throw new IndexReembedRpcError(-32602, `Unsupported model: ${model}`);
 }
 
-function buildCandidateSql(p: ReembedParams): {
+export function buildCandidateSql(p: ReembedParams): {
   sql: string;
   params: Array<string | number>;
 } {
@@ -133,7 +138,10 @@ function buildCandidateSql(p: ReembedParams): {
   return { sql, params };
 }
 
-async function assertModelUsable(p: ReembedParams, ctx: IndexReembedRpcContext): Promise<void> {
+export async function assertModelUsable(
+  p: ReembedParams,
+  ctx: IndexReembedRpcContext,
+): Promise<void> {
   if (p.model.startsWith("openai:")) {
     const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
     if (envKey === "") {
@@ -252,11 +260,10 @@ async function runReembed(
     return { succeeded: 0, skipped: 0, planned: total, dryRun: true };
   }
   const embedder = await resolveEmbedder(p.model, ctx);
-  const pipeline = new SqliteEmbeddingPipeline({
-    db: ctx.db,
-    embedder,
-    logger: ctx.logger,
-  });
+  const pipeline: ReembedSink =
+    ctx._sinkFactory !== undefined
+      ? ctx._sinkFactory(embedder)
+      : new SqliteEmbeddingPipeline({ db: ctx.db, embedder, logger: ctx.logger });
 
   const counters: BatchCounters = { succeeded: 0, skipped: 0 };
   for (let i = 0; i < candidates.length; i += batchSize) {
