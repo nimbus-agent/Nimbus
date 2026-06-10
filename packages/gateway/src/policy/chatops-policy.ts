@@ -21,9 +21,9 @@ function literalPrefixLen(pattern: string): number {
 function globMatches(pattern: string, value: string): boolean {
   const re = new RegExp(
     `^${pattern
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/\?/g, ".")}$`,
+      .replace(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
+      .replaceAll("*", ".*")
+      .replaceAll("?", ".")}$`,
   );
   return re.test(value);
 }

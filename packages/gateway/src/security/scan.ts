@@ -89,6 +89,86 @@ function absoluteLineFor(item: ScanItem, body: string, offset: number): number |
 
 const NO_OPTIONS: ScanOptions = { allowlist: new Set<string>() };
 
+/** Resolve indexed blame for a match (code_symbol items only), in snake_case finding shape. */
+function resolveFindingBlame(
+  row: ScanItem,
+  body: string,
+  offset: number,
+  options: ScanOptions,
+): FindingBlame | null {
+  const absLine = absoluteLineFor(row, body, offset);
+  if (absLine === null || options.resolveBlame === undefined) return null;
+  const b = options.resolveBlame(row, absLine);
+  if (b === null) return null;
+  return {
+    commit_sha: b.commitSha,
+    author_name: b.authorName,
+    author_email: b.authorEmail,
+    author_time_ms: b.authorTimeMs,
+  };
+}
+
+/** Build the finding for one regex match, or null when its fingerprint is allowlisted (muted). */
+function buildFindingForMatch(
+  row: ScanItem,
+  body: string,
+  externalId: string,
+  pattern: SecretPattern,
+  match: RegExpExecArray,
+  options: ScanOptions,
+): SecurityFinding | null {
+  const offset = match.index ?? 0;
+  const raw = match[0];
+  const matchRedacted = redactSecret(raw);
+  const contextSnippet = buildContextSnippet(body, offset, raw.length);
+  const fingerprint = computeFindingFingerprint({
+    service: row.service,
+    externalId,
+    patternName: pattern.name,
+    matchRedacted,
+    contextSnippet,
+  });
+  if (options.allowlist.has(fingerprint)) return null;
+  return {
+    item_id: row.id,
+    service: row.service,
+    type: row.type,
+    title: row.title,
+    pattern_name: pattern.name,
+    pattern_category: pattern.category,
+    match_redacted: matchRedacted,
+    match_offset: offset,
+    context_snippet: contextSnippet,
+    modified_at_ms: row.modified_at,
+    url: row.url,
+    fingerprint,
+    external_id: externalId,
+    blame: resolveFindingBlame(row, body, offset, options),
+  };
+}
+
+/** Scan one row against all patterns, pushing findings into `sink`; returns the muted count. */
+function scanRowForSecrets(
+  row: ScanItem,
+  patterns: readonly SecretPattern[],
+  options: ScanOptions,
+  sink: SecurityFinding[],
+): number {
+  const body = row.body_preview;
+  if (body === null || body.length === 0) return 0;
+  const externalId = row.external_id ?? row.id;
+  let muted = 0;
+  for (const pattern of patterns) {
+    pattern.regex.lastIndex = 0;
+    for (const match of body.matchAll(pattern.regex)) {
+      const finding = buildFindingForMatch(row, body, externalId, pattern, match, options);
+      if (finding === null) muted += 1;
+      else sink.push(finding);
+    }
+  }
+  return muted;
+}
+
 export function scanItemsForSecrets(
   rows: Iterable<ScanItem>,
   patterns: readonly SecretPattern[],
@@ -101,59 +181,7 @@ export function scanItemsForSecrets(
 
   for (const row of rows) {
     items_scanned += 1;
-    const body = row.body_preview;
-    if (body === null || body.length === 0) continue;
-    const externalId = row.external_id ?? row.id;
-    for (const pattern of patterns) {
-      pattern.regex.lastIndex = 0;
-      for (const match of body.matchAll(pattern.regex)) {
-        const offset = match.index ?? 0;
-        const raw = match[0];
-        const matchRedacted = redactSecret(raw);
-        const contextSnippet = buildContextSnippet(body, offset, raw.length);
-        const fingerprint = computeFindingFingerprint({
-          service: row.service,
-          externalId,
-          patternName: pattern.name,
-          matchRedacted,
-          contextSnippet,
-        });
-        if (options.allowlist.has(fingerprint)) {
-          muted_count += 1;
-          continue;
-        }
-        const absLine = absoluteLineFor(row, body, offset);
-        const b =
-          absLine !== null && options.resolveBlame !== undefined
-            ? options.resolveBlame(row, absLine)
-            : null;
-        const blame: FindingBlame | null =
-          b === null
-            ? null
-            : {
-                commit_sha: b.commitSha,
-                author_name: b.authorName,
-                author_email: b.authorEmail,
-                author_time_ms: b.authorTimeMs,
-              };
-        findings.push({
-          item_id: row.id,
-          service: row.service,
-          type: row.type,
-          title: row.title,
-          pattern_name: pattern.name,
-          pattern_category: pattern.category,
-          match_redacted: matchRedacted,
-          match_offset: offset,
-          context_snippet: contextSnippet,
-          modified_at_ms: row.modified_at,
-          url: row.url,
-          fingerprint,
-          external_id: externalId,
-          blame,
-        });
-      }
-    }
+    muted_count += scanRowForSecrets(row, patterns, options, findings);
   }
 
   return {

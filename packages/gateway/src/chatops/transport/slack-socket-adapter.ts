@@ -51,7 +51,7 @@ export class SlackEventNormalizer {
     if (f["type"] !== "events_api") return undefined;
     const payload = f["payload"] as Record<string, unknown> | undefined;
     const event = payload?.["event"] as Record<string, unknown> | undefined;
-    if (event === undefined || event["type"] !== "app_mention") return undefined;
+    if (event?.["type"] !== "app_mention") return undefined;
     const channel = event["channel"];
     const user = event["user"];
     const text = event["text"];
