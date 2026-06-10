@@ -14,12 +14,18 @@ function fakeVault(entries: Record<string, string>): NimbusVault {
 
 describe("chatopsSlackBotServers (I1/I15 bot-token spawn spec)", () => {
   test("returns undefined when slack.bot_token is missing (fail-closed: no spawn)", async () => {
-    const servers = await chatopsSlackBotServers(fakeVault({ "slack.app_token": "xapp-1" }), "/cwd");
+    const servers = await chatopsSlackBotServers(
+      fakeVault({ "slack.app_token": "xapp-1" }),
+      "/cwd",
+    );
     expect(servers).toBeUndefined();
   });
 
   test("returns undefined when slack.app_token is missing", async () => {
-    const servers = await chatopsSlackBotServers(fakeVault({ "slack.bot_token": "xoxb-1" }), "/cwd");
+    const servers = await chatopsSlackBotServers(
+      fakeVault({ "slack.bot_token": "xoxb-1" }),
+      "/cwd",
+    );
     expect(servers).toBeUndefined();
   });
 
