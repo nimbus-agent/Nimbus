@@ -10,6 +10,10 @@ import {
 } from "../automation/watcher-engine.ts";
 import { buildChatopsBoot, type ChatopsBoot } from "../chatops/chatops-boot.ts";
 import { buildChatopsToolRunner } from "../chatops/chatops-tool-runner.ts";
+import {
+  buildE2eSinkDispatcher,
+  buildE2eSinkRunChatopsTool,
+} from "../chatops/chatops-tool-runner-e2e-sink.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusAuditFromConfigDir,
@@ -853,6 +857,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   let chatopsBoot: ChatopsBoot | undefined;
   if (chatopsCfg.enabled) {
     const identityBootRef = identityBoot;
+    // E2E seam (NIMBUS_CHATOPS_E2E_SINK_DIR, precedent: NIMBUS_SKIP_EMBEDDING_RUNTIME): swap the
+    // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
+    // Slack/Teams transport" the real-gateway e2e drives. Unset in production (the real spawn).
+    const chatopsE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
     chatopsBoot = buildChatopsBoot({
       cfg: chatopsCfg,
       policyGate,
@@ -879,16 +887,22 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
                 ),
             },
           }),
-      runTool: buildChatopsToolRunner({
-        vault,
-        botVaultEntry: chatopsCfg.botVaultEntry,
-        sandboxCwd: paths.dataDir,
-      }),
+      runTool:
+        chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
+          ? buildChatopsToolRunner({
+              vault,
+              botVaultEntry: chatopsCfg.botVaultEntry,
+              sandboxCwd: paths.dataDir,
+            })
+          : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
       audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
-      dispatcher: createConnectorDispatcher({
-        listTools: () => connectorMesh.listToolsForDispatcher(),
-        getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-      }),
+      dispatcher:
+        chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
+          ? createConnectorDispatcher({
+              listTools: () => connectorMesh.listToolsForDispatcher(),
+              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+            })
+          : buildE2eSinkDispatcher(chatopsE2eSinkDir),
       ...(chatopsCfg.teamsEnabled && chatopsCfg.teamsBotAppId !== ""
         ? {
             validateTeamsJwt: buildTeamsBotJwtValidator({

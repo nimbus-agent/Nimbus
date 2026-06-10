@@ -23,10 +23,16 @@ interface BuildArgvOpts {
 const HELPER_PATH =
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] ?? "/usr/lib/nimbus/bin/nimbus-sandbox-helper";
 
-const log = pino({
-  name: "sandbox-linux",
-  level: process.env["NIMBUS_LOG_LEVEL"] ?? "warn",
-});
+// MUST log to STDERR: this module also runs inside sandbox-wrapper.ts, whose stdout IS the
+// connector's MCP stdio channel — any stdout line corrupts the JSON-RPC stream and the client
+// drops the connection (found by the chatops e2e: the "degraded mode" warn killed every spawn).
+const log = pino(
+  {
+    name: "sandbox-linux",
+    level: process.env["NIMBUS_LOG_LEVEL"] ?? "warn",
+  },
+  pino.destination(2),
+);
 
 export function decideNetworkMode(
   manifest: ExtensionManifest,

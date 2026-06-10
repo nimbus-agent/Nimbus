@@ -205,7 +205,8 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       const ctx = getChatopsApprovalContext();
       if (ctx === undefined || identity === undefined) return false;
       const scim = identity.findScimByEmail(ctx.ownerEmail);
-      return scim !== undefined && scim.active && identity.isOperatorValid(scim.issuer);
+      if (scim === undefined || !scim.active) return false;
+      return identity.isOperatorValid(scim.issuer);
     },
     requestRemote: () => presenter.requestApproval(),
   });
@@ -219,7 +220,7 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       resolveOwner: (resource) => resolveOwner(chatopsPolicy(), resource),
       ownerExternalIdFor: (email) => {
         const scim = identity?.findScimByEmail(email);
-        return scim !== undefined && scim.active ? scim.externalId : undefined;
+        return scim?.active === true ? scim.externalId : undefined;
       },
       askEngine: (query, namespace) => askEngine(query, namespace),
       runGatedWrite: (actionType, args, owner, requesterExternalId, originatingChannelId) =>

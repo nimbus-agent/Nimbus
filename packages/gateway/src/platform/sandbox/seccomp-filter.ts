@@ -173,6 +173,21 @@ const SYSCALL_NR: Record<string, number> = {
   io_uring_setup: 425,
   io_uring_enter: 426,
   io_uring_register: 427,
+  // Modern-runtime syscalls a wrapped bun connector needs at startup (measured via
+  // `strace -fc` in the chatops e2e — see seccomp-filter.test.ts).
+  rt_sigsuspend: 130,
+  sigaltstack: 131,
+  sched_setscheduler: 144,
+  tgkill: 234,
+  newfstatat: 262,
+  timerfd_create: 283,
+  timerfd_settime: 286,
+  eventfd2: 290,
+  preadv2: 327,
+  membarrier: 324,
+  rseq: 334,
+  close_range: 436,
+  epoll_pwait2: 441,
 };
 
 export const SYS_ALLOW: readonly string[] = Object.freeze([
@@ -298,6 +313,29 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "futimesat",
   "statx",
   "openat2",
+  // Modern-runtime calls (glibc startup + Bun event loop) — without these the KILL default
+  // SIGSYS-kills every wrapped connector on a current distro. None grant privilege: they are
+  // thread/registration (rseq, sigaltstack, membarrier), stat (newfstatat), event-loop fds
+  // (eventfd2, timerfd_*), fd hygiene (close_range), scheduling (sched_setscheduler), process
+  // metadata (prctl, sysinfo).
+  "newfstatat",
+  "rseq",
+  "prctl",
+  "sysinfo",
+  "eventfd2",
+  "close_range",
+  "timerfd_create",
+  "timerfd_settime",
+  "sigaltstack",
+  "sched_setscheduler",
+  "membarrier",
+  // Hit once a wrapped connector processes a request: Bun's epoll event loop (epoll_pwait2),
+  // thread/signal management (rt_sigsuspend, tgkill) and vectored positioned reads (preadv2).
+  // None grant privilege — they are I/O wait + intra-process signalling.
+  "epoll_pwait2",
+  "rt_sigsuspend",
+  "tgkill",
+  "preadv2",
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
