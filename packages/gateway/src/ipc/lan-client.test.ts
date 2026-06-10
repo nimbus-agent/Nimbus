@@ -196,8 +196,8 @@ describe("exchangeOneFrame", () => {
         port,
         (_s) => {
           // Intentionally throwing a plain string (non-Error) to cover the ternary branch.
-          // biome-ignore lint/complexity/noUselessThrow: testing non-Error throw path
-          throw "plain string throw" as unknown as Error;
+          const nonError: unknown = "plain string throw";
+          throw nonError;
         },
         MAX_HANDSHAKE_FRAME,
         500,
