@@ -158,6 +158,7 @@ export type GhostFinding = {
   suggestedContact: string;
 };
 
+// CLI-side mirror of GhostBrief in packages/gateway/src/agents/_lib/findings.ts; rank mirrors ExpertiseRank in federation/types.ts
 export type GhostBrief = {
   kind: "ghost";
   agentVersion: 1;
@@ -194,6 +195,7 @@ export type ConflictCollision = {
   modifiedAt: number;
 };
 
+// CLI-side mirror of ConflictBrief in packages/gateway/src/agents/_lib/findings.ts
 export type ConflictBrief = {
   kind: "conflict";
   agentVersion: 1;
@@ -220,35 +222,18 @@ export function isConflictBrief(x: unknown): x is ConflictBrief {
   );
 }
 
-export type HuddlePr = {
-  title: string;
-  snippet: string;
-  service: string;
-  modifiedAt: number;
-};
-
-export type HuddleTicket = {
-  title: string;
-  snippet: string;
-  service: string;
-  modifiedAt: number;
-};
-
-export type HuddleIncident = {
-  title: string;
-  snippet: string;
-  service: string;
-  modifiedAt: number;
-};
+/** Mirror of FederatedItemLite in packages/gateway/src/agents/_lib/findings.ts (CLI cannot import gateway). */
+type HuddleItem = { title: string; snippet: string; service: string; modifiedAt: number };
 
 export type HuddleContribution = {
   peerId: string;
   who: string | null;
-  prs: HuddlePr[];
-  tickets: HuddleTicket[];
-  incidents: HuddleIncident[];
+  prs: HuddleItem[];
+  tickets: HuddleItem[];
+  incidents: HuddleItem[];
 };
 
+// CLI-side mirror of HuddleBrief in packages/gateway/src/agents/_lib/findings.ts
 export type HuddleBrief = {
   kind: "huddle";
   agentVersion: 1;
