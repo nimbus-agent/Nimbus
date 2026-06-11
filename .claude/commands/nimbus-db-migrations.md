@@ -39,7 +39,7 @@ The runner in `packages/gateway/src/index/migrations/runner.ts`:
 - Wraps each step in **a single transaction**.
 - Writes a **pre-migration backup** via `applyIndexedSchemaStep` before each step runs.
 - Records each step in `_schema_migrations` on success via `recordMigration`.
-- On a thrown step: rolls back the transaction, restores the backup, marks the migration `failed` in the ledger, and exits with an error.
+- On a thrown step: the transaction is rolled back and a `MigrationRollbackError` is thrown (with the pre-migration backup path in its message when one was written). No ledger entry is recorded for a failed migration — only successful migrations are recorded. The caller must handle the exception.
 
 **Never write a migration that cannot be safely rolled back within a transaction.**
 
@@ -50,8 +50,10 @@ The backup is written by `applyIndexedSchemaStep` automatically before every ste
 The backup lives at:
 
 ```
-<dataDir>/backups/pre-migration-V<N>-<timestamp>.db
+<dataDir>/backups/pre-migration-<N>-<timestamp>-<uuid>.db.gz
 ```
+
+(`<uuid>` is a random UUID appended for uniqueness; there is no `V` prefix on the version number, and the file is gzip-compressed with a `.gz` extension.)
 
 ## Migration File Structure
 
@@ -126,12 +128,11 @@ Columns:
 
 | Column | Type | Notes |
 |---|---|---|
-| `version` | integer | the `V<N>` number |
+| `version` | integer | the `V<N>` number (primary key) |
 | `description` | text | from the step definition |
 | `applied_at` | integer | unix ms |
-| `status` | `applied` \| `failed` | runner-managed |
 
-The runner inserts a row with `status = 'applied'` after each successful migration via `recordMigration`. **Never write to this table manually.**
+The runner inserts a row (`INSERT OR IGNORE`) after each successful migration via `recordMigration`. There is no `status` column — only successful migrations are recorded. **Never write to this table manually.**
 
 ## New Table Checklist
 

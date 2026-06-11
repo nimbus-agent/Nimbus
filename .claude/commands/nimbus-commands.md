@@ -124,7 +124,7 @@ bun run audit:openapi-drift             # OpenAPI ↔ READ_ONLY_HTTP_ROUTES drif
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
 bun scripts/structure-audit/count-any-usage.ts --update    # rewrite docs/structure-audit/any-baseline.json
 
-bun scripts/structure-audit/check-doc-references.ts --check  # doc-ref drift (broken markdown links + backtick paths)
+bun run audit:doc-refs                  # doc-ref drift (broken markdown links + backtick paths)
 ```
 
 Baselines: `docs/structure-audit/{any-baseline.json,baseline.md,churn-90d.json,coverage-baseline.json,db-run-census.json}`.
@@ -164,7 +164,6 @@ nimbus db prune [--yes]
 nimbus telemetry show
 nimbus telemetry disable
 nimbus serve [--port 7474]
-nimbus docs [topic]
 nimbus connector history <name>
 nimbus connector reindex <name> [--depth <metadata_only|summary|full>]
 ```
@@ -194,14 +193,13 @@ nimbus update --check                  # exit 1 if newer available
 nimbus update [--yes]                  # download, verify Ed25519, install
 
 # LAN remote access
-nimbus lan enable [--allow-pairing]    # start LAN server; open 5-min pairing window
-nimbus lan disable
-nimbus lan pair <host-ip> <code>       # exchange X25519 keys with a host using pairing code
-nimbus lan status
-nimbus lan list-peers                  # id, direction, write-allowed
-nimbus lan grant-write <peer-id>       # allow peer to call write/HITL methods
-nimbus lan revoke-write <peer-id>
-nimbus lan remove-peer <peer-id>
+nimbus lan [status]                    # default; enabled / pairing-open / listen addr
+nimbus lan open [--allow-pairing]      # start LAN server; open 5-min pairing window
+nimbus lan close                       # close the pairing window
+nimbus lan peers                       # list connected peers
+nimbus lan grant <peerId>              # allow peer to call write/HITL methods
+nimbus lan revoke <peerId>
+nimbus lan remove <peerId>
 ```
 
 ### Phase 5 T3 — Team Intelligence built-in agents
@@ -262,6 +260,78 @@ nimbus extension downgrade <id> --to <version> [--json]
 
 # nimbus.toml knob:
 #   [extensions].update_check_interval_hours = 24    # integer in [1, 168]; default 24
+```
+
+### Phase 6 Slices 1+2+5 — Team federation
+
+```bash
+nimbus team discover                                  # mDNS-discover peers on the LAN
+nimbus team pair <host> <code>                        # out-of-band pair with a peer using its code
+nimbus team namespace publish <name> --type T --service S [--tag T]   # publish a shared scoped namespace
+nimbus team namespace grant <ns> <peerId> <role> [--standing]         # grant a peer RBAC on a namespace
+nimbus team namespace revoke <ns> <peerId>
+nimbus team query <ns> <peerId> "<purpose>"           # federated query against a peer's namespace
+nimbus team who-knows <peerId> "<query>"              # content-free expertise routing
+nimbus team consent <requestId> approve|deny          # answer an inbound federated-query consent request
+nimbus team listen                                    # stream + answer inbound consent requests
+
+# Team Vault + delegated/quorum HITL (Slice 2)
+nimbus team vault put <entry> <service> --secret key=value   # store a team-shared secret
+nimbus team vault grant <entry> <peerId> <toolId>            # let a peer invoke a tool with the secret
+nimbus team vault revoke <entry> <peerId> <toolId>
+nimbus team vault list
+nimbus team invoke <peerId> <entry> <toolId> --purpose "<why>" [--args <json>]   # team-credentialed invoke
+nimbus team delegate <peerId> --scope kind:value --expires <seconds>             # delegate HITL approval
+nimbus team delegations                               # list active delegations
+nimbus team approve <requestId> [--as <peerId>]       # answer a (possibly delegated) HITL request
+nimbus team deny <requestId> [--as <peerId>]
+nimbus team audit <namespace> [--purpose "<why>"] [--since <unixMs>]   # merged cross-gateway audit timeline
+nimbus team purge --user <externalId> [--yes]         # GDPR-purge a user across the team index (Slice 4)
+```
+
+### Phase 6 Slice 3 — Identity (SSO / OIDC) + SCIM
+
+```bash
+nimbus identity login                                 # OIDC device-code SSO sign-in
+nimbus identity status
+nimbus identity logout
+nimbus identity bind <email> <peerId>                 # bind an IdP identity to a peer
+nimbus identity unbind <peerId>
+nimbus identity list-bindings <email>
+
+nimbus scim status
+nimbus scim set-token <token>                         # set the SCIM provisioning bearer (CLI-only)
+nimbus scim list-users
+nimbus scim deprovision <email>
+```
+
+### Phase 6 Slice 4 — Org policy + admin console
+
+```bash
+nimbus policy show                                    # current enforced (resolved) org policy
+nimbus policy verify                                  # verify the pinned policy signature
+nimbus policy sign <file.toml>                        # sign + apply a policy TOML (alias: push)
+nimbus policy trust <pubkeyBase64>                    # pin the org-policy anchor pubkey
+nimbus policy refetch                                 # re-fetch the org policy from its source
+
+nimbus admin status                                   # admin-panel status
+nimbus admin console                                  # print the admin console URL (bearer in URL fragment)
+nimbus admin token                                    # print the bearer-resolver command (nimbus vault get)
+```
+
+### Phase 6 Slice 5 — ChatOps
+
+```bash
+nimbus chatops status                                 # bot connection + per-platform channel counts
+nimbus chatops start
+nimbus chatops stop
+nimbus chatops test "<message>"                       # post a test message through the reply dispatcher (I23)
+```
+
+### MCP server mode
+
+```bash
+nimbus mcp-server                                     # run Nimbus as an MCP server over stdio (no subcommands)
 ```
 
 ## Environment-variable overrides

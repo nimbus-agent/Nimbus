@@ -51,6 +51,11 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "github:issue",
   "gitlab:issue",
   "bitbucket:issue",
+  "snyk:vulnerability",
+  "zoom:transcript",   // transcribed speech — paragraph-shaped natural language
+  "imap:email",        // email bodies — same posture as gmail:email
+  "fastmail:email",    // JMAP email bodies
+  "protonmail:email",  // Bridge email bodies
 ]);
 ```
 
@@ -59,7 +64,7 @@ The key shape is `"<service>:<type>"` — same shape every `IndexedItem.id` uses
 - **Prose-heavy** (paragraphs of natural language; semantic search benefits from a larger model): add to `PROSE_HEAVY_TYPES`. Routes to OpenAI `text-embedding-3-small` in hybrid mode. Examples: chat messages, email bodies, wiki pages, free-form ticket descriptions.
 - **Sparse / structured** (titles, file paths, identifiers, code snippets, short metadata): omit from the set. Stays on local MiniLM-L6-v2 (384-dim). Examples: PR titles, file names, API endpoint paths, deployment items, CI run names.
 
-**Default to omitting.** Adding a new entry sends every existing user's `(service, type)` corpus through OpenAI on the next embed pass — for free OSS users that means surprise API spend the first time the gateway encounters that type after upgrade. The default of "stay on local" is the safer floor.
+**Default to omitting.** Adding a new entry sends every existing user's `(service, type)` corpus through OpenAI on the next embed pass — for free OSS users that means surprise API spend the first time the gateway encounters that type after upgrade. But when content is genuinely prose-paragraph-shaped (email bodies, transcribed speech, vulnerability descriptions), additions are justified and actively made — see the comment-annotated `snyk:vulnerability` / `zoom:transcript` / `imap:email` / `fastmail:email` / `protonmail:email` entries in `routing.ts`. For sparse/structured types (titles, paths, IDs), the default of "stay on local" remains the safer floor.
 
 ## The Routing Pipeline
 
@@ -105,8 +110,8 @@ After T6 PR 3, vector search **must** consult both tables and merge by distance.
 import { vectorSearchChunksDual } from "../search/dual-search.ts";
 
 const hits = await vectorSearchChunksDual(db, {
-  queryVector384: localEmbedding,    // optional — undefined skips local KNN
-  queryVector1536: openaiEmbedding,  // optional — undefined skips OpenAI KNN
+  queryEmbedding384: localEmbedding,    // optional — undefined skips local KNN
+  queryEmbedding1536: openaiEmbedding,  // optional — undefined skips OpenAI KNN
   k: 50,
 });
 ```

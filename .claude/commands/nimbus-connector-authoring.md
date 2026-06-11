@@ -46,7 +46,7 @@ Write tools (`create`, `update`, `move`, `delete`) are conditional or always-HIT
 | `syncInterval` | seconds | default sync cadence |
 | `minNimbusVersion` | semver | gating |
 
-The `hitlRequired` field is what causes the Gateway to gate those tools — **omitting it means write tools run without consent**.
+The `hitlRequired` field lists which write/delete permissions require Gateway HITL consent. This field is mandatory per the contract test (it must be an array). Populate it with the permission types (`"write"`, `"delete"`) that your connector's tools require; leave it empty if all tools are read-only. The Gateway gates actions based on the entries you list here — **if a write tool's permission is omitted from this array, the HITL gate is bypassed for that tool**.
 
 ### Sandbox declaration
 
@@ -107,7 +107,7 @@ Run `nimbus test` from the connector directory before submitting. This executes 
 
 ## Coverage Gate
 
-MCP connectors: **≥ 70% line coverage**. Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
+MCP connectors: **≥ 80% line coverage** (tracked in `docs/structure-audit/coverage-baseline.json`). Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
 
 ## Scaffold
 
@@ -130,7 +130,7 @@ Then add the sync handler and register in the connector registry at `packages/ga
 - [ ] Item IDs follow `"<service>:<native_id>"` — no UUIDs.
 - [ ] `nimbus test` passes (contract tests green).
 - [ ] Connector registered in `packages/gateway/src/connectors/registry.ts`.
-- [ ] Line coverage ≥ 70%.
+- [ ] Line coverage ≥ 80%.
 
 ## Signing your extension (T2 PR 2)
 

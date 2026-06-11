@@ -124,7 +124,13 @@ No inline comments were mapped to I6 in the triage. No additional subsection nee
 
 **Phase 6 Slice 1 additions (2026-06-05):** `federation.discover`, `federation.namespace.grant`, `federation.namespace.publish`, `federation.namespace.revoke`, and `federation.peers` joined the allowlist (62 → 67). `federation.pair` is deliberately absent (CLI-only, transmits an out-of-band pairing code — same class as `lan.pair`). `federation.query` and `federation.expertise` are over-the-wire answering methods routed through `query-gate.ts` (I17) and are never renderer-callable. `federation.consentRespond` (the owner's local consent-decision reply for the over-the-wire federation flow) also joined the allowlist (67 → 68); `federation.consentRequest` remains a notification delivered to the renderer, not a renderer-callable method.
 
-**Phase 6 Slice 3 additions (2026-06-05):** the six identity/SCIM read+login methods — `identity.login`, `identity.status`, `identity.logout`, `identity.listBindings`, `scim.status`, `scim.listUsers` — joined the allowlist (68 → 74, the current `allowlist_exact_size`). The credential-mutating `identity.bind` / `identity.unbind` and `scim.setToken` / `scim.deprovision` stay CLI-only (same class as `vault.*`). The size assertion is checked by the `I7` / `I18` describe blocks in `packages/gateway/src/security-invariants.test.ts`, which grep the `.rs` source for `ALLOWED_METHODS.len(), N`.
+**Phase 6 Slice 3 additions (2026-06-05):** the six identity/SCIM read+login methods — `identity.login`, `identity.status`, `identity.logout`, `identity.listBindings`, `scim.status`, `scim.listUsers` — joined the allowlist (68 → 74). The credential-mutating `identity.bind` / `identity.unbind` and `scim.setToken` / `scim.deprovision` stay CLI-only (same class as `vault.*`). The size assertion is checked by the `I7` / `I18` describe blocks in `packages/gateway/src/security-invariants.test.ts`, which grep the `.rs` source for `ALLOWED_METHODS.len(), N`.
+
+**Phase 6 Slice 2 additions (2026-06-07):** five renderer-safe team-vault / quorum-HITL read+respond methods — `federation.approvalRespond`, `federation.quorumRespond`, `hitl.listDelegations`, `hitl.pendingQueue`, `teamvault.list` — joined the allowlist (74 → 79). The respond methods carry no secret bytes and force the responder peer id from the NaCl-authenticated session (I17/R1, I21); the secret/RCE-class methods (`teamvault.put` / `teamvault.delete` / `teamvault.grant` / `teamvault.revoke`, `hitl.delegate`, `federation.invoke` / `federation.askInvoke`) stay renderer-FORBIDDEN (same class as `vault.*`).
+
+**Phase 6 Slice 4 additions (2026-06-07):** three read-only org-policy / admin / team-audit methods — `admin.status`, `policy.show`, `team.auditMerged` — joined the allowlist (79 → 82). The privileged policy-mutating methods (`policy.sign` / `policy.trust` / `policy.refetch`) and `team.purge` stay CLI-only (`policy.sign` signs with the Vault-only anchor key — secret-bearing, same class as `vault.*`).
+
+**Phase 6 Slice 5 additions (2026-06-09):** the read-only `chatops.status` joined the allowlist (82 → 83, the current `allowlist_exact_size`). The operational `chatops.start` / `chatops.stop` / `chatops.test` stay off the renderer surface (CLI-only). 83 is the value asserted by `allowlist_exact_size` in `gateway_bridge.rs` and by the `I7` / `I18` describe blocks in `security-invariants.test.ts`.
 
 ### Migrated rationale (2026-05-28)
 
@@ -221,13 +227,13 @@ No inline comments were mapped to I12 specifically in the triage. No additional 
 **Wired at:**
 
 - `packages/gateway/src/ipc/http-server.ts` — every write method (POST/PATCH/DELETE) dispatches through `dispatchWriteRoute` (and not the readonly handler). SCIM GET roster reads go through the bearer-checked `dispatchScimRead` read path (reads never write).
-- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, four entries: `"POST /v1/deployments"` + the three `/scim/v2/Users` provisioning routes). `dispatchWriteRoute` selects the per-route bearer token (deployment uses `http_api.deployment_token`; SCIM uses `identity.scim.bearer`) and audit action type.
+- `packages/gateway/src/ipc/http-write-routes.ts` — owns `WRITE_ROUTE_ALLOWLIST` (compile-time, six entries: `"POST /v1/deployments"` + the three `/scim/v2/Users` provisioning routes + `"PUT /v1/admin/policy"` (Slice 4 admin console) + `"POST /v1/messaging/teams/events"` (Slice 5 ChatOps Teams inbound)). `dispatchWriteRoute` selects the per-route bearer token (deployment uses `http_api.deployment_token`; SCIM uses `identity.scim.bearer`; admin-policy uses the admin token) and audit action type; the Teams inbound route authenticates with a Bot Framework JWT validated in-route, not a static bearer.
 
 **Test:** `packages/gateway/src/security-invariants.test.ts` — three sub-asserts:
 
 1. `http-server.ts` imports `dispatchWriteRoute` from `./http-write-routes.ts`.
 2. `http-server.ts` opens at most one writable `Database` handle (the write-surface handle, shared by the deployment and SCIM surfaces).
-3. `WRITE_ROUTE_ALLOWLIST.length === 4` and contains exactly `"POST /v1/deployments"`, `"POST /scim/v2/Users"`, `"PATCH /scim/v2/Users/{id}"`, `"DELETE /scim/v2/Users/{id}"`.
+3. `WRITE_ROUTE_ALLOWLIST.length === 6` and contains exactly `"POST /v1/deployments"`, `"POST /scim/v2/Users"`, `"PATCH /scim/v2/Users/{id}"`, `"DELETE /scim/v2/Users/{id}"`, `"PUT /v1/admin/policy"`, `"POST /v1/messaging/teams/events"`.
 
 **Anti-patterns:**
 
@@ -235,7 +241,7 @@ No inline comments were mapped to I12 specifically in the triage. No additional 
 - Adding a new POST/PUT/DELETE handler that bypasses `dispatchWriteRoute` (e.g. a parallel SCIM dispatcher with its own bearer check — the original Slice 3 implementation did this and was folded into `dispatchWriteRoute`).
 - Adding entries to `WRITE_ROUTE_ALLOWLIST` without bumping the count assertion in `security-invariants.test.ts`.
 
-**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). T4 introduced a narrow write surface (post-deploy annotation) and Phase 6 Slice 3 added SCIM provisioning — both flow through the same `dispatchWriteRoute` pipeline (per-route allowlist + bearer auth + per-token rate limiting + audit-on-rejection), the structural defense against a same-host process spoofing deploys or provisioning operators. Same rigor as Tauri `ALLOWED_METHODS` (I7).
+**Why:** before Task 3b the HTTP server's read-only invariant was per-server (`SQLITE_OPEN_READONLY` on the single handle). T4 introduced a narrow write surface (post-deploy annotation), Phase 6 Slice 3 added SCIM provisioning, Slice 4 (Task 18b) added `PUT /v1/admin/policy` (the admin console's signed anchor-policy install — own bearer; the route never parses TOML, deferring to a `policy/`-resident author closure so D16 holds), and Slice 5 added `POST /v1/messaging/teams/events` (the ChatOps Teams inbound webhook, authenticated by a Bot Framework JWT validated in-route against the identity JWKS-cache + RS256 verifier — fail-closed, not a static bearer). All flow through the same `dispatchWriteRoute` pipeline (per-route allowlist + bearer/JWT auth + per-token rate limiting + audit-on-rejection), the structural defense against a same-host process spoofing deploys, provisioning operators, policy bundles, or bot activities. Same rigor as Tauri `ALLOWED_METHODS` (I7).
 
 **Audit cross-reference:** S2 disposition from the plan review — every rejection at the HTTP write boundary writes an audit row via `appendAuditEntry` (`deployment.annotation_rejected` for the deploy route, `scim.provision_rejected` for SCIM), making brute-force probes tamper-evident on the BLAKE3 chain.
 

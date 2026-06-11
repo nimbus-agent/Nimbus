@@ -26,7 +26,7 @@ Phase 6 (Team) makes Nimbus a collaborative layer **without surrendering local s
 - **Federation** (Slice 1) — a Gateway can answer a scoped query from a *paired peer* Gateway over the encrypted LAN channel, but **only** through a single leak-proof gate (`I17`).
 - **Identity & Access** (Slice 3) — SSO/OIDC + SCIM **gate federation, and only federation**. Local `ask` / `search` are never affected by identity. Tokens are validated in exactly one place and live only in the Vault (`I18`).
 
-Slice 2 (Team Vault + Quorum HITL) is in active development — treat its surface as not-yet-frozen.
+Slice 2 (Team Vault + Quorum HITL) shipped 2026-06-07 ✅ — its surface is frozen. Covers invariants I19/I20/I21 and team-vault/delegation/quorum/purge IPC.
 
 ## File Map
 
@@ -62,8 +62,8 @@ Both are asserted at runtime in `packages/gateway/src/security-invariants.test.t
 ## Surfaces
 
 - **CLI:** `nimbus team` (discover / pair / namespace publish|grant|revoke / query / who-knows / consent / listen) · `nimbus identity` (login / status / logout / list-bindings / bind / unbind) · `nimbus scim` (status / set-token / ...). Full reference: [`docs/cli-reference.md`](../../docs/cli-reference.md) §§ Team Federation, Identity & Access.
-- **IPC:** `federation.*` / `identity.*` / `scim.*` — see the `nimbus-ipc` skill registry. LAN admits **only** `federation.query` / `federation.expertise` (`I5`); `federation.pair`, `identity.bind`/`unbind`, `scim.setToken`/`deprovision` are CLI-only. The 5 federation management + 6 identity/scim read methods are in the Tauri allowlist (`I7`) — see `nimbus-tauri-allowlist`.
-- **HTTP:** SCIM provisioning writes (`POST` / `PATCH` / `DELETE /scim/v2/Users`) are on the `WRITE_ROUTE_ALLOWLIST` (`I13`, 4 routes total with `POST /v1/deployments`) — see `nimbus-http-write-surface`.
+- **IPC:** `federation.*` / `identity.*` / `scim.*` — see the `nimbus-ipc` skill registry. LAN admits `federation.query` / `federation.expertise` (Slice 1), plus answerable Slice 2+ methods: `federation.invoke` / `federation.quorumRespond` / `federation.approvalRespond` / `federation.requestApproval` (team-vault invoke + quorum), `federation.purge` (GDPR), and `federation.auditExport` / `federation.policy` (audit/policy distribution) — all HITL-gated and answerable. Management methods `federation.discover`, `federation.pair`, `federation.peers`, `federation.namespace.*`, `federation.ask*`, `team.auditMerged` + identity/scim methods are CLI-only. See `lan-rpc.ts` FORBIDDEN_OVER_LAN for the authoritative blocked list (`I5`). The Tauri allowlist (`I7`, `ALLOWED_METHODS` in `gateway_bridge.rs`) includes federation/identity/scim/team read/query methods; see `nimbus-tauri-allowlist` for the current count and exact surface. Credential-mutating methods (`federation.pair`, `identity.bind`, `scim.setToken`, `teamvault.put`/`grant`, `hitl.delegate`, `federation.invoke`) remain renderer-forbidden.
+- **HTTP:** SCIM provisioning writes (`POST` / `PATCH` / `DELETE /scim/v2/Users`) are 3 of 6 routes on the `WRITE_ROUTE_ALLOWLIST` (`I13`): see `nimbus-http-write-surface` for the authoritative list (currently 6: deployments, SCIM create/patch/delete, admin policy, teams events).
 - **Schema:** V33 (federation namespaces/filters/grants + nullable `audit_log.federation_json`, folded into the chain only when present) · V34 (identity/SCIM tables). See `nimbus-db-migrations`.
 - **Config:** `[federation]` (transport rides the `[lan]` section), `[identity]`, `[scim]` in `nimbus.toml` — all disabled by default.
 
