@@ -1,4 +1,6 @@
+import type { Database } from "bun:sqlite";
 import type { PreflightCommandConfig } from "../config/nimbus-toml.ts";
+import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { PreflightApprovalInput } from "./preflight-consent-broker.ts";
 import {
   type PreflightRunParams,
@@ -109,3 +111,30 @@ export async function answerFederatedPreflight(
  */
 export const defaultRunCommand: PreflightGateCtx["runCommand"] = (cfg, params) =>
   runPreflightCommand(cfg, params);
+
+/**
+ * The production `audit` thunk: appends a leak-proof `federation.preflight.<decision>` row to the
+ * tamper-evident audit log (peerId + namespace + run duration only — never the ref, command, or
+ * any output). Wired into the gate ctx by the dispatcher / LAN server.
+ */
+export function appendPreflightAudit(
+  db: Database,
+  entry: { decision: PreflightDecision; peerId: string; namespace: string; durationMs?: number },
+): void {
+  const hitlStatus =
+    entry.decision === "answered"
+      ? "approved"
+      : entry.decision === "denied"
+        ? "denied"
+        : "rejected";
+  appendAuditEntry(db, {
+    actionType: `federation.preflight.${entry.decision}`,
+    hitlStatus,
+    actionJson: JSON.stringify({
+      peerId: entry.peerId,
+      namespace: entry.namespace,
+      ...(entry.durationMs === undefined ? {} : { durationMs: entry.durationMs }),
+    }),
+    timestamp: Date.now(),
+  });
+}

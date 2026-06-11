@@ -723,6 +723,11 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
 });
 
 describe("I24 — a federated preflight executes only behind the LOCAL owner's HITL gate", () => {
+  test("federation.preflight routes through answerFederatedPreflight (sole inbound path)", async () => {
+    const rpc = await read("packages/gateway/src/ipc/federation-rpc.ts");
+    expect(rpc).toContain("answerFederatedPreflight");
+  });
+
   test("the gate never spawns before approval, ignores a caller-supplied command, fails closed", async () => {
     const { answerFederatedPreflight } = await import("./federation/preflight-gate.ts");
     let ran = 0;

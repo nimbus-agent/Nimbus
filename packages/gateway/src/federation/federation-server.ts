@@ -39,6 +39,9 @@ export interface BuildFederationLanServerDeps {
   // nothing. `deletePurgeContributions` is deferred to Task 26 (undefined → deletedCount stays 0).
   readonly purgeSign?: FederationRpcContext["purgeSign"];
   readonly deletePurgeContributions?: FederationRpcContext["deletePurgeContributions"];
+  // I24 (Slice 6b): downstream preflight gate deps — present so an upstream peer's federation.preflight
+  // is served over the wire (behind THIS owner's local HITL approval; command from local config).
+  readonly preflight?: FederationRpcContext["preflight"];
 }
 
 export interface FederationLanServer {
@@ -101,6 +104,7 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         ...(deps.deletePurgeContributions === undefined
           ? {}
           : { deletePurgeContributions: deps.deletePurgeContributions }),
+        ...(deps.preflight === undefined ? {} : { preflight: deps.preflight }),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;

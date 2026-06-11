@@ -27,6 +27,7 @@ import {
   loadNimbusLlmFromPath,
   loadNimbusLlmPartialFromPath,
   loadNimbusPagerdutyFromConfigDir,
+  loadNimbusPreflightFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
@@ -75,6 +76,8 @@ import { loadOrCreateFederationIdentity } from "../federation/federation-identit
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
+import { preflightConsent } from "../federation/preflight-consent-broker.ts";
+import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -615,6 +618,17 @@ async function bootFederationIntoIpcOpts(
         federationRuntime.consentTimeoutSeconds * 1000,
       );
       return r.kind === "answered" ? r.approved : false;
+    },
+    // I24 (Slice 6b): serve inbound preflights over the wire behind THIS owner's local HITL approval;
+    // the command is resolved from local nimbus.toml only, never from the caller.
+    preflight: {
+      isPeerGranted: (ns, peerId) =>
+        new NamespaceStore(db).getActiveGrant(ns, peerId) !== undefined,
+      resolveCommand: (ns) => loadNimbusPreflightFromConfigDir(paths.configDir).get(ns),
+      requestApproval: (input) =>
+        preflightConsent.request(input, federationRuntime.consentTimeoutSeconds * 1000 + 5000),
+      runCommand: defaultRunCommand,
+      audit: (e) => appendPreflightAudit(db, e),
     },
   });
   // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
@@ -1160,6 +1174,11 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   if (federationBooted) {
     federationConsent.setBroadcast((method, params) =>
+      ipc.broadcast(method, asBroadcastParams(params)),
+    );
+    // I24 (Slice 6b): the inbound-preflight approval prompt reaches the local owner via the same
+    // broadcast channel; they answer with `nimbus preflight approve <id>` → federation.preflightRespond.
+    preflightConsent.setBroadcast((method, params) =>
       ipc.broadcast(method, asBroadcastParams(params)),
     );
     // Quorum (I21) + delegated-approval (I20) requests reach subscribers (local owner UI / approver
