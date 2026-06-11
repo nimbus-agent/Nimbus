@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T06:29:46.886Z",
+  "generated_at": "2026-06-11T08:00:07.170Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -100,11 +100,11 @@
     },
     "packages/gateway/src/agents/expert.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 67.24
+      "min_branch_pct": 68.97
     },
     "packages/gateway/src/agents/impact.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 77.27
+      "min_branch_pct": 78.79
     },
     "packages/gateway/src/commands/data-delete.ts": {
       "min_line_pct": 80,
@@ -473,38 +473,6 @@
     "packages/gateway/src/index/sqlite-vec-load.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 68.42
-    },
-    "packages/gateway/src/ipc/_lib/dispatch-by-method.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/ipc/agents-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.33
-    },
-    "packages/gateway/src/ipc/data-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.36
-    },
-    "packages/gateway/src/ipc/federation-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.66
-    },
-    "packages/gateway/src/ipc/hitl-rpc.ts": {
-      "min_line_pct": 74.19,
-      "min_branch_pct": 80
-    },
-    "packages/gateway/src/ipc/http-write-routes.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.69
-    },
-    "packages/gateway/src/ipc/security-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.69
-    },
-    "packages/gateway/src/ipc/teamvault-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
     },
     "packages/gateway/src/llm/llamacpp-provider.ts": {
       "min_line_pct": 80,
