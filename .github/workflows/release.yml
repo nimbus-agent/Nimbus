@@ -70,6 +70,11 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       contents: read
+      # Required by _test-suite.yml: the integration / e2e-gateway / e2e-cli
+      # jobs declare `checks: write` for their dorny/test-reporter step. A
+      # called workflow's jobs cannot request a permission the caller withholds,
+      # so this must be granted here (matches the ci.yml callers).
+      checks: write
       id-token: write
 
   build-gateway:
