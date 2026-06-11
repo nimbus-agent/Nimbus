@@ -295,3 +295,39 @@ export function isJanitorBrief(x: unknown): x is JanitorBrief {
     typeof b["query"] === "object"
   );
 }
+
+// CLI-side mirror of PreflightBrief in packages/gateway/src/agents/_lib/findings.ts
+export type PreflightDownstream = {
+  peerId: string;
+  who: string | null;
+  status: "pass" | "fail" | "declined" | "not_configured";
+  summary: string;
+};
+
+export type PreflightBrief = {
+  kind: "preflight";
+  agentVersion: 1;
+  generatedAt: number;
+  latencyMs: number;
+  gaps: GapNote[];
+  query: { ref: string; namespace: string };
+  downstreams: PreflightDownstream[];
+  anyFailed: boolean;
+  anyIncomplete: boolean;
+};
+
+export function isPreflightBrief(x: unknown): x is PreflightBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "preflight" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["downstreams"]) &&
+    typeof b["anyFailed"] === "boolean" &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    b["query"] !== null &&
+    typeof b["query"] === "object"
+  );
+}

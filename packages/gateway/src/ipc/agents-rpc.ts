@@ -7,6 +7,7 @@ import { emitGhostBrief } from "../agents/ghost.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
+import { emitPreflightBrief } from "../agents/preflight.ts";
 import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -172,7 +173,15 @@ const ZERO_IDENTITY: BoxKeypair = {
 };
 
 function newSessionId(
-  kind: "expert" | "impact" | "catchup" | "ghost" | "conflicts" | "huddle" | "janitor",
+  kind:
+    | "expert"
+    | "impact"
+    | "catchup"
+    | "ghost"
+    | "conflicts"
+    | "huddle"
+    | "janitor"
+    | "preflight",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -332,6 +341,32 @@ async function handleJanitor(params: unknown, ctx: AgentsRpcContext): Promise<un
   return await emitJanitorBrief(input, federatedAgentBase(ctx, newSessionId("janitor")));
 }
 
+function requirePreflightParams(params: unknown): {
+  ref: string;
+  namespace: string;
+  changedSurface: string[];
+} {
+  if (params === null || typeof params !== "object") {
+    throw new AgentsRpcError(-32602, "agents.preflight: object params required");
+  }
+  const p = params as Record<string, unknown>;
+  if (typeof p["ref"] !== "string" || p["ref"].length === 0) {
+    throw new AgentsRpcError(-32602, "agents.preflight: ref (non-empty string) required");
+  }
+  if (typeof p["namespace"] !== "string" || p["namespace"].length === 0) {
+    throw new AgentsRpcError(-32602, "agents.preflight: namespace (non-empty string) required");
+  }
+  const surface = Array.isArray(p["changedSurface"])
+    ? p["changedSurface"].filter((s): s is string => typeof s === "string")
+    : [];
+  return { ref: p["ref"], namespace: p["namespace"], changedSurface: surface };
+}
+
+async function handlePreflight(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requirePreflightParams(params);
+  return await emitPreflightBrief(input, federatedAgentBase(ctx, newSessionId("preflight")));
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -345,5 +380,6 @@ export async function dispatchAgentsRpc(
     "agents.conflicts": handleConflicts,
     "agents.huddle": handleHuddle,
     "agents.janitor": handleJanitor,
+    "agents.preflight": handlePreflight,
   });
 }

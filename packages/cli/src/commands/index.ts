@@ -27,6 +27,7 @@ export { runMcpServer } from "./mcp-server.ts";
 export { runMetricsCli } from "./metrics.ts";
 export { runPeople } from "./people.ts";
 export { runPolicy } from "./policy.ts";
+export { runPreflightCli } from "./preflight.ts";
 export { runProfile } from "./profile.ts";
 export { runQuery } from "./query.ts";
 export { runRepl } from "./repl.ts";

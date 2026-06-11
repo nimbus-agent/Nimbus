@@ -30,6 +30,10 @@ export type AgentBriefCliSpec<TFindings> = {
   json: boolean;
   /** Params forwarded verbatim to the `agents.<kind>` IPC call. */
   params: Record<string, unknown>;
+  /** Notification wait timeout (ms). Defaults to 30 s; raise for human-gated agents (preflight). */
+  timeoutMs?: number;
+  /** Invoked with the typed findings before output — lets a command set its own exit code. */
+  onResult?: (findings: TFindings) => void;
 };
 
 function awaitBrief<TFindings>(
@@ -37,8 +41,14 @@ function awaitBrief<TFindings>(
   spec: AgentBriefCliSpec<TFindings>,
   onTimer: (t: ReturnType<typeof setTimeout>) => void,
 ): Promise<{ brief: string; findings: TFindings }> {
+  const timeoutMs = spec.timeoutMs ?? TIMEOUT_MS;
   return new Promise<{ brief: string; findings: TFindings }>((resolve, reject) => {
-    onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
+    onTimer(
+      setTimeout(
+        () => reject(new Error(`Agent timed out after ${Math.round(timeoutMs / 1000)} s`)),
+        timeoutMs,
+      ),
+    );
     client.onNotification(`${spec.kind}.briefReady`, (params: unknown) => {
       if (params === null || typeof params !== "object") {
         reject(new Error(`Malformed ${spec.kind}.briefReady payload`));
@@ -82,6 +92,7 @@ export async function runAgentBriefCli<TFindings>(
     });
     await client.call<{ sessionId: string }>(`agents.${spec.kind}`, spec.params);
     const { brief, findings } = await briefPromise;
+    spec.onResult?.(findings);
     if (spec.json) {
       process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
     } else {

@@ -24,6 +24,7 @@ export const COMMAND_NAMES = [
   "llm",
   "metrics",
   "people",
+  "preflight",
   "profile",
   "query",
   "repl",
