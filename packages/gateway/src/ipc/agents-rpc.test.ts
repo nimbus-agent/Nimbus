@@ -234,4 +234,56 @@ describe("agents.ghost / conflicts / huddle dispatch", () => {
     );
     expect(out.kind).toBe("hit");
   });
+
+  it("agents.conflicts returns a hit for a valid file", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.conflicts",
+      { file: "src/x.ts" },
+      ctxWithFederation(),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
+  it("agents.ghost rejects an empty file", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.ghost", { file: "   " }, ctxWithFederation()),
+    ).rejects.toThrow();
+  });
+
+  it("agents.ghost rejects a file over the length limit", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.ghost", { file: "a".repeat(3000) }, ctxWithFederation()),
+    ).rejects.toThrow();
+  });
+
+  it("agents.ghost rejects an empty-string namespace", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.ghost", { file: "x.ts", namespaces: [""] }, ctxWithFederation()),
+    ).rejects.toThrow();
+  });
+
+  it("agents.ghost accepts a singular namespace string", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.ghost",
+      { file: "x.ts", namespace: "single" },
+      ctxWithFederation(),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
+  it("agents.huddle rejects a negative sinceMs", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.huddle", { sinceMs: -5 }, ctxWithFederation()),
+    ).rejects.toThrow();
+  });
+
+  it("agents.huddle rejects a too-large sinceMs", async () => {
+    await expect(
+      dispatchAgentsRpc(
+        "agents.huddle",
+        { sinceMs: 999 * 24 * 60 * 60 * 1000 },
+        ctxWithFederation(),
+      ),
+    ).rejects.toThrow();
+  });
 });

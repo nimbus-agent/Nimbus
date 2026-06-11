@@ -177,6 +177,7 @@ function newSessionId(
 }
 
 function parseNamespaces(p: { namespace?: unknown; namespaces?: unknown }): string[] {
+  // `namespaces` (array) takes precedence over the singular `namespace` alias when both are given.
   const raw = p.namespaces ?? p.namespace;
   if (raw === undefined) return [];
   const arr = Array.isArray(raw) ? raw : [raw];
@@ -223,7 +224,7 @@ function requireHuddleParams(params: unknown): { sinceMs?: number; namespaces: s
     ) {
       throw new AgentsRpcError(
         -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms`,
+        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
       );
     }
     out.sinceMs = p.sinceMs;
@@ -245,6 +246,8 @@ function federatedAgentBase(ctx: AgentsRpcContext, sessionId: string) {
   return {
     ...base,
     ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    // sendOverWire is a test-only DI seam; when omitted, peer-fanout falls back to the real
+    // sendFederatedOverWire, so production agents fan out over the wire with no extra wiring.
     ...(ctx.sendOverWire === undefined ? {} : { sendOverWire: ctx.sendOverWire }),
   };
 }
