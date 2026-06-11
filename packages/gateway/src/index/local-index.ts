@@ -873,6 +873,7 @@ export class LocalIndex {
 
   public removeLanPeer(peerId: string): void {
     dbRun(this.db, `DELETE FROM lan_peers WHERE peer_id = ?`, [peerId]);
+    dbRun(this.db, `DELETE FROM federation_known_namespaces WHERE peer_id = ?`, [peerId]);
   }
 
   public getLanPeerByPubkey(pubkey: Uint8Array): LanPeerRow | undefined {
