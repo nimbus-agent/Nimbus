@@ -93,15 +93,23 @@ broadcast-and-resolve pattern; `dispatchFederationRpc` / `FederationRpcContext`;
 - `federation/resource-probe.ts` — `probeResourceRecency(db, { resourceRef })`
   returns `{ touched: boolean; lastSeenDaysAgo?: number }`. Mirrors
   `scoreExpertise`: wildcard-escaped LIKE-match the resource ref against recent
-  `item` rows; return only the boolean + recency. Leak-proof.
+  `item` rows; return only the boolean + recency. Leak-proof. **`resourceRef`
+  is validated first (min length 4, charset `^[A-Za-z0-9_:.\-/]+$`)** so a short
+  or noisy token (`123`, `test`) cannot produce false idle/touched hits; a
+  non-conforming ref is rejected before any fan-out (Q1, S1).
 - `federation/peer-fanout.ts` — add `fanOutProbe(deps, { resourceRef, purpose })`
   returning `PeerFanoutOutcome<PeerProbeResult>`.
 - `federation/federation-rpc.ts` — inbound `federation.probe` →
   `probeResourceRecency`, audited like a read query.
 - `agents/janitor.ts` — `runJanitor` + `emitJanitorBrief` via
   `emitBriefWithSynthesis`: fan-out probe, decide idle ≥ N days across all
-  answering peers, render a brief naming the cleanup action; gaps suppress the
-  proposal.
+  answering peers, render the brief. The janitor **does not auto-derive** a
+  provider or cleanup-action type from the bare ref (Nimbus has no cloud-resource
+  ontology, and fabricating an action type that may not exist is misleading).
+  The recommended cleanup command is rendered **only when the owner passes
+  `--cleanup <action.type>`**; otherwise the brief reports the resource as idle
+  and leaves the action to the owner (Q1). Gaps suppress the proposal unless
+  `--allow-gaps` is set (Q2; see §4.3).
 
 **Preflight (I24 — upstream + downstream):**
 
@@ -115,10 +123,16 @@ broadcast-and-resolve pattern; `dispatchFederationRpc` / `FederationRpcContext`;
   `federation.preflightRequest` to local clients; `respond(id, approved)`;
   TTL safety-net), mirroring `FederationConsentBroker`. Process singleton.
 - `federation/preflight-runner.ts` — wraps `createSandboxRunner()`: builds a
-  minimal scoped `ExtensionManifest` (test dir only), spawns the configured
+  minimal scoped `ExtensionManifest` whose allowed paths come **only from the
+  local `[federation.preflight.<ns>].cwd`** (defaulting to the namespace's
+  configured root) — **never from the request** (Q4). Spawns the configured
   command with validated params as env vars, captures exit code → `{ passed,
-  summary }`. The only consumer of the sandbox in the preflight path. DI seam for
-  the runner so tests inject a fake.
+  summary }`. Enforces a **hard timeout** (`timeoutSeconds`, default 300, capped
+  at 1800): on timeout it kills the sandbox process and returns
+  `{ passed:false, summary:"timed out" }`. Records the run **duration** in the
+  `audit_log` outcome entry (S3). The only consumer of the sandbox in the
+  preflight path. DI seam for the runner so tests inject a fake. (Per-process
+  CPU/memory accounting is deferred — see §11.)
 - `federation/peer-fanout.ts` — add `fanOutPreflight(deps, { ref, changedSurface,
   purpose })`.
 - `federation/federation-rpc.ts` — inbound `federation.preflight` →
@@ -131,6 +145,9 @@ broadcast-and-resolve pattern; `dispatchFederationRpc` / `FederationRpcContext`;
   into a brief via `LongRunningJobRegistry`.
 - `config/nimbus-toml.ts` — `[federation.preflight.<namespace>]` schema:
   `{ command: string; args?: string[]; cwd?: string; timeoutSeconds?: number }`.
+  `cwd` is a **local owner-controlled path** (the only path the sandbox is
+  granted); `timeoutSeconds` defaults to 300 and is capped at 1800. None of these
+  fields are ever influenced by the request (Q4).
 
 **Shared surfaces:**
 
@@ -169,9 +186,12 @@ nimbus janitor i-12345 --idle-days 14
 ```
 
 Safety rule: a peer that does not answer (gap / no_grant / unreachable) is never
-treated as "idle." The janitor proposes a cleanup only when every answering peer
-is clear **and** coverage is complete; otherwise it reports the gap and withholds
-the proposal.
+treated as "idle." By default the janitor proposes a cleanup only when every
+answering peer is clear **and** coverage is complete; otherwise it reports the
+gap and withholds the proposal. The owner may pass **`--allow-gaps`** to opt into
+proposing with incomplete coverage — the brief then names each unreachable /
+no-grant peer and prominently warns that coverage was partial (Q2). The strict,
+no-bypass behavior remains the default.
 
 ### 4.4 Data flow — preflight (I24)
 
@@ -199,9 +219,30 @@ UPSTREAM aggregates:
   brief "downstream X: pass | Y: fail (3 tests) | Z: declined"
 ```
 
-Validated params (`ref` / `changedSurface`) reach the command **only as env
-vars**, after validation (ref matches a safe git-ref charset; arrays bounded) —
-never concatenated into a shell command.
+The gate **validates the request before step 4 (before HITL is even raised)**
+and rejects non-conforming input with `{ error:"no_grant" }` (opaque). `ref` must
+match the git-ref allowlist `^[A-Za-z0-9_./~^-]+$` (covers `A..B` ranges); each
+`changedSurface` symbol must match `^[A-Za-z0-9_.:#/-]+$`; the array is bounded
+(≤ 200 entries). Validated params reach the command **only as env vars**
+(`NIMBUS_PREFLIGHT_REF`, `NIMBUS_PREFLIGHT_SURFACE`) — never concatenated into a
+shell command, never as filesystem paths (S1, Q4).
+
+### 4.5 Preflight CLI contract — exit codes & interactivity (Q3)
+
+`nimbus preflight` is an **interactive pre-merge advisory, not a hands-off CI
+gate**: by I24, every downstream test run requires a *human* HITL approval on the
+downstream owner's machine, so the upstream call blocks on those approvals (with
+per-peer timeouts) and cannot be fully automated in a pipeline. The CLI still
+exposes a deterministic exit-code contract:
+
+- **0** — every answering downstream's tests passed (gaps / declined /
+  not-configured are rendered as warnings but do not fail the command by default).
+- **non-zero (1)** — at least one answering downstream reported test failure.
+- **`--strict`** — additionally fail (non-zero) if any downstream was unreachable,
+  declined, or had no configured command (i.e. coverage was incomplete).
+
+This lets a human use the exit status meaningfully without implying the command
+is a substitute for an automated CI gate.
 
 ## 5. Invariant I24
 
@@ -225,8 +266,13 @@ missing local config fails closed.
   2. a request carrying its own `command`/`cmd`/`args` field has that field
      ignored — only the configured command runs;
   3. no local config → `{ error:"not_configured" }`, zero spawn;
-  4. denied / timeout → zero spawn;
-  5. the result payload contains no filesystem paths or file contents.
+  4. denied / consent-timeout → zero spawn;
+  5. the result payload contains no filesystem paths or file contents;
+  6. a request with a non-conforming `ref` / oversized `changedSurface` is
+     rejected (`{ error:"no_grant" }`) **before** HITL is raised — zero broadcast,
+     zero spawn (S1);
+  7. a command that exceeds `timeoutSeconds` is killed and yields
+     `{ passed:false, summary:"timed out" }` — the run does not hang (S3).
 - **Static D18** (`check-nimbus-invariants.ts`): the preflight
   command-resolution + the `createSandboxRunner` / `preflight-runner` import are
   confined to `preflight-gate.ts` / `preflight-runner.ts` (mirroring D15's
@@ -239,8 +285,10 @@ missing local config fails closed.
 - **Downstream gate:** identity-invalid / no-grant → opaque `{ error:"no_grant" }`
   (no state leak, mirrors invoke-gate). Not-configured →
   `{ error:"not_configured" }`. Denied / TTL → `{ error:"denied" }`. Sandbox spawn
-  failure → `{ kind:"ok", passed:false, summary:"preflight could not run" }` (a
-  test failing vs the runner erroring are distinguished but both leak-proof).
+  failure → `{ kind:"ok", passed:false, summary:"preflight could not run" }`;
+  timeout → `{ kind:"ok", passed:false, summary:"timed out" }` (a test failing
+  vs the runner erroring/timing-out are distinguished but all leak-proof). Every
+  outcome (incl. duration on a real run) is appended to `audit_log` (S3).
 - **Upstream:** each downstream error becomes a gap-style line in the brief
   (`declined` / `not configured` / `unreachable`); a non-answering downstream is
   never rendered as "safe to merge."
@@ -251,12 +299,15 @@ missing local config fails closed.
 
 ## 7. Testing
 
-- **Unit:** `resource-probe` (content-free shape, wildcard-escape); `peer-fanout`
-  new arms (probe/preflight gap/no_grant/timeout); `preflight-gate` (every I24
-  branch — the security test doubles as the gate's coverage); `preflight-runner`
-  (spawn via injected runner fake; pass/fail/spawn-error); `preflight-consent-broker`
-  (approve/deny/timeout/unknown-id); the two agents (decompose + render +
-  injected-LLM emit branch); config parse.
+- **Unit:** `resource-probe` (content-free shape, wildcard-escape, `resourceRef`
+  validation reject); `peer-fanout` new arms (probe/preflight gap/no_grant/timeout);
+  `preflight-gate` (every I24 branch — the security test doubles as the gate's
+  coverage — incl. request-validation reject before HITL); `preflight-runner`
+  (spawn via injected runner fake; pass/fail/spawn-error/timeout-kill);
+  `preflight-consent-broker` (approve/deny/timeout/unknown-id); the two agents
+  (decompose + render + injected-LLM emit branch; janitor `--cleanup` /
+  `--allow-gaps`; preflight exit-code contract); config parse (`timeoutSeconds`
+  default/cap, `cwd`).
 - **Integration:** a two-gateway preflight acceptance (upstream fan-out →
   downstream gate → local approve → sandboxed echo-command → aggregated result),
   mirroring the Slice-2 two-gateway invoke test; plus a janitor multi-peer
@@ -281,21 +332,26 @@ missing local config fails closed.
 
 Fresh subagent per task; two-stage spec/quality review; I serialize git.
 
-1. `[federation.preflight.<ns>]` config schema + parse.
-2. `resource-probe.ts` (unit).
+1. `[federation.preflight.<ns>]` config schema + parse (`timeoutSeconds`
+   default 300 / cap 1800; `cwd` local-only).
+2. `resource-probe.ts` + `resourceRef` validation (unit).
 3. `peer-fanout` `fanOutProbe` (unit, DI fake send).
 4. `federation.probe` inbound RPC + audit.
-5. `agents/janitor.ts` + brief unions + render.
-6. `agents.janitor` IPC + `nimbus janitor` CLI.
+5. `agents/janitor.ts` + brief unions + render (`--cleanup` optional action,
+   no auto-derivation).
+6. `agents.janitor` IPC + `nimbus janitor` CLI (`--idle-days`, `--cleanup`,
+   `--allow-gaps`).
 7. `preflight-consent-broker.ts` (unit).
-8. `preflight-runner.ts` (sandbox via injected runner fake).
-9. **`preflight-gate.ts` + I24 triple (wiring + SECURITY-INVARIANTS row +
-   security test + D18) — same commit.**
+8. `preflight-runner.ts` (sandbox via injected runner fake; hard timeout +
+   kill + duration audit; paths from local `cwd` only).
+9. **`preflight-gate.ts` + I24 triple (wiring + request validation before HITL +
+   SECURITY-INVARIANTS row + security test + D18) — same commit.**
 10. `federation.preflight` + `federation.preflightRespond` inbound RPC +
     `FederationRpcContext` / `federation-server.ts` threading.
 11. `peer-fanout` `fanOutPreflight` (unit).
 12. `agents/preflight.ts` (upstream, `LongRunningJobRegistry`) + unions / render.
-13. `agents.preflight` IPC + `nimbus preflight` / `nimbus preflight approve` CLI.
+13. `agents.preflight` IPC + `nimbus preflight` / `nimbus preflight approve` CLI
+    (exit-code contract + `--strict`; §4.5).
 14. Tauri allowlist bump (Rust + JS mirror) + `nimbus-toml` doc/schema-version
     prose + CLAUDE / GEMINI invariant count + CHANGELOG.
 15. Two-gateway preflight integration acceptance + janitor integration.
@@ -325,3 +381,45 @@ Fresh subagent per task; two-stage spec/quality review; I serialize git.
 - Tribal-knowledge extraction (Slice 6c).
 - Applying an upstream diff to the downstream checkout (the downstream command
   fetches the candidate build from the ref itself).
+- **`nimbus preflight run-local <ns> --ref <ref>` dry-run** (S2) — a local
+  command to test one's own configured preflight command (in the sandbox, dummy
+  env, no wire/HITL) before onboarding upstream peers. Valuable for onboarding;
+  deferred to a follow-up to bound this slice.
+- **Per-process CPU/memory accounting** in the audit_log (S3) — needs per-OS
+  resource APIs; this slice ships the hard timeout + run-duration audit only.
+
+## 12. Review dispositions
+
+Dispositions of
+[the design review](./2026-06-11-phase6-slice6b-federated-action-requests-design-review.md).
+
+- **Q1 (resource-ref formatting / provider resolution) — FIXED.** No
+  auto-derivation of provider or cleanup-action type (Nimbus has no
+  cloud-resource ontology; a fabricated action type would mislead). The cleanup
+  command renders only when the owner passes `--cleanup <action.type>`.
+  `resourceRef` is validated (min length 4, charset `^[A-Za-z0-9_:.\-/]+$`) to
+  prevent false hits from short/noisy tokens. (§4.2)
+- **Q2 (strict coverage vs offline peers) — FIXED.** Strict all-or-nothing stays
+  the safe default; `--allow-gaps` is an explicit opt-in that names the
+  unreachable / no-grant peers and warns that coverage was partial. (§4.3)
+- **Q3 (CI exit codes) — FIXED (partial).** Defined the exit-code contract
+  (0 = all answering downstreams passed; 1 = a downstream failed; `--strict`
+  also fails on gaps/declined/not-configured) and clarified that preflight is an
+  **interactive** advisory (each downstream needs a human HITL approval — I24),
+  not a hands-off CI gate. (§4.5)
+- **Q4 (sandbox git/path access, traversal) — FIXED.** All filesystem paths
+  (`cwd`, allowed roots) come from local config only, never the request; the
+  upstream supplies only `ref` / `changedSurface` (validated, env-only), so path
+  traversal is structurally impossible. The configured command owns the
+  candidate-build fetch within its sandbox-allowed paths. (§4.2, §4.4)
+- **S1 (ref/symbol regex, env injection) — FIXED.** Concrete allowlist regexes
+  (`ref ^[A-Za-z0-9_./~^-]+$`, surface symbols `^[A-Za-z0-9_.:#/-]+$`, ≤ 200
+  entries), rejected at the gate before HITL; params passed only as env vars,
+  never interpolated into a shell command. (§4.4, §5)
+- **S2 (preflight dry-run) — DEFERRED.** `nimbus preflight run-local` is valuable
+  for onboarding but is a separate CLI command + tests; deferred to a follow-up
+  to bound this slice. (§11)
+- **S3 (sandbox limits / timeout / audit) — FIXED (timeout + duration) /
+  DEFERRED (CPU/mem).** Hard default timeout (300 s, capped 1800) with
+  kill-on-timeout + run-duration in `audit_log`; per-process CPU/memory
+  accounting deferred (needs per-OS resource APIs). (§4.2, §6, §11)
