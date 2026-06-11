@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-10T19:09:10.918Z",
+  "generated_at": "2026-06-11T06:29:46.886Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -45,10 +45,6 @@
     "packages/cli/src/commands/scim.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76
-    },
-    "packages/cli/src/commands/security.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.59
     },
     "packages/cli/src/commands/status.ts": {
       "min_line_pct": 80,
@@ -345,10 +341,6 @@
     "packages/gateway/src/connectors/storybook-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 78.57
-    },
-    "packages/gateway/src/connectors/superset-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74.36
     },
     "packages/gateway/src/connectors/testflight-sync.ts": {
       "min_line_pct": 80,

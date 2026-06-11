@@ -84,6 +84,11 @@ describe("parseSecurityArgs", () => {
     expect(parseSecurityArgs(["help"]).subcommand).toBe("help");
   });
 
+  test("--help and -h aliases resolve to the help subcommand", () => {
+    expect(parseSecurityArgs(["--help"]).subcommand).toBe("help");
+    expect(parseSecurityArgs(["-h"]).subcommand).toBe("help");
+  });
+
   test("unknown subcommand throws", () => {
     expect(() => parseSecurityArgs(["bogus"])).toThrow();
   });
@@ -164,6 +169,98 @@ describe("formatScanPretty", () => {
       { tty: false, noColor: true },
     );
     expect(out).toContain("2 finding(s) muted");
+  });
+
+  test("muted_count absent → no muted line (covers the ?? 0 fallback)", () => {
+    const { muted_count: _drop, ...noMuted } = RESULT_FIXTURE;
+    const out = formatScanPretty(noMuted, { tty: false, noColor: true });
+    expect(out).not.toContain("muted by");
+    // header + findings still render
+    expect(out).toContain("Nimbus security scan");
+  });
+
+  test("emits ANSI color when tty && !noColor (covers yellow/red/dim colored side)", () => {
+    const out = formatScanPretty(
+      { ...RESULT_FIXTURE, muted_count: 2 },
+      { tty: true, noColor: false },
+    );
+    // red() wraps the pattern name in the findings table
+    expect(out).toContain(`\x1b[31m`);
+    // yellow() wraps the skipped-connectors line
+    expect(out).toContain(`\x1b[33m`);
+    // dim() wraps the muted line + blame + fingerprint
+    expect(out).toContain(`\x1b[2m`);
+    expect(out).toContain(`\x1b[0m`);
+    expect(out).toContain("introduced by ada@x.dev");
+  });
+
+  test("colored output: no findings → clean message without ANSI table rows", () => {
+    const out = formatScanPretty(
+      {
+        ...RESULT_FIXTURE,
+        items_skipped_depth: 0,
+        findings_count: 0,
+        findings: [],
+        skipped_connectors: [],
+        muted_count: 0,
+      },
+      { tty: true, noColor: false },
+    );
+    expect(out).toContain("0 findings. Index appears clean");
+    // No yellow skipped line and no red finding rows when nothing to report.
+    expect(out).not.toContain(`\x1b[33m`);
+    expect(out).not.toContain(`\x1b[31m`);
+  });
+
+  test("colored: blame with null author_email/name and null author_time_ms falls back", () => {
+    const out = formatScanPretty(
+      {
+        ...RESULT_FIXTURE,
+        findings_count: 1,
+        items_skipped_depth: 0,
+        skipped_connectors: [],
+        findings: [
+          (() => {
+            const { fingerprint: _drop, ...base } = RESULT_FIXTURE.findings[0]!;
+            return {
+              ...base,
+              blame: {
+                commit_sha: "deadbeefcafe99",
+                author_name: null,
+                author_email: null,
+                author_time_ms: null,
+              },
+            };
+          })(),
+        ],
+      },
+      { tty: true, noColor: false },
+    );
+    // author falls back to "unknown", time to "?"
+    expect(out).toContain("introduced by unknown @ ?");
+    expect(out).toContain("deadbeefcafe");
+    // dim wrapping present (colored side)
+    expect(out).toContain(`\x1b[2m`);
+  });
+
+  test("colored: code_symbol finding without blame triggers backfill hint (dim)", () => {
+    const out = formatScanPretty(
+      {
+        ...RESULT_FIXTURE,
+        findings_count: 1,
+        items_skipped_depth: 0,
+        skipped_connectors: [],
+        findings: [
+          (() => {
+            const { fingerprint: _drop, ...base } = RESULT_FIXTURE.findings[0]!;
+            return { ...base, blame: null };
+          })(),
+        ],
+      },
+      { tty: true, noColor: false },
+    );
+    expect(out).toContain("nimbus connector sync filesystem");
+    expect(out).toContain(`\x1b[2m`);
   });
 });
 
