@@ -12,6 +12,8 @@ import type {
   ImpactCategory,
   ImpactFinding,
   JanitorBrief,
+  PreflightBrief,
+  PreflightDownstream,
 } from "./findings.ts";
 
 function renderGaps(gaps: GapNote[]): string {
@@ -195,4 +197,24 @@ export function renderJanitor(brief: JanitorBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", verdict, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+function preflightIcon(s: PreflightDownstream["status"]): string {
+  if (s === "pass") return "✅ pass";
+  if (s === "fail") return "❌ fail";
+  if (s === "declined") return "⏸ declined";
+  return "⚠ not configured";
+}
+
+export function renderPreflight(brief: PreflightBrief): string {
+  const header = `# Preflight: ${brief.query.ref}`;
+  const body =
+    brief.downstreams.length === 0
+      ? "_no downstream owners reachable_"
+      : brief.downstreams
+          .map((d) => `- **${d.who ?? d.peerId}**: ${preflightIcon(d.status)} — ${d.summary}`)
+          .join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
 }

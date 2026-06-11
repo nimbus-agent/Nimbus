@@ -6,6 +6,7 @@ import type {
   HuddleBrief,
   ImpactBrief,
   JanitorBrief,
+  PreflightBrief,
 } from "./findings.ts";
 import { type SynthesizerLlm, synthesize } from "./synthesize.ts";
 
@@ -16,7 +17,8 @@ type AnyBrief =
   | GhostBrief
   | ConflictBrief
   | HuddleBrief
-  | JanitorBrief;
+  | JanitorBrief
+  | PreflightBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

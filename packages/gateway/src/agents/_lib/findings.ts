@@ -173,6 +173,21 @@ export type JanitorBrief = AgentBriefBase & {
   peersTouched: JanitorPeerTouch[];
 };
 
+export type PreflightDownstream = {
+  peerId: string;
+  who: string | null;
+  status: "pass" | "fail" | "declined" | "not_configured";
+  summary: string;
+};
+
+export type PreflightBrief = AgentBriefBase & {
+  kind: "preflight";
+  query: { ref: string; namespace: string };
+  downstreams: PreflightDownstream[];
+  anyFailed: boolean;
+  anyIncomplete: boolean;
+};
+
 export type AgentBrief =
   | ExpertBrief
   | ImpactBrief
@@ -180,7 +195,8 @@ export type AgentBrief =
   | GhostBrief
   | ConflictBrief
   | HuddleBrief
-  | JanitorBrief;
+  | JanitorBrief
+  | PreflightBrief;
 
 export type BriefReadyPayload<B extends AgentBrief> = {
   sessionId: string;
@@ -287,6 +303,22 @@ export function isJanitorBrief(x: unknown): x is JanitorBrief {
     Array.isArray(b["gaps"]) &&
     typeof b["idle"] === "boolean" &&
     Array.isArray(b["peersTouched"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    typeof b["query"] === "object" &&
+    b["query"] !== null
+  );
+}
+
+export function isPreflightBrief(x: unknown): x is PreflightBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "preflight" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["downstreams"]) &&
+    typeof b["anyFailed"] === "boolean" &&
     typeof b["generatedAt"] === "number" &&
     typeof b["latencyMs"] === "number" &&
     typeof b["query"] === "object" &&
