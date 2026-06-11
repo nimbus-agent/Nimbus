@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T13:21:31.943Z",
+  "generated_at": "2026-06-11T14:39:34.500Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -134,18 +134,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 76.56
     },
-    "packages/gateway/src/connectors/_lib/gmail/api.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 58.97
-    },
-    "packages/gateway/src/connectors/_lib/gmail/cursor.ts": {
-      "min_line_pct": 78.57,
-      "min_branch_pct": 76
-    },
-    "packages/gateway/src/connectors/_lib/gmail/history.ts": {
-      "min_line_pct": 68.52,
-      "min_branch_pct": 47.22
-    },
     "packages/gateway/src/connectors/_lib/http.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76.92
@@ -157,14 +145,6 @@
     "packages/gateway/src/connectors/_lib/rate-limit-observer.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/connectors/_lib/teams/api.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/connectors/_lib/teams/cursor.ts": {
-      "min_line_pct": 69.84,
-      "min_branch_pct": 74.36
     },
     "packages/gateway/src/connectors/athena-sync.ts": {
       "min_line_pct": 80,
@@ -242,26 +222,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 66.67
     },
-    "packages/gateway/src/connectors/gmail-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 60.87
-    },
-    "packages/gateway/src/connectors/google-drive-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.38
-    },
-    "packages/gateway/src/connectors/google-meet-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.31
-    },
-    "packages/gateway/src/connectors/google-photos-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 64.44
-    },
-    "packages/gateway/src/connectors/google-sync-shared.ts": {
-      "min_line_pct": 76.32,
-      "min_branch_pct": 66.67
-    },
     "packages/gateway/src/connectors/great-expectations-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 63.29
@@ -273,10 +233,6 @@
     "packages/gateway/src/connectors/jira-sync.ts": {
       "min_line_pct": 75.19,
       "min_branch_pct": 52.76
-    },
-    "packages/gateway/src/connectors/json-unknown.ts": {
-      "min_line_pct": 66.67,
-      "min_branch_pct": 80
     },
     "packages/gateway/src/connectors/launchdarkly-sync.ts": {
       "min_line_pct": 80,
@@ -290,10 +246,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 68.57
     },
-    "packages/gateway/src/connectors/microsoft-graph-sync-shared.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 67.57
-    },
     "packages/gateway/src/connectors/notion-sync.ts": {
       "min_line_pct": 78.46,
       "min_branch_pct": 58.16
@@ -306,17 +258,9 @@
       "min_line_pct": 80,
       "min_branch_pct": 79.63
     },
-    "packages/gateway/src/connectors/onedrive-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.68
-    },
     "packages/gateway/src/connectors/openapi-indexer-config.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 78.38
-    },
-    "packages/gateway/src/connectors/outlook-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 56.41
     },
     "packages/gateway/src/connectors/pagerduty-sync.ts": {
       "min_line_pct": 80,
@@ -389,10 +333,6 @@
     "packages/gateway/src/index/drift-hints.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 78.26
-    },
-    "packages/gateway/src/index/item-store.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.07
     },
     "packages/gateway/src/index/local-index.ts": {
       "min_line_pct": 80,

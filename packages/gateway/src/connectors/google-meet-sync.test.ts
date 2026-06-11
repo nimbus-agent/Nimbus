@@ -13,6 +13,7 @@ import {
   encodeGoogleMeetSyncCursor,
   type GoogleMeetSyncCursorV1,
 } from "./google-meet-sync.ts";
+import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 describe("Google Meet sync cursor codec", () => {
   test("round-trip", () => {
@@ -26,6 +27,35 @@ describe("Google Meet sync cursor codec", () => {
       decodeGoogleMeetSyncCursor,
       "nimbus-gmeet1:",
     );
+  });
+
+  // L35 branch: o == null (wrong prefix → decodeNimbusJsonCursorPayload returns undefined)
+  test("decodeGoogleMeetSyncCursor returns undefined for wrong prefix", () => {
+    expect(decodeGoogleMeetSyncCursor("nimbus-OTHER:abc")).toBeUndefined();
+  });
+
+  // L35 branch: typeof o !== "object" (payload decodes to a primitive, e.g. a JSON number)
+  test("decodeGoogleMeetSyncCursor returns undefined when payload is a primitive", () => {
+    const raw = encodeNimbusJsonCursor("nimbus-gmeet1:", 42);
+    expect(decodeGoogleMeetSyncCursor(raw)).toBeUndefined();
+  });
+
+  // L35 branch: Array.isArray(o) (payload decodes to an array)
+  test("decodeGoogleMeetSyncCursor returns undefined when payload is an array", () => {
+    const raw = encodeNimbusJsonCursor("nimbus-gmeet1:", [1, 2, 3]);
+    expect(decodeGoogleMeetSyncCursor(raw)).toBeUndefined();
+  });
+
+  // L39 branch: r["v"] !== 1 (object but wrong version)
+  test("decodeGoogleMeetSyncCursor returns undefined when v field is not 1", () => {
+    const raw = encodeNimbusJsonCursor("nimbus-gmeet1:", { v: 2, pageToken: null });
+    expect(decodeGoogleMeetSyncCursor(raw)).toBeUndefined();
+  });
+
+  // L43 branch: pageToken is not null and not a string (e.g. a number)
+  test("decodeGoogleMeetSyncCursor returns undefined when pageToken is not null/string", () => {
+    const raw = encodeNimbusJsonCursor("nimbus-gmeet1:", { v: 1, pageToken: 99 });
+    expect(decodeGoogleMeetSyncCursor(raw)).toBeUndefined();
   });
 });
 
@@ -94,6 +124,82 @@ describe("createGoogleMeetSyncable", () => {
     expect(r.itemsUpserted).toBe(1);
     expect(r.hasMore).toBe(false);
     expect(r.cursor).toBeNull();
+  });
+
+  // L85 branch: dec is undefined → dec?.pageToken is undefined → ?? null arm taken
+  // This happens when the cursor has the right prefix but an invalid payload
+  test("corrupt cursor (valid prefix, invalid payload) falls back to pageToken=null", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+    let capturedUrl = "";
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = requestUrlString(input);
+      capturedUrl = url;
+      return new Response(JSON.stringify({ conferenceRecords: [], nextPageToken: "" }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    // Encode a payload with the right prefix but v !== 1, so decodeGoogleMeetSyncCursor returns undefined
+    const badCursor = encodeNimbusJsonCursor("nimbus-gmeet1:", { v: 99, pageToken: "ignored" });
+    const r = await syncable.sync(ctx, badCursor);
+    // dec is undefined → pageToken falls back to null → no pageToken param in URL
+    expect(capturedUrl).not.toContain("pageToken=");
+    expect(r.hasMore).toBe(false);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  // L90 branch: parsed.conferenceRecords is undefined → ?? [] arm taken (empty list)
+  test("response with no conferenceRecords key yields 0 upserts", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = requestUrlString(input);
+      if (url.includes("conferenceRecords")) {
+        // Omit the conferenceRecords key entirely
+        return new Response(JSON.stringify({ nextPageToken: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.hasMore).toBe(false);
+    expect(r.cursor).toBeNull();
+  });
+
+  // L95 branch: mapped === null → continue (record with no name is skipped)
+  test("conference record without a name is skipped (mapped === null)", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = requestUrlString(input);
+      if (url.includes("conferenceRecords")) {
+        return new Response(
+          JSON.stringify({
+            conferenceRecords: [
+              // Record without `name` → mapGoogleMeetRecordToItem returns null
+              { startTime: "2024-03-01T10:00:00Z", endTime: "2024-03-01T11:00:00Z" },
+              // Valid record that should be upserted
+              {
+                name: "conferenceRecords/c99",
+                startTime: "2024-03-01T10:00:00Z",
+                endTime: "2024-03-01T11:00:00Z",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    // The nameless record is skipped, only c99 is upserted
+    expect(r.itemsUpserted).toBe(1);
   });
 
   test("401 throws UnauthenticatedError with API message", async () => {
