@@ -122,12 +122,21 @@ jobs:
   # TS/Bun test suite — ubuntu only, runs in parallel with pr-quality-rust
   pr-quality-ts:
     name: PR quality — TS/Bun (ubuntu-24.04)
-    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
+    # Always run on PRs so the required reusable-workflow child checks
+    # (`… / Static`, `… / Unit + Coverage`, … `/ Packaging`) always REPORT a
+    # status. On docs-only PRs we pass run-tests=false, which skips every child
+    # job — a skipped required check counts as passing. Gating the *caller* on
+    # `code-changed` instead (the old behavior) meant the reusable workflow
+    # never ran, so the 6 child contexts were never created and sat
+    # "Expected — Waiting for status to be reported" forever, blocking the merge.
+    # Test execution on code PRs is unchanged (code-changed=true → run-tests=true).
+    if: github.event_name == 'pull_request'
     needs: filter
     uses: ./.github/workflows/_test-suite.yml
     with:
       runner: ubuntu-24.04
       run-packaging: true
+      run-tests: ${{ needs.filter.outputs.code-changed == 'true' }}
     secrets:
       # Optional; the reusable workflow silently skips the SonarQube step
       # when this is unset (e.g. on fork PRs).
@@ -182,11 +191,14 @@ jobs:
   pr-quality-cross-platform:
     name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
     # The filter always emits the full 4-entry matrix on `pull_request`
-    # events (see ci.yml#Detect-changed-paths). The `code-changed` gate
-    # above already short-circuits docs-only PRs at the filter, so this
-    # job just needs to confirm the PR event + non-doc trigger before
-    # expanding the matrix.
-    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
+    # events (see ci.yml#Detect-changed-paths). Branch-protection rulesets
+    # require the expanded check names (`PR quality — Cross-platform
+    # (cli, macos-15)` etc.), so this job must RUN on every PR — even
+    # docs-only ones — or those 4 required checks never post and sit
+    # "Expected — Waiting for status to be reported" forever. The expensive
+    # steps below are individually gated on `code-changed`, so a docs-only PR
+    # spins up the 4 matrix legs but does no test work (they report success).
+    if: github.event_name == 'pull_request'
     needs: filter
     strategy:
       fail-fast: false
@@ -209,15 +221,16 @@ jobs:
           persist-credentials: false
 
       - name: Setup Bun and install dependencies
+        if: needs.filter.outputs.code-changed == 'true'
         uses: ./.github/actions/setup-nimbus-ci
 
       - name: macOS — Strip quarantine from native SQLite extensions
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && needs.filter.outputs.code-changed == 'true'
         shell: bash
         run: find node_modules -name "*.dylib" -print0 2>/dev/null | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
 
       - name: macOS — Create and unlock CI Keychain
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && needs.filter.outputs.code-changed == 'true'
         shell: bash
         run: |
           security create-keychain -p "" nimbus-ci.keychain
@@ -232,11 +245,11 @@ jobs:
       # quirks still surface on the gateway entry. Client build is only needed
       # for vscode-extension typecheck, which only runs alongside typecheck.
       - name: Build @nimbus-dev/client (for vscode-extension typecheck)
-        if: matrix.pkg == 'gateway'
+        if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
         run: cd packages/client && bun run build
 
       - name: Typecheck (catches host-specific TS quirks)
-        if: matrix.pkg == 'gateway'
+        if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
         shell: bash
         # @nimbus/docs is excluded here: it has no host-specific TS surface and
         # its astro-sync content-type generation flakes a 60s Vite timeout on slow
@@ -254,6 +267,7 @@ jobs:
           done
 
       - name: ${{ matrix.pkg }} unit tests (retry once on slow runners)
+        if: needs.filter.outputs.code-changed == 'true'
         shell: bash
         # `--timeout 60000` matches every other Bun test invocation in the repo
         # (`_test-suite.yml` runs these SAME gateway/cli suites at 60 s on the
