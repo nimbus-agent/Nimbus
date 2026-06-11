@@ -8,10 +8,62 @@ import {
   expectServiceItemCount,
   type SyncTestFetchParams,
   silentSyncContextExtras,
+  syncTestContext,
   testConnectorSyncNoop,
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
 import { createNotionSyncable } from "./notion-sync.ts";
+
+/** Build a valid oauth payload accepted by getValidNotionAccessToken */
+function makeOauthPayload(overrides?: Partial<{ accessToken: string; expiresAt: number }>): string {
+  return JSON.stringify({
+    accessToken: overrides?.accessToken ?? "notion_secret_test",
+    refreshToken: "refresh_test",
+    expiresAt: overrides?.expiresAt ?? Date.now() + 86_400_000,
+    scopes: [] as string[],
+  });
+}
+
+/** A minimal valid page result object */
+function makePage(
+  id: string,
+  opts?: {
+    last_edited_time?: string;
+    created_by?: unknown;
+    properties?: unknown;
+    object?: string;
+  },
+): Record<string, unknown> {
+  return {
+    object: opts?.object ?? "page",
+    id,
+    last_edited_time: opts?.last_edited_time ?? "2026-04-01T12:00:00.000Z",
+    created_by: opts?.created_by ?? { object: "user", id: "notion-user-abc" },
+    properties: opts?.properties ?? {
+      title: {
+        type: "title",
+        title: [{ type: "text", text: { content: "Hello" } }],
+      },
+    },
+  };
+}
+
+/** Install a fetch stub that returns a single-page Notion search response */
+function installFetchSinglePage(
+  results: unknown[],
+  opts?: { hasMore?: boolean; nextCursor?: string | null },
+): void {
+  globalThis.fetch = (async (): Promise<Response> => {
+    return new Response(
+      JSON.stringify({
+        results,
+        has_more: opts?.hasMore ?? false,
+        next_cursor: opts?.nextCursor ?? null,
+      }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+}
 
 describeWithFetchRestore("notion-sync", () => {
   testConnectorSyncNoop(
@@ -19,6 +71,18 @@ describeWithFetchRestore("notion-sync", () => {
     () => createNotionSyncable({ ensureNotionMcpRunning: async () => {} }),
     EMPTY_NIMBUS_VAULT,
   );
+
+  // ── covers line 247–249: getValidNotionAccessToken throws → syncNoopResult ──
+  test("no-op when oauth payload is malformed (getValidNotionAccessToken throws)", async () => {
+    const db = createMemoryIndexDb();
+    // "notion.oauth" present but payload is unparseable JSON
+    const vault = createStubVault({ "notion.oauth": "not-valid-json" });
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, vault), null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.itemsDeleted).toBe(0);
+    expect(r.cursor).toBeNull();
+  });
 
   test("indexes pages from Notion search and advances cursor", async () => {
     const db = createMemoryIndexDb();
@@ -54,15 +118,9 @@ describeWithFetchRestore("notion-sync", () => {
       );
     }) as typeof fetch;
 
-    const oauthPayload = JSON.stringify({
-      accessToken: "notion_secret_test",
-      refreshToken: "refresh_test",
-      expiresAt: Date.now() + 86_400_000,
-      scopes: [] as string[],
-    });
     const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
     const ctx = {
-      vault: createStubVault({ "notion.oauth": oauthPayload }),
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
       db,
       ...silentSyncContextExtras(),
     };
@@ -74,5 +132,743 @@ describeWithFetchRestore("notion-sync", () => {
       | { author_id: string | null }
       | undefined;
     expect(row?.author_id).not.toBeNull();
+  });
+
+  // ── covers lines 109–111: HTTP 429 → throws "rate limited" ──
+  test("throws on HTTP 429 rate-limited response", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response("", { status: 429 });
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await expect(sync.sync(ctx, null)).rejects.toThrow("rate limited");
+  });
+
+  // ── covers lines 113–114: non-ok HTTP (e.g. 500) → throws with status ──
+  test("throws on non-ok HTTP response", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response("Internal Server Error", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await expect(sync.sync(ctx, null)).rejects.toThrow("Notion sync HTTP 500");
+  });
+
+  // ── covers lines 117–121: invalid JSON response body ──
+  test("throws on invalid JSON response body", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response("not json at all!!!", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await expect(sync.sync(ctx, null)).rejects.toThrow("invalid JSON");
+  });
+
+  // ── covers lines 122–124: valid JSON but not a record (e.g. array) ──
+  test("throws when response JSON is not a record", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(JSON.stringify([1, 2, 3]), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await expect(sync.sync(ctx, null)).rejects.toThrow("invalid response");
+  });
+
+  // ── covers lines 126–128: missing results field ──
+  test("throws when results field is missing", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(JSON.stringify({ has_more: false }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await expect(sync.sync(ctx, null)).rejects.toThrow("missing results");
+  });
+
+  // ── covers lines 177–179: non-record item in results → skipped ──
+  test("skips non-record items in results", async () => {
+    installFetchSinglePage([null, "string", 42, makePage("page-id-001")]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    // Only the valid page should be indexed; nulls/strings/numbers skipped
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "notion", 1);
+  });
+
+  // ── covers lines 180–181: object !== "page" → skipped ──
+  test("skips items whose object field is not 'page'", async () => {
+    installFetchSinglePage([
+      { object: "database", id: "db-001", last_edited_time: "2026-04-01T12:00:00.000Z" },
+      { object: "block", id: "blk-001", last_edited_time: "2026-04-01T12:00:00.000Z" },
+      makePage("page-id-001"),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  // ── covers lines 183–185: missing/empty id → skipped ──
+  test("skips pages with missing or empty id", async () => {
+    installFetchSinglePage([
+      { object: "page", last_edited_time: "2026-04-01T12:00:00.000Z" }, // no id
+      { object: "page", id: "", last_edited_time: "2026-04-01T12:00:00.000Z" }, // empty id
+      makePage("valid-page-id"),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  // ── covers lines 147–149: edited undefined/empty → watermark returns "continue" ──
+  test("processes pages with missing last_edited_time using syncTime as modifiedAt", async () => {
+    installFetchSinglePage([
+      { object: "page", id: "page-no-time" }, // no last_edited_time
+      { object: "page", id: "page-empty-time", last_edited_time: "" }, // empty
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    // Both pages have no time → neither advances maxEdited, both should still upsert
+    expect(r.itemsUpserted).toBe(2);
+    expectServiceItemCount(db, "notion", 2);
+  });
+
+  // ── covers lines 150–152: watermark stop when item older than watermark ──
+  test("stops accumulating when item is at or before watermark", async () => {
+    const db = createMemoryIndexDb();
+    // First sync: index a page so we get a cursor with a watermark
+    installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-04-02T12:00:00.000Z" })]);
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = syncTestContext(db, vault);
+    const r1 = await sync.sync(ctx, null);
+    expect(r1.cursor).not.toBeNull();
+
+    // Second sync with two pages: one older than watermark (should trigger stop), one same
+    installFetchSinglePage([
+      // older → should trigger watermark stop
+      makePage("page-old", { last_edited_time: "2026-03-01T00:00:00.000Z" }),
+      makePage("page-never-reached", { last_edited_time: "2026-02-01T00:00:00.000Z" }),
+    ]);
+    const r2 = await sync.sync(ctx, r1.cursor);
+    // The loop should have stopped after the first page (watermark hit)
+    // page-old and page-never-reached were NOT upserted (watermark stop)
+    expect(r2.itemsUpserted).toBe(0);
+  });
+
+  // ── covers lines 274–276: shouldStop → break out of pagination loop ──
+  test("breaks pagination loop when watermark stop is triggered", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = syncTestContext(db, vault);
+
+    // First sync to establish a cursor/watermark
+    installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-05-01T12:00:00.000Z" })]);
+    const r1 = await sync.sync(ctx, null);
+    expect(r1.cursor).not.toBeNull();
+
+    // Second sync: has_more=true but first result is older than watermark → should stop immediately
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(
+        JSON.stringify({
+          results: [makePage("old-page", { last_edited_time: "2026-01-01T00:00:00.000Z" })],
+          has_more: true,
+          next_cursor: "some-cursor-value",
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const r2 = await sync.sync(ctx, r1.cursor);
+    expect(r2.itemsUpserted).toBe(0);
+    // cursor should be retained (watermark unchanged)
+  });
+
+  // ── covers lines 277–279: !batch.hasMore → break ──
+  test("stops pagination when has_more is false", async () => {
+    installFetchSinglePage([makePage("page-a")], { hasMore: false });
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+    expect(r.hasMore).toBe(false);
+  });
+
+  // ── covers lines 280–282: nextCursor is undefined → break ──
+  test("stops pagination when next_cursor is null/empty", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(
+        JSON.stringify({
+          results: [makePage("page-a")],
+          has_more: true,
+          next_cursor: "", // empty string → nextCursor becomes undefined → break
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  // ── covers lines 283, 81: next_cursor present + multi-page pagination ──
+  test("follows pagination cursor across multiple pages", async () => {
+    let callCount = 0;
+    globalThis.fetch = (async (
+      _input: SyncTestFetchParams[0],
+      init?: SyncTestFetchParams[1],
+    ): Promise<Response> => {
+      callCount += 1;
+      const body =
+        init?.body !== undefined && typeof init.body === "string"
+          ? (JSON.parse(init.body) as Record<string, unknown>)
+          : {};
+      if (callCount === 1) {
+        // First page: no start_cursor in body
+        expect(body["start_cursor"]).toBeUndefined();
+        return new Response(
+          JSON.stringify({
+            results: [makePage("page-1", { last_edited_time: "2026-04-03T12:00:00.000Z" })],
+            has_more: true,
+            next_cursor: "cursor-page-2",
+          }),
+          { status: 200 },
+        );
+      }
+      // Second page: start_cursor should be set
+      expect(body["start_cursor"]).toBe("cursor-page-2");
+      return new Response(
+        JSON.stringify({
+          results: [makePage("page-2", { last_edited_time: "2026-04-02T12:00:00.000Z" })],
+          has_more: false,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(callCount).toBe(2);
+    expect(r.itemsUpserted).toBe(2);
+    expectServiceItemCount(db, "notion", 2);
+  });
+
+  // ── covers line 132: next_cursor present in response ──
+  test("captures next_cursor string from response", async () => {
+    let callCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(
+          JSON.stringify({
+            results: [makePage("page-1", { last_edited_time: "2026-04-03T12:00:00.000Z" })],
+            has_more: true,
+            next_cursor: "the-cursor-value",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          results: [],
+          has_more: false,
+          next_cursor: null,
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    expect(callCount).toBe(2);
+  });
+
+  // ── covers line 253: malformed cursor → treated as null watermark ──
+  test("handles malformed cursor gracefully (treats as null watermark)", async () => {
+    installFetchSinglePage([makePage("page-a")]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    // Pass a cursor that doesn't match the nimbus-ntn1: prefix
+    const r = await sync.sync(ctx, "totally-invalid-cursor-garbage");
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "notion", 1);
+  });
+
+  // ── covers line 63: properties is not a record → returns "Untitled" ──
+  test("uses 'Untitled' when properties is not a record", async () => {
+    installFetchSinglePage([
+      {
+        object: "page",
+        id: "page-no-props",
+        last_edited_time: "2026-04-01T12:00:00.000Z",
+        properties: null, // not a record
+      },
+      {
+        object: "page",
+        id: "page-arr-props",
+        last_edited_time: "2026-04-01T12:00:00.000Z",
+        properties: [1, 2, 3], // array, not a record
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(2);
+    const rows = db
+      .prepare("SELECT title FROM item WHERE service = 'notion' ORDER BY title")
+      .all() as Array<{ title: string }>;
+    for (const row of rows) {
+      expect(row.title).toBe("Untitled");
+    }
+  });
+
+  // ── covers lines 67–70: title extraction iterates values; fallback Untitled ──
+  test("uses 'Untitled' when no property has type='title'", async () => {
+    installFetchSinglePage([
+      makePage("page-no-title-prop", {
+        properties: {
+          status: { type: "select", select: { name: "Done" } },
+          number: { type: "number", number: 42 },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Untitled");
+  });
+
+  // ── covers line 54: property type is not 'title' → returns null ──
+  test("skips property values with type != 'title' when extracting title", async () => {
+    installFetchSinglePage([
+      makePage("page-title-not-first", {
+        properties: {
+          desc: { type: "rich_text", rich_text: [] },
+          name: {
+            type: "title",
+            title: [{ type: "text", text: { content: "My Title" } }],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("My Title");
+  });
+
+  // ── covers lines 28–29: titleArr not array → returns [] ──
+  test("handles non-array title rich text (returns empty title → Untitled)", async () => {
+    installFetchSinglePage([
+      makePage("page-string-title", {
+        properties: {
+          title: { type: "title", title: "not-an-array" },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Untitled");
+  });
+
+  // ── covers line 34: non-record item in title array → continue ──
+  test("skips non-record items inside title rich-text array", async () => {
+    installFetchSinglePage([
+      makePage("page-mixed-title", {
+        properties: {
+          title: {
+            type: "title",
+            title: [
+              null, // non-record → skip
+              "a string", // non-record → skip
+              { type: "text", text: { content: "Actual Title" } }, // valid
+            ],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Actual Title");
+  });
+
+  // ── covers line 37: rich-text item type !== "text" → continue ──
+  test("skips rich-text items with type != text", async () => {
+    installFetchSinglePage([
+      makePage("page-mention-title", {
+        properties: {
+          title: {
+            type: "title",
+            title: [
+              { type: "mention", mention: { user: {} } }, // not "text" → skip
+              { type: "text", text: { content: "Real Part" } },
+            ],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Real Part");
+  });
+
+  // ── covers lines 41–42: text field missing or content is empty/undefined ──
+  test("skips rich-text items with missing or empty content", async () => {
+    installFetchSinglePage([
+      makePage("page-empty-content", {
+        properties: {
+          title: {
+            type: "title",
+            title: [
+              { type: "text" }, // no text field → tx undefined → c undefined → skip
+              { type: "text", text: null }, // text is null → tx undefined → skip
+              { type: "text", text: { content: "" } }, // empty string → skip
+              { type: "text", text: { content: "Valid" } },
+            ],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Valid");
+  });
+
+  // ── covers line 51: titleFromNotionPropertyValue with non-record val → null ──
+  test("skips non-record property values when extracting title", async () => {
+    installFetchSinglePage([
+      makePage("page-null-prop-val", {
+        properties: {
+          someField: null, // non-record → titleFromNotionPropertyValue returns null
+          title: {
+            type: "title",
+            title: [{ type: "text", text: { content: "Found" } }],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Found");
+  });
+
+  // ── covers line 161–164: created_by missing or no notionUserId → authorId null ──
+  test("indexes pages with missing or invalid created_by as null author", async () => {
+    installFetchSinglePage([
+      {
+        object: "page",
+        id: "page-no-created-by",
+        last_edited_time: "2026-04-01T12:00:00.000Z",
+        // no created_by
+      },
+      {
+        object: "page",
+        id: "page-non-user-created-by",
+        last_edited_time: "2026-04-01T12:00:00.000Z",
+        created_by: { object: "bot", id: "bot-id" }, // object != "user"
+      },
+      {
+        object: "page",
+        id: "page-empty-user-id",
+        last_edited_time: "2026-04-01T12:00:00.000Z",
+        created_by: { object: "user", id: "" }, // empty id
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(3);
+    const rows = db
+      .prepare("SELECT author_id FROM item WHERE service = 'notion' ORDER BY external_id")
+      .all() as Array<{ author_id: string | null }>;
+    for (const row of rows) {
+      expect(row.author_id).toBeNull();
+    }
+  });
+
+  // ── covers line 200: title longer than 512 chars gets truncated ──
+  test("truncates titles longer than 512 characters", async () => {
+    const longTitle = "A".repeat(600);
+    installFetchSinglePage([
+      makePage("page-long-title", {
+        properties: {
+          title: {
+            type: "title",
+            title: [{ type: "text", text: { content: longTitle } }],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title.length).toBe(512);
+    expect(row.title).toBe("A".repeat(512));
+  });
+
+  // ── covers line 193: edited is present → use isoMs(edited) as modifiedAt ──
+  // ── covers line 204: modifiedAt is finite → uses it directly ──
+  test("uses last_edited_time as modifiedAt when present", async () => {
+    const editedTime = "2026-04-01T12:00:00.000Z";
+    installFetchSinglePage([makePage("page-with-time", { last_edited_time: editedTime })]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db
+      .prepare("SELECT modified_at FROM item WHERE service = 'notion' LIMIT 1")
+      .get() as { modified_at: number };
+    expect(row.modified_at).toBe(new Date(editedTime).getTime());
+  });
+
+  // ── covers line 286: maxEdited === "" → use watermark as nextW ──
+  test("preserves prior watermark when no new pages are processed", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = syncTestContext(db, vault);
+
+    // First sync: index a page to get a cursor with watermark
+    installFetchSinglePage([makePage("page-a", { last_edited_time: "2026-04-01T12:00:00.000Z" })]);
+    const r1 = await sync.sync(ctx, null);
+    expect(r1.cursor).toContain("nimbus-ntn1:");
+
+    // Second sync: empty results (no new pages) → maxEdited stays "" → watermark preserved
+    installFetchSinglePage([]);
+    const r2 = await sync.sync(ctx, r1.cursor);
+    expect(r2.cursor).toContain("nimbus-ntn1:");
+    // Cursor should contain the same watermark
+    expect(r2.cursor).toBe(r1.cursor);
+  });
+
+  // ── covers line 154: maxIso path (maxEdited was already set, update with newer) ──
+  test("advances maxEdited to the most recent last_edited_time across multiple pages", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = syncTestContext(db, vault);
+
+    // Two pages with different times; the first should be newer (desc ordering)
+    let callCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(
+          JSON.stringify({
+            results: [
+              makePage("page-newer", { last_edited_time: "2026-05-01T12:00:00.000Z" }),
+              makePage("page-older", { last_edited_time: "2026-04-01T12:00:00.000Z" }),
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const r = await sync.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(2);
+    // cursor should encode a watermark with the newer timestamp
+    expect(r.cursor).toContain("nimbus-ntn1:");
+  });
+
+  // ── covers multi-rich-text join (concatenation) ──
+  test("concatenates multiple rich-text parts in title", async () => {
+    installFetchSinglePage([
+      makePage("page-multi-text", {
+        properties: {
+          title: {
+            type: "title",
+            title: [
+              { type: "text", text: { content: "Hello" } },
+              { type: "text", text: { content: " " } },
+              { type: "text", text: { content: "World" } },
+            ],
+          },
+        },
+      }),
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    const ctx = {
+      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
+      db,
+      ...silentSyncContextExtras(),
+    };
+    await sync.sync(ctx, null);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Hello World");
   });
 });

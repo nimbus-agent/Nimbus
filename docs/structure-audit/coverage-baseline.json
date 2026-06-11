@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T14:39:34.500Z",
+  "generated_at": "2026-06-11T17:57:07.570Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -150,29 +150,13 @@
       "min_line_pct": 80,
       "min_branch_pct": 75.93
     },
-    "packages/gateway/src/connectors/atlassian-api-sync-helpers.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
     "packages/gateway/src/connectors/bigquery-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 71.95
     },
-    "packages/gateway/src/connectors/bitrise-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 61.54
-    },
     "packages/gateway/src/connectors/cloudwatch-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75.51
-    },
-    "packages/gateway/src/connectors/codemagic-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 61.54
-    },
-    "packages/gateway/src/connectors/confluence-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 62.77
     },
     "packages/gateway/src/connectors/connector-catalog.ts": {
       "min_line_pct": 78.95,
@@ -206,10 +190,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 64.36
     },
-    "packages/gateway/src/connectors/figma-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 62.16
-    },
     "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75.64
@@ -230,25 +210,13 @@
       "min_line_pct": 80,
       "min_branch_pct": 75
     },
-    "packages/gateway/src/connectors/jira-sync.ts": {
-      "min_line_pct": 75.19,
-      "min_branch_pct": 52.76
-    },
     "packages/gateway/src/connectors/launchdarkly-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 73.68
     },
-    "packages/gateway/src/connectors/linear-sync.ts": {
-      "min_line_pct": 78.7,
-      "min_branch_pct": 50
-    },
     "packages/gateway/src/connectors/metabase-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 68.57
-    },
-    "packages/gateway/src/connectors/notion-sync.ts": {
-      "min_line_pct": 78.46,
-      "min_branch_pct": 58.16
     },
     "packages/gateway/src/connectors/obsidian-daily-note.ts": {
       "min_line_pct": 80,
@@ -281,14 +249,6 @@
     "packages/gateway/src/connectors/sonarqube-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/connectors/storybook-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.57
-    },
-    "packages/gateway/src/connectors/testflight-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.68
     },
     "packages/gateway/src/connectors/user-mcp-store.ts": {
       "min_line_pct": 80,
