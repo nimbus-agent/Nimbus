@@ -35,6 +35,13 @@ export interface PeerProbeResult {
   readonly lastSeenDaysAgo: number | null;
 }
 
+export interface PeerPreflightResult {
+  readonly peerId: string;
+  readonly displayName: string | null;
+  readonly status: "pass" | "fail" | "declined" | "not_configured";
+  readonly summary: string;
+}
+
 export interface PeerFanoutOutcome<T> {
   readonly perPeer: readonly T[];
   readonly gaps: readonly GapNote[];
@@ -184,6 +191,62 @@ export async function fanOutProbe(
             touched: result.touched === true,
             lastSeenDaysAgo:
               typeof result.lastSeenDaysAgo === "number" ? result.lastSeenDaysAgo : null,
+          },
+        };
+      } catch (err) {
+        return { gap: gapForPeer(row, err) };
+      }
+    },
+  );
+  perPeer.sort((a, b) => a.peerId.localeCompare(b.peerId));
+  return { perPeer, gaps };
+}
+
+/**
+ * Blast-radius preflight fan-out (upstream). Each downstream owner answers `federation.preflight`
+ * with a leak-proof `{ kind:"ok", passed, summary }` (after their LOCAL HITL approval) or a
+ * `{ kind:"error", error }` (no_grant / not_configured / denied). A transport error becomes a gap —
+ * a non-answering downstream is NEVER rendered as "safe to merge".
+ */
+export async function fanOutPreflight(
+  deps: PeerFanoutDeps,
+  req: { namespace: string; ref: string; changedSurface: readonly string[]; purpose: string },
+): Promise<PeerFanoutOutcome<PeerPreflightResult>> {
+  const send = deps.sendOverWire ?? sendFederatedOverWire;
+  const { perPeer, gaps } = await runPool<PeerPreflightResult>(
+    reachablePeers(deps.index),
+    async (row) => {
+      try {
+        const r = (await send(
+          row.host_ip as string,
+          row.host_port as number,
+          deps.selfIdentity,
+          row.peer_pubkey,
+          "federation.preflight",
+          {
+            namespace: req.namespace,
+            ref: req.ref,
+            changedSurface: [...req.changedSurface],
+            purpose: req.purpose,
+          },
+        )) as { kind?: string; passed?: boolean; summary?: string; error?: string };
+        if (r.kind === "ok") {
+          return {
+            ok: {
+              peerId: row.peer_id,
+              displayName: row.display_name,
+              status: r.passed === true ? "pass" : "fail",
+              summary: r.summary ?? "",
+            },
+          };
+        }
+        const status = r.error === "not_configured" ? "not_configured" : "declined";
+        return {
+          ok: {
+            peerId: row.peer_id,
+            displayName: row.display_name,
+            status,
+            summary: r.error ?? "error",
           },
         };
       } catch (err) {
