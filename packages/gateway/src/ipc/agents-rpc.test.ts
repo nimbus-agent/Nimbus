@@ -35,6 +35,26 @@ function freshDb(): Database {
   return db;
 }
 
+/**
+ * Polls a ctx.notify mock until `eventName` is observed or the deadline passes.
+ * Deterministic replacement for fixed sleeps (the briefReady notify may fire
+ * after the dispatch promise resolves; a fixed wait flakes under load).
+ */
+async function waitForNotify(
+  notify: unknown,
+  eventName: string,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
+  const calls = (notify as ReturnType<typeof mock>).mock.calls;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (calls.some((c) => c[0] === eventName)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
 describe("dispatchAgentsRpc", () => {
   test("returns kind:miss for unknown methods", async () => {
     const out = await dispatchAgentsRpc("agents.unknown", {}, makeCtx(freshDb()));
@@ -76,10 +96,7 @@ describe("dispatchAgentsRpc", () => {
   test("agents.expert eventually emits expert.briefReady", async () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx);
-    await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
-    const briefReady = calls.find((c) => c[0] === "expert.briefReady");
-    expect(briefReady).toBeDefined();
+    expect(await waitForNotify(ctx.notify, "expert.briefReady")).toBe(true);
   });
 });
 
@@ -134,10 +151,7 @@ describe("dispatchAgentsRpc — agents.impact", () => {
   test("agents.impact eventually emits impact.briefReady", async () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.impact", { fileOrPrUrl: "x" }, ctx);
-    await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
-    const briefReady = calls.find((c) => c[0] === "impact.briefReady");
-    expect(briefReady).toBeDefined();
+    expect(await waitForNotify(ctx.notify, "impact.briefReady")).toBe(true);
   });
 });
 
@@ -425,18 +439,14 @@ describe("dispatchAgentsRpc — llm-present branches", () => {
     const out = await dispatchAgentsRpc("agents.expert", { topicOrFile: "src/x.ts" }, ctx);
     expect(out.kind).toBe("hit");
     // briefReady is emitted; the llm-present arm was taken (no error = correct branch)
-    await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
-    expect(calls.some((c) => c[0] === "expert.briefReady")).toBe(true);
+    expect(await waitForNotify(ctx.notify, "expert.briefReady")).toBe(true);
   });
 
   test("agents.impact with llm set takes the llm-present context arm", async () => {
     const ctx = makeCtx(freshDb(), { llm: fakeLlm() });
     const out = await dispatchAgentsRpc("agents.impact", { fileOrPrUrl: "src/x.ts" }, ctx);
     expect(out.kind).toBe("hit");
-    await new Promise((r) => setTimeout(r, 50));
-    const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
-    expect(calls.some((c) => c[0] === "impact.briefReady")).toBe(true);
+    expect(await waitForNotify(ctx.notify, "impact.briefReady")).toBe(true);
   });
 
   test("agents.catchup with llm set takes the llm-present context arm", async () => {

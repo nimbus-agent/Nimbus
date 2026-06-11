@@ -359,7 +359,7 @@ describe("requireDeps missing index/vault (line 44)", () => {
     // emptyCtx() has index=undefined, vault=undefined → requireDeps throws
     const err = await dispatchDataRpc(
       "data.import",
-      { bundlePath: "/tmp/x.tar.gz" },
+      { bundlePath: join(tmpdir(), "x.tar.gz") },
       emptyCtx(),
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DataRpcError);
@@ -478,7 +478,12 @@ describe("data.import error branches (line 114)", () => {
     // which must be rethrown as-is (not wrapped in DataRpcError -32010).
     const err = await dispatchDataRpc(
       "data.import",
-      { bundlePath: "/nonexistent/no-such-bundle.tar.gz" },
+      {
+        bundlePath: join(
+          mkdtempSync(join(tmpdir(), "nimbus-rpc-missing-")),
+          "no-such-bundle.tar.gz",
+        ),
+      },
       {
         index: newIndex(),
         vault: memVault(),
