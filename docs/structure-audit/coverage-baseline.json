@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T11:09:20.094Z",
+  "generated_at": "2026-06-11T13:21:31.943Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -373,38 +373,6 @@
     "packages/gateway/src/embedding/pipeline.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 69.23
-    },
-    "packages/gateway/src/extensions/auto-update-apply.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.08
-    },
-    "packages/gateway/src/extensions/auto-update-init.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 67.86
-    },
-    "packages/gateway/src/extensions/auto-update-orchestrate.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/extensions/auto-update-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/extensions/auto-update.ts": {
-      "min_line_pct": 77.32,
-      "min_branch_pct": 58.57
-    },
-    "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70
-    },
-    "packages/gateway/src/extensions/publisher-keys.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.57
-    },
-    "packages/gateway/src/extensions/verify-extensions.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.85
     },
     "packages/gateway/src/federation/federation-server.ts": {
       "min_line_pct": 78.26,

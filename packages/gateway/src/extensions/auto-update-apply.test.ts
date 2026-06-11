@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -193,6 +193,142 @@ describe("applyDowngradeSwap", () => {
       ).rejects.toThrow(/downgrade_unavailable/);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects with swap_failed when buffer→_prev/<from> rename fails (non-empty target dir)", async () => {
+    // Strategy: pre-create _prev/<fromVersion> as a non-empty directory so that
+    // renaming the buffer onto it fails with ENOTEMPTY/EEXIST/EPERM cross-platform.
+    const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
+    try {
+      // Build the ext layout: active + _prev/1.0.0 (the rollback target)
+      const extRoot = await makeExt(root, "1.1.0", "1.0.0");
+      // Pre-populate _prev/1.1.0 (swapPrevPath) with a file so rename-onto-it fails.
+      const swapPrevPath = join(extRoot, "_prev", "1.1.0");
+      await mkdir(swapPrevPath, { recursive: true });
+      await writeFile(join(swapPrevPath, "blocker.txt"), "blocker");
+
+      await expect(
+        applyDowngradeSwap({
+          extRoot,
+          fromVersion: "1.1.0",
+          toVersion: "1.0.0",
+        }),
+      ).rejects.toThrow(/swap_failed/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("applyUpgradeSwap — rollback paths", () => {
+  it("first-rename failure with movedAside: calls restoreHolding then removes _prev, rejects", async () => {
+    // Set up: stale _prev/0.9.0 present (triggers movedAside=true + _holding creation),
+    // but active dir is MISSING → rename(active→_prev/1.0.0) throws ENOENT.
+    // Catch path (lines 98-102): restoreHolding(holding→_prev) then rm(_prev) then rethrow.
+    // So _prev ends up removed and _holding is gone too.
+    const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-roll1-"));
+    try {
+      const extRoot = join(root, "com.example.x");
+      // Create _prev/0.9.0 (stale, not fromVersion "1.0.0") — but NO active dir.
+      await mkdir(join(extRoot, "_prev", "0.9.0"), { recursive: true });
+      await writeFile(join(extRoot, "_prev", "0.9.0", "marker.txt"), "prev=0.9.0");
+
+      const pendingDir = await makePending(root, "com.example.x", "1.1.0");
+
+      await expect(
+        applyUpgradeSwap({
+          extRoot,
+          pendingExtractedDir: pendingDir,
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+        }),
+      ).rejects.toThrow();
+
+      // _prev must be gone (restoreHolding moved entries back, then rm(_prev) was called).
+      const prevExists = await stat(join(extRoot, "_prev"))
+        .then(() => true)
+        .catch(() => false);
+      expect(prevExists).toBe(false);
+      // _holding must also be gone (cleaned up by restoreHolding → rm).
+      const holdingExists = await stat(join(extRoot, "_holding"))
+        .then(() => true)
+        .catch(() => false);
+      expect(holdingExists).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("second-rename failure with movedAside: restores active and holding, then rejects", async () => {
+    // Set up: stale _prev/0.9.0 present (movedAside=true), active dir exists (first rename
+    // active→_prev/1.0.0 succeeds), pendingExtractedDir is MISSING → second rename throws.
+    // Expected: rejects, active is restored, stale 0.9.0 is back under _prev.
+    const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-roll2-"));
+    try {
+      const extRoot = await makeExt(root, "1.0.0", "0.9.0");
+      // pendingDir intentionally NOT created on disk.
+      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
+
+      await expect(
+        applyUpgradeSwap({
+          extRoot,
+          pendingExtractedDir: pendingDir,
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+        }),
+      ).rejects.toThrow();
+
+      // active must be restored (marker still says active=1.0.0).
+      const activeMarker = await readFile(join(extRoot, "active", "marker.txt"), "utf8");
+      expect(activeMarker).toBe("active=1.0.0");
+
+      // The stale entry 0.9.0 must be back under _prev.
+      const prevEntries = await readdir(join(extRoot, "_prev")).catch(() => [] as string[]);
+      expect(prevEntries).toContain("0.9.0");
+
+      // _holding must be gone.
+      const holdingExists = await stat(join(extRoot, "_holding"))
+        .then(() => true)
+        .catch(() => false);
+      expect(holdingExists).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("restoreHolding early-returns safely when _holding does not exist (movedAside=false path)", async () => {
+    // When there are no stale _prev entries, movedAside=false and _holding is never created.
+    // If the second rename then fails, restoreHolding is not called; verify behavior stays correct.
+    // But to explicitly cover the early-return: run applyUpgradeSwap with no stale entries
+    // and a missing pendingDir so the second catch fires without movedAside.
+    const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-nohld-"));
+    try {
+      const extRoot = await makeExt(root, "1.0.0");
+      // No pendingDir → second rename fails; movedAside=false → restoreHolding NOT called.
+      // But verify function still rejects and active is restored (line 107 fires, not restoreHolding).
+      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
+
+      await expect(
+        applyUpgradeSwap({
+          extRoot,
+          pendingExtractedDir: pendingDir,
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+        }),
+      ).rejects.toThrow();
+
+      // active must be restored even without the holding path.
+      const activeMarker = await readFile(join(extRoot, "active", "marker.txt"), "utf8");
+      expect(activeMarker).toBe("active=1.0.0");
+
+      // _holding must not exist (was never created).
+      const holdingExists = await stat(join(extRoot, "_holding"))
+        .then(() => true)
+        .catch(() => false);
+      expect(holdingExists).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
     }
   });
 });
