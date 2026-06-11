@@ -116,4 +116,68 @@ describe("teamvault-rpc", () => {
       /ERR_INVALID_PARAMS/,
     );
   });
+
+  // line 33 block 2 branch 0: str() TRUE path — field is empty string
+  it("rejects teamvault.grant when entry is an empty string", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await expect(
+      dispatchTeamVaultRpc(
+        "teamvault.grant",
+        { entry: "", peerId: "peer:abc", toolId: "aws.ec2.instance.stop" },
+        ctx(db, vault),
+      ),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+  });
+
+  // line 51 block 4 branch 0: secrets === null TRUE path
+  it("rejects teamvault.put when secrets is null", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await expect(
+      dispatchTeamVaultRpc(
+        "teamvault.put",
+        { entry: "prod-aws", service: "aws", secrets: null },
+        ctx(db, vault),
+      ),
+    ).rejects.toThrow(/secrets object required/);
+  });
+
+  // line 55 block 6 branch 0: secret value typeof v !== "string" TRUE path
+  it("rejects teamvault.put when a secret value is not a string", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    const badSecrets: Record<string, unknown> = { good: "x", bad: 123 };
+    await expect(
+      dispatchTeamVaultRpc(
+        "teamvault.put",
+        { entry: "prod-aws", service: "aws", secrets: badSecrets },
+        ctx(db, vault),
+      ),
+    ).rejects.toThrow(/must be a string/);
+  });
+
+  // line 67 block 7 branch 1: Array.isArray(keys) FALSE path — keys absent
+  it("teamvault.delete returns ok and deletes nothing when keys is absent", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const vault = new Map<string, string>();
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      { entry: "prod-aws", service: "aws", secrets: { "aws.access_key_id": "x" } },
+      ctx(db, vault),
+    );
+    const sizeBefore = vault.size;
+    const out = await dispatchTeamVaultRpc(
+      "teamvault.delete",
+      { entry: "prod-aws" },
+      ctx(db, vault),
+    );
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") expect(out.value).toEqual({ ok: true });
+    expect(vault.size).toBe(sizeBefore);
+  });
 });

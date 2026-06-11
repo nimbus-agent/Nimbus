@@ -844,3 +844,221 @@ test("federation.ask does NOT record on a kind error answer", async () => {
   expect(rows.n).toBe(0);
   askIndex.close();
 });
+
+// ---------------------------------------------------------------------------
+// B3b branch-coverage additions — residual guard arms
+// ---------------------------------------------------------------------------
+
+// line 86: asRecord null TRUE → object expected
+test("asRecord: null params rejects with 'object expected' (line 86 null arm)", async () => {
+  const nullParam: unknown = null;
+  await expect(
+    dispatchFederationRpc("federation.consentRespond", nullParam, ctx()),
+  ).rejects.toThrow(/object expected/);
+});
+
+// line 129: parseFilters !Array.isArray TRUE → filters[]
+test("parseFilters: non-array filters rejects (line 129 !isArray arm)", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.namespace.publish",
+      { name: "ns-filtertype", filters: "nope" },
+      ctx(),
+    ),
+  ).rejects.toThrow(/filters/);
+});
+
+// line 164: requireAskTarget row === undefined TRUE → ERR_UNKNOWN_PEER (peer absent entirely)
+test("federation.ask: unknown peer (absent from index) rejects ERR_UNKNOWN_PEER (line 164 row-absent arm)", async () => {
+  const emptyDb = new Database(":memory:");
+  runIndexedSchemaMigrations(emptyDb, 33);
+  const emptyIndex = new LocalIndex(emptyDb);
+  const selfKp = generateBoxKeypair();
+  const askCtx: FederationRpcContext = {
+    db: emptyDb,
+    consentTimeoutMs: 200,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(emptyIndex),
+    index: emptyIndex,
+    selfIdentity: selfKp,
+  };
+  try {
+    await expect(
+      dispatchFederationRpc(
+        "federation.ask",
+        { peerId: "peer:ghost", namespace: "ns", purpose: "p" },
+        askCtx,
+      ),
+    ).rejects.toThrow(/ERR_UNKNOWN_PEER/);
+  } finally {
+    emptyIndex.close();
+  }
+});
+
+// line 191: federation.pair port default (typeof rec["port"] !== "number") → 7475 then throws "not wired"
+test("federation.pair: missing port defaults to 7475 and propagates 'not wired' (line 191 default-port arm)", async () => {
+  // No port supplied → the FALSE arm runs (defaults to 7475), then initiatePair throws "not wired".
+  await expect(
+    dispatchFederationRpc("federation.pair", { host: "gateway-b.test", code: "xyz" }, ctx()),
+  ).rejects.toThrow(/not wired/);
+});
+
+// line 240: federation.query identityGuard defined → identity spread executes
+test("federation.query: identityGuard defined — identity spread executes (line 240 identity arm)", async () => {
+  const c: FederationRpcContext = {
+    ...ctx(),
+    consentTimeoutMs: 200,
+    identityGuard: { enabled: true, isOperatorValid: () => true },
+  };
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-idguard", filters: [{ kind: "type", value: "pull_request" }] },
+    c,
+  );
+  // no_grant path: the identity spread executed; gate returns an error shape (still a hit)
+  const res = await dispatchFederationRpc(
+    "federation.query",
+    { peerId: "peer:idguard", namespace: "ns-idguard", purpose: "p" },
+    c,
+  );
+  expect(res.kind).toBe("hit");
+});
+
+// line 261: federation.auditExport identityGuard defined → identity spread executes
+test("federation.auditExport: identityGuard defined — identity spread executes (line 261 identity arm)", async () => {
+  const c: FederationRpcContext = {
+    ...ctx(),
+    consentTimeoutMs: 200,
+    identityGuard: { enabled: true, isOperatorValid: () => true },
+  };
+  await dispatchFederationRpc(
+    "federation.namespace.publish",
+    { name: "ns-ax-idguard", filters: [{ kind: "type", value: "pull_request" }] },
+    c,
+  );
+  // no_grant path: the identity spread executed; gate returns an error shape (still a hit)
+  const res = await dispatchFederationRpc(
+    "federation.auditExport",
+    { peerId: "peer:axidguard", namespace: "ns-ax-idguard", purpose: "audit" },
+    c,
+  );
+  expect(res.kind).toBe("hit");
+});
+
+// line 317: federation.consentRespond approved non-boolean TRUE → rejects
+test("federation.consentRespond: non-boolean approved rejects (line 317 non-bool arm)", async () => {
+  await expect(
+    dispatchFederationRpc("federation.consentRespond", { requestId: "x", approved: "yes" }, ctx()),
+  ).rejects.toThrow(/approved must be a boolean/);
+});
+
+// line 400: federation.invoke teamVault undefined → ERR_TEAMVAULT_UNAVAILABLE
+test("federation.invoke: no teamVault rejects ERR_TEAMVAULT_UNAVAILABLE (line 400 tv-undefined arm)", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.invoke",
+      { peerId: "p", entry: "e", toolId: "t", purpose: "q" },
+      ctx(), // ctx() has no teamVault
+    ),
+  ).rejects.toThrow(/ERR_TEAMVAULT_UNAVAILABLE/);
+});
+
+// line 429: federation.quorumRespond non-boolean TRUE → rejects
+test("federation.quorumRespond: non-boolean approved rejects (line 429 non-bool arm)", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.quorumRespond",
+      { requestId: "r", peerId: "p", approved: 1 },
+      ctx(),
+    ),
+  ).rejects.toThrow(/approved must be a boolean/);
+});
+
+// line 442: federation.approvalRespond non-boolean TRUE → rejects; and boolean TRUE + unknown id → matched:false
+test("federation.approvalRespond: non-boolean rejected; boolean + unknown id returns matched:false (line 442 both arms)", async () => {
+  // Non-boolean arm:
+  await expect(
+    dispatchFederationRpc(
+      "federation.approvalRespond",
+      { requestId: "r", peerId: "p", approved: "x" },
+      ctx(),
+    ),
+  ).rejects.toThrow(/approved must be a boolean/);
+
+  // Boolean arm — unknown requestId → matched:false:
+  const res = await dispatchFederationRpc(
+    "federation.approvalRespond",
+    { requestId: "unknown-req", peerId: "p", approved: true },
+    ctx(),
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { ok: boolean; matched: boolean };
+    expect(v.ok).toBe(true);
+    expect(v.matched).toBe(false);
+  }
+});
+
+// lines 459 + 473: federation.requestApproval — delegateApproval absent (nullish default → false)
+// and delegateApproval present → true
+test("federation.requestApproval: absent delegateApproval → approved:false; present → approved:true (lines 459+473)", async () => {
+  // (a) No delegateApproval wired → nullish default ?? (async () => false) → approved:false
+  const resA = await dispatchFederationRpc(
+    "federation.requestApproval",
+    { peerId: "peer:owner", actionType: "file.read" },
+    ctx(), // no delegateApproval
+  );
+  expect(resA.kind).toBe("hit");
+  if (resA.kind === "hit") {
+    const v = resA.value as { approved: boolean };
+    expect(v.approved).toBe(false);
+  }
+
+  // (b) delegateApproval always returns true → approved:true
+  const ctxWithDelegate: FederationRpcContext = {
+    ...ctx(),
+    delegateApproval: async () => true,
+  };
+  const resB = await dispatchFederationRpc(
+    "federation.requestApproval",
+    { peerId: "peer:owner", actionType: "file.read" },
+    ctxWithDelegate,
+  );
+  expect(resB.kind).toBe("hit");
+  if (resB.kind === "hit") {
+    const v = resB.value as { approved: boolean };
+    expect(v.approved).toBe(true);
+  }
+});
+
+// line 537: federation.purge nullish arm (no deletePurgeContributions) → deletedCount:0 (line 537 ?? arm)
+test("federation.purge APPROVE: no deletePurgeContributions → deletedCount 0 (line 537 nullish arm)", async () => {
+  federationConsent.setBroadcast((_m, params) => {
+    const rid = (params as { requestId: string }).requestId;
+    queueMicrotask(() => federationConsent.respond(rid, true));
+  });
+  const kp = generateEd25519Keypair();
+  // Build a ctx like purgeCtx but WITHOUT deletePurgeContributions
+  const noDeleteCtx: FederationRpcContext = {
+    db,
+    consentTimeoutMs: 1000,
+    notify: (method, params) => notes.push({ method, params }),
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(index),
+    purgeSign: { privkeyB64: encodeBase64(kp.privkey), selfPeerId: "peer:self" },
+    // deletePurgeContributions intentionally omitted
+  };
+  const res = await dispatchFederationRpc(
+    "federation.purge",
+    { peerId: "peer:home", externalId: "user-99" },
+    noDeleteCtx,
+  );
+  expect(res.kind).toBe("hit");
+  if (res.kind === "hit") {
+    const v = res.value as { kind: string; record: { deletedCount: number }; sig: string };
+    expect(v.kind).toBe("ok");
+    expect(v.record.deletedCount).toBe(0);
+    expect(typeof v.sig).toBe("string");
+  }
+});

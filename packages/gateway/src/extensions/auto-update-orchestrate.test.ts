@@ -114,6 +114,67 @@ describe("createPerformUpgrade", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("cleans up pendingDir and throws swap_failed when applyUpgradeSwap throws", async () => {
+    // Trigger: extensionsRoot points to a temp dir where the extension's `active`
+    // directory does NOT exist. applyUpgradeSwap's rename(activePath, newPrevPath)
+    // throws ENOENT → the catch block fires → rejects with "swap_failed: ...".
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-swap-fail-"));
+    let pendingDir: string | undefined;
+    try {
+      // extensionsRoot exists but com.example.a/active does NOT — intentional.
+      const extensionsRoot = join(root, "extensions");
+      await mkdir(extensionsRoot, { recursive: true });
+
+      const dataDir = join(root, "data");
+      await mkdir(join(dataDir, "extensions"), { recursive: true });
+
+      const tarballBytes = new TextEncoder().encode("fake-tarball");
+      const stopExtensionClient = mock(async (_id: string) => {});
+      const dbUpdateExtensionRow = mock(
+        async (_id: string, _version: string, _manifestHash: string, _entryHash: string) => {},
+      );
+
+      // extractTarball creates the pendingDir so applyUpgradeSwap can reach the rename.
+      const extractTarball = mock(async (_bytes: Uint8Array, destDir: string) => {
+        pendingDir = destDir;
+        await mkdir(destDir, { recursive: true });
+      });
+
+      const perform = createPerformUpgrade({
+        extensionsRoot,
+        dataDir,
+        fetcher: (async () =>
+          new Response(tarballBytes, {
+            status: 200,
+            headers: { "content-length": String(tarballBytes.byteLength) },
+          })) as unknown as typeof fetch,
+        maxBytes: 1024,
+        signal: new AbortController().signal,
+        // Return exactly update.entryHash so the hash check passes.
+        sha256OfTarball: async () => "e".repeat(64),
+        extractTarball,
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+
+      const err = await perform(mkAvailable()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/^swap_failed:/);
+
+      // pendingDir must have been removed by the catch cleanup.
+      if (pendingDir !== undefined) {
+        const { stat: fsStat } = await import("node:fs/promises");
+        await expect(fsStat(pendingDir)).rejects.toThrow();
+      }
+
+      // db row and stopExtensionClient must NOT have been called on failure.
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
 
 describe("createPerformDowngrade", () => {

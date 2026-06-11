@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T06:29:46.886Z",
+  "generated_at": "2026-06-11T13:21:31.943Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -100,11 +100,11 @@
     },
     "packages/gateway/src/agents/expert.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 67.24
+      "min_branch_pct": 68.97
     },
     "packages/gateway/src/agents/impact.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 77.27
+      "min_branch_pct": 78.79
     },
     "packages/gateway/src/commands/data-delete.ts": {
       "min_line_pct": 80,
@@ -354,42 +354,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 77.88
     },
-    "packages/gateway/src/db/audit-verify.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/db/backup-manifest.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/db/latency-ring-buffer.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.13
-    },
-    "packages/gateway/src/db/metrics.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/db/query-guard.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/db/repair.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/db/snapshot.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 62.96
-    },
-    "packages/gateway/src/db/verify.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74.07
-    },
-    "packages/gateway/src/db/write.ts": {
-      "min_line_pct": 76.19,
-      "min_branch_pct": 80
-    },
     "packages/gateway/src/embedding/chunker.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 72.31
@@ -409,38 +373,6 @@
     "packages/gateway/src/embedding/pipeline.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 69.23
-    },
-    "packages/gateway/src/extensions/auto-update-apply.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.08
-    },
-    "packages/gateway/src/extensions/auto-update-init.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 67.86
-    },
-    "packages/gateway/src/extensions/auto-update-orchestrate.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/extensions/auto-update-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/extensions/auto-update.ts": {
-      "min_line_pct": 77.32,
-      "min_branch_pct": 58.57
-    },
-    "packages/gateway/src/extensions/install-from-local.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70
-    },
-    "packages/gateway/src/extensions/publisher-keys.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.57
-    },
-    "packages/gateway/src/extensions/verify-extensions.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.85
     },
     "packages/gateway/src/federation/federation-server.ts": {
       "min_line_pct": 78.26,
@@ -473,38 +405,6 @@
     "packages/gateway/src/index/sqlite-vec-load.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 68.42
-    },
-    "packages/gateway/src/ipc/_lib/dispatch-by-method.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/ipc/agents-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.33
-    },
-    "packages/gateway/src/ipc/data-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.36
-    },
-    "packages/gateway/src/ipc/federation-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.66
-    },
-    "packages/gateway/src/ipc/hitl-rpc.ts": {
-      "min_line_pct": 74.19,
-      "min_branch_pct": 80
-    },
-    "packages/gateway/src/ipc/http-write-routes.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.69
-    },
-    "packages/gateway/src/ipc/security-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.69
-    },
-    "packages/gateway/src/ipc/teamvault-rpc.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
     },
     "packages/gateway/src/llm/llamacpp-provider.ts": {
       "min_line_pct": 80,
