@@ -46,7 +46,7 @@ Tool-scope restriction is a code-review discipline, not mechanically enforced �
 
 ## Tool Scope Restriction
 
-Sub-agents are defined as functions passed via `SubTask.execute()`. Tool access is determined by what each sub-agent function calls internally — for the built-in agents (`expert`, `catchup`, `impact`) this is primarily local-index database queries on the `IndexDB` instance. There is no built-in dispatcher-level restriction; **enforce scope via code review** — each sub-agent function should access only the data sources appropriate to its task. **Do not give a sub-agent a broad scope "for flexibility"** — scope it to exactly the data it needs. Broad scopes break the principle of least privilege and make latency budgets unpredictable.
+Sub-agents are defined as functions passed via `SubTask.execute()`. Tool access is determined by what each sub-agent function calls internally — for the built-in agents (`expert`, `catchup`, `impact`) this is primarily queries against the in-memory SQLite `Database` (the local index). There is no built-in dispatcher-level restriction; **enforce scope via code review** — each sub-agent function should access only the data sources appropriate to its task. **Do not give a sub-agent a broad scope "for flexibility"** — scope it to exactly the data it needs. Broad scopes break the principle of least privilege and make latency budgets unpredictable.
 
 ## IPC Notification Contract
 
@@ -75,7 +75,7 @@ Add the command to the CLI's command registry in `packages/cli/src/index.ts`.
 
 Every agent requires an e2e test at `packages/gateway/test/e2e/scenarios/<agent-name>.e2e.test.ts` that:
 
-- Sets up test data in an in-memory `IndexDB` instance — mocking connectors is unnecessary, since agents query the local index rather than remote APIs.
+- Sets up test data in an in-memory SQLite `Database` (the local index; e.g. `new Database(":memory:")` or `createMemoryIndexDb()`) — mocking connectors is unnecessary, since agents query the local index rather than remote APIs.
 - Asserts the brief contains the expected sections.
 - Asserts **zero HITL actions fired** — a structural check that the agent source does not import `ToolExecutor` or reference `HITL_REQUIRED`.
 - Optionally asserts the `briefReady` notification is emitted (via the `emitBriefWithSynthesis` / `emit<Agent>Brief` path) with a non-empty `brief` and `findings`.
