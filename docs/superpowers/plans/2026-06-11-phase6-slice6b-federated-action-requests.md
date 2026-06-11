@@ -891,10 +891,26 @@ test("rejects a flag-shaped value and a missing ref", () => {
 
 - [ ] **Step 7: Run test to verify it fails, then implement `janitor.ts`**
 
+First add the shared flag-value extractor to `_agent-brief-cli.ts` (S1 — proactively shared so `janitor.ts` and `preflight.ts` don't duplicate it and trip SonarCloud new-code duplication):
+
+```typescript
+// add to packages/cli/src/commands/_agent-brief-cli.ts
+/** Reads the value following a `--flag`, rejecting empty / another-flag values. Shared by agent CLIs. */
+export function flagValue(args: string[], i: number, flag: string): string {
+  const v = args[i + 1];
+  if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return v.trim();
+}
+```
+
+Then `janitor.ts` imports it:
+
 ```typescript
 // packages/cli/src/commands/janitor.ts
 import { type JanitorBrief, isJanitorBrief } from "../types/agents.ts";
-import { runAgentBriefCli } from "./_agent-brief-cli.ts";
+import { flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
 
 export type JanitorCliArgs = {
   resourceRef: string;
@@ -903,14 +919,6 @@ export type JanitorCliArgs = {
   allowGaps: boolean;
   json: boolean;
 };
-
-function flagValue(args: string[], i: number, flag: string): string {
-  const v = args[i + 1];
-  if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) {
-    throw new Error(`${flag} requires a value`);
-  }
-  return v.trim();
-}
 
 export function parseJanitorArgs(args: string[]): JanitorCliArgs {
   const positional: string[] = [];
@@ -1083,6 +1091,8 @@ export class PreflightConsentBroker {
 export const preflightConsent = new PreflightConsentBroker();
 ```
 
+> **`.unref?.()` is correct here (Q1) — do NOT remove it.** This is verbatim the shipped `FederationConsentBroker`, whose identical TTL test passes in CI. The [[bun-test-unref-timer-hang]] trap is `await setTimeout(delay)` (an *awaited* delay); this timer is a TTL safety-net inside a `Promise` that either fires-to-resolve or is cleared by `respond()` — never awaited as a delay. The `await p` in the TTL test keeps the test alive until the timer fires (same as `consent-broker.test.ts`). The spec §6 "no `.unref()` on an awaited path" does not apply to this pattern.
+
 - [ ] **Step 4: Run test to verify it passes.**
 
 Run: `timeout 60 bun test packages/gateway/src/federation/preflight-consent-broker.test.ts`
@@ -1197,6 +1207,7 @@ First read `packages/gateway/src/extensions/manifest.ts` to confirm the `Extensi
 ```typescript
 // packages/gateway/src/federation/preflight-runner.ts
 import type { ChildProcess } from "node:child_process";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { createSandboxRunner, type SandboxRunner } from "../platform/sandbox/index.ts";
 import type { ExtensionManifest } from "../extensions/manifest.ts";
 import type { PreflightCommandConfig } from "../config/nimbus-toml.ts";
@@ -1255,14 +1266,18 @@ export async function runPreflightCommand(
   const elapsed = () => now() - start;
   try {
     const runner = await (deps.createRunner ?? createSandboxRunner)();
+    // cwd is OWNER-controlled local config (never caller-supplied), so this is a foot-gun guard,
+    // not a caller boundary (Q3): normalize to an absolute path so the sandbox manifest grants a
+    // concrete root, never the gateway process's incidental cwd or a surprising relative path.
+    const cwd = isAbsolute(cfg.cwd) ? cfg.cwd : resolvePath(cfg.cwd);
     const env: Record<string, string> = {
       NIMBUS_PREFLIGHT_REF: params.ref,
       NIMBUS_PREFLIGHT_SURFACE: params.changedSurface.join(","),
     };
     const child = runner.spawn(cfg.command, [...cfg.args], {
-      manifest: preflightManifest(cfg.cwd),
+      manifest: preflightManifest(cwd),
       env,
-      cwd: cfg.cwd,
+      cwd,
       stdio: "ignore",
     });
     const { code, timedOut } = await awaitExit(child, cfg.timeoutSeconds * 1000);
@@ -2108,8 +2123,15 @@ Run: `timeout 60 bun test packages/gateway/src/ipc/agents-rpc.preflight.test.ts`
 
 ```typescript
 // packages/cli/src/commands/preflight.test.ts
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { parsePreflightArgs } from "./preflight.ts";
+
+// `runPreflightCli` sets process.exitCode for the --strict exit-code contract; reset to 0 (NOT
+// undefined — restoring undefined reads as a coverage fail) so a leak can't redden the suite (Q2,
+// [[bun-test-exit-code-leak]]). The parse-only tests below don't set it, but the guard is cheap.
+afterEach(() => {
+  process.exitCode = 0;
+});
 
 test("preflight run: ref + --namespace + --strict", () => {
   expect(parsePreflightArgs(["HEAD~1..HEAD", "--namespace", "project:zurich", "--strict", "--json"])).toEqual({
@@ -2137,7 +2159,7 @@ test("preflight approve <id>", () => {
 import { IPCClient } from "@nimbus-dev/client";
 import { getCliPlatformPaths, readGatewayState } from "../platform/paths.ts";
 import { type PreflightBrief, isPreflightBrief } from "../types/agents.ts";
-import { runAgentBriefCli } from "./_agent-brief-cli.ts";
+import { flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
 
 const PREFLIGHT_TIMEOUT_MS = 600_000; // 10 min — downstream owners approve interactively
 
@@ -2162,9 +2184,7 @@ export function parsePreflightArgs(args: string[]): PreflightCliArgs {
     if (a === "--json") json = true;
     else if (a === "--strict") strict = true;
     else if (a === "--namespace") {
-      const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) throw new Error("--namespace requires a value");
-      namespace = v.trim();
+      namespace = flagValue(args, i, "--namespace");
       i += 1;
     } else if (a !== undefined && !a.startsWith("--")) positional.push(a);
   }
@@ -2262,7 +2282,7 @@ git commit -m "feat(phase6-slice6b): Tauri allowlist (86→88) + I24 docs + CHAN
 
 Mirror the Slice-2 two-gateway invoke integration test (real `LanServer` + real over-the-wire client between two in-process gateways; sandbox runner faked via the `preflight` ctx's `runCommand`).
 
-- [ ] **Step 1: Write the preflight two-gateway test** — boot two `buildFederationLanServer` instances (peer up + peer down), pair them (reuse the Slice-1/2 pairing helper), grant the upstream peer on the downstream namespace, configure the downstream `preflight` ctx with `requestApproval: async () => true` + a fake `runCommand` returning `{passed:true,...}`, then call `fanOutPreflight` from the upstream and assert the aggregated `pass`. Add a second case: `requestApproval: async () => false` → upstream sees `declined`. **Reuse the exact two-gateway harness from `packages/gateway/test/` Slice-2 invoke integration** (find it via grep `answerFederatedInvoke` in `*integration*.test.ts`); copy its setup verbatim and swap the method.
+- [ ] **Step 1: Write the preflight two-gateway test** — boot two `buildFederationLanServer` instances (peer up + peer down), pair them (reuse the Slice-1/2 pairing helper), grant the upstream peer on the downstream namespace, configure the downstream `preflight` ctx with `requestApproval: async () => true` + a fake `runCommand` returning `{passed:true,...}`, then call `fanOutPreflight` from the upstream and assert the aggregated `pass`. Add a second case: `requestApproval: async () => false` → upstream sees `declined`. **Reuse the exact two-gateway harness from `packages/gateway/test/` Slice-2 invoke integration** (find it via grep `answerFederatedInvoke` in `*integration*.test.ts`); copy its setup verbatim and swap the method. **Both `LanServer` instances MUST bind `port: 0`** (ephemeral / OS-assigned) so parallel CI runs never collide on a fixed port (S2) — verify the reused harness does this; read the actual listening port back from the server after `listen()` for the outbound `addLanPeer` host_port.
 
 - [ ] **Step 2: Write the janitor integration test** — two gateways; downstream indexes an `item` mentioning `i-12345` at a known `modified_at`; upstream calls `fanOutProbe`; assert `touched`/`lastSeenDaysAgo`. Second case: downstream offline → gap.
 
@@ -2318,4 +2338,15 @@ git commit -m "test(phase6-slice6b): reseed coverage baseline from PR merge lcov
 
 - **Spec coverage:** janitor (T2-T6) · preflight gate/I24 (T7-T10) · preflight agent/CLI (T11-T13) · config (T1) · surfaces/docs (T14) · acceptance (T15) · coverage (T16). Q1 ref-validation (T2) · Q2 --allow-gaps (T5/T6) · Q3 exit-codes (T13) · Q4 paths-from-config (T1/T8) · S1 regexes (T2/T9) · S3 timeout+duration (T8). ✅ All spec sections mapped.
 - **Type consistency:** `PreflightCommandConfig` (T1) used in T8/T9/T10 · `PreflightRunResult.durationMs` (T8) consumed in T9 audit · `PeerProbeResult`/`PeerPreflightResult` (T3/T11) consumed in T5/T12 · brief `kind` strings `"janitor"`/`"preflight"` consistent across findings/synthesize/render/CLI-types · `federation.preflight`/`federation.preflightRespond`/`federation.probe` method names consistent T4/T10/T11. ✅
-- **Deferred (do NOT implement):** `nimbus preflight run-local` dry-run (S2); per-process CPU/mem accounting (S3); scheduled janitor sweeps; org-policy command allowlisting; janitor enqueuing executable pending actions; diff application. The flagship reserves `executor.ts`/`tool-output-envelope.ts` — untouched.
+- **Deferred (do NOT implement):** `nimbus preflight run-local` dry-run (spec S2); per-process CPU/mem accounting (spec S3); scheduled janitor sweeps; org-policy command allowlisting; janitor enqueuing executable pending actions; diff application. The flagship reserves `executor.ts`/`tool-output-envelope.ts` — untouched.
+
+## Plan review dispositions
+
+Dispositions of
+[the plan review](./2026-06-11-phase6-slice6b-federated-action-requests-review.md). All FIXED (none deferred).
+
+- **Q1 (broker `.unref?.()` vs spec §6) — FIXED (clarify).** Added a note to Task 7: the `.unref?.()` is verbatim the shipped `FederationConsentBroker` (its identical TTL test passes in CI); the §6 trap is `await setTimeout(delay)`, not a Promise-internal TTL safety-net. Do not remove it.
+- **Q2 (`process.exitCode` leak in CLI tests) — FIXED.** Task 13's `preflight.test.ts` gains `afterEach(() => { process.exitCode = 0; })` (`= 0`, not `undefined` — per [[bun-test-exit-code-leak]]).
+- **Q3 (sandbox `cwd` outside workspace) — FIXED.** Task 8's `runPreflightCommand` normalizes `cwd` via `isAbsolute`/`resolve` before building the manifest, with a comment that `cwd` is owner-controlled local config (a foot-gun guard, not a caller boundary — the upstream can't set it).
+- **S1 (duplicated `flagValue`) — FIXED (proactive).** `flagValue` is exported once from `_agent-brief-cli.ts` (Task 6) and imported by both `janitor.ts` and `preflight.ts`, removing the duplication before SonarCloud sees it.
+- **S2 (integration port binding) — FIXED (note).** Task 15 now explicitly requires both `LanServer`s bind `port: 0` (ephemeral) and read the assigned port back, for parallel-CI safety.
