@@ -12,6 +12,14 @@ function basename(fileOrPath: string): string {
   return parts.at(-1) ?? fileOrPath;
 }
 
+/** Escape SQL LIKE metacharacters so the bound value matches literally (no wildcard leakage). */
+function escapeLikeWildcards(s: string): string {
+  return s
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll("%", String.raw`\%`)
+    .replaceAll("_", String.raw`\_`);
+}
+
 /**
  * Resolve a user-supplied file argument to a machine-portable match token. Prefers the local
  * graph's symbol label (service-relative, e.g. a repo-relative path) so the token matches across
@@ -25,12 +33,13 @@ export function resolveMatchToken(db: Database, fileArg: string): ResolvedToken 
   if (exact?.id !== undefined && exact.label !== undefined) {
     return { entityId: exact.id, token: exact.label };
   }
+  const escaped = escapeLikeWildcards(base);
   const byBase = db
     .query(
-      "SELECT id, label FROM graph_entity WHERE type = 'symbol' AND label LIKE '%' || ? || '%' " +
+      String.raw`SELECT id, label FROM graph_entity WHERE type = 'symbol' AND label LIKE '%' || ? || '%' ESCAPE '\' ` +
         "ORDER BY length(label) ASC, id ASC LIMIT 1",
     )
-    .get(base) as { id?: string; label?: string } | null;
+    .get(escaped) as { id?: string; label?: string } | null;
   if (byBase?.id !== undefined && byBase.label !== undefined) {
     return { entityId: byBase.id, token: byBase.label };
   }
@@ -39,10 +48,11 @@ export function resolveMatchToken(db: Database, fileArg: string): ResolvedToken 
 
 /** Local check: does a symbol whose label contains `token` still exist in the graph? */
 export function symbolExistsLocally(db: Database, token: string): boolean {
+  const escaped = escapeLikeWildcards(token);
   const row = db
     .query(
-      "SELECT 1 AS hit FROM graph_entity WHERE type = 'symbol' AND label LIKE '%' || ? || '%' LIMIT 1",
+      String.raw`SELECT 1 AS hit FROM graph_entity WHERE type = 'symbol' AND label LIKE '%' || ? || '%' ESCAPE '\' LIMIT 1`,
     )
-    .get(token) as { hit?: number } | null;
+    .get(escaped) as { hit?: number } | null;
   return row?.hit === 1;
 }

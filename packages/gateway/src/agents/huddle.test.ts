@@ -6,6 +6,23 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { emitHuddleBrief, runHuddle } from "./huddle.ts";
 
+/**
+ * Polls `predicate()` until it returns true or the deadline passes.
+ * Deterministic replacement for fixed `setTimeout` sleeps in emit tests.
+ */
+async function waitForNotify(
+  predicate: () => boolean,
+  { timeoutMs = 1_000, stepMs = 5 }: { timeoutMs?: number; stepMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForNotify: timed out after ${timeoutMs} ms`);
+    }
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
 const SELF: BoxKeypair = { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) };
 
 function freshDb(): Database {
@@ -219,7 +236,7 @@ describe("emitHuddleBrief", () => {
       },
     );
     expect(res.sessionId).toBe("s2");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitForNotify(() => events.includes("huddle.briefReady"));
     expect(events).toContain("huddle.briefReady");
     db.close();
   });

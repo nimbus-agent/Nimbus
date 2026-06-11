@@ -129,7 +129,13 @@ export async function fanOutExpertise(
           row.peer_pubkey,
           "federation.expertise",
           { query: req.query, purpose: req.purpose },
-        )) as { rank?: ExpertiseRank };
+        )) as { kind?: string; rank?: ExpertiseRank };
+        // Defensive: treat a gated/error envelope as rank "none" (consistent with fanOutQuery).
+        if ((result as { kind?: string }).kind === "error") {
+          return {
+            ok: { peerId: row.peer_id, displayName: row.display_name, rank: "none" },
+          };
+        }
         return {
           ok: { peerId: row.peer_id, displayName: row.display_name, rank: result.rank ?? "none" },
         };

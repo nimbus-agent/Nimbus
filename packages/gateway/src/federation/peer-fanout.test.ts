@@ -199,4 +199,24 @@ describe("fanOutExpertise", () => {
     );
     expect(out.perPeer).toEqual([]);
   });
+
+  it("treats a kind:'error' expertise envelope as rank:'none' (no crash, no gap)", async () => {
+    const db = freshDb();
+    const index = seedTwoPeers(db);
+    const send = async (_h: string, _p: number, _s: BoxKeypair, pubkey: Uint8Array) => {
+      // peer:aa returns an error envelope (e.g. expertise is gated); peer:bb returns normal rank.
+      if (pubkey[0] === 1) return { kind: "error", error: "no_grant" };
+      return { rank: "high" };
+    };
+    const out = await fanOutExpertise(
+      { index, selfIdentity: SELF, sendOverWire: send, store: new KnownNamespaceStore(db) },
+      { query: "auth.ts", purpose: "ghost" },
+    );
+    // Both peers resolve to perPeer entries (error envelope → rank "none", not a gap, not a throw).
+    expect(out.gaps).toHaveLength(0);
+    expect(out.perPeer).toEqual([
+      { peerId: "peer:aa", displayName: "Alice", rank: "none" },
+      { peerId: "peer:bb", displayName: "Bob", rank: "high" },
+    ]);
+  });
 });

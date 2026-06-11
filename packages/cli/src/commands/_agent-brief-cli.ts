@@ -31,6 +31,10 @@ function awaitBrief<TFindings>(
   return new Promise<{ brief: string; findings: TFindings }>((resolve, reject) => {
     onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
     client.onNotification(`${spec.kind}.briefReady`, (params: unknown) => {
+      if (params === null || typeof params !== "object") {
+        reject(new Error(`Malformed ${spec.kind}.briefReady payload`));
+        return;
+      }
       const p = params as { sessionId?: string; brief?: string; findings?: unknown };
       if (typeof p.brief !== "string" || !spec.guard(p.findings)) {
         reject(new Error(`Malformed ${spec.kind}.briefReady payload`));
@@ -39,6 +43,10 @@ function awaitBrief<TFindings>(
       resolve({ brief: p.brief, findings: p.findings });
     });
     client.onNotification(`${spec.kind}.briefError`, (params: unknown) => {
+      if (params === null || typeof params !== "object") {
+        reject(new Error("Agent failed"));
+        return;
+      }
       const p = params as { error?: string };
       reject(new Error(p.error ?? "Agent failed"));
     });
@@ -56,15 +64,13 @@ export async function runAgentBriefCli<TFindings>(
   }
 
   const client = new IPCClient(state.socketPath);
-  await client.connect();
-  registerInteractiveCliIpcHandlers(client);
-
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const briefPromise = awaitBrief(client, spec, (t) => {
-    timeout = t;
-  });
-
   try {
+    await client.connect();
+    registerInteractiveCliIpcHandlers(client);
+    const briefPromise = awaitBrief(client, spec, (t) => {
+      timeout = t;
+    });
     await client.call<{ sessionId: string }>(`agents.${spec.kind}`, spec.params);
     const { brief, findings } = await briefPromise;
     if (spec.json) {
@@ -77,6 +83,7 @@ export async function runAgentBriefCli<TFindings>(
     process.exit(2);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    // IPCClient.disconnect() is safe even when connect() was never called (null socket guards).
     await client.disconnect();
   }
 }

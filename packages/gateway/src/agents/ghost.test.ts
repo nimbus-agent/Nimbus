@@ -6,6 +6,23 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { emitGhostBrief, runGhost } from "./ghost.ts";
 
+/**
+ * Polls `predicate()` until it returns true or the deadline passes.
+ * Deterministic replacement for fixed `setTimeout` sleeps in emit tests.
+ */
+async function waitForNotify(
+  predicate: () => boolean,
+  { timeoutMs = 1_000, stepMs = 5 }: { timeoutMs?: number; stepMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForNotify: timed out after ${timeoutMs} ms`);
+    }
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
 const SELF: BoxKeypair = { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) };
 
 function freshDb(): Database {
@@ -401,11 +418,11 @@ describe("runGhost", () => {
       },
     );
     expect(res.sessionId).toBe("s-llm");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitForNotify(() => events.some((e) => e.method === "ghost.briefReady"));
     expect(events.some((e) => e.method === "ghost.briefReady")).toBe(true);
-    // llm may or may not be invoked when there are zero findings; the assertion that matters for
-    // the branch is that the `llm !== undefined` spread path executed without error.
-    expect(llmCalls).toBeGreaterThanOrEqual(0);
+    // synthesize() calls opts.llm.generateMarkdown whenever opts.llm is defined (regardless of
+    // findings count) — verify the LLM was actually invoked via the injected synthesizer.
+    expect(llmCalls).toBeGreaterThanOrEqual(1);
     db.close();
   });
 
@@ -426,8 +443,8 @@ describe("runGhost", () => {
       },
     );
     expect(res.sessionId).toBe("s9");
-    // emitBriefWithSynthesis runs the build fire-and-forget; wait a tick for the notification.
-    await new Promise((r) => setTimeout(r, 10));
+    // emitBriefWithSynthesis runs the build fire-and-forget; poll until the notification arrives.
+    await waitForNotify(() => events.some((e) => e.method === "ghost.briefReady"));
     expect(events.some((e) => e.method === "ghost.briefReady")).toBe(true);
     db.close();
   });

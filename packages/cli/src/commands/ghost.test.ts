@@ -284,4 +284,47 @@ describe("runGhostCli — dispatcher", () => {
     await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("Malformed");
   });
+
+  // Fix 6: null params guard in briefReady callback.
+  it("exits 2 when briefReady fires with null params", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          if (method === "agents.ghost") {
+            setTimeout(() => {
+              handlers.get("ghost.briefReady")?.(null);
+            }, 0);
+            return { sessionId: "s" };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("Malformed");
+  });
+
+  // Fix 7: connect() rejection is caught inside the try block → exit 2.
+  it("exits 2 when client.connect() rejects", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => undefined,
+        connect: async () => {
+          throw new Error("ECONNREFUSED");
+        },
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("ECONNREFUSED");
+  });
 });
