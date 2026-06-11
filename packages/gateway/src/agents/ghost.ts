@@ -4,7 +4,7 @@ import {
   fanOutQuery,
   type PeerExpertiseResult,
 } from "../federation/peer-fanout.ts";
-import type { FederatedItem } from "../federation/types.ts";
+import type { ExpertiseRank, FederatedItem } from "../federation/types.ts";
 import type { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { sendFederatedOverWire } from "../ipc/lan-client.ts";
@@ -40,11 +40,12 @@ function fanoutDeps(ctx: GhostContext) {
   return deps;
 }
 
-function rankWeight(rank: string): number {
+function rankWeight(rank: ExpertiseRank): number {
+  // defensive: "none" is filtered earlier in the findings loop
+  if (rank === "none") return 0;
   if (rank === "high") return 3;
   if (rank === "medium") return 2;
-  if (rank === "low") return 1;
-  return 0;
+  return 1; // "low"
 }
 
 export async function runGhost(input: GhostInput, ctx: GhostContext): Promise<GhostBrief> {
@@ -73,8 +74,12 @@ export async function runGhost(input: GhostInput, ctx: GhostContext): Promise<Gh
   for (const r of exp.perPeer) rankByPeer.set(r.peerId, r);
 
   const ctxByPeer = new Map<string, FederatedItem[]>();
-  for (const ns of input.namespaces) {
-    const q = await fanOutQuery(deps, { namespace: ns, purpose: "ghost", types: [...GHOST_TYPES] });
+  const queryResults = await Promise.all(
+    input.namespaces.map((ns) =>
+      fanOutQuery(deps, { namespace: ns, purpose: "ghost", types: [...GHOST_TYPES] }),
+    ),
+  );
+  for (const q of queryResults) {
     gaps.push(...q.gaps);
     for (const peer of q.perPeer) {
       const matched = peer.items.filter(
@@ -92,6 +97,8 @@ export async function runGhost(input: GhostInput, ctx: GhostContext): Promise<Gh
   for (const [peerId, rankRes] of rankByPeer) {
     if (rankRes.rank === "none") continue;
     const context = (ctxByPeer.get(peerId) ?? [])
+      // When the referenced symbol no longer exists locally, drop commit context (a fix against
+      // since-rewritten code is noise); PRs/issues/incidents retain discussion value, so keep them.
       .filter((it) => symbolExists || it.type !== "commit")
       .sort((a, b) => b.modifiedAt - a.modifiedAt)
       .map((it) => ({
@@ -100,6 +107,7 @@ export async function runGhost(input: GhostInput, ctx: GhostContext): Promise<Gh
         service: it.service,
         modifiedAt: it.modifiedAt,
       }));
+    if (context.length === 0) continue;
     const who = rankRes.displayName ?? peerId;
     findings.push({
       peerId,
