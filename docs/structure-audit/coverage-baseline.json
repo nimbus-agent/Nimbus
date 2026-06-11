@@ -336,7 +336,7 @@
     },
     "packages/gateway/src/people/person-store.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 77.23
+      "min_branch_pct": 79.21
     },
     "packages/gateway/src/platform/dirs.ts": {
       "min_line_pct": 80,
