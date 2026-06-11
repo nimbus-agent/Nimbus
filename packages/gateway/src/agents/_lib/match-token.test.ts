@@ -23,6 +23,19 @@ describe("resolveMatchToken", () => {
     db.close();
   });
 
+  it("resolves via the exact label branch when fileArg equals a stored label", () => {
+    const db = freshDb();
+    db.run("INSERT INTO graph_entity (id, type, label, external_id) VALUES (?, 'symbol', ?, ?)", [
+      "e2",
+      "src/auth.ts",
+      "sym:src/auth.ts",
+    ]);
+    const r = resolveMatchToken(db, "src/auth.ts");
+    expect(r.token).toBe("src/auth.ts");
+    expect(r.entityId).toBe("e2");
+    db.close();
+  });
+
   it("falls back to the basename when no entity resolves", () => {
     const db = freshDb();
     const r = resolveMatchToken(db, "/Users/bob/project/src/auth.ts");
