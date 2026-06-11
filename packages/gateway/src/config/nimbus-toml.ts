@@ -1156,6 +1156,77 @@ export function loadNimbusChatopsFromConfigDir(configDir: string): NimbusChatops
   );
 }
 
+// ---------------------------------------------------------------------------
+// [federation.preflight."<namespace>"] — per-namespace downstream preflight command (I24)
+// ---------------------------------------------------------------------------
+
+export interface PreflightCommandConfig {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly timeoutSeconds: number;
+}
+
+export type PreflightConfig = ReadonlyMap<string, PreflightCommandConfig>;
+
+const PREFLIGHT_TABLE_PREFIX = '[federation.preflight."';
+const PREFLIGHT_TIMEOUT_DEFAULT = 300;
+const PREFLIGHT_TIMEOUT_CAP = 1800;
+
+export function parsePreflightConfig(source: string): PreflightConfig {
+  const accum = new Map<string, Record<string, string>>();
+  let currentId: string | undefined;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") continue;
+    if (isTableHeader(trimmed)) {
+      currentId =
+        trimmed.startsWith(PREFLIGHT_TABLE_PREFIX) && trimmed.endsWith('"]')
+          ? trimmed.slice(PREFLIGHT_TABLE_PREFIX.length, -2)
+          : undefined;
+      if (currentId !== undefined && currentId.length > 0 && !accum.has(currentId)) {
+        accum.set(currentId, {});
+      } else if (currentId !== undefined && currentId.length === 0) {
+        currentId = undefined;
+      }
+      continue;
+    }
+    if (currentId === undefined) continue;
+    const kv = splitKeyValue(trimmed);
+    const bucket = accum.get(currentId);
+    if (kv !== undefined && bucket !== undefined) bucket[kv.key] = kv.valRaw;
+  }
+
+  const out = new Map<string, PreflightCommandConfig>();
+  for (const [ns, kv] of accum.entries()) {
+    const commandRaw = kv["command"];
+    if (commandRaw === undefined) continue; // command-less table → ignored
+    const command = parseString(commandRaw);
+    if (command.length === 0) continue;
+    const timeoutParsed =
+      kv["timeout_seconds"] === undefined ? undefined : parseIntDec(kv["timeout_seconds"]);
+    const timeoutSeconds =
+      timeoutParsed === undefined || timeoutParsed <= 0
+        ? PREFLIGHT_TIMEOUT_DEFAULT
+        : Math.min(timeoutParsed, PREFLIGHT_TIMEOUT_CAP);
+    out.set(ns, {
+      command,
+      args: kv["args"] === undefined ? [] : parseStringArray(kv["args"]),
+      cwd: kv["cwd"] === undefined ? "." : parseString(kv["cwd"]),
+      timeoutSeconds,
+    });
+  }
+  return out;
+}
+
+export function loadNimbusPreflightFromConfigDir(configDir: string): PreflightConfig {
+  return loadTomlSection<PreflightConfig>(
+    join(configDir, "nimbus.toml"),
+    new Map(),
+    parsePreflightConfig,
+  );
+}
+
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
 // `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`
