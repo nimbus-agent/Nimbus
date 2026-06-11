@@ -113,6 +113,10 @@ export async function tryDispatchAgentsRpc(
       db: ctx.options.localIndex.getDatabase(),
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+      index: ctx.options.localIndex,
+      ...(ctx.options.federationIdentity === undefined
+        ? {}
+        : { selfIdentity: ctx.options.federationIdentity }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

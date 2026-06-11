@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, it, mock, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "./agents-rpc.ts";
 
@@ -184,5 +184,54 @@ describe("dispatchAgentsRpc — agents.catchup", () => {
     const calls = (ctx.notify as ReturnType<typeof mock>).mock.calls; // NOSONAR S4325: cast exposes the bun mock's .mock.calls (ctx.notify is typed as a plain fn)
     const briefReady = calls.find((c) => c[0] === "catchup.briefReady");
     expect(briefReady).toBeDefined();
+  });
+});
+
+describe("agents.ghost / conflicts / huddle dispatch", () => {
+  function ctxWithFederation() {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const index = new LocalIndex(db);
+    return {
+      db,
+      notify: mock(() => {}),
+      index,
+      selfIdentity: { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) },
+      sendOverWire: async () => ({ kind: "ok" as const, response: { items: [] } }),
+    };
+  }
+
+  it("agents.ghost returns a sessionId (hit)", async () => {
+    const out = await dispatchAgentsRpc("agents.ghost", { file: "auth.ts" }, ctxWithFederation());
+    expect(out.kind).toBe("hit");
+  });
+
+  it("agents.conflicts validates the file param", async () => {
+    await expect(dispatchAgentsRpc("agents.conflicts", {}, ctxWithFederation())).rejects.toThrow();
+  });
+
+  it("agents.huddle works with no file param", async () => {
+    const out = await dispatchAgentsRpc("agents.huddle", { sinceMs: 1000 }, ctxWithFederation());
+    expect(out.kind).toBe("hit");
+  });
+
+  it("agents.ghost accepts namespaces array", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.ghost",
+      { file: "auth.ts", namespaces: ["a", "b"] },
+      ctxWithFederation(),
+    );
+    expect(out.kind).toBe("hit");
+  });
+
+  it("agents.ghost without federation deps still returns a brief (degraded)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const out = await dispatchAgentsRpc(
+      "agents.ghost",
+      { file: "auth.ts" },
+      { db, notify: mock(() => {}) },
+    );
+    expect(out.kind).toBe("hit");
   });
 });
