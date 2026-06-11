@@ -37,6 +37,7 @@ import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
+import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
@@ -391,6 +392,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   simpleStep(35, 36, "org_policy_state + policy_anchor_pin (policy v36)", POLICY_V36_SQL),
   simpleStep(36, 37, "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37)", GDPR_V37_SQL),
+  simpleStep(37, 38, "federation_known_namespaces asker-side cache", KNOWN_NAMESPACES_V38_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
