@@ -304,7 +304,7 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
 
   // --- Responder B ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 33);
+  runIndexedSchemaMigrations(bDb, 38);
   const bIndex = new LocalIndex(bDb);
   bDb.run(`INSERT INTO item (id,service,type,external_id,title,body_preview,modified_at,synced_at,metadata)
            VALUES ('github:pr1','github','pull_request','pr1','Fix auth','body1',10,1,'{}')`);
@@ -354,7 +354,7 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
 
   // --- Asker A ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 33);
+  runIndexedSchemaMigrations(aDb, 38);
   const aIndex = new LocalIndex(aDb);
   // A knows B as an outbound peer (host/port/pubkey):
   aIndex.addLanPeer({
@@ -767,4 +767,80 @@ test("federation.auditExport returns the metadata-only slice for a standing gran
     expect(v.kind).toBe("ok");
     expect(v.entries.some((e) => e.actionType.startsWith("federation."))).toBe(true);
   }
+});
+
+// ---------------------------------------------------------------------------
+// federation.ask — asker-side V38 KnownNamespaceStore cache recording (Task 10).
+// Records (peerId, namespace) ONLY on a kind:"ok" answer; skips on kind:"error".
+// Uses the sendOverWire DI seam so the test never needs a live LAN server.
+// ---------------------------------------------------------------------------
+
+test("federation.ask records the namespace on a successful (kind ok) answer", async () => {
+  const askDb = new Database(":memory:");
+  runIndexedSchemaMigrations(askDb, 38);
+  const askIndex = new LocalIndex(askDb);
+  const selfKp = generateBoxKeypair();
+  const peerPubkey = new Uint8Array(32).fill(7);
+  const peerId = "peer:ns-cache-ok";
+  askIndex.addLanPeer({
+    peerId,
+    peerPubkey,
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: 7475,
+  });
+  const askCtx: FederationRpcContext = {
+    db: askDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(askIndex),
+    index: askIndex,
+    selfIdentity: selfKp,
+    sendOverWire: async () => ({ kind: "ok", response: { items: [] } }),
+  };
+  await dispatchFederationRpc(
+    "federation.ask",
+    { peerId, namespace: "project:zurich", purpose: "p" },
+    askCtx,
+  );
+  const rows = askDb.query("SELECT namespace FROM federation_known_namespaces").all();
+  expect(rows).toEqual([{ namespace: "project:zurich" }]);
+  askIndex.close();
+});
+
+test("federation.ask does NOT record on a kind error answer", async () => {
+  const askDb = new Database(":memory:");
+  runIndexedSchemaMigrations(askDb, 38);
+  const askIndex = new LocalIndex(askDb);
+  const selfKp = generateBoxKeypair();
+  const peerPubkey = new Uint8Array(32).fill(8);
+  const peerId = "peer:ns-cache-err";
+  askIndex.addLanPeer({
+    peerId,
+    peerPubkey,
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: 7475,
+  });
+  const askCtx: FederationRpcContext = {
+    db: askDb,
+    consentTimeoutMs: 1000,
+    notify: () => {},
+    discovery: new InMemoryDiscoveryProvider(),
+    pairing: new PeerPairing(askIndex),
+    index: askIndex,
+    selfIdentity: selfKp,
+    sendOverWire: async () => ({ kind: "error", error: "no_grant" }),
+  };
+  await dispatchFederationRpc(
+    "federation.ask",
+    { peerId, namespace: "denied:ns", purpose: "p" },
+    askCtx,
+  );
+  const rows = askDb.query("SELECT COUNT(*) AS n FROM federation_known_namespaces").get() as {
+    n: number;
+  };
+  expect(rows.n).toBe(0);
+  askIndex.close();
 });

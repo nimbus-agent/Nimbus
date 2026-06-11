@@ -20,6 +20,7 @@ import type {
   FederationRole,
   NamespaceFilter,
 } from "../federation/types.ts";
+import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
 import { type DeletionRecord, signDeletionRecord } from "../policy/deletion-record.ts";
 import { servePolicy } from "../policy/policy-distribution.ts";
@@ -47,6 +48,8 @@ export interface FederationRpcContext {
   // Asker-side over-the-wire client deps (present only on the local dispatch path):
   readonly index?: LocalIndex;
   readonly selfIdentity?: BoxKeypair;
+  // DI seam: injected in tests to replace the real sendFederatedOverWire (avoids mock.module).
+  readonly sendOverWire?: typeof sendFederatedOverWire;
   // I18: when identity is enabled, the answerer's own operator identity must be valid to federate.
   readonly identityGuard?: { enabled: boolean; isOperatorValid: () => boolean };
   // Team Vault (Slice 2). Present on the answering (anchor) dispatch path.
@@ -339,14 +342,16 @@ export async function dispatchFederationRpc(
     "federation.ask": async (p) => {
       const rec = asRecord(p);
       const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      const namespace = requireString(rec, "namespace");
       const body: Record<string, unknown> = {
-        namespace: requireString(rec, "namespace"),
+        namespace,
         purpose: requireString(rec, "purpose"),
         ...(Array.isArray(rec["types"])
           ? { types: rec["types"].filter((t): t is string => typeof t === "string") }
           : {}),
       };
-      return sendFederatedOverWire(
+      const send = ctx.sendOverWire ?? sendFederatedOverWire;
+      const result = await send(
         row.host_ip as string,
         row.host_port as number,
         selfIdentity,
@@ -354,6 +359,11 @@ export async function dispatchFederationRpc(
         "federation.query",
         body,
       );
+      // Asker-side cache (V38): record the namespace only when the peer actually answered.
+      if ((result as { kind?: string }).kind === "ok") {
+        new KnownNamespaceStore(ctx.db).record(row.peer_id, namespace, Date.now());
+      }
+      return result;
     },
     // Asker-side: send the content-free expertise probe OVER THE WIRE.
     "federation.askExpertise": async (p) => {
