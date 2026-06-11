@@ -808,7 +808,7 @@ describe("fanOutQuery", () => {
     expect(store.list()).toEqual([{ peerId: "peer:aa", namespace: "project:zurich" }]);
   });
 
-  it("skips peers with a null host and notes a gap", async () => {
+  it("silently skips peers with a null host (matches team.auditMerged)", async () => {
     const db = freshDb();
     const idx = new LocalIndex(db);
     idx.addLanPeer({
@@ -823,8 +823,11 @@ describe("fanOutQuery", () => {
       { index: idx, selfIdentity: SELF, sendOverWire: async () => ({ items: [] }), store: new KnownNamespaceStore(db) },
       { namespace: "ns", purpose: "ghost" },
     );
+    // A null-host peer is inbound-only (no dial-back address) — not a fan-out target and not a
+    // transient error. reachablePeers() filters it out BEFORE the pool, matching the shipped
+    // team.auditMerged convention (federation-rpc.ts: `if (host_ip === null) continue;`). No gap.
     expect(out.perPeer).toEqual([]);
-    expect(out.gaps).toHaveLength(1);
+    expect(out.gaps).toEqual([]);
   });
 });
 
@@ -959,6 +962,7 @@ export async function fanOutQuery(
       return { gap: gapForPeer(row, err) };
     }
   });
+  perPeer.sort((a, b) => a.peerId.localeCompare(b.peerId));
   return { perPeer, gaps };
 }
 
@@ -987,13 +991,15 @@ export async function fanOutExpertise(
       }
     },
   );
+  perPeer.sort((a, b) => a.peerId.localeCompare(b.peerId));
   return { perPeer, gaps };
 }
 ```
 
-> NOTE: `runPool` does not preserve input order across lanes for large peer sets; the expertise
-> test seeds 2 peers with concurrency 5, so both run in lane order and the assertion holds. If a
-> future test needs deterministic order with >5 peers, sort `perPeer` by `peerId` in the test.
+> NOTE: `runPool` does not preserve input order across concurrency lanes, so both fan-out functions
+> sort `perPeer` by `peerId` before returning. This removes display jitter (consecutive
+> `nimbus huddle` / `ghost` runs render peers in a stable order despite network-timing differences)
+> and makes the expertise test deterministic regardless of lane scheduling.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1127,6 +1133,12 @@ export function symbolExistsLocally(db: Database, token: string): boolean {
   return row?.hit === 1;
 }
 ```
+
+> NOTE: do NOT wrap the `LIKE` clauses in `LOWER()`. SQLite `LIKE` is already case-insensitive for
+> ASCII by default, so `%Auth.ts%` matches a stored `src/auth.ts` — the case-variant fallback is
+> already covered. `LOWER()` would only re-apply ASCII folding (SQLite's stock `lower()` is
+> ASCII-only too — it does not fix Unicode), while defeating index use. The only case-sensitive
+> probe is the exact `label = ?`; a case variant there falls through to the case-insensitive LIKE.
 
 - [ ] **Step 4: Run to verify it passes + typecheck + commit**
 
@@ -1613,7 +1625,8 @@ describe("runHuddle", () => {
     store.record("peer:aa", "project:zurich", 1);
     const brief = await runHuddle(
       { sinceMs: 100, namespaces: ["project:zurich"] },
-      { db, index, selfIdentity: SELF, sendOverWire: send, store, sessionId: "s1", notify: () => {} },
+      // now=600, sinceMs=100 -> cutoff=500: keeps modifiedAt 1000 & 500, drops "stale" (1).
+      { db, index, selfIdentity: SELF, sendOverWire: send, store, sessionId: "s1", notify: () => {}, now: () => 600 },
     );
     expect(brief.kind).toBe("huddle");
     expect(brief.contributions).toHaveLength(1);
@@ -1664,6 +1677,8 @@ export type HuddleContext = {
   llm?: SynthesizerLlm;
   notify: (method: string, params: unknown) => void;
   sessionId: string;
+  /** Injectable clock for deterministic window tests; production omits it (defaults Date.now). */
+  now?: () => number;
 };
 
 function lite(it: { title: string; snippet: string; service: string; modifiedAt: number }): FederatedItemLite {
@@ -1674,7 +1689,7 @@ export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise
   const start = performance.now();
   const gaps: GapNote[] = [];
   const sinceMs = input.sinceMs ?? DEFAULT_SINCE_MS;
-  const cutoff = Date.now() - sinceMs;
+  const cutoff = (ctx.now ?? Date.now)() - sinceMs;
 
   // Resolve namespaces: explicit, else the asker-side cache default.
   const namespaces =
