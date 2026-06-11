@@ -26,9 +26,14 @@ timeout_seconds = 99999
 
 [federation.preflight."b"]
 args = ["x"]
+
+[federation.preflight."c"]
+command = "run"
+timeout_seconds = 0
 `);
   expect(cfg.get("a")).toEqual({ command: "make check", args: [], cwd: ".", timeoutSeconds: 1800 });
   expect(cfg.has("b")).toBe(false); // no command → ignored
+  expect(cfg.get("c")?.timeoutSeconds).toBe(300); // timeout_seconds = 0 → default 300
 });
 
 test("absent section → empty map", () => {
