@@ -589,7 +589,7 @@ type FakeStmt = {
 /** Partial shape of bun:sqlite Database that repair.ts touches */
 type FakeRepairDb = {
   query: (sql: string) => FakeStmt;
-  run: (sql: string) => void;
+  run: (sql: string, ...rest: unknown[]) => void;
   transaction: (fn: () => void) => () => void;
 };
 
@@ -626,14 +626,16 @@ describe("repairIndex — catch false-arm: non-Error thrown from db.run", () => 
       query(sql: string): FakeStmt {
         return delegateRepairStmt(real, sql);
       },
-      run(sql: string): void {
+      run(sql: string, ...rest: unknown[]): void {
         // Intercept only the item_fts INSERT (both verify's integrity-check and
         // repair's rebuild).  All other .run() calls (PRAGMA foreign_keys, audit_log
-        // INSERT, etc.) are delegated to the real backing db.
+        // INSERT, etc.) are delegated to the real backing db — forwarding bound
+        // params so writeAuditEntry's parameterised INSERT actually executes.
         if (sql.includes("item_fts")) {
           throw nonError;
         }
-        real.run(sql);
+        const realRun = real.run.bind(real) as unknown as (s: string, ...r: unknown[]) => void;
+        realRun(sql, ...rest);
       },
       transaction(fn: () => void): () => void {
         return real.transaction(fn);
@@ -666,14 +668,16 @@ describe("repairIndex — catch false-arm: non-Error thrown from db.run", () => 
       query(sql: string): FakeStmt {
         return delegateRepairStmt(real, sql);
       },
-      run(sql: string): void {
+      run(sql: string, ...rest: unknown[]): void {
         // Intercept only the DELETE FROM sync_state write.  All other .run() calls
         // (PRAGMA foreign_keys = ON from checkForeignKeyIntegrity, audit_log
-        // INSERT from writeAuditEntry, etc.) are delegated to the real db.
+        // INSERT from writeAuditEntry, etc.) are delegated to the real db —
+        // forwarding bound params so the parameterised audit INSERT executes.
         if (sql.includes("DELETE FROM sync_state")) {
           throw nonError;
         }
-        real.run(sql);
+        const realRun = real.run.bind(real) as unknown as (s: string, ...r: unknown[]) => void;
+        realRun(sql, ...rest);
       },
       transaction(fn: () => void): () => void {
         return real.transaction(fn);

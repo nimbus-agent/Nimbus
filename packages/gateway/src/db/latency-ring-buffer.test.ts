@@ -11,6 +11,7 @@ import {
   recordSlowQuery,
   startLatencyFlushScheduler,
 } from "./latency-ring-buffer.ts";
+import { dbRun } from "./write.ts";
 
 // Fixed epoch used so all clock-dependent branches are deterministic.
 const FIXED_NOW = 1_000_000_000;
@@ -44,8 +45,14 @@ function createSlowQueryTable(db: Database): void {
   `);
 }
 
-function countRows(db: Database, table: string): number {
-  return (db.query(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
+// Fixed identifier mapping — no interpolated identifiers (DB-safety rule applies to tests too).
+type CountableTable = "query_latency_log" | "slow_query_log";
+const COUNT_SQL: Record<CountableTable, string> = {
+  query_latency_log: "SELECT COUNT(*) AS c FROM query_latency_log",
+  slow_query_log: "SELECT COUNT(*) AS c FROM slow_query_log",
+};
+function countRows(db: Database, table: CountableTable): number {
+  return (db.query(COUNT_SQL[table]).get() as { c: number }).c;
 }
 
 // ─── LatencyRingBuffer ────────────────────────────────────────────────────────
@@ -247,8 +254,10 @@ describe("flushLatencyBuffer", () => {
     // Insert an old slow-query row that should be pruned
     const SLOW_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
     const oldRecordedAt = FIXED_NOW - SLOW_RETENTION_MS - 1;
-    db.exec(
-      `INSERT INTO slow_query_log (query_text, latency_ms, query_type, recorded_at) VALUES ('q', 600, 'sql', ${oldRecordedAt})`,
+    dbRun(
+      db,
+      "INSERT INTO slow_query_log (query_text, latency_ms, query_type, recorded_at) VALUES (?, ?, ?, ?)",
+      ["q", 600, "sql", oldRecordedAt],
     );
     expect(countRows(db, "slow_query_log")).toBe(1);
 
@@ -269,8 +278,10 @@ describe("flushLatencyBuffer", () => {
     // Insert a row that is older than LATENCY_RETENTION_MS (24h)
     const LATENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
     const oldRecordedAt = FIXED_NOW - LATENCY_RETENTION_MS - 1;
-    db.exec(
-      `INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (100, 'sql', ${oldRecordedAt})`,
+    dbRun(
+      db,
+      "INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (?, ?, ?)",
+      [100, "sql", oldRecordedAt],
     );
     expect(countRows(db, "query_latency_log")).toBe(1);
 
@@ -422,8 +433,10 @@ describe("readLatencyPercentilesFromDb", () => {
 
     // Insert rows within the retention window (FIXED_NOW - 1h)
     for (let i = 1; i <= 10; i += 1) {
-      db.exec(
-        `INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (${i * 10}, 'sql', ${FIXED_NOW - 3600000})`,
+      dbRun(
+        db,
+        "INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (?, ?, ?)",
+        [i * 10, "sql", FIXED_NOW - 3600000],
       );
     }
 
@@ -440,8 +453,10 @@ describe("readLatencyPercentilesFromDb", () => {
     const LATENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
 
     // Insert rows older than retention window
-    db.exec(
-      `INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (999, 'sql', ${FIXED_NOW - LATENCY_RETENTION_MS - 1})`,
+    dbRun(
+      db,
+      "INSERT INTO query_latency_log (latency_ms, query_type, recorded_at) VALUES (?, ?, ?)",
+      [999, "sql", FIXED_NOW - LATENCY_RETENTION_MS - 1],
     );
 
     const result = readLatencyPercentilesFromDb(db, fixedClock);
