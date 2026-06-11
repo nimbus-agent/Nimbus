@@ -142,3 +142,134 @@ export function isCatchupBrief(x: unknown): x is CatchupBrief {
     typeof b["latencyMs"] === "number"
   );
 }
+
+export type GhostContextItem = {
+  title: string;
+  snippet: string;
+  service: string;
+  modifiedAt: number;
+};
+
+export type GhostFinding = {
+  peerId: string;
+  expert: string | null;
+  rank: "high" | "medium" | "low" | "none";
+  context: GhostContextItem[];
+  suggestedContact: string;
+};
+
+export type GhostBrief = {
+  kind: "ghost";
+  agentVersion: 1;
+  generatedAt: number;
+  latencyMs: number;
+  gaps: GapNote[];
+  query: { file: string };
+  startEntityId: string | null;
+  findings: GhostFinding[];
+};
+
+export function isGhostBrief(x: unknown): x is GhostBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "ghost" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["findings"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    b["query"] !== null &&
+    typeof b["query"] === "object"
+  );
+}
+
+export type ConflictCollision = {
+  peerId: string;
+  who: string | null;
+  service: string;
+  collisionType: "open_pr" | "assigned_ticket" | "recent_commit" | "open_branch";
+  title: string;
+  snippet: string;
+  modifiedAt: number;
+};
+
+export type ConflictBrief = {
+  kind: "conflict";
+  agentVersion: 1;
+  generatedAt: number;
+  latencyMs: number;
+  gaps: GapNote[];
+  query: { file: string };
+  startEntityId: string | null;
+  collisions: ConflictCollision[];
+};
+
+export function isConflictBrief(x: unknown): x is ConflictBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "conflict" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["collisions"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    b["query"] !== null &&
+    typeof b["query"] === "object"
+  );
+}
+
+export type HuddlePr = {
+  title: string;
+  snippet: string;
+  service: string;
+  modifiedAt: number;
+};
+
+export type HuddleTicket = {
+  title: string;
+  snippet: string;
+  service: string;
+  modifiedAt: number;
+};
+
+export type HuddleIncident = {
+  title: string;
+  snippet: string;
+  service: string;
+  modifiedAt: number;
+};
+
+export type HuddleContribution = {
+  peerId: string;
+  who: string | null;
+  prs: HuddlePr[];
+  tickets: HuddleTicket[];
+  incidents: HuddleIncident[];
+};
+
+export type HuddleBrief = {
+  kind: "huddle";
+  agentVersion: 1;
+  generatedAt: number;
+  latencyMs: number;
+  gaps: GapNote[];
+  query: { sinceMs: number };
+  contributions: HuddleContribution[];
+};
+
+export function isHuddleBrief(x: unknown): x is HuddleBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "huddle" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["contributions"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    b["query"] !== null &&
+    typeof b["query"] === "object"
+  );
+}
