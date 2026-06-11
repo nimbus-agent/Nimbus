@@ -10,6 +10,7 @@ import type { LocalIndex } from "../index/local-index.ts";
 import type { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
+import { buildFanoutDeps, pushFederationReachGaps } from "./_lib/fanout-deps.ts";
 import type { GapNote, GhostBrief, GhostFinding } from "./_lib/findings.ts";
 import { resolveMatchToken, symbolExistsLocally } from "./_lib/match-token.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
@@ -29,17 +30,6 @@ export type GhostContext = {
   sessionId: string;
 };
 
-function fanoutDeps(ctx: GhostContext) {
-  const deps: {
-    index: LocalIndex;
-    selfIdentity: BoxKeypair;
-    store: KnownNamespaceStore;
-    sendOverWire?: typeof sendFederatedOverWire;
-  } = { index: ctx.index, selfIdentity: ctx.selfIdentity, store: ctx.store };
-  if (ctx.sendOverWire !== undefined) deps.sendOverWire = ctx.sendOverWire;
-  return deps;
-}
-
 function rankWeight(rank: ExpertiseRank): number {
   // defensive: "none" is filtered earlier in the findings loop
   if (rank === "none") return 0;
@@ -53,20 +43,12 @@ export async function runGhost(input: GhostInput, ctx: GhostContext): Promise<Gh
   const gaps: GapNote[] = [];
   const resolved = resolveMatchToken(ctx.db, input.file);
 
-  if (input.namespaces.length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no known namespaces — pass --namespace <name>",
-    });
-  }
-  if (ctx.index.listLanPeers().length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no paired peers — run `nimbus team pair`",
-    });
-  }
+  pushFederationReachGaps(gaps, {
+    namespaceCount: input.namespaces.length,
+    peerCount: ctx.index.listLanPeers().length,
+  });
 
-  const deps = fanoutDeps(ctx);
+  const deps = buildFanoutDeps(ctx);
 
   const exp = await fanOutExpertise(deps, { query: resolved.token, purpose: "ghost" });
   gaps.push(...exp.gaps);

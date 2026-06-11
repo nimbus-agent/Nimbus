@@ -5,6 +5,7 @@ import type { LocalIndex } from "../index/local-index.ts";
 import type { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
+import { buildFanoutDeps, pushFederationReachGaps } from "./_lib/fanout-deps.ts";
 import type { ConflictBrief, ConflictFinding, ConflictType, GapNote } from "./_lib/findings.ts";
 import { resolveMatchToken } from "./_lib/match-token.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
@@ -32,17 +33,6 @@ function classify(itemType: string): ConflictType {
   return "open_pr";
 }
 
-function fanoutDeps(ctx: ConflictContext) {
-  const deps: {
-    index: LocalIndex;
-    selfIdentity: BoxKeypair;
-    store: KnownNamespaceStore;
-    sendOverWire?: typeof sendFederatedOverWire;
-  } = { index: ctx.index, selfIdentity: ctx.selfIdentity, store: ctx.store };
-  if (ctx.sendOverWire !== undefined) deps.sendOverWire = ctx.sendOverWire;
-  return deps;
-}
-
 export async function runConflicts(
   input: ConflictInput,
   ctx: ConflictContext,
@@ -51,20 +41,12 @@ export async function runConflicts(
   const gaps: GapNote[] = [];
   const resolved = resolveMatchToken(ctx.db, input.file);
 
-  if (input.namespaces.length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no known namespaces — pass --namespace <name>",
-    });
-  }
-  if (ctx.index.listLanPeers().length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no paired peers — run `nimbus team pair`",
-    });
-  }
+  pushFederationReachGaps(gaps, {
+    namespaceCount: input.namespaces.length,
+    peerCount: ctx.index.listLanPeers().length,
+  });
 
-  const deps = fanoutDeps(ctx);
+  const deps = buildFanoutDeps(ctx);
 
   const collisions: ConflictFinding[] = [];
   const queryResults = await Promise.all(

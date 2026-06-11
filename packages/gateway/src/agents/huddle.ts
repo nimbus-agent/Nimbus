@@ -5,6 +5,7 @@ import type { LocalIndex } from "../index/local-index.ts";
 import type { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
+import { buildFanoutDeps, pushFederationReachGaps } from "./_lib/fanout-deps.ts";
 import type {
   FederatedItemLite,
   GapNote,
@@ -40,19 +41,6 @@ function lite(it: {
   return { title: it.title, snippet: it.snippet, service: it.service, modifiedAt: it.modifiedAt };
 }
 
-function fanoutDeps(ctx: HuddleContext) {
-  const deps: {
-    index: LocalIndex;
-    selfIdentity: BoxKeypair;
-    store: KnownNamespaceStore;
-    sendOverWire?: typeof sendFederatedOverWire;
-    now?: () => number;
-  } = { index: ctx.index, selfIdentity: ctx.selfIdentity, store: ctx.store };
-  if (ctx.sendOverWire !== undefined) deps.sendOverWire = ctx.sendOverWire;
-  if (ctx.now !== undefined) deps.now = ctx.now;
-  return deps;
-}
-
 export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise<HuddleBrief> {
   const start = performance.now();
   const gaps: GapNote[] = [];
@@ -63,20 +51,12 @@ export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise
     input.namespaces.length > 0
       ? input.namespaces
       : [...new Set(ctx.store.list().map((r) => r.namespace))];
-  if (namespaces.length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no known namespaces — pass --namespace <name>",
-    });
-  }
-  if (ctx.index.listLanPeers().length === 0) {
-    gaps.push({
-      category: "missing_connector",
-      detail: "no paired peers — run `nimbus team pair`",
-    });
-  }
+  pushFederationReachGaps(gaps, {
+    namespaceCount: namespaces.length,
+    peerCount: ctx.index.listLanPeers().length,
+  });
 
-  const deps = fanoutDeps(ctx);
+  const deps = buildFanoutDeps(ctx);
 
   const byPeer = new Map<string, HuddleContribution>();
   const queryResults = await Promise.all(
