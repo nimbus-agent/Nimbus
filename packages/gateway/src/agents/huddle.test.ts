@@ -179,6 +179,26 @@ describe("runHuddle", () => {
     expect(brief.gaps.length).toBeGreaterThan(0);
     db.close();
   });
+
+  it("emits a no-peers gap when a namespace is given but no peers are paired", async () => {
+    const db = freshDb();
+    const index = new LocalIndex(db); // no peers
+    const brief = await runHuddle(
+      { sinceMs: 1000, namespaces: ["ns"] },
+      {
+        db,
+        index,
+        selfIdentity: SELF,
+        sendOverWire: async () => ({ kind: "ok", response: { items: [] } }),
+        store: new KnownNamespaceStore(db),
+        sessionId: "s1",
+        notify: () => {},
+        now: () => 5000,
+      },
+    );
+    expect(brief.gaps.some((g) => g.detail.includes("no paired peers"))).toBe(true);
+    db.close();
+  });
 });
 
 describe("emitHuddleBrief", () => {

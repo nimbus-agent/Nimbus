@@ -40,6 +40,19 @@ function lite(it: {
   return { title: it.title, snippet: it.snippet, service: it.service, modifiedAt: it.modifiedAt };
 }
 
+function fanoutDeps(ctx: HuddleContext) {
+  const deps: {
+    index: LocalIndex;
+    selfIdentity: BoxKeypair;
+    store: KnownNamespaceStore;
+    sendOverWire?: typeof sendFederatedOverWire;
+    now?: () => number;
+  } = { index: ctx.index, selfIdentity: ctx.selfIdentity, store: ctx.store };
+  if (ctx.sendOverWire !== undefined) deps.sendOverWire = ctx.sendOverWire;
+  if (ctx.now !== undefined) deps.now = ctx.now;
+  return deps;
+}
+
 export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise<HuddleBrief> {
   const start = performance.now();
   const gaps: GapNote[] = [];
@@ -63,13 +76,7 @@ export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise
     });
   }
 
-  const deps: {
-    index: LocalIndex;
-    selfIdentity: BoxKeypair;
-    store: KnownNamespaceStore;
-    sendOverWire?: typeof sendFederatedOverWire;
-  } = { index: ctx.index, selfIdentity: ctx.selfIdentity, store: ctx.store };
-  if (ctx.sendOverWire !== undefined) deps.sendOverWire = ctx.sendOverWire;
+  const deps = fanoutDeps(ctx);
 
   const byPeer = new Map<string, HuddleContribution>();
   const queryResults = await Promise.all(
