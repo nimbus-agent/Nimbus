@@ -4,6 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
+import { ScimError } from "../identity/scim-service.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
@@ -296,5 +297,441 @@ describe("dispatchWriteRoute — PUT /v1/admin/policy (anchor policy write)", ()
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("org");
+  });
+
+  // line 188 branch: method !== "PUT" → 405 + Allow: PUT
+  it("405 + Allow: PUT when the policy route receives a non-PUT method", async () => {
+    const ctx = policyContext([]);
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/admin/policy", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+        body: JSON.stringify({ toml: "org" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("PUT");
+  });
+});
+
+// ── Method-not-allowed / disabled branches (lines 202, 216, 235, 236) ─────────────────────────
+
+describe("dispatchWriteRoute — SCIM / Teams 405 and 404 method/disabled branches", () => {
+  // line 202: resolveScimCreateRoute method !== "POST" → 405
+  it("405 + Allow: POST when a PUT hits /scim/v2/Users with SCIM enabled", async () => {
+    const ctx = scimContext();
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/scim/v2/Users", {
+        method: "PUT",
+        headers: { authorization: "Bearer scim-secret", "content-type": "application/json" },
+        body: JSON.stringify({ externalId: "u1" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  // line 216: resolveTeamsEventsRoute method !== "POST" → 405
+  it("405 when a GET hits /v1/messaging/teams/events with messaging enabled", async () => {
+    const ctx = {
+      ...scimContext(),
+      messaging: {
+        teamsBotAppId: "app-1",
+        validateBotJwt: async () => true,
+        onActivity: async () => {},
+      },
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/messaging/teams/events", { method: "GET" }),
+      ctx,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  // line 235: resolveScimItemRoute method !== "PATCH" && !== "DELETE" → 405
+  it("405 + Allow: PATCH, DELETE when a POST hits a SCIM item path with SCIM enabled", async () => {
+    const ctx = scimContext();
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/scim/v2/Users/abc", {
+        method: "POST",
+        headers: { authorization: "Bearer scim-secret", "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("PATCH, DELETE");
+  });
+
+  // line 236: resolveScimItemRoute ctx.scim === undefined → 404
+  it("404 when PATCH hits a SCIM item path but SCIM surface is not wired", async () => {
+    const { scim: _scim, ...noScim } = scimContext();
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/scim/v2/Users/abc", {
+        method: "PATCH",
+        headers: { authorization: "Bearer scim-secret", "content-type": "application/json" },
+        body: JSON.stringify({ Operations: [] }),
+      }),
+      noScim,
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── parseBody — actual body-size limit (line 339) ─────────────────────────────────────────────
+
+describe("dispatchWriteRoute — parseBody body-size cap (line 339)", () => {
+  // line 339: bodyBytes.byteLength > MAX_BODY_BYTES without a content-length trip (line 317).
+  // A ReadableStream body omits the content-length header so the pre-read check at line 316 is
+  // skipped; the actual ArrayBuffer read at line 339 then catches the oversize.
+  it("413 payload_too_large when body is >8 KB via ReadableStream (no content-length)", async () => {
+    const ctx = scimContext();
+    const bigPayload = "x".repeat(8 * 1024 + 1);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(bigPayload));
+        controller.close();
+      },
+    });
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/scim/v2/Users", {
+        method: "POST",
+        headers: { authorization: "Bearer scim-secret" },
+        body: stream,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("payload_too_large");
+  });
+});
+
+// ── extractService branches (lines 363, 365) ──────────────────────────────────────────────────
+
+// We need a valid deployment body that passes all annotate validations.
+function validDeployBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    service: "payment-service",
+    provider: "github-actions",
+    environment: "prod",
+    sha: "abc1234",
+    ref: "main",
+    status: "success",
+    started_at_ms: 1_700_000_000_000,
+    ...overrides,
+  };
+}
+
+function deployContext() {
+  const db = openSeededInMemoryDb(28);
+  return {
+    writeDb: db,
+    expectedToken: "hunter2",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: () => ["payment-service"] as readonly string[],
+  };
+}
+
+describe("dispatchWriteRoute — extractService branches + checkServiceAllowlist", () => {
+  // line 363 FALSE arm: body is an object WITHOUT a "service" key → extractService returns undefined
+  // line 376 TRUE arm: svc is undefined → checkServiceAllowlist returns undefined (no 400)
+  it("proceeds (not a 400 unknown_service) when the deployment body has no service key", async () => {
+    const ctx = deployContext();
+    // Send a body without service — it will still fail validation for missing service field
+    // (DeploymentRpcError with field="service"), but we confirm unknown_service is NOT the error.
+    const bodyNoService: Record<string, unknown> = {
+      provider: "github-actions",
+      environment: "prod",
+      sha: "abc1234",
+      ref: "main",
+      status: "success",
+      started_at_ms: 1_700_000_000_000,
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify(bodyNoService),
+      }),
+      ctx,
+    );
+    // DeploymentRpcError for missing service field → 400 invalid_request, NOT unknown_service
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; details: Array<{ field?: string }> };
+    expect(body.error).toBe("invalid_request");
+    expect(body.details[0]?.field).toBe("service");
+  });
+
+  // line 365 FALSE arm: body has a "service" key but value is non-string → extractService returns undefined
+  // svc will be undefined → checkServiceAllowlist returns undefined (no 400 unknown_service)
+  it("proceeds (not a 400 unknown_service) when service is a non-string value", async () => {
+    const ctx = deployContext();
+    const bodyBadService: Record<string, unknown> = {
+      service: 123,
+      provider: "github-actions",
+      environment: "prod",
+      sha: "abc1234",
+      ref: "main",
+      status: "success",
+      started_at_ms: 1_700_000_000_000,
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify(bodyBadService),
+      }),
+      ctx,
+    );
+    // Service is numeric → extractService returns undefined → no allowlist check → annotate
+    // fails on invalid service field → 400 invalid_request (not unknown_service)
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_request");
+  });
+});
+
+// ── runDeploymentRoute — happy path + DeploymentRpcError branches ──────────────────────────────
+
+describe("dispatchWriteRoute — runDeploymentRoute branches", () => {
+  // line 408 FALSE arm: ctx.deployEnvironments IS defined → spread into dispatchDeploymentRpc opts
+  it("200 with deployEnvironments defined — hit arm returns annotation", async () => {
+    const ctx = {
+      ...deployContext(),
+      deployEnvironments: ["production", "staging"] as readonly string[],
+      knownServices: () => ["payment-service"] as readonly string[],
+    };
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify(validDeployBody({ environment: "production" })),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { service: string; dora_eligible: boolean };
+    expect(body.service).toBe("payment-service");
+    expect(body.dora_eligible).toBe(true);
+  });
+
+  // lines 423 TRUE + 428 (e.field !== undefined): DeploymentRpcError WITH a field
+  // and line 429: service IS a string → service spread in recordRejection
+  it("400 invalid_request with field details when annotate fails a named-field validation", async () => {
+    const ctx = {
+      ...deployContext(),
+      // knownServices allows "payment-service" so we get past the allowlist
+      knownServices: () => ["payment-service"] as readonly string[],
+    };
+    // Send an invalid status to trigger AnnotateError on "status" field
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify(validDeployBody({ status: "bad_status" })),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      details: Array<{ field: string; reason: string }>;
+    };
+    expect(body.error).toBe("invalid_request");
+    expect(body.details[0]?.field).toBe("status");
+    expect(typeof body.details[0]?.reason).toBe("string");
+  });
+
+  // lines 423 TRUE + 435 (e.field === undefined): DeploymentRpcError WITHOUT a field
+  // Triggered when params is not an object (requireParams throws with no field).
+  it("400 invalid_request with no field when body is a non-object (array)", async () => {
+    const ctx = deployContext();
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify([1, 2, 3]),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      details: Array<{ reason: string; field?: string }>;
+    };
+    expect(body.error).toBe("invalid_request");
+    // field must be absent (the undefined-field branch → [{ reason: e.message }])
+    expect(body.details[0]?.field).toBeUndefined();
+    expect(typeof body.details[0]?.reason).toBe("string");
+  });
+});
+
+// ── runScimRoute — ScimError status branches (lines 455/456/457, 488, 494/507) ────────────────
+
+// A fake ScimWriteSurface whose runScimWrite can be forced to throw a specific ScimError.
+// We inject it by overriding the scim surface's store/identity with a throwing proxy.
+// The simplest approach: provide a store whose upsertScimUser throws the desired ScimError.
+
+function scimContextThrowing(errorToThrow: unknown) {
+  const db = openSeededInMemoryDb(34);
+  const realIdentity = new IdentityStore(db);
+  // Wrap realIdentity so upsertScimUser throws our chosen error
+  const throwingIdentity: IdentityStore = new Proxy(realIdentity, {
+    get(target, prop) {
+      if (prop === "upsertScimUser") {
+        return () => {
+          throw errorToThrow;
+        };
+      }
+      return (target as unknown as Record<string, unknown>)[prop as string];
+    },
+  });
+  return {
+    writeDb: db,
+    expectedToken: "deploy-token",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: (): readonly string[] => [],
+    scim: {
+      token: "scim-secret",
+      store: new NamespaceStore(db),
+      identity: throwingIdentity,
+    },
+  };
+}
+
+describe("dispatchWriteRoute — runScimRoute ScimError / generic-error branches", () => {
+  // line 455: scimReason status === 400 → "invalid_request"
+  // line 488 TRUE: e instanceof ScimError
+  // line 494 TRUE: route.id === undefined (POST /scim/v2/Users — create route, no id)
+  it("400 with scim_reason=invalid_request when ScimError(400) thrown on create (no route.id)", async () => {
+    const err = new ScimError("bad body", 400);
+    const ctx = scimContextThrowing(err);
+    const res = await dispatchWriteRoute(
+      scimReq("POST", "/scim/v2/Users", "scim-secret", { externalId: "u1", userName: "alice" }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: string; status: number };
+    expect(body.status).toBe(400);
+    expect(body.detail).toBe("bad body");
+  });
+
+  // line 456: scimReason status === 404 → "not_found"
+  // line 507 FALSE: route.id IS defined (PATCH /scim/v2/Users/{id} — item route, id = "u1")
+  it("404 with scim_reason=not_found when ScimError(404) thrown on item route (route.id defined)", async () => {
+    // For PATCH we need to first create the user so the token check passes;
+    // but we inject throwing identity to force the error during applyScimPatch.
+    // Use a separate context for the patch that has the throwing identity.
+    const err = new ScimError("not found", 404);
+    const db = openSeededInMemoryDb(34);
+    // Normal identity for the create, throwing for the patch
+    const realIdentity = new IdentityStore(db);
+    // Wrap: getScimUser and setScimActive throw; we simulate PATCH path via parseScimPatchActive
+    // which calls into identity. Actually the error needs to come from inside runScimWrite.
+    // Since PATCH → applyScimPatch → deprovisionUser or identity.setScimActive, we can
+    // make identity.setScimActive throw for active=true case.
+    const throwingIdentity: IdentityStore = new Proxy(realIdentity, {
+      get(target, prop) {
+        if (prop === "setScimActive" || prop === "upsertScimUser") {
+          return () => {
+            throw err;
+          };
+        }
+        return (target as unknown as Record<string, unknown>)[prop as string];
+      },
+    });
+    const ctx = {
+      writeDb: db,
+      expectedToken: "deploy-token",
+      rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+      nowMs: () => 1_700_000_000_000,
+      knownServices: (): readonly string[] => [],
+      scim: {
+        token: "scim-secret",
+        store: new NamespaceStore(db),
+        identity: throwingIdentity,
+      },
+    };
+    const res = await dispatchWriteRoute(
+      scimReq("PATCH", "/scim/v2/Users/u1", "scim-secret", {
+        Operations: [{ op: "replace", path: "active", value: true }],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { detail: string; status: number };
+    expect(body.status).toBe(404);
+    expect(body.detail).toBe("not found");
+  });
+
+  // line 457: scimReason status === 409 → "conflict"
+  it("409 with scim_reason=conflict when ScimError(409) thrown on create", async () => {
+    const err = new ScimError("conflict", 409);
+    const ctx = scimContextThrowing(err);
+    const res = await dispatchWriteRoute(
+      scimReq("POST", "/scim/v2/Users", "scim-secret", { externalId: "u1", userName: "alice" }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { status: number };
+    expect(body.status).toBe(409);
+  });
+
+  // line 488 FALSE + line 502-509: non-ScimError thrown → generic 500 internal_error
+  // line 494 TRUE: create route, route.id undefined
+  it("500 internal_error when a non-ScimError is thrown from the SCIM handler (create route)", async () => {
+    const nonScimErr: unknown = new Error("unexpected db failure");
+    const ctx = scimContextThrowing(nonScimErr);
+    const res = await dispatchWriteRoute(
+      scimReq("POST", "/scim/v2/Users", "scim-secret", { externalId: "u1", userName: "alice" }),
+      ctx,
+    );
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("internal_error");
+  });
+
+  // line 507 FALSE (item route, route.id IS defined): non-ScimError on item PATCH → 500
+  it("500 internal_error when a non-ScimError is thrown from the SCIM handler (item route)", async () => {
+    const nonScimErr: unknown = new Error("unexpected db failure on patch");
+    const db = openSeededInMemoryDb(34);
+    const realIdentity = new IdentityStore(db);
+    const throwingIdentity: IdentityStore = new Proxy(realIdentity, {
+      get(target, prop) {
+        if (prop === "setScimActive" || prop === "upsertScimUser") {
+          return () => {
+            throw nonScimErr;
+          };
+        }
+        return (target as unknown as Record<string, unknown>)[prop as string];
+      },
+    });
+    const ctx = {
+      writeDb: db,
+      expectedToken: "deploy-token",
+      rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+      nowMs: () => 1_700_000_000_000,
+      knownServices: (): readonly string[] => [],
+      scim: {
+        token: "scim-secret",
+        store: new NamespaceStore(db),
+        identity: throwingIdentity,
+      },
+    };
+    const res = await dispatchWriteRoute(
+      scimReq("PATCH", "/scim/v2/Users/u99", "scim-secret", {
+        Operations: [{ op: "replace", path: "active", value: true }],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("internal_error");
   });
 });
