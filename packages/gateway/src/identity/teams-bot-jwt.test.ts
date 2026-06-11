@@ -121,6 +121,54 @@ describe("buildTeamsBotJwtValidator (I18 reuse; aud === teamsBotAppId; fail-clos
     expect(await validate("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
   });
 
+  test("caches the verifier: discovery is fetched once across repeated validations", async () => {
+    // The second valid call must take the `if (verifier !== undefined) return verifier` fast path
+    // (no re-discovery): the OpenID config is fetched exactly once for two successful validations.
+    const { jwt, jwk } = await mintedToken({});
+    let discoveryFetches = 0;
+    const inner = fetchServing(jwk);
+    const counting = ((url: string | URL, init?: RequestInit) => {
+      if (String(url).includes("openidconfiguration")) discoveryFetches++;
+      return inner(url as never, init as never);
+    }) as typeof fetch;
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: counting,
+    });
+    expect(await validate(`Bearer ${jwt}`, 1_700_000_000_000)).toBe(true);
+    expect(await validate(`Bearer ${jwt}`, 1_700_000_000_000)).toBe(true);
+    expect(discoveryFetches).toBe(1);
+  });
+
+  test("fail-closed: a whitespace-only token trims to empty → false (never reaches the verifier)", async () => {
+    // `/^Bearer\s+(.+)$/i` backtracks so `(.+)` captures a trailing space; `.trim()` empties it,
+    // hitting the `token === ""` guard before any discovery/verify runs.
+    let fetched = false;
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      fetchLike: ((_url: string | URL) => {
+        fetched = true;
+        return Promise.resolve(Response.json({ jwks_uri: JWKS_URI }));
+      }) as typeof fetch,
+    });
+    expect(await validate("Bearer   ", 1_700_000_000_000)).toBe(false);
+    expect(fetched).toBe(false);
+  });
+
+  test("default log sink swallows a non-Error discovery rejection", async () => {
+    // The discovery catch logs `e instanceof Error ? e.message : e`; rejecting with a non-Error
+    // value (a string) exercises the `: e` branch of that ternary, still fail-closed to false.
+    const validate = buildTeamsBotJwtValidator({
+      db: memDb(),
+      teamsBotAppId: APP_ID,
+      log: () => {},
+      fetchLike: ((_url: string | URL) => Promise.reject("string-failure")) as typeof fetch,
+    });
+    expect(await validate("Bearer x.y.z", 1_700_000_000_000)).toBe(false);
+  });
+
   test("fail-closed: discovery outage → false, and recovers on a later call", async () => {
     const { jwt, jwk } = await mintedToken({});
     let healthy = false;
