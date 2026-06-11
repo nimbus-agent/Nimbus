@@ -57,7 +57,10 @@ impl Default for HitlInbox {
 pub const ALLOWED_METHODS: &[&str] = &[
     "admin.status",
     "agents.catchup",
+    "agents.conflicts",
     "agents.expert",
+    "agents.ghost",
+    "agents.huddle",
     "agents.impact",
     "audit.export",
     "audit.getSummary",
@@ -473,7 +476,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 83);
+        assert_eq!(ALLOWED_METHODS.len(), 86);
     }
 
     #[test]
