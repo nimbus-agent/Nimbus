@@ -444,6 +444,23 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I24 — a federated preflight executes only behind the LOCAL owner's HITL gate
+
+**Statement:** An inbound `federation.preflight` (blast-radius preflight) request executes only behind the LOCAL owner's HITL approval, never on the caller's say-so. The command that runs is resolved ONLY from the downstream owner's local `nimbus.toml` (`[federation.preflight."<ns>"]`) — the caller-supplied request never selects or supplies the command, and a missing local command fails closed (`not_configured`). The request is validated (git-ref allowlist + bounded `changedSurface` symbols) BEFORE the HITL prompt is raised; an ungranted peer or identity-invalid operator gets an opaque `no_grant`. The configured command runs inside the per-OS sandbox (`createSandboxRunner`, I15) with the validated params passed as env vars only (never shell-interpolated, never as filesystem paths); a hard timeout kills it. The result is leak-proof (`{ passed, summary }`, no paths/bodies). Static **D18**.
+
+**Wired at:**
+
+- `packages/gateway/src/federation/preflight-gate.ts` `answerFederatedPreflight()` — the SOLE path from an inbound `federation.preflight` to a sandbox spawn: identity (I18) → request validation → peer grant → resolve-LOCAL-command → `PreflightConsentBroker` approval → `runPreflightCommand` (sandbox). Every outcome is audited.
+- `packages/gateway/src/federation/preflight-runner.ts` `runPreflightCommand()` — the only sandbox-spawn site for a preflight; builds a manifest granting only the locally-configured `cwd`, passes validated params as env, enforces the hard timeout.
+- Enforced statically by **D18** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `preflight-gate.ts` / `preflight-runner.ts` (excluding `.test.ts`) that references `runPreflightCommand` causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I24` describe block: the gate never calls `runCommand` before approval resolves, ignores a caller-supplied `command` field (only the configured command runs), fails closed when no command is configured, and rejects an invalid ref / oversized surface before HITL; plus a `D18` presence assertion.
+
+**Anti-pattern:** reading a command (or any part of one) from the inbound request; spawning the preflight command outside `runPreflightCommand`; running before the `PreflightConsentBroker` approval resolves; passing request params as shell arguments or filesystem paths; returning file contents/paths in the result.
+
+**How to comply:** route every inbound preflight through `answerFederatedPreflight`; resolve the command only via the local-config `resolveCommand` dep; gate the spawn behind `requestApproval`; run via `runPreflightCommand`; keep the result shape `{ passed, summary }`.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

@@ -336,6 +336,36 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
   return out;
 }
 
+// D18 (I24) — the preflight sandbox runner (`runPreflightCommand`) may be referenced ONLY from
+// preflight-gate.ts (the gate) + preflight-runner.ts (its home). Any other module spawning the
+// preflight command would bypass the local HITL gate and the downstream-config-only command (I24).
+const PREFLIGHT_RUNNER_ALLOWED = [
+  "packages/gateway/src/federation/preflight-gate.ts",
+  "packages/gateway/src/federation/preflight-runner.ts",
+];
+const PREFLIGHT_RUNNER_RE = /\brunPreflightCommand\b/;
+
+export function checkPreflightRunnerInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (PREFLIGHT_RUNNER_ALLOWED.some((p) => f.relPath === p)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (PREFLIGHT_RUNNER_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D18-preflight-runner",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -451,6 +481,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D17 chatops post tool referenced outside reply-dispatcher/transport — bypasses I23: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkPreflightRunnerInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D18 runPreflightCommand referenced outside preflight-gate/preflight-runner — bypasses I24: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
