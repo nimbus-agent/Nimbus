@@ -267,6 +267,77 @@ nimbus catchup --since 24h --service payment-service --json
 
 ---
 
+### `nimbus ghost`
+
+Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.
+
+```bash
+nimbus ghost src/auth/session.ts
+nimbus ghost src/auth/session.ts --json
+nimbus ghost src/auth/session.ts --namespace project:zurich
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--namespace <n>` | Restrict the peer sweep to a single published namespace (default: ambient sweep across all paired peers) |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** ranked list of teammates with their file-relevant evidence (recent PR titles, commit messages, issue assignments), confidence scores, and any gap notes (e.g. "peer offline", "no matching namespace").
+
+**Read-only:** never triggers HITL, never sends a message, never makes a live API call. Fan-out goes only to consented, paired peers via the existing federated query gate (I17).
+
+---
+
+### `nimbus conflicts`
+
+Warn of work-in-progress collisions before editing a file — surfaces teammates who have an open PR, assigned ticket, recent commit, or open branch touching the same file across the federation mesh.
+
+```bash
+nimbus conflicts src/auth/session.ts
+nimbus conflicts src/auth/session.ts --json
+nimbus conflicts src/auth/session.ts --namespace project:zurich
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--namespace <n>` | Restrict the peer sweep to a single published namespace (default: ambient sweep across all paired peers) |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** list of detected WIP collisions per teammate (open PR url / ticket / branch / recent commit), ordered by recency; gap notes if a peer is unreachable.
+
+**Read-only:** never triggers HITL, never makes a live API call.
+
+---
+
+### `nimbus huddle`
+
+Team-scoped morning briefing aggregating each teammate's recent PRs, tickets, and incidents from across paired peers — a status summary without manual reporting.
+
+```bash
+nimbus huddle
+nimbus huddle --since 86400000
+nimbus huddle --json
+nimbus huddle --namespace project:zurich --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <ms>` | Lookback window in milliseconds (default: 86400000 = 24 h) |
+| `--namespace <n>` | Restrict the peer sweep to a single published namespace (default: ambient sweep across all paired peers) |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** one section per teammate, each listing recent merged PRs, closed tickets, and resolved incidents with one-line context; gap notes if a peer is unreachable.
+
+**Read-only:** never triggers HITL, never makes a live API call.
+
+---
+
 ## CI/CD
 
 DORA metrics, pre-deploy checks, and post-deploy annotation — answered from the local index without an external API call. All three commands target a stable `<service-id>` you choose (e.g. `payment-service`); the underlying repo URNs (`<provider>:<owner>/<repo>`) and PagerDuty service ids are configured per-service in `[metrics.dora.<service-id>]` / `[ci.service.<service-id>]` blocks in `nimbus.toml`.

@@ -15,7 +15,21 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+
+### Cross-Colleague Agents (Phase 6 Slice 6a)
+
+Three read-only agents that surface cross-colleague context by fanning the shipped federated-query primitives across paired peers. They follow the same shape invariant as `catchup`/`expert`/`impact` but additionally fan out over the federation mesh via `federation/peer-fanout.ts`.
+
+**`ghost`** (`packages/gateway/src/agents/ghost.ts`) — IPC `agents.ghost`, CLI `nimbus ghost <file> [--namespace <n>] [--json]`, notification `ghost.briefReady`. Ranks teammates by file expertise across paired peers (`federation.expertise` fan-out) and surfaces their matching PRs, issues, and commits. Suggests who to contact; never sends a message. Sub-agents: per-peer expertise query + local index enrichment, run in parallel via `AgentCoordinator`.
+
+**`conflicts`** (`packages/gateway/src/agents/conflicts.ts`) — IPC `agents.conflicts`, CLI `nimbus conflicts <file> [--namespace <n>] [--json]`, notification `conflicts.briefReady`. Warns of WIP collisions (open PR / assigned ticket / recent commit / open branch) before editing a file. Fans out `federation.query` per peer asking for recent activity on the file path; merges results sorted by recency.
+
+**`huddle`** (`packages/gateway/src/agents/huddle.ts`) — IPC `agents.huddle`, CLI `nimbus huddle [--since <ms>] [--namespace <n>] [--json]`, notification `huddle.briefReady`. Team-scoped morning briefing aggregating each teammate's recent PRs, tickets, and incidents from across paired peers. One `federation.query` fan-out per peer, one sub-agent per peer, results merged into a per-teammate section.
+
+**Shared fan-out helper:** `federation/peer-fanout.ts` — iterates `PeerRegistry`, calls `federation.query` / `federation.expertise` per peer with per-peer timeout + error isolation, and returns merged results. Consumed only by these three agents.
+
+**V38 known-namespaces cache:** `federation_known_namespaces` table (added by V38 migration) caches which remote namespaces a successful federated query touched on the asker side, letting the agents default to an ambient sweep when `--namespace` is omitted. Rows are pruned on `no_grant` / unpair events.
 
 ## Agent Shape Invariant
 

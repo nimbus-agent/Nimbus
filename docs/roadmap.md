@@ -732,7 +732,7 @@ Phase 6 bundles several independent subsystems; it ships as **9 sequenced delive
 | 3 | Identity — SSO/OIDC/SAML + SCIM (✅ OIDC device-code + SCIM trust-anchor delivered 2026-06-05, invariant I18; SAML deferred) | 1 |
 | 4 | Org Policy Engine + Admin Console + Observability (✅ delivered 2026-06-07, invariant I22) | 1 |
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) (✅ delivered 2026-06-09, invariant I23) | 1, 2 |
-| 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) | 1 |
+| 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) — **Slice 6a** (ghost / conflicts / huddle agents + V38 known-namespaces cache) ✅ 2026-06-11; 6b (cloud janitor + blast-radius preflight) + 6c (tribal-knowledge) remain | 1 |
 | 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) | 2, 3 |
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing |
 | 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent |
@@ -744,7 +744,7 @@ Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; S
 - **Slice 3** ↔ "Identity & Access" (SSO/OIDC/SAML, SCIM, role-based access control)
 - **Slice 4** ↔ "Shared Workflows & Policy" (org-level policy engine + enforcement) + "Admin & Observability"
 - **Slice 5** ↔ "ChatOps"
-- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight)
+- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight) — **Slice 6a** ✅ 2026-06-11: ghost / conflicts / huddle agents + V38 `federation_known_namespaces` cache; **6b** (cloud janitor + blast-radius preflight) + **6c** (tribal-knowledge) remain
 - **Slice 7** ↔ "Data Warehouses & BI (SSO-gated)"
 - **Slice 8** ↔ "Share & Virality Primitives"
 - **Slice 9** ↔ "Deferred from Phase 5"
@@ -778,11 +778,11 @@ These two primitives are the **foundation** every cross-colleague feature stands
 #### Shared Infrastructure
 
 - [x] **Nimbus-to-Nimbus federation** — two Gateways share a scoped index namespace over E2E-encrypted channel (NaCl box); no relay server; each side controls which `item` types and services it exposes; revocable per peer
-- [ ] **Cross-user conflict detection** — use the federated index to detect "Work-in-Progress collisions" (e.g., Alice editing `auth.ts` while Bob is assigned to the related Jira ticket); notifies the user before starting changes
+- [x] **Cross-user conflict detection** — use the federated index to detect "Work-in-Progress collisions" (e.g., Alice editing `auth.ts` while Bob is assigned to the related Jira ticket); notifies the user before starting changes ✅ (Slice 6a: 2026-06-11 — `agents.conflicts` / `nimbus conflicts`)
 - [x] **Team Vault** — shared credential store; one Gateway acts as trust anchor; role-based read/write access to named vault entries; credentials never leave the LAN ✅ (Slice 2: 2026-06-07)
 - [x] **Shared index namespaces** — user publishes a named namespace (e.g. `project:zurich`) as a filtered slice of their index; teammates subscribe over the federation channel; changes propagate on next sync cycle
 - [x] **LAN discovery** — Gateways advertise each other via mDNS; `nimbus team discover` lists available peers; pairing requires explicit mutual approval
-- [ ] **"Ghost" reviewers** — when you open a complex file, your Gateway uses the consent-scoped federated query primitive (above) to surface ambient teammate context: *"Alice resolved a similar race condition here 3 months ago (PR #142) — pull her context or draft her a Slack message?"*. Strictly an opt-in pull; context is weighted by recency and whether the referenced code still exists (a fix against since-rewritten code is suppressed). Turns the team's past experience into an ambient, queryable graph without requiring exhaustive documentation. Built on the federated-consent + expertise-routing primitives.
+- [x] **"Ghost" reviewers** — when you open a complex file, your Gateway uses the consent-scoped federated query primitive (above) to surface ambient teammate context: *"Alice resolved a similar race condition here 3 months ago (PR #142) — pull her context or draft her a Slack message?"*. Strictly an opt-in pull; context is weighted by recency and whether the referenced code still exists (a fix against since-rewritten code is suppressed). Turns the team's past experience into an ambient, queryable graph without requiring exhaustive documentation. Built on the federated-consent + expertise-routing primitives. ✅ (Slice 6a: 2026-06-11 — `agents.ghost` / `nimbus ghost`)
 - [x] **Quorum HITL (the "two-man rule")** — extends Multi-user HITL: for the most destructive actions (e.g. `terraform destroy`, force-push to `main`, drop a production DB), the Team Vault requires *two* federated peers to approve within a bounded window before the credential unlocks. Enforced in the executor's HITL gate (`I2`), not the prompt — two-person control executed entirely over the local-first mesh with no central broker. The action-type → quorum-size mapping lives in the org-level policy engine. ✅ (Slice 2: 2026-06-07 — `QuorumCoordinator` counts only DISTINCT authenticated peers, invariant **I21**)
 - [ ] **Cross-team cloud janitor** — a designated "janitor" agent queries the team mesh (via the consent primitive) to ask each peer's Gateway whether any local terminal, repo, or recent activity has touched a given cloud resource (e.g. AWS instance `i-12345`). If every peer reports no recent local context for ≥ N days, the janitor proposes a cleanup workflow through the team HITL queue. Bridges infrastructure state (the cloud) and *human* developer context (who's actually using what) — the gap that lets idle test databases and forgotten instances balloon cloud spend.
 
@@ -807,7 +807,7 @@ Depends on Team Vault (above) so service-account / SSO credentials can be shared
 #### Shared Workflows & Policy
 
 - [ ] **Team-owned workflow pipelines** — pipelines in a shared namespace; any team member can trigger; write steps require HITL from the triggering user; no credentials embedded in pipeline YAML
-- [ ] **Team "Huddle" Briefing** — aggregate morning briefing summarizing team achievements across PRs, tickets, and incidents without manual status reporting
+- [x] **Team "Huddle" Briefing** — aggregate morning briefing summarizing team achievements across PRs, tickets, and incidents without manual status reporting ✅ (Slice 6a: 2026-06-11 — `agents.huddle` / `nimbus huddle`)
 - [ ] **Tribal-knowledge extraction** — agent watches Slack / Teams for repeated questions ("how do I deploy X?") and proactively suggests saving the answer to a shared Notion / Confluence page or as a Phase 7 Wave 4 automation template; upstream pattern detector that feeds the automation library
 - [ ] **Cross-team blast-radius pre-flight** — before merging a PR, the upstream service owner's agent sends a "preflight request" to the agents of downstream service owners; downstream agents simulate the change against their local integration tests / environments only after the downstream owner approves via their HITL queue (no auto-execution on the upstream owner's say-so); aggregated results return to the upstream PR; stops cascading failures across team boundaries without a centralised staging environment
 - [x] **Org-level policy engine** — `nimbus.policy.toml` enforces: connector allowlists, `retentionDays` floor, HITL threshold overrides, audit log shipping destination; interacts with per-user profile config from Phase 3.5 *(Slice 4: signature-verified `nimbus.policy.toml` (Ed25519 over canonical bytes) → `PolicyGate` resolves a monotonic-stricter `EnforcedPolicy`; V36 `org_policy_state` + `policy_anchor_pin`; invariant **I22** / static **D16**)*
@@ -872,7 +872,7 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 #### Acceptance Criteria
 
-> **Status:** Slices 1–5 (shipped 2026-06-05 → 2026-06-09) satisfy the criteria below tied to federation, identity, Team Vault/quorum, org policy, and ChatOps; Slices 6–9 (cross-colleague intelligence, Data Warehouse/BI connectors, share/virality, deferred Phase-5 items) remain planned.
+> **Status:** Slices 1–5 (shipped 2026-06-05 → 2026-06-09) satisfy the criteria below tied to federation, identity, Team Vault/quorum, org policy, and ChatOps; Slice 6a (cross-colleague agents — ghost/conflicts/huddle + V38 cache, shipped 2026-06-11) partially satisfies Slice 6; Slices 6b/6c + 7–9 remain planned.
 
 - Two Nimbus instances on the same LAN establish a federated namespace in under 60 seconds with no external server involved ✅ (Slice 1)
 - A team member's HITL approval on a shared workflow is recorded in both the approver's and the workspace owner's local audit log ✅ (Slice 2)

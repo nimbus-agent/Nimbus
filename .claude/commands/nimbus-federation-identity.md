@@ -31,6 +31,7 @@ Slice 2 (Team Vault + Quorum HITL) shipped 2026-06-07 ✅ — its surface is fro
 ## File Map
 
 **Federation** — `packages/gateway/src/federation/`
+
 | File | Role |
 |---|---|
 | `query-gate.ts` | **I17** — `answerFederatedQuery`, the ONLY path that answers an inbound `federation.query`. Grant + role + consent + declared-namespace filter; returns the leak-proof `FederatedItem` shape (never `metadata`). |
@@ -43,6 +44,7 @@ Slice 2 (Team Vault + Quorum HITL) shipped 2026-06-07 ✅ — its surface is fro
 | `federation-identity.ts` | Bridges identity bindings into federation authorization. |
 
 **Identity** — `packages/gateway/src/identity/`
+
 | File | Role |
 |---|---|
 | `verifier.ts` | **I18** — the ONLY place IdP tokens are validated (RS256). Federation consults `isOperatorValid()`. |
@@ -66,6 +68,18 @@ Both are asserted at runtime in `packages/gateway/src/security-invariants.test.t
 - **HTTP:** SCIM provisioning writes (`POST` / `PATCH` / `DELETE /scim/v2/Users`) are 3 of 6 routes on the `WRITE_ROUTE_ALLOWLIST` (`I13`): see `nimbus-http-write-surface` for the authoritative list (currently 6: deployments, SCIM create/patch/delete, admin policy, teams events).
 - **Schema:** V33 (federation namespaces/filters/grants + nullable `audit_log.federation_json`, folded into the chain only when present) · V34 (identity/SCIM tables). See `nimbus-db-migrations`.
 - **Config:** `[federation]` (transport rides the `[lan]` section), `[identity]`, `[scim]` in `nimbus.toml` — all disabled by default.
+
+## Slice 6a — Asker-side Fan-out (cross-colleague agents)
+
+Phase 6 Slice 6a (2026-06-11) added an **asker-side fan-out layer** on top of the existing `federation.query` / `federation.expertise` primitives — no new invariant, no new answering-side gate (I17 continues to govern all inbound answering unchanged).
+
+**`federation/peer-fanout.ts`** — the shared helper that iterates `PeerRegistry`, dispatches `federation.query` or `federation.expertise` to each peer in parallel (per-peer timeout + error isolation), and merges the results. Consumed only by the three new cross-colleague agents (`ghost`, `conflicts`, `huddle`).
+
+**V38 `federation_known_namespaces`** — asker-side SQLite cache (added by the V38 migration, `CURRENT_SCHEMA_VERSION = 38`) recording which remote namespaces a successful federated query touched. Lets the agents default to an ambient sweep when `--namespace` is omitted. Rows are pruned when a `no_grant` response is received or a peer is unpaired. This table lives on the **asker** side only — it carries no secret data and is not subject to I17 (which governs the answering side).
+
+**No new invariant for Slice 6a.** The answering side remains fully gated by I17 (`query-gate.ts`). The fan-out adds asker-side orchestration only.
+
+**Schema:** V38 (`federation_known_namespaces`). See `nimbus-db-migrations`.
 
 ## Gotchas
 
