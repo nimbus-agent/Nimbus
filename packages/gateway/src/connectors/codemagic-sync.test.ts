@@ -139,7 +139,7 @@ describeWithFetchRestore("codemagic-sync", () => {
   });
 
   // ── mappedApp === null branch (line 88 false arm) ───────────────────────────
-  test("app with missing _id is not upserted but still triggers builds fetch if appRow has _id", async () => {
+  test("app with missing _id is not upserted and does not trigger builds fetch", async () => {
     // mapCodemagicAppToItem returns null when _id is missing from the raw row;
     // however appId() checks the SAME row — if _id is absent stringField returns
     // undefined, so appId() returns undefined and we never fetch builds either.

@@ -153,7 +153,7 @@ describe("storybook-sync", () => {
   // successful readFile the manifest is still indexed correctly regardless of
   // whether modifiedAtMs is null.  The mapping uses `ctx.syncedAt` as fallback
   // (mapStorybookStoryToItem: `modifiedAt: ctx.modifiedAtMs ?? ctx.syncedAt`).
-  test("handles manifest with modifiedAtMs null gracefully (modifiedAt falls back to syncedAt)", async () => {
+  test("indexes a story and persists a non-null modified_at from a readable manifest", async () => {
     const manifest = {
       entries: {
         "card--default": {
@@ -171,7 +171,7 @@ describe("storybook-sync", () => {
     const sync = createStorybookSyncable(noopOptions);
     const r = await sync.sync(syncTestContext(db, createStubVault({ "storybook.dir": dir })), null);
     expect(r.itemsUpserted).toBe(1);
-    // Verify the row was stored — modifiedAt column is non-null (uses syncedAt).
+    // Verify the row was stored with a non-null modified_at (normal manifest-metadata path).
     const row = db
       .prepare("SELECT modified_at FROM item WHERE service = 'storybook' LIMIT 1")
       .get() as { modified_at: number } | undefined;
