@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T08:00:07.170Z",
+  "generated_at": "2026-06-11T11:09:20.094Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -353,42 +353,6 @@
     "packages/gateway/src/connectors/zoom-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 77.88
-    },
-    "packages/gateway/src/db/audit-verify.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/db/backup-manifest.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/db/latency-ring-buffer.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.13
-    },
-    "packages/gateway/src/db/metrics.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/db/query-guard.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/db/repair.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/db/snapshot.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 62.96
-    },
-    "packages/gateway/src/db/verify.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74.07
-    },
-    "packages/gateway/src/db/write.ts": {
-      "min_line_pct": 76.19,
-      "min_branch_pct": 80
     },
     "packages/gateway/src/embedding/chunker.ts": {
       "min_line_pct": 80,

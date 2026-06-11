@@ -116,7 +116,11 @@ function tableExists(db: Database, name: string): boolean {
   return row !== null;
 }
 
-export function flushLatencyBuffer(db: Database, buffer: LatencyRingBuffer): void {
+export function flushLatencyBuffer(
+  db: Database,
+  buffer: LatencyRingBuffer,
+  now: () => number = Date.now,
+): void {
   if (!tableExists(db, "query_latency_log")) {
     buffer.drainOrdered();
     return;
@@ -125,9 +129,9 @@ export function flushLatencyBuffer(db: Database, buffer: LatencyRingBuffer): voi
   if (batch.length === 0) {
     return;
   }
-  const now = Date.now();
-  const cutoffLatency = now - LATENCY_RETENTION_MS;
-  const cutoffSlow = now - SLOW_QUERY_RETENTION_MS;
+  const nowMs = now();
+  const cutoffLatency = nowMs - LATENCY_RETENTION_MS;
+  const cutoffSlow = nowMs - SLOW_QUERY_RETENTION_MS;
 
   db.transaction(() => {
     const chunkSize = 200;
@@ -174,7 +178,10 @@ export function recordSlowQuery(
   );
 }
 
-export function readLatencyPercentilesFromDb(db: Database): {
+export function readLatencyPercentilesFromDb(
+  db: Database,
+  now: () => number = Date.now,
+): {
   p50Ms: number;
   p95Ms: number;
   p99Ms: number;
@@ -182,7 +189,7 @@ export function readLatencyPercentilesFromDb(db: Database): {
   if (!tableExists(db, "query_latency_log")) {
     return { p50Ms: 0, p95Ms: 0, p99Ms: 0 };
   }
-  const since = Date.now() - LATENCY_RETENTION_MS;
+  const since = now() - LATENCY_RETENTION_MS;
   const rows = db
     .query(
       "SELECT latency_ms FROM query_latency_log WHERE recorded_at >= ? ORDER BY latency_ms ASC",

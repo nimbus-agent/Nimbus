@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-import { DiskFullError, dbExec, dbRun, dbStmtRun } from "./write.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  DiskFullError,
+  dbExec,
+  dbRun,
+  dbStmtRun,
+  isDiskSpaceWarning,
+  onDiskFull,
+  setDiskSpaceWarning,
+} from "./write.ts";
 
 describe("dbRun", () => {
   test("returns Bun's RunResult shape on a normal INSERT", () => {
@@ -125,5 +133,344 @@ describe("dbStmtRun", () => {
     expect(caught).toBeInstanceOf(DiskFullError);
     stmt.finalize();
     db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isDiskSpaceWarning / setDiskSpaceWarning / onDiskFull — unit tests
+// ---------------------------------------------------------------------------
+
+describe("isDiskSpaceWarning", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("returns false by default", () => {
+    // Reset first — prior suites (real SQLite FULL tests) may have left the flag set
+    setDiskSpaceWarning(false);
+    expect(isDiskSpaceWarning()).toBe(false);
+  });
+
+  test("returns true after setDiskSpaceWarning(true)", () => {
+    setDiskSpaceWarning(true);
+    expect(isDiskSpaceWarning()).toBe(true);
+  });
+
+  test("returns false after toggling back to false", () => {
+    setDiskSpaceWarning(true);
+    setDiskSpaceWarning(false);
+    expect(isDiskSpaceWarning()).toBe(false);
+  });
+});
+
+describe("setDiskSpaceWarning — listener notification", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("fires registered onDiskFull listeners when transitioning false→true", () => {
+    let fired = 0;
+    const unsub = onDiskFull(() => {
+      fired++;
+    });
+    setDiskSpaceWarning(true);
+    expect(fired).toBe(1);
+    unsub();
+  });
+
+  test("does NOT fire listeners when already true→true (no re-fire)", () => {
+    setDiskSpaceWarning(true);
+    let fired = 0;
+    const unsub = onDiskFull(() => {
+      fired++;
+    });
+    setDiskSpaceWarning(true);
+    expect(fired).toBe(0);
+    unsub();
+  });
+
+  test("does NOT fire listeners when transitioning true→false", () => {
+    setDiskSpaceWarning(true);
+    let fired = 0;
+    const unsub = onDiskFull(() => {
+      fired++;
+    });
+    setDiskSpaceWarning(false);
+    expect(fired).toBe(0);
+    unsub();
+  });
+
+  test("swallows a listener that throws — setDiskSpaceWarning does not throw", () => {
+    const unsub = onDiskFull(() => {
+      throw new Error("listener explosion");
+    });
+    expect(() => setDiskSpaceWarning(true)).not.toThrow();
+    unsub();
+  });
+
+  test("fires multiple listeners and swallows a throwing one without skipping later ones", () => {
+    const calls: string[] = [];
+    const unsub1 = onDiskFull(() => {
+      calls.push("before");
+    });
+    const unsub2 = onDiskFull(() => {
+      throw new Error("middle explodes");
+    });
+    const unsub3 = onDiskFull(() => {
+      calls.push("after");
+    });
+
+    expect(() => setDiskSpaceWarning(true)).not.toThrow();
+    expect(calls).toEqual(["before", "after"]);
+
+    unsub1();
+    unsub2();
+    unsub3();
+  });
+});
+
+describe("onDiskFull — unsubscribe", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("unsubscribed listener is not called on subsequent false→true transition", () => {
+    let fired = 0;
+    const unsub = onDiskFull(() => {
+      fired++;
+    });
+    unsub();
+    setDiskSpaceWarning(true);
+    expect(fired).toBe(0);
+  });
+
+  test("calling unsubscribe twice is a safe no-op", () => {
+    const unsub = onDiskFull(() => {
+      /* nothing */
+    });
+    unsub();
+    expect(() => unsub()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSqliteFull / handleWriteError — fake-db error-path coverage
+// ---------------------------------------------------------------------------
+
+describe("DiskFullError via fake db — numeric code paths", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("dbRun throws DiskFullError and sets warning when error.code === 13 (SQLITE_FULL low-byte)", () => {
+    const err: unknown = Object.assign(new Error("disk full"), { code: 13 });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    expect(() => dbRun(fakeDb, "INSERT INTO t VALUES (1)")).toThrow(DiskFullError);
+    expect(isDiskSpaceWarning()).toBe(true);
+  });
+
+  test("dbRun DiskFullError carries the original error as cause", () => {
+    const original: unknown = Object.assign(new Error("disk full"), { code: 13 });
+    const fakeDb = {
+      run() {
+        throw original;
+      },
+      exec() {
+        throw original;
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(DiskFullError);
+    expect((caught as DiskFullError).cause).toBe(original);
+  });
+
+  test("dbRun throws DiskFullError for code with SQLITE_FULL in high bits (code & 0xff === 13)", () => {
+    // e.g. SQLITE_FULL | extended-error-code = 0x010D (269)
+    const err: unknown = Object.assign(new Error("disk full extended"), { code: 269 });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    expect(() => dbRun(fakeDb, "INSERT INTO t VALUES (1)")).toThrow(DiskFullError);
+  });
+
+  test("dbExec throws DiskFullError and sets warning when error.code === 13", () => {
+    const err: unknown = Object.assign(new Error("disk full"), { code: 13 });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    expect(() => dbExec(fakeDb, "INSERT INTO t VALUES (1)")).toThrow(DiskFullError);
+    expect(isDiskSpaceWarning()).toBe(true);
+  });
+
+  test("dbStmtRun throws DiskFullError and sets warning when error.code === 13", () => {
+    const err: unknown = Object.assign(new Error("disk full"), { code: 13 });
+    const fakeStmt: { run: () => unknown } = {
+      run() {
+        throw err;
+      },
+    };
+    expect(() => dbStmtRun(fakeStmt)).toThrow(DiskFullError);
+    expect(isDiskSpaceWarning()).toBe(true);
+  });
+});
+
+describe("DiskFullError via fake db — string code path", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("dbRun throws DiskFullError when error.code === 'SQLITE_FULL'", () => {
+    const err: unknown = Object.assign(new Error("disk full string"), { code: "SQLITE_FULL" });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    expect(() => dbRun(fakeDb, "INSERT INTO t VALUES (1)")).toThrow(DiskFullError);
+    expect(isDiskSpaceWarning()).toBe(true);
+  });
+
+  test("dbExec throws DiskFullError when error.code === 'SQLITE_FULL'", () => {
+    const err: unknown = Object.assign(new Error("disk full string"), { code: "SQLITE_FULL" });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    expect(() => dbExec(fakeDb, "INSERT INTO t VALUES (1)")).toThrow(DiskFullError);
+  });
+
+  test("non-SQLITE_FULL string code is rethrown verbatim by dbRun", () => {
+    const err: unknown = Object.assign(new Error("busy"), { code: "SQLITE_BUSY" });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
+    expect(caught).not.toBeInstanceOf(DiskFullError);
+  });
+});
+
+describe("isSqliteFull — non-object error paths", () => {
+  afterEach(() => {
+    setDiskSpaceWarning(false);
+  });
+
+  test("dbRun rethrows a thrown string (non-object) verbatim", () => {
+    const fakeDb = {
+      run() {
+        throw "raw string error";
+      },
+      exec() {
+        throw "raw string error";
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe("raw string error");
+    expect(isDiskSpaceWarning()).toBe(false);
+  });
+
+  test("dbRun rethrows null verbatim (null is not an object for isSqliteFull)", () => {
+    const fakeDb = {
+      run() {
+        throw null;
+      },
+      exec() {
+        throw null;
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeNull();
+    expect(isDiskSpaceWarning()).toBe(false);
+  });
+
+  test("dbRun rethrows a non-SQLITE_FULL numeric code verbatim", () => {
+    // code 5 = SQLITE_BUSY — should NOT trigger DiskFullError
+    const err: unknown = Object.assign(new Error("busy"), { code: 5 });
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
+    expect(caught).not.toBeInstanceOf(DiskFullError);
+    expect(isDiskSpaceWarning()).toBe(false);
+  });
+
+  test("dbRun rethrows an object with no code property verbatim", () => {
+    const err: unknown = { message: "no code here" };
+    const fakeDb = {
+      run() {
+        throw err;
+      },
+      exec() {
+        throw err;
+      },
+    } as unknown as Database;
+    let caught: unknown;
+    try {
+      dbRun(fakeDb, "INSERT INTO t VALUES (1)");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
+    expect(caught).not.toBeInstanceOf(DiskFullError);
   });
 });
