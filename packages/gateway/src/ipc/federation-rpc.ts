@@ -14,6 +14,7 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
 import type { ConsentPrompter } from "../federation/query-gate.ts";
 import { answerFederatedQuery } from "../federation/query-gate.ts";
+import { probeResourceRecency } from "../federation/resource-probe.ts";
 import type {
   ExpertiseRequest,
   FederatedQueryRequest,
@@ -330,6 +331,13 @@ export async function dispatchFederationRpc(
         purpose: requireString(rec, "purpose"),
       };
       return scoreExpertise(ctx.db, req);
+    },
+    // Cloud janitor (Slice 6b): content-free resource-recency probe. Like expertise, this returns
+    // only a coarse, leak-proof answer (touched + whole-days recency) and requires no per-namespace
+    // grant — it never exposes item bodies. Scored locally against this gateway's own index.
+    "federation.probe": (p) => {
+      const rec = asRecord(p);
+      return probeResourceRecency(ctx.db, { resourceRef: requireString(rec, "resourceRef") });
     },
     // Anchor-side: serve the persisted signed org-policy bundle so paired peers can fetch it.
     // Read-only and public — the bundle is the signed TOML + signature, never a secret (the
