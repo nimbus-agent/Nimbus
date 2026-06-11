@@ -27,6 +27,8 @@ export type ConflictContext = {
 function classify(itemType: string): ConflictType {
   if (itemType === "issue") return "assigned_ticket";
   if (itemType === "commit") return "recent_commit";
+  // pr (and any default) -> open_pr. "open_branch" is intentionally NOT in CONFLICT_TYPES
+  // (branch items aren't indexed yet); add a case here if it's ever added to the query.
   return "open_pr";
 }
 
