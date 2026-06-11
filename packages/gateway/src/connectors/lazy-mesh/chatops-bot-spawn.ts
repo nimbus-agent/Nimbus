@@ -23,6 +23,9 @@ import { wrapServerSpec } from "./wrap-server-spec.ts";
 export interface ChatopsTeamsSpawnOpts {
   /** Bot Framework serviceUrl from the inbound activity (per-conversation reply endpoint). */
   readonly serviceUrl?: string;
+  /** Test seam for the best-effort Graph-token resolve (default: `getValidMicrosoftAccessToken`).
+   *  Keeps the real OAuth/refresh machinery out of this builder's unit tests. */
+  readonly graphTokenResolver?: (vault: NimbusVault) => Promise<string>;
 }
 
 /** Slack bot spec: requires BOTH `slack.bot_token` (user_info/chat_post) and `slack.app_token`
@@ -64,7 +67,8 @@ export async function chatopsTeamsBotServers(
   }
   let graphToken: string | undefined;
   try {
-    const t = await getValidMicrosoftAccessToken(vault);
+    const resolveGraphToken = opts?.graphTokenResolver ?? getValidMicrosoftAccessToken;
+    const t = await resolveGraphToken(vault);
     if (t !== "") graphToken = t;
   } catch {
     graphToken = undefined; // identity mapping degrades to unmapped (fail-closed downstream)

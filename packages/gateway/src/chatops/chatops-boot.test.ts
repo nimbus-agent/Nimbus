@@ -344,6 +344,216 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(h.boot.rpcCtx.status().platforms[0]?.connected).toBe(false);
   });
 
+  test("read before bindAskEngine → the default not-available placeholder is posted", async () => {
+    // The askEngine local starts as a placeholder; a read that arrives before index.ts late-binds
+    // the engine must still reply (with the placeholder) rather than throw.
+    const socket = new FakeSocket();
+    const posts: { channel: string; text: string }[] = [];
+    const runTool: RunChatopsTool = (_p, toolId, args) => {
+      if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+      if (toolId === "slack_user_info") {
+        const user = (args as { user: string }).user;
+        const email = SLACK_EMAILS[user];
+        return Promise.resolve(
+          email === undefined ? { user: {} } : { user: { profile: { email } } },
+        );
+      }
+      if (toolId === "slack_chat_post") {
+        const a = args as { channel: string; text: string };
+        posts.push({ channel: a.channel, text: a.text });
+        return Promise.resolve({ ok: true });
+      }
+      throw new Error(`unexpected ${toolId}`);
+    };
+    const boot = buildChatopsBoot({
+      cfg: {
+        enabled: true,
+        slackEnabled: true,
+        teamsEnabled: false,
+        botVaultEntry: "chatops-bot",
+        identityCacheTtlSeconds: 900,
+        teamsBotAppId: "",
+      },
+      policyGate: {
+        enforced: () =>
+          enforcedWith({ C0: { namespace: "project:pay", unmapped: "refuse", notify: [] } }),
+      },
+      identity: { findScimByEmail: (email) => SCIM[email], isOperatorValid: () => true },
+      runTool,
+      audit: { recordAudit: () => {} },
+      dispatcher: { dispatch: () => Promise.resolve({}) },
+      socketFactory: () => socket,
+      log: () => {},
+    });
+    // Intentionally NOT calling boot.bindAskEngine — exercise the default askEngine placeholder.
+    await boot.service.start();
+    socket.emit(mention("C0", "U_BOB", "@nimbus who is on call for payment-service?", "30"));
+    await until(() => posts.length === 1);
+    expect(posts[0]?.text).toContain("not available yet");
+    await boot.service.stop();
+  });
+
+  test("local-consent fallback: a bound approver honors the non-delegate write (line 193)", async () => {
+    // A non-owner click is not honored as a delegate (I20); the executor then falls back to the
+    // bound local consent channel. Binding an approve-returning consent drives the dispatch.
+    const h = buildHarness();
+    h.boot.bindLocalConsent(() => Promise.resolve(true));
+    await h.boot.service.start();
+    h.socket.emit(
+      mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "31"),
+    );
+    await until(() => h.posts.some((p) => p.text.includes("Approval needed")));
+    // bob (requester, not owner) approves → delegate refused → local fallback approves → dispatch.
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus approve", "32"));
+    await until(() => h.dispatched.length === 1);
+    expect(h.dispatched[0]?.type).toBe("deployment.rollback");
+    expect(h.audits.find((a) => a.actionType === "deployment.rollback")?.hitlStatus).toBe(
+      "approved",
+    );
+    await h.boot.service.stop();
+  });
+
+  test("identity disabled (no identity dep) → isOperatorValid fallback is false (?? false)", async () => {
+    // With `identity` absent the mapper resolves everyone unmapped AND the executor's
+    // isOperatorValid seam returns the `?? false` fallback — a write can never be honored.
+    // `identity` is omitted entirely (exactOptionalPropertyTypes forbids an explicit `undefined`).
+    const socket = new FakeSocket();
+    const dispatched: PlannedAction[] = [];
+    const audits: Harness["audits"] = [];
+    const runTool: RunChatopsTool = (_p, toolId, args) => {
+      if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+      if (toolId === "slack_user_info") {
+        const user = (args as { user: string }).user;
+        const email = SLACK_EMAILS[user];
+        return Promise.resolve(
+          email === undefined ? { user: {} } : { user: { profile: { email } } },
+        );
+      }
+      if (toolId === "slack_chat_post") return Promise.resolve({ ok: true });
+      throw new Error(`unexpected ${toolId}`);
+    };
+    const boot = buildChatopsBoot({
+      cfg: {
+        enabled: true,
+        slackEnabled: true,
+        teamsEnabled: false,
+        botVaultEntry: "chatops-bot",
+        identityCacheTtlSeconds: 900,
+        teamsBotAppId: "",
+      },
+      policyGate: {
+        enforced: () =>
+          enforcedWith({ C0: { namespace: "project:pay", unmapped: "refuse", notify: [] } }),
+      },
+      runTool,
+      audit: {
+        recordAudit: (e) =>
+          audits.push({
+            actionType: e.actionType,
+            hitlStatus: e.hitlStatus,
+            actionJson: e.actionJson,
+          }),
+      },
+      dispatcher: {
+        dispatch: (action) => {
+          dispatched.push(action);
+          return Promise.resolve({});
+        },
+      },
+      socketFactory: () => socket,
+      log: () => {},
+    });
+    boot.bindAskEngine((q, ns) => Promise.resolve(`[${ns}] ${q}`));
+    await boot.service.start();
+    socket.emit(
+      mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "33"),
+    );
+    // Unmapped requester under refuse mode → refusal, never a card / dispatch.
+    await until(() => audits.some((a) => a.actionType === "chatops.refusal"));
+    expect(dispatched.length).toBe(0);
+    await boot.service.stop();
+  });
+
+  test("user lookup throw is caught + logged → user treated as unmapped (line 169)", async () => {
+    const logs: string[] = [];
+    const h = buildHarness({
+      log: (m) => logs.push(m),
+      runTool: ((_p, toolId) => {
+        if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+        if (toolId === "slack_user_info") return Promise.reject(new Error("rate limited"));
+        if (toolId === "slack_chat_post") return Promise.resolve({ ok: true });
+        throw new Error(`unexpected ${toolId}`);
+      }) as RunChatopsTool,
+    });
+    await h.boot.service.start();
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call?", "34"));
+    await until(() => logs.some((l) => l.includes("user lookup failed")));
+    expect(logs.some((l) => l.includes("rate limited"))).toBe(true);
+    await h.boot.service.stop();
+  });
+
+  test("user lookup returns a non-JSON content envelope → unwrap falls back to raw text (line 77)", async () => {
+    // unwrapToolResult tries JSON.parse(textBlock.text); a non-JSON text body hits the catch and
+    // returns the raw string, which emailFromUserInfo then reads as a non-object → unmapped.
+    const h = buildHarness({
+      runTool: ((_p, toolId) => {
+        if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+        if (toolId === "slack_user_info") {
+          return Promise.resolve({ content: [{ text: "this is not json" }] });
+        }
+        if (toolId === "slack_chat_post") return Promise.resolve({ ok: true });
+        throw new Error(`unexpected ${toolId}`);
+      }) as RunChatopsTool,
+    });
+    await h.boot.service.start();
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call?", "35"));
+    // Non-JSON → raw string → not an object → emailless → unmapped → refusal under refuse mode.
+    await until(() => h.audits.some((a) => a.actionType === "chatops.refusal"));
+    await h.boot.service.stop();
+  });
+
+  test("teams onActivity without serviceUrl/conversationId → no serviceUrl recorded (lines 323-324)", async () => {
+    const h = buildHarness({
+      cfg: {
+        enabled: true,
+        slackEnabled: false,
+        teamsEnabled: true,
+        botVaultEntry: "chatops-bot",
+        identityCacheTtlSeconds: 900,
+        teamsBotAppId: "app-1",
+      },
+      policyGate: {
+        enforced: () =>
+          enforcedWith({
+            "19:conv": { namespace: "project:pay", unmapped: "public-read", notify: [] },
+          }),
+      },
+      validateTeamsJwt: () => Promise.resolve(true),
+    });
+    await h.boot.service.start();
+    const surface = h.boot.teamsSurface;
+    expect(surface).toBeDefined();
+    // An activity lacking serviceUrl (and one lacking conversation.id) must skip the map write but
+    // still forward to the adapter — exercising the false side of the typeof guards.
+    await surface?.onActivity({
+      type: "message",
+      id: "a0",
+      from: { id: "T_USER" },
+      conversation: { id: "19:conv" },
+      text: "<at>nimbus</at> hi",
+    });
+    await surface?.onActivity({
+      type: "message",
+      id: "a1",
+      serviceUrl: "https://smba.example/emea/",
+      from: { id: "T_USER" },
+      text: "<at>nimbus</at> hi",
+    });
+    // public-read namespace → a read reply still posts (default serviceUrl resolver returns none).
+    await until(() => h.posts.length >= 1);
+    await h.boot.service.stop();
+  });
+
   test("user lookup tolerates an MCP content-envelope result (unwrapToolResult)", async () => {
     // Slack `users.info` can arrive wrapped in an MCP `{ content: [{ text: "<json>" }] }` envelope;
     // the boot must unwrap it before reading the profile email. A successful unwrap → mapped user →

@@ -205,7 +205,7 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       const ctx = getChatopsApprovalContext();
       if (ctx === undefined || identity === undefined) return false;
       const scim = identity.findScimByEmail(ctx.ownerEmail);
-      if (scim === undefined || !scim.active) return false;
+      if (!scim?.active) return false;
       return identity.isOperatorValid(scim.issuer);
     },
     requestRemote: () => presenter.requestApproval(),

@@ -38,7 +38,8 @@ export function buildE2eSinkRunChatopsTool(sinkDir: string): RunChatopsTool {
     const a = (args ?? {}) as Record<string, unknown>;
     if (toolId.endsWith("_socket_open")) return Promise.resolve({ url: cfg().wsUrl });
     if (toolId.endsWith("_user_info")) {
-      const userId = String(a["user"] ?? a["userId"] ?? "");
+      const rawId = a["user"] ?? a["userId"];
+      const userId = typeof rawId === "string" ? rawId : "";
       const email = cfg().users[userId];
       if (email === undefined) return Promise.resolve(platform === "slack" ? { user: {} } : {});
       return Promise.resolve(
