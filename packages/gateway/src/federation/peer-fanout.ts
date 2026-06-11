@@ -43,10 +43,6 @@ function gapForPeer(row: LanPeerRow, err: unknown): GapNote {
   return { category: "missing_connector", detail: `peer ${who}: ${msg}` };
 }
 
-function isNoGrant(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("no_grant");
-}
-
 /** Bounded-parallel map: at most FANOUT_CONCURRENCY in-flight; never rejects (errors map to gaps). */
 async function runPool<T>(
   rows: LanPeerRow[],
@@ -81,6 +77,7 @@ export async function fanOutQuery(
   const { perPeer, gaps } = await runPool<PeerQueryResult>(
     reachablePeers(deps.index),
     async (row) => {
+      const who = row.display_name ?? row.peer_id;
       try {
         const result = (await send(
           row.host_ip as string,
@@ -89,13 +86,25 @@ export async function fanOutQuery(
           row.peer_pubkey,
           "federation.query",
           body,
-        )) as { items?: readonly FederatedItem[] };
+        )) as { kind?: string; response?: { items?: readonly FederatedItem[] }; error?: string };
+        if (result.kind === "error") {
+          if (result.error === "no_grant") deps.store.prune(row.peer_id, req.namespace);
+          return {
+            gap: {
+              category: "missing_connector",
+              detail: `peer ${who}: ${result.error ?? "error"}`,
+            },
+          };
+        }
         deps.store.record(row.peer_id, req.namespace, nowMs);
         return {
-          ok: { peerId: row.peer_id, displayName: row.display_name, items: result.items ?? [] },
+          ok: {
+            peerId: row.peer_id,
+            displayName: row.display_name,
+            items: result.response?.items ?? [],
+          },
         };
       } catch (err) {
-        if (isNoGrant(err)) deps.store.prune(row.peer_id, req.namespace);
         return { gap: gapForPeer(row, err) };
       }
     },

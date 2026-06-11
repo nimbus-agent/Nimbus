@@ -43,19 +43,22 @@ describe("fanOutQuery", () => {
     const send = async (_h: string, _p: number, _s: BoxKeypair, pubkey: Uint8Array) => {
       if (pubkey[0] === 1) {
         return {
-          items: [
-            {
-              id: "i1",
-              service: "github",
-              type: "pr",
-              title: "fix auth race",
-              snippet: "x",
-              modifiedAt: 10,
-            },
-          ],
+          kind: "ok",
+          response: {
+            items: [
+              {
+                id: "i1",
+                service: "github",
+                type: "pr",
+                title: "fix auth race",
+                snippet: "x",
+                modifiedAt: 10,
+              },
+            ],
+          },
         };
       }
-      throw new Error("lan-client: peer error no_grant");
+      return { kind: "error", error: "no_grant" };
     };
     const out = await fanOutQuery(
       { index, selfIdentity: SELF, sendOverWire: send, store, now: () => 5 },
@@ -95,7 +98,7 @@ describe("fanOutQuery", () => {
       {
         index: idx,
         selfIdentity: SELF,
-        sendOverWire: async () => ({ items: [] }),
+        sendOverWire: async () => ({ kind: "ok", response: { items: [] } }),
         store: new KnownNamespaceStore(db),
       },
       { namespace: "ns", purpose: "ghost" },
