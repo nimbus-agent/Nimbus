@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dispatchByMethod } from "./dispatch-by-method.ts";
+import { dispatchByMethod, type RpcMethodHandlerMap } from "./dispatch-by-method.ts";
 
 describe("dispatchByMethod", () => {
   test("returns hit envelope with the handler value when method is registered", async () => {
@@ -53,6 +53,15 @@ describe("dispatchByMethod", () => {
     const proto = { "evil.method": () => "PWNED" };
     const handlers = Object.create(proto) as Record<string, () => unknown>;
     const result = await dispatchByMethod("evil.method", undefined, undefined, handlers);
+    expect(result).toEqual({ kind: "miss" });
+  });
+
+  test("returns miss when own property exists but its value is undefined (handler === undefined branch)", async () => {
+    // Object.hasOwn returns true for "ghost" but handlers["ghost"] is undefined,
+    // exercising the `if (handler === undefined)` true arm (BRDA line 21 block 1 branch 0).
+    // Cast through unknown because RpcMethodHandlerMap forbids undefined values at the type level.
+    const handlers = { ghost: undefined } as unknown as RpcMethodHandlerMap<undefined>;
+    const result = await dispatchByMethod("ghost", undefined, undefined, handlers);
     expect(result).toEqual({ kind: "miss" });
   });
 });
