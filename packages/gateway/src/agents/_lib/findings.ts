@@ -157,13 +157,30 @@ export type HuddleBrief = AgentBriefBase & {
   contributions: HuddleContribution[];
 };
 
+export type JanitorPeerTouch = {
+  peerId: string;
+  who: string | null;
+  lastSeenDaysAgo: number | null;
+};
+
+export type JanitorBrief = AgentBriefBase & {
+  kind: "janitor";
+  query: { resourceRef: string; idleDays: number };
+  idle: boolean;
+  proposalSuppressed: boolean;
+  cleanupAction: string | null;
+  peersClear: number;
+  peersTouched: JanitorPeerTouch[];
+};
+
 export type AgentBrief =
   | ExpertBrief
   | ImpactBrief
   | CatchupBrief
   | GhostBrief
   | ConflictBrief
-  | HuddleBrief;
+  | HuddleBrief
+  | JanitorBrief;
 
 export type BriefReadyPayload<B extends AgentBrief> = {
   sessionId: string;
@@ -254,6 +271,22 @@ export function isHuddleBrief(x: unknown): x is HuddleBrief {
     b["agentVersion"] === 1 &&
     Array.isArray(b["gaps"]) &&
     Array.isArray(b["contributions"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    typeof b["query"] === "object" &&
+    b["query"] !== null
+  );
+}
+
+export function isJanitorBrief(x: unknown): x is JanitorBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "janitor" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    typeof b["idle"] === "boolean" &&
+    Array.isArray(b["peersTouched"]) &&
     typeof b["generatedAt"] === "number" &&
     typeof b["latencyMs"] === "number" &&
     typeof b["query"] === "object" &&

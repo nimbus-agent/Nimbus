@@ -6,6 +6,7 @@ import type {
   GhostBrief,
   HuddleBrief,
   ImpactBrief,
+  JanitorBrief,
 } from "./findings.ts";
 import {
   renderCatchup,
@@ -14,6 +15,7 @@ import {
   renderGhost,
   renderHuddle,
   renderImpact,
+  renderJanitor,
 } from "./render.ts";
 
 export type SynthesizerLlm = {
@@ -41,7 +43,8 @@ type SynthInput =
   | CatchupBrief
   | GhostBrief
   | ConflictBrief
-  | HuddleBrief;
+  | HuddleBrief
+  | JanitorBrief;
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
@@ -49,6 +52,7 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "catchup") return renderCatchup(brief);
   if (brief.kind === "ghost") return renderGhost(brief);
   if (brief.kind === "conflict") return renderConflict(brief);
+  if (brief.kind === "janitor") return renderJanitor(brief);
   return renderHuddle(brief);
 }
 
@@ -58,6 +62,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "catchup") return "agents.catchup";
   if (brief.kind === "ghost") return "agents.ghost";
   if (brief.kind === "conflict") return "agents.conflicts";
+  if (brief.kind === "janitor") return "agents.janitor";
   return "agents.huddle";
 }
 
