@@ -80,6 +80,7 @@ describe("hitl-rpc", () => {
     if (result.kind === "hit") {
       const { pending } = result.value as { pending: unknown[] };
       expect(Array.isArray(pending)).toBe(true);
+      expect(pending).toHaveLength(0);
     }
   });
 
