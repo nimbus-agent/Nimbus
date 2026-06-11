@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { KnownNamespaceStore } from "./known-namespace-store.ts";
 import { LocalIndex } from "./local-index.ts";
 import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
@@ -17,6 +17,7 @@ describe("KnownNamespaceStore", () => {
     db = freshDb();
     store = new KnownNamespaceStore(db);
   });
+  afterEach(() => db.close());
 
   it("records (peerId, namespace) and lists it", () => {
     store.record("peer:aa", "project:zurich", 1000);
@@ -61,5 +62,6 @@ describe("removeLanPeer cascade-prunes the namespace cache", () => {
     store.record("peer:gone", "ns1", 1);
     idx.removeLanPeer("peer:gone");
     expect(store.listForPeer("peer:gone")).toEqual([]);
+    db.close();
   });
 });
