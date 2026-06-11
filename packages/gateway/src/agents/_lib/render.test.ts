@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
-import { renderCatchup, renderExpert, renderImpact } from "./render.ts";
+import type {
+  CatchupBrief,
+  ConflictBrief,
+  ExpertBrief,
+  GhostBrief,
+  HuddleBrief,
+  ImpactBrief,
+} from "./findings.ts";
+import {
+  renderCatchup,
+  renderConflict,
+  renderExpert,
+  renderGhost,
+  renderHuddle,
+  renderImpact,
+} from "./render.ts";
 
 type BriefMetaKeys = "kind" | "agentVersion" | "generatedAt" | "latencyMs";
 
@@ -384,5 +398,194 @@ describe("renderCatchup", () => {
     expect(linearIdx).toBeGreaterThan(-1);
     expect(highIdx).toBeGreaterThan(linearIdx);
     expect(lowIdx).toBeGreaterThan(highIdx);
+  });
+});
+
+const GHOST_BASE: Pick<GhostBrief, BriefMetaKeys> = {
+  kind: "ghost",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 800,
+};
+
+describe("renderGhost", () => {
+  test("full fixture: findings with context rows + expert name, no Gaps", () => {
+    const brief: GhostBrief = {
+      ...GHOST_BASE,
+      gaps: [],
+      query: { file: "src/auth.ts" },
+      startEntityId: "graph:symbol#1",
+      findings: [
+        {
+          peerId: "peer:aa",
+          expert: "Alice",
+          rank: "high",
+          suggestedContact: "Ask Alice (high relevance)",
+          context: [
+            { title: "fix auth race", snippet: "x", service: "github", modifiedAt: 10 },
+            { title: "auth retry", snippet: "y", service: "github", modifiedAt: 9 },
+          ],
+        },
+      ],
+    };
+    const md = renderGhost(brief);
+    expect(md).toContain("# Ghost: src/auth.ts");
+    expect(md).toContain("**Alice** (high) — Ask Alice (high relevance)");
+    expect(md).toContain("- fix auth race (`github`)");
+    expect(md).not.toContain("## Gaps");
+    expect(md).toContain("_generated in 0.8 s_");
+  });
+
+  test("finding with no context rows falls back to the head-only line; null expert uses peerId", () => {
+    const brief: GhostBrief = {
+      ...GHOST_BASE,
+      gaps: [{ category: "missing_connector", detail: "no paired peers — run `nimbus team pair`" }],
+      query: { file: "src/auth.ts" },
+      startEntityId: null,
+      findings: [
+        {
+          peerId: "peer:zz",
+          expert: null,
+          rank: "low",
+          suggestedContact: "Ask peer:zz (low relevance)",
+          context: [],
+        },
+      ],
+    };
+    const md = renderGhost(brief);
+    expect(md).toContain("**peer:zz** (low) — Ask peer:zz (low relevance)");
+    expect(md).toContain("## Gaps");
+    expect(md).toContain("no paired peers");
+  });
+
+  test("no findings yields the empty-state line", () => {
+    const brief: GhostBrief = {
+      ...GHOST_BASE,
+      gaps: [],
+      query: { file: "x.ts" },
+      startEntityId: null,
+      findings: [],
+    };
+    expect(renderGhost(brief)).toContain("_no teammate context found_");
+  });
+});
+
+const CONFLICT_BASE: Pick<ConflictBrief, BriefMetaKeys> = {
+  kind: "conflict",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 600,
+};
+
+describe("renderConflict", () => {
+  test("full fixture: collisions list with who + collision type", () => {
+    const brief: ConflictBrief = {
+      ...CONFLICT_BASE,
+      gaps: [],
+      query: { file: "src/auth.ts" },
+      startEntityId: "graph:symbol#1",
+      collisions: [
+        {
+          peerId: "peer:aa",
+          who: "Alice",
+          service: "github",
+          collisionType: "open_pr",
+          title: "WIP: refactor auth",
+          snippet: "",
+          modifiedAt: 10,
+        },
+      ],
+    };
+    const md = renderConflict(brief);
+    expect(md).toContain("# Conflicts: src/auth.ts");
+    expect(md).toContain("**Alice** — open pr: WIP: refactor auth (`github`)");
+    expect(md).not.toContain("## Gaps");
+    expect(md).toContain("_generated in 0.6 s_");
+  });
+
+  test("null who falls back to peerId; no collisions yields the empty-state line", () => {
+    const withNullWho: ConflictBrief = {
+      ...CONFLICT_BASE,
+      gaps: [],
+      query: { file: "src/auth.ts" },
+      startEntityId: null,
+      collisions: [
+        {
+          peerId: "peer:zz",
+          who: null,
+          service: "gitlab",
+          collisionType: "recent_commit",
+          title: "hotfix",
+          snippet: "",
+          modifiedAt: 5,
+        },
+      ],
+    };
+    expect(renderConflict(withNullWho)).toContain("**peer:zz** — recent commit: hotfix (`gitlab`)");
+
+    const empty: ConflictBrief = {
+      ...CONFLICT_BASE,
+      gaps: [],
+      query: { file: "x.ts" },
+      startEntityId: null,
+      collisions: [],
+    };
+    expect(renderConflict(empty)).toContain("_no work-in-progress collisions found_");
+  });
+});
+
+const HUDDLE_BASE: Pick<HuddleBrief, BriefMetaKeys> = {
+  kind: "huddle",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 1_500,
+};
+
+describe("renderHuddle", () => {
+  test("full fixture: per-contributor PR/ticket/incident lines, who name", () => {
+    const brief: HuddleBrief = {
+      ...HUDDLE_BASE,
+      gaps: [],
+      query: { sinceMs: 24 * 60 * 60 * 1000 },
+      contributions: [
+        {
+          peerId: "peer:aa",
+          who: "Alice",
+          prs: [{ title: "merge billing", snippet: "", service: "github", modifiedAt: 10 }],
+          tickets: [{ title: "BILL-12", snippet: "", service: "jira", modifiedAt: 9 }],
+          incidents: [{ title: "latency spike", snippet: "", service: "pagerduty", modifiedAt: 8 }],
+        },
+      ],
+    };
+    const md = renderHuddle(brief);
+    expect(md).toContain("# Team Huddle");
+    expect(md).toContain("## Alice");
+    expect(md).toContain("- PR: merge billing");
+    expect(md).toContain("- Ticket: BILL-12");
+    expect(md).toContain("- Incident: latency spike");
+    expect(md).not.toContain("## Gaps");
+    expect(md).toContain("_generated in 1.5 s_");
+  });
+
+  test("contributor with no items renders _quiet_; null who falls back to peerId", () => {
+    const brief: HuddleBrief = {
+      ...HUDDLE_BASE,
+      gaps: [],
+      query: { sinceMs: 1_000 },
+      contributions: [{ peerId: "peer:zz", who: null, prs: [], tickets: [], incidents: [] }],
+    };
+    const md = renderHuddle(brief);
+    expect(md).toContain("## peer:zz");
+    expect(md).toContain("_quiet_");
+  });
+
+  test("no contributions yields the empty-state line", () => {
+    const brief: HuddleBrief = {
+      ...HUDDLE_BASE,
+      gaps: [],
+      query: { sinceMs: 1_000 },
+      contributions: [],
+    };
+    expect(renderHuddle(brief)).toContain("_no teammate activity in the window_");
   });
 });

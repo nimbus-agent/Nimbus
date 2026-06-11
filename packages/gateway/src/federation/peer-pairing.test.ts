@@ -8,7 +8,7 @@ import { PeerPairing } from "./peer-pairing.ts";
 let index: LocalIndex;
 beforeEach(() => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, 38);
   index = new LocalIndex(db);
 });
 afterEach(() => index.close?.());
