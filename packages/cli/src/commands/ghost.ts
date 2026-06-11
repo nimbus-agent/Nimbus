@@ -13,7 +13,7 @@ export function parseGhostArgs(args: string[]): GhostCliArgs {
       json = true;
     } else if (a === "--namespace") {
       const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
+      if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) {
         throw new Error("--namespace requires a value");
       }
       namespaces.push(v.trim());

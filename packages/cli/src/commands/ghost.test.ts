@@ -37,6 +37,12 @@ describe("parseGhostArgs", () => {
   it("throws when --namespace value is whitespace-only", () => {
     expect(() => parseGhostArgs(["x.ts", "--namespace", "   "])).toThrow();
   });
+
+  it("rejects a flag swallowed as the --namespace value", () => {
+    expect(() => parseGhostArgs(["x.ts", "--namespace", "--json"])).toThrow(
+      "--namespace requires a value",
+    );
+  });
 });
 
 const {
@@ -195,6 +201,60 @@ describe("runGhostCli — dispatcher", () => {
     });
     await runGhostCli(["src/auth.ts", "--namespace", "teamA"]);
     expect(agentCallParams).toEqual({ file: "src/auth.ts", namespaces: ["teamA"] });
+  });
+
+  it("exits 2 with 'Agent failed' when briefError carries no error field", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          if (method === "agents.ghost") {
+            setTimeout(() => {
+              handlers.get("ghost.briefError")?.({});
+            }, 0);
+            return { sessionId: "s" };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("Agent failed");
+  });
+
+  it("exits 2 when briefReady has a valid brief but findings fail the guard", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          if (method === "agents.ghost") {
+            setTimeout(() => {
+              handlers.get("ghost.briefReady")?.({
+                sessionId: "s",
+                brief: "# valid markdown brief",
+                findings: { not: "a ghost brief" },
+              });
+            }, 0);
+            return { sessionId: "s" };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("Malformed");
   });
 
   it("exits 2 when briefReady payload is malformed", async () => {

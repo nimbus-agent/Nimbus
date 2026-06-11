@@ -12,15 +12,16 @@ export function parseHuddleArgs(args: string[]): HuddleCliArgs {
     if (a === "--json") {
       json = true;
     } else if (a === "--since") {
-      const v = Number(args[i + 1]);
-      if (!Number.isInteger(v) || v < 0) {
+      const raw = args[i + 1];
+      const v = Number(raw);
+      if (raw === undefined || raw.startsWith("--") || !Number.isInteger(v) || v < 0) {
         throw new Error("--since must be a non-negative integer (ms)");
       }
       sinceMs = v;
       i += 1;
     } else if (a === "--namespace") {
       const v = args[i + 1];
-      if (typeof v !== "string" || v.trim().length === 0) {
+      if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) {
         throw new Error("--namespace requires a value");
       }
       namespaces.push(v.trim());

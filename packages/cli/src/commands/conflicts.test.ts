@@ -44,6 +44,12 @@ describe("parseConflictsArgs", () => {
   it("throws when --namespace value is whitespace-only", () => {
     expect(() => parseConflictsArgs(["x.ts", "--namespace", "   "])).toThrow();
   });
+
+  it("rejects a flag swallowed as the --namespace value", () => {
+    expect(() => parseConflictsArgs(["x.ts", "--namespace", "--json"])).toThrow(
+      "--namespace requires a value",
+    );
+  });
 });
 
 const {

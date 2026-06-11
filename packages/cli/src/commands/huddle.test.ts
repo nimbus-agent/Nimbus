@@ -50,6 +50,18 @@ describe("parseHuddleArgs", () => {
   it("throws when --namespace value is whitespace-only", () => {
     expect(() => parseHuddleArgs(["--namespace", "   "])).toThrow();
   });
+
+  it("rejects a flag swallowed as the --namespace value", () => {
+    expect(() => parseHuddleArgs(["--namespace", "--json"])).toThrow(
+      "--namespace requires a value",
+    );
+  });
+
+  it("rejects a flag swallowed as the --since value", () => {
+    expect(() => parseHuddleArgs(["--since", "--json"])).toThrow(
+      "--since must be a non-negative integer (ms)",
+    );
+  });
 });
 
 const {
