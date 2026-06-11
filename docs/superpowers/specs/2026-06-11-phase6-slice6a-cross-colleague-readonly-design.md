@@ -86,13 +86,19 @@ packages/ui/src-tauri/src/
 ### 3.2 Data flow (all three agents, on-demand)
 
 1. CLI `nimbus ghost <file>` → `agents.ghost` IPC method.
-2. `runGhost` resolves the file to a local graph entity (the `impact.resolveStartEntity` pattern).
-3. The agent runs `fanOutExpertise` (who knows it) and/or `fanOutQuery` (what they did) across all
-   paired peers via the shared fan-out helper. Each answering peer enforces grant + role + consent
-   through the existing `answerFederatedQuery` (I17). Unreachable / denying / timing-out peers
-   degrade to gap notes.
-4. Local post-filtering: recency weighting; for ghost, **suppress** any finding whose referenced
-   symbol no longer exists in the local graph.
+2. `runGhost` resolves the file to a local graph entity (the `impact.resolveStartEntity` pattern)
+   and derives a **machine-portable match token** — repo-relative path / file basename / symbol
+   label — never the absolute local path (see §3.4).
+3. The agent runs `fanOutExpertise(token)` (who knows it — `federation.expertise` takes a free-text
+   query) and `fanOutQuery({ types })` (the peer's declared typed slice — `federation.query` takes
+   **no** search term, so it returns the namespace slice bounded by `limit`). Each answering peer
+   enforces grant + role + consent through the existing `answerFederatedQuery` (I17). Unreachable /
+   denying / timing-out peers degrade to gap notes.
+4. Local post-filtering on the asker: match each returned `FederatedItem` against the token
+   (basename/symbol in `title`/`snippet`) — the wire cannot filter by file, so the asker does;
+   recency weighting; for ghost, **suppress** any finding whose referenced symbol no longer exists
+   in the local graph; rank/order suggested contacts by expertise rank then recency (one entry per
+   peer — there is no author identity on the wire to dedupe further; see §3.5).
 5. `emitBriefWithSynthesis` emits the structured brief via the `<kind>.briefReady` notification
    (optional LLM synthesis, exactly as `impact` does).
 
@@ -109,6 +115,32 @@ packages/ui/src-tauri/src/
   unaffected (only `query-gate.ts` may import it; the asker uses the wire).
 - All three `agents.*` methods are local-only (asker-side orchestration, never answered for a peer);
   `FORBIDDEN_OVER_LAN` is unchanged.
+
+### 3.4 Cross-machine entity matching
+
+A file lives at a different absolute path on every colleague's machine
+(`C:\gitrep\Nimbus\src\main.ts` vs `/Users/bob/projects/Nimbus/src/main.ts`). The agents therefore
+never put an absolute path on the wire. Resolution derives a **machine-portable match token**:
+
+- Preferred: the **symbol / entity label** already in the local graph (`graph_entity.label`, which is
+  service-relative, e.g. a repo-relative path or a code-symbol name) — the same labels
+  `impact.resolveStartEntity` resolves against today.
+- Fallback: the **file basename** (e.g. `main.ts`) when no graph entity resolves.
+
+The token feeds `federation.expertise` (free-text ranking) directly. For the `federation.query`
+path — which returns the namespace's declared typed slice with no search term — the asker **filters
+the returned `FederatedItem`s locally** by matching the token against `title` / `snippet`. This
+keeps matching machine-portable and leak-proof (the asker only ever sees declared-type items it
+holds a grant on). A basename collision across unrelated repos is possible; it is a precision
+limitation, surfaced as lower-confidence findings, not a leak.
+
+### 3.5 Contact ranking (no cross-peer dedupe)
+
+The leak-proof `FederatedItem` excludes `author_id`, and `federation.expertise` returns only a
+coarse `rank` — there is **no email or author identity on the wire**. Each paired peer maps to
+exactly one expert (its owner, via `lan_peers.display_name`). Ghost therefore ranks/orders
+suggested contacts by `(rank, recency)` and emits one entry per peer; there is no further
+cross-peer identity dedupe to perform (and none is possible without leaking author identity).
 
 ## 4. The fan-out primitive — `federation/peer-fanout.ts`
 
@@ -153,6 +185,13 @@ try/catch. A throw — unreachable peer, transport error, or a federation busine
 (`no_grant` / `consent_denied` / `timeout` arrive as a thrown wire error per the over-the-wire
 contract) — becomes a `GapNote`, never fatal. On a successful `federation.query` answer the helper
 records `(peerId, namespace)` into the known-namespaces cache; on `no_grant` it prunes that row.
+
+**Concurrency & timeout (resolved):** the fan-out runs peers in **bounded parallel** (default cap 5
+in-flight via a tiny local promise-pool — no such helper exists in the gateway today) rather than
+sequentially, so total latency ≈ the slowest reachable peer, not the sum. Each per-peer call uses
+the lan-client wire timeout (`DEFAULT_TIMEOUT_MS` = 5s). This bounds a single AFK/slow peer to one
+~5s window regardless of that peer's answerer-side 30s consent wait — the asker never blocks on a
+human approving an interactive-consent prompt (see §7).
 
 ## 5. Brief schemas (added to `agents/_lib/findings.ts`)
 
@@ -247,7 +286,10 @@ CREATE TABLE federation_known_namespaces (
   answered — never on `no_grant` / `timeout` — so the cache never holds namespaces the asker cannot
   access. Hooked into the `federation.ask` success path and the fan-out helper.
 - **Self-healing:** a later `no_grant` (grant revoked at the peer) prunes that row, so a default
-  fan-out stops hitting dead namespaces within one use.
+  fan-out stops hitting dead namespaces within one use. Unpairing a peer cascade-deletes its cache
+  rows (hook on `LocalIndex.removeLanPeer`). Rows key on the stable `peer_id` (derived from the peer
+  pubkey), so a peer IP change re-pairs without orphaning rows. No time-based TTL is added (YAGNI:
+  the table is tiny and self-heals via the `no_grant` + unpair prunes).
 - **Namespace selection:** `--namespace <name>` (repeatable) overrides; if omitted, the default
   fan-out targets every `(peerId, namespace)` row in the cache; an empty cache yields a gap note
   `"no known namespaces — pass --namespace <name>"`.
@@ -266,7 +308,14 @@ This is the slice's only schema change: one append-only table, forward-only, `CU
 | Federation disabled or asker deps absent | brief with a single gap note; never throws |
 | LLM absent | synthesis omitted (`emitBriefWithSynthesis` already optional-LLM) |
 
-## 8. Surfaces
+**Consent stance for ambient sweeps.** Ambient features rely on **standing consent**: a teammate
+who wants to participate grants the asker standing consent on the shared namespace (already
+supported — `NamespaceGrant.standingConsent`), so no per-query prompt fires. A peer with only
+interactive (non-standing) consent will not answer within the asker's 5s wire timeout (its owner
+must approve a prompt the asker won't wait for) and degrades to a gap note — this is intended, not a
+failure: ambient sweeps must never block on or pester a human. An answerer-side "ambient / no-prompt"
+query flag (decline-fast instead of prompting) is a worthwhile follow-up but is **deferred out of
+6a** because it would modify the answerer's consent path; 6a changes nothing on the answering side.
 
 - **CLI:** `nimbus ghost <file> [--namespace <n>]`, `nimbus conflicts <file> [--namespace <n>]`,
   `nimbus huddle [--since <duration>] [--namespace <n>]` — thin IPC-call shells; registered in both
@@ -315,12 +364,35 @@ file to both `scripts/coverage-floor/exclusions.ts` and `sonar-project.propertie
 
 ## 11. Risks & open questions
 
-- **Known-namespaces cold start.** Until the user runs at least one explicit `--namespace` query per
-  namespace, the default sweep is empty (gap note guides them). Acceptable for v1; a true "all
-  granted" default needs the 6b namespace-discovery primitive.
-- **Fan-out latency.** Sequential per-peer wire calls (as `team.auditMerged` does today) bound the
-  brief latency by the slowest reachable peer × peer count. Mitigation: bounded per-peer timeout
-  (reuse the lan-client `DEFAULT_TIMEOUT_MS`); consider bounded concurrency in the plan if the peer
-  count is large. Document the budget; do not silently cap.
-- **Consent fatigue.** A peer with interactive (non-standing) consent will be prompted per fan-out
-  query. The agents should query efficiently (one query per peer per agent run, not per finding).
+- **Known-namespaces cold start.** A federated query requires a namespace name. v1 discovery is
+  **out-of-band**, identical to today's shipped `federation.ask`: the namespace owner (who runs
+  `nimbus team namespace grant <ns> <peer>`) communicates the name to the grantee; the cache then
+  auto-fills on the first answered query. Until then the default sweep is empty and emits a gap note
+  guiding the user to pass `--namespace`. A true "all granted" default needs a namespace-discovery
+  primitive (new wire surface + a leak-surface review of advertising namespace names) — **deferred
+  to 6b**.
+- **Fan-out latency — resolved.** Bounded-parallel fan-out (cap 5) + 5s per-peer wire timeout, so
+  latency ≈ slowest reachable peer, and a single AFK peer is capped at one window (see §4). Document
+  the budget; do not silently cap the peer set.
+- **Match precision.** Local basename/symbol matching can collide across unrelated repos; surfaced
+  as lower-confidence findings, never a leak (§3.4).
+
+## 12. Review dispositions (2026-06-11)
+
+Dispositions of the design-review file (`*-readonly-design-review.md`):
+
+- **Q1 (cold-start / namespace discovery):** deferred to 6b + v1 out-of-band path documented (§6,
+  §11). Conscious scope boundary — matches the chosen asker-side-cache approach over a discovery
+  wire method.
+- **Q2 (interactive-consent latency):** fixed via bounded parallel + 5s wire timeout; design stance
+  = ambient features rely on standing consent, interactive-consent peers degrade to a gap note (§7).
+  Verified the asker already caps at 5s regardless of the answerer's 30s consent wait.
+- **Q3 (cross-machine entity resolution):** fixed — a real gap. Match via machine-portable token
+  (symbol label / repo-relative path / basename), never the absolute path; `federation.query` has no
+  search term so the asker filters the typed slice locally (§3.4, §3.2).
+- **Q4 / S2 (concurrency):** fixed — bounded-parallel pool, cap 5 (§4).
+- **S1 (cache eviction):** unpair-prune fixed (§6); 30-day TTL deferred as YAGNI (stable `peer_id`
+  key + self-healing prunes).
+- **S3 (contact dedupe):** pushed back — no `author_id` / email on the wire and expertise returns
+  only a rank, so cross-peer email dedupe is neither possible nor needed; one expert per peer, ranked
+  by `(rank, recency)` (§3.5).
