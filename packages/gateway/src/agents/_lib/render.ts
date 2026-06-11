@@ -1,8 +1,13 @@
 import type {
   CatchupBrief,
+  ConflictBrief,
+  ConflictFinding,
   ExpertBrief,
   ExpertFinding,
   GapNote,
+  GhostBrief,
+  GhostFinding,
+  HuddleBrief,
   ImpactBrief,
   ImpactCategory,
   ImpactFinding,
@@ -107,6 +112,62 @@ export function renderCatchup(brief: CatchupBrief): string {
       const ordered = [...s.items].sort((a, b) => b.relevanceScore - a.relevanceScore);
       const block = [heading, "", ...ordered.map(renderCatchupItem)].join("\n");
       sections.push(block);
+    }
+  }
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+function renderGhostFinding(f: GhostFinding): string {
+  const head = `**${f.expert ?? f.peerId}** (${f.rank}) — ${f.suggestedContact}`;
+  if (f.context.length === 0) return `- ${head}`;
+  const lines = f.context.slice(0, 5).map((c) => `   - ${c.title} (\`${c.service}\`)`);
+  return [`- ${head}`, ...lines].join("\n");
+}
+
+export function renderGhost(brief: GhostBrief): string {
+  const header = `# Ghost: ${brief.query.file}`;
+  const body =
+    brief.findings.length === 0
+      ? "_no teammate context found_"
+      : brief.findings.map(renderGhostFinding).join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+function renderConflictFinding(f: ConflictFinding): string {
+  return `- **${f.who ?? f.peerId}** — ${f.collisionType.replaceAll("_", " ")}: ${f.title} (\`${
+    f.service
+  }\`)`;
+}
+
+export function renderConflict(brief: ConflictBrief): string {
+  const header = `# Conflicts: ${brief.query.file}`;
+  const body =
+    brief.collisions.length === 0
+      ? "_no work-in-progress collisions found_"
+      : brief.collisions.map(renderConflictFinding).join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+export function renderHuddle(brief: HuddleBrief): string {
+  const header = "# Team Huddle";
+  const sections: string[] = [];
+  if (brief.contributions.length === 0) {
+    sections.push("_no teammate activity in the window_");
+  } else {
+    for (const c of brief.contributions) {
+      const heading = `## ${c.who ?? c.peerId}`;
+      const lines = [
+        ...c.prs.map((p) => `- PR: ${p.title}`),
+        ...c.tickets.map((t) => `- Ticket: ${t.title}`),
+        ...c.incidents.map((i) => `- Incident: ${i.title}`),
+      ];
+      sections.push([heading, "", ...(lines.length === 0 ? ["_quiet_"] : lines)].join("\n"));
     }
   }
   const gaps = renderGaps(brief.gaps);

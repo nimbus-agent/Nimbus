@@ -1,7 +1,14 @@
-import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
+import type {
+  CatchupBrief,
+  ConflictBrief,
+  ExpertBrief,
+  GhostBrief,
+  HuddleBrief,
+  ImpactBrief,
+} from "./findings.ts";
 import { type SynthesizerLlm, synthesize } from "./synthesize.ts";
 
-type AnyBrief = ExpertBrief | ImpactBrief | CatchupBrief;
+type AnyBrief = ExpertBrief | ImpactBrief | CatchupBrief | GhostBrief | ConflictBrief | HuddleBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

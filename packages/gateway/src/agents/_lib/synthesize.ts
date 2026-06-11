@@ -1,6 +1,20 @@
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
-import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
-import { renderCatchup, renderExpert, renderImpact } from "./render.ts";
+import type {
+  CatchupBrief,
+  ConflictBrief,
+  ExpertBrief,
+  GhostBrief,
+  HuddleBrief,
+  ImpactBrief,
+} from "./findings.ts";
+import {
+  renderCatchup,
+  renderConflict,
+  renderExpert,
+  renderGhost,
+  renderHuddle,
+  renderImpact,
+} from "./render.ts";
 
 export type SynthesizerLlm = {
   generateMarkdown: (prompt: string) => Promise<string | null>;
@@ -21,18 +35,30 @@ const SYNTHESIS_INSTRUCTIONS = [
   "- Output Markdown only — no preamble, no code fences around the whole answer.",
 ].join("\n");
 
-type SynthInput = ExpertBrief | ImpactBrief | CatchupBrief;
+type SynthInput =
+  | ExpertBrief
+  | ImpactBrief
+  | CatchupBrief
+  | GhostBrief
+  | ConflictBrief
+  | HuddleBrief;
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
   if (brief.kind === "impact") return renderImpact(brief);
-  return renderCatchup(brief);
+  if (brief.kind === "catchup") return renderCatchup(brief);
+  if (brief.kind === "ghost") return renderGhost(brief);
+  if (brief.kind === "conflict") return renderConflict(brief);
+  return renderHuddle(brief);
 }
 
 function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "expert") return "agents.expert";
   if (brief.kind === "impact") return "agents.impact";
-  return "agents.catchup";
+  if (brief.kind === "catchup") return "agents.catchup";
+  if (brief.kind === "ghost") return "agents.ghost";
+  if (brief.kind === "conflict") return "agents.conflicts";
+  return "agents.huddle";
 }
 
 export async function synthesize(brief: SynthInput, opts: SynthesizeOpts = {}): Promise<string> {

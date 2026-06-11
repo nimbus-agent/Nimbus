@@ -1,6 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import type { ExpertBrief, GapNote } from "./findings.ts";
-import { isCatchupBrief, isExpertBrief, isImpactBrief } from "./findings.ts";
+import {
+  isCatchupBrief,
+  isConflictBrief,
+  isExpertBrief,
+  isGhostBrief,
+  isHuddleBrief,
+  isImpactBrief,
+} from "./findings.ts";
 
 describe("findings type guards", () => {
   test("isExpertBrief accepts a minimal valid brief", () => {
@@ -63,5 +70,51 @@ describe("findings type guards", () => {
     expect(isCatchupBrief({ ...valid, kind: "catchup", sections: [], query: { sinceMs: 0 } })).toBe(
       true,
     );
+  });
+});
+
+describe("6a brief guards", () => {
+  it("isGhostBrief accepts a well-formed ghost brief", () => {
+    const b = {
+      kind: "ghost",
+      agentVersion: 1,
+      generatedAt: 1,
+      latencyMs: 1,
+      gaps: [],
+      query: { file: "auth.ts" },
+      startEntityId: null,
+      findings: [],
+    };
+    expect(isGhostBrief(b)).toBe(true);
+    expect(isGhostBrief({ ...b, kind: "impact" })).toBe(false);
+  });
+
+  it("isConflictBrief checks the collisions array", () => {
+    const b = {
+      kind: "conflict",
+      agentVersion: 1,
+      generatedAt: 1,
+      latencyMs: 1,
+      gaps: [],
+      query: { file: "auth.ts" },
+      startEntityId: null,
+      collisions: [],
+    };
+    expect(isConflictBrief(b)).toBe(true);
+    expect(isConflictBrief({ ...b, collisions: undefined })).toBe(false);
+  });
+
+  it("isHuddleBrief checks the contributions array", () => {
+    const b = {
+      kind: "huddle",
+      agentVersion: 1,
+      generatedAt: 1,
+      latencyMs: 1,
+      gaps: [],
+      query: { sinceMs: 0 },
+      contributions: [],
+    };
+    expect(isHuddleBrief(b)).toBe(true);
+    expect(isHuddleBrief({ ...b, kind: "ghost" })).toBe(false);
   });
 });

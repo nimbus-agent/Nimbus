@@ -1,3 +1,5 @@
+import type { ExpertiseRank } from "../../federation/types.ts";
+
 export type Evidence = {
   itemId: string;
   type:
@@ -99,7 +101,69 @@ export type CatchupBrief = AgentBriefBase & {
   sections: CatchupSection[];
 };
 
-export type AgentBrief = ExpertBrief | ImpactBrief | CatchupBrief;
+/** A leak-proof projection of FederatedItem (no metadata), reused by the huddle buckets. */
+export type FederatedItemLite = {
+  title: string;
+  snippet: string;
+  service: string;
+  modifiedAt: number;
+};
+
+export type GhostFinding = {
+  peerId: string;
+  expert: string | null;
+  rank: ExpertiseRank;
+  context: FederatedItemLite[];
+  suggestedContact: string;
+};
+
+export type GhostBrief = AgentBriefBase & {
+  kind: "ghost";
+  query: { file: string };
+  startEntityId: string | null;
+  findings: GhostFinding[];
+};
+
+export type ConflictType = "open_pr" | "assigned_ticket" | "recent_commit" | "open_branch";
+
+export type ConflictFinding = {
+  peerId: string;
+  who: string | null;
+  service: string;
+  collisionType: ConflictType;
+  title: string;
+  snippet: string;
+  modifiedAt: number;
+};
+
+export type ConflictBrief = AgentBriefBase & {
+  kind: "conflict";
+  query: { file: string };
+  startEntityId: string | null;
+  collisions: ConflictFinding[];
+};
+
+export type HuddleContribution = {
+  peerId: string;
+  who: string | null;
+  prs: FederatedItemLite[];
+  tickets: FederatedItemLite[];
+  incidents: FederatedItemLite[];
+};
+
+export type HuddleBrief = AgentBriefBase & {
+  kind: "huddle";
+  query: { sinceMs: number };
+  contributions: HuddleContribution[];
+};
+
+export type AgentBrief =
+  | ExpertBrief
+  | ImpactBrief
+  | CatchupBrief
+  | GhostBrief
+  | ConflictBrief
+  | HuddleBrief;
 
 export type BriefReadyPayload<B extends AgentBrief> = {
   sessionId: string;
@@ -145,6 +209,51 @@ export function isCatchupBrief(x: unknown): x is CatchupBrief {
     b["agentVersion"] === 1 &&
     Array.isArray(b["gaps"]) &&
     Array.isArray(b["sections"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    typeof b["query"] === "object" &&
+    b["query"] !== null
+  );
+}
+
+export function isGhostBrief(x: unknown): x is GhostBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "ghost" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["findings"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    typeof b["query"] === "object" &&
+    b["query"] !== null
+  );
+}
+
+export function isConflictBrief(x: unknown): x is ConflictBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "conflict" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["collisions"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    typeof b["query"] === "object" &&
+    b["query"] !== null
+  );
+}
+
+export function isHuddleBrief(x: unknown): x is HuddleBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "huddle" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    Array.isArray(b["contributions"]) &&
     typeof b["generatedAt"] === "number" &&
     typeof b["latencyMs"] === "number" &&
     typeof b["query"] === "object" &&
