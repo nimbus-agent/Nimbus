@@ -18,8 +18,8 @@ JSON-RPC 2.0 over a **local-only** domain socket (macOS/Linux) or named pipe (Wi
 | Platform | Socket path |
 |---|---|
 | Windows 10+ | `\\.\pipe\nimbus-gateway` |
-| macOS 13+ | `~/Library/Application Support/Nimbus/gateway.sock` |
-| Ubuntu 22.04+ | `~/.local/share/nimbus/gateway.sock` |
+| macOS 13+ | `$TMPDIR/nimbus-gateway.sock` (defaults to `/tmp/nimbus-gateway.sock`) |
+| Ubuntu 22.04+ | `$XDG_RUNTIME_DIR/nimbus-gateway.sock` (defaults to `/tmp/nimbus-gateway.sock` if `XDG_RUNTIME_DIR` is unset) |
 
 Use `PlatformServices` to resolve the path — never hardcode it.
 
@@ -51,7 +51,7 @@ namespace.methodName
 When a method needs to stream results, it returns a handle immediately and emits notifications:
 
 ```
-→ engine.askStream({ prompt })          request  →  { streamId }
+→ engine.askStream({ input })           request  →  { streamId }
 ← engine.streamToken { streamId, token }           notification (×N)
 ← engine.streamDone  { streamId, result }          notification (×1)
 ← engine.streamError { streamId, error }           notification (on failure)
@@ -65,9 +65,9 @@ When a method needs to stream results, it returns a handle immediately and emits
 
 | Method | Type | Params | Returns / Emits |
 |---|---|---|---|
-| `engine.ask` | request | `{ prompt, sessionId? }` | `{ result: string }` |
-| `engine.askStream` | request | `{ prompt, sessionId? }` | `{ streamId }` → see streaming notifications below |
-| `engine.getSubTaskPlan` | request | `{ sessionId }` | `SubTaskPlan` |
+| `engine.askStream` | request | `{ input, sessionId?, agent? }` | `{ streamId }` → see streaming notifications below |
+| `engine.cancelStream` | request | `{ streamId }` | cancels an in-flight stream |
+| `engine.getSessionTranscript` | request | `{ sessionId }` | session transcript rows (requires a configured local index) |
 
 **Streaming notifications (engine):**
 

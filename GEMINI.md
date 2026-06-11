@@ -7,7 +7,7 @@ Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that main
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
 **Status:** Phase 5 ✅ (2026-06-04) · Phase 6 (Team) 🚧 in progress — Federation Core + Identity/SSO/SCIM shipped (Slices 1 & 3). Latest release `v0.5.0` (2026-06-04); `v0.1.0` was the first headless GA (2026-05-09; Gateway + CLI + VS Code extension; Tauri desktop deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
-Companion context: [`CLAUDE.md`](./CLAUDE.md) (same project facts) — keep both aligned when changing commands, roadmap rows, or non-negotiables.
+Companion file: [`CLAUDE.md`](./CLAUDE.md) is the canonical source; both must stay aligned when changing commands, roadmap rows, or non-negotiables.
 
 ---
 
@@ -72,7 +72,7 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 
 **Dependency rules:** `gateway` imports nothing from cli/ui. `cli` and `ui` reach the gateway IPC-only (no source imports). `sdk` imports nothing from gateway/cli/ui. `mcp-connectors/*` depend on `@nimbus-dev/sdk` only. Circular dependencies are forbidden.
 
-**Prerequisites:** Bun v1.2+; Rust for the Tauri UI.
+**Prerequisites:** Bun v1.2+; Rust for the Tauri UI. Local `nimbus ask` can run through Ollama on `http://127.0.0.1:11434` with `[llm].prefer_local = true` + `[llm].local_model`.
 
 ---
 
@@ -107,4 +107,29 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
 - [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I23 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
-- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in CLAUDE.md's Skill References table): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-federation-identity`, `nimbus-agent-patterns`.
+- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in the Skill References table below): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-federation-identity`, `nimbus-agent-patterns`.
+
+---
+
+## Skill References
+
+Domain skills live in `.claude/commands/nimbus-*.md`, **loaded on demand** via the Skill tool (or `/<name>`) — each carries a `description` that drives when it triggers.
+
+| Skill | Use when… |
+| --- | --- |
+| `nimbus-architecture` | Placing/naming new code, package ownership, IPC design — read first for any Gateway-touching task |
+| `nimbus-file-map` | "Where does X live?" — pointer index to high-traffic files |
+| `nimbus-commands` | bun scripts, CLI subcommands, coverage-gate names, env overrides, `bun add` safety |
+| `nimbus-ipc` | Adding/designing an IPC method, notification, or streaming contract; Tauri-exposure check |
+| `nimbus-testing` | Choosing a test layer, file location, coverage gate, or mocking the Gateway |
+| `nimbus-preflight` | What to run before pushing; why `test:ci` ≠ full gate set; cross-platform/CI gates |
+| `nimbus-security-invariants` | Adding/auditing a structural defense (the wiring + docs + test triple rule) |
+| `nimbus-tauri-allowlist` | Exposing a method to the renderer (`ALLOWED_METHODS`, I7) |
+| `nimbus-http-write-surface` | Adding an HTTP `POST`/`PUT`/`DELETE` route (`WRITE_ROUTE_ALLOWLIST`, I13) |
+| `nimbus-tool-output-envelope` | Feeding tool results to the LLM (`wrapToolOutput`, I11) |
+| `nimbus-connector-authoring` | Building/modifying a first-party MCP connector |
+| `nimbus-db-migrations` | Authoring a SQLite migration or new table |
+| `nimbus-embedding-routing` | Embedding-table routing for a new item type; `nimbus index reembed` |
+| `nimbus-cicd-data-layer` | DORA metrics, preflight checks, deployment annotation (Phase 5 T4) |
+| `nimbus-federation-identity` | Phase 6 Team federation (I17 query gate, namespaces/RBAC, pairing/discovery) + identity/SSO/SCIM (I18, OIDC device-code, SCIM-on-I13); touching `gateway/src/{federation,identity}/` |
+| `nimbus-agent-patterns` | Authoring a built-in read-only agent |

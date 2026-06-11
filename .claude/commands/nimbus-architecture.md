@@ -20,7 +20,7 @@ These are **load-bearing constraints**, not style preferences. Check every new f
 3. **No plaintext credentials** — Vault only. Never in logs, IPC responses, config files, or env vars persisted outside spawn context. The structured logger auto-redacts `*.token`, `*.secret`, `oauth.*`.
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly. Every integration is an MCP server. Engine ↔ connector boundary is always MCP.
 5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change.
-6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 6 (Team)** (🚧 in progress — Slices 1 & 3 shipped). Phase 5 (The Extended Surface) is ✅ complete.
+6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 6 (Team)** (🚧 in progress — Slices 1–5 shipped: 1 & 3 on 2026-06-05, 2 & 4 on 2026-06-07, 5 on 2026-06-09). Phase 5 (The Extended Surface) is ✅ complete.
 
 ---
 
@@ -63,12 +63,12 @@ nimbus/
 
 **Key files to know:**
 - `engine/executor.ts` — HITL gate lives here. Touch carefully.
-- `ipc/handlers/` — one file per IPC namespace (e.g. `engine.ts`, `connector.ts`, `llm.ts`)
+- `ipc/<namespace>-rpc.ts` — one file per IPC namespace (e.g. `federation-rpc.ts`, `connector-rpc.ts`, `llm-rpc.ts`); each exports a `dispatch<Namespace>Rpc` wired into `ipc/server/dispatchers.ts`
 - `db/schema.ts` (or migrations/) — all SQLite schema changes go through migrations, never manual ALTER
 
 ### `packages/cli/src/`
 
-- `commands/` — one file per CLI subcommand (`ask`, `search`, `query`, `config`, `profile`, `diag`, `doctor`, `db`, `telemetry`, `connector`, `extension`, `workflow`, `status`, `audit`)
+- `commands/` — one file per CLI subcommand (44 top-level commands registered in `COMMAND_HANDLERS`, `packages/cli/src/index.ts`): `start`, `stop`, `status`, `db`, `diag`, `query`, `telemetry`, `tui`, `update`, `doctor`, `config`, `profile`, `serve`, `test`, `ask`, `catchup`, `expert`, `impact`, `index`, `vault`, `audit`, `connector`, `data`, `deploy`, `extension`, `people`, `search`, `security`, `session`, `workflow`, `watch`, `repl`, `run`, `scaffold`, `lan`, `llm`, `metrics`, `team`, `identity`, `scim`, `policy`, `chatops`, `admin`, `mcp-server`. (`bench` is dispatched in a separate branch; there is no `docs` command.)
 - `tui/` — Ink-based TUI components (Phase 4): `App.tsx`, `QueryInput.tsx`, `ConnectorHealth.tsx`, `WatcherPane.tsx`, `SubTaskPane.tsx`
 
 ### `packages/ui/src/` (Tauri desktop — Phase 4)
@@ -106,8 +106,8 @@ nimbus/
 ```
 
 **Adding a new IPC method:**
-1. Add handler in `packages/gateway/src/ipc/handlers/<namespace>.ts`
-2. Register it in the IPC server
+1. Add handler in `packages/gateway/src/ipc/<namespace>-rpc.ts` (create the file if it doesn't exist), exporting a `dispatch<Namespace>Rpc` function (built via the `dispatchByMethod` helper) that returns an `RpcMissOrHit` discriminated union — `{ kind: "hit", value }` on a match, `{ kind: "miss" }` otherwise
+2. Wire it into the dispatcher chain in `packages/gateway/src/ipc/server/dispatchers.ts`
 3. If it should be callable from the Tauri UI, add it to `ALLOWED_METHODS` in `gateway_bridge.rs`
 4. Write a unit test in `packages/gateway/test/unit/ipc/`
 
@@ -165,7 +165,7 @@ Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 | What you're building | Where it goes |
 |---|---|
 | New CLI subcommand | `packages/cli/src/commands/<name>.ts` |
-| New IPC method | `packages/gateway/src/ipc/handlers/<namespace>.ts` |
+| New IPC method | `packages/gateway/src/ipc/<namespace>-rpc.ts` |
 | New connector | `packages/mcp-connectors/<service>/` |
 | New DB table / migration | `packages/gateway/src/db/migrations/` |
 | New engine capability | `packages/gateway/src/engine/` |

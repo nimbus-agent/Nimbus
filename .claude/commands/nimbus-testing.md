@@ -82,26 +82,31 @@ Coverage is checked in CI on push to `main`. PRs that drop a gate fail the `pr-q
 
 ### HITL Executor (unit)
 
-Test that the `HITL_REQUIRED` set contains what it should, and that the gate fires before any connector call:
+Test that the `HITL_REQUIRED` set contains what it should, and that the gate fires before any connector call. `executor.ts` exports the `HITL_REQUIRED` frozen set and the `ToolExecutor` **class** (there is no singleton `executor` and no `.run()` — instantiate `ToolExecutor` and call `.gate(action)`, where `action` is a `PlannedAction` `{ type, payload }`):
 
 ```ts
-import { executor, HITL_REQUIRED } from '../../src/engine/executor';
+import { HITL_REQUIRED, ToolExecutor } from '../../engine/executor.ts';
 
 describe('HITL gate', () => {
-  it('blocks delete actions', () => {
-    expect(HITL_REQUIRED.has('google-drive:trash')).toBe(true);
+  it('requires consent for write actions', () => {
+    expect(HITL_REQUIRED.has('email.send')).toBe(true);
   });
 
-  it('writes audit log BEFORE dispatching', async () => {
-    const auditSpy = vi.spyOn(auditLog, 'append');
-    const dispatchSpy = vi.spyOn(connector, 'dispatch');
-    // simulate approval
-    await executor.run({ tool: 'google-drive:trash', params: { id: '1' }, consent: 'approved' });
-    expect(auditSpy.mock.invocationCallOrder[0])
-      .toBeLessThan(dispatchSpy.mock.invocationCallOrder[0]);
+  it('allows read-only actions', () => {
+    expect(HITL_REQUIRED.has('gmail.list')).toBe(false);
+  });
+
+  it('routes a HITL action through the consent gate', async () => {
+    // new ToolExecutor(consent, audit, connectors, delegation?)
+    const exec = new ToolExecutor(consent, audit, connectors);
+    const result = await exec.gate({ type: 'email.send', payload: {} });
+    // gate() returns "proceed" on approval, or an ActionResult on rejection
+    expect(consent.requestApproval).toHaveBeenCalled();
   });
 });
 ```
+
+The audit-before-dispatch ordering is enforced inside `gate()`; see `executor-delegation.test.ts` for the full `ToolExecutor` wiring (consent/audit/connector dependency injection).
 
 ### IPC Method (unit)
 
@@ -142,14 +147,15 @@ it('allows connector.list', async () => {
 
 ### Vault (unit — use MockVault)
 
+`MockVault` is a gateway-internal helper at `packages/gateway/src/vault/mock.ts` (an in-memory `NimbusVault` — it never touches DPAPI/Keychain/libsecret). Import it via a relative path; it is **not** exported from `@nimbus-dev/sdk/testing`:
+
 ```ts
-import { MockVault } from '@nimbus-dev/sdk/testing';
+import { MockVault } from '../../vault/mock.ts'; // relative to packages/gateway/src/
+// or: import { createMockVault } from '../../vault/mock.ts';
 
 const vault = new MockVault();
 await vault.set('github.pat', 'ghp_test');
 expect(await vault.get('github.pat')).toBe('ghp_test');
-// Confirm no real keychain call was made
-expect(vault.realKeychainCalled).toBe(false);
 ```
 
 ### Integration test with fresh DB

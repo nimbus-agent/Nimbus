@@ -23,28 +23,28 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 
 | File | Role |
 |---|---|
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:63`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:134`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:149`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs:57`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs:149`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs:162`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
 | [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) `mod tests` | Four enforcement tests: `allowlist_exact_size`, `allowlist_is_alphabetized`, `allowlist_has_no_duplicates`, `allowlist_rejects_vault_and_raw_db_writes` |
 
 ## The Three Lists
 
 ### `ALLOWED_METHODS`
 
-Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 74 entries. The list is:
+Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 83 entries. The list is:
 
 - **Alphabetized** — enforced by `allowlist_is_alphabetized`. Insert in order; do not append at the end.
-- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 74`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
+- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 83`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
 - **Deduplicated** — `allowlist_has_no_duplicates` covers copy-paste mistakes.
 - **Free of forbidden namespaces** — `allowlist_rejects_vault_and_raw_db_writes` asserts that `vault.*`, `db.put` / `db.delete`, `config.set`, `index.rebuild`, and `index.querySql` are absent. Add to this test if you introduce a new forbidden namespace.
 
 ### `NO_TIMEOUT_METHODS`
 
-Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 4: `data.export`, `data.import`, `llm.pullModel`, `updater.applyUpdate`. The list is:
+Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 5: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `updater.applyUpdate`. The list is:
 
 - **A subset of `ALLOWED_METHODS`** — enforced by `no_timeout_methods_are_subset_of_allowlist`.
-- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 4`.
+- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 5`.
 
 A new no-timeout method must (a) emit periodic progress notifications the UI polls for liveness, (b) support cancellation via a partner method (e.g. `llm.cancelPull`), and (c) appear in both lists with both size constants updated.
 

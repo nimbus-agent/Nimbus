@@ -41,12 +41,11 @@ The Phase 4 internal audit found three defenses (`extensionProcessEnv`, `checkLa
 
 ## Extension Integrity Invariants
 
-Manifest SHA-256 is verified **twice**:
+Manifest SHA-256 is verified **once, at Gateway startup**, via `verifyExtensionsBestEffort` (wired from `platform/assemble.ts`). It hashes every enabled extension and compares against the stored `manifest_hash`/`entry_hash`, hard-disabling any mismatch. For `publisher` extensions it also runs the Ed25519 signature pass (`I16`).
 
-1. At Gateway startup via `verifyExtensionsBestEffort`.
-2. **Immediately before each spawn** via `verifyOneExtensionStrict`.
+When a connector is later spawned, the verified manifest is serialized into the `NIMBUS_SANDBOX_MANIFEST_JSON` env var by `wrapServerSpec()` (see `I15` below) — there is **no** separate re-verification step immediately before spawn in production. (`verifyOneExtensionStrict` exists in `verify-extensions.ts` but currently has test-only callers.)
 
-Both wiring sites must be present. A defense that only verifies at startup is insufficient — it does not catch mutations between startup and spawn. When auditing, check both call sites exist; deleting either breaks the invariant.
+When auditing, confirm the startup call site exists and that the per-extension hash check is reached; deleting it breaks the invariant.
 
 ## Vault Invariants
 
@@ -81,7 +80,7 @@ Wiring sites the I15 enforcement test asserts against:
 - Each lazy-mesh source file imports `wrapServerSpec` from `./wrap-server-spec.ts` and the source contains at least one `wrapServerSpec(` call.
 - `platform/sandbox/sandbox-wrapper.ts` calls `runner.spawn(` against a `SandboxRunner` from `createSandboxRunner()`.
 
-Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invariants.ts` exits 1 on any `ServerSpec` literal under `connectors/lazy-mesh/` that does not pass through `wrapServerSpec(...)`. Same enforcement shape as the `D1` (`I1`) and `D12` (`I14`) static rules — fails before the test suite runs.
+Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invariants.ts` exits 1 on any `ServerSpec` literal under `connectors/lazy-mesh/` that does not pass through `wrapServerSpec(...)`. Same enforcement shape as the `D10-spawn` (`I1`) and `D12` (`I14`) static rules — fails before the test suite runs.
 
 **Why Option A:** the wrapper-shim collapses N lazy-mesh spawn sites into one sandbox boundary. If we instead asked every spawn site to call `runner.spawn` directly, the runtime test would have to grow with every new call site, and a future contributor could miss one. With Option A the invariant is "any `ServerSpec` constructed in lazy-mesh is wrapped" rather than "every spawn site individually applies a sandbox" — one boundary, one test pattern, one anti-pattern to catch.
 

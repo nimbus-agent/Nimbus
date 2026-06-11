@@ -881,12 +881,12 @@ nimbus profile switch personal
 
 ---
 
-### `nimbus profile delete <name>`
+### `nimbus profile delete <name> --yes`
 
-Delete a profile and its associated configuration. Does not delete Vault entries (use `nimbus connector remove` first).
+Delete a profile and its associated configuration. Does not delete Vault entries (use `nimbus connector remove` first). Requires the `--yes` flag for confirmation (same pattern as other destructive operations).
 
 ```bash
-nimbus profile delete personal
+nimbus profile delete personal --yes
 ```
 
 ---
@@ -958,6 +958,95 @@ nimbus team who-knows peer:aabbcc "src/billing/retry.ts"
 ```bash
 nimbus team consent req:1234 approve
 nimbus team listen
+```
+
+### Team Vault (Phase 6 Slice 2)
+
+Store team-shared secrets in a leak-proof team vault and grant paired peers tool-scoped use of them. Secrets are never returned over the wire (invariant `I19`); a granted peer can only *invoke* a tool that consumes the secret.
+
+### `nimbus team vault put <entry> <service> --secret key=value`
+
+Store one or more secrets for a team-vault entry bound to a connector service. Repeat `--secret key=value` for each field; at least one is required.
+
+```bash
+nimbus team vault put prod-stripe stripe --secret api_key=sk_live_xxxx
+```
+
+### `nimbus team vault grant <entry> <peerId> <toolId>`
+
+Grant a paired peer permission to invoke one tool against a team-vault entry.
+
+```bash
+nimbus team vault grant prod-stripe peer:aabbcc stripe.refund.create
+```
+
+### `nimbus team vault revoke <entry> <peerId> <toolId>`
+
+Revoke a peer's permission to invoke a tool against a team-vault entry.
+
+```bash
+nimbus team vault revoke prod-stripe peer:aabbcc stripe.refund.create
+```
+
+### `nimbus team vault list`
+
+List the team-vault entries and their grants (JSON).
+
+```bash
+nimbus team vault list
+```
+
+### `nimbus team invoke <peerId> <entry> <toolId> --purpose "<why>" [--args <json>]`
+
+Ask a peer to invoke a granted tool against one of their team-vault entries on your behalf. The peer's gateway runs the tool with team-scoped credentials and returns a leak-proof result (invariant `I19`). `--args` accepts a JSON object of tool arguments.
+
+```bash
+nimbus team invoke peer:aabbcc prod-stripe stripe.refund.create --purpose "refund order 1234" --args '{"charge":"ch_xyz"}'
+```
+
+### Delegation & Quorum Approval (Phase 6 Slice 2)
+
+### `nimbus team delegate <peerId> --scope kind:value --expires <seconds>`
+
+Delegate your HITL approval authority for a scope to a paired peer for a bounded window. A delegated approval is honored only from a live, in-scope, identity-valid delegate; otherwise it falls back to the local owner (invariant `I20`).
+
+```bash
+nimbus team delegate peer:aabbcc --scope service:stripe --expires 3600
+```
+
+### `nimbus team delegations`
+
+List the active HITL delegations (JSON).
+
+```bash
+nimbus team delegations
+```
+
+### `nimbus team approve <requestId> [--as <peerId>]` / `nimbus team deny <requestId> [--as <peerId>]`
+
+Approve or deny a pending federated approval — a delegated approval or a quorum vote. `--as <peerId>` casts the decision as a specific peer identity (defaults to `self`). Quorum counts only distinct authenticated peers and is deny-fail-closed (invariant `I21`).
+
+```bash
+nimbus team approve req:1234
+nimbus team deny req:1234 --as peer:aabbcc
+```
+
+### Audit & GDPR (Phase 6 Slice 4)
+
+### `nimbus team audit <namespace> [--purpose "<why>"] [--since <unixMs>]`
+
+Render the merged team-audit timeline for a namespace as a fixed-width table (timestamp, peer, action, HITL status, hash). `--since` filters by unix-millisecond timestamp.
+
+```bash
+nimbus team audit incidents --purpose "quarterly review" --since 1715000000000
+```
+
+### `nimbus team purge --user <externalId> [--yes]`
+
+GDPR-purge all data for a user across the team. Irreversible; prompts for confirmation unless `--yes` (or `--force`) is passed.
+
+```bash
+nimbus team purge --user alice@acme.com --yes
 ```
 
 ---
@@ -1057,6 +1146,61 @@ nimbus scim deprovision alice@acme.com
 
 ---
 
+## Org Policy
+
+Signature-verified organization policy for the Phase 6 federation layer (Slice 4). Enforcement reads a resolved, monotonic-stricter `EnforcedPolicy` — never the raw policy TOML — and resolution is tighten-only and fail-closed to the last-valid/baseline policy (invariant `I22`). Channel↔namespace bindings and resource→owner ownership for ChatOps live in `[policy.chatops.*]`.
+
+### `nimbus policy show`
+
+Display the current org policy as JSON. This is the default subcommand (`nimbus policy` with no argument runs `show`).
+
+```bash
+nimbus policy show
+```
+
+---
+
+### `nimbus policy verify`
+
+Verify the org policy signature and print the validation result as JSON.
+
+```bash
+nimbus policy verify
+```
+
+---
+
+### `nimbus policy sign <file.toml>` / `nimbus policy push <file.toml>`
+
+Sign a policy TOML file and apply it. `push` is an alias for `sign`.
+
+```bash
+nimbus policy sign ./org-policy.toml
+nimbus policy push ./org-policy.toml
+```
+
+---
+
+### `nimbus policy trust <pubkeyBase64>`
+
+Pin an org-policy anchor public key (base64). Subsequent policies must verify against a trusted anchor.
+
+```bash
+nimbus policy trust BASE64_PUBKEY
+```
+
+---
+
+### `nimbus policy refetch`
+
+Fetch the latest policy from the configured policy source and print the result as JSON.
+
+```bash
+nimbus policy refetch
+```
+
+---
+
 ## ChatOps
 
 A bidirectional Slack/Teams `@nimbus` bot (Phase 6 Slice 5). Read queries are answered from the shared index; structured write commands (`@nimbus run <action> service=<svc> …`) route to the resolved resource owner's HITL approval before executing — the bot never bypasses the consent gate (invariant `I23` bounds the operational reply surface). Disabled by default; enable via the `[chatops]` section in `nimbus.toml`. Channel↔namespace bindings and resource→owner ownership live in the signed org policy (`[policy.chatops.*]`). The subcommands are local/CLI-only (forbidden over the LAN wire); only `chatops.status` is exposed to the desktop UI.
@@ -1084,6 +1228,41 @@ Dry-run the command parser against a message without sending anything — prints
 
 ```bash
 nimbus chatops test "run deployment.rollback service=payment-service version=v1.4"
+```
+
+---
+
+## Admin Console
+
+Local-only helpers for the admin read-surface (Phase 6 Slice 4). The read-surface bearer is the Vault credential `http_api.deployment_token` — the same bearer that protects the `I13` HTTP write surface. The CLI talks to the gateway IPC-only and never holds the Vault, so `console` and `token` print a resolver command rather than echoing the secret; both are local-only (no gateway round-trip).
+
+### `nimbus admin status`
+
+Show the admin read-surface status as JSON. This is the default subcommand (`nimbus admin` with no argument runs `status`).
+
+```bash
+nimbus admin status
+```
+
+---
+
+### `nimbus admin console`
+
+Print the admin console URL with the bearer carried in the URL **fragment** (never the query string, so it is not sent to servers or written to access logs). Resolve the bearer with `nimbus vault get http_api.deployment_token` and open the printed URL in a browser.
+
+```bash
+nimbus admin console
+# Admin console: http://127.0.0.1:<NIMBUS_HTTP_PORT>/admin#token=$(nimbus vault get http_api.deployment_token)
+```
+
+---
+
+### `nimbus admin token`
+
+Print the Vault key name (`http_api.deployment_token`) that holds the read-surface bearer, with the command to print its value.
+
+```bash
+nimbus admin token
 ```
 
 ---
@@ -1597,24 +1776,86 @@ Output is JSON in all forms.
 
 ## People
 
-### `nimbus people`
-
 Query the cross-service people graph. Resolves identities across GitHub, GitLab, Slack, Linear, Jira, Notion, and more without a network call.
 
+### `nimbus people list [--unlinked] [--limit N]`
+
+List people in the graph. `--unlinked` restricts the output to identities that have not yet been merged into a person; `--limit N` caps the rows (default 100).
+
 ```bash
-nimbus people --query "elena"
-nimbus people --email "elena@company.com"
-nimbus people --github "elena-dev"
-nimbus people --json
+nimbus people list
+nimbus people list --unlinked --limit 50
+```
+
+---
+
+### `nimbus people search <query> [--limit N]`
+
+Search the graph by name or handle. `--limit N` caps the rows (default 25).
+
+```bash
+nimbus people search elena
+nimbus people search elena --limit 10
+```
+
+---
+
+### `nimbus people get <id>`
+
+Show the details for a single person.
+
+```bash
+nimbus people get person:abc123
+```
+
+---
+
+### `nimbus people items <id> [--limit N]`
+
+List the indexed items attributed to a person. `--limit N` caps the rows (default 50).
+
+```bash
+nimbus people items person:abc123
+nimbus people items person:abc123 --limit 20
+```
+
+---
+
+### `nimbus people link <id-a> <id-b>`
+
+Merge two people: `id-b` is folded into `id-a` (`id-a` survives).
+
+```bash
+nimbus people link person:abc123 person:def456
 ```
 
 ---
 
 ## Vault
 
-### `nimbus vault list`
+### `nimbus vault set <key> <value>`
 
-List Vault key names (never values). Keys are scoped per connector and per profile.
+Store a secret in the Vault under the given key.
+
+```bash
+nimbus vault set github.pat ghp_xxxx
+```
+
+---
+
+### `nimbus vault get <key>`
+
+Retrieve and print a Vault secret. Because the value echoes to the terminal, the command first prompts `Secrets echo to this terminal. Continue?` and prints nothing if you decline.
+
+```bash
+nimbus vault get github.pat
+```
+
+---
+
+### `nimbus vault list [prefix]`
+
+List Vault key names (never values). Keys are scoped per connector and per profile. An optional `prefix` filters the listing.
 
 ```bash
 nimbus vault list
@@ -1629,22 +1870,6 @@ Delete a specific Vault entry. Use `nimbus connector remove` for full connector 
 
 ```bash
 nimbus vault delete github.pat
-```
-
----
-
-## Documentation
-
-### `nimbus docs [topic]`
-
-Open documentation for a topic in the terminal or browser.
-
-```bash
-nimbus docs
-nimbus docs connectors
-nimbus docs query
-nimbus docs extensions
-nimbus docs config
 ```
 
 ---
@@ -1834,85 +2059,72 @@ Encrypted, relay-free remote access between machines on the same network. Disabl
 
 All traffic is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). `vault.*`, `updater.*`, `lan.*`, and `profile.*` methods are forbidden over LAN regardless of peer grants.
 
-### `nimbus lan enable`
-
-Start the LAN server. Without `--allow-pairing`, only already-paired peers can connect.
-
-```bash
-nimbus lan enable                   # Accept connections from paired peers only
-nimbus lan enable --allow-pairing   # Also open a 5-minute pairing window; prints pairing code
-```
-
----
-
-### `nimbus lan disable`
-
-Stop the LAN server and close all active peer connections.
-
-```bash
-nimbus lan disable
-```
-
----
-
-### `nimbus lan pair <host-ip> <pairing-code>`
-
-Initiate a key exchange with a host that has an open pairing window. Stores the peer's X25519 public key in the local `lan_peers` table.
-
-```bash
-nimbus lan pair 192.168.1.42 Ab3Xy7QmPn1Wk8Zv    # 20-character base58 pairing code
-```
-
----
-
 ### `nimbus lan status`
 
-Show LAN server state, listen port, and number of paired peers.
+Show LAN server state: whether LAN is enabled, whether a pairing window is open, and the listen address. This is the default subcommand (`nimbus lan` with no argument runs `status`).
 
 ```bash
 nimbus lan status
-nimbus lan status --json
 ```
 
 ---
 
-### `nimbus lan list-peers`
+### `nimbus lan open`
 
-List all paired peers with their ID, direction (`inbound` / `outbound`), and write-allowed status.
+Open a 5-minute pairing window and print a one-time pairing code (with its expiry). A peer pairs against this window using the code.
 
 ```bash
-nimbus lan list-peers
-nimbus lan list-peers --json
+nimbus lan open
 ```
 
 ---
 
-### `nimbus lan grant-write <peer-id>`
+### `nimbus lan close`
+
+Close the active pairing window early.
+
+```bash
+nimbus lan close
+```
+
+---
+
+### `nimbus lan peers`
+
+List all paired peers with their ID, write-allowed flag, and display name.
+
+```bash
+nimbus lan peers
+```
+
+---
+
+### `nimbus lan grant <peerId>`
 
 Allow a peer to call write and HITL-gated methods. Read-only by default after pairing.
 
 ```bash
-nimbus lan grant-write abc123
+nimbus lan grant abc123
 ```
 
 ---
 
-### `nimbus lan revoke-write <peer-id>`
+### `nimbus lan revoke <peerId>`
 
 Remove a peer's write grant. They remain paired but are restricted to read-only methods.
 
 ```bash
-nimbus lan revoke-write abc123
+nimbus lan revoke abc123
 ```
 
 ---
 
-### `nimbus lan remove-peer <peer-id>`
+### `nimbus lan remove <peerId>`
 
 Unpair a peer. Their stored public key is deleted; any active session is terminated.
 
 ```bash
-nimbus lan remove-peer abc123
+nimbus lan remove abc123
 ```
 
 ---

@@ -1,9 +1,9 @@
 ---
 name: nimbus-agent-patterns
 description: >
-  Authoring built-in Nimbus agents (meeting-prep, oncall-brief, expert, standup, catchup,
-  impact, etc.): file location, the read-only/HITL-free shape invariant, parallel
-  sub-agent decomposition via AgentCoordinator, tool-scope restriction, the briefReady
+  Authoring built-in Nimbus agents (catchup, expert, impact): file location, the
+  read-only/HITL-free shape invariant, parallel sub-agent decomposition via
+  AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
   latency budget. Use when adding/modifying a built-in agent, deciding sequential-vs-parallel
   decomposition, scoping a sub-agent's tools, wiring an agent's CLI command, testing an
@@ -15,7 +15,7 @@ description: >
 
 ## Built-in Agent Location
 
-All built-in agents live in `packages/gateway/src/agents/`. Each agent is a single file named after the command it serves: `expert.ts`, `meeting-prep.ts`, `oncall-brief.ts`, `standup.ts`, `catchup.ts`, `impact.ts`, etc.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
 
 ## Agent Shape Invariant
 
@@ -24,38 +24,40 @@ Every built-in agent must be:
 - **Read-only** — no write tools in scope.
 - **Parallel where possible** — use `AgentCoordinator` with independent sub-agents.
 - **HITL-free** — if the coordinator encounters a HITL-required tool it skips it and notes the omission in output. Built-in agents never wait on consent.
-- **Notifying** — emits a `<agentName>.briefReady { sessionId, brief: string }` IPC notification on completion.
+- **Notifying** — emits a `<agentName>.briefReady { sessionId, brief: string, findings }` IPC notification on completion.
 
 ## Sub-agent Decomposition Pattern
 
-Use `AgentCoordinator` to decompose into parallel sub-agents with isolated tool scopes:
+Use `AgentCoordinator` to run independent sub-agents in parallel. Each sub-agent is a `SubTask` whose `execute()` function does the work; `run()` fans them out with `Promise.all`:
 
 ```typescript
-const plan = await coordinator.decompose(intent, {
-  subTasks: [
-    { id: "a", toolScope: ["github.pr.list", "github.issue.list"], description: "..." },
-    { id: "b", toolScope: ["slack.search"], description: "..." },
-    { id: "c", toolScope: ["searchLocalIndex"], description: "..." },
-  ]
-});
-const results = await coordinator.executeAll(plan); // runs in parallel
+const coordinator = new AgentCoordinator({ sessionId, parentId, depth, toolCallCount });
+const tasks: SubTask[] = [
+  { taskType: "agent_step", prompt: "", execute: async () => { /* query/blame ... */ } },
+  { taskType: "agent_step", prompt: "", execute: async () => { /* ... */ } },
+  { taskType: "agent_step", prompt: "", execute: async () => { /* ... */ } },
+];
+const results = await coordinator.run(tasks); // runs in parallel
 ```
+
+Tool-scope restriction is a code-review discipline, not mechanically enforced — see below.
 
 **Never use sequential tool calls where parallel sub-agents would work** — it defeats the latency purpose of decomposition.
 
 ## Tool Scope Restriction
 
-Sub-agents receive only the tools listed in their `toolScope`. This is enforced at the dispatcher level. **Do not give a sub-agent a broad scope "for flexibility"** — scope it to exactly the tools it needs. Broad scopes break the principle of least privilege and make latency budgets unpredictable.
+Sub-agents are defined as functions passed via `SubTask.execute()`. Tool access is determined by what each sub-agent function calls internally — for the built-in agents (`expert`, `catchup`, `impact`) this is primarily local-index database queries on the `IndexDB` instance. There is no built-in dispatcher-level restriction; **enforce scope via code review** — each sub-agent function should access only the data sources appropriate to its task. **Do not give a sub-agent a broad scope "for flexibility"** — scope it to exactly the data it needs. Broad scopes break the principle of least privilege and make latency budgets unpredictable.
 
 ## IPC Notification Contract
 
 Every agent emits a completion notification via the Gateway IPC server:
 
 ```typescript
-ipcServer.notify(`${agentName}.briefReady`, { sessionId, brief });
+ipcServer.notify(`${agentName}.briefReady`, { sessionId, brief, findings });
 ```
 
 - `brief` is **always a Markdown string**.
+- `findings` is the typed brief object (`ExpertBrief`, `CatchupBrief`, or `ImpactBrief`) — clients can render it directly or transform the Markdown further.
 - `sessionId` ties the notification to the originating `engine.askStream` call.
 - Notification name is always `<agentName>.briefReady` — the CLI subscribes to that exact name.
 
@@ -73,12 +75,12 @@ Add the command to the CLI's command registry in `packages/cli/src/index.ts`.
 
 Every agent requires an e2e test at `packages/gateway/test/e2e/scenarios/<agent-name>.e2e.test.ts` that:
 
-- Mocks all connector MCP servers.
-- Asserts the brief contains the expected sections (e.g., attendees, recent work, doc references for `meeting-prep`).
-- Asserts **zero HITL actions fired**.
-- Asserts the `briefReady` notification is emitted with a non-empty `brief`.
+- Sets up test data in an in-memory `IndexDB` instance — mocking connectors is unnecessary, since agents query the local index rather than remote APIs.
+- Asserts the brief contains the expected sections.
+- Asserts **zero HITL actions fired** — a structural check that the agent source does not import `ToolExecutor` or reference `HITL_REQUIRED`.
+- Optionally asserts the `briefReady` notification is emitted (via the `emitBriefWithSynthesis` / `emit<Agent>Brief` path) with a non-empty `brief` and `findings`.
 
-Use the existing `expert.e2e.test.ts` as the reference implementation.
+Use `expert.e2e.test.ts` (alongside `catchup.e2e.test.ts` and `impact.e2e.test.ts`) as the reference implementations — they focus on brief-structure correctness and the HITL-free property.
 
 ## Coverage Gate
 
