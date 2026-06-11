@@ -5,6 +5,15 @@ import { getCliPlatformPaths } from "../paths.ts";
 
 const TIMEOUT_MS = 30_000;
 
+/** Reads the value following a `--flag`, rejecting empty / another-flag values. Shared by agent CLIs. */
+export function flagValue(args: string[], i: number, flag: string): string {
+  const v = args[i + 1];
+  if (typeof v !== "string" || v.trim().length === 0 || v.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return v.trim();
+}
+
 /**
  * Shared driver for the cross-colleague agent CLI commands (ghost / conflicts / huddle).
  * Each command is a thin parse + a single `runAgentBriefCli` call: this helper owns the

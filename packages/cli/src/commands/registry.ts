@@ -19,6 +19,7 @@ export const COMMAND_NAMES = [
   "identity",
   "impact",
   "index",
+  "janitor",
   "lan",
   "llm",
   "metrics",

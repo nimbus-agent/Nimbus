@@ -6,6 +6,7 @@ import { emitExpertBrief } from "../agents/expert.ts";
 import { emitGhostBrief } from "../agents/ghost.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
+import { emitJanitorBrief } from "../agents/janitor.ts";
 import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -171,7 +172,7 @@ const ZERO_IDENTITY: BoxKeypair = {
 };
 
 function newSessionId(
-  kind: "expert" | "impact" | "catchup" | "ghost" | "conflicts" | "huddle",
+  kind: "expert" | "impact" | "catchup" | "ghost" | "conflicts" | "huddle" | "janitor",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -302,6 +303,35 @@ async function handleHuddle(params: unknown, ctx: AgentsRpcContext): Promise<unk
   return await emitHuddleBrief(input, federatedAgentBase(ctx, newSessionId("huddle")));
 }
 
+function requireJanitorParams(params: unknown): {
+  resourceRef: string;
+  idleDays: number;
+  cleanupAction: string | null;
+  allowGaps: boolean;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new AgentsRpcError(-32602, "agents.janitor: object params required");
+  }
+  const p = params as Record<string, unknown>;
+  if (typeof p["resourceRef"] !== "string" || p["resourceRef"].length === 0) {
+    throw new AgentsRpcError(-32602, "agents.janitor: resourceRef (non-empty string) required");
+  }
+  return {
+    resourceRef: p["resourceRef"],
+    idleDays: typeof p["idleDays"] === "number" && p["idleDays"] > 0 ? p["idleDays"] : 14,
+    cleanupAction:
+      typeof p["cleanupAction"] === "string" && p["cleanupAction"].length > 0
+        ? p["cleanupAction"]
+        : null,
+    allowGaps: p["allowGaps"] === true,
+  };
+}
+
+async function handleJanitor(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requireJanitorParams(params);
+  return await emitJanitorBrief(input, federatedAgentBase(ctx, newSessionId("janitor")));
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -314,5 +344,6 @@ export async function dispatchAgentsRpc(
     "agents.ghost": handleGhost,
     "agents.conflicts": handleConflicts,
     "agents.huddle": handleHuddle,
+    "agents.janitor": handleJanitor,
   });
 }

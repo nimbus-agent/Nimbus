@@ -258,3 +258,40 @@ export function isHuddleBrief(x: unknown): x is HuddleBrief {
     typeof b["query"] === "object"
   );
 }
+
+// CLI-side mirror of JanitorBrief in packages/gateway/src/agents/_lib/findings.ts
+export type JanitorPeerTouch = {
+  peerId: string;
+  who: string | null;
+  lastSeenDaysAgo: number | null;
+};
+
+export type JanitorBrief = {
+  kind: "janitor";
+  agentVersion: 1;
+  generatedAt: number;
+  latencyMs: number;
+  gaps: GapNote[];
+  query: { resourceRef: string; idleDays: number };
+  idle: boolean;
+  proposalSuppressed: boolean;
+  cleanupAction: string | null;
+  peersClear: number;
+  peersTouched: JanitorPeerTouch[];
+};
+
+export function isJanitorBrief(x: unknown): x is JanitorBrief {
+  if (x === null || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return (
+    b["kind"] === "janitor" &&
+    b["agentVersion"] === 1 &&
+    Array.isArray(b["gaps"]) &&
+    typeof b["idle"] === "boolean" &&
+    Array.isArray(b["peersTouched"]) &&
+    typeof b["generatedAt"] === "number" &&
+    typeof b["latencyMs"] === "number" &&
+    b["query"] !== null &&
+    typeof b["query"] === "object"
+  );
+}
