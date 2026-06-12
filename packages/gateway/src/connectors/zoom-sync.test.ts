@@ -556,4 +556,712 @@ describeWithFetchRestore("zoom-sync", () => {
       expect(line.includes("supersecrettoken")).toBe(false);
     }
   });
+
+  // ----- Additional branch coverage -----
+
+  test("noop when getValidZoomAccessToken throws (corrupt token store)", async () => {
+    // vault has a zoom.oauth key but with a payload that causes getValidZoomAccessToken
+    // to throw (expired token with no refresh token → the token-refresh path throws).
+    const vault = createStubVault({
+      "zoom.oauth": JSON.stringify({
+        accessToken: "",
+        refreshToken: "",
+        // Far-past expiry so the "needs refresh" path tries to call refresh and fails
+        expiresAt: Date.now() - 10 * 60 * 1000,
+      }),
+    });
+    // No HTTP stub — getValidZoomAccessToken will throw when it attempts refresh
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, vault), null);
+    expectSyncNoopResult(r);
+    expectServiceItemCount(db, "zoom", 0);
+  });
+
+  test("noop when zoom.oauth is empty string", async () => {
+    // raw === "" branch in the sync function
+    const vault = createStubVault({ "zoom.oauth": "" });
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, vault), null);
+    expectSyncNoopResult(r);
+  });
+
+  test("decodeCursor handles empty string cursor the same as null", async () => {
+    // cursor === "" branch: should behave as null (initial sync)
+    stubAllZoomUrls({ meetings: [], recordingsMeetings: [] });
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    // Pass empty string — should not throw and should return a valid cursor
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), "");
+    expect(r.cursor).not.toBeNull();
+    expect((r.cursor as string).startsWith(CURSOR_PREFIX)).toBe(true);
+  });
+
+  test("decodeCursor handles a cursor payload that is not a JSON object", async () => {
+    // asRecord(parsed) returns undefined → falls back to emptyCursor()
+    // A base64url of a JSON array is a valid prefix-decoded payload but not an object
+    const arrayPayload = Buffer.from(JSON.stringify([1, 2, 3])).toString("base64url");
+    const badCursor = `${CURSOR_PREFIX}${arrayPayload}`;
+    stubAllZoomUrls({ meetings: [], recordingsMeetings: [] });
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), badCursor);
+    // Should not throw; should return a valid cursor (treated as initial sync)
+    expect(r.cursor).not.toBeNull();
+    expect((r.cursor as string).startsWith(CURSOR_PREFIX)).toBe(true);
+  });
+
+  test("decodeCursor lastRecordingsTo: empty string field treated as null", async () => {
+    // lastTo field is an empty string → treated as null → initial sync window
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+    }) as typeof fetch;
+
+    const emptyStringToPayload = Buffer.from(
+      JSON.stringify({ pass: 1, lastRecordingsTo: "" }),
+    ).toString("base64url");
+    const cursor = `${CURSOR_PREFIX}${emptyStringToPayload}`;
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), cursor);
+
+    // Since lastRecordingsTo is treated as null, the initial-sync 30-day window
+    // is used → recordings URL should have a 'from' param (not a future date).
+    const recUrl = urls.find((u) => u.includes("/v2/users/me/recordings"));
+    expect(recUrl).toBeDefined();
+    expect(recUrl).toContain("from=");
+  });
+
+  test("nextRecordingsWindow returns null when lastRecordingsTo is in the future", async () => {
+    // lastToMs >= nowMs → window === null → Walk B is skipped
+    const futureDate = new Date(Date.now() + 2 * 86_400_000).toISOString(); // 2 days in the future
+    const payload = Buffer.from(JSON.stringify({ pass: 1, lastRecordingsTo: futureDate })).toString(
+      "base64url",
+    );
+    const futCursor = `${CURSOR_PREFIX}${payload}`;
+
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), futCursor);
+
+    // No recordings URL should have been fetched — Walk B was skipped
+    expect(urls.some((u) => u.includes("/v2/users/me/recordings"))).toBe(false);
+    // Should still return a valid cursor
+    expect(r.cursor).not.toBeNull();
+  });
+
+  test("nextRecordingsWindow returns null when lastRecordingsTo is unparseable", async () => {
+    // !Number.isFinite(Date.parse(lastTo)) → return null → Walk B skipped
+    const payload = Buffer.from(
+      JSON.stringify({ pass: 1, lastRecordingsTo: "not-a-date" }),
+    ).toString("base64url");
+    const badDateCursor = `${CURSOR_PREFIX}${payload}`;
+
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), badDateCursor);
+
+    // Walk B must have been skipped (no recordings URL hit)
+    expect(urls.some((u) => u.includes("/v2/users/me/recordings"))).toBe(false);
+    expect(r.cursor).not.toBeNull();
+  });
+
+  test("Walk A mid-walk (page >= 2) HTTP error still runs Walk B", async () => {
+    // page === 1 OK, page === 2 HTTP 500 → break out of Walk A, Walk B still runs
+    let meetingsPage = 0;
+    let recordingsCalled = false;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        meetingsPage += 1;
+        if (meetingsPage === 1) {
+          return new Response(
+            JSON.stringify({
+              meetings: [makeMeeting(901, "Meeting A", "2026-06-01T10:00:00Z")],
+              next_page_token: "page2token",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Page 2: HTTP error
+        return new Response("Internal Server Error", { status: 500 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        recordingsCalled = true;
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Walk A page 1 gave us one meeting
+    expect(r.itemsUpserted).toBe(1);
+    // Walk B was still invoked
+    expect(recordingsCalled).toBe(true);
+  });
+
+  test("extractPage handles non-object meetings response body", async () => {
+    // connectorFetch returns a non-object parsed value → extractPage root === undefined
+    // We achieve this by returning something like `"not-an-object"` as JSON body
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        // Return a JSON string (not an object) — connectorFetch parses it OK but
+        // asRecord("string") returns undefined → extractPage returns empty lists
+        return new Response(JSON.stringify("not-an-object"), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // extractPage returned empty → 0 meetings upserted from Walk A, Walk B no-op
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.cursor).not.toBeNull();
+  });
+
+  test("upsertMeetings skips malformed meeting records (null id)", async () => {
+    // mapZoomMeetingToItem returns null when id field is absent → `continue` branch
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(
+          JSON.stringify({
+            // A meeting without an 'id' field → mapZoomMeetingToItem returns null
+            meetings: [{ topic: "No ID meeting", start_time: "2026-06-01T10:00:00Z" }],
+            next_page_token: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    expect(r.itemsUpserted).toBe(0);
+    expectServiceItemCount(db, "zoom", 0);
+  });
+
+  test("Walk B transcript download network error is skipped (catch branch)", async () => {
+    // fetch throws a network error → catch block → kind === "skip"
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [makeRecording({ meetingId: 910, uuid: "uuid-910", fileId: "tx-net" })],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      // Transcript download → network error
+      throw new TypeError("network failure");
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // The cycle should complete (error was swallowed), transcript was not upserted
+    expect(r.cursor).not.toBeNull();
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+    // The parent meeting was still upserted
+    const meetingCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'meeting'")
+      .get() as { c: number };
+    expect(meetingCount.c).toBe(1);
+  });
+
+  test("Walk B transcript: non-ok, non-429 HTTP response → kind done, upserted 0", async () => {
+    // res.ok is false but status !== 429 → line 248 branch
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [makeRecording({ meetingId: 920, uuid: "uuid-920", fileId: "tx-403" })],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      // Transcript download → 403 Forbidden
+      return new Response("Forbidden", { status: 403 });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Cycle completed, no transcript upserted, meeting was upserted
+    expect(r.cursor).not.toBeNull();
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+    expectServiceItemCount(db, "zoom", 1); // just the meeting
+  });
+
+  test("Walk B transcript: empty VTT body → mapZoomTranscriptToItem returns null (row null branch)", async () => {
+    // vttToPlainText("") returns "" → plainText.trim() === "" → mapZoomTranscriptToItem returns null
+    // → line 257 branch: kind done, upserted 0
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [makeRecording({ meetingId: 930, uuid: "uuid-930", fileId: "tx-empty" })],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      // Empty VTT body — plaintext will be empty string
+      return new Response("", { status: 200, headers: { "Content-Type": "text/vtt" } });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // No transcript row (empty body → mapper returned null)
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+    // Parent meeting still upserted
+    expectServiceItemCount(db, "zoom", 1);
+  });
+
+  test("Walk B processTranscriptsForMeeting: recording_files not an array is a no-op", async () => {
+    // meeting["recording_files"] is not an array → early return (line 272)
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [
+              {
+                id: 940,
+                uuid: "uuid-940",
+                topic: "No files field",
+                host_id: "host-1",
+                start_time: "2026-06-01T10:00:00Z",
+                // recording_files is a string, not an array
+                recording_files: "not-an-array",
+              },
+            ],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // No transcript rows; parent meeting was upserted
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+    expectServiceItemCount(db, "zoom", 1);
+  });
+
+  test("Walk B processTranscriptsForMeeting: missing uuid is a no-op for transcripts", async () => {
+    // meetingUuid === undefined || meetingUuid === "" → early return (line 276)
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [
+              {
+                id: 950,
+                // uuid is absent entirely
+                topic: "No UUID meeting",
+                host_id: "host-1",
+                start_time: "2026-06-01T10:00:00Z",
+                recording_files: [
+                  {
+                    id: "tx-nouuid",
+                    file_type: "TRANSCRIPT",
+                    download_url: "https://api.zoom.us/v2/transcript-download/tx-nouuid.vtt",
+                  },
+                ],
+              },
+            ],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // No transcripts; meeting was upserted (meeting has id=950)
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+    expectServiceItemCount(db, "zoom", 1);
+  });
+
+  test("Walk B selectTranscriptFile: file with empty-string id is skipped", async () => {
+    // fileId === "" → selectTranscriptFile returns null → skip
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [
+              {
+                id: 960,
+                uuid: "uuid-960",
+                topic: "Empty file id",
+                host_id: "host-1",
+                start_time: "2026-06-01T10:00:00Z",
+                recording_files: [
+                  {
+                    id: "", // empty string id
+                    file_type: "TRANSCRIPT",
+                    download_url: "https://api.zoom.us/v2/transcript-download/empty.vtt",
+                  },
+                ],
+              },
+            ],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+  });
+
+  test("Walk B selectTranscriptFile: file with missing download_url is skipped", async () => {
+    // downloadUrl === undefined || downloadUrl === "" → selectTranscriptFile returns null
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [
+              {
+                id: 970,
+                uuid: "uuid-970",
+                topic: "No download URL",
+                host_id: "host-1",
+                start_time: "2026-06-01T10:00:00Z",
+                recording_files: [
+                  {
+                    id: "tx-nodl",
+                    file_type: "TRANSCRIPT",
+                    // download_url is absent
+                  },
+                ],
+              },
+            ],
+            next_page_token: "",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    const txCount = db
+      .prepare("SELECT COUNT(*) AS c FROM item WHERE service = 'zoom' AND type = 'transcript'")
+      .get() as { c: number };
+    expect(txCount.c).toBe(0);
+  });
+
+  test("Walk B — recordings HTTP error stops walk without advancing cursor", async () => {
+    // runRecordingsWalk: outcome.kind !== "ok" on first page → return out (line 388)
+    stubAllZoomUrls({ meetings: [], recordingsStatus: 500 });
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Walk completed without error but advancedTo stays null → cursor lastRecordingsTo stays null
+    expect(r.cursor).not.toBeNull();
+    const decoded = JSON.parse(
+      Buffer.from((r.cursor as string).slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
+    ) as { lastRecordingsTo: string | null };
+    expect(decoded.lastRecordingsTo).toBeNull();
+  });
+
+  test("Walk B — recordings pagination uses next_page_token", async () => {
+    // runRecordingsWalk loop: pageResult.stop === false → pageToken = pageResult.nextPageToken
+    let recordingsPage = 0;
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        recordingsPage += 1;
+        if (recordingsPage === 1) {
+          return new Response(
+            JSON.stringify({
+              meetings: [makeRecording({ meetingId: 980, uuid: "uuid-980" })],
+              next_page_token: "rec-page-2-token",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Page 2: last page
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      // Transcript download
+      return new Response(VTT_SAMPLE, { status: 200, headers: { "Content-Type": "text/vtt" } });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    expect(recordingsPage).toBe(2);
+    // The second page URL should contain the page token
+    const page2Url = urls.find((u) => u.includes("next_page_token=rec-page-2-token"));
+    expect(page2Url).toBeDefined();
+    // Walk completed cleanly → advancedTo was set
+    const decoded = JSON.parse(
+      Buffer.from((r.cursor as string).slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
+    ) as { lastRecordingsTo: string | null };
+    expect(decoded.lastRecordingsTo).not.toBeNull();
+  });
+
+  test("Walk B processRecordingsPage: non-array meetings field is treated as empty", async () => {
+    // meetingsRaw is not an array → meetings = [] (line 353, falsy branch)
+    // Results in stop === true (meetings.length === 0)
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            // meetings is an object, not an array
+            meetings: { not: "an-array" },
+            next_page_token: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Zero items; walk should have advanced (empty result = clean finish)
+    expect(r.itemsUpserted).toBe(0);
+    const decoded = JSON.parse(
+      Buffer.from((r.cursor as string).slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
+    ) as { lastRecordingsTo: string | null };
+    // Empty page means stop=true, walk "completes" → advancedTo set
+    expect(decoded.lastRecordingsTo).not.toBeNull();
+  });
+
+  test("Walk B processRecordingsPage: non-record meeting entry is skipped", async () => {
+    // asRecord(meetingRaw) === undefined → continue (line 356-358)
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        return new Response(
+          JSON.stringify({
+            // One valid meeting + one non-record (null) entry
+            meetings: [
+              null, // asRecord(null) === undefined → skipped
+              makeRecording({ meetingId: 990, uuid: "uuid-990" }),
+            ],
+            next_page_token: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(VTT_SAMPLE, { status: 200, headers: { "Content-Type": "text/vtt" } });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // The valid meeting (+ transcript) should have been upserted; null entry skipped
+    expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
+    expectServiceItemCount(db, "zoom", 2); // meeting + transcript
+  });
+
+  test("Walk B runRecordingsWalk: non-object parsed body breaks the walk cleanly", async () => {
+    // asRecord(outcome.parsed) === undefined → break, then advancedTo = window.to
+    // We achieve this by returning a JSON string as the recordings response body
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        // A JSON number (not an object) — connectorFetch parses fine; asRecord returns undefined
+        return new Response(JSON.stringify(42), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    const r = await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Walk broke cleanly (no rate-limit) → advancedTo was still set
+    expect(r.cursor).not.toBeNull();
+    const decoded = JSON.parse(
+      Buffer.from((r.cursor as string).slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
+    ) as { lastRecordingsTo: string | null };
+    expect(decoded.lastRecordingsTo).not.toBeNull();
+  });
+
+  test("recordingsPath includes next_page_token when pageToken is non-empty", async () => {
+    // Indirectly exercises line 81 (recordingsPath pageToken !== "")
+    // The recordings pagination test above already hits this;
+    // this test verifies the URL shape explicitly.
+    // NOTE: processRecordingsPage sets stop=true when meetings.length === 0,
+    // so page 1 must have ≥1 meeting to allow the loop to continue to page 2.
+    const urls: string[] = [];
+    let recordingsPage = 0;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      if (url.includes("/v2/users/me/meetings")) {
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      if (url.includes("/v2/users/me/recordings")) {
+        recordingsPage += 1;
+        if (recordingsPage === 1) {
+          return new Response(
+            JSON.stringify({
+              // Non-empty meetings list keeps stop=false so the loop continues
+              meetings: [makeRecording({ meetingId: 991, uuid: "uuid-991" })],
+              next_page_token: "next-token-abc",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ meetings: [], next_page_token: "" }), { status: 200 });
+      }
+      // Transcript download
+      return new Response(VTT_SAMPLE, { status: 200, headers: { "Content-Type": "text/vtt" } });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createZoomSyncable({ ensureZoomMcpRunning: async () => {} });
+    await sync.sync(syncTestContext(db, makeZoomVault()), null);
+
+    // Second recordings URL must contain the next_page_token param
+    const page2Url = urls.find(
+      (u) => u.includes("/v2/users/me/recordings") && u.includes("next_page_token=next-token-abc"),
+    );
+    expect(page2Url).toBeDefined();
+  });
 });

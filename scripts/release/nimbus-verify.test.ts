@@ -47,6 +47,27 @@ function run(
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
+// Primary (master) fingerprints in a keyring. `--with-colons` emits a `pub`
+// record followed immediately by its `fpr` record (field 10 = fingerprint);
+// subkey `fpr` records follow a `sub` record and are skipped here.
+function primaryFingerprints(home: string): string[] {
+  const out = spawnSync(GPG_BIN, ["--list-keys", "--with-colons"], {
+    encoding: "utf8",
+    env: { ...process.env, GNUPGHOME: home },
+  }).stdout;
+  const fps: string[] = [];
+  let afterPub = false;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("pub:")) {
+      afterPub = true;
+    } else if (afterPub && line.startsWith("fpr:")) {
+      fps.push(line.split(":")[9] ?? "");
+      afterPub = false;
+    }
+  }
+  return fps;
+}
+
 beforeEach(() => {
   work = mkdtempSync(join(tmpdir(), "nimbus-verify-test-"));
   gnupghome = join(work, "gnupg");
@@ -114,28 +135,71 @@ shellTest("exits 1 when SHA256SUMS is correct but hash doesn't match file", () =
 });
 
 shellTest("exits 1 when SHA256SUMS.asc is signed by untrusted key", () => {
-  const otherHome = join(work, "gnupg-other");
-  const otherRes = spawnSync(BASH_BIN, [GEN_KEY, otherHome], { encoding: "utf8" });
-  const otherFp = otherRes.stdout.trim();
-  spawnSync(
+  // Mint the untrusted key INSIDE the existing gnupghome — reusing the agent
+  // beforeEach already started — rather than a second GNUPGHOME. A separate
+  // `work/gnupg-other` home pushes the agent socket path past macOS's 104-byte
+  // sun_path limit under the long /var/folders tmpdir, intermittently hanging
+  // the agent so the re-sign fails silently and the trusted signature survives
+  // (→ false exit 0). Both keys are cert-only primary + sign subkey (see
+  // gen-test-key.sh); selecting the untrusted primary by `--local-user` lets
+  // gpg auto-pick its sign subkey, and the verifier reports the primary fp.
+  const before = new Set(primaryFingerprints(gnupghome));
+  const untrustedBatch = join(work, "untrusted-key.batch");
+  writeFileSync(
+    untrustedBatch,
+    [
+      "%no-protection",
+      "Key-Type: EDDSA",
+      "Key-Curve: ed25519",
+      "Key-Usage: cert",
+      "Subkey-Type: EDDSA",
+      "Subkey-Curve: ed25519",
+      "Subkey-Usage: sign",
+      "Name-Real: Nimbus Untrusted",
+      "Name-Email: untrusted@nimbus.local",
+      "Expire-Date: 1y",
+      "%commit",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const gen = spawnSync(GPG_BIN, ["--batch", "--generate-key", untrustedBatch], {
+    encoding: "utf8",
+    env: { ...process.env, GNUPGHOME: gnupghome },
+  });
+  if (gen.status !== 0) {
+    throw new Error(`untrusted key-gen failed: ${gen.stderr}`);
+  }
+  const untrustedFp = primaryFingerprints(gnupghome).find((fp) => !before.has(fp)) ?? "";
+  if (!/^[0-9A-F]{40}$/.test(untrustedFp)) {
+    throw new Error(`could not capture untrusted fingerprint (got "${untrustedFp}")`);
+  }
+
+  const reSign = spawnSync(
     GPG_BIN,
     [
       "--batch",
       "--yes",
       "--pinentry-mode",
       "loopback",
+      "--local-user",
+      untrustedFp,
       "--detach-sign",
       "--armor",
       "--output",
       join(cwd, "SHA256SUMS.asc"),
       join(cwd, "SHA256SUMS"),
     ],
-    { env: { ...process.env, GNUPGHOME: otherHome } },
+    { encoding: "utf8", env: { ...process.env, GNUPGHOME: gnupghome } },
   );
+  if (reSign.status !== 0) {
+    throw new Error(`untrusted re-sign failed: ${reSign.stderr}`);
+  }
+
   const r = run(["--no-fetch"], { env: { NIMBUS_VERIFY_FINGERPRINT_OVERRIDE: fingerprint } });
   expect(r.status).toBe(1);
   expect(r.stdout + r.stderr).toMatch(/fingerprint|untrusted|❌/i);
-  expect(otherFp).not.toBe(fingerprint);
+  expect(untrustedFp).not.toBe(fingerprint);
 });
 
 shellTest("exits 2 when SHA256SUMS missing with --no-fetch", () => {

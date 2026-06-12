@@ -64,9 +64,10 @@ function rootKey(root: string): string {
   return createHash("sha256").update(root).digest("hex").slice(0, 16);
 }
 
-async function gitLogRecords(
+export async function gitLogRecords(
   root: string,
   maxCount: number,
+  spawn: SpawnFn = Bun.spawn,
 ): Promise<{ sha: string; ct: number; subject: string }[]> {
   const args = [
     "git",
@@ -77,7 +78,7 @@ async function gitLogRecords(
     "-z",
     "--pretty=format:%H%x00%ct%x00%s",
   ];
-  const proc = Bun.spawn(args, {
+  const proc = spawn(args, {
     env: extensionProcessEnv({}),
     stdout: "pipe",
     stderr: "pipe",
