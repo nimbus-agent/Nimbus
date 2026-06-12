@@ -96,8 +96,8 @@ export type CreateIpcServerOptions = {
   // namespace (status, start, stop, list, dismiss, scan; capture added with the write path).
   // Present only when [tribal].enabled at boot; the dispatcher skips when unset. LAN-forbidden.
   tribalRpcCtx?: TribalRpcCtx;
-  // Connector dispatch seam for the I25 tribal capture write (notion_kb_append/confluence_kb_append).
-  // The capture executor is built PER-CALL in the dispatcher with the initiating client's consent;
-  // this provides the MCP dispatch target. Present only when [tribal].enabled at boot.
+  // Connector dispatch seam for the I25 tribal capture write (the KB-append tools). The capture
+  // executor is built PER-CALL in the dispatcher with the initiating client's consent; this
+  // provides the MCP dispatch target. Present only when [tribal].enabled at boot.
   tribalConnectorDispatcher?: ConnectorDispatcher;
 };

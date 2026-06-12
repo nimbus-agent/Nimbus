@@ -461,6 +461,24 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I25 — a tribal-knowledge KB capture writes only the config destination, behind the owner's HITL gate
+
+**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. Static **D19**.
+
+**Wired at:**
+
+- `packages/gateway/src/tribal/tribal-write-gate.ts` `captureToKnowledgeBase()` — the SOLE path from a capture trigger to a KB write: resolve the target (explicit selector, else the sole configured KB, else `not_configured`/`target_ambiguous`) → resolve the destination from `cfg.notion`/`cfg.confluence` ONLY → synthesize a draft → submit a `PlannedAction` (`*.knowledge.write`, payload carries the config destination + `mcpToolId`) through the executor HITL gate (I2) → on approval + a returned `pageRef`, `markCaptured`. The destination is never read from caller input. The `notion_kb_append`/`confluence_kb_append` literals appear only here (gateway side).
+- `packages/gateway/src/ipc/server/dispatchers.ts` `tryDispatchTribalRpc()` — builds the capture executor PER-CALL with the initiating client's consent channel (the local owner who ran `nimbus tribal capture`), so the HITL prompt reaches the operator who triggered it.
+- `packages/gateway/src/engine/executor.ts` — `notion.knowledge.write` / `confluence.knowledge.write` are members of `HITL_REQUIRED_BACKING` (I2), so the gate always fires before the connector dispatch.
+- Enforced statically by **D19** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `tribal-write-gate.ts` / the two connector `server.ts` (excluding `.test.ts`) that references `notion_kb_append`/`confluence_kb_append` causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I25` describe block: the submitted action's destination is the config `databaseId` (never a caller value), an unconfigured target fails closed without submitting, a rejected HITL leaves the cluster `pending`, plus a `D19` presence assertion.
+
+**Anti-pattern:** reading the destination database/space/parent from caller input; calling `notion_kb_append`/`confluence_kb_append` from anywhere but the write-gate; writing before the owner's HITL approval resolves; marking a cluster captured without a returned `pageRef`.
+
+**How to comply:** route every capture through `captureToKnowledgeBase`; resolve the destination only from `cfg.notion`/`cfg.confluence`; submit through the executor gate; keep the result leak-proof (`{ ok, pageRef }` / a coarse error code).
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

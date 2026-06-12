@@ -366,6 +366,38 @@ export function checkPreflightRunnerInvariant(files: readonly FileEntry[]): Viol
   return out;
 }
 
+// D19 (I25): the tribal-knowledge KB-write tools may be NAMED only in the gateway write-gate (the
+// sole gateway-side invocation, where the destination comes from local config) and the two
+// connector definition sites. Any other reference would let a caller drive an arbitrary KB write,
+// bypassing the local owner's HITL gate + config-only destination.
+const TRIBAL_KB_WRITE_ALLOWED = [
+  "packages/gateway/src/tribal/tribal-write-gate.ts",
+  "packages/mcp-connectors/notion/src/server.ts",
+  "packages/mcp-connectors/confluence/src/server.ts",
+];
+const TRIBAL_KB_WRITE_RE = /\b(?:notion_kb_append|confluence_kb_append)\b/;
+
+export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (TRIBAL_KB_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (TRIBAL_KB_WRITE_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D19-tribal-kb-write",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -490,6 +522,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D18 runPreflightCommand referenced outside preflight-gate/preflight-runner — bypasses I24: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkTribalKbWriteInvariant(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D19 tribal KB-write tool referenced outside the write-gate/connector sites — bypasses I25: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
