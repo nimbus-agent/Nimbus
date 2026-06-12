@@ -1,4 +1,3 @@
-/// <reference types="bun-types" />
 import { describe, expect, test } from "bun:test";
 import { channelUpgradeHint, resolveDistributionChannel } from "./distribution-channel.ts";
 
