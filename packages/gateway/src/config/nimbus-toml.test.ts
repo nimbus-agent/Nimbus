@@ -1,0 +1,1478 @@
+/**
+ * nimbus-toml.test.ts — coverage-gap filler for nimbus-toml.ts (tc-B11).
+ *
+ * Covers:
+ *  - loadTomlSection catch-arm (parse throws)
+ *  - ALL embedding section helpers + parseNimbusTomlEmbeddingSection
+ *  - resolveNimbusTomlForProfile (all branches)
+ *  - loadNimbusEmbeddingFromPath / loadNimbusEmbeddingFromConfigDir
+ *  - NIMBUS_UPDATER_URL env branch in parseNimbusUpdaterToml
+ *  - NaN guard in parseNimbusLanToml NIMBUS_LAN_PORT
+ *  - Every *FromConfigDir / *FromPath wrapper
+ *  - loadNimbusServiceConfigsFromConfigDir duplicate-id stderr warning
+ *  - security allowlist empty-fingerprint skip
+ *  - identity numeric keys, scopes empty-filter
+ *  - quorum edge-cases: missing keys, duplicate id already in map
+ *  - preflight edge-cases: empty command string, timeout negative
+ *  - federation consent_timeout > 3600 rejected
+ */
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  DEFAULT_NIMBUS_AUTOMATION_TOML,
+  DEFAULT_NIMBUS_EMBEDDING_TOML,
+  DEFAULT_NIMBUS_LAN_TOML,
+  DEFAULT_NIMBUS_UPDATER_TOML,
+  loadNimbusAuditFromConfigDir,
+  loadNimbusAuditFromPath,
+  loadNimbusAutomationFromConfigDir,
+  loadNimbusAutomationFromPath,
+  loadNimbusChatopsFromConfigDir,
+  loadNimbusEmbeddingFromConfigDir,
+  loadNimbusEmbeddingFromPath,
+  loadNimbusExtensionsFromConfigDir,
+  loadNimbusExtensionsFromPath,
+  loadNimbusFederationFromConfigDir,
+  loadNimbusFederationFromPath,
+  loadNimbusIdentityFromConfigDir,
+  loadNimbusLanFromConfigDir,
+  loadNimbusLanFromPath,
+  loadNimbusLlmFromConfigDir,
+  loadNimbusPreflightFromConfigDir,
+  loadNimbusQuorumFromConfigDir,
+  loadNimbusQuorumFromPath,
+  loadNimbusScimFromConfigDir,
+  loadNimbusSecurityFromConfigDir,
+  loadNimbusSecurityFromPath,
+  loadNimbusServiceConfigsFromConfigDir,
+  loadNimbusUpdaterFromConfigDir,
+  loadNimbusUpdaterFromPath,
+  loadNimbusUserFromConfigDir,
+  loadNimbusVoiceFromConfigDir,
+  parseNimbusAuditToml,
+  parseNimbusAutomationToml,
+  parseNimbusFederationToml,
+  parseNimbusIdentityToml,
+  parseNimbusLanToml,
+  parseNimbusPagerdutyToml,
+  parseNimbusScimToml,
+  parseNimbusSecurityToml,
+  parseNimbusTomlEmbeddingSection,
+  parseNimbusTomlLlmSection,
+  parseNimbusTomlVoiceSection,
+  parseNimbusUpdaterToml,
+  parseNimbusUserToml,
+  parsePreflightConfig,
+  parseQuorumConfig,
+  resolveNimbusTomlForProfile,
+} from "./nimbus-toml.ts";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeTmpDir(): string {
+  return mkdtempSync(join(tmpdir(), "nimbus-toml-test-"));
+}
+
+function writeToml(dir: string, content: string, name = "nimbus.toml"): string {
+  const p = join(dir, name);
+  writeFileSync(p, content, "utf8");
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// loadTomlSection — catch arm (parse function throws)
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusExtensionsFromPath — catch arm when parse throws", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when toml parse raises (e.g. out-of-range extension interval)", () => {
+    // parseNimbusExtensionsToml throws for out-of-range values; loadTomlSection catches → defaults
+    const p = writeToml(dir, "[extensions]\nupdate_check_interval_hours = 999\n");
+    const result = loadNimbusExtensionsFromPath(p);
+    // catch arm returns structuredClone(fallback) = DEFAULT_NIMBUS_EXTENSIONS_TOML
+    expect(result.updateCheckIntervalHours).toBe(24);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Embedding section — all helpers
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusTomlEmbeddingSection", () => {
+  test("returns empty object for empty string", () => {
+    expect(parseNimbusTomlEmbeddingSection("")).toEqual({});
+  });
+
+  test("ignores unrelated sections", () => {
+    expect(parseNimbusTomlEmbeddingSection("[llm]\nenabled = false\n")).toEqual({});
+  });
+
+  test("parses enabled = true", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nenabled = true\n")).toEqual({
+      enabled: true,
+    });
+  });
+
+  test("parses enabled = false", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nenabled = false\n")).toEqual({
+      enabled: false,
+    });
+  });
+
+  test("ignores malformed enabled (parseBool returns undefined)", () => {
+    // 'maybe' is neither true nor false → parseBool returns undefined → field skipped
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nenabled = maybe\n")).toEqual({});
+  });
+
+  test("parses provider = local", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nprovider = local\n")).toEqual({
+      provider: "local",
+    });
+  });
+
+  test("parses provider = openai", () => {
+    expect(parseNimbusTomlEmbeddingSection('[embedding]\nprovider = "openai"\n')).toEqual({
+      provider: "openai",
+    });
+  });
+
+  test("parses provider = hybrid", () => {
+    expect(parseNimbusTomlEmbeddingSection('[embedding]\nprovider = "hybrid"\n')).toEqual({
+      provider: "hybrid",
+    });
+  });
+
+  test("ignores unrecognized provider value", () => {
+    expect(parseNimbusTomlEmbeddingSection('[embedding]\nprovider = "unknown"\n')).toEqual({});
+  });
+
+  test("parses model string", () => {
+    expect(parseNimbusTomlEmbeddingSection('[embedding]\nmodel = "all-MiniLM-L6-v2"\n')).toEqual({
+      model: "all-MiniLM-L6-v2",
+    });
+  });
+
+  test("parses chunk_tokens positive int", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_tokens = 512\n")).toEqual({
+      chunkTokens: 512,
+    });
+  });
+
+  test("ignores chunk_tokens = 0 (must be > 0)", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_tokens = 0\n")).toEqual({});
+  });
+
+  test("ignores chunk_tokens = -1 (must be > 0)", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_tokens = -1\n")).toEqual({});
+  });
+
+  test("parses chunk_overlap_tokens = 0 (must be >= 0)", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_overlap_tokens = 0\n")).toEqual({
+      chunkOverlapTokens: 0,
+    });
+  });
+
+  test("ignores chunk_overlap_tokens = -1 (must be >= 0)", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_overlap_tokens = -1\n")).toEqual({});
+  });
+
+  test("parses chunk_overlap_tokens positive int", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nchunk_overlap_tokens = 64\n")).toEqual({
+      chunkOverlapTokens: 64,
+    });
+  });
+
+  test("parses backfill_batch_size positive int", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nbackfill_batch_size = 100\n")).toEqual({
+      backfillBatchSize: 100,
+    });
+  });
+
+  test("ignores backfill_batch_size = 0 (must be > 0)", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nbackfill_batch_size = 0\n")).toEqual({});
+  });
+
+  test("parses pause_on_battery = false", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\npause_on_battery = false\n")).toEqual({
+      pauseOnBattery: false,
+    });
+  });
+
+  test("parses pause_on_battery = true", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\npause_on_battery = true\n")).toEqual({
+      pauseOnBattery: true,
+    });
+  });
+
+  test("ignores malformed pause_on_battery", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\npause_on_battery = nope\n")).toEqual({});
+  });
+
+  test("ignores unknown keys", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\nunknown_key = 123\n")).toEqual({});
+  });
+
+  test("stops reading at next section header", () => {
+    const src = "[embedding]\nenabled = true\n[llm]\nenabled = false\n";
+    expect(parseNimbusTomlEmbeddingSection(src)).toEqual({ enabled: true });
+  });
+
+  test("strips # inline comments", () => {
+    expect(
+      parseNimbusTomlEmbeddingSection("[embedding]\nenabled = true # use embedding\n"),
+    ).toEqual({ enabled: true });
+  });
+
+  test("handles CRLF line endings", () => {
+    expect(parseNimbusTomlEmbeddingSection("[embedding]\r\nenabled = true\r\n")).toEqual({
+      enabled: true,
+    });
+  });
+
+  test("parses all keys together", () => {
+    const src = [
+      "[embedding]",
+      "enabled = true",
+      'provider = "openai"',
+      'model = "text-embedding-3-small"',
+      "chunk_tokens = 256",
+      "chunk_overlap_tokens = 32",
+      "backfill_batch_size = 50",
+      "pause_on_battery = false",
+    ].join("\n");
+    expect(parseNimbusTomlEmbeddingSection(src)).toEqual({
+      enabled: true,
+      provider: "openai",
+      model: "text-embedding-3-small",
+      chunkTokens: 256,
+      chunkOverlapTokens: 32,
+      backfillBatchSize: 50,
+      pauseOnBattery: false,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusEmbeddingFromPath / loadNimbusEmbeddingFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusEmbeddingFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusEmbeddingFromPath(join(dir, "no-such-file.toml"));
+    expect(result).toEqual(DEFAULT_NIMBUS_EMBEDDING_TOML);
+  });
+
+  test("merges file values over defaults", () => {
+    const p = writeToml(dir, "[embedding]\nenabled = false\nchunk_tokens = 512\n");
+    const result = loadNimbusEmbeddingFromPath(p);
+    expect(result.enabled).toBe(false);
+    expect(result.chunkTokens).toBe(512);
+    // defaults preserved
+    expect(result.provider).toBe("local");
+    expect(result.model).toBe("all-MiniLM-L6-v2");
+  });
+
+  test("DEFAULT_NIMBUS_EMBEDDING_TOML has expected values", () => {
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.enabled).toBe(true);
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.provider).toBe("local");
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.chunkTokens).toBe(256);
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.chunkOverlapTokens).toBe(32);
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.backfillBatchSize).toBe(50);
+    expect(DEFAULT_NIMBUS_EMBEDDING_TOML.pauseOnBattery).toBe(true);
+  });
+});
+
+describe("loadNimbusEmbeddingFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[embedding]\nenabled = false\n");
+    const result = loadNimbusEmbeddingFromConfigDir(dir);
+    expect(result.enabled).toBe(false);
+  });
+
+  test("returns defaults when nimbus.toml missing", () => {
+    const result = loadNimbusEmbeddingFromConfigDir(dir);
+    expect(result).toEqual(DEFAULT_NIMBUS_EMBEDDING_TOML);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNimbusTomlForProfile
+// ---------------------------------------------------------------------------
+
+describe("resolveNimbusTomlForProfile", () => {
+  let dir: string;
+  let savedProfile: string | undefined;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    savedProfile = process.env["NIMBUS_PROFILE"];
+  });
+
+  afterEach(() => {
+    if (savedProfile === undefined) {
+      delete process.env["NIMBUS_PROFILE"];
+    } else {
+      process.env["NIMBUS_PROFILE"] = savedProfile;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns nimbus.toml when NIMBUS_PROFILE is unset", () => {
+    delete process.env["NIMBUS_PROFILE"];
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
+  });
+
+  test("returns nimbus.toml when NIMBUS_PROFILE is empty string", () => {
+    process.env["NIMBUS_PROFILE"] = "";
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
+  });
+
+  test("returns nimbus.toml when NIMBUS_PROFILE is 'default'", () => {
+    process.env["NIMBUS_PROFILE"] = "default";
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
+  });
+
+  test("returns nimbus.<profile>.toml when the alt file exists", () => {
+    process.env["NIMBUS_PROFILE"] = "work";
+    // create the alt file
+    writeToml(dir, "", "nimbus.work.toml");
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.work.toml"));
+  });
+
+  test("falls back to nimbus.toml when NIMBUS_PROFILE is set but alt file does not exist", () => {
+    process.env["NIMBUS_PROFILE"] = "staging";
+    // do NOT create nimbus.staging.toml
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
+  });
+
+  test("trims whitespace from NIMBUS_PROFILE", () => {
+    process.env["NIMBUS_PROFILE"] = "  default  ";
+    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNimbusUpdaterToml — NIMBUS_UPDATER_URL env branch
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusUpdaterToml — NIMBUS_UPDATER_URL env override", () => {
+  let savedUrl: string | undefined;
+
+  beforeEach(() => {
+    savedUrl = process.env["NIMBUS_UPDATER_URL"];
+  });
+
+  afterEach(() => {
+    if (savedUrl === undefined) {
+      delete process.env["NIMBUS_UPDATER_URL"];
+    } else {
+      process.env["NIMBUS_UPDATER_URL"] = savedUrl;
+    }
+  });
+
+  test("NIMBUS_UPDATER_URL overrides the url field", () => {
+    process.env["NIMBUS_UPDATER_URL"] = "https://example.com/latest.json";
+    const out = parseNimbusUpdaterToml("");
+    expect(out.url).toBe("https://example.com/latest.json");
+  });
+
+  test("NIMBUS_UPDATER_URL absent — url from defaults", () => {
+    delete process.env["NIMBUS_UPDATER_URL"];
+    delete process.env["NIMBUS_UPDATER_DISABLE"];
+    const out = parseNimbusUpdaterToml("");
+    expect(out.url).toBe(DEFAULT_NIMBUS_UPDATER_TOML.url);
+  });
+
+  test("NIMBUS_UPDATER_URL overrides even when toml also sets url", () => {
+    process.env["NIMBUS_UPDATER_URL"] = "https://override.example/v.json";
+    const out = parseNimbusUpdaterToml('[updater]\nurl = "https://toml.example/v.json"\n');
+    expect(out.url).toBe("https://override.example/v.json");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusUpdaterFromPath / loadNimbusUpdaterFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusUpdaterFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusUpdaterFromPath(join(dir, "nope.toml"));
+    expect(result.enabled).toBe(DEFAULT_NIMBUS_UPDATER_TOML.enabled);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(dir, "[updater]\nenabled = false\ncheck_on_startup = false\n");
+    const result = loadNimbusUpdaterFromPath(p);
+    expect(result.enabled).toBe(false);
+    expect(result.checkOnStartup).toBe(false);
+  });
+});
+
+describe("loadNimbusUpdaterFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[updater]\nauto_apply = true\n");
+    const result = loadNimbusUpdaterFromConfigDir(dir);
+    expect(result.autoApply).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNimbusLanToml — NaN guard for NIMBUS_LAN_PORT
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusLanToml — NIMBUS_LAN_PORT NaN guard", () => {
+  let savedPort: string | undefined;
+
+  beforeEach(() => {
+    savedPort = process.env["NIMBUS_LAN_PORT"];
+  });
+
+  afterEach(() => {
+    if (savedPort === undefined) {
+      delete process.env["NIMBUS_LAN_PORT"];
+    } else {
+      process.env["NIMBUS_LAN_PORT"] = savedPort;
+    }
+  });
+
+  test("ignores NIMBUS_LAN_PORT when it is not a valid integer", () => {
+    process.env["NIMBUS_LAN_PORT"] = "abc";
+    const out = parseNimbusLanToml("");
+    // NaN guard: port stays at default
+    expect(out.port).toBe(DEFAULT_NIMBUS_LAN_TOML.port);
+  });
+
+  test("ignores NIMBUS_LAN_PORT = 'NaN'", () => {
+    process.env["NIMBUS_LAN_PORT"] = "NaN";
+    const out = parseNimbusLanToml("");
+    expect(out.port).toBe(DEFAULT_NIMBUS_LAN_TOML.port);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LAN section — port = 0 rejected (must be > 0)
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusLanToml — port <= 0 rejected", () => {
+  test("ignores port = 0", () => {
+    const out = parseNimbusLanToml("[lan]\nport = 0\n");
+    expect(out.port).toBe(DEFAULT_NIMBUS_LAN_TOML.port);
+  });
+
+  test("ignores lockout_seconds = -1 (must be >= 0)", () => {
+    const out = parseNimbusLanToml("[lan]\nlockout_seconds = -1\n");
+    expect(out.lockoutSeconds).toBe(DEFAULT_NIMBUS_LAN_TOML.lockoutSeconds);
+  });
+
+  test("accepts lockout_seconds = 0", () => {
+    const out = parseNimbusLanToml("[lan]\nlockout_seconds = 0\n");
+    expect(out.lockoutSeconds).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusLanFromPath / loadNimbusLanFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusLanFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusLanFromPath(join(dir, "nope.toml"));
+    expect(result).toEqual(DEFAULT_NIMBUS_LAN_TOML);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(dir, "[lan]\nenabled = true\nport = 9000\n");
+    const result = loadNimbusLanFromPath(p);
+    expect(result.enabled).toBe(true);
+    expect(result.port).toBe(9000);
+  });
+});
+
+describe("loadNimbusLanFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[lan]\nenabled = true\n");
+    const result = loadNimbusLanFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusLanFromConfigDir(dir);
+    expect(result).toEqual(DEFAULT_NIMBUS_LAN_TOML);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusLlmFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusLlmFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[llm]\nmax_agent_depth = 7\n");
+    const result = loadNimbusLlmFromConfigDir(dir);
+    expect(result.maxAgentDepth).toBe(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusVoiceFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusVoiceFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[voice]\nenabled = true\n");
+    const result = loadNimbusVoiceFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusFederationFromPath / loadNimbusFederationFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusFederationFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusFederationFromPath(join(dir, "nope.toml"));
+    expect(result.enabled).toBe(false);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(dir, "[federation]\nenabled = true\nconsent_timeout_seconds = 60\n");
+    const result = loadNimbusFederationFromPath(p);
+    expect(result.enabled).toBe(true);
+    expect(result.consentTimeoutSeconds).toBe(60);
+  });
+});
+
+describe("loadNimbusFederationFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[federation]\nenabled = true\n");
+    const result = loadNimbusFederationFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// federation consent_timeout_seconds > 3600 rejected
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusFederationToml — consent_timeout > 3600 rejected", () => {
+  test("ignores consent_timeout_seconds > 3600 (keeps default)", () => {
+    const result = parseNimbusFederationToml("[federation]\nconsent_timeout_seconds = 9999\n");
+    expect(result.consentTimeoutSeconds).toBe(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusAutomationFromPath / loadNimbusAutomationFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusAutomationFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusAutomationFromPath(join(dir, "nope.toml"));
+    expect(result.graphConditions).toBe(true);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(dir, "[automation]\ngraph_conditions = false\n");
+    const result = loadNimbusAutomationFromPath(p);
+    expect(result.graphConditions).toBe(false);
+  });
+});
+
+describe("loadNimbusAutomationFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[automation]\ngraph_conditions = false\n");
+    const result = loadNimbusAutomationFromConfigDir(dir);
+    expect(result.graphConditions).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusExtensionsFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusExtensionsFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[extensions]\nupdate_check_interval_hours = 48\n");
+    const result = loadNimbusExtensionsFromConfigDir(dir);
+    expect(result.updateCheckIntervalHours).toBe(48);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusExtensionsFromConfigDir(dir);
+    expect(result.updateCheckIntervalHours).toBe(24);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusAuditFromPath / loadNimbusAuditFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusAuditFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusAuditFromPath(join(dir, "nope.toml"));
+    expect(result.toolCallLogRetentionDays).toBe(90);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(dir, "[audit]\ntool_call_log_retention_days = 30\n");
+    const result = loadNimbusAuditFromPath(p);
+    expect(result.toolCallLogRetentionDays).toBe(30);
+  });
+
+  test("catch arm: returns defaults when parse throws (out-of-range value)", () => {
+    const p = writeToml(dir, "[audit]\ntool_call_log_retention_days = -1\n");
+    const result = loadNimbusAuditFromPath(p);
+    expect(result.toolCallLogRetentionDays).toBe(90);
+  });
+});
+
+describe("loadNimbusAuditFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[audit]\ntool_call_log_retention_days = 60\n");
+    const result = loadNimbusAuditFromConfigDir(dir);
+    expect(result.toolCallLogRetentionDays).toBe(60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusSecurityFromPath / loadNimbusSecurityFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusSecurityFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when file does not exist", () => {
+    const result = loadNimbusSecurityFromPath(join(dir, "nope.toml"));
+    expect(result.extendedPatterns).toBe(false);
+    expect(result.allowlistFingerprints).toEqual([]);
+  });
+
+  test("reads from disk", () => {
+    const p = writeToml(
+      dir,
+      '[security]\nextended_patterns = true\n\n[[security.allowlist]]\nfingerprint = "abc123"\n',
+    );
+    const result = loadNimbusSecurityFromPath(p);
+    expect(result.extendedPatterns).toBe(true);
+    expect(result.allowlistFingerprints).toEqual(["abc123"]);
+  });
+});
+
+describe("loadNimbusSecurityFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[security]\nextended_patterns = true\n");
+    const result = loadNimbusSecurityFromConfigDir(dir);
+    expect(result.extendedPatterns).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// security allowlist — empty fingerprint skip
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusSecurityToml — empty fingerprint skipped", () => {
+  test("skips empty fingerprint strings", () => {
+    const raw = [
+      "[[security.allowlist]]",
+      'fingerprint = ""',
+      "[[security.allowlist]]",
+      'fingerprint = "abc"',
+    ].join("\n");
+    const result = parseNimbusSecurityToml(raw);
+    expect(result.allowlistFingerprints).toEqual(["abc"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// identity — numeric keys, scopes empty filter
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusIdentityToml — extended coverage", () => {
+  test("parses revalidate_interval_seconds (min=1)", () => {
+    const out = parseNimbusIdentityToml("[identity]\nrevalidate_interval_seconds = 7200\n");
+    expect(out.revalidateIntervalSeconds).toBe(7200);
+  });
+
+  test("ignores revalidate_interval_seconds = 0 (min=1)", () => {
+    const out = parseNimbusIdentityToml("[identity]\nrevalidate_interval_seconds = 0\n");
+    expect(out.revalidateIntervalSeconds).toBe(3600); // default
+  });
+
+  test("parses token_refresh_skew_seconds (min=0)", () => {
+    const out = parseNimbusIdentityToml("[identity]\ntoken_refresh_skew_seconds = 0\n");
+    expect(out.tokenRefreshSkewSeconds).toBe(0);
+  });
+
+  test("parses session_grace_seconds = 0 (min=0)", () => {
+    const out = parseNimbusIdentityToml("[identity]\nsession_grace_seconds = 0\n");
+    expect(out.sessionGraceSeconds).toBe(0);
+  });
+
+  test("parses jwks_max_age_seconds (min=1)", () => {
+    const out = parseNimbusIdentityToml("[identity]\njwks_max_age_seconds = 1\n");
+    expect(out.jwksMaxAgeSeconds).toBe(1);
+  });
+
+  test("ignores jwks_max_age_seconds = 0 (min=1)", () => {
+    const out = parseNimbusIdentityToml("[identity]\njwks_max_age_seconds = 0\n");
+    expect(out.jwksMaxAgeSeconds).toBe(86400); // default
+  });
+
+  test("scopes with empty entries filtered out", () => {
+    // parseStringArray filters empty from array; then arr.filter(s => s.length > 0)
+    const out = parseNimbusIdentityToml('[identity]\nscopes = ["openid", "", "email"]\n');
+    expect(out.scopes).toEqual(["openid", "email"]);
+  });
+
+  test("scopes empty array (all filtered) → default scopes kept", () => {
+    // If arr.length === 0 after filtering, out.scopes is not set; defaults prevail
+    const out = parseNimbusIdentityToml('[identity]\nscopes = ["", ""]\n');
+    expect(out.scopes).toEqual(["openid", "email", "profile"]); // default
+  });
+
+  test("ignores unknown keys in [identity]", () => {
+    const out = parseNimbusIdentityToml("[identity]\nunknown_key = 123\n");
+    // applyNimbusIdentityNumericKey returns false → no effect
+    expect(out).toMatchObject({ enabled: false });
+  });
+});
+
+describe("loadNimbusIdentityFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[identity]\nenabled = true\n");
+    const result = loadNimbusIdentityFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusIdentityFromConfigDir(dir);
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quorum — missing window_seconds, already-in-map id
+// ---------------------------------------------------------------------------
+
+describe("parseQuorumConfig — additional edge cases", () => {
+  test("ignores sub-table with missing window_seconds", () => {
+    const raw = ['[hitl.quorum."x.y"]', "approvers = 2"].join("\n");
+    expect(parseQuorumConfig(raw).has("x.y")).toBe(false);
+  });
+
+  test("ignores sub-table with missing approvers", () => {
+    const raw = ['[hitl.quorum."x.y"]', "window_seconds = 300"].join("\n");
+    expect(parseQuorumConfig(raw).has("x.y")).toBe(false);
+  });
+
+  test("second sub-table with same id overwrites first (map semantics)", () => {
+    const raw = [
+      '[hitl.quorum."x.y"]',
+      "approvers = 1",
+      "window_seconds = 100",
+      '[hitl.quorum."x.y"]',
+      "approvers = 3",
+      "window_seconds = 200",
+    ].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    // Map is built by iterating accum; second entry for same id overwrites it in accum
+    const rule = cfg.get("x.y");
+    expect(rule).toBeDefined();
+  });
+
+  test("empty table id is not added to map", () => {
+    // beginQuorumTable: id.length === 0 → return undefined
+    const raw = ['[hitl.quorum.""]', "approvers = 2", "window_seconds = 300"].join("\n");
+    expect(parseQuorumConfig(raw).size).toBe(0);
+  });
+
+  test("non-numeric window_seconds is ignored", () => {
+    const raw = ['[hitl.quorum."x.y"]', "approvers = 2", "window_seconds = bad"].join("\n");
+    expect(parseQuorumConfig(raw).has("x.y")).toBe(false);
+  });
+});
+
+describe("loadNimbusQuorumFromPath / loadNimbusQuorumFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("loadNimbusQuorumFromPath returns empty map when file does not exist", () => {
+    const result = loadNimbusQuorumFromPath(join(dir, "nope.toml"));
+    expect(result.size).toBe(0);
+  });
+
+  test("loadNimbusQuorumFromPath reads from disk", () => {
+    const p = writeToml(dir, '[hitl.quorum."iac.destroy"]\napprovers = 2\nwindow_seconds = 300\n');
+    const result = loadNimbusQuorumFromPath(p);
+    expect(result.get("iac.destroy")).toEqual({ approvers: 2, windowSeconds: 300 });
+  });
+
+  test("loadNimbusQuorumFromConfigDir resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, '[hitl.quorum."db.drop"]\napprovers = 1\nwindow_seconds = 60\n');
+    const result = loadNimbusQuorumFromConfigDir(dir);
+    expect(result.get("db.drop")).toEqual({ approvers: 1, windowSeconds: 60 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SCIM — loadNimbusScimFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusScimFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[scim]\nenabled = true\n");
+    const result = loadNimbusScimFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusScimFromConfigDir(dir);
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ChatOps — loadNimbusChatopsFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusChatopsFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, "[chatops]\nenabled = true\nslack_enabled = true\n");
+    const result = loadNimbusChatopsFromConfigDir(dir);
+    expect(result.enabled).toBe(true);
+    expect(result.slackEnabled).toBe(true);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusChatopsFromConfigDir(dir);
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Preflight — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("parsePreflightConfig — edge cases", () => {
+  test("empty-string command is ignored (treated as no-command)", () => {
+    // parseString on an empty quoted string returns "" → command.length === 0 → undefined
+    const cfg = parsePreflightConfig('[federation.preflight."ns"]\ncommand = ""\n');
+    expect(cfg.has("ns")).toBe(false);
+  });
+
+  test("negative timeout_seconds uses default 300", () => {
+    const cfg = parsePreflightConfig(
+      '[federation.preflight."ns"]\ncommand = "make"\ntimeout_seconds = -5\n',
+    );
+    expect(cfg.get("ns")?.timeoutSeconds).toBe(300);
+  });
+
+  test("empty namespace id is not added", () => {
+    // beginPreflightTable: id.length === 0 → return undefined
+    const cfg = parsePreflightConfig('[federation.preflight.""]\ncommand = "make"\n');
+    expect(cfg.size).toBe(0);
+  });
+
+  test("timeout_seconds capped at 1800", () => {
+    const cfg = parsePreflightConfig(
+      '[federation.preflight."ns"]\ncommand = "run"\ntimeout_seconds = 99999\n',
+    );
+    expect(cfg.get("ns")?.timeoutSeconds).toBe(1800);
+  });
+
+  test("args and cwd defaults when absent", () => {
+    const cfg = parsePreflightConfig('[federation.preflight."ns"]\ncommand = "make check"\n');
+    expect(cfg.get("ns")?.args).toEqual([]);
+    expect(cfg.get("ns")?.cwd).toBe(".");
+  });
+});
+
+describe("loadNimbusPreflightFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, '[federation.preflight."pr"]\ncommand = "bun test"\ntimeout_seconds = 120\n');
+    const result = loadNimbusPreflightFromConfigDir(dir);
+    expect(result.get("pr")?.command).toBe("bun test");
+    expect(result.get("pr")?.timeoutSeconds).toBe(120);
+  });
+
+  test("returns empty map when nimbus.toml is missing", () => {
+    const result = loadNimbusPreflightFromConfigDir(dir);
+    expect(result.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusServiceConfigsFromConfigDir — duplicate-id stderr warning
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusServiceConfigsFromConfigDir — duplicate id warning", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("logs a warning and uses [ci.service] when id appears in both dora and ci", () => {
+    writeToml(
+      dir,
+      `[metrics.dora.payments]
+repos = ["github:acme/payments"]
+
+[ci.service.payments]
+repos = ["github:acme/payments-ci"]
+`,
+    );
+    const captured: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      captured.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stderr.write;
+    let result: Map<string, unknown>;
+    try {
+      result = loadNimbusServiceConfigsFromConfigDir(dir);
+    } finally {
+      process.stderr.write = orig;
+    }
+    // Duplicate warning emitted
+    expect(captured.join("")).toContain("payments");
+    expect(result!.size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadNimbusUserFromConfigDir
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusUserFromConfigDir", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("resolves <configDir>/nimbus.toml", () => {
+    writeToml(dir, '[user]\nme_person_id = "person-xyz"\n');
+    const result = loadNimbusUserFromConfigDir(dir);
+    expect(result.mePersonId).toBe("person-xyz");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: forEachSectionEntry — kv === undefined arm (line 82)
+// splitKeyValue returns undefined when there is no '=' sign on a line
+// ---------------------------------------------------------------------------
+
+describe("forEachSectionEntry — line with no '=' sign inside section", () => {
+  test("embedding section skips a line with no equals sign", () => {
+    // A line inside [embedding] with no '=' → splitKeyValue returns undefined → skipped
+    const src = "[embedding]\nthis-line-has-no-equals-sign\nenabled = true\n";
+    const result = parseNimbusTomlEmbeddingSection(src);
+    // The malformed line is skipped; enabled still parsed
+    expect(result.enabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: parseBool undefined arms in various section parsers
+// (hitting the else-branch of "if (b !== undefined)")
+// ---------------------------------------------------------------------------
+
+describe("parseBool undefined arm — LLM section", () => {
+  test("prefer_local with malformed value is ignored", () => {
+    // parseBool("notabool") → undefined → if (b !== undefined) is false
+    const result = parseNimbusTomlLlmSection("[llm]\nprefer_local = notabool\n");
+    expect(result.preferLocal).toBeUndefined();
+  });
+
+  test("enforce_air_gap with malformed value is ignored", () => {
+    const result = parseNimbusTomlLlmSection("[llm]\nenforce_air_gap = maybe\n");
+    expect(result.enforceAirGap).toBeUndefined();
+  });
+});
+
+describe("parseBool undefined arm — updater section", () => {
+  test("enabled = invalid keeps default", () => {
+    const result = parseNimbusUpdaterToml("[updater]\nenabled = notabool\n");
+    // parseBool("notabool") → undefined → field skipped; default used
+    expect(result.enabled).toBe(true);
+  });
+
+  test("check_on_startup = invalid keeps default", () => {
+    const result = parseNimbusUpdaterToml("[updater]\ncheck_on_startup = notabool\n");
+    expect(result.checkOnStartup).toBe(true);
+  });
+
+  test("auto_apply = invalid keeps default", () => {
+    const result = parseNimbusUpdaterToml("[updater]\nauto_apply = notabool\n");
+    expect(result.autoApply).toBe(false);
+  });
+});
+
+describe("parseBool undefined arm — LAN section", () => {
+  test("enabled = invalid keeps default", () => {
+    const result = parseNimbusLanToml("[lan]\nenabled = notabool\n");
+    expect(result.enabled).toBe(false);
+  });
+});
+
+describe("parseBool undefined arm — federation section", () => {
+  test("enabled = invalid keeps default", () => {
+    const result = parseNimbusFederationToml("[federation]\nenabled = notabool\n");
+    expect(result.enabled).toBe(false);
+  });
+
+  test("mdns_enabled = invalid keeps default", () => {
+    const result = parseNimbusFederationToml("[federation]\nmdns_enabled = notabool\n");
+    expect(result.mdnsEnabled).toBe(true);
+  });
+});
+
+describe("parseBool undefined arm — SCIM section", () => {
+  test("enabled = invalid keeps default", () => {
+    const result = parseNimbusScimToml("[scim]\nenabled = notabool\n");
+    expect(result.enabled).toBe(false);
+  });
+});
+
+describe("parseBool undefined arm — automation section", () => {
+  test("graph_conditions = invalid keeps default", () => {
+    const result = parseNimbusAutomationToml("[automation]\ngraph_conditions = notabool\n");
+    expect(result.graphConditions).toBe(DEFAULT_NIMBUS_AUTOMATION_TOML.graphConditions);
+  });
+});
+
+describe("parseBool undefined arm — security section", () => {
+  test("extended_patterns = invalid keeps default", () => {
+    const result = parseNimbusSecurityToml("[security]\nextended_patterns = notabool\n");
+    expect(result.extendedPatterns).toBe(false);
+  });
+});
+
+describe("parseBool undefined arm — identity section", () => {
+  test("enabled = invalid keeps default", () => {
+    const result = parseNimbusIdentityToml("[identity]\nenabled = notabool\n");
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: LAN section — pairing_window_seconds and max_failed_attempts
+// (n <= 0 rejected arms)
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusLanToml — invalid positive-int values rejected", () => {
+  test("pairing_window_seconds = 0 is rejected", () => {
+    const result = parseNimbusLanToml("[lan]\npairing_window_seconds = 0\n");
+    expect(result.pairingWindowSeconds).toBe(300); // default
+  });
+
+  test("max_failed_attempts = 0 is rejected", () => {
+    const result = parseNimbusLanToml("[lan]\nmax_failed_attempts = 0\n");
+    expect(result.maxFailedAttempts).toBe(3); // default
+  });
+
+  test("pairing_window_seconds non-numeric is rejected", () => {
+    const result = parseNimbusLanToml("[lan]\npairing_window_seconds = abc\n");
+    expect(result.pairingWindowSeconds).toBe(300);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: quorum — applyQuorumKvLine with undefined bucket
+// and kv === undefined path
+// ---------------------------------------------------------------------------
+
+describe("parseQuorumConfig — kv-line edge cases", () => {
+  test("line-with-no-equals inside a quorum table is skipped", () => {
+    const raw = [
+      '[hitl.quorum."x.y"]',
+      "no-equals-here",
+      "approvers = 2",
+      "window_seconds = 100",
+    ].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    expect(cfg.get("x.y")).toEqual({ approvers: 2, windowSeconds: 100 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: preflight — applyPreflightKvLine with undefined bucket
+// and kv === undefined path
+// ---------------------------------------------------------------------------
+
+describe("parsePreflightConfig — kv-line edge cases", () => {
+  test("line-with-no-equals inside a preflight table is skipped", () => {
+    const cfg = parsePreflightConfig(
+      '[federation.preflight."ns"]\nno-equals-here\ncommand = "make"\n',
+    );
+    expect(cfg.get("ns")?.command).toBe("make");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: pagerduty read-file catch branch
+// The two branches inside the catch at lines 845-848 cover:
+//   err instanceof Error → true: e.message used
+//   err instanceof Error → false: String(err) used
+// These are covered by the existing pagerduty test but the `err instanceof Error`
+// false arm on the second catch (line 856) is also unreachable normally.
+// ---------------------------------------------------------------------------
+// Note: lines 847/856 `err instanceof Error` false-arm is genuinely unreachable
+// in normal Bun operation since all thrown errors from readFileSync/parseNimbus*
+// are Error instances. This is documented in uncoverableBranches.
+
+// ---------------------------------------------------------------------------
+// Branch coverage: extensions — loadNimbusExtensionsFromPath catch arm
+// (covered by the test at top of file)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Branch coverage: preflight toPreflightCommandConfig — timeout_seconds key
+// present but parseIntDec returns undefined
+// ---------------------------------------------------------------------------
+
+describe("parsePreflightConfig — timeout_seconds non-numeric uses default", () => {
+  test("timeout_seconds = abc → fallback to 300", () => {
+    const cfg = parsePreflightConfig(
+      '[federation.preflight."ns"]\ncommand = "run"\ntimeout_seconds = abc\n',
+    );
+    // parseIntDec("abc") = undefined → timeoutParsed = undefined → default 300
+    expect(cfg.get("ns")?.timeoutSeconds).toBe(300);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: preflight — accum.has(id) true path (duplicate namespace)
+// ---------------------------------------------------------------------------
+
+describe("parsePreflightConfig — duplicate namespace table (id already in map)", () => {
+  test("second table with same namespace id overwrites the first", () => {
+    const cfg = parsePreflightConfig(
+      [
+        '[federation.preflight."ns"]',
+        'command = "first"',
+        '[federation.preflight."ns"]',
+        'command = "second"',
+      ].join("\n"),
+    );
+    // The second entry replaces the first in accum
+    expect(cfg.get("ns")?.command).toBe("second");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: quorum — accum.has(id) true path (duplicate quorum id)
+// ---------------------------------------------------------------------------
+
+describe("parseQuorumConfig — duplicate quorum id table (id already in map)", () => {
+  test("second table with same action-type id overwrites the first", () => {
+    const raw = [
+      '[hitl.quorum."a.b"]',
+      "approvers = 1",
+      "window_seconds = 60",
+      '[hitl.quorum."a.b"]',
+      "approvers = 2",
+      "window_seconds = 120",
+    ].join("\n");
+    const cfg = parseQuorumConfig(raw);
+    const rule = cfg.get("a.b");
+    expect(rule).toBeDefined();
+    // Second entry values
+    expect(rule?.approvers).toBe(2);
+    expect(rule?.windowSeconds).toBe(120);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: LAN section — port non-numeric is ignored
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusLanToml — port non-numeric is ignored", () => {
+  test("port = abc is rejected (parseIntDec returns undefined)", () => {
+    const result = parseNimbusLanToml("[lan]\nport = abc\n");
+    expect(result.port).toBe(7475); // default
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: federation — consent_timeout_seconds n <= 0 rejected
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusFederationToml — consent_timeout non-numeric is rejected", () => {
+  test("consent_timeout_seconds = abc is rejected", () => {
+    const result = parseNimbusFederationToml("[federation]\nconsent_timeout_seconds = abc\n");
+    expect(result.consentTimeoutSeconds).toBe(30); // default
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: voice enabled = invalid (parseBool returns undefined)
+// ---------------------------------------------------------------------------
+
+describe("parseNimbusTomlVoiceSection — enabled with invalid value", () => {
+  test("enabled = invalid is ignored", () => {
+    const result = parseNimbusTomlVoiceSection("[voice]\nenabled = notabool\n");
+    expect(result.enabled).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: switch default arms — various section parsers
+// These are the "default: break" arms in switch statements triggered by
+// unknown/unrecognized keys.
+// ---------------------------------------------------------------------------
+
+describe("switch default arms — unknown keys in sections", () => {
+  test("LLM section: unknown key hits switch default", () => {
+    const result = parseNimbusTomlLlmSection("[llm]\nunknown_key_for_default = 123\n");
+    // default branch taken; result is empty
+    expect(result).toEqual({});
+  });
+
+  test("updater section: unknown key hits switch default", () => {
+    const result = parseNimbusUpdaterToml("[updater]\nunknown_key_for_default = 123\n");
+    // default branch; defaults are used
+    expect(result.enabled).toBe(DEFAULT_NIMBUS_UPDATER_TOML.enabled);
+  });
+
+  test("LAN section: unknown key hits switch default", () => {
+    const result = parseNimbusLanToml("[lan]\nunknown_key_for_default = 123\n");
+    expect(result.port).toBe(DEFAULT_NIMBUS_LAN_TOML.port);
+  });
+
+  test("federation section: unknown key hits switch default", () => {
+    const result = parseNimbusFederationToml("[federation]\nunknown_key_for_default = 123\n");
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Branch coverage: if (key === "...") FALSE arms — single-key sections
+// (audit, security, user, pagerduty, scim)
+// ---------------------------------------------------------------------------
+
+describe("if (key) check FALSE arms — unknown keys inside sections", () => {
+  test("audit section: unknown key is ignored (key != tool_call_log_retention_days)", () => {
+    const result = parseNimbusAuditToml("[audit]\nunknown_key = 99\n");
+    expect(result.toolCallLogRetentionDays).toBe(90); // default
+  });
+
+  test("security section: unknown key is ignored (key != extended_patterns)", () => {
+    const result = parseNimbusSecurityToml("[security]\nunknown_key = 99\n");
+    expect(result.extendedPatterns).toBe(false); // default
+  });
+
+  test("security allowlist: non-fingerprint key inside [[security.allowlist]] is ignored", () => {
+    const raw = [
+      "[[security.allowlist]]",
+      'other_key = "not a fingerprint"',
+      'fingerprint = "abc123"',
+    ].join("\n");
+    const result = parseNimbusSecurityToml(raw);
+    expect(result.allowlistFingerprints).toEqual(["abc123"]);
+  });
+
+  test("user section: unknown key is ignored (key != me_person_id)", () => {
+    const result = parseNimbusUserToml("[user]\nunknown_key = 99\n");
+    expect(result.mePersonId).toBeUndefined();
+  });
+
+  test("pagerduty section: unknown key falls through both if/else if", () => {
+    const result = parseNimbusPagerdutyToml("[pagerduty]\nunknown_key = 99\n");
+    expect(result.maxPagesPerSync).toBe(20); // default
+  });
+
+  test("scim section: unknown key is ignored (key != enabled)", () => {
+    const result = parseNimbusScimToml("[scim]\nunknown_key = 99\n");
+    expect(result.enabled).toBe(false); // default
+  });
+});

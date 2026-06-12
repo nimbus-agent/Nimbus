@@ -78,6 +78,48 @@ describe("emitBriefWithSynthesis", () => {
     expect(p.brief).toBe("## llm-rendered");
   });
 
+  test("emits briefErrorMethod with String(err) when buildBrief throws a non-Error value", async () => {
+    const notified: Array<{ method: string; params: unknown }> = [];
+    await emitBriefWithSynthesis({
+      sessionId: "sess-non-error",
+      briefReadyMethod: "expert.briefReady",
+      briefErrorMethod: "expert.briefError",
+      notify: (method, params) => notified.push({ method, params }),
+      buildBrief: async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw "plain string error";
+      },
+    });
+    await waitMacrotask();
+    const err = notified.find((n) => n.method === "expert.briefError");
+    expect(err).toBeDefined();
+    const p = err?.params as { sessionId: string; error: string };
+    expect(p.sessionId).toBe("sess-non-error");
+    expect(p.error).toBe("plain string error");
+    expect(notified.some((n) => n.method === "expert.briefReady")).toBe(false);
+  });
+
+  test("emits briefErrorMethod with String(err) when buildBrief throws a numeric value", async () => {
+    const notified: Array<{ method: string; params: unknown }> = [];
+    await emitBriefWithSynthesis({
+      sessionId: "sess-num-error",
+      briefReadyMethod: "expert.briefReady",
+      briefErrorMethod: "expert.briefError",
+      notify: (method, params) => notified.push({ method, params }),
+      buildBrief: async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 42;
+      },
+    });
+    await waitMacrotask();
+    const err = notified.find((n) => n.method === "expert.briefError");
+    expect(err).toBeDefined();
+    const p = err?.params as { sessionId: string; error: string };
+    expect(p.sessionId).toBe("sess-num-error");
+    expect(p.error).toBe("42");
+    expect(notified.some((n) => n.method === "expert.briefReady")).toBe(false);
+  });
+
   test("returns { sessionId } immediately without awaiting the async work", async () => {
     let buildCalledAt: number | null = null;
     const buildBrief = async (): Promise<ExpertBrief> => {
