@@ -13,6 +13,16 @@ afterAll(() => {
   out.restore();
 });
 
+/** Helper: set up fixture with a mock IPC client and return calls array. */
+function setupMock(responseQueue: ReadonlyArray<unknown>): ReturnType<typeof createMockIpcClient> {
+  const mock = createMockIpcClient(responseQueue);
+  setFixture({
+    gatewayState: { socketPath: FAKE_SOCKET_PATH },
+    ipcClient: mock.client,
+  });
+  return mock;
+}
+
 describe("runQuery — help & validation", () => {
   beforeEach(() => {
     out.reset();
@@ -187,5 +197,304 @@ describe("runQuery — --service path", () => {
     expect(out.stdout).toContain("#1");
     expect(out.stdout).toContain("id:");
     expect(out.stdout).toContain("label:");
+  });
+});
+
+describe("runQuery — output formatting branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  // compact JSON path: no --json, no --pretty, process.stdout.isTTY is falsy in tests
+  it("emits compact JSON for --sql when neither --json nor --pretty is given (non-TTY)", async () => {
+    const mock = setupMock([{ rows: [{ id: 42 }], meta: { count: 1 } }]);
+    await runQuery(["--sql", "SELECT id FROM t"]);
+    expect(mock.calls[0]?.method).toBe("index.querySql");
+    // compact JSON: no indentation
+    expect(out.stdout).toContain('[{"id":42}]');
+  });
+
+  it("emits compact JSON for --service when neither --json nor --pretty is given (non-TTY)", async () => {
+    const mock = setupMock([{ items: [{ id: 7 }], meta: { limit: 50, total: 1 } }]);
+    await runQuery(["--service", "github"]);
+    expect(mock.calls[0]?.method).toBe("index.queryItems");
+    expect(out.stdout).toContain('[{"id":7}]');
+  });
+
+  // singular vs plural row count
+  it("shows '1 row' (singular) for exactly one result in --pretty mode", async () => {
+    setupMock([{ items: [{ title: "A", service: "svc" }], meta: { limit: 50, total: 1 } }]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\(1 row ·/);
+  });
+
+  it("shows 'N rows' (plural) for multiple results in --pretty mode", async () => {
+    setupMock([
+      {
+        items: [
+          { title: "A", service: "svc" },
+          { title: "B", service: "svc" },
+        ],
+        meta: { limit: 50, total: 2 },
+      },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\(2 rows ·/);
+  });
+
+  // --limit 0 → defaults to 50
+  it("defaults limit to 50 when --limit is 0", async () => {
+    const mock = setupMock([{ items: [], meta: { limit: 50, total: 0 } }]);
+    await runQuery(["--service", "github", "--limit", "0", "--json"]);
+    expect(mock.calls[0]?.params).toMatchObject({ limit: 50 });
+  });
+
+  // --limit negative → defaults to 50
+  it("defaults limit to 50 when --limit is negative", async () => {
+    const mock = setupMock([{ items: [], meta: { limit: 50, total: 0 } }]);
+    await runQuery(["--service", "github", "--limit", "-5", "--json"]);
+    expect(mock.calls[0]?.params).toMatchObject({ limit: 50 });
+  });
+
+  // --service "" (empty string) → throws
+  it("throws when --service is provided but its value is an empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runQuery(["--service", ""])).rejects.toThrow(/Missing --service/);
+  });
+
+  // takeFlag: flag present but is the LAST argument (no value after it) → returns undefined → service=undefined → throws
+  it("throws when --service flag appears last with no value (takeFlag i+1>=args.length)", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    // --service with no following arg → takeFlag returns undefined → Missing --service
+    await expect(runQuery(["--service"])).rejects.toThrow(/Missing --service/);
+  });
+
+  // --type "" (empty string) → type param omitted from IPC call
+  it("omits types param when --type value is an empty string", async () => {
+    const mock = setupMock([{ items: [], meta: { limit: 50, total: 0 } }]);
+    await runQuery(["--service", "github", "--type", "", "--json"]);
+    const p = mock.calls[0]?.params as Record<string, unknown>;
+    expect(p["types"]).toBeUndefined();
+  });
+});
+
+describe("runQuery — formatQueryCell branches via kv blocks", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  // Exercise boolean, object, null/undefined, number, string in kv-block cells.
+  // All these go through formatQueryCell (via printKvBlock for non-_at fields).
+  it("renders boolean values as 'true'/'false' strings", async () => {
+    setupMock([
+      {
+        rows: [{ flag_active: true, flag_deleted: false }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT flag_active, flag_deleted FROM t", "--pretty"]);
+    expect(out.stdout).toContain("flag_active: true");
+    expect(out.stdout).toContain("flag_deleted: false");
+  });
+
+  it("renders object values as JSON in kv block", async () => {
+    setupMock([
+      {
+        rows: [{ meta: { key: "val" } }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT meta FROM t", "--pretty"]);
+    expect(out.stdout).toContain('{"key":"val"}');
+  });
+
+  it("renders null cell values as empty string in kv block", async () => {
+    setupMock([
+      {
+        rows: [{ field_a: null, field_b: undefined }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT field_a, field_b FROM t", "--pretty"]);
+    // null/undefined → empty string → "field_a: "
+    expect(out.stdout).toContain("field_a:");
+  });
+
+  // formatTimestampField with non-finite number falls back to formatQueryCell
+  it("renders non-finite _at field via formatQueryCell fallback", async () => {
+    setupMock([
+      {
+        rows: [{ created_at: Number.NaN }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT created_at FROM t", "--pretty"]);
+    // NaN → formatQueryCell → String(NaN) = "NaN"
+    expect(out.stdout).toContain("created_at: NaN");
+  });
+
+  // _at field with a valid finite timestamp hits the ISO+relative branch
+  it("renders finite _at field as ISO local + relative", async () => {
+    const nowMs = Date.now();
+    setupMock([
+      {
+        rows: [{ updated_at: nowMs }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT updated_at FROM t", "--pretty"]);
+    // Should contain the ISO-like prefix (YYYY-MM-DD HH:MM) and "ago"
+    expect(out.stdout).toMatch(/updated_at:.*\d{4}-\d{2}-\d{2}/);
+    expect(out.stdout).toContain("ago");
+  });
+});
+
+describe("runQuery — formatRelative time branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  // Each test drives a different formatRelative branch via modified_at on an item card.
+  // We use --pretty so printItemCard is called with formatTimestampField on modified_at.
+
+  it("formatRelative: seconds ago (< 60s)", async () => {
+    const ms = Date.now() - 30 * 1000; // 30s ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+s ago/);
+  });
+
+  it("formatRelative: minutes ago (< 60 min)", async () => {
+    const ms = Date.now() - 5 * 60 * 1000; // 5 min ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+m ago/);
+  });
+
+  it("formatRelative: hours ago (< 24h)", async () => {
+    const ms = Date.now() - 3 * 60 * 60 * 1000; // 3h ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+h ago/);
+  });
+
+  it("formatRelative: days ago (< 30d)", async () => {
+    const ms = Date.now() - 10 * 24 * 60 * 60 * 1000; // 10d ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+d ago/);
+  });
+
+  it("formatRelative: months ago (< 12 months)", async () => {
+    const ms = Date.now() - 60 * 24 * 60 * 60 * 1000; // ~2 months ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+mo ago/);
+  });
+
+  it("formatRelative: years ago (>= 12 months)", async () => {
+    const ms = Date.now() - 400 * 24 * 60 * 60 * 1000; // ~13 months ago
+    setupMock([
+      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toMatch(/\d+y ago/);
+  });
+});
+
+describe("runQuery — printItemCard field-presence branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  // Card with no type, no modified_at → meta only has service
+  it("renders card without type or modified_at (meta = service only)", async () => {
+    setupMock([
+      {
+        items: [{ title: "Bare item", service: "notion" }],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "notion", "--pretty"]);
+    expect(out.stdout).toContain("Bare item");
+    expect(out.stdout).toContain("notion");
+  });
+
+  // body_preview present but equals title → body line suppressed
+  it("suppresses body_preview when it equals the title", async () => {
+    setupMock([
+      {
+        items: [{ title: "same", service: "svc", body_preview: "same" }],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toContain("same");
+    // body_preview === title → not printed twice; only once via title line
+    const occurrences = out.stdout.split("same").length - 1;
+    // printed at most twice (title line + footer), NOT three times
+    expect(occurrences).toBeLessThan(3);
+  });
+
+  // body_preview longer than 120 chars → gets truncated (covers truncate() long-string branch)
+  it("truncates long body_preview to 120 chars with ellipsis", async () => {
+    const longBody = "A".repeat(200);
+    setupMock([
+      {
+        items: [{ title: "card", service: "svc", body_preview: longBody }],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    // Truncated to 119 chars + ellipsis char (≤ 121 display chars total)
+    expect(out.stdout).toContain("…");
+    // Should not contain the full 200-char string
+    expect(out.stdout).not.toContain("A".repeat(200));
+  });
+
+  // url absent → no url line printed
+  it("renders card without url when url field is absent", async () => {
+    setupMock([
+      {
+        items: [{ title: "No URL", service: "svc" }],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).not.toContain("http");
+  });
+
+  // body_preview present but empty string → body line suppressed
+  it("suppresses body_preview when it is an empty string", async () => {
+    setupMock([
+      {
+        items: [{ title: "Has empty body", service: "svc", body_preview: "" }],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "svc", "--pretty"]);
+    expect(out.stdout).toContain("Has empty body");
   });
 });

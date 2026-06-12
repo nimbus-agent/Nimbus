@@ -233,4 +233,237 @@ describe("runPeople — link", () => {
     await expect(runPeople(["link"])).rejects.toThrow(/Usage: nimbus people link/);
     await expect(runPeople(["link", "p1"])).rejects.toThrow(/Usage: nimbus people link/);
   });
+
+  it("throws usage when id-a is empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runPeople(["link", "", "p2"])).rejects.toThrow(/Usage: nimbus people link/);
+  });
+
+  it("throws usage when id-b is empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runPeople(["link", "p1", ""])).rejects.toThrow(/Usage: nimbus people link/);
+  });
+});
+
+describe("runPeople — printPerson: all handle fields + itemCount", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("prints all handle fields when present", async () => {
+    const mock = createMockIpcClient([
+      [
+        fakePerson({
+          githubLogin: "gh-user",
+          gitlabLogin: "gl-user",
+          slackHandle: "sl-user",
+          linearMemberId: "lin-id",
+          jiraAccountId: "jira-id",
+          notionUserId: "notion-id",
+        }),
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list"]);
+    expect(out.stdout).toContain("github=gh-user");
+    expect(out.stdout).toContain("gitlab=gl-user");
+    expect(out.stdout).toContain("slack=sl-user");
+    expect(out.stdout).toContain("linear=lin-id");
+    expect(out.stdout).toContain("jira=jira-id");
+    expect(out.stdout).toContain("notion=notion-id");
+  });
+
+  it("prints itemCount when present", async () => {
+    const mock = createMockIpcClient([[fakePerson({ itemCount: 42 })]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list"]);
+    expect(out.stdout).toContain("items=42");
+  });
+
+  it("omits items= when itemCount is not present", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list"]);
+    expect(out.stdout).not.toContain("items=");
+  });
+
+  it("omits handle line when all handle fields are null or empty", async () => {
+    const mock = createMockIpcClient([
+      [
+        fakePerson({
+          githubLogin: null,
+          gitlabLogin: null,
+          slackHandle: null,
+          linearMemberId: null,
+          jiraAccountId: null,
+          notionUserId: null,
+        }),
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list"]);
+    // The handle line (starting with 3 spaces) should not appear
+    expect(out.stdout).not.toContain("   github=");
+  });
+
+  it("omits empty-string handle fields from handle line", async () => {
+    const mock = createMockIpcClient([
+      [
+        fakePerson({
+          githubLogin: "",
+          gitlabLogin: "",
+          slackHandle: "my-slack",
+        }),
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list"]);
+    expect(out.stdout).not.toContain("github=");
+    expect(out.stdout).not.toContain("gitlab=");
+    expect(out.stdout).toContain("slack=my-slack");
+  });
+});
+
+describe("runPeople — search: empty-string query + --limit flag", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("throws usage when query is empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runPeople(["search", ""])).rejects.toThrow(/Usage: nimbus people search/);
+  });
+
+  it("honours --limit flag in search", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["search", "bob", "--limit", "5"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.search",
+      params: { query: "bob", limit: 5 },
+    });
+  });
+
+  it("ignores trailing --limit with no value in search (uses default)", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["search", "bob", "--limit"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.search",
+      params: { query: "bob", limit: 25 },
+    });
+  });
+});
+
+describe("runPeople — get: empty-string id", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("throws usage when id is empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runPeople(["get", ""])).rejects.toThrow(/Usage: nimbus people get/);
+  });
+});
+
+describe("runPeople — items: empty-string id + --limit flag", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("throws usage when id is empty string", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runPeople(["items", ""])).rejects.toThrow(/Usage: nimbus people items/);
+  });
+
+  it("honours --limit flag in items", async () => {
+    const mock = createMockIpcClient([[{ id: "github:pr_1", service: "github", name: "Fix bug" }]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["items", "p1", "--limit", "10"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.items",
+      params: { personId: "p1", limit: 10 },
+    });
+  });
+
+  it("ignores trailing --limit with no value in items (uses default)", async () => {
+    const mock = createMockIpcClient([[{ id: "github:pr_1", service: "github", name: "Fix bug" }]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["items", "p1", "--limit"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.items",
+      params: { personId: "p1", limit: 50 },
+    });
+  });
+});
+
+describe("runPeople — list: trailing --limit with no value", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("ignores trailing --limit with no value in list (uses default 100)", async () => {
+    const mock = createMockIpcClient([[fakePerson()]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runPeople(["list", "--limit"]);
+    expect(mock.calls[0]).toEqual({
+      method: "people.list",
+      params: { unlinkedOnly: false, limit: 100 },
+    });
+  });
 });

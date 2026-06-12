@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { type CallRecord, captureStdout, makeQueuedCall } from "./cli-test-helpers.ts";
 import { parseScimArgs, runScim, runScimCommand, type ScimIpc } from "./scim.ts";
 
@@ -9,6 +9,9 @@ import { parseScimArgs, runScim, runScimCommand, type ScimIpc } from "./scim.ts"
 test("status / list-users defaults", () => {
   expect(parseScimArgs(["status"])).toEqual({ kind: "status" });
   expect(parseScimArgs(["list-users"])).toEqual({ kind: "listUsers" });
+});
+test("empty argv defaults to status", () => {
+  expect(parseScimArgs([])).toEqual({ kind: "status" });
 });
 test("set-token requires a token", () => {
   expect(parseScimArgs(["set-token", "secret"])).toEqual({ kind: "setToken", token: "secret" });
@@ -102,9 +105,13 @@ describe("runScim wrapper", () => {
     }) as typeof process.stderr.write;
     return { exitCodes, err };
   }
+  beforeEach(() => {
+    process.exitCode = 0;
+  });
   afterEach(() => {
     process.exit = realExit;
     process.stderr.write = realStderr;
+    process.exitCode = 0;
   });
 
   it("parse error → writes usage to stderr and exits 1", async () => {
@@ -140,5 +147,96 @@ describe("runScim wrapper", () => {
     );
     expect(fake.calls[0]).toEqual({ method: "scim.status", params: {} });
     expect(disconnected).toBe(true);
+  });
+
+  it("runScimCommand error → finally block still calls disconnect", async () => {
+    let disconnected = false;
+    const ipc: ScimIpc = {
+      call: async (_method: string, _params?: unknown): Promise<never> => {
+        throw new Error("IPC failure");
+      },
+      disconnect: async (): Promise<void> => {
+        disconnected = true;
+      },
+    };
+    await expect(
+      runScim(["status"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      }),
+    ).rejects.toThrow("IPC failure");
+    expect(disconnected).toBe(true);
+  });
+
+  it("disconnect throwing is silently suppressed by .catch(()=>{})", async () => {
+    const fake = makeFake([{ enabled: true }]);
+    const ipc: ScimIpc = {
+      call: fake.ipc.call,
+      disconnect: async (): Promise<void> => {
+        throw new Error("disconnect failed");
+      },
+    };
+    // Should NOT throw — disconnect error is swallowed
+    await captureStdout(() =>
+      runScim(["status"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      }),
+    );
+    expect(fake.calls[0]).toEqual({ method: "scim.status", params: {} });
+  });
+
+  it("set-token subcommand dispatches through the full wrapper", async () => {
+    const fake = makeFake([{}]);
+    const ipc: ScimIpc = {
+      call: fake.ipc.call,
+      disconnect: async (): Promise<void> => {},
+    };
+    const out = await captureStdout(() =>
+      runScim(["set-token", "my-bearer-token"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      }),
+    );
+    expect(fake.calls[0]).toEqual({
+      method: "scim.setToken",
+      params: { token: "my-bearer-token" },
+    });
+    expect(out).toContain("SCIM bearer token stored.");
+  });
+
+  it("list-users subcommand dispatches through the full wrapper", async () => {
+    const fake = makeFake([{ users: [] }]);
+    const ipc: ScimIpc = {
+      call: fake.ipc.call,
+      disconnect: async (): Promise<void> => {},
+    };
+    const out = await captureStdout(() =>
+      runScim(["list-users"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      }),
+    );
+    expect(fake.calls[0]).toEqual({ method: "scim.listUsers", params: {} });
+    expect(out).toContain("users");
+  });
+
+  it("deprovision subcommand dispatches through the full wrapper", async () => {
+    const fake = makeFake([{}]);
+    const ipc: ScimIpc = {
+      call: fake.ipc.call,
+      disconnect: async (): Promise<void> => {},
+    };
+    const out = await captureStdout(() =>
+      runScim(["deprovision", "user@example.com"], {
+        readState: async () => ({ socketPath: "pipe://test" }),
+        connect: async () => ipc,
+      }),
+    );
+    expect(fake.calls[0]).toEqual({
+      method: "scim.deprovision",
+      params: { email: "user@example.com" },
+    });
+    expect(out).toContain("user@example.com");
   });
 });

@@ -1,59 +1,7 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T04:17:06.973Z",
+  "generated_at": "2026-06-12T04:53:07.604Z",
   "files": {
-    "packages/cli/src/commands/audit.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74.19
-    },
-    "packages/cli/src/commands/bench.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 72.73
-    },
-    "packages/cli/src/commands/config.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70.49
-    },
-    "packages/cli/src/commands/deploy.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.94
-    },
-    "packages/cli/src/commands/doctor-core.ts": {
-      "min_line_pct": 77.91,
-      "min_branch_pct": 67.72
-    },
-    "packages/cli/src/commands/extension.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.1
-    },
-    "packages/cli/src/commands/identity.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/cli/src/commands/people.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.31
-    },
-    "packages/cli/src/commands/query.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.96
-    },
-    "packages/cli/src/commands/run-workflow.ts": {
-      "min_line_pct": 78,
-      "min_branch_pct": 75
-    },
-    "packages/cli/src/commands/scim.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76
-    },
-    "packages/cli/src/commands/status.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.39
-    },
-    "packages/cli/src/commands/update.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.27
-    },
     "packages/cli/src/lib/interactive-ipc-handlers.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 78
