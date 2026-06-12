@@ -531,7 +531,9 @@ function writePreMigrationBackup(
   return gzPath;
 }
 
-function pruneOldBackups(backupDir: string, maxAgeDays: number): void {
+// Exported for direct branch testing of the missing-directory catch path (the normal
+// migration flow always mkdir's the backup dir before pruning, so it can't reach it).
+export function pruneOldBackups(backupDir: string, maxAgeDays: number): void {
   let entries: string[];
   try {
     entries = readdirSync(backupDir);

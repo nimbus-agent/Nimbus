@@ -451,15 +451,30 @@ describe("vectorSearchChunks — optional filters", () => {
 
   test.skipIf(!VEC_AVAILABLE)("limit is clamped to maximum of 500", () => {
     const db = freshDb();
+    const now = Date.now();
+    // Seed more than 500 matching rows so the cap is observable: without the
+    // Math.min(500, limit) clamp, limit=99999 would return all 501.
+    const total = 501;
+    for (let i = 1; i <= total; i++) {
+      insertItem(db, {
+        id: `clamp:${String(i)}`,
+        service: "svc",
+        type: "file",
+        modifiedAt: now,
+        chunkText: "c",
+        rowid: i,
+        model: "openai:text-embedding-3-small",
+      });
+    }
     const v = new Float32Array(1536);
     v[0] = 1;
-    // limit=99999 → Math.min(500, ...) = 500 → no crash, returns empty
     const hits = vectorSearchChunks(db, {
       queryEmbedding: v,
       model: "openai:text-embedding-3-small",
       limit: 99999,
     });
-    expect(hits.length).toBe(0);
+    // 501 rows available but the result is capped at the 500 ceiling.
+    expect(hits.length).toBe(500);
   });
 
   test.skipIf(!VEC_AVAILABLE)("hit shape exposes all VectorChunkHit fields", () => {

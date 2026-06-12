@@ -753,6 +753,34 @@ describe("rowToItem metadata column branches", () => {
     expect(results[0]?.mimeType).toBeUndefined();
   });
 
+  test("applyItemMetadataColumn: size_bytes non-number is not set", () => {
+    const idx = makeIndex();
+    const db = idx.getDatabase();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, modified_at, author_id, metadata, synced_at, pinned)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "test:size-str",
+        "test",
+        "file",
+        "size-str",
+        "Size NonNumber",
+        null,
+        null,
+        null,
+        now,
+        null,
+        // typeof !== "number" arm
+        '{"size_bytes":"not-a-number"}',
+        now,
+        0,
+      ],
+    );
+    const results = idx.search({ name: "Size NonNumber" });
+    expect(results[0]?.sizeBytes).toBeUndefined();
+  });
+
   test("applyItemMetadataColumn: size_bytes non-finite is not set", () => {
     const idx = makeIndex();
     const db = idx.getDatabase();
@@ -771,7 +799,8 @@ describe("rowToItem metadata column branches", () => {
         null,
         now,
         null,
-        '{"size_bytes":"not-a-number"}',
+        // 1e309 parses to a numeric Infinity → typeof === "number" but !isFinite arm
+        '{"size_bytes":1e309}',
         now,
         0,
       ],
@@ -807,6 +836,34 @@ describe("rowToItem metadata column branches", () => {
     expect(results[0]?.parentId).toBeUndefined();
   });
 
+  test("applyItemMetadataColumn: created_at non-number is not set", () => {
+    const idx = makeIndex();
+    const db = idx.getDatabase();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, modified_at, author_id, metadata, synced_at, pinned)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "test:cat-str",
+        "test",
+        "file",
+        "cat-str",
+        "CreatedAt nonnumber",
+        null,
+        null,
+        null,
+        now,
+        null,
+        // typeof !== "number" arm
+        '{"created_at":"nan"}',
+        now,
+        0,
+      ],
+    );
+    const results = idx.search({ name: "CreatedAt nonnumber" });
+    expect(results[0]?.createdAt).toBeUndefined();
+  });
+
   test("applyItemMetadataColumn: created_at non-finite is not set", () => {
     const idx = makeIndex();
     const db = idx.getDatabase();
@@ -825,7 +882,8 @@ describe("rowToItem metadata column branches", () => {
         null,
         now,
         null,
-        '{"created_at":"nan"}',
+        // 1e309 parses to a numeric Infinity → typeof === "number" but !isFinite arm
+        '{"created_at":1e309}',
         now,
         0,
       ],
@@ -914,7 +972,8 @@ describe("dedupeRankedByCanonicalUrl edge cases", () => {
       title: "Trim canon doc",
       modifiedAt: now,
       syncedAt: now,
-      canonicalUrl: "  https://canon.example.com/trimmed  ",
+      // Already trimmed — dedupe must normalize the OTHER (padded) value to match this.
+      canonicalUrl: "https://canon.example.com/trimmed",
     });
     upsertIndexedItem(db, {
       service: "svc2",

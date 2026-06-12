@@ -201,9 +201,10 @@ describe("vectorSearchChunksDual", () => {
       limit: 10,
       since: 0,
     });
-    // since=0 is treated as falsy (> 0 check in vec-store), so it is treated as no filter
-    // The result should include the 384-indexed item
-    expect(hits.length).toBeGreaterThanOrEqual(0);
+    // since=0 is treated as falsy (the vec-store applies the filter only when since > 0),
+    // so it behaves as "no filter" and the 384-indexed item survives.
+    expect(hits.length).toBe(1);
+    expect(hits[0]?.itemId).toBe("s:a");
   });
 
   test.skipIf(!VEC_AVAILABLE)(

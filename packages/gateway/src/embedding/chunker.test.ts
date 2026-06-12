@@ -124,16 +124,14 @@ describe("chunkText", () => {
       text += sentence(i);
     }
     const chunks = chunkText(text, { maxChunkTokens: 16, overlapTokens: 100 });
-    expect(chunks.length).toBeGreaterThanOrEqual(1);
-    // The second chunk should contain content from the first chunk
-    if (chunks.length > 1) {
-      const second = chunks[1] ?? "";
-      const first = chunks[0] ?? "";
-      // The first chunk is short (< overlapChars=400), so entire first chunk used as prefix
-      // Second chunk should contain some text from first
-      expect(second.length).toBeGreaterThan(0);
-      expect(first.length).toBeGreaterThan(0);
-    }
+    // Force the branch: there must be a second chunk for the overlap prefix to apply.
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    const first = chunks[0] ?? "";
+    const second = chunks[1] ?? "";
+    // The first chunk is short (< overlapChars=400), so the ENTIRE first chunk is the
+    // overlap prefix → the second chunk must begin with the full first chunk.
+    expect(first.length).toBeLessThan(400);
+    expect(second.startsWith(first)).toBe(true);
   });
 
   // overlapPrefixFromPrevious: cut via ". " punctuation

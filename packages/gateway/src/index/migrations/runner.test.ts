@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   MigrationRollbackError,
+  pruneOldBackups,
   readIndexedUserVersion,
   runIndexedSchemaMigrations,
 } from "./runner.ts";
@@ -574,13 +575,12 @@ describe("writePreMigrationBackup via backupOptions", () => {
   });
 
   it("pruneOldBackups handles missing backupDir gracefully (no throw)", () => {
-    const dbPath = join(tmpDir, "nimbus.db");
+    // Call pruneOldBackups directly against a nonexistent dir to hit the readdirSync
+    // catch branch. (Going through runIndexedSchemaMigrations can't reach it: the backup
+    // step mkdir's backupDir before pruning runs, so the directory always exists by then.)
     const backupDir = join(tmpDir, "nonexistent");
-    // Do NOT create backupDir — pruneOldBackups readdirSync catch branch
-    const db = new Database(dbPath);
-    // Run two steps so anyStepRan=true and pruning is attempted
-    expect(() => runIndexedSchemaMigrations(db, 2, { backupDir, dbPath })).not.toThrow();
-    db.close();
+    expect(existsSync(backupDir)).toBe(false);
+    expect(() => pruneOldBackups(backupDir, 30)).not.toThrow();
   });
 
   it("pruneOldBackups skips non-gz files in the backup directory", () => {

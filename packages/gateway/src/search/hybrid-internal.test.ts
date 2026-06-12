@@ -534,6 +534,9 @@ describe("runVectorSearch", () => {
       queryEmbedding: q,
     };
     const hits = runVectorSearch(db, opts, 10, "svc", "test");
+    // Positive cardinality first — otherwise an empty result (a regression that drops all
+    // vector hits) would still satisfy the per-hit id check below.
+    expect(hits.length).toBe(1);
     for (const h of hits) {
       expect(h.itemId).toBe("svc:1");
     }
@@ -568,6 +571,8 @@ describe("runVectorSearch", () => {
       itemType: "note",
     };
     const hits = runVectorSearch(db, opts, 10, undefined, "test");
+    // Positive cardinality first — `every` is vacuously true on an empty result.
+    expect(hits.length).toBe(1);
     expect(hits.every((h) => h.itemId === "s:note")).toBe(true);
     db.close();
   });

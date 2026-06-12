@@ -20,6 +20,21 @@ function vecAvailable(): boolean {
   d.close();
   return ok;
 }
+
+/** Poll a predicate until it returns true or the deadline elapses (deterministic, no fixed sleep). */
+async function pollUntil(
+  predicate: () => boolean,
+  { timeoutMs = 2000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return predicate();
+}
 const VEC_AVAILABLE = vecAvailable();
 
 function fakeEmbedder(model: string, dims: number): Embedder {
@@ -491,12 +506,14 @@ describe.skipIf(!VEC_AVAILABLE)(
         const factory = await importFactory(throwingOnEmbedEmbedder);
         const runtime = await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
         runtime?.scheduleItemEmbedding("test:catch-1");
-        await new Promise((r) => setTimeout(r, 80));
-        expect(
+        // Poll for the warning instead of a fixed sleep — the embed runs async and a
+        // slow CI worker can land the warning after a fixed delay, flaking the branch.
+        const sawWarning = await pollUntil(() =>
           warnings.some(
             (w) => typeof w["msg"] === "string" && w["msg"].includes("embedding item failed"),
           ),
-        ).toBe(true);
+        );
+        expect(sawWarning).toBe(true);
       } finally {
         restoreFetch();
         h.cleanup();

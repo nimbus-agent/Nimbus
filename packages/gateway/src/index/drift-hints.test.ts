@@ -181,18 +181,15 @@ describe("driftHintsFromIndex", () => {
     expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);
   });
 
-  // Branch: metadata is a valid object but awsLambdaIndexedCount is Infinity (non-finite)
-  test("skips lambda snapshot lines when awsLambdaIndexedCount is Infinity", () => {
+  // Branch: awsLambdaIndexedCount is a number but non-finite (Number.isFinite() false arm).
+  test("skips lambda snapshot lines when awsLambdaIndexedCount is non-finite", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const t = Date.now();
-    // JSON.stringify({ awsLambdaIndexedCount: Infinity }) produces {"awsLambdaIndexedCount":null}
-    // Use a raw JSON string to get a "number" that passes typeof but not isFinite — actually
-    // JSON cannot represent Infinity, so we pass null (a non-number) as awsLambdaIndexedCount.
-    // To test the isFinite branch we need a finite-check failure: use a non-number type.
-    // Instead test with key absent entirely (undefined after parse) to hit the !isFinite path
-    // via the typeof guard (snap is undefined, typeof undefined !== "number").
-    insertHeartbeat(db, JSON.stringify({ otherKey: 42 }), t);
+    // JSON.parse("1e309") yields Infinity — a value that passes `typeof === "number"`
+    // but fails `Number.isFinite`, exercising the isFinite-false arm specifically (the
+    // typeof-false arm is covered by the "non-numeric" test above).
+    insertHeartbeat(db, '{"awsLambdaIndexedCount":1e309}', t);
     const lines = driftHintsFromIndex(db);
     expect(lines.some((l) => l.startsWith("IaC heartbeat last updated:"))).toBe(true);
     expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);
