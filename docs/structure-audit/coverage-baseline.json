@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-11T17:57:07.570Z",
+  "generated_at": "2026-06-12T02:17:52.435Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -146,14 +146,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 77.78
     },
-    "packages/gateway/src/connectors/athena-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.93
-    },
-    "packages/gateway/src/connectors/bigquery-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 71.95
-    },
     "packages/gateway/src/connectors/cloudwatch-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75.51
@@ -166,26 +158,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 62.5
     },
-    "packages/gateway/src/connectors/dagster-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.08
-    },
-    "packages/gateway/src/connectors/data-profile-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 72.73
-    },
-    "packages/gateway/src/connectors/databricks-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74
-    },
-    "packages/gateway/src/connectors/dbt-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 67.5
-    },
-    "packages/gateway/src/connectors/dependencytrack-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.17
-    },
     "packages/gateway/src/connectors/fastmail-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 64.36
@@ -194,29 +166,13 @@
       "min_line_pct": 80,
       "min_branch_pct": 75.64
     },
-    "packages/gateway/src/connectors/flagsmith-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 60.38
-    },
     "packages/gateway/src/connectors/github-index-repos.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 66.67
     },
-    "packages/gateway/src/connectors/great-expectations-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 63.29
-    },
     "packages/gateway/src/connectors/iac-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75
-    },
-    "packages/gateway/src/connectors/launchdarkly-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 73.68
-    },
-    "packages/gateway/src/connectors/metabase-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 68.57
     },
     "packages/gateway/src/connectors/obsidian-daily-note.ts": {
       "min_line_pct": 80,
@@ -233,22 +189,6 @@
     "packages/gateway/src/connectors/pagerduty-sync.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76.47
-    },
-    "packages/gateway/src/connectors/prefect-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.17
-    },
-    "packages/gateway/src/connectors/semgrep-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 64
-    },
-    "packages/gateway/src/connectors/snyk-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 68.42
-    },
-    "packages/gateway/src/connectors/sonarqube-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
     },
     "packages/gateway/src/connectors/user-mcp-store.ts": {
       "min_line_pct": 80,
