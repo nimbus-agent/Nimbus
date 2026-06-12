@@ -242,35 +242,24 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
     expect(performance.now() - t0).toBeGreaterThanOrEqual(0);
   });
 
-  test("wait-for-refill branch: not enough tokens triggers wait and refill", async () => {
-    // burstSize=2, we drain both tokens, then acquire waits for refill.
-    // ratePerMs = 600_000 / 60_000 = 10 token/ms → 1 token refills in 0.1ms
-    // waitMs = ceil(1 / 10) = 1ms → real wait of 1ms
-    let t = 20_000_000;
+  test("wait-for-refill branch: a token deficit sleeps, then a later refill satisfies it", async () => {
+    // Genuinely exercise the deficit → sleepMs → retry path in acquireUnderLock (the branch the
+    // previous tests missed by pre-advancing the clock so refill succeeded on the first pass).
+    // The clock stays at `base` while tokens are short — forcing the wait branch — then jumps
+    // forward so a later loop iteration refills enough and returns. Flipping `advanced` only after
+    // a macrotask tick guarantees the acquire has already parked in its sleep, so the deficit
+    // branch is hit; if it ever isn't, the loop simply re-sleeps until `advanced`, so it always
+    // terminates AND always covers the wait path.
+    const base = 20_000_000;
+    let advanced = false;
+    const nowFn = () => (advanced ? base + 60_000 : base);
     const quota = { requestsPerMinute: 600_000, burstSize: 2 };
-    const limiter = new ProviderRateLimiter({ github: quota }, () => t);
-    // Drain the 2 burst tokens
-    await limiter.acquire("github", 2);
-    // Advance clock by 200ms so next refill fills up to burstSize
-    t += 200;
-    // Should succeed after the wait
-    await expect(limiter.acquire("github", 1)).resolves.toBeUndefined();
-  });
-
-  test("waitMs=0 case: deficit=0 edge — max(1, 0) ensures at least 1ms sleep", async () => {
-    // When ratePerMs is huge and deficit is tiny, ceil(deficit/ratePerMs) could be 0.
-    // Math.max(1, waitMs) guards the minimum sleep. We exercise this by having
-    // exactly 0 tokens and a very high rate so waitMs rounds to 0.
-    // ratePerMs = 60_000_000 / 60_000 = 1000 tokens/ms
-    // deficit=1 token → waitMs = ceil(1/1000) = 1ms → Math.max(1,1)=1 (still fine)
-    // To get waitMs=0: deficit must be < ratePerMs * 1 ms = 1000 tokens; ceil(0.001/1000)=1 still > 0
-    // Actually ceil always >= 1 when deficit>0; this test verifies the path runs.
-    let t = 30_000_000;
-    const quota = { requestsPerMinute: 60_000_000, burstSize: 1 };
-    const limiter = new ProviderRateLimiter({ slack: quota }, () => t);
-    await limiter.acquire("slack", 1); // drain
-    t += 1; // advance 1ms → refills 1000 tokens → capped at burstSize=1
-    await expect(limiter.acquire("slack", 1)).resolves.toBeUndefined();
+    const limiter = new ProviderRateLimiter({ github: quota }, nowFn);
+    await limiter.acquire("github", 2); // drain both burst tokens
+    const waiting = limiter.acquire("github", 1); // 0 tokens → must wait for a refill
+    await Bun.sleep(0); // let the acquire reach its sleepMs (the deficit branch)
+    advanced = true; // next iteration sees the advanced clock → refill → resolve
+    await expect(waiting).resolves.toBeUndefined();
   });
 });
 

@@ -253,11 +253,14 @@ describe("active_p1_incidents metadata fallbacks", () => {
   });
   afterEach(() => db.close());
 
-  test("severity falls back to 'P1' when metadata severity is not a string", () => {
-    // Insert raw SQL to set severity to a number in metadata
+  test("non-string-severity rows are filtered out; opened_at_ms falls back to 0 when non-numeric", () => {
+    // The active-P1 query filters on LOWER(json_extract(metadata,'$.severity')) IN (aliases), so a
+    // numeric severity never matches and the row is excluded entirely (it never reaches the mapper,
+    // hence the severity-fallback arm is not reachable from this query). The matched row below
+    // instead exercises the opened_at_ms fallback (non-numeric → 0).
     itemSeq += 1;
     const id = `item-${itemSeq}`;
-    // severity=1 (a number, not string) → fallback to "P1"
+    // severity=1 (a number) → LOWER('1') != 'p1' → excluded by the WHERE filter
     const metadata = JSON.stringify({
       status: "triggered",
       severity: 1,
@@ -279,12 +282,11 @@ describe("active_p1_incidents metadata fallbacks", () => {
     const id2 = `item-${itemSeq}`;
     const metadata2 = JSON.stringify({
       status: "triggered",
-      severity: 42, // number → typeof !== "string" → fallback to "P1"
+      severity: 42, // number → also excluded by the WHERE filter (never reaches the mapper)
       pagerduty_service_id: "pd-svc-1",
       opened_at_ms: NOW - ONE_HOUR,
     });
-    // Force severity to be the string "p1" in the row's metadata via LOWER check,
-    // but store a number for the severity field
+    // severity=42 likewise won't match WHERE severity IN ('p1'); the matched row is id3 below.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at, url)
        VALUES (?, 'pagerduty', 'incident', ?, 'Num Sev Match', ?, ?, ?, NULL)`,

@@ -7,6 +7,10 @@ import { IPCClient, idKey, jsonRpcErrorMessage, tryParseJsonRecord } from "../sr
 
 const isWin = process.platform === "win32";
 
+// Socket-free internal tests never connect, so this path is only a constructor argument; build it
+// cross-platform via tmpdir() rather than a hardcoded POSIX literal.
+const INTERNAL_FAKE_PATH = join(tmpdir(), "nimbus-ipc-internal.sock");
+
 let tmp: string;
 let socketPath: string;
 let server: ReturnType<typeof Bun.listen> | undefined;
@@ -415,7 +419,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   }
 
   test("failAll with empty pending map returns early without iterating", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // No pending entries — should return without throwing
     expect(ic.pending.size).toBe(0);
@@ -424,7 +428,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("failAll with non-Error reason wraps it in an Error", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // Add a pending entry manually
     let rejectedWith: Error | undefined;
@@ -444,7 +448,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("failAll with non-Error non-string reason wraps via String()", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let rejectedWith: Error | undefined;
     ic.pending.set("s:test-id", {
@@ -460,7 +464,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("onTransportData calls failAll when ingest throws (NdjsonLineReader too-large line)", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let rejectedWith: Error | undefined;
     ic.pending.set("s:sentinel", {
@@ -479,7 +483,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchLine silently drops invalid JSON", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // Should not throw
     ic.dispatchLine("this is not json");
@@ -487,14 +491,14 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchLine silently drops line without jsonrpc 2.0", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     ic.dispatchLine(JSON.stringify({ jsonrpc: "1.0", id: "x", result: "bad" }));
     expect(ic.pending.size).toBe(0);
   });
 
   test("dispatchLine routes message with id to dispatchRpcLine", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let resolved: unknown;
     ic.pending.set("s:my-id", {
@@ -510,7 +514,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchLine routes message without id to dispatchNotificationLine", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const notifsSeen: unknown[] = [];
     c.onNotification("test.event", (p) => notifsSeen.push(p));
     const ic = internal(c);
@@ -519,7 +523,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine drops message when id is not string or number", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // Boolean id — should be silently dropped
     ic.dispatchRpcLine({ jsonrpc: "2.0", id: true, result: "ignored" });
@@ -527,7 +531,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine drops message when no pending entry matches id", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // No pending registered, but valid id type — should silently return
     ic.dispatchRpcLine({ jsonrpc: "2.0", id: "nonexistent-id", result: "dropped" });
@@ -535,7 +539,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine resolves with undefined when no result key in response", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let resolved: unknown = "sentinel";
     ic.pending.set("s:x", {
@@ -552,7 +556,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine rejects with jsonRpcErrorMessage when error key present", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let rejectedWith: Error | undefined;
     ic.pending.set("s:err-id", {
@@ -568,7 +572,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine rejects with default message when error has no message key", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let rejectedWith: Error | undefined;
     ic.pending.set("s:err-id2", {
@@ -584,21 +588,21 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchNotificationLine drops message with non-string method", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // Should not throw — method is a number, not a string
     ic.dispatchNotificationLine({ jsonrpc: "2.0", method: 123, params: {} });
   });
 
   test("dispatchNotificationLine drops message with no registered handlers", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     // method string but no handler registered — should not throw
     ic.dispatchNotificationLine({ jsonrpc: "2.0", method: "unregistered", params: {} });
   });
 
   test("dispatchNotificationLine delivers params=undefined when params key absent", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     const seen: unknown[] = [];
     c.onNotification("my.event", (p) => seen.push(p));
@@ -607,7 +611,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("rawWrite is a no-op when both netSocket and bunSocket are null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     expect(ic.netSocket).toBeNull();
     expect(ic.bunSocket).toBeNull();
@@ -616,7 +620,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("rawWrite writes to netSocket when netSocket is not null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     const written: string[] = [];
     ic.netSocket = {
@@ -632,7 +636,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("rawWrite writes to bunSocket when netSocket is null and bunSocket is not null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     const written: string[] = [];
     ic.bunSocket = {
@@ -648,7 +652,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("endWindowsTransport returns early when netSocket is null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     expect(ic.netSocket).toBeNull();
     // Should not throw
@@ -657,7 +661,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("endWindowsTransport calls end() and nullifies netSocket when not null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let ended = false;
     ic.netSocket = {
@@ -674,7 +678,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("endUnixTransport returns early when bunSocket is null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     expect(ic.bunSocket).toBeNull();
     // Should not throw
@@ -683,7 +687,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("endUnixTransport calls end() and nullifies bunSocket when not null", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let ended = false;
     ic.bunSocket = {
@@ -700,7 +704,7 @@ describe("IPCClient dispatch internals (no socket)", () => {
   });
 
   test("dispatchRpcLine resolves with numeric id from pending (number id key path)", () => {
-    const c = new IPCClient("/fake/path");
+    const c = new IPCClient(INTERNAL_FAKE_PATH);
     const ic = internal(c);
     let resolvedValue: unknown = "unset";
     // Register pending with numeric id key

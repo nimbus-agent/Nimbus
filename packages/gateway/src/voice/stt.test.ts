@@ -127,7 +127,7 @@ describe("WhisperSttProvider", () => {
   test("isAvailable with backslash path checks file existence", async () => {
     // A path with backslash that doesn't exist → false
     const provider = new WhisperSttProvider({
-      whisperBin: "C:\\nonexistent\\whisper.exe",
+      whisperBin: "C:\\nonexistent\\whisper.exe", // cross-platform-ok: intentional Windows backslash to exercise the `includes("\\")` branch
       which: (_name) => null,
     });
     expect(await provider.isAvailable()).toBe(false);

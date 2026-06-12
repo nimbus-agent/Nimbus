@@ -6,7 +6,7 @@
  * directly and asserts concrete DB rows.
  */
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 
@@ -14,9 +14,19 @@ import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 // helpers
 // ---------------------------------------------------------------------------
 
+const openedDbs: Database[] = [];
+
 function freshDb(): Database {
-  return createMemoryIndexDb();
+  const db = createMemoryIndexDb();
+  openedDbs.push(db);
+  return db;
 }
+
+afterEach(() => {
+  for (const db of openedDbs.splice(0)) {
+    db.close();
+  }
+});
 
 function countEntities(db: Database, type: string): number {
   const row = db.query("SELECT COUNT(*) AS c FROM graph_entity WHERE type = ?").get(type) as {

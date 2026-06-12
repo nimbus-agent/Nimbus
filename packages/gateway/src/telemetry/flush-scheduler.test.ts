@@ -789,36 +789,38 @@ describe("startTelemetryFlushScheduler — fetch throws a non-Error value", () =
     (globalThis as unknown as Record<string, unknown>)["fetch"] = async () => {
       return Promise.reject("plain-string-rejection");
     };
-
-    const warnLogger = pino(
-      { level: "warn" },
-      {
-        write(chunk: string) {
-          try {
-            const j = JSON.parse(chunk) as { msg?: string };
-            if (typeof j.msg === "string") {
-              warnMessages.push(j.msg);
+    try {
+      const warnLogger = pino(
+        { level: "warn" },
+        {
+          write(chunk: string) {
+            try {
+              const j = JSON.parse(chunk) as { msg?: string };
+              if (typeof j.msg === "string") {
+                warnMessages.push(j.msg);
+              }
+            } catch {
+              /* skip non-JSON */
             }
-          } catch {
-            /* skip non-JSON */
-          }
+          },
         },
-      },
-    );
+      );
 
-    const handle = startTelemetryFlushScheduler({
-      dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
-      getDatabase: () => harness.db,
-      gatewayVersion: "0.1.0-test",
-      logger: warnLogger,
-    });
+      const handle = startTelemetryFlushScheduler({
+        dataDir: harness.dataDir,
+        activeTomlPath: harness.tomlPath,
+        getDatabase: () => harness.db,
+        gatewayVersion: "0.1.0-test",
+        logger: warnLogger,
+      });
 
-    await yieldMs(150);
-    handle.stop();
-    (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+      await yieldMs(150);
+      handle.stop();
 
-    expect(warnMessages.some((m) => m.includes("telemetry POST threw"))).toBe(true);
+      expect(warnMessages.some((m) => m.includes("telemetry POST threw"))).toBe(true);
+    } finally {
+      (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+    }
   });
 });
 
@@ -844,39 +846,41 @@ describe("startTelemetryFlushScheduler — outer tick catch with non-Error throw
       ok: true,
       status: 200,
     });
-
-    const warnLogger = pino(
-      { level: "warn" },
-      {
-        write(chunk: string) {
-          try {
-            const j = JSON.parse(chunk) as { msg?: string };
-            if (typeof j.msg === "string") {
-              warnMessages.push(j.msg);
+    try {
+      const warnLogger = pino(
+        { level: "warn" },
+        {
+          write(chunk: string) {
+            try {
+              const j = JSON.parse(chunk) as { msg?: string };
+              if (typeof j.msg === "string") {
+                warnMessages.push(j.msg);
+              }
+            } catch {
+              /* skip non-JSON */
             }
-          } catch {
-            /* skip non-JSON */
-          }
+          },
         },
-      },
-    );
+      );
 
-    // Throw a non-Error value to exercise the `String(e)` branch in outer catch
-    const handle = startTelemetryFlushScheduler({
-      dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
-      getDatabase: () => {
-        throw "synthetic-string-error";
-      },
-      gatewayVersion: "0.1.0-test",
-      logger: warnLogger,
-    });
+      // Throw a non-Error value to exercise the `String(e)` branch in outer catch
+      const handle = startTelemetryFlushScheduler({
+        dataDir: harness.dataDir,
+        activeTomlPath: harness.tomlPath,
+        getDatabase: () => {
+          throw "synthetic-string-error";
+        },
+        gatewayVersion: "0.1.0-test",
+        logger: warnLogger,
+      });
 
-    await yieldMs(80);
-    handle.stop();
-    (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+      await yieldMs(80);
+      handle.stop();
 
-    expect(warnMessages.some((m) => m.includes("telemetry flush tick failed"))).toBe(true);
+      expect(warnMessages.some((m) => m.includes("telemetry flush tick failed"))).toBe(true);
+    } finally {
+      (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+    }
   });
 });
 

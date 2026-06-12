@@ -385,9 +385,13 @@ describe("registerConsentPromptHandler — confirm DI seam", () => {
 describe("registerScriptConsentHandler — error paths", () => {
   test("throws ENOENT-wrapped error when source file does not exist", () => {
     const { client } = makeMultiClient();
-    expect(() =>
-      registerScriptConsentHandler(client, "/nonexistent-path/does-not-exist.jsonl"),
-    ).toThrow("--script-consent-source: script consent source not found:");
+    const missingSource = join(
+      mkdtempSync(join(tmpdir(), "script-consent-missing-")),
+      "does-not-exist.jsonl",
+    );
+    expect(() => registerScriptConsentHandler(client, missingSource)).toThrow(
+      "--script-consent-source: script consent source not found:",
+    );
   });
 
   test("rethrows non-ENOENT errors (e.g. malformed JSON)", () => {

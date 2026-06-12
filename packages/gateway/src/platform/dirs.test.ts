@@ -16,15 +16,15 @@ afterEach(() => {
 
 describe("isWindowsNamedPipe", () => {
   it("returns true for a canonical Windows named-pipe path", () => {
-    expect(isWindowsNamedPipe(String.raw`\\.\pipe\nimbus-gateway`)).toBe(true);
+    expect(isWindowsNamedPipe(String.raw`\\.\pipe\nimbus-gateway`)).toBe(true); // cross-platform-ok: literal Windows named-pipe fixture
   });
 
   it("returns true for an upper-case variant (case-insensitive check)", () => {
-    expect(isWindowsNamedPipe(String.raw`\\.\PIPE\nimbus-gateway`)).toBe(true);
+    expect(isWindowsNamedPipe(String.raw`\\.\PIPE\nimbus-gateway`)).toBe(true); // cross-platform-ok: literal Windows named-pipe fixture
   });
 
   it("returns true for a mixed-case variant", () => {
-    expect(isWindowsNamedPipe(String.raw`\\.\Pipe\some-pipe`)).toBe(true);
+    expect(isWindowsNamedPipe(String.raw`\\.\Pipe\some-pipe`)).toBe(true); // cross-platform-ok: literal Windows named-pipe fixture
   });
 
   it("returns false for a Unix socket path", () => {
@@ -32,7 +32,7 @@ describe("isWindowsNamedPipe", () => {
   });
 
   it("returns false for a Windows path that is not a named pipe", () => {
-    expect(isWindowsNamedPipe(String.raw`C:\Temp\nimbus.sock`)).toBe(false);
+    expect(isWindowsNamedPipe(String.raw`C:\Temp\nimbus.sock`)).toBe(false); // cross-platform-ok: literal Windows path fixture
   });
 
   it("returns false for an empty string", () => {
@@ -98,7 +98,7 @@ describe("ensurePlatformDirectories — Windows named-pipe socketPath", () => {
       logDir: join(base, "data", "logs"),
       // Canonical Windows named-pipe path — dirname would be \\.\pipe which
       // does not exist as a real directory on any OS.
-      socketPath: String.raw`\\.\pipe\nimbus-gateway`,
+      socketPath: String.raw`\\.\pipe\nimbus-gateway`, // cross-platform-ok: literal Windows named-pipe fixture
       extensionsDir: join(base, "data", "extensions"),
       tempDir: join(base, "temp", "nimbus"),
     };
