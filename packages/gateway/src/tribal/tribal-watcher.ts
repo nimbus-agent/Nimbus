@@ -18,7 +18,6 @@ export interface TribalWatcherDeps {
   botUserIds: ReadonlySet<string>;
   minOccurrences: number;
   windowDays: number;
-  cooldownDays: number;
   matchMode: "embedding" | "embedding+llm";
   llmJudge?: (a: string, b: string) => Promise<boolean>;
   now: () => number;

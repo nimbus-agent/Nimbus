@@ -736,6 +736,17 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
     await walk(dir, "");
     expect(offenders).toEqual([]);
   });
+
+  test("(c) no tribal module references the connector post tools — suggestions only via the injected I23 send seam (D17)", async () => {
+    const dir = resolve(import.meta.dir, "tribal");
+    const offenders: string[] = [];
+    for (const ent of await readdir(dir, { withFileTypes: true })) {
+      if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
+      const c = await readFile(resolve(dir, ent.name), "utf8");
+      if (/\b(?:slack_chat_post|teams_chat_post)\b/.test(c)) offenders.push(ent.name);
+    }
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("I24 — a federated preflight executes only behind the LOCAL owner's HITL gate", () => {

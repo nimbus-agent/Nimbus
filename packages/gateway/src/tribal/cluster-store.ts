@@ -134,10 +134,16 @@ export class TribalClusterStore {
       );
       return this.getOrThrow(p.clusterId);
     }
+    // Backfill the representative vector if the cluster was first seen while the embedder was
+    // offline (vec NULL) — otherwise the cluster stays invisible to recall-based near-dup merge
+    // and a later near-identical question would spawn a duplicate cluster.
     dbRun(
       this.db,
-      `UPDATE tribal_clusters SET occurrence_count = occurrence_count + 1, last_seen = ? WHERE cluster_id = ?`,
-      [p.now, p.clusterId],
+      `UPDATE tribal_clusters
+       SET occurrence_count = occurrence_count + 1, last_seen = ?,
+           representative_vec = COALESCE(representative_vec, ?)
+       WHERE cluster_id = ?`,
+      [p.now, vecBytes(p.vec), p.clusterId],
     );
     return this.getOrThrow(p.clusterId);
   }

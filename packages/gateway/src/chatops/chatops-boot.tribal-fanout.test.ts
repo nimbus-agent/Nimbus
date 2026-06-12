@@ -111,10 +111,10 @@ describe("chatops Slice 6c fan-out seam (real buildChatopsBoot)", () => {
     );
     await until(() => h.inbound.length === 1);
     expect(h.inbound[0]?.addressedToBot).toBe(false);
-    // give the router a beat; an ambient message must never produce an operational post.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(h.posts.length).toBe(0);
+    // stop() drains any in-flight handleMessage; the ambient path returns immediately after
+    // onInboundMessage (no router call), so once drained an operational post can never appear.
     await h.boot.service.stop();
+    expect(h.posts.length).toBe(0);
   });
 
   test("addressed message: onInboundMessage fires AND the IntentRouter replies", async () => {

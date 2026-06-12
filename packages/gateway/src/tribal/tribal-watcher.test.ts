@@ -15,7 +15,6 @@ function deps(over: Partial<TribalWatcherDeps>): TribalWatcherDeps {
     botUserIds: new Set(["BOT"]),
     minOccurrences: 2,
     windowDays: 14,
-    cooldownDays: 30,
     matchMode: "embedding",
     now: () => 1000,
     ...over,
@@ -38,6 +37,7 @@ test("the bot's own message is never ingested (no embed, no post)", async () => 
     userId: "BOT",
     text: "how do I deploy the gateway?",
     ts: "1",
+    addressedToBot: false,
   });
   expect(embeds).toBe(0);
 });
@@ -54,7 +54,14 @@ test("non-question is ignored (no embed, no post)", async () => {
       send: async (_t, text) => void sent.push(text),
     }),
   );
-  await w.ingest({ platform: "slack", channelId: "C1", userId: "U", text: "lgtm 🚀", ts: "1" });
+  await w.ingest({
+    platform: "slack",
+    channelId: "C1",
+    userId: "U",
+    text: "lgtm 🚀",
+    ts: "1",
+    addressedToBot: false,
+  });
   expect(embeds).toBe(0);
   expect(sent).toHaveLength(0);
 });
@@ -75,6 +82,7 @@ test("message outside watch_channels is ignored (no embed)", async () => {
     userId: "U",
     text: "how do I deploy the gateway?",
     ts: "1",
+    addressedToBot: false,
   });
   expect(embeds).toBe(0);
 });
@@ -90,6 +98,7 @@ test("repeated question fires a suggestion exactly once at threshold", async () 
     userId: "U",
     text: "how do I deploy the gateway?",
     ts: "1",
+    addressedToBot: false,
   });
   expect(sent).toHaveLength(0);
   await w.ingest({
@@ -98,6 +107,7 @@ test("repeated question fires a suggestion exactly once at threshold", async () 
     userId: "U",
     text: "how do I deploy the gateway?",
     ts: "2",
+    addressedToBot: false,
   });
   expect(sent).toHaveLength(1);
 });
@@ -116,6 +126,7 @@ test("ingest never throws even if embed fails", async () => {
     userId: "U",
     text: "how do I deploy?",
     ts: "1",
+    addressedToBot: false,
   });
   // no throw = pass
 });

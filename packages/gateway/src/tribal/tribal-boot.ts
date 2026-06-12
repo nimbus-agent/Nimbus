@@ -99,7 +99,6 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
     botUserIds: deps.botUserIds,
     minOccurrences: deps.cfg.minOccurrences,
     windowDays: deps.cfg.windowDays,
-    cooldownDays: deps.cfg.cooldownDays,
     matchMode: deps.cfg.match,
     now,
     ...(deps.log !== undefined ? { log: deps.log } : {}),

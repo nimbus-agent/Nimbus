@@ -93,6 +93,38 @@ test("listByStatus + markSuggested + markCaptured", () => {
   expect(s.get("k1")?.capturedPageRef).toBe("notion:pg1");
 });
 
+test("a null-vec cluster backfills its representative vector on a later bump", () => {
+  const s = new TribalClusterStore(db());
+  s.upsertOccurrence({
+    clusterId: "k1",
+    question: "q",
+    vec: null,
+    channelId: "C1",
+    platform: "slack",
+    now: 1000,
+  });
+  expect(s.get("k1")?.representativeVec).toBeNull();
+  s.upsertOccurrence({
+    clusterId: "k1",
+    question: "q",
+    vec: new Float32Array([1, 2, 3]),
+    channelId: "C1",
+    platform: "slack",
+    now: 2000,
+  });
+  expect(Array.from(s.get("k1")?.representativeVec ?? [])).toEqual([1, 2, 3]);
+  // a subsequent non-null vec must NOT overwrite the now-present one (COALESCE keeps the first).
+  s.upsertOccurrence({
+    clusterId: "k1",
+    question: "q",
+    vec: new Float32Array([9, 9, 9]),
+    channelId: "C1",
+    platform: "slack",
+    now: 3000,
+  });
+  expect(Array.from(s.get("k1")?.representativeVec ?? [])).toEqual([1, 2, 3]);
+});
+
 test("representativeVec round-trips through BLOB storage", () => {
   const s = new TribalClusterStore(db());
   const vec = new Float32Array([0.1, 0.2, 0.3]);
