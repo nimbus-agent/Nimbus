@@ -1077,13 +1077,17 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // write-gate with the owner's chatops HITL consent. Built in the tribal block, consumed by chatops.
   let tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
   if (tribalCfg.enabled) {
-    if (rt == null) {
-      throw new Error(
-        "[tribal].enabled requires the embedding runtime ([embeddings].enabled); fail-closed",
+    // Embeddings absent is a DEGRADATION, not a security boundary: repeat detection needs the
+    // embedder, so without it the watcher is inert (embedQuery → null), but the IPC surface,
+    // CLI list/dismiss, and owner-HITL capture still work. The privacy fail-closed (empty
+    // watch_channels) is enforced inside buildTribalBoot regardless.
+    const embeddingRt = rt;
+    if (embeddingRt == null) {
+      syncLogger.warn(
+        "[tribal].enabled but the embedding runtime is unavailable — repeat detection is inert; capture/list still work",
       );
     }
-    const embeddingRt = rt;
-    const tribalModel = embeddingRt.getEmbeddingModel();
+    const tribalModel = embeddingRt?.getEmbeddingModel() ?? "";
     const tribalWatch = tribalCfg.watchChannels;
     const tribalWatchSet = new Set(tribalWatch);
     // Recall the cluster's source threads from the index, channel-filtered IN SQL (review §2.1),
@@ -1154,7 +1158,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     tribalBoot = buildTribalBoot({
       db,
       cfg: tribalCfg,
-      embedQuery: (text) => embeddingRt.embedQuery(text),
+      embedQuery: (text) =>
+        embeddingRt == null ? Promise.resolve(null) : embeddingRt.embedQuery(text),
       // Bot self-filter (review §1.1): primary guard is the Slack normalizer's bot_id/subtype skip
       // (Task 8); this is defense-in-depth using the configured Teams bot app id. (The Slack bot
       // user id is not resolvable without an extra API call at boot.)

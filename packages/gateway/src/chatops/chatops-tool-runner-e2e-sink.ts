@@ -74,7 +74,9 @@ export function buildE2eSinkDispatcher(sinkDir: string): ConnectorDispatcher {
         join(sinkDir, "mock-chatops-sink.ndjson"),
         `${JSON.stringify({ kind: "dispatch", type: action.type, payload: action.payload ?? {} })}\n`,
       );
-      return Promise.resolve({ ok: true, action: action.type });
+      // Return a created-page id so the tribal capture's pageRef extraction succeeds in the e2e
+      // (mirrors a Notion/Confluence create response `{ id }`).
+      return Promise.resolve({ ok: true, action: action.type, id: "e2e-kb-page-1" });
     },
   };
 }

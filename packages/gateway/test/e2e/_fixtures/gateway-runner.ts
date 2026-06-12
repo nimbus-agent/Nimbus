@@ -74,6 +74,37 @@ if (scimSeeds.length > 0) {
   }
 }
 
+// Seed tribal clusters (Slice 6c e2e): lets a test exercise the IPC capture/list/dismiss surface
+// without a live embedding run. Inserted directly into the V39 ledger.
+interface TribalSeed {
+  clusterId: string;
+  question: string;
+  channelId: string;
+  platform?: string;
+  occurrenceCount?: number;
+}
+const tribalSeeds = envJson<TribalSeed[]>("NIMBUS_E2E_SEED_TRIBAL_JSON") ?? [];
+if (tribalSeeds.length > 0) {
+  const db = services.localIndex.getDatabase();
+  const now = Date.now();
+  for (const c of tribalSeeds) {
+    db.run(
+      `INSERT OR REPLACE INTO tribal_clusters
+         (cluster_id, representative_question, occurrence_count, first_seen, last_seen, status, channel_id, platform)
+       VALUES (?, ?, ?, ?, ?, 'suggested', ?, ?)`,
+      [
+        c.clusterId,
+        c.question,
+        c.occurrenceCount ?? 3,
+        now,
+        now,
+        c.channelId,
+        c.platform ?? "slack",
+      ],
+    );
+  }
+}
+
 // Deterministic engine stub for the chatops read path (see header note). The connector tool
 // layer is the file-backed sink (NIMBUS_CHATOPS_E2E_SINK_DIR, set by the test) — assemble.ts
 // swaps the real bot-spawn + mesh dispatch for it, so this gateway exercises the full chatops
