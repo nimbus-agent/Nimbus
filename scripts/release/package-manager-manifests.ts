@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -147,6 +147,7 @@ export function buildManifestsToDir(opts: BuildOptions): BuildResult {
       winX64Sha256: requireHash(sums, "nimbus-headless-windows-x64.zip"),
     },
   };
+  mkdirSync(opts.outDir, { recursive: true });
   const formulaPath = join(opts.outDir, "nimbus.rb");
   const scoopPath = join(opts.outDir, "nimbus.json");
   writeFileSync(formulaPath, renderHomebrewFormula(inputs), "utf8");

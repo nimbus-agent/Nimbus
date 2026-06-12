@@ -160,4 +160,30 @@ describe("buildManifestsToDir", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("creates the output directory if it does not yet exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mf-"));
+    try {
+      const sums = [
+        `${"a".repeat(64)}  nimbus-headless-macos-arm64.tar.gz`,
+        `${"b".repeat(64)}  nimbus-headless-macos-x64.tar.gz`,
+        `${"c".repeat(64)}  nimbus-headless-linux-amd64-v0.1.0.tar.gz`,
+        `${"d".repeat(64)}  nimbus-headless-windows-x64.zip`,
+      ].join("\n");
+      const sumsPath = join(dir, "SHA256SUMS");
+      writeFileSync(sumsPath, sums, "utf8");
+      // outDir is a not-yet-existing nested path under the temp dir.
+      const outDir = join(dir, "nested", "out");
+      const written = buildManifestsToDir({
+        version: "0.1.0",
+        repo: "nimbus-agent/Nimbus",
+        sha256SumsPath: sumsPath,
+        outDir,
+      });
+      expect(readFileSync(written.formulaPath, "utf8")).toContain("class Nimbus < Formula");
+      expect(readFileSync(written.scoopPath, "utf8")).toContain("nimbus.exe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
