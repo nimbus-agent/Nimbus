@@ -64,7 +64,7 @@
     },
     "packages/gateway/src/config/nimbus-toml.ts": {
       "min_line_pct": 80,
-      "min_branch_pct": 75.09
+      "min_branch_pct": 75.85
     },
     "packages/gateway/src/config/telemetry-toml.ts": {
       "min_line_pct": 80,
@@ -92,7 +92,7 @@
     },
     "packages/gateway/src/federation/federation-server.ts": {
       "min_line_pct": 78.26,
-      "min_branch_pct": 79.17
+      "min_branch_pct": 80
     },
     "packages/gateway/src/federation/peer-pairing.ts": {
       "min_line_pct": 80,

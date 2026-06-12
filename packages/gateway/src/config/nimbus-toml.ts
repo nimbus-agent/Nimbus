@@ -1156,6 +1156,104 @@ export function loadNimbusChatopsFromConfigDir(configDir: string): NimbusChatops
   );
 }
 
+// ---------------------------------------------------------------------------
+// [federation.preflight."<namespace>"] — per-namespace downstream preflight command (I24)
+// ---------------------------------------------------------------------------
+
+export interface PreflightCommandConfig {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly timeoutSeconds: number;
+}
+
+export type PreflightConfig = ReadonlyMap<string, PreflightCommandConfig>;
+
+const PREFLIGHT_TABLE_PREFIX = '[federation.preflight."';
+const PREFLIGHT_TIMEOUT_DEFAULT = 300;
+const PREFLIGHT_TIMEOUT_CAP = 1800;
+
+/** Accumulates raw kv strings per `[federation.preflight."<namespace>"]` sub-table. */
+function collectPreflightKvSections(source: string): Map<string, Record<string, string>> {
+  const accum = new Map<string, Record<string, string>>();
+  let currentId: string | undefined;
+
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") continue;
+    if (isTableHeader(trimmed)) {
+      currentId = beginPreflightTable(accum, trimmed);
+      continue;
+    }
+    if (currentId === undefined) continue;
+    applyPreflightKvLine(accum.get(currentId), trimmed);
+  }
+
+  return accum;
+}
+
+/**
+ * If `trimmed` is a `[federation.preflight."<namespace>"]` header with a non-empty id,
+ * ensures a bucket exists in `accum` and returns the id; otherwise returns undefined.
+ */
+function beginPreflightTable(
+  accum: Map<string, Record<string, string>>,
+  trimmed: string,
+): string | undefined {
+  if (!trimmed.startsWith(PREFLIGHT_TABLE_PREFIX) || !trimmed.endsWith('"]')) return undefined;
+  const id = trimmed.slice(PREFLIGHT_TABLE_PREFIX.length, -2);
+  if (id.length === 0) return undefined;
+  if (!accum.has(id)) accum.set(id, {});
+  return id;
+}
+
+/** Records a `key = value` line into the current sub-table's bucket, if any. */
+function applyPreflightKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
+  if (bucket === undefined) return;
+  const kv = splitKeyValue(trimmed);
+  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
+}
+
+/**
+ * Converts one sub-table's raw kv strings into a PreflightCommandConfig, or undefined when
+ * no `command` key is present or it is empty (command-less tables are ignored).
+ */
+function toPreflightCommandConfig(kv: Record<string, string>): PreflightCommandConfig | undefined {
+  const commandRaw = kv["command"];
+  if (commandRaw === undefined) return undefined;
+  const command = parseString(commandRaw);
+  if (command.length === 0) return undefined;
+  const timeoutParsed =
+    kv["timeout_seconds"] === undefined ? undefined : parseIntDec(kv["timeout_seconds"]);
+  const timeoutSeconds =
+    timeoutParsed === undefined || timeoutParsed <= 0
+      ? PREFLIGHT_TIMEOUT_DEFAULT
+      : Math.min(timeoutParsed, PREFLIGHT_TIMEOUT_CAP);
+  return {
+    command,
+    args: kv["args"] === undefined ? [] : parseStringArray(kv["args"]),
+    cwd: kv["cwd"] === undefined ? "." : parseString(kv["cwd"]),
+    timeoutSeconds,
+  };
+}
+
+export function parsePreflightConfig(source: string): PreflightConfig {
+  const out = new Map<string, PreflightCommandConfig>();
+  for (const [ns, kv] of collectPreflightKvSections(source).entries()) {
+    const cfg = toPreflightCommandConfig(kv);
+    if (cfg !== undefined) out.set(ns, cfg);
+  }
+  return out;
+}
+
+export function loadNimbusPreflightFromConfigDir(configDir: string): PreflightConfig {
+  return loadTomlSection<PreflightConfig>(
+    join(configDir, "nimbus.toml"),
+    new Map(),
+    parsePreflightConfig,
+  );
+}
+
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
 // `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`

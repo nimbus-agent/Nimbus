@@ -28,6 +28,20 @@ export interface PeerExpertiseResult {
   readonly rank: ExpertiseRank;
 }
 
+export interface PeerProbeResult {
+  readonly peerId: string;
+  readonly displayName: string | null;
+  readonly touched: boolean;
+  readonly lastSeenDaysAgo: number | null;
+}
+
+export interface PeerPreflightResult {
+  readonly peerId: string;
+  readonly displayName: string | null;
+  readonly status: "pass" | "fail" | "declined" | "not_configured";
+  readonly summary: string;
+}
+
 export interface PeerFanoutOutcome<T> {
   readonly perPeer: readonly T[];
   readonly gaps: readonly GapNote[];
@@ -138,6 +152,102 @@ export async function fanOutExpertise(
         }
         return {
           ok: { peerId: row.peer_id, displayName: row.display_name, rank: result.rank ?? "none" },
+        };
+      } catch (err) {
+        return { gap: gapForPeer(row, err) };
+      }
+    },
+  );
+  perPeer.sort((a, b) => a.peerId.localeCompare(b.peerId));
+  return { perPeer, gaps };
+}
+
+/**
+ * Content-free resource-recency fan-out (cloud janitor). Each peer answers `federation.probe` with
+ * only `{ touched, lastSeenDaysAgo? }`. A peer that does NOT answer (transport error / unreachable)
+ * becomes a gap — never silently read as "idle" by the janitor.
+ */
+export async function fanOutProbe(
+  deps: PeerFanoutDeps,
+  req: { resourceRef: string; purpose: string },
+): Promise<PeerFanoutOutcome<PeerProbeResult>> {
+  const send = deps.sendOverWire ?? sendFederatedOverWire;
+  const { perPeer, gaps } = await runPool<PeerProbeResult>(
+    reachablePeers(deps.index),
+    async (row) => {
+      try {
+        const result = (await send(
+          row.host_ip as string,
+          row.host_port as number,
+          deps.selfIdentity,
+          row.peer_pubkey,
+          "federation.probe",
+          { resourceRef: req.resourceRef, purpose: req.purpose },
+        )) as { touched?: boolean; lastSeenDaysAgo?: number };
+        return {
+          ok: {
+            peerId: row.peer_id,
+            displayName: row.display_name,
+            touched: result.touched === true,
+            lastSeenDaysAgo:
+              typeof result.lastSeenDaysAgo === "number" ? result.lastSeenDaysAgo : null,
+          },
+        };
+      } catch (err) {
+        return { gap: gapForPeer(row, err) };
+      }
+    },
+  );
+  perPeer.sort((a, b) => a.peerId.localeCompare(b.peerId));
+  return { perPeer, gaps };
+}
+
+/**
+ * Blast-radius preflight fan-out (upstream). Each downstream owner answers `federation.preflight`
+ * with a leak-proof `{ kind:"ok", passed, summary }` (after their LOCAL HITL approval) or a
+ * `{ kind:"error", error }` (no_grant / not_configured / denied). A transport error becomes a gap —
+ * a non-answering downstream is NEVER rendered as "safe to merge".
+ */
+export async function fanOutPreflight(
+  deps: PeerFanoutDeps,
+  req: { namespace: string; ref: string; changedSurface: readonly string[]; purpose: string },
+): Promise<PeerFanoutOutcome<PeerPreflightResult>> {
+  const send = deps.sendOverWire ?? sendFederatedOverWire;
+  const { perPeer, gaps } = await runPool<PeerPreflightResult>(
+    reachablePeers(deps.index),
+    async (row) => {
+      try {
+        const r = (await send(
+          row.host_ip as string,
+          row.host_port as number,
+          deps.selfIdentity,
+          row.peer_pubkey,
+          "federation.preflight",
+          {
+            namespace: req.namespace,
+            ref: req.ref,
+            changedSurface: [...req.changedSurface],
+            purpose: req.purpose,
+          },
+        )) as { kind?: string; passed?: boolean; summary?: string; error?: string };
+        if (r.kind === "ok") {
+          return {
+            ok: {
+              peerId: row.peer_id,
+              displayName: row.display_name,
+              status: r.passed === true ? "pass" : "fail",
+              summary: r.summary ?? "",
+            },
+          };
+        }
+        const status = r.error === "not_configured" ? "not_configured" : "declined";
+        return {
+          ok: {
+            peerId: row.peer_id,
+            displayName: row.display_name,
+            status,
+            summary: r.error ?? "error",
+          },
         };
       } catch (err) {
         return { gap: gapForPeer(row, err) };

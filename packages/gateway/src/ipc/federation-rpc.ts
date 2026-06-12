@@ -12,8 +12,11 @@ import { scoreExpertise } from "../federation/expertise.ts";
 import { answerFederatedInvoke } from "../federation/invoke-gate.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
+import { preflightConsent } from "../federation/preflight-consent-broker.ts";
+import { answerFederatedPreflight, type PreflightGateCtx } from "../federation/preflight-gate.ts";
 import type { ConsentPrompter } from "../federation/query-gate.ts";
 import { answerFederatedQuery } from "../federation/query-gate.ts";
+import { probeResourceRecency } from "../federation/resource-probe.ts";
 import type {
   ExpertiseRequest,
   FederatedQueryRequest,
@@ -80,6 +83,10 @@ export interface FederationRpcContext {
   // threads the concrete local-delete (Task 26 wires the real accessor; default 0 = nothing deleted).
   readonly purgeSign?: { privkeyB64: string; selfPeerId: string };
   readonly deletePurgeContributions?: (externalId: string, peerId: string) => number;
+  // I24 (Slice 6b). Present on the answering path: the downstream preflight gate's deps (the LOCAL
+  // command resolver + HITL approval + sandbox runner + audit). `identity` is supplied separately
+  // from `identityGuard`. Absent → federation.preflight fails closed (ERR_PREFLIGHT_UNAVAILABLE).
+  readonly preflight?: Omit<PreflightGateCtx, "identity">;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -330,6 +337,50 @@ export async function dispatchFederationRpc(
         purpose: requireString(rec, "purpose"),
       };
       return scoreExpertise(ctx.db, req);
+    },
+    // Cloud janitor (Slice 6b): content-free resource-recency probe. Like expertise, this returns
+    // only a coarse, leak-proof answer (touched + whole-days recency) and requires no per-namespace
+    // grant — it never exposes item bodies. Scored locally against this gateway's own index.
+    "federation.probe": (p) => {
+      const rec = asRecord(p);
+      return probeResourceRecency(ctx.db, { resourceRef: requireString(rec, "resourceRef") });
+    },
+    // Blast-radius preflight (Slice 6b, I24). Routes ONLY through answerFederatedPreflight — the
+    // command is resolved from LOCAL config + gated by the LOCAL owner's HITL approval; the caller
+    // never supplies it. Fail-closed if this gateway isn't configured to serve preflights.
+    "federation.preflight": (p) => {
+      const rec = asRecord(p);
+      if (ctx.preflight === undefined) {
+        throw new FederationRpcError(
+          -32603,
+          "ERR_PREFLIGHT_UNAVAILABLE: not configured to serve preflights",
+        );
+      }
+      const surfaceRaw = rec["changedSurface"];
+      const changedSurface = Array.isArray(surfaceRaw)
+        ? surfaceRaw.filter((s): s is string => typeof s === "string")
+        : [];
+      const gateCtx: PreflightGateCtx =
+        ctx.identityGuard === undefined
+          ? ctx.preflight
+          : { ...ctx.preflight, identity: ctx.identityGuard };
+      return answerFederatedPreflight(gateCtx, {
+        peerId: requireString(rec, "peerId"),
+        namespace: requireString(rec, "namespace"),
+        ref: requireString(rec, "ref"),
+        changedSurface,
+        purpose: requireString(rec, "purpose"),
+      });
+    },
+    // The LOCAL owner's approval response for a pending inbound preflight (broker is local-only
+    // state; a remote/unknown requestId simply doesn't match → { matched:false }, harmless).
+    "federation.preflightRespond": (p) => {
+      const rec = asRecord(p);
+      const matched = preflightConsent.respond(
+        requireString(rec, "requestId"),
+        rec["approved"] === true,
+      );
+      return { matched };
     },
     // Anchor-side: serve the persisted signed org-policy bundle so paired peers can fetch it.
     // Read-only and public — the bundle is the signed TOML + signature, never a secret (the

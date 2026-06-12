@@ -7,6 +7,8 @@ import {
   isGhostBrief,
   isHuddleBrief,
   isImpactBrief,
+  isJanitorBrief,
+  isPreflightBrief,
 } from "./findings.ts";
 
 describe("findings type guards", () => {
@@ -116,5 +118,68 @@ describe("6a brief guards", () => {
     };
     expect(isHuddleBrief(b)).toBe(true);
     expect(isHuddleBrief({ ...b, kind: "ghost" })).toBe(false);
+  });
+});
+
+describe("6b brief guards", () => {
+  const janitor = {
+    kind: "janitor",
+    agentVersion: 1,
+    generatedAt: 1,
+    latencyMs: 1,
+    gaps: [],
+    query: { resourceRef: "i-12345", idleDays: 14 },
+    idle: true,
+    proposalSuppressed: false,
+    cleanupAction: null,
+    peersClear: 2,
+    peersTouched: [],
+  };
+
+  it("isJanitorBrief accepts a well-formed janitor brief", () => {
+    expect(isJanitorBrief(janitor)).toBe(true);
+  });
+
+  it("isJanitorBrief rejects null, primitives, and each malformed field", () => {
+    expect(isJanitorBrief(null)).toBe(false);
+    expect(isJanitorBrief(42)).toBe(false);
+    expect(isJanitorBrief({ ...janitor, kind: "preflight" })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, agentVersion: 2 })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, gaps: "x" })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, idle: "yes" })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, peersTouched: undefined })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, generatedAt: "now" })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, latencyMs: null })).toBe(false);
+    expect(isJanitorBrief({ ...janitor, query: null })).toBe(false);
+  });
+
+  const preflight = {
+    kind: "preflight",
+    agentVersion: 1,
+    generatedAt: 1,
+    latencyMs: 1,
+    gaps: [],
+    query: { ref: "HEAD", namespace: "project:zurich" },
+    downstreams: [],
+    anyFailed: false,
+    anyIncomplete: false,
+  };
+
+  it("isPreflightBrief accepts a well-formed preflight brief", () => {
+    expect(isPreflightBrief(preflight)).toBe(true);
+  });
+
+  it("isPreflightBrief rejects null, primitives, and each malformed field", () => {
+    expect(isPreflightBrief(null)).toBe(false);
+    expect(isPreflightBrief("brief")).toBe(false);
+    expect(isPreflightBrief({ ...preflight, kind: "janitor" })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, agentVersion: 0 })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, gaps: 1 })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, downstreams: {} })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, anyFailed: "no" })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, anyIncomplete: "no" })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, generatedAt: "t" })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, latencyMs: undefined })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, query: null })).toBe(false);
   });
 });

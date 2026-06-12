@@ -1,8 +1,14 @@
 import pino from "pino";
-import { loadNimbusServiceConfigsFromConfigDir } from "../../config/nimbus-toml.ts";
+import {
+  loadNimbusPreflightFromConfigDir,
+  loadNimbusServiceConfigsFromConfigDir,
+} from "../../config/nimbus-toml.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
+import { NamespaceStore } from "../../federation/namespace-store.ts";
+import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
+import { appendPreflightAudit, defaultRunCommand } from "../../federation/preflight-gate.ts";
 import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
@@ -242,6 +248,25 @@ export async function tryDispatchFederationRpc(
             },
           }
         : {}),
+      // I24 (Slice 6b): serve inbound preflights only when a config dir exists (the command comes
+      // from local nimbus.toml). The command runs behind the LOCAL owner's HITL approval.
+      ...(ctx.options.configDir === undefined
+        ? {}
+        : {
+            preflight: {
+              isPeerGranted: (ns: string, peerId: string) =>
+                new NamespaceStore(index.getDatabase()).getActiveGrant(ns, peerId) !== undefined,
+              resolveCommand: (ns: string) =>
+                loadNimbusPreflightFromConfigDir(ctx.options.configDir as string).get(ns),
+              requestApproval: (input) =>
+                preflightConsent.request(
+                  input,
+                  (ctx.options.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
+                ),
+              runCommand: defaultRunCommand,
+              audit: (e) => appendPreflightAudit(index.getDatabase(), e),
+            },
+          }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

@@ -6,6 +6,8 @@ import { emitExpertBrief } from "../agents/expert.ts";
 import { emitGhostBrief } from "../agents/ghost.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
+import { emitJanitorBrief } from "../agents/janitor.ts";
+import { emitPreflightBrief } from "../agents/preflight.ts";
 import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -171,7 +173,15 @@ const ZERO_IDENTITY: BoxKeypair = {
 };
 
 function newSessionId(
-  kind: "expert" | "impact" | "catchup" | "ghost" | "conflicts" | "huddle",
+  kind:
+    | "expert"
+    | "impact"
+    | "catchup"
+    | "ghost"
+    | "conflicts"
+    | "huddle"
+    | "janitor"
+    | "preflight",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -302,6 +312,68 @@ async function handleHuddle(params: unknown, ctx: AgentsRpcContext): Promise<unk
   return await emitHuddleBrief(input, federatedAgentBase(ctx, newSessionId("huddle")));
 }
 
+function requireJanitorParams(params: unknown): {
+  resourceRef: string;
+  idleDays: number;
+  cleanupAction: string | null;
+  allowGaps: boolean;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new AgentsRpcError(-32602, "agents.janitor: object params required");
+  }
+  const p = params as Record<string, unknown>;
+  const resourceRef = typeof p["resourceRef"] === "string" ? p["resourceRef"].trim() : "";
+  if (resourceRef.length === 0) {
+    throw new AgentsRpcError(-32602, "agents.janitor: resourceRef (non-empty string) required");
+  }
+  const idleDaysRaw = p["idleDays"];
+  return {
+    resourceRef,
+    idleDays:
+      typeof idleDaysRaw === "number" && Number.isInteger(idleDaysRaw) && idleDaysRaw > 0
+        ? idleDaysRaw
+        : 14,
+    cleanupAction:
+      typeof p["cleanupAction"] === "string" && p["cleanupAction"].length > 0
+        ? p["cleanupAction"]
+        : null,
+    allowGaps: p["allowGaps"] === true,
+  };
+}
+
+async function handleJanitor(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requireJanitorParams(params);
+  return await emitJanitorBrief(input, federatedAgentBase(ctx, newSessionId("janitor")));
+}
+
+function requirePreflightParams(params: unknown): {
+  ref: string;
+  namespace: string;
+  changedSurface: string[];
+} {
+  if (params === null || typeof params !== "object") {
+    throw new AgentsRpcError(-32602, "agents.preflight: object params required");
+  }
+  const p = params as Record<string, unknown>;
+  const ref = typeof p["ref"] === "string" ? p["ref"].trim() : "";
+  if (ref.length === 0) {
+    throw new AgentsRpcError(-32602, "agents.preflight: ref (non-empty string) required");
+  }
+  const namespace = typeof p["namespace"] === "string" ? p["namespace"].trim() : "";
+  if (namespace.length === 0) {
+    throw new AgentsRpcError(-32602, "agents.preflight: namespace (non-empty string) required");
+  }
+  const surface = Array.isArray(p["changedSurface"])
+    ? p["changedSurface"].filter((s): s is string => typeof s === "string")
+    : [];
+  return { ref, namespace, changedSurface: surface };
+}
+
+async function handlePreflight(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
+  const input = requirePreflightParams(params);
+  return await emitPreflightBrief(input, federatedAgentBase(ctx, newSessionId("preflight")));
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -314,5 +386,7 @@ export async function dispatchAgentsRpc(
     "agents.ghost": handleGhost,
     "agents.conflicts": handleConflicts,
     "agents.huddle": handleHuddle,
+    "agents.janitor": handleJanitor,
+    "agents.preflight": handlePreflight,
   });
 }

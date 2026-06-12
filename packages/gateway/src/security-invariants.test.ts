@@ -517,9 +517,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 86", async () => {
+  test("allowlist_exact_size assertion is 88", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*86\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*88\s*\)/);
   });
 
   test("Slice 4: read-only admin/policy/team-audit methods are allowed; privileged policy/team-purge methods stay absent", async () => {
@@ -719,6 +719,50 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
     }
     await walk(dir, "");
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("I24 — a federated preflight executes only behind the LOCAL owner's HITL gate", () => {
+  test("federation.preflight routes through answerFederatedPreflight (sole inbound path)", async () => {
+    const rpc = await read("packages/gateway/src/ipc/federation-rpc.ts");
+    expect(rpc).toContain("answerFederatedPreflight");
+  });
+
+  test("the gate never spawns before approval, ignores a caller-supplied command, fails closed", async () => {
+    const { answerFederatedPreflight } = await import("./federation/preflight-gate.ts");
+    let ran = 0;
+    let cmdSeen = "";
+    const base = {
+      isPeerGranted: () => true,
+      resolveCommand: () => ({ command: "bun", args: ["test"], cwd: "/x", timeoutSeconds: 60 }),
+      runCommand: async (cfg: { command: string }) => {
+        ran += 1;
+        cmdSeen = cfg.command;
+        return { passed: true, summary: "", durationMs: 0 };
+      },
+      audit: () => {},
+    };
+    const req = { peerId: "p", namespace: "n", ref: "HEAD", changedSurface: [], purpose: "x" };
+    // denied → zero run
+    await answerFederatedPreflight({ ...base, requestApproval: async () => false }, req);
+    expect(ran).toBe(0);
+    // approved + a caller-supplied command field → only the configured command runs
+    await answerFederatedPreflight({ ...base, requestApproval: async () => true }, {
+      ...req,
+      ...({ command: "rm -rf /" } as object),
+    } as never);
+    expect(cmdSeen).toBe("bun");
+    // no local config → not_configured, fail-closed
+    const r = await answerFederatedPreflight(
+      { ...base, resolveCommand: () => undefined, requestApproval: async () => true },
+      req,
+    );
+    expect(r).toEqual({ kind: "error", error: "not_configured" });
+  });
+
+  test("D18 confines runPreflightCommand to preflight-gate/preflight-runner", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain("D18-preflight-runner");
   });
 });
 

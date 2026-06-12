@@ -11,6 +11,9 @@ import type {
   ImpactBrief,
   ImpactCategory,
   ImpactFinding,
+  JanitorBrief,
+  PreflightBrief,
+  PreflightDownstream,
 } from "./findings.ts";
 
 function renderGaps(gaps: GapNote[]): string {
@@ -173,4 +176,45 @@ export function renderHuddle(brief: HuddleBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+export function renderJanitor(brief: JanitorBrief): string {
+  const header = `# Janitor: ${brief.query.resourceRef}`;
+  let verdict: string;
+  if (brief.proposalSuppressed) {
+    verdict = "_coverage incomplete — proposal withheld (pass --allow-gaps to override)_";
+  } else if (brief.idle) {
+    verdict =
+      brief.cleanupAction === null
+        ? `Idle ≥ ${brief.query.idleDays}d across ${brief.peersClear} peer(s). Consider cleanup.`
+        : `Idle ≥ ${brief.query.idleDays}d across ${brief.peersClear} peer(s). Cleanup: \`nimbus run ${brief.cleanupAction} ${brief.query.resourceRef}\``;
+  } else {
+    const lines = brief.peersTouched.map(
+      (p) => `   - ${p.who ?? p.peerId}: last seen ${p.lastSeenDaysAgo ?? "?"}d ago`,
+    );
+    verdict = ["Still in use:", ...lines].join("\n");
+  }
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", verdict, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+function preflightIcon(s: PreflightDownstream["status"]): string {
+  if (s === "pass") return "✅ pass";
+  if (s === "fail") return "❌ fail";
+  if (s === "declined") return "⏸ declined";
+  return "⚠ not configured";
+}
+
+export function renderPreflight(brief: PreflightBrief): string {
+  const header = `# Preflight: ${brief.query.ref}`;
+  const body =
+    brief.downstreams.length === 0
+      ? "_no downstream owners reachable_"
+      : brief.downstreams
+          .map((d) => `- **${d.who ?? d.peerId}**: ${preflightIcon(d.status)} — ${d.summary}`)
+          .join("\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
 }
