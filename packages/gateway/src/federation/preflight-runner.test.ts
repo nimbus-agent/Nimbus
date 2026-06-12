@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { isAbsolute } from "node:path";
 import type { SandboxRunner } from "../platform/sandbox/index.ts";
 import { runPreflightCommand } from "./preflight-runner.ts";
 
@@ -96,4 +97,54 @@ test("spawn throwing → could not run", async () => {
   );
   expect(r.passed).toBe(false);
   expect(r.summary).toContain("could not run");
+});
+
+test("a null exit code is coerced to 0 → passed", async () => {
+  const r = await runPreflightCommand(
+    cfg,
+    { ref: "HEAD", changedSurface: [] },
+    {
+      // emit the exit INSIDE the spawn thunk (after createRunner resolved) so the listener
+      // attached by awaitExit is already in place — mirrors fakeChild's scheduling.
+      createRunner: fakeRunner(() => {
+        const ee = new EventEmitter() as EventEmitter & { kill: () => void };
+        ee.kill = () => {};
+        queueMicrotask(() => ee.emit("exit", null));
+        return ee as unknown as ChildProcess;
+      }),
+      now: () => 0,
+    },
+  );
+  expect(r.passed).toBe(true);
+  expect(r.summary).toBe("passed");
+});
+
+test("a relative cwd is resolved to an absolute sandbox root", async () => {
+  let seenCwd = "";
+  const r = await runPreflightCommand(
+    { command: "bun", args: ["test"], cwd: "rel/dir", timeoutSeconds: 1 },
+    { ref: "HEAD", changedSurface: [] },
+    {
+      createRunner: fakeRunner((_cmd, _args, opts) => {
+        seenCwd = opts.cwd;
+        return fakeChild(0);
+      }),
+      now: () => 0,
+    },
+  );
+  expect(r.passed).toBe(true);
+  expect(isAbsolute(seenCwd)).toBe(true);
+  expect(seenCwd.replaceAll("\\", "/")).toContain("rel/dir");
+});
+
+test("omitting deps.now falls back to the real clock and reports a non-negative duration", async () => {
+  // tiny timeoutSeconds → the awaitExit safety timer is ~10ms (and cleared on the immediate
+  // microtask exit), avoiding a long-lived unref'd timer that spins `bun test` on Windows.
+  const r = await runPreflightCommand(
+    { command: "bun", args: ["test"], cwd: "/srv/x", timeoutSeconds: 0.01 },
+    { ref: "HEAD", changedSurface: [] },
+    { createRunner: fakeRunner(() => fakeChild(0)) },
+  );
+  expect(r.passed).toBe(true);
+  expect(r.durationMs).toBeGreaterThanOrEqual(0);
 });

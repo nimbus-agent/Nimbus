@@ -6,6 +6,8 @@ import type {
   GhostBrief,
   HuddleBrief,
   ImpactBrief,
+  JanitorBrief,
+  PreflightBrief,
 } from "./findings.ts";
 import {
   renderCatchup,
@@ -14,6 +16,8 @@ import {
   renderGhost,
   renderHuddle,
   renderImpact,
+  renderJanitor,
+  renderPreflight,
 } from "./render.ts";
 
 type BriefMetaKeys = "kind" | "agentVersion" | "generatedAt" | "latencyMs";
@@ -587,5 +591,134 @@ describe("renderHuddle", () => {
       contributions: [],
     };
     expect(renderHuddle(brief)).toContain("_no teammate activity in the window_");
+  });
+});
+
+const JANITOR_BASE: Pick<JanitorBrief, BriefMetaKeys> = {
+  kind: "janitor",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 700,
+};
+
+describe("renderJanitor", () => {
+  test("idle with a named cleanup action renders the runnable command", () => {
+    const brief: JanitorBrief = {
+      ...JANITOR_BASE,
+      gaps: [],
+      query: { resourceRef: "i-12345", idleDays: 14 },
+      idle: true,
+      proposalSuppressed: false,
+      cleanupAction: "cloud.instance.terminate",
+      peersClear: 3,
+      peersTouched: [],
+    };
+    const md = renderJanitor(brief);
+    expect(md).toContain("# Janitor: i-12345");
+    expect(md).toContain("Idle ≥ 14d across 3 peer(s).");
+    expect(md).toContain("`nimbus run cloud.instance.terminate i-12345`");
+    expect(md).not.toContain("## Gaps");
+    expect(md).toContain("_generated in 0.7 s_");
+  });
+
+  test("idle with no cleanup action renders the bare 'Consider cleanup' verdict", () => {
+    const brief: JanitorBrief = {
+      ...JANITOR_BASE,
+      gaps: [],
+      query: { resourceRef: "i-99", idleDays: 30 },
+      idle: true,
+      proposalSuppressed: false,
+      cleanupAction: null,
+      peersClear: 1,
+      peersTouched: [],
+    };
+    const md = renderJanitor(brief);
+    expect(md).toContain("Idle ≥ 30d across 1 peer(s). Consider cleanup.");
+    expect(md).not.toContain("nimbus run");
+  });
+
+  test("proposalSuppressed wins over idle and shows the withheld verdict", () => {
+    const brief: JanitorBrief = {
+      ...JANITOR_BASE,
+      gaps: [{ category: "missing_connector", detail: "no paired peers — run `nimbus team pair`" }],
+      query: { resourceRef: "i-12345", idleDays: 14 },
+      idle: false,
+      proposalSuppressed: true,
+      cleanupAction: null,
+      peersClear: 0,
+      peersTouched: [],
+    };
+    const md = renderJanitor(brief);
+    expect(md).toContain("proposal withheld");
+    expect(md).toContain("## Gaps");
+    expect(md).toContain("no paired peers");
+  });
+
+  test("not idle lists touched peers; null who falls back to peerId, null recency to '?'", () => {
+    const brief: JanitorBrief = {
+      ...JANITOR_BASE,
+      gaps: [],
+      query: { resourceRef: "i-12345", idleDays: 14 },
+      idle: false,
+      proposalSuppressed: false,
+      cleanupAction: null,
+      peersClear: 0,
+      peersTouched: [
+        { peerId: "peer:aa", who: "Alice", lastSeenDaysAgo: 2 },
+        { peerId: "peer:zz", who: null, lastSeenDaysAgo: null },
+      ],
+    };
+    const md = renderJanitor(brief);
+    expect(md).toContain("Still in use:");
+    expect(md).toContain("Alice: last seen 2d ago");
+    expect(md).toContain("peer:zz: last seen ?d ago");
+  });
+});
+
+const PREFLIGHT_BASE: Pick<PreflightBrief, BriefMetaKeys> = {
+  kind: "preflight",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 3_200,
+};
+
+describe("renderPreflight", () => {
+  test("renders one line per downstream covering every status icon; null who → peerId", () => {
+    const brief: PreflightBrief = {
+      ...PREFLIGHT_BASE,
+      gaps: [],
+      query: { ref: "HEAD~1..HEAD", namespace: "project:zurich" },
+      downstreams: [
+        { peerId: "peer:aa", who: "Alice", status: "pass", summary: "42 passed" },
+        { peerId: "peer:bb", who: "Bob", status: "fail", summary: "3 failed" },
+        { peerId: "peer:cc", who: "Cara", status: "declined", summary: "owner declined" },
+        { peerId: "peer:dd", who: null, status: "not_configured", summary: "no command" },
+      ],
+      anyFailed: true,
+      anyIncomplete: true,
+    };
+    const md = renderPreflight(brief);
+    expect(md).toContain("# Preflight: HEAD~1..HEAD");
+    expect(md).toContain("**Alice**: ✅ pass — 42 passed");
+    expect(md).toContain("**Bob**: ❌ fail — 3 failed");
+    expect(md).toContain("**Cara**: ⏸ declined — owner declined");
+    expect(md).toContain("**peer:dd**: ⚠ not configured — no command");
+    expect(md).not.toContain("## Gaps");
+    expect(md).toContain("_generated in 3.2 s_");
+  });
+
+  test("no reachable downstreams yields the empty-state line and renders gaps", () => {
+    const brief: PreflightBrief = {
+      ...PREFLIGHT_BASE,
+      gaps: [{ category: "missing_connector", detail: "no paired peers — run `nimbus team pair`" }],
+      query: { ref: "HEAD", namespace: "n" },
+      downstreams: [],
+      anyFailed: false,
+      anyIncomplete: true,
+    };
+    const md = renderPreflight(brief);
+    expect(md).toContain("_no downstream owners reachable_");
+    expect(md).toContain("## Gaps");
+    expect(md).toContain("no paired peers");
   });
 });
