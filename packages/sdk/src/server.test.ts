@@ -50,18 +50,21 @@ describe("NimbusExtensionServer", () => {
 
     test("accepts multiple tool registrations without throwing", () => {
       const server = new NimbusExtensionServer({ manifest: makeManifest("ext-multi") });
-      server.registerTool("tool-a", {
-        description: "Tool A",
-        inputSchema: {},
-        handler: async (_input: unknown) => "a",
-      });
-      server.registerTool("tool-b", {
-        description: "Tool B",
-        inputSchema: { count: { type: "number" } },
-        handler: async (_input: unknown) => 42,
-      });
-      // Reaching here means both calls completed without error
-      expect(true).toBe(true);
+      // registerTool is a documented no-op → each call returns undefined.
+      expect(
+        server.registerTool("tool-a", {
+          description: "Tool A",
+          inputSchema: {},
+          handler: async (_input: unknown) => "a",
+        }),
+      ).toBeUndefined();
+      expect(
+        server.registerTool("tool-b", {
+          description: "Tool B",
+          inputSchema: { count: { type: "number" } },
+          handler: async (_input: unknown) => 42,
+        }),
+      ).toBeUndefined();
     });
   });
 

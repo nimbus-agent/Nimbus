@@ -58,10 +58,8 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
   test("acquire succeeds immediately when tokens are available", async () => {
     const t = 1_000_000;
     const limiter = new ProviderRateLimiter({ google: fastQuota }, () => t);
-    // Should resolve without sleeping; burstSize=50, we consume 3.
-    await limiter.acquire("google", 3);
-    // No assertion beyond "did not throw / did not hang"
-    expect(true).toBe(true);
+    // burstSize=50, so consuming 3 resolves immediately (no sleep, no hang).
+    await expect(limiter.acquire("google", 3)).resolves.toBeUndefined();
   });
 
   test("acquire with default token count of 1 succeeds", async () => {
@@ -217,11 +215,9 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
 
   test("multiple sequential acquires re-use the existing mutex (mutexFor hit path)", async () => {
     const limiter = new ProviderRateLimiter({ google: fastQuota });
-    // First acquire creates the mutex; second acquire re-uses it
+    // First acquire creates the mutex; the second re-uses it and still resolves.
     await limiter.acquire("google");
-    await limiter.acquire("google");
-    // No assertion beyond "completed without error"
-    expect(true).toBe(true);
+    await expect(limiter.acquire("google")).resolves.toBeUndefined();
   });
 
   test("penalise with retryAfterMs=0 is accepted (zero is valid, finite, non-negative)", async () => {
