@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T04:01:35.664Z",
+  "generated_at": "2026-06-12T04:17:06.973Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -197,10 +197,6 @@
     "packages/gateway/src/people/person-id.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/people/person-store.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.21
     },
     "packages/gateway/src/platform/dirs.ts": {
       "min_line_pct": 80,
