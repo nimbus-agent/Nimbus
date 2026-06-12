@@ -46,6 +46,8 @@ export interface ChatopsBootDeps {
   /** Test seams for the Slack Socket Mode adapter. */
   readonly socketFactory?: (url: string) => SocketLike;
   readonly scheduleReconnect?: (ms: number, fn: () => void) => void;
+  /** Slice 6c: called for every inbound message (before routing). Never throws. */
+  readonly onInboundMessage?: (m: ChatMessage) => Promise<void>;
 }
 
 export interface ChatopsBoot {
@@ -254,6 +256,9 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
 
   const handleMessage = async (msg: ChatMessage): Promise<void> => {
     lastPlatformByChannel.set(msg.channelId, msg.platform);
+    // Slice 6c fan-out: every inbound message (addressed or ambient) flows to the tribal
+    // watcher first. It swallows its own errors, so this never breaks the command path.
+    if (deps.onInboundMessage !== undefined) await deps.onInboundMessage(msg);
     const normalized = normalizeChatText(msg.text).toLowerCase();
     if (normalized === "approve" || normalized === "reject") {
       const requestId = pendingCardByChannel.get(msg.channelId);
@@ -272,6 +277,9 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
         return; // a verdict on a live card is never routed as a command
       }
     }
+    // Ambient (non-addressed) messages are tribal-only — never routed as a command. Today all
+    // delivered messages were @-mentions (addressedToBot=true), so this preserves behavior.
+    if (!msg.addressedToBot) return;
     await routerFor(msg).handle(msg);
   };
 

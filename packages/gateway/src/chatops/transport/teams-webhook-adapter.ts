@@ -19,7 +19,9 @@ export function normalizeTeamsActivity(activity: unknown): ChatMessage | undefin
   ) {
     return undefined;
   }
-  return { platform: "teams", channelId, userId, text, ts: id };
+  // Teams webhooks deliver messages already routed to the bot (the bot is a conversation member),
+  // so they're treated as addressed-to-bot — preserving today's command-routing behavior.
+  return { platform: "teams", channelId, userId, text, ts: id, addressedToBot: true };
 }
 
 /**

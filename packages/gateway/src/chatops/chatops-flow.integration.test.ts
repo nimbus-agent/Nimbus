@@ -178,6 +178,7 @@ const msg = (userId: string, text: string): ChatMessage => ({
   userId,
   text,
   ts: `${Math.floor(performance.now())}.${userId}`,
+  addressedToBot: true,
 });
 
 describe("ChatOps end-to-end flow (in-process integration)", () => {

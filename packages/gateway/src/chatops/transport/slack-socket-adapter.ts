@@ -51,20 +51,32 @@ export class SlackEventNormalizer {
     if (f["type"] !== "events_api") return undefined;
     const payload = f["payload"] as Record<string, unknown> | undefined;
     const event = payload?.["event"] as Record<string, unknown> | undefined;
-    if (event?.["type"] !== "app_mention") return undefined;
-    const channel = event["channel"];
-    const user = event["user"];
-    const text = event["text"];
-    const ts = event["ts"];
+    const eventType = event?.["type"];
+    // Accept @-mentions (→ commands) and plain channel messages (→ ambient tribal-only). A
+    // `message` with a subtype (e.g. bot_message/message_changed) or a bot_id is the bot's own
+    // post or an edit — never ingest it (review §1.1 feedback-loop guard).
+    if (eventType !== "app_mention" && eventType !== "message") return undefined;
     if (
-      typeof channel !== "string" ||
-      typeof user !== "string" ||
-      typeof text !== "string" ||
-      typeof ts !== "string"
+      eventType === "message" &&
+      (event?.["subtype"] !== undefined || event?.["bot_id"] !== undefined)
     ) {
       return undefined;
     }
-    return { platform: "slack", channelId: channel, userId: user, text, ts };
+    const channel = event?.["channel"];
+    const user = event?.["user"];
+    const text = event?.["text"];
+    const ts = event?.["ts"];
+    if (typeof channel !== "string" || typeof text !== "string" || typeof ts !== "string") {
+      return undefined;
+    }
+    return {
+      platform: "slack",
+      channelId: channel,
+      userId: typeof user === "string" ? user : "",
+      text,
+      ts,
+      addressedToBot: eventType === "app_mention",
+    };
   }
 }
 
