@@ -1,7 +1,14 @@
+import { realpathSync } from "node:fs";
+
 /**
  * Channels a Nimbus binary can be distributed through. When Nimbus runs from a
  * package-manager install, the self-updater steps aside so the package manager
- * owns updates (see installer design spec §6.1).
+ * owns updates.
+ *
+ * Lives in the SDK so the gateway and CLI share one copy: the `cli` package
+ * reaches the gateway over IPC only (no source imports), so a shared pure helper
+ * must live in a package both may depend on — the same pattern the manifest
+ * signer uses.
  */
 export type DistributionChannel = "homebrew" | "scoop" | "winget" | "apt" | "yum" | "msi" | "pkg";
 
@@ -14,8 +21,6 @@ const KNOWN_CHANNELS = new Set<DistributionChannel>([
   "msi",
   "pkg",
 ] satisfies readonly DistributionChannel[]);
-
-import { realpathSync } from "node:fs";
 
 export interface ResolveChannelOptions {
   /** Defaults to `process.env`. */

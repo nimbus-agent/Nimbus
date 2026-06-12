@@ -1,9 +1,9 @@
-import type { IPCClient } from "../ipc-client/index.ts";
 import {
   channelUpgradeHint,
   type DistributionChannel,
   resolveDistributionChannel,
-} from "../lib/distribution-channel.ts";
+} from "@nimbus-dev/sdk";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export type UpdateArgs = { mode: "check" | "apply"; yes: boolean };

@@ -1,8 +1,5 @@
+import { type DistributionChannel, resolveDistributionChannel } from "@nimbus-dev/sdk";
 import type { Logger } from "pino";
-import {
-  type DistributionChannel,
-  resolveDistributionChannel,
-} from "../config/distribution-channel.ts";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { derivePlatformTarget } from "./platform-target.ts";
 import { loadUpdaterPublicKey } from "./public-key.ts";

@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { type DistributionChannel, resolveDistributionChannel } from "@nimbus-dev/sdk";
 import type { Logger } from "pino";
-import {
-  type DistributionChannel,
-  resolveDistributionChannel,
-} from "../config/distribution-channel.ts";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { DEFAULT_NIMBUS_UPDATER_TOML } from "../config/nimbus-toml.ts";
 import { createUpdaterFromConfig } from "./factory.ts";

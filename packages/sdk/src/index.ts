@@ -46,6 +46,12 @@ export {
   signManifest,
   verifyManifestSignature,
 } from "./crypto/verify-signature";
+export {
+  channelUpgradeHint,
+  type DistributionChannel,
+  type ResolveChannelOptions,
+  resolveDistributionChannel,
+} from "./distribution-channel";
 export type { HitlRequest } from "./hitl-request";
 export { isHitlRequest } from "./hitl-request";
 export { NimbusExtensionServer } from "./server";
