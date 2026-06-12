@@ -50,6 +50,7 @@ No `packages/` changes — this is pure release infrastructure under `scripts/` 
 for clean `.deb`/`.rpm` generation.
 
 Rejected alternatives:
+
 - **B — Adopt GoReleaser/full toolkit:** Go-project-centric, fights the Bun monorepo, and
   would displace the existing bespoke signing/attestation steps that already work. We take
   only `nfpm` (a focused `.deb`/`.rpm`/`.apk` builder) from it.
@@ -127,10 +128,12 @@ Rejected alternatives:
   key into an ephemeral `GNUPGHOME` and never echoes it.
 - **Modern client trust (not deprecated `apt-key`).** The published install docs use the
   `signed-by` keyring form:
+
   ```bash
   curl -fsSL https://pkg.nimbus.dev/gpg.key | gpg --dearmor -o /usr/share/keyrings/nimbus-archive-keyring.gpg
   echo "deb [signed-by=/usr/share/keyrings/nimbus-archive-keyring.gpg] https://pkg.nimbus.dev/apt stable main" | sudo tee /etc/apt/sources.list.d/nimbus.list
   ```
+
 - Hosted on GitHub Pages (target domain e.g. `pkg.nimbus.dev`, TBD with the docs domain) so
   `apt install nimbus` / `dnf install nimbus` work and auto-update.
 - New workflow `publish-linux-repo.yml`.

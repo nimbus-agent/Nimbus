@@ -33,6 +33,7 @@
 ## File Structure
 
 **Phase A — Updater coexistence (gateway + CLI):**
+
 - Create: `packages/gateway/src/config/distribution-channel.ts` — pure channel resolver.
 - Create: `packages/gateway/src/config/distribution-channel.test.ts`
 - Modify: `packages/gateway/src/updater/factory.ts` — skip construction when channel-managed.
@@ -41,13 +42,16 @@
 - Modify: `packages/cli/src/commands/update.test.ts` — add nudge case.
 
 **Phase B — Manifest generators (scripts):**
+
 - Create: `scripts/release/package-manager-manifests.ts` — `parseSha256Sums`, `renderHomebrewFormula`, `renderScoopManifest`, CLI `main`.
 - Create: `scripts/release/package-manager-manifests.test.ts`
 
 **Phase C — Publish workflow:**
+
 - Create: `.github/workflows/publish-package-managers.yml`
 
 **Phase D — External repos + docs:**
+
 - Prerequisite (run by a maintainer): create `nimbus-agent/homebrew-tap` + `nimbus-agent/scoop-bucket`.
 - Create: `docs/install.md` (channel matrix + one-liners) — or extend the docs site if a page exists.
 - Modify: `scripts/install/README.md` — point package-manager users at the new one-liners.
@@ -59,6 +63,7 @@
 ### Task 1: `distribution-channel` pure resolver
 
 **Files:**
+
 - Create: `packages/gateway/src/config/distribution-channel.ts`
 - Test: `packages/gateway/src/config/distribution-channel.test.ts`
 
@@ -248,6 +253,7 @@ git commit -m "feat(updater): distribution-channel resolver for package-manager 
 ### Task 2: Skip the self-updater when channel-managed
 
 **Files:**
+
 - Modify: `packages/gateway/src/updater/factory.ts`
 - Test: `packages/gateway/src/updater/factory.test.ts`
 
@@ -348,6 +354,7 @@ git commit -m "feat(updater): disable self-update on package-manager installs"
 > package boundary is the correct trade, not a smell.
 
 **Files:**
+
 - Create: `packages/cli/src/lib/distribution-channel.ts` (CLI-local copy of the resolver + hint)
 - Create: `packages/cli/src/lib/distribution-channel.test.ts`
 - Modify: `packages/cli/src/commands/update.ts`
@@ -454,6 +461,7 @@ git commit -m "feat(cli): nimbus update nudges to the package manager on managed
 ### Task 4: `parseSha256Sums` + types
 
 **Files:**
+
 - Create: `scripts/release/package-manager-manifests.ts`
 - Test: `scripts/release/package-manager-manifests.test.ts`
 
@@ -534,6 +542,7 @@ git commit -m "feat(release): SHA256SUMS parser for package-manager manifests"
 ### Task 5: `renderHomebrewFormula`
 
 **Files:**
+
 - Modify: `scripts/release/package-manager-manifests.ts`
 - Test: `scripts/release/package-manager-manifests.test.ts`
 
@@ -678,6 +687,7 @@ git commit -m "feat(release): render Homebrew formula from release inputs"
 ### Task 6: `renderScoopManifest`
 
 **Files:**
+
 - Modify: `scripts/release/package-manager-manifests.ts`
 - Test: `scripts/release/package-manager-manifests.test.ts`
 
@@ -776,6 +786,7 @@ git commit -m "feat(release): render Scoop manifest from release inputs"
 ### Task 7: CLI `main` — read version + SHA256SUMS, write both files
 
 **Files:**
+
 - Modify: `scripts/release/package-manager-manifests.ts`
 - Test: `scripts/release/package-manager-manifests.test.ts`
 
@@ -936,6 +947,7 @@ git commit -m "feat(release): CLI to emit nimbus.rb + nimbus.json from SHA256SUM
 ### Task 8: `publish-package-managers.yml`
 
 **Files:**
+
 - Create: `.github/workflows/publish-package-managers.yml`
 
 - [ ] **Step 1: Write the workflow**
@@ -1108,6 +1120,7 @@ gh repo create nimbus-agent/scoop-bucket --public \
 ### Task 10: Install docs + README pointer
 
 **Files:**
+
 - Create: `docs/install.md`
 - Modify: `scripts/install/README.md`
 
@@ -1165,12 +1178,14 @@ git commit -m "docs: package-manager install one-liners (brew + scoop)"
 - [ ] `bun run lint` (or `bunx biome check packages scripts` — biome is misconfigured inside `.claude/worktrees`, so prefer the explicit form) — clean.
 - [ ] `bun run preflight:fast` — green (cheap static gates).
 - [ ] Manually dry-run the generator end-to-end:
+
   ```bash
   printf '%s  nimbus-headless-macos-arm64.tar.gz\n%s  nimbus-headless-macos-x64.tar.gz\n%s  nimbus-headless-linux-amd64-v0.1.0.tar.gz\n%s  nimbus-headless-windows-x64.zip\n' \
     $(printf 'a%.0s' {1..64}) $(printf 'b%.0s' {1..64}) $(printf 'c%.0s' {1..64}) $(printf 'd%.0s' {1..64}) > /tmp/SHA256SUMS
   bun scripts/release/package-manager-manifests.ts --version 0.1.0 --sha256sums /tmp/SHA256SUMS --out-dir /tmp/out
   cat /tmp/out/nimbus.rb /tmp/out/nimbus.json
   ```
+
   Expected: a valid formula + a `JSON.parse`-able manifest with the four hashes wired in.
 
 ---
@@ -1182,4 +1197,3 @@ git commit -m "docs: package-manager install one-liners (brew + scoop)"
 - **Cross-platform paths:** use `join()` / `tmpdir()` in tests (never hardcoded separators); `bun run audit:cross-platform` flags violations.
 - **Coverage gates:** new gateway code lands under the `config` (≥80%) + `updater` (≥80%) gates; new CLI code under the CLI suite; the new `scripts/` module is covered by its own `.test.ts` under the per-file coverage floor. Keep each new file ≥80% line+branch (the `audit:coverage-floor` ratchet is CI-Linux-authoritative).
 - **This slice intentionally touches gateway/CLI** only for §6.1 coexistence — the smallest change that makes brew/scoop correct. Everything else is release infra.
-```
