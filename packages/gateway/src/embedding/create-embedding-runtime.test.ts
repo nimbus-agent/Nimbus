@@ -10,7 +10,12 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { MockVault } from "../vault/mock.ts";
-import { createEmbeddingRuntime } from "./create-embedding-runtime.ts";
+import {
+  createEmbeddingRuntime,
+  type EmbeddingRuntimeOverrides,
+} from "./create-embedding-runtime.ts";
+import type { EmbeddingRuntime } from "./embedding-runtime.ts";
+import type { Embedder } from "./types.ts";
 
 const silentLogger = pino({ level: "silent" });
 
@@ -341,6 +346,310 @@ describe("createEmbeddingRuntime — provider 'hybrid' fallback + provider 'loca
         h.vault,
       );
       expect(rt).not.toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for DI-seam tests
+// ---------------------------------------------------------------------------
+
+function makeFakeRuntime(): EmbeddingRuntime {
+  return {
+    scheduleItemEmbedding(): void {
+      /* no-op */
+    },
+    async embedQuery(): Promise<Float32Array | null> {
+      return null;
+    },
+    async embedQueryDual(): Promise<{
+      vec384: Float32Array | null;
+      vec1536: Float32Array | null;
+      model384: string | null;
+      model1536: string | null;
+    }> {
+      return { vec384: null, vec1536: null, model384: null, model1536: null };
+    },
+    getEmbeddingModel(): string {
+      return "fake:model";
+    },
+    getEmbeddingDims(): number {
+      return 384;
+    },
+    getBackfillProgress(): { done: number; total: number } | null {
+      return null;
+    },
+    startBackgroundJobs(): void {
+      /* no-op */
+    },
+    terminate(): void {
+      /* no-op */
+    },
+  };
+}
+
+function makeFakeEmbedder(): Embedder {
+  return {
+    model: "fake:embedder",
+    dims: 384,
+    async embed(texts: string[]): Promise<Float32Array[]> {
+      return texts.map(() => new Float32Array(384));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DI-seam: hybrid returns non-null (line 91 — return hybrid)
+// ---------------------------------------------------------------------------
+
+describe("createEmbeddingRuntime — hybrid returns non-null (DI seam)", () => {
+  let originalSkip: string | undefined;
+  let originalOpenaiEnv: string | undefined;
+
+  beforeEach(() => {
+    originalSkip = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
+    originalOpenaiEnv = process.env["OPENAI_API_KEY"];
+    processEnvDelete("NIMBUS_SKIP_EMBEDDING_RUNTIME");
+    processEnvDelete("OPENAI_API_KEY");
+  });
+
+  afterEach(() => {
+    processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", originalSkip);
+    processEnvSet("OPENAI_API_KEY", originalOpenaiEnv);
+  });
+
+  test("returns the hybrid runtime when routingRuntimeFactory succeeds (covers return hybrid branch)", async () => {
+    const fakeRuntime = makeFakeRuntime();
+    const overrides: EmbeddingRuntimeOverrides = {
+      routingRuntimeFactory: async () => fakeRuntime,
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        overrides,
+      );
+      expect(rt).toBe(fakeRuntime);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DI-seam: worker bridge returns null → createLazyEmbeddingRuntime (line 103)
+// ---------------------------------------------------------------------------
+
+describe("createEmbeddingRuntime — worker bridge null → lazy fallback (DI seam)", () => {
+  let originalSkip: string | undefined;
+  let originalOpenaiEnv: string | undefined;
+
+  beforeEach(() => {
+    originalSkip = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
+    originalOpenaiEnv = process.env["OPENAI_API_KEY"];
+    processEnvDelete("NIMBUS_SKIP_EMBEDDING_RUNTIME");
+    processEnvDelete("OPENAI_API_KEY");
+  });
+
+  afterEach(() => {
+    processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", originalSkip);
+    processEnvSet("OPENAI_API_KEY", originalOpenaiEnv);
+  });
+
+  test("falls back to createLazyEmbeddingRuntime when worker bridge returns null (covers line 103)", async () => {
+    const overrides: EmbeddingRuntimeOverrides = {
+      workerBridgeFactory: () => null,
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("local"),
+        true,
+        h.vault,
+        overrides,
+      );
+      // The lazy runtime is returned even when worker fails
+      expect(rt).not.toBeNull();
+      // getEmbeddingModel returns the LOCAL_EMBEDDING_MODEL_ID placeholder before pipeline loads
+      expect(typeof rt?.getEmbeddingModel()).toBe("string");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("hybrid falls through to lazy when routing fails and worker bridge also fails", async () => {
+    const overrides: EmbeddingRuntimeOverrides = {
+      routingRuntimeFactory: async () => null,
+      workerBridgeFactory: () => null,
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        overrides,
+      );
+      expect(rt).not.toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DI-seam: openai embedder factory throws → catch block (lines 52-59)
+// ---------------------------------------------------------------------------
+
+describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", () => {
+  let originalOpenaiEnv: string | undefined;
+
+  beforeEach(() => {
+    originalOpenaiEnv = process.env["OPENAI_API_KEY"];
+    processEnvSet("OPENAI_API_KEY", "test-key-for-catch");
+    processEnvDelete("NIMBUS_SKIP_EMBEDDING_RUNTIME");
+  });
+
+  afterEach(() => {
+    processEnvSet("OPENAI_API_KEY", originalOpenaiEnv);
+  });
+
+  test("returns null and logs when openai embedder factory throws an Error (covers Error branch in catch)", async () => {
+    const warnings: Array<Record<string, unknown>> = [];
+    const captureLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            warnings.push(JSON.parse(chunk) as Record<string, unknown>);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
+    );
+    const overrides: EmbeddingRuntimeOverrides = {
+      openaiEmbedderFactory: async () => {
+        throw new Error("factory-error-test");
+      },
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        captureLogger,
+        defaultToml("openai"),
+        true,
+        h.vault,
+        overrides,
+      );
+      expect(rt).toBeNull();
+      const found = warnings.find(
+        (w) => typeof w["msg"] === "string" && w["msg"].includes("OpenAI embedder init failed"),
+      );
+      expect(found).not.toBeUndefined();
+      expect(found?.["errName"]).toBe("Error");
+      expect(found?.["errMessage"]).toBe("factory-error-test");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("returns null and logs when openai embedder factory throws a non-Error value (covers non-Error ternary branch)", async () => {
+    const warnings: Array<Record<string, unknown>> = [];
+    const captureLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            warnings.push(JSON.parse(chunk) as Record<string, unknown>);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
+    );
+    const overrides: EmbeddingRuntimeOverrides = {
+      openaiEmbedderFactory: async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw "plain-string-error";
+      },
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        captureLogger,
+        defaultToml("openai"),
+        true,
+        h.vault,
+        overrides,
+      );
+      expect(rt).toBeNull();
+      const found = warnings.find(
+        (w) => typeof w["msg"] === "string" && w["msg"].includes("OpenAI embedder init failed"),
+      );
+      expect(found).not.toBeUndefined();
+      // Non-Error thrown: ternary else branch → "Error" and String(err)
+      expect(found?.["errName"]).toBe("Error");
+      expect(found?.["errMessage"]).toBe("plain-string-error");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("openai embedder factory returns fake embedder — runtime is non-null", async () => {
+    const fakeEmbedder = makeFakeEmbedder();
+    const overrides: EmbeddingRuntimeOverrides = {
+      openaiEmbedderFactory: async () => fakeEmbedder,
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = await createEmbeddingRuntime(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("openai"),
+        true,
+        h.vault,
+        overrides,
+      );
+      expect(rt).not.toBeNull();
+      // The lazy runtime's model comes from the preloaded embedder
+      expect(rt?.getEmbeddingModel()).toBe("fake:embedder");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("empty model string triggers override to text-embedding-3-small (covers empty-model branch)", async () => {
+    let capturedModel: string | undefined;
+    const overrides: EmbeddingRuntimeOverrides = {
+      openaiEmbedderFactory: async (opts) => {
+        capturedModel = opts["model"];
+        return makeFakeEmbedder();
+      },
+    };
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const toml = { ...defaultToml("openai"), model: "   " };
+      await createEmbeddingRuntime(h.db, h.paths, silentLogger, toml, true, h.vault, overrides);
+      expect(capturedModel).toBe("text-embedding-3-small");
     } finally {
       h.cleanup();
     }

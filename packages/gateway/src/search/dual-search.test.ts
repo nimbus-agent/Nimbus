@@ -114,4 +114,116 @@ describe("vectorSearchChunksDual", () => {
     });
     expect(hits.length).toBe(0);
   });
+
+  test.skipIf(!VEC_AVAILABLE)("with only the 1536 vector, returns only vec_items_1536 hits", () => {
+    const db = freshDb();
+    seed(db);
+    const v1536 = new Float32Array(1536);
+    v1536[0] = 1;
+    const hits = vectorSearchChunksDual(db, {
+      queryEmbedding1536: v1536,
+      model1536: "m1536",
+      limit: 10,
+    });
+    expect(hits.length).toBe(1);
+    expect(hits[0]?.itemId).toBe("s:b");
+  });
+
+  test.skipIf(!VEC_AVAILABLE)("service filter narrows results to matching service", () => {
+    const db = freshDb();
+    seed(db);
+    const v384 = new Float32Array(384);
+    v384[0] = 1;
+    const v1536 = new Float32Array(1536);
+    v1536[0] = 1;
+    // Only github items should be returned when service='github'
+    const hits = vectorSearchChunksDual(db, {
+      queryEmbedding384: v384,
+      queryEmbedding1536: v1536,
+      model384: "m384",
+      model1536: "m1536",
+      limit: 10,
+      service: "github",
+    });
+    expect(hits.length).toBeGreaterThan(0);
+    for (const h of hits) {
+      expect(h.itemId).toBe("s:a");
+    }
+  });
+
+  test.skipIf(!VEC_AVAILABLE)("itemType filter narrows results to matching type", () => {
+    const db = freshDb();
+    seed(db);
+    const v384 = new Float32Array(384);
+    v384[0] = 1;
+    const v1536 = new Float32Array(1536);
+    v1536[0] = 1;
+    // Only message items should be returned when itemType='message'
+    const hits = vectorSearchChunksDual(db, {
+      queryEmbedding384: v384,
+      queryEmbedding1536: v1536,
+      model384: "m384",
+      model1536: "m1536",
+      limit: 10,
+      itemType: "message",
+    });
+    expect(hits.length).toBeGreaterThan(0);
+    for (const h of hits) {
+      expect(h.itemId).toBe("s:b");
+    }
+  });
+
+  test.skipIf(!VEC_AVAILABLE)("since filter excludes items older than threshold", () => {
+    const db = freshDb();
+    seed(db);
+    const v384 = new Float32Array(384);
+    v384[0] = 1;
+    // Use a far-future since to exclude everything
+    const farFuture = Date.now() + 1_000_000_000;
+    const hits = vectorSearchChunksDual(db, {
+      queryEmbedding384: v384,
+      model384: "m384",
+      limit: 10,
+      since: farFuture,
+    });
+    expect(hits.length).toBe(0);
+  });
+
+  test.skipIf(!VEC_AVAILABLE)("since filter includes items at or after threshold", () => {
+    const db = freshDb();
+    seed(db);
+    const v384 = new Float32Array(384);
+    v384[0] = 1;
+    // Use 0 as since — all items (modified_at >= 0) should be included
+    const hits = vectorSearchChunksDual(db, {
+      queryEmbedding384: v384,
+      model384: "m384",
+      limit: 10,
+      since: 0,
+    });
+    // since=0 is treated as falsy (the vec-store applies the filter only when since > 0),
+    // so it behaves as "no filter" and the 384-indexed item survives.
+    expect(hits.length).toBe(1);
+    expect(hits[0]?.itemId).toBe("s:a");
+  });
+
+  test.skipIf(!VEC_AVAILABLE)(
+    "since filter with positive value returns items modified after threshold",
+    () => {
+      const db = freshDb();
+      seed(db);
+      const v384 = new Float32Array(384);
+      v384[0] = 1;
+      // Use a past time well before the seeded items so everything passes through
+      const pastTime = Date.now() - 10_000;
+      const hits = vectorSearchChunksDual(db, {
+        queryEmbedding384: v384,
+        model384: "m384",
+        limit: 10,
+        since: pastTime,
+      });
+      expect(hits.length).toBe(1);
+      expect(hits[0]?.itemId).toBe("s:a");
+    },
+  );
 });
