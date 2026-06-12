@@ -50,7 +50,7 @@
 
 **New (connectors):** `notion_kb_append` in `packages/mcp-connectors/notion/src/server.ts`; `confluence_kb_append` in `packages/mcp-connectors/confluence/src/server.ts`
 
-**Modified:** `chatops/types.ts` (+`addressedToBot`), `chatops/transport/slack-socket-adapter.ts` (+message events), `chatops/chatops-boot.ts` (+fan-out hook + `buildChatopsBoot` dep), `config/nimbus-toml.ts` (+`[tribal]`), `index/local-index.ts` (`CURRENT_SCHEMA_VERSION`), `index/migrations/runner.ts` (+V39 step), `engine/executor.ts` (+2 action types), `engine/registry.ts` (tool map for new tools, if needed), `ipc/server/{context,dispatchers}.ts`, `ipc/lan-rpc.ts`, `cli/src/commands/registry.ts`, `cli/src/commands/index.ts`, `cli/src/index.ts`, `cli/src/types/agents.ts` (if a brief type is surfaced), `ui/src-tauri/src/gateway_bridge.rs`, `security-invariants.test.ts`, `scripts/structure-audit/check-nimbus-invariants.ts`, docs.
+**Modified:** `chatops/types.ts` (+`addressedToBot`), `chatops/transport/slack-socket-adapter.ts` (+message events), `chatops/chatops-boot.ts` (+fan-out hook + `buildChatopsBoot` dep), `search/vec-store.ts` (+optional `metadataChannelIn` SQL filter, review §2.1), `config/nimbus-toml.ts` (+`[tribal]`), `index/local-index.ts` (`CURRENT_SCHEMA_VERSION`), `index/migrations/runner.ts` (+V39 step), `engine/executor.ts` (+2 action types), `engine/registry.ts` (tool map for new tools, if needed), `ipc/server/{context,dispatchers}.ts`, `ipc/lan-rpc.ts`, `cli/src/commands/registry.ts`, `cli/src/commands/index.ts`, `cli/src/index.ts`, `cli/src/types/agents.ts` (if a brief type is surfaced), `ui/src-tauri/src/gateway_bridge.rs`, `security-invariants.test.ts`, `scripts/structure-audit/check-nimbus-invariants.ts`, docs.
 
 ---
 
@@ -715,7 +715,9 @@ export interface RecallHit {
 
 export interface RepeatDetectorDeps {
   embed: (text: string) => Promise<Float32Array | null>;
-  /** Production: vectorSearchChunks over slack/teams `message` items, then map item→cluster + parse metadata.channel. */
+  /** Production: vectorSearchChunks over slack/teams `message` items, channel-filtered IN SQL via
+   *  `json_extract(metadata,'$.channel') IN (watchChannels)` so the top-N are all watched-channel
+   *  hits (review §2.1 — never push watched hits out of top-N), then map item→cluster. */
   recall: (vec: Float32Array) => RecallHit[];
   store: TribalClusterStore;
   watchChannels: ReadonlySet<string>;
@@ -909,6 +911,7 @@ function deps(over: Partial<TribalWatcherDeps>): TribalWatcherDeps {
     recall: () => [],
     send: async () => {},
     watchChannels: new Set(["C1"]),
+    botUserIds: new Set(["BOT"]),
     minOccurrences: 2,
     windowDays: 14,
     cooldownDays: 30,
@@ -917,6 +920,17 @@ function deps(over: Partial<TribalWatcherDeps>): TribalWatcherDeps {
     ...over,
   };
 }
+
+test("the bot's own message is never ingested (no embed, no post)", async () => {
+  let embeds = 0;
+  const w = new TribalWatcher(deps({ embed: async () => { embeds++; return new Float32Array([1]); } }));
+  await w.ingest({ platform: "slack", channelId: "C1", userId: "BOT", text: "how do I deploy the gateway?", ts: "1" });
+  expect(embeds).toBe(0);
+});
+
+// NOTE: Task 8 adds the required `addressedToBot` field to ChatMessage and updates every
+// fixture in this file (its Step 3 covers "update all ChatMessage fixtures") — so the fixtures
+// above are written against the Task-7-era ChatMessage shape (no `addressedToBot`).
 
 test("non-question is ignored (no embed, no post)", async () => {
   let embeds = 0;
@@ -965,6 +979,9 @@ export interface TribalWatcherDeps {
   recall: (vec: Float32Array) => RecallHit[];
   send: (target: ReplyTarget, text: string) => Promise<void>;
   watchChannels: ReadonlySet<string>;
+  /** The bot's own platform user/app ids — messages from these are skipped to prevent a
+   *  suggestion→ingest feedback loop (review §1.1). Captured at boot (Task 11). */
+  botUserIds: ReadonlySet<string>;
   minOccurrences: number;
   windowDays: number;
   cooldownDays: number;
@@ -983,6 +1000,7 @@ export class TribalWatcher {
   /** Fan-out target: called for every watched inbound message. Never throws. */
   async ingest(msg: ChatMessage): Promise<void> {
     try {
+      if (this.deps.botUserIds.has(msg.userId)) return; // never ingest our own posts (review §1.1)
       if (!this.deps.watchChannels.has(msg.channelId)) return;
       if (!isQuestion(msg.text)) return;
       const result = await detectRepeat(
@@ -1201,7 +1219,11 @@ git commit -m "feat(phase6-slice6c): nimbus tribal CLI (status/start/stop/list/d
 - Modify: `packages/gateway/src/platform/assemble.ts`
 - Test: `packages/gateway/src/tribal/tribal-boot.test.ts`
 
-`buildTribalBoot(deps)` constructs the `TribalWatcher` (building the production `recall` closure over `vectorSearchChunks` + `metadata.channel` post-filter, and the `embed` closure over the embedding worker), exposes `onInboundMessage = (m) => watcher.ingest(m)` for `buildChatopsBoot`, and returns the `TribalRpcCtx` (status/list/dismiss/scan/start/stop). **Boot-time validation (review §1.1):** if `tribalCfg.enabled && watchChannels.length === 0`, throw a clear fail-closed error.
+`buildTribalBoot(deps)` constructs the `TribalWatcher`, exposes `onInboundMessage = (m) => watcher.ingest(m)` for `buildChatopsBoot`, and returns the `TribalRpcCtx` (status/list/dismiss/scan/start/stop). **Boot-time validation (review §1.1):** if `tribalCfg.enabled && watchChannels.length === 0`, throw a clear fail-closed error.
+
+**Production `recall` closure (review §2.1):** wraps `vectorSearchChunks(db, { queryEmbedding, model, limit, service:"slack"|"teams", itemType:"message" })` but the channel-allowlist filter is applied **in SQL** — extend `search/vec-store.ts` `vectorSearchChunks` with an optional `metadataChannelIn?: readonly string[]` param that appends `AND json_extract(i.metadata, '$.channel') IN (?, ?, …)` to the query (the `item` row is already joined as `i`). The recall passes `watchChannels` so the top-N hits are all from watched channels (never pushing a watched hit out of top-N by post-filtering). Run it once per `service` (slack + teams) and union. Map each `VectorChunkHit.itemId` to its cluster_id (the cluster store keyed the item when it was first observed — or derive via the item's stored cluster mapping; if a hit's item isn't yet clustered, skip it). **Defer** a `json_extract` expression index (`CREATE INDEX … ON item(json_extract(metadata,'$.channel'))`) as a future optimization — YAGNI until a large `item` table proves the filter slow; the embedding KNN already bounds the candidate set to top-N.
+
+> **vec-store edit (small, shared file):** add the optional `metadataChannelIn` param + the `IN (…)` clause + bound params; add a unit test in `search/vec-store.test.ts` proving a hit in a non-allowlisted channel is excluded. Do this as Step 0 of this task before building the closure.
 
 - [ ] **Step 1: Write the failing test** — `buildTribalBoot` with enabled + empty watchChannels throws; with channels returns a boot whose `onInboundMessage` forwards to a watcher; `rpcCtx.status().enabled` is true.
 
@@ -1219,6 +1241,13 @@ if (tribalCfg.enabled) {
     cfg: tribalCfg,
     embedQuery: (t) => embeddingBridge.embedQuery(t),
     embeddingModel: embeddingBridge.getEmbeddingModel(),
+    // Bot self-filter (review §1.1): the bot's own platform user/app ids, so the watcher never
+    // ingests its own suggestion posts. Source from the chatops bot identity — Slack bot user id
+    // (resolvable via the bot `auth.test`/`slack_user_info` already used by chatops, or the
+    // configured bot id) + the Teams bot app id (`chatopsCfg.teamsBotAppId`). If the Slack id
+    // isn't readily resolvable at boot, fall back to the configured ids; the Slack normalizer's
+    // `bot_id`/`subtype` skip (Task 8) is the primary guard, this is defense-in-depth.
+    botUserIds: new Set([chatopsCfg.teamsBotAppId, /* slack bot user id if available */].filter((s) => s !== "")),
     send: /* reuse the chatops reply-dispatcher send; expose it from chatopsBoot or pass the connector-post seam */,
     log: (m) => syncLogger.warn(m),
   });
@@ -1272,6 +1301,8 @@ git commit -m "feat(phase6-slice6c): Tauri allowlist 88->90 (tribal.status/list 
 
 Gathers the cluster's source threads from the index (recall by the cluster's representative vec, **filtered to `watchChannels`**), then an injected `llm` drafts `{ title, bodyMarkdown, citations }`. LLM + recall are injected (test stubs them). Output is the draft shown at HITL.
 
+**Constrain the synthesis output (review §3.1):** the LLM prompt MUST instruct a **simple** markdown shape — plain paragraphs separated by blank lines, plus an optional `-` bulleted list, and **no** headers/tables/code-fences/inline HTML. This keeps the Notion/Confluence converter (Task 14) trivial and robust. The synthesizer appends the `Sources` section itself (from `citations`), not the LLM, so source links are always well-formed.
+
 - [ ] **Step 1: Write the failing test** — given a fake recall returning 2 source items (with channel ∈ allowlist) and a fake llm echoing a draft, `synthesizeAnswer` returns `{ title, bodyMarkdown, citations: [{itemId, channelId, url}] }`; a source whose channel ∉ allowlist is excluded from citations.
 
 - [ ] **Step 2–4: Implement** — interface:
@@ -1309,7 +1340,9 @@ git commit -m "feat(phase6-slice6c): answer synthesizer (draft + allowlist-filte
 - Modify: `packages/mcp-connectors/notion/src/server.ts`, `packages/mcp-connectors/confluence/src/server.ts`
 - Test: the connectors' existing `test/` (extend with a fetch-mocked tool test)
 
-`notion_kb_append` input: `{ databaseId, title, bodyMarkdown, citationsJson }` → `POST /v1/pages` with `{ parent: { database_id }, properties: { Name: { title: [...] } }, children: [...] }` (markdown→blocks; keep minimal: one paragraph block per line + a "Sources" list). `confluence_kb_append` input: `{ spaceKey, parentPageId, title, storageHtml }` → `POST /content` with ancestors. Reuse `notionFetch`/`confFetch`. These are **the only** new write tools; the gate passes destination from config (Task 16).
+`notion_kb_append` input: `{ databaseId, title, bodyMarkdown, citationsJson }` → `POST /v1/pages` with `{ parent: { database_id }, properties: { Name: { title: [...] } }, children: [...] }`. `confluence_kb_append` input: `{ spaceKey, parentPageId, title, storageHtml }` → `POST /content` with ancestors. Reuse `notionFetch`/`confFetch`. These are **the only** new write tools; the gate passes destination from config (Task 16).
+
+**Robust, minimal markdown→blocks converter (review §3.1).** Because Task 13 constrains synthesis to simple markdown (paragraphs + `-` bullets, no headers/code/tables), the Notion converter is a small line-walker: a line starting `-` → a `bulleted_list_item` block; a blank line → skip; **any other non-empty line → a `paragraph` block** (the fallback — it never throws on unexpected markup; worst case a stray `#` becomes paragraph text). Confluence's `storageHtml` is built the same way (`<ul><li>` for bullets, `<p>` for everything else), HTML-escaping text. Add a unit test feeding markdown with a stray header/code line and asserting the converter emits valid blocks (paragraph fallback) without throwing.
 
 - [ ] **Step 1: Write fetch-mocked tests** for each tool (assert the request body shape + that the tool returns the created page id).
 - [ ] **Step 2–4: Implement** mirroring the existing `notion_page_create` / `confluence_page_create` tool registrations in each `server.ts`.
@@ -1425,7 +1458,15 @@ Mirror the I24/D18 pattern exactly.
 - [ ] **Step 1: D19 static rule** — in `check-nimbus-invariants.ts`, add `checkTribalKbWriteInvariant`:
 
 ```typescript
-const TRIBAL_KB_WRITE_ALLOWED = ["packages/gateway/src/tribal/tribal-write-gate.ts"];
+// The static audit scans BOTH packages/*/src/**/*.ts AND packages/mcp-connectors/*/src/**/*.ts
+// (verified: scripts/structure-audit/lib.ts iterateSourceFiles), so the two connector definition
+// sites MUST be allow-listed alongside the gateway gate (review §4.1) — they DEFINE the tools; only
+// the gateway-side INVOCATION is confined to the write-gate.
+const TRIBAL_KB_WRITE_ALLOWED = [
+  "packages/gateway/src/tribal/tribal-write-gate.ts",
+  "packages/mcp-connectors/notion/src/server.ts",
+  "packages/mcp-connectors/confluence/src/server.ts",
+];
 const TRIBAL_KB_WRITE_RE = /\b(notion_kb_append|confluence_kb_append)\b/;
 export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -1444,7 +1485,7 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 }
 ```
 
-Register it in `run()` next to `checkPreflightRunnerInvariant`. (The connector definition files live under `packages/mcp-connectors/`, which the gateway-scoped audit does not scan — verify the audit's file set; if it does scan them, add the two connector `server.ts` paths to `TRIBAL_KB_WRITE_ALLOWED`.)
+Register it in `run()` next to `checkPreflightRunnerInvariant`. (Verified: `iterateSourceFiles` in `scripts/structure-audit/lib.ts` globs `packages/mcp-connectors/*/src/**/*.ts`, so the connector `server.ts` files ARE scanned and are pre-allow-listed above — without them the tool-definition sites would trip D19.)
 
 - [ ] **Step 2: I25 runtime test** — add the `describe("I25 ...")` block to `security-invariants.test.ts`: import `captureToKnowledgeBase`, assert (a) caller-supplied `databaseId` ignored → only config dest in the submitted action, (b) unconfigured → `not_configured`, submitAction never called, (c) rejected HITL → no markCaptured, (d) `expect(audit).toContain("D19-tribal-kb-write")`.
 
