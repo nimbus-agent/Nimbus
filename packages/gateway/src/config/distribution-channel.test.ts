@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 import { describe, expect, test } from "bun:test";
-import { resolveDistributionChannel } from "./distribution-channel.ts";
+import { channelUpgradeHint, resolveDistributionChannel } from "./distribution-channel.ts";
 
 describe("resolveDistributionChannel", () => {
   test("returns null for an ordinary install path with no env marker", () => {
@@ -61,5 +61,30 @@ describe("resolveDistributionChannel", () => {
         execPath: "C:\\Users\\u\\scoop\\apps\\nimbus\\current\\nimbus.exe",
       }),
     ).toBe("homebrew");
+  });
+
+  test("resolves a Homebrew bin symlink to its Cellar target before matching", () => {
+    expect(
+      resolveDistributionChannel({
+        env: {},
+        execPath: "/opt/homebrew/bin/nimbus",
+        realpath: (p) =>
+          p === "/opt/homebrew/bin/nimbus" ? "/opt/homebrew/Cellar/nimbus/0.1.0/bin/nimbus" : p,
+      }),
+    ).toBe("homebrew");
+  });
+});
+
+describe("channelUpgradeHint", () => {
+  test.each([
+    ["homebrew", "brew upgrade nimbus"],
+    ["scoop", "scoop update nimbus"],
+    ["winget", "winget upgrade nimbus"],
+    ["apt", "apt upgrade nimbus"],
+    ["yum", "dnf upgrade nimbus"],
+    ["msi", ".msi"],
+    ["pkg", ".pkg"],
+  ] as const)("%s hint mentions the right command", (channel, needle) => {
+    expect(channelUpgradeHint(channel)).toContain(needle);
   });
 });

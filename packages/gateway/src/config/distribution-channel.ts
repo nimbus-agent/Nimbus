@@ -5,7 +5,7 @@
  */
 export type DistributionChannel = "homebrew" | "scoop" | "winget" | "apt" | "yum" | "msi" | "pkg";
 
-const KNOWN_CHANNELS: ReadonlySet<DistributionChannel> = new Set([
+const KNOWN_CHANNELS = new Set<DistributionChannel>([
   "homebrew",
   "scoop",
   "winget",
@@ -13,13 +13,30 @@ const KNOWN_CHANNELS: ReadonlySet<DistributionChannel> = new Set([
   "yum",
   "msi",
   "pkg",
-]);
+] satisfies readonly DistributionChannel[]);
+
+import { realpathSync } from "node:fs";
 
 export interface ResolveChannelOptions {
   /** Defaults to `process.env`. */
   env?: Record<string, string | undefined>;
   /** Defaults to `process.execPath`. */
   execPath?: string;
+  /**
+   * Resolves symlinks so a package manager's real install path (e.g. Homebrew's
+   * Cellar) is inspected rather than the `bin` symlink that launched the process.
+   * Injectable for tests; defaults to a safe `realpathSync` that falls back to the
+   * input path if resolution fails.
+   */
+  realpath?: (p: string) => string;
+}
+
+function safeRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 function fromEnv(env: Record<string, string | undefined>): DistributionChannel | null {
@@ -30,9 +47,11 @@ function fromEnv(env: Record<string, string | undefined>): DistributionChannel |
   return null;
 }
 
-function fromPath(execPath: string): DistributionChannel | null {
-  // Normalize backslashes so Windows + POSIX paths match the same substrings.
-  const p = execPath.replace(/\\/g, "/").toLowerCase();
+function fromPath(execPath: string, realpath: (p: string) => string): DistributionChannel | null {
+  // Resolve symlinks first: package managers expose the binary via a symlink whose
+  // own path may not contain the tell-tale Cellar/apps segment.
+  const resolved = realpath(execPath);
+  const p = resolved.replace(/\\/g, "/").toLowerCase();
   // Homebrew: macOS `/opt/homebrew/Cellar/...` or `/usr/local/Cellar/...`,
   // Linuxbrew `/home/linuxbrew/.linuxbrew/...`.
   if (p.includes("/cellar/") || p.includes("/.linuxbrew/")) {
@@ -56,7 +75,8 @@ export function resolveDistributionChannel(
 ): DistributionChannel | null {
   const env = opts.env ?? process.env;
   const execPath = opts.execPath ?? process.execPath;
-  return fromEnv(env) ?? fromPath(execPath);
+  const realpath = opts.realpath ?? safeRealpath;
+  return fromEnv(env) ?? fromPath(execPath, realpath);
 }
 
 /** Human-facing upgrade hint per channel, used by `nimbus update`. */
