@@ -14,7 +14,7 @@ import {
   buildE2eSinkDispatcher,
   buildE2eSinkRunChatopsTool,
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
-import type { ReplyTarget } from "../chatops/types.ts";
+import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusAuditFromConfigDir,
@@ -69,8 +69,9 @@ import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
-import type { ExecutorDelegationDep } from "../engine/executor.ts";
+import { type ExecutorDelegationDep, ToolExecutor } from "../engine/executor.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
+import type { ConnectorDispatcher } from "../engine/types.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -97,6 +98,8 @@ import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
+import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
+import type { TribalSubmitAction } from "../ipc/tribal-rpc.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
@@ -123,6 +126,10 @@ import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { type SynthSource, synthesizeAnswer } from "../tribal/answer-synthesizer.ts";
 import type { TribalCluster } from "../tribal/cluster-store.ts";
 import { buildTribalBoot, type TribalBoot } from "../tribal/tribal-boot.ts";
+import {
+  handleTribalCaptureCommand,
+  parseTribalCaptureCommand,
+} from "../tribal/tribal-chat-capture.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
 import { createNimbusVault } from "../vault/factory.ts";
@@ -1066,6 +1073,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // Reassigned below once chatops's reply seam exists (the chatops↔tribal boot cycle).
   let tribalSend: (target: ReplyTarget, text: string) => Promise<void> = async () => {};
   let tribalBoot: TribalBoot | undefined;
+  // Slice 6c in-chat capture: recognizes `@nimbus tribal capture <id>` and routes it to the I25
+  // write-gate with the owner's chatops HITL consent. Built in the tribal block, consumed by chatops.
+  let tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
   if (tribalCfg.enabled) {
     if (rt == null) {
       throw new Error(
@@ -1156,13 +1166,49 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ipcOpts.tribalRpcCtx = tribalBoot.rpcCtx;
     // I25 capture write target: the e2e sink when set (Task 20), else the real connector mesh.
     const tribalE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
-    ipcOpts.tribalConnectorDispatcher =
+    const tribalDispatcher: ConnectorDispatcher =
       tribalE2eSinkDir === undefined || tribalE2eSinkDir === ""
         ? createConnectorDispatcher({
             listTools: () => connectorMesh.listToolsForDispatcher(),
             getToolsEpoch: () => connectorMesh.getToolsEpoch(),
           })
         : buildE2eSinkDispatcher(tribalE2eSinkDir);
+    ipcOpts.tribalConnectorDispatcher = tribalDispatcher;
+    // In-chat capture trigger (Task 19): `@nimbus tribal capture <id>` → I25 write-gate with the
+    // owner's chatops HITL consent. `chatopsBoot` is late-bound (assigned just below), so the
+    // closure reads it at message time. Skips cleanly if chatops isn't up.
+    const tribalRpcCtx = tribalBoot.rpcCtx;
+    tribalInterceptCommand = async (msg: ChatMessage): Promise<boolean> => {
+      const cmd = parseTribalCaptureCommand(msg.text);
+      if (cmd === undefined) return false;
+      const cb = chatopsBoot;
+      if (cb === undefined) return false;
+      const executor = new ToolExecutor(
+        { requestApproval: (p, d) => cb.requestOwnerApproval(p, d) },
+        localIndex,
+        tribalDispatcher,
+      );
+      const submit: TribalSubmitAction = async (action) => {
+        const res = await executor.execute({ type: action.type, payload: action.payload });
+        if (res.status !== "ok") return { status: "rejected" };
+        return {
+          status: "approved",
+          result: { pageRef: extractKbPageRef(action.type, res.result) },
+        };
+      };
+      await handleTribalCaptureCommand(
+        {
+          capture: (id, t) => tribalRpcCtx.capture(id, t, submit),
+          reply: (text) =>
+            cb.replyTo(
+              { kind: "originating", platform: msg.platform, channelId: msg.channelId },
+              text,
+            ),
+        },
+        cmd,
+      );
+      return true;
+    };
   }
 
   // ChatOps (Phase 6 Slice 5 boot wiring — the deferred follow-up of PR #559). When
@@ -1183,6 +1229,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       cfg: chatopsCfg,
       policyGate,
       ...(tribalBoot !== undefined ? { onInboundMessage: tribalBoot.onInboundMessage } : {}),
+      ...(tribalInterceptCommand !== undefined ? { interceptCommand: tribalInterceptCommand } : {}),
       ...(identityBootRef === undefined
         ? {}
         : {

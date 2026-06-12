@@ -708,7 +708,7 @@ function tribalParamString(params: unknown, key: string): string | undefined {
  * The result is the MCP tool envelope wrapping the created page JSON; tolerant of shapes, returns
  * "" if no id is found (→ the write-gate reports write_failed, never a false success).
  */
-function extractKbPageRef(actionType: string, result: unknown): string {
+export function extractKbPageRef(actionType: string, result: unknown): string {
   const prefix = actionType.startsWith("notion") ? "notion" : "confluence";
   const findId = (v: unknown): string | undefined => {
     if (v === null || typeof v !== "object") return undefined;

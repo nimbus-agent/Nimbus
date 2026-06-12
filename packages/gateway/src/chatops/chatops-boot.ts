@@ -48,6 +48,12 @@ export interface ChatopsBootDeps {
   readonly scheduleReconnect?: (ms: number, fn: () => void) => void;
   /** Slice 6c: called for every inbound message (before routing). Never throws. */
   readonly onInboundMessage?: (m: ChatMessage) => Promise<void>;
+  /**
+   * Slice 6c: a chance to intercept an addressed message as a special command BEFORE the
+   * IntentRouter (e.g. `tribal capture <id>`). Returns true if it handled the message (routing is
+   * then skipped). Kept generic so chatops stays decoupled from the tribal subsystem.
+   */
+  readonly interceptCommand?: (m: ChatMessage) => Promise<boolean>;
 }
 
 export interface ChatopsBoot {
@@ -65,6 +71,11 @@ export interface ChatopsBoot {
    * tribal watcher to post repeat-question suggestions. Still confined to D17's allowed post path.
    */
   replyTo(target: ReplyTarget, text: string): Promise<void>;
+  /**
+   * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
+   * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
+   */
+  requestOwnerApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -285,6 +296,8 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
     // Ambient (non-addressed) messages are tribal-only — never routed as a command. Today all
     // delivered messages were @-mentions (addressedToBot=true), so this preserves behavior.
     if (!msg.addressedToBot) return;
+    // Slice 6c: a special command (e.g. `tribal capture <id>`) is intercepted before the router.
+    if (deps.interceptCommand !== undefined && (await deps.interceptCommand(msg))) return;
     await routerFor(msg).handle(msg);
   };
 
@@ -358,6 +371,7 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       localConsent = fn;
     },
     replyTo: (target, text) => replyDispatcher.send(target, text),
+    requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
     stop: () => service.stop(),
   };
 }
