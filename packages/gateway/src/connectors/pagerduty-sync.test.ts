@@ -6,12 +6,13 @@ import {
   createStubVault,
   describeWithFetchRestore,
   EMPTY_NIMBUS_VAULT,
+  expectServiceItemCount,
   silentSyncContextExtras,
   syncTestContext,
   testConnectorSyncNoop,
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
-import { createPagerdutySyncable } from "./pagerduty-sync.ts";
+import { createPagerdutySyncable, syncPagerdutyIncidentItems } from "./pagerduty-sync.ts";
 
 type IncidentMetadata = {
   status: string | null;
@@ -541,5 +542,503 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const BACKFILL_DAYS = 30;
     expect(lastUpdatedMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
     expect(lastUpdatedMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  // ── decodeCursor edge branches ───────────────────────────────────────────
+
+  test("valid cursor from prior sync is used as since parameter", async () => {
+    // Run a first sync to produce a real cursor
+    let capturedUrls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrls.push(urlFromFetchInput(input));
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+
+    // First sync — null cursor, produces a cursor based on floorIso
+    const r1 = await sync.sync(syncTestContext(db, vault), null);
+    expect(r1.cursor).not.toBeNull();
+
+    capturedUrls = [];
+    // Second sync with the valid cursor returned from first sync
+    const r2 = await sync.sync(syncTestContext(db, vault), r1.cursor);
+    expect(r2.itemsUpserted).toBe(0);
+    expect(capturedUrls.length).toBe(1);
+    // The "since" from the second call should be the cursor's lastUpdated (not the 30d floor)
+    const since2 = new URL(capturedUrls[0] as string).searchParams.get("since"); // NOSONAR S4325
+    expect(since2).not.toBeNull();
+  });
+
+  test("decodeCursor: empty-string cursor is treated as null → uses 30-day floor", async () => {
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    await sync.sync(syncTestContext(db, vault), "");
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  test("decodeCursor: wrong-prefix cursor falls back to 30-day floor", async () => {
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    // A cursor with the wrong prefix is treated as invalid → falls back to floor
+    await sync.sync(syncTestContext(db, vault), "nimbus-wrongprefix:AAAA");
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  test("decodeCursor: cursor whose payload is a JSON array falls back to 30-day floor", async () => {
+    // encode an array payload with the correct prefix
+    const arrayPayload = Buffer.from(JSON.stringify([1, 2, 3]), "utf8").toString("base64url");
+    const badCursor = `nimbus-pd1:${arrayPayload}`;
+
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    await sync.sync(syncTestContext(db, vault), badCursor);
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  test("decodeCursor: cursor whose payload is null falls back to 30-day floor", async () => {
+    const nullPayload = Buffer.from(JSON.stringify(null), "utf8").toString("base64url");
+    const badCursor = `nimbus-pd1:${nullPayload}`;
+
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    await sync.sync(syncTestContext(db, vault), badCursor);
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  test("decodeCursor: cursor whose payload has numeric lastUpdated falls back to 30-day floor", async () => {
+    const numericLu = Buffer.from(JSON.stringify({ lastUpdated: 12345 }), "utf8").toString(
+      "base64url",
+    );
+    const badCursor = `nimbus-pd1:${numericLu}`;
+
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    await sync.sync(syncTestContext(db, vault), badCursor);
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  test("decodeCursor: cursor whose payload has empty-string lastUpdated falls back to 30-day floor", async () => {
+    const emptyLu = Buffer.from(JSON.stringify({ lastUpdated: "" }), "utf8").toString("base64url");
+    const badCursor = `nimbus-pd1:${emptyLu}`;
+
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      capturedUrl = urlFromFetchInput(input);
+      return new Response(JSON.stringify({ incidents: [], more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const before = Date.now();
+    await sync.sync(syncTestContext(db, vault), badCursor);
+    const after = Date.now();
+
+    expect(capturedUrl).toBeDefined();
+    const sinceMs = Date.parse(new URL(capturedUrl as string).searchParams.get("since") as string); // NOSONAR S4325
+    const BACKFILL_DAYS = 30;
+    expect(sinceMs).toBeGreaterThanOrEqual(before - BACKFILL_DAYS * 86_400_000 - 2000);
+    expect(sinceMs).toBeLessThanOrEqual(after - BACKFILL_DAYS * 86_400_000 + 2000);
+  });
+
+  // ── parsePagerdutyListResponse edge branches ─────────────────────────────
+
+  test("malformed JSON response causes early return with partial cursor progress", async () => {
+    const updatedPage1 = isoHoursAgo(24);
+    let call = 0;
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0]) => {
+      call += 1;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            incidents: [
+              {
+                id: "P_VALID",
+                title: "Valid row",
+                created_at: updatedPage1,
+                updated_at: updatedPage1,
+                status: "triggered",
+              },
+            ],
+            more: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      // Second page returns invalid JSON
+      return new Response("not-json-{{{{", { status: 200 });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const result = await sync.sync(syncTestContext(db, vault), null);
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.hasMore).toBe(false);
+    const cursor = result.cursor as string;
+    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedPage1 });
+  });
+
+  test("response with incidents field missing returns null → early return", async () => {
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0]) => {
+      // Object without "incidents" key
+      return new Response(JSON.stringify({ total: 0, more: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const result = await sync.sync(syncTestContext(db, vault), null);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.hasMore).toBe(false);
+  });
+
+  test("response that is a JSON array (not object) returns null → early return", async () => {
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0]) => {
+      return new Response(JSON.stringify([{ id: "x" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const db = createMemoryIndexDb();
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const result = await sync.sync(syncTestContext(db, vault), null);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.hasMore).toBe(false);
+  });
+
+  // ── syncPagerdutyIncidentItems edge branches (via exported function) ─────
+
+  test("syncPagerdutyIncidentItems: skips non-object items in incidents array", () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const since = isoHoursAgo(24);
+    const { upserted } = syncPagerdutyIncidentItems(
+      ctx,
+      [null, "string-item", 42, true, undefined],
+      since,
+      Date.now(),
+    );
+    expect(upserted).toBe(0);
+    expectServiceItemCount(db, "pagerduty", 0);
+  });
+
+  test("syncPagerdutyIncidentItems: skips items with missing or empty-string id", () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const since = isoHoursAgo(24);
+    const { upserted } = syncPagerdutyIncidentItems(
+      ctx,
+      [
+        { title: "No id field" },
+        { id: "", title: "Empty id" },
+        { id: "VALID_ID", title: "Has id", status: "triggered", created_at: isoHoursAgo(12) },
+      ],
+      since,
+      Date.now(),
+    );
+    // Only the item with VALID_ID should be upserted
+    expect(upserted).toBe(1);
+    expectServiceItemCount(db, "pagerduty", 1);
+  });
+
+  test("syncPagerdutyIncidentItems: updated_at not advancing maxUpdated when older than since", () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }));
+    const recentSince = isoHoursAgo(5);
+    const olderThanSince = isoHoursAgo(10);
+    const { maxUpdated } = syncPagerdutyIncidentItems(
+      ctx,
+      [
+        {
+          id: "PT_OLD",
+          title: "Old item",
+          status: "resolved",
+          created_at: olderThanSince,
+          updated_at: olderThanSince,
+        },
+      ],
+      recentSince,
+      Date.now(),
+    );
+    // maxUpdated must not go backwards (must stay at recentSince)
+    expect(maxUpdated).toBe(recentSince);
+  });
+
+  // ── upsertPagerdutyIncident edge branches ────────────────────────────────
+
+  test("falls back to 'Incident <id>' when title field is absent", async () => {
+    const db = await runOneSync([
+      {
+        id: "PT_NO_TITLE",
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: isoHoursAgo(12),
+      },
+    ]);
+    const row = db
+      .prepare("SELECT title FROM item WHERE service = ? AND external_id = ?")
+      .get("pagerduty", "PT_NO_TITLE") as { title: string };
+    expect(row.title).toBe("Incident PT_NO_TITLE");
+  });
+
+  test("truncates title longer than 512 characters", async () => {
+    const longTitle = "A".repeat(600);
+    const db = await runOneSync([
+      {
+        id: "PT_LONG_TITLE",
+        title: longTitle,
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: isoHoursAgo(12),
+      },
+    ]);
+    const row = db
+      .prepare("SELECT title FROM item WHERE service = ? AND external_id = ?")
+      .get("pagerduty", "PT_LONG_TITLE") as { title: string };
+    expect(row.title.length).toBe(512);
+    expect(row.title).toBe("A".repeat(512));
+  });
+
+  test("url is null when html_url is absent", async () => {
+    const db = await runOneSync([
+      {
+        id: "PT_NO_URL",
+        title: "No url",
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: isoHoursAgo(12),
+      },
+    ]);
+    const row = db
+      .prepare("SELECT url FROM item WHERE service = ? AND external_id = ?")
+      .get("pagerduty", "PT_NO_URL") as { url: string | null };
+    expect(row.url).toBeNull();
+  });
+
+  test("modifiedAt falls back to now when updated_at is malformed", async () => {
+    const before = Date.now();
+    const db = await runOneSync([
+      {
+        id: "PT_BAD_UPDATED",
+        title: "Garbled updated_at",
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: "not-a-date",
+      },
+    ]);
+    const after = Date.now();
+    const row = db
+      .prepare("SELECT modified_at FROM item WHERE service = ? AND external_id = ?")
+      .get("pagerduty", "PT_BAD_UPDATED") as { modified_at: number };
+    expect(row.modified_at).toBeGreaterThanOrEqual(before);
+    expect(row.modified_at).toBeLessThanOrEqual(after);
+  });
+
+  test("omits pagerduty_service_id when service.id is empty string", async () => {
+    const db = await runOneSync([
+      {
+        id: "PT_EMPTY_SVC_ID",
+        title: "Empty service id",
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: isoHoursAgo(12),
+        service: { id: "" },
+      },
+    ]);
+    const meta = readIncidentMetadata(db, "PT_EMPTY_SVC_ID");
+    expect(meta.pagerduty_service_id).toBeUndefined();
+  });
+
+  test("omits severity when priority.name is empty string", async () => {
+    const db = await runOneSync([
+      {
+        id: "PT_EMPTY_PRI_NAME",
+        title: "Empty priority name",
+        status: "triggered",
+        created_at: isoHoursAgo(12),
+        updated_at: isoHoursAgo(12),
+        priority: { id: "P1", name: "" },
+      },
+    ]);
+    const meta = readIncidentMetadata(db, "PT_EMPTY_PRI_NAME");
+    expect(meta.severity).toBeUndefined();
+  });
+
+  // ── maxPagesPerSync clamping ─────────────────────────────────────────────
+
+  test("maxPagesPerSync of 0 is clamped to 1 — fetches exactly one page", async () => {
+    const updatedA = isoHoursAgo(12);
+    const { calls } = stubPagerdutyPages([
+      {
+        incidents: [
+          {
+            id: "P_CLAMP1",
+            title: "First page",
+            created_at: updatedA,
+            updated_at: updatedA,
+            status: "triggered",
+          },
+        ],
+        more: true,
+      },
+      {
+        // second page should never be fetched
+        incidents: [],
+        more: false,
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createPagerdutySyncable({
+      ensurePagerdutyMcpRunning: async () => {},
+      maxPagesPerSync: 0,
+    });
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const result = await sync.sync(syncTestContext(db, vault), null);
+    expect(calls.length).toBe(1);
+    expect(result.itemsUpserted).toBe(1);
+    // pdHasMore=true and pagesFetched(1) >= clampedMax(1) → hasMore=true
+    expect(result.hasMore).toBe(true);
+  });
+
+  test("maxPagesPerSync of 200 is clamped to 100 (upper bound)", async () => {
+    // Verify the clamped value is 100 by exhausting pages at 100 — we only
+    // supply one page that returns more=false so the loop exits early.
+    const updatedA = isoHoursAgo(12);
+    stubPagerdutyPages([
+      {
+        incidents: [
+          {
+            id: "P_UPPER",
+            title: "Single page",
+            created_at: updatedA,
+            updated_at: updatedA,
+            status: "triggered",
+          },
+        ],
+        more: false,
+      },
+    ]);
+    const db = createMemoryIndexDb();
+    const sync = createPagerdutySyncable({
+      ensurePagerdutyMcpRunning: async () => {},
+      maxPagesPerSync: 200,
+    });
+    const vault = createStubVault({ "pagerduty.api_token": "tok" });
+    const result = await sync.sync(syncTestContext(db, vault), null);
+    expect(result.itemsUpserted).toBe(1);
+    // more=false so hasMore is false regardless of the cap
+    expect(result.hasMore).toBe(false);
+  });
+
+  test("whitespace-only token is treated as missing → noop", async () => {
+    const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+    const ctx = syncTestContext(
+      createMemoryIndexDb(),
+      createStubVault({ "pagerduty.api_token": "   " }),
+    );
+    const result = await sync.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.cursor).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T02:17:52.435Z",
+  "generated_at": "2026-06-12T04:01:35.664Z",
   "files": {
     "packages/cli/src/commands/audit.ts": {
       "min_line_pct": 80,
@@ -121,82 +121,6 @@
     "packages/gateway/src/config/telemetry-toml.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 77.97
-    },
-    "packages/gateway/src/connectors/_lib/fetch-outcome.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/connectors/_lib/gitlab/events.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 74.03
-    },
-    "packages/gateway/src/connectors/_lib/gitlab/pipelines.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.56
-    },
-    "packages/gateway/src/connectors/_lib/http.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.92
-    },
-    "packages/gateway/src/connectors/_lib/pagination.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 71.43
-    },
-    "packages/gateway/src/connectors/_lib/rate-limit-observer.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/connectors/cloudwatch-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.51
-    },
-    "packages/gateway/src/connectors/connector-catalog.ts": {
-      "min_line_pct": 78.95,
-      "min_branch_pct": 60
-    },
-    "packages/gateway/src/connectors/connector-sync-test-helpers.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 62.5
-    },
-    "packages/gateway/src/connectors/fastmail-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 64.36
-    },
-    "packages/gateway/src/connectors/filesystem-v2-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.64
-    },
-    "packages/gateway/src/connectors/github-index-repos.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/connectors/iac-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/connectors/obsidian-daily-note.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/connectors/obsidian-parsing.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.63
-    },
-    "packages/gateway/src/connectors/openapi-indexer-config.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.38
-    },
-    "packages/gateway/src/connectors/pagerduty-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.47
-    },
-    "packages/gateway/src/connectors/user-mcp-store.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 72.22
-    },
-    "packages/gateway/src/connectors/zoom-sync.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.88
     },
     "packages/gateway/src/embedding/chunker.ts": {
       "min_line_pct": 80,

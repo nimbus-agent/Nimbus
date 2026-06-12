@@ -148,4 +148,126 @@ describe("connectorFetch", () => {
     expect(headers.get("Accept")).toBe("application/json");
     expect(observedInit?.body).toBe(JSON.stringify({ q: 1 }));
   });
+
+  test("uses globalThis.fetch when fetchFn is omitted (default param branch)", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    const body = JSON.stringify({ hello: "world" });
+    const savedFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () =>
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as unknown as typeof fetch;
+      const ctx = makeCtx({ fetch: globalThis.fetch, acquired, warnings });
+
+      // Call without passing fetchFn — exercises the default-param branch
+      const outcome = await connectorFetch(ctx, "argocd", "https://api/default");
+
+      expect(outcome.kind).toBe("ok");
+      if (outcome.kind === "ok") {
+        expect(outcome.parsed).toEqual({ hello: "world" });
+        expect(outcome.bytes).toBe(body.length);
+      }
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  test("uses empty object when init is omitted (default param branch)", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    let observedInit: RequestInit | undefined;
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      observedInit = init;
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    const ctx = makeCtx({ fetch: fetchFn, acquired, warnings });
+
+    // Pass fetchFn but omit init — exercises the `init = {}` default-param branch
+    const outcome = await connectorFetch(ctx, "argocd", "https://api/x", undefined, fetchFn);
+
+    expect(outcome.kind).toBe("ok");
+    // init should have been the default empty object
+    expect(observedInit).toEqual({});
+  });
+
+  test("http_error outcome includes correct status code from response", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    const fetchFn = (async () =>
+      new Response("Service Unavailable", {
+        status: 503,
+      })) as unknown as typeof fetch;
+    const ctx = makeCtx({ fetch: fetchFn, acquired, warnings });
+
+    const outcome = await connectorFetch(ctx, "argocd", "https://api/x", {}, fetchFn);
+
+    expect(outcome.kind).toBe("http_error");
+    if (outcome.kind === "http_error") {
+      expect(outcome.status).toBe(503);
+      expect(outcome.bytes).toBe("Service Unavailable".length);
+    }
+    expect(warnings[0]?.bindings).toMatchObject({ url: "https://api/x" });
+  });
+
+  test("http_error warning includes url binding", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    const fetchFn = (async () => new Response("", { status: 401 })) as unknown as typeof fetch;
+    const ctx = makeCtx({ fetch: fetchFn, acquired, warnings });
+
+    await connectorFetch(ctx, "linear", "https://api.linear.app/graphql", {}, fetchFn);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.bindings).toMatchObject({
+      serviceId: "linear",
+      status: 401,
+      url: "https://api.linear.app/graphql",
+    });
+    expect(warnings[0]?.msg).toBe("connector fetch failed");
+  });
+
+  test("parse_error byte count matches raw text length for non-empty invalid JSON", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    const body = "<html>Not JSON at all</html>";
+    const fetchFn = (async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      })) as unknown as typeof fetch;
+    const ctx = makeCtx({ fetch: fetchFn, acquired, warnings });
+
+    const outcome = await connectorFetch(ctx, "argocd", "https://api/x", {}, fetchFn);
+
+    expect(outcome.kind).toBe("parse_error");
+    if (outcome.kind === "parse_error") {
+      expect(outcome.bytes).toBe(body.length);
+    }
+    // parse_error must not emit warnings
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("ok outcome byte count for empty JSON object", async () => {
+    const acquired: RateLimiterRecord = { acquired: [] };
+    const warnings: { msg: string; bindings: Record<string, unknown> }[] = [];
+    const body = "{}";
+    const fetchFn = (async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const ctx = makeCtx({ fetch: fetchFn, acquired, warnings });
+
+    const outcome = await connectorFetch(ctx, "github", "https://api.github.com/x", {}, fetchFn);
+
+    expect(outcome.kind).toBe("ok");
+    if (outcome.kind === "ok") {
+      expect(outcome.parsed).toEqual({});
+      expect(outcome.bytes).toBe(body.length);
+    }
+    expect(acquired.acquired).toEqual(["github"]);
+  });
 });

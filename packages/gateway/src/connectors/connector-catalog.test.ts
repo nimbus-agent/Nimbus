@@ -167,4 +167,151 @@ describe("oauthProfileForService — unsupported providers throw structured erro
       expect((err as Error).message).toContain("github");
     }
   });
+
+  const remainingUnsupported: ConnectorServiceId[] = [
+    "snyk",
+    "bitrise",
+    "codemagic",
+    "testflight",
+    "firebase",
+    "sonarqube",
+    "semgrep",
+    "wiz",
+    "launchdarkly",
+    "flagsmith",
+    "argocd",
+    "flux",
+    "dbt",
+    "metabase",
+    "superset",
+    "databricks",
+    "mlflow",
+    "vercel",
+    "netlify",
+    "stripe",
+    "mercury",
+    "readwise",
+    "raindrop",
+    "intercom",
+    "zendesk",
+    "lever",
+    "greenhouse",
+    "pipedrive",
+    "stackoverflow",
+    "zotero",
+    "dependencytrack",
+    "airflow",
+    "prefect",
+    "dagster",
+    "ramp",
+    "bigquery",
+    "athena",
+    "cloudwatch",
+    "sagemaker",
+    "cloud_logging",
+    "vertex_ai",
+    "elasticsearch",
+    "great_expectations",
+    "imap",
+    "fastmail",
+    "protonmail",
+    "localdb",
+    "storybook",
+    "dataprofile",
+  ];
+
+  test.each(remainingUnsupported)("throws for remaining unsupported service %s", (svc) => {
+    expect(() => oauthProfileForService(svc)).toThrow(/oauthProfileForService:/);
+  });
+
+  test("error message includes the service id for a sampling of remaining unsupported services", () => {
+    const samples: ConnectorServiceId[] = ["snyk", "stripe", "bigquery", "imap", "dataprofile"];
+    for (const svc of samples) {
+      let caught: unknown;
+      try {
+        oauthProfileForService(svc);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain(svc);
+    }
+  });
+});
+
+describe("oauthProfileForService — remaining supported OAuth providers", () => {
+  test("returns Google provider profile for google_meet with meetings scope", () => {
+    const profile = oauthProfileForService("google_meet");
+    expect(profile.provider).toBe("google");
+    expect(profile.defaultScopes).toContain(
+      "https://www.googleapis.com/auth/meetings.space.readonly",
+    );
+  });
+
+  test("returns zoom provider profile with meeting and recording scopes", () => {
+    const profile = oauthProfileForService("zoom");
+    expect(profile.provider).toBe("zoom");
+    expect(profile.defaultScopes).toContain("user:read:user");
+    expect(profile.defaultScopes).toContain("meeting:read:list_meetings");
+    expect(profile.defaultScopes).toContain("cloud_recording:read:list_user_recordings");
+  });
+
+  test("returns hubspot provider profile with crm deals read scope", () => {
+    const profile = oauthProfileForService("hubspot");
+    expect(profile.provider).toBe("hubspot");
+    expect(profile.defaultScopes).toContain("crm.objects.deals.read");
+    expect(profile.defaultScopes).toContain("oauth");
+  });
+
+  test("returns miro provider profile with boards:read scope", () => {
+    const profile = oauthProfileForService("miro");
+    expect(profile.provider).toBe("miro");
+    expect(profile.defaultScopes).toContain("boards:read");
+  });
+
+  test("returns canva provider profile with design:meta:read scope", () => {
+    const profile = oauthProfileForService("canva");
+    expect(profile.provider).toBe("canva");
+    expect(profile.defaultScopes).toContain("design:meta:read");
+  });
+
+  test("returns figma provider profile with files:read scope", () => {
+    const profile = oauthProfileForService("figma");
+    expect(profile.provider).toBe("figma");
+    expect(profile.defaultScopes).toContain("files:read");
+  });
+
+  test("returns salesforce provider profile with api and refresh_token scopes", () => {
+    const profile = oauthProfileForService("salesforce");
+    expect(profile.provider).toBe("salesforce");
+    expect(profile.defaultScopes).toContain("api");
+    expect(profile.defaultScopes).toContain("refresh_token");
+  });
+});
+
+describe("oauthProfileForService — completeness", () => {
+  test("every service in CONNECTOR_SERVICE_IDS either returns a profile or throws a structured error", () => {
+    for (const svc of CONNECTOR_SERVICE_IDS) {
+      let result: ReturnType<typeof oauthProfileForService> | undefined;
+      let caught: unknown;
+      try {
+        result = oauthProfileForService(svc);
+      } catch (err) {
+        caught = err;
+      }
+      if (caught !== undefined) {
+        expect(caught).toBeInstanceOf(Error);
+        expect((caught as Error).message).toMatch(/^oauthProfileForService:/);
+        expect((caught as Error).message).toContain(svc);
+      } else {
+        expect(result).toBeDefined();
+        expect(typeof (result as ReturnType<typeof oauthProfileForService>).provider).toBe(
+          "string",
+        );
+        expect(
+          Array.isArray((result as ReturnType<typeof oauthProfileForService>).defaultScopes),
+        ).toBe(true);
+      }
+    }
+  });
 });
