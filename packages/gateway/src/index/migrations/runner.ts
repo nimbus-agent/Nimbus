@@ -56,6 +56,7 @@ import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
+import { TRIBAL_CLUSTERS_V39_SQL } from "../tribal-clusters-v39-sql.ts";
 import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
   UNIFIED_ITEM_V3_SCHEMA_SQL,
@@ -393,6 +394,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(35, 36, "org_policy_state + policy_anchor_pin (policy v36)", POLICY_V36_SQL),
   simpleStep(36, 37, "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37)", GDPR_V37_SQL),
   simpleStep(37, 38, "federation_known_namespaces asker-side cache", KNOWN_NAMESPACES_V38_SQL),
+  simpleStep(
+    38,
+    39,
+    "tribal_clusters (tribal-knowledge cluster ledger v39)",
+    TRIBAL_CLUSTERS_V39_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
@@ -433,6 +440,8 @@ const BACKFILL_LABELS: readonly string[] = [
   "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
   "org_policy_state + policy_anchor_pin (policy v36) (backfilled)",
   "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37) (backfilled)",
+  "federation_known_namespaces asker-side cache (backfilled)",
+  "tribal_clusters (tribal-knowledge cluster ledger v39) (backfilled)",
 ];
 
 function backfillMigrationsLedger(db: Database): void {
