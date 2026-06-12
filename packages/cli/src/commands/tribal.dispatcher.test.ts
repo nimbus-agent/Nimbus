@@ -63,3 +63,18 @@ test("scan → tribal.scan", async () => {
   await runTribalCommand(client, { kind: "scan" });
   expect(calls[0]?.method).toBe("tribal.scan");
 });
+
+test("capture without target sends only the clusterId", async () => {
+  const { client, calls } = fakeClient({ ok: true, pageRef: "notion:pg1" });
+  await runTribalCommand(client, { kind: "capture", clusterId: "k1" });
+  expect(calls[0]).toEqual({ method: "tribal.capture", params: { clusterId: "k1" } });
+});
+
+test("capture with target forwards the target", async () => {
+  const { client, calls } = fakeClient({ ok: true, pageRef: "confluence:pg2" });
+  await runTribalCommand(client, { kind: "capture", clusterId: "k1", target: "confluence" });
+  expect(calls[0]).toEqual({
+    method: "tribal.capture",
+    params: { clusterId: "k1", target: "confluence" },
+  });
+});

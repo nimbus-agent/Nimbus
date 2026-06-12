@@ -126,6 +126,51 @@ test("dismiss puts a cluster into cooldown so it stops re-suggesting", async () 
   expect(sent).toHaveLength(1);
 });
 
+const okSubmit = async () => ({ status: "approved" as const, result: { pageRef: "notion:p" } });
+
+test("capture is unavailable when synthesize is not wired", async () => {
+  const boot = buildTribalBoot(deps());
+  expect(await boot.rpcCtx.capture("k1", undefined, okSubmit)).toEqual({
+    ok: false,
+    error: "capture_unavailable",
+  });
+});
+
+test("capture on a missing cluster → not_found", async () => {
+  const boot = buildTribalBoot(
+    deps({ synthesize: async () => ({ title: "T", bodyMarkdown: "B", citations: [] }) }),
+  );
+  expect(await boot.rpcCtx.capture("nope", undefined, okSubmit)).toEqual({
+    ok: false,
+    error: "not_found",
+  });
+});
+
+test("capture wires the write-gate: synthesize → owner HITL → markCaptured", async () => {
+  const db = freshDb();
+  db.run(
+    `INSERT INTO tribal_clusters (cluster_id, representative_question, occurrence_count, first_seen, last_seen, status, channel_id, platform)
+     VALUES ('k1', 'how do I deploy?', 3, 1000, 2000, 'suggested', 'C1', 'slack')`,
+  );
+  const submitted: { type: string; payload: Record<string, unknown> }[] = [];
+  const boot = buildTribalBoot(
+    deps({
+      db,
+      cfg: { ...baseCfg, notion: { databaseId: "db_cfg" } },
+      synthesize: async () => ({ title: "Deploying", bodyMarkdown: "Run deploy", citations: [] }),
+    }),
+  );
+  const r = await boot.rpcCtx.capture("k1", "notion", async (action) => {
+    submitted.push(action);
+    return { status: "approved", result: { pageRef: "notion:pg1" } };
+  });
+  expect(r).toEqual({ ok: true, pageRef: "notion:pg1" });
+  expect(submitted[0]?.type).toBe("notion.knowledge.write");
+  expect(submitted[0]?.payload["databaseId"]).toBe("db_cfg");
+  const row = boot.rpcCtx.list("captured") as { clusterId: string }[];
+  expect(row.map((c) => c.clusterId)).toEqual(["k1"]);
+});
+
 test("scan re-fires suggestions for qualifying pending clusters", async () => {
   // Seed a cluster directly at threshold but still pending (suggestion never posted).
   const db = freshDb();

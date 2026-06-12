@@ -9,6 +9,22 @@ export interface TribalStatus {
   readonly clusters: number;
 }
 
+export interface TribalCaptureResult {
+  ok: boolean;
+  pageRef?: string;
+  error?: string;
+}
+
+/**
+ * Submits the capture action through the executor HITL gate. Built PER-CALL in the dispatcher with
+ * the initiating client's consent channel (the local owner who ran `nimbus tribal capture`) — never
+ * at boot — so the I25 approval prompt reaches the operator who triggered it.
+ */
+export type TribalSubmitAction = (action: {
+  type: string;
+  payload: Record<string, unknown>;
+}) => Promise<{ status: "approved" | "rejected"; result?: { pageRef: string } }>;
+
 export interface TribalRpcCtx {
   readonly status: () => TribalStatus;
   readonly start: () => Promise<void>;
@@ -16,6 +32,12 @@ export interface TribalRpcCtx {
   readonly list: (status?: string) => unknown;
   readonly dismiss: (clusterId: string) => Promise<void>;
   readonly scan: () => Promise<{ scanned: number; fired: number }>;
+  /** `submitAction` is supplied per-call by the dispatcher (per-client HITL consent); see I25. */
+  readonly capture: (
+    clusterId: string,
+    target: string | undefined,
+    submitAction: TribalSubmitAction,
+  ) => Promise<TribalCaptureResult>;
 }
 
 function requireString(params: unknown, key: string): string {
@@ -47,6 +69,8 @@ const HANDLERS: RpcMethodHandlerMap<TribalRpcCtx> = {
     return { ok: true } as const;
   },
   "tribal.scan": (_p, ctx) => ctx.scan(),
+  // NOTE: `tribal.capture` is NOT registered here — it needs a per-call HITL consent channel
+  // (the initiating client) that only the dispatcher has. See tryDispatchTribalRpc.
 } as const;
 
 export function dispatchTribalRpc(

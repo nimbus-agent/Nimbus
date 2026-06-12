@@ -113,12 +113,15 @@ import { refreshPolicy } from "../policy/policy-runtime.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
+import { vectorSearchChunks } from "../search/vec-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { invokeTeamTool } from "../teamvault/team-tool-invoke.ts";
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
+import { type SynthSource, synthesizeAnswer } from "../tribal/answer-synthesizer.ts";
+import type { TribalCluster } from "../tribal/cluster-store.ts";
 import { buildTribalBoot, type TribalBoot } from "../tribal/tribal-boot.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
@@ -1070,6 +1073,74 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       );
     }
     const embeddingRt = rt;
+    const tribalModel = embeddingRt.getEmbeddingModel();
+    const tribalWatch = tribalCfg.watchChannels;
+    const tribalWatchSet = new Set(tribalWatch);
+    // Recall the cluster's source threads from the index, channel-filtered IN SQL (review §2.1),
+    // and hydrate each hit with its channel + url for citations. Empty when the cluster has no vec.
+    const gatherSources = (cluster: TribalCluster): SynthSource[] => {
+      const vec = cluster.representativeVec;
+      if (vec === null) return [];
+      const hits = [
+        ...vectorSearchChunks(db, {
+          queryEmbedding: vec,
+          model: tribalModel,
+          limit: 5,
+          service: "slack",
+          itemType: "message",
+          metadataChannelIn: tribalWatch,
+        }),
+        ...vectorSearchChunks(db, {
+          queryEmbedding: vec,
+          model: tribalModel,
+          limit: 5,
+          service: "teams",
+          itemType: "message",
+          metadataChannelIn: tribalWatch,
+        }),
+      ];
+      const out: SynthSource[] = [];
+      const seen = new Set<string>();
+      for (const h of hits) {
+        if (seen.has(h.itemId)) continue;
+        seen.add(h.itemId);
+        const row = db.query("SELECT metadata, url FROM item WHERE id = ?").get(h.itemId) as {
+          metadata: string | null;
+          url: string | null;
+        } | null;
+        let channelId = "";
+        if (row?.metadata != null) {
+          try {
+            const m = JSON.parse(row.metadata) as { channel?: unknown };
+            if (typeof m.channel === "string") channelId = m.channel;
+          } catch {
+            // non-JSON metadata → leave channelId empty (filtered out by the watch-set check)
+          }
+        }
+        out.push({ itemId: h.itemId, channelId, url: row?.url ?? null, text: h.chunkText });
+      }
+      return out;
+    };
+    // v1 synthesis: a deterministic draft (title = the question, body = the source snippets) that
+    // the owner reviews + edits at the HITL gate. The injected-llm seam keeps swapping in an
+    // LLM-authored prose draft a one-line change (answer-synthesizer.ts SYNTH_PROMPT is ready).
+    const tribalSynthesize = (cluster: TribalCluster) =>
+      synthesizeAnswer(
+        {
+          gatherSources,
+          watchChannels: tribalWatchSet,
+          llm: async (question, srcs) => ({
+            title: question.slice(0, 120),
+            bodyMarkdown:
+              srcs.length === 0
+                ? "No source context was found — please write the answer manually before saving."
+                : `Drafted from ${srcs.length} source message(s) — review and edit before saving.\n\n${srcs
+                    .map((s) => `- ${s.text}`)
+                    .join("\n")}`,
+          }),
+        },
+        cluster,
+      );
     tribalBoot = buildTribalBoot({
       db,
       cfg: tribalCfg,
@@ -1079,9 +1150,19 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       // user id is not resolvable without an extra API call at boot.)
       botUserIds: new Set([chatopsCfg.teamsBotAppId].filter((s) => s !== "")),
       send: (target, text) => tribalSend(target, text),
+      synthesize: tribalSynthesize,
       log: (m) => syncLogger.warn(m),
     });
     ipcOpts.tribalRpcCtx = tribalBoot.rpcCtx;
+    // I25 capture write target: the e2e sink when set (Task 20), else the real connector mesh.
+    const tribalE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
+    ipcOpts.tribalConnectorDispatcher =
+      tribalE2eSinkDir === undefined || tribalE2eSinkDir === ""
+        ? createConnectorDispatcher({
+            listTools: () => connectorMesh.listToolsForDispatcher(),
+            getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+          })
+        : buildE2eSinkDispatcher(tribalE2eSinkDir);
   }
 
   // ChatOps (Phase 6 Slice 5 boot wiring — the deferred follow-up of PR #559). When

@@ -2,10 +2,12 @@ import type { Database } from "bun:sqlite";
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import type { NimbusTribalToml } from "../config/nimbus-toml.ts";
 import type { TribalRpcCtx } from "../ipc/tribal-rpc.ts";
-import { TribalClusterStore, type TribalStatus } from "./cluster-store.ts";
+import type { SynthesizedAnswer } from "./answer-synthesizer.ts";
+import { type TribalCluster, TribalClusterStore, type TribalStatus } from "./cluster-store.ts";
 import type { RecallHit } from "./repeat-detector.ts";
 import { postSuggestion } from "./tribal-suggestion.ts";
 import { TribalWatcher } from "./tribal-watcher.ts";
+import { captureToKnowledgeBase } from "./tribal-write-gate.ts";
 
 const DAY_MS = 86_400_000;
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -30,6 +32,14 @@ export interface TribalBootDeps {
    * originating channel. May be a no-op when chatops is disabled (detection still records clusters).
    */
   readonly send: (target: ReplyTarget, text: string) => Promise<void>;
+  /**
+   * I25 capture seam. When present, `tribal.capture` is live: a draft is synthesized and submitted
+   * through the executor HITL gate (the `submitAction` is supplied PER-CALL by the dispatcher with
+   * the initiating client's consent), writing to the config-pinned KB. Absent → `capture_unavailable`
+   * (detection/suggestion still work). The destination is resolved from `cfg.notion`/`cfg.confluence`
+   * only — never from the caller (the write-gate enforces this).
+   */
+  readonly synthesize?: (cluster: TribalCluster) => Promise<SynthesizedAnswer>;
   readonly log?: (m: string) => void;
   readonly now?: () => number;
 }
@@ -144,6 +154,30 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
         }
       }
       return { scanned: pending.length, fired };
+    },
+    capture: async (clusterId, target, submitAction) => {
+      if (deps.synthesize === undefined) {
+        return { ok: false, error: "capture_unavailable" };
+      }
+      const cluster = store.get(clusterId);
+      if (cluster === undefined) return { ok: false, error: "not_found" };
+      const t = target === "notion" || target === "confluence" ? target : undefined;
+      const r = await captureToKnowledgeBase(
+        {
+          cfg: {
+            ...(deps.cfg.notion !== undefined ? { notion: deps.cfg.notion } : {}),
+            ...(deps.cfg.confluence !== undefined ? { confluence: deps.cfg.confluence } : {}),
+          },
+          synthesize: deps.synthesize,
+          submitAction,
+          store,
+          cooldownDays: deps.cfg.cooldownDays,
+          now,
+        },
+        cluster,
+        t,
+      );
+      return r.ok ? { ok: true, pageRef: r.pageRef } : { ok: false, error: r.error };
     },
   };
 

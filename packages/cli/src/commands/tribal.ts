@@ -8,7 +8,8 @@ export type TribalCommand =
   | { kind: "stop" }
   | { kind: "list"; status?: string }
   | { kind: "dismiss"; clusterId: string }
-  | { kind: "scan" };
+  | { kind: "scan" }
+  | { kind: "capture"; clusterId: string; target?: "notion" | "confluence" };
 
 /** Minimal client surface used by the tribal dispatcher — satisfied by IPCClient. */
 export interface TribalIpc {
@@ -28,7 +29,32 @@ interface TribalClusterRow {
   readonly channelId: string;
 }
 
-const USAGE = "Usage: nimbus tribal [status|start|stop|list [status]|dismiss <cluster-id>|scan]";
+const USAGE =
+  "Usage: nimbus tribal [status|start|stop|list [status]|dismiss <cluster-id>|scan|capture <cluster-id> [--target notion|confluence]]";
+
+function parseCaptureArgs(rest: string[]): TribalCommand {
+  let clusterId: string | undefined;
+  let target: "notion" | "confluence" | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--target") {
+      const v = rest[i + 1];
+      if (v !== "notion" && v !== "confluence") {
+        throw new Error("nimbus tribal capture --target must be 'notion' or 'confluence'");
+      }
+      target = v;
+      i++;
+    } else if (a !== undefined && !a.startsWith("--") && clusterId === undefined) {
+      clusterId = a;
+    }
+  }
+  if (clusterId === undefined || clusterId === "") {
+    throw new Error("Usage: nimbus tribal capture <cluster-id> [--target notion|confluence]");
+  }
+  return target === undefined
+    ? { kind: "capture", clusterId }
+    : { kind: "capture", clusterId, target };
+}
 
 export function parseTribalArgs(argv: string[]): TribalCommand {
   const [sub, ...rest] = argv;
@@ -53,6 +79,8 @@ export function parseTribalArgs(argv: string[]): TribalCommand {
     }
     case "scan":
       return { kind: "scan" };
+    case "capture":
+      return parseCaptureArgs(rest);
     default:
       throw new Error(`Unknown subcommand: ${sub}\n${USAGE}`);
   }
@@ -102,6 +130,21 @@ export async function runTribalCommand(client: TribalIpc, cmd: TribalCommand): P
     case "scan": {
       const r = await client.call<{ scanned: number; fired: number }>("tribal.scan", {});
       process.stdout.write(`Scanned ${r.scanned}; ${r.fired} suggestion(s) fired\n`);
+      break;
+    }
+    case "capture": {
+      const r = await client.call<{ ok: boolean; pageRef?: string; error?: string }>(
+        "tribal.capture",
+        cmd.target === undefined
+          ? { clusterId: cmd.clusterId }
+          : { clusterId: cmd.clusterId, target: cmd.target },
+      );
+      if (r.ok) {
+        process.stdout.write(`Captured ${cmd.clusterId} → ${r.pageRef ?? "(no ref)"}\n`);
+      } else {
+        process.stderr.write(`Capture failed: ${r.error ?? "unknown"}\n`);
+        process.exitCode = 1;
+      }
       break;
     }
   }

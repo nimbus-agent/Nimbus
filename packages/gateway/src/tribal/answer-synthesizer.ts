@@ -14,11 +14,15 @@ export interface SynthDeps {
   /** The privacy allowlist — sources outside it are dropped (defense-in-depth atop gatherSources). */
   watchChannels: ReadonlySet<string>;
   /**
-   * Drafts a Q&A from the sources. The prompt MUST instruct SIMPLE markdown only — plain
-   * paragraphs separated by blank lines plus an optional `-` bulleted list; no headers, tables,
-   * code fences, or inline HTML (keeps the Notion/Confluence converter trivial; review §3.1).
+   * Drafts a Q&A for `question` from the sources. The implementation MUST instruct the model to use
+   * SIMPLE markdown only — plain paragraphs separated by blank lines plus an optional `-` bulleted
+   * list; no headers, tables, code fences, or inline HTML (keeps the Notion/Confluence converter
+   * trivial; review §3.1). `SYNTH_PROMPT` is the shared instruction to prepend.
    */
-  llm: (prompt: string, sources: SynthSource[]) => Promise<{ title: string; bodyMarkdown: string }>;
+  llm: (
+    question: string,
+    sources: SynthSource[],
+  ) => Promise<{ title: string; bodyMarkdown: string }>;
 }
 
 export interface SynthesizedAnswer {
@@ -27,7 +31,7 @@ export interface SynthesizedAnswer {
   citations: { itemId: string; channelId: string; url: string | null }[];
 }
 
-const SYNTH_PROMPT =
+export const SYNTH_PROMPT =
   "You are documenting a frequently-asked team question for a shared knowledge base. " +
   "Write a concise, accurate answer using ONLY the provided source messages. " +
   "Use SIMPLE markdown only: plain paragraphs separated by blank lines, plus an optional " +
@@ -45,7 +49,7 @@ export async function synthesizeAnswer(
   cluster: TribalCluster,
 ): Promise<SynthesizedAnswer> {
   const sources = deps.gatherSources(cluster).filter((s) => deps.watchChannels.has(s.channelId));
-  const draft = await deps.llm(SYNTH_PROMPT, sources);
+  const draft = await deps.llm(cluster.representativeQuestion, sources);
   return {
     title: draft.title,
     bodyMarkdown: draft.bodyMarkdown,

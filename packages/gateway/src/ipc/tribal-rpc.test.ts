@@ -9,6 +9,10 @@ function makeCtx(over: Partial<TribalRpcCtx> = {}): TribalRpcCtx {
     list: (status) => [{ clusterId: "k1", status: status ?? "all" }],
     dismiss: async () => {},
     scan: async () => ({ scanned: 5, fired: 1 }),
+    capture: async (clusterId, target) => ({
+      ok: true,
+      pageRef: `${target ?? "notion"}:${clusterId}`,
+    }),
     ...over,
   };
 }
@@ -52,6 +56,12 @@ test("tribal.start / tribal.stop return ok", async () => {
     kind: "hit",
     value: { ok: true },
   });
+});
+
+test("tribal.capture is NOT in the pure dispatcher (handled in the dispatcher with per-call HITL)", async () => {
+  // capture needs a per-call consent channel → it is special-cased in tryDispatchTribalRpc, not here.
+  const out = await dispatchTribalRpc("tribal.capture", { clusterId: "k1" }, makeCtx());
+  expect(out.kind).toBe("miss");
 });
 
 test("unknown tribal.* method is a miss", async () => {

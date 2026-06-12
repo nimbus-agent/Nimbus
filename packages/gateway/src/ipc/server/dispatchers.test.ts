@@ -97,6 +97,7 @@ function makeTribalRpcCtx(overrides: Partial<TribalRpcCtx> = {}): TribalRpcCtx {
     list: () => [],
     dismiss: async () => {},
     scan: async () => ({ scanned: 0, fired: 0 }),
+    capture: async () => ({ ok: true, pageRef: "notion:pg1" }),
     ...overrides,
   };
 }
@@ -812,20 +813,43 @@ describe("tryDispatchChatopsRpc", () => {
 describe("tryDispatchTribalRpc", () => {
   test("skips a non-tribal method", async () => {
     const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
-    expect(await tryDispatchTribalRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchTribalRpc(ctx, "engine.ask", {}, "c1")).toBe(phase4RpcSkipped);
   });
   test("skips when tribalRpcCtx is not wired", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchTribalRpc(ctx, "tribal.status", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchTribalRpc(ctx, "tribal.status", {}, "c1")).toBe(phase4RpcSkipped);
   });
   test("dispatches tribal.status when the ctx is wired", async () => {
     const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
-    const out = await tryDispatchTribalRpc(ctx, "tribal.status", {});
+    const out = await tryDispatchTribalRpc(ctx, "tribal.status", {}, "c1");
     expect(out).toMatchObject({ enabled: true, clusters: 0 });
   });
   test("an unknown tribal.* method falls through to skipped", async () => {
     const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
-    expect(await tryDispatchTribalRpc(ctx, "tribal.__nope__", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchTribalRpc(ctx, "tribal.__nope__", {}, "c1")).toBe(phase4RpcSkipped);
+  });
+  test("tribal.capture requires a clusterId", async () => {
+    const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
+    await expect(tryDispatchTribalRpc(ctx, "tribal.capture", {}, "c1")).rejects.toThrow(
+      /clusterId/,
+    );
+  });
+  test("tribal.capture with no connector dispatcher rejects the write (fail-closed)", async () => {
+    // localIndex/tribalConnectorDispatcher unset → submitAction returns rejected; capture surfaces it.
+    const captured: { clusterId: string; target: string | undefined }[] = [];
+    const rpc = makeTribalRpcCtx({
+      capture: async (clusterId, target, submit) => {
+        captured.push({ clusterId, target });
+        const r = await submit({ type: "notion.knowledge.write", payload: {} });
+        return r.status === "approved"
+          ? { ok: true, pageRef: "x" }
+          : { ok: false, error: "rejected" };
+      },
+    });
+    const { ctx } = makeCtx({ tribalRpcCtx: rpc });
+    const out = await tryDispatchTribalRpc(ctx, "tribal.capture", { clusterId: "k1" }, "c1");
+    expect(out).toEqual({ ok: false, error: "rejected" });
+    expect(captured).toEqual([{ clusterId: "k1", target: undefined }]);
   });
 });
 

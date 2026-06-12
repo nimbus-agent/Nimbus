@@ -22,6 +22,25 @@ test("dismiss requires a cluster id", () => {
   expect(() => parseTribalArgs(["dismiss"])).toThrow(/dismiss <cluster-id>/);
 });
 
+test("capture parses cluster id and optional --target", () => {
+  expect(parseTribalArgs(["capture", "k1"])).toEqual({ kind: "capture", clusterId: "k1" });
+  expect(parseTribalArgs(["capture", "k1", "--target", "confluence"])).toEqual({
+    kind: "capture",
+    clusterId: "k1",
+    target: "confluence",
+  });
+  expect(parseTribalArgs(["capture", "k1", "--target", "notion"])).toEqual({
+    kind: "capture",
+    clusterId: "k1",
+    target: "notion",
+  });
+});
+
+test("capture rejects a missing cluster id or a bad --target", () => {
+  expect(() => parseTribalArgs(["capture"])).toThrow(/capture <cluster-id>/);
+  expect(() => parseTribalArgs(["capture", "k1", "--target", "jira"])).toThrow(/--target must be/);
+});
+
 test("unknown subcommand throws usage", () => {
   expect(() => parseTribalArgs(["bogus"])).toThrow(/Unknown subcommand/);
 });

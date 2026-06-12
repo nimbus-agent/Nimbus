@@ -1,5 +1,6 @@
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
@@ -95,4 +96,8 @@ export type CreateIpcServerOptions = {
   // namespace (status, start, stop, list, dismiss, scan; capture added with the write path).
   // Present only when [tribal].enabled at boot; the dispatcher skips when unset. LAN-forbidden.
   tribalRpcCtx?: TribalRpcCtx;
+  // Connector dispatch seam for the I25 tribal capture write (notion_kb_append/confluence_kb_append).
+  // The capture executor is built PER-CALL in the dispatcher with the initiating client's consent;
+  // this provides the MCP dispatch target. Present only when [tribal].enabled at boot.
+  tribalConnectorDispatcher?: ConnectorDispatcher;
 };
