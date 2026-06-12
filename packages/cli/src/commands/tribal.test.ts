@@ -1,0 +1,27 @@
+import { expect, test } from "bun:test";
+import { parseTribalArgs } from "./tribal.ts";
+
+test("default + status → status", () => {
+  expect(parseTribalArgs([])).toEqual({ kind: "status" });
+  expect(parseTribalArgs(["status"])).toEqual({ kind: "status" });
+});
+
+test("start / stop / scan", () => {
+  expect(parseTribalArgs(["start"])).toEqual({ kind: "start" });
+  expect(parseTribalArgs(["stop"])).toEqual({ kind: "stop" });
+  expect(parseTribalArgs(["scan"])).toEqual({ kind: "scan" });
+});
+
+test("list with and without a status filter", () => {
+  expect(parseTribalArgs(["list"])).toEqual({ kind: "list" });
+  expect(parseTribalArgs(["list", "suggested"])).toEqual({ kind: "list", status: "suggested" });
+});
+
+test("dismiss requires a cluster id", () => {
+  expect(parseTribalArgs(["dismiss", "k1"])).toEqual({ kind: "dismiss", clusterId: "k1" });
+  expect(() => parseTribalArgs(["dismiss"])).toThrow(/dismiss <cluster-id>/);
+});
+
+test("unknown subcommand throws usage", () => {
+  expect(() => parseTribalArgs(["bogus"])).toThrow(/Unknown subcommand/);
+});
