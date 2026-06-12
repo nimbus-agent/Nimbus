@@ -422,7 +422,16 @@ function emit(filters: SockFilter[]): Buffer {
   return buf;
 }
 
-export function buildDefaultSeccompFilter(): Buffer {
+/** Optional overrides for testing — production callers omit both parameters. */
+export interface SeccompFilterOverrides {
+  allowList?: readonly string[];
+  blockList?: readonly string[];
+}
+
+export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}): Buffer {
+  const allowList = overrides.allowList ?? SYS_ALLOW;
+  const blockList = overrides.blockList ?? SYS_BLOCK_EPERM;
+
   const program: SockFilter[] = [];
   program.push(
     instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARCH_OFFSET),
@@ -431,7 +440,7 @@ export function buildDefaultSeccompFilter(): Buffer {
     instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_NR_OFFSET),
   );
 
-  for (const name of SYS_ALLOW) {
+  for (const name of allowList) {
     const nr = SYSCALL_NR[name];
     if (nr === undefined) {
       throw new Error(`unknown syscall in allow list: ${name}`);
@@ -441,7 +450,7 @@ export function buildDefaultSeccompFilter(): Buffer {
       instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),
     );
   }
-  for (const name of SYS_BLOCK_EPERM) {
+  for (const name of blockList) {
     const nr = SYSCALL_NR[name];
     if (nr === undefined) {
       throw new Error(`unknown syscall in block list: ${name}`);

@@ -217,14 +217,19 @@ function refill(state: BucketState, now: number): void {
 export class ProviderRateLimiter {
   private readonly states = new Map<Provider, BucketState>();
   private readonly mutexes = new Map<Provider, ProviderMutex>();
+  private readonly nowFn: () => number;
 
-  constructor(quotaOverrides?: Partial<Record<Provider, ProviderQuota>>) {
-    const now = Date.now();
+  constructor(
+    quotaOverrides?: Partial<Record<Provider, ProviderQuota>>,
+    now: () => number = () => Date.now(),
+  ) {
+    this.nowFn = now;
+    const t = now();
     for (const p of Object.keys(DEFAULT_QUOTAS) as Provider[]) {
       const quota = mergeQuota(p, quotaOverrides);
       this.states.set(p, {
         tokens: quota.burstSize,
-        lastRefillMs: now,
+        lastRefillMs: t,
         penaltyUntilMs: 0,
         quota,
       });
@@ -264,7 +269,7 @@ export class ProviderRateLimiter {
   private async acquireUnderLock(provider: Provider, tokens: number): Promise<void> {
     const state = this.stateFor(provider);
     for (;;) {
-      const now = Date.now();
+      const now = this.nowFn();
       if (now < state.penaltyUntilMs) {
         await sleepMs(state.penaltyUntilMs - now);
         continue;
@@ -287,7 +292,7 @@ export class ProviderRateLimiter {
     }
     void this.mutexFor(provider).runExclusive(async () => {
       const state = this.stateFor(provider);
-      const now = Date.now();
+      const now = this.nowFn();
       state.tokens = 0;
       state.penaltyUntilMs = Math.max(state.penaltyUntilMs, now + Math.floor(retryAfterMs));
       state.lastRefillMs = now;

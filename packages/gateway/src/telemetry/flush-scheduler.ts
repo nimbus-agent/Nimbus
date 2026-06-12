@@ -14,7 +14,7 @@ export type TelemetryFlushHandle = {
 const STORED_SESSION_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function parseStoredTelemetrySessionId(raw: string): string | undefined {
+export function parseStoredTelemetrySessionId(raw: string): string | undefined {
   const s = raw.trim();
   if (!STORED_SESSION_UUID_RE.test(s)) {
     return undefined;
@@ -22,7 +22,7 @@ function parseStoredTelemetrySessionId(raw: string): string | undefined {
   return s.toLowerCase();
 }
 
-function readErrorCode(err: unknown): string | undefined {
+export function readErrorCode(err: unknown): string | undefined {
   if (err !== null && typeof err === "object" && "code" in err) {
     const c = err.code;
     return typeof c === "string" ? c : undefined;

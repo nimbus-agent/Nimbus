@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { startTelemetryFlushScheduler } from "./flush-scheduler.ts";
+import {
+  parseStoredTelemetrySessionId,
+  readErrorCode,
+  startTelemetryFlushScheduler,
+} from "./flush-scheduler.ts";
 
 type TickFn = () => void;
 
@@ -537,5 +541,455 @@ describe("startTelemetryFlushScheduler — tick error outer catch", () => {
     (globalThis as any).fetch = origFetch;
 
     expect(warnMessages.some((m) => m.includes("telemetry flush tick failed"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure-helper unit tests (visibility-only exports added to cover branches)
+// ---------------------------------------------------------------------------
+
+describe("parseStoredTelemetrySessionId — pure helper", () => {
+  it("returns undefined for an empty string (fails regex)", () => {
+    expect(parseStoredTelemetrySessionId("")).toBeUndefined();
+  });
+
+  it("returns undefined for a clearly non-UUID string", () => {
+    expect(parseStoredTelemetrySessionId("not-a-uuid")).toBeUndefined();
+  });
+
+  it("returns undefined for a UUID that is version 3, not 4", () => {
+    // Version 3 UUID: 3rd group starts with '3', not '4'
+    expect(parseStoredTelemetrySessionId("550e8400-e29b-31d4-a716-446655440000")).toBeUndefined();
+  });
+
+  it("returns lowercase for a valid v4 UUID (uppercase input)", () => {
+    const upper = "550E8400-E29B-41D4-A716-446655440000";
+    const result = parseStoredTelemetrySessionId(upper);
+    expect(result).toBe(upper.toLowerCase());
+  });
+
+  it("returns the UUID with leading/trailing whitespace stripped", () => {
+    const uuid = "550e8400-e29b-41d4-a716-446655440000";
+    expect(parseStoredTelemetrySessionId(`  ${uuid}  `)).toBe(uuid);
+  });
+});
+
+describe("readErrorCode — pure helper", () => {
+  it("returns the code string when present and is a string", () => {
+    const err = { code: "ENOENT" };
+    expect(readErrorCode(err)).toBe("ENOENT");
+  });
+
+  it("returns undefined when code property exists but is a number, not a string", () => {
+    const err = { code: 42 };
+    expect(readErrorCode(err)).toBeUndefined();
+  });
+
+  it("returns undefined for a plain Error without a code property", () => {
+    expect(readErrorCode(new Error("oops"))).toBeUndefined();
+  });
+
+  it("returns undefined for null", () => {
+    expect(readErrorCode(null)).toBeUndefined();
+  });
+
+  it("returns undefined for a primitive string", () => {
+    expect(readErrorCode("ENOENT")).toBeUndefined();
+  });
+
+  it("returns undefined for a number", () => {
+    expect(readErrorCode(404)).toBeUndefined();
+  });
+
+  it("returns undefined for undefined", () => {
+    expect(readErrorCode(undefined)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session-file state branches exercised through startTelemetryFlushScheduler
+// ---------------------------------------------------------------------------
+
+describe("startTelemetryFlushScheduler — corrupt session file", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("proceeds to fetch even when .nimbus-telemetry-session contains garbage", async () => {
+    // Write a corrupt (non-UUID) session file — exercises the 'corrupt' branch
+    writeFileSync(join(harness.dataDir, ".nimbus-telemetry-session"), "not-a-uuid\n", "utf8");
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    await yieldMs(80);
+    handle.stop();
+
+    // persistCorruptSessionFile is called; a new session id is minted and fetch fires
+    expect(fetchSpy.callCount()).toBeGreaterThan(0);
+  });
+});
+
+describe("startTelemetryFlushScheduler — valid pre-existing session file", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("reuses the session id from an existing valid .nimbus-telemetry-session file", async () => {
+    // Pre-populate with a valid v4 UUID — exercises the 'valid' branch in readOrCreateSessionId
+    const knownId = "550e8400-e29b-41d4-a716-446655440000";
+    writeFileSync(join(harness.dataDir, ".nimbus-telemetry-session"), `${knownId}\n`, "utf8");
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    await yieldMs(80);
+    handle.stop();
+
+    expect(fetchSpy.callCount()).toBeGreaterThan(0);
+    const body = fetchSpy.lastBody() as Record<string, unknown>;
+    expect(body["session_id"]).toBe(knownId);
+  });
+});
+
+describe("startTelemetryFlushScheduler — interval clamping", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+  });
+
+  it("clamps flush_interval_seconds below 60 to exactly 60 000 ms", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "nimbus-flush-clamp-lo-"));
+    const tomlPath = join(dataDir, "nimbus.toml");
+    writeFileSync(
+      tomlPath,
+      `[telemetry]\nenabled = true\nflush_interval_seconds = 1\nendpoint = "https://example.com/ingest"\n`,
+      "utf8",
+    );
+    const db = new Database(":memory:");
+    db.exec(
+      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
+    );
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir,
+      activeTomlPath: tomlPath,
+      getDatabase: () => db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    const ms = fakeTimers.capturedIntervalMs();
+    handle.stop();
+    db.close();
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+
+    expect(ms).toBe(60_000);
+  });
+
+  it("clamps flush_interval_seconds above 86400 to exactly 86 400 000 ms", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "nimbus-flush-clamp-hi-"));
+    const tomlPath = join(dataDir, "nimbus.toml");
+    writeFileSync(
+      tomlPath,
+      `[telemetry]\nenabled = true\nflush_interval_seconds = 999999\nendpoint = "https://example.com/ingest"\n`,
+      "utf8",
+    );
+    const db = new Database(":memory:");
+    db.exec(
+      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
+    );
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir,
+      activeTomlPath: tomlPath,
+      getDatabase: () => db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    const ms = fakeTimers.capturedIntervalMs();
+    handle.stop();
+    db.close();
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+
+    expect(ms).toBe(86_400_000);
+  });
+});
+
+describe("startTelemetryFlushScheduler — fetch throws a non-Error value", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let harness: Harness;
+  const warnMessages: string[] = [];
+
+  beforeEach(() => {
+    warnMessages.length = 0;
+    fakeTimers = installFakeTimers();
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    harness.cleanup();
+  });
+
+  it("logs warn via String(err) when fetch rejects with a non-Error value", async () => {
+    const origFetch = globalThis.fetch;
+    // Reject with a plain string — exercises the `String(err)` branch in the .catch handler
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = async () => {
+      return Promise.reject("plain-string-rejection");
+    };
+
+    const warnLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            const j = JSON.parse(chunk) as { msg?: string };
+            if (typeof j.msg === "string") {
+              warnMessages.push(j.msg);
+            }
+          } catch {
+            /* skip non-JSON */
+          }
+        },
+      },
+    );
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: warnLogger,
+    });
+
+    await yieldMs(150);
+    handle.stop();
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+
+    expect(warnMessages.some((m) => m.includes("telemetry POST threw"))).toBe(true);
+  });
+});
+
+describe("startTelemetryFlushScheduler — outer tick catch with non-Error thrown", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let harness: Harness;
+  const warnMessages: string[] = [];
+
+  beforeEach(() => {
+    warnMessages.length = 0;
+    fakeTimers = installFakeTimers();
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    harness.cleanup();
+  });
+
+  it("logs tick error via String(e) when getDatabase throws a non-Error value", async () => {
+    const origFetch = globalThis.fetch;
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = async () => ({
+      ok: true,
+      status: 200,
+    });
+
+    const warnLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            const j = JSON.parse(chunk) as { msg?: string };
+            if (typeof j.msg === "string") {
+              warnMessages.push(j.msg);
+            }
+          } catch {
+            /* skip non-JSON */
+          }
+        },
+      },
+    );
+
+    // Throw a non-Error value to exercise the `String(e)` branch in outer catch
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => {
+        throw "synthetic-string-error";
+      },
+      gatewayVersion: "0.1.0-test",
+      logger: warnLogger,
+    });
+
+    await yieldMs(80);
+    handle.stop();
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = origFetch;
+
+    expect(warnMessages.some((m) => m.includes("telemetry flush tick failed"))).toBe(true);
+  });
+});
+
+describe("startTelemetryFlushScheduler — disabled marker file unreadable (non-ENOENT)", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("proceeds to fetch when the disabled marker check throws a non-ENOENT error", async () => {
+    // Simulate by stubbing readFileSync to throw EACCES for the disabled-marker path
+    // but still allow other files to be read normally.
+    // We cannot use mock.module so we exercise via an OS-level trick:
+    // On any platform, reading a directory as a file gives a different error than ENOENT.
+    // Create a directory named ".nimbus-telemetry-disabled" instead of a file.
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(harness.dataDir, ".nimbus-telemetry-disabled"), { recursive: true });
+
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    await yieldMs(80);
+    handle.stop();
+
+    // The "ignore unreadable marker" branch is hit; telemetry proceeds to fetch
+    expect(fetchSpy.callCount()).toBeGreaterThan(0);
+  });
+});
+
+describe("startTelemetryFlushScheduler — stop() with handle already null (second call)", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("second stop() does not call clearInterval again (handle is null)", async () => {
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+    });
+
+    await yieldMs(30);
+    handle.stop(); // first: clearInterval called, handle set to null
+    const callsAfterFirst = fakeTimers.clearIntervalMock.mock.calls.length;
+    handle.stop(); // second: handle is null, clearInterval NOT called again
+    const callsAfterSecond = fakeTimers.clearIntervalMock.mock.calls.length;
+
+    expect(callsAfterSecond).toBe(callsAfterFirst); // no extra clearInterval call
+  });
+});
+
+describe("startTelemetryFlushScheduler — no coldStartMs (undefined spread)", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("cold_start_ms defaults to 0 when coldStartMs is not provided", async () => {
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+      // no coldStartMs
+    });
+
+    await yieldMs(100);
+    handle.stop();
+
+    expect(fetchSpy.callCount()).toBeGreaterThan(0);
+    const body = fetchSpy.lastBody() as Record<string, unknown>;
+    expect(body["cold_start_ms"]).toBe(0);
   });
 });

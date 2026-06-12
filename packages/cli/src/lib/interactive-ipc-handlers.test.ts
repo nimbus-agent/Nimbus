@@ -9,6 +9,7 @@ import {
   registerAutoApproveConsentHandler,
   registerConsentPromptHandler,
   registerInteractiveCliIpcHandlers,
+  registerScriptConsentHandler,
   selectConsentHandler,
 } from "./interactive-ipc-handlers.ts";
 
@@ -250,5 +251,312 @@ describe("selectConsentHandler", () => {
   test("falls through to consent prompt handler when yes=false and no scriptConsentSource", () => {
     const { client } = makeMultiClient();
     expect(() => selectConsentHandler(client, { yes: false })).not.toThrow();
+  });
+
+  test("selects script handler with yes=false (no warning emitted)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "select-consent-no-warn-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":true}\n', "utf8");
+
+    let stderrCapture = "";
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      stderrCapture += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+
+    const { client, fire, calls } = makeMultiClient();
+    try {
+      selectConsentHandler(client, { yes: false, scriptConsentSource: source });
+      await fire("consent.request", { requestId: "r-3", prompt: "deploy" });
+    } finally {
+      process.stderr.write = origErr;
+      process.stdout.write = origOut;
+    }
+    expect(stderrCapture).not.toContain("overrides");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-3", approved: true } },
+    ]);
+  });
+});
+
+describe("registerAutoApproveConsentHandler — prompt fallback branches", () => {
+  test("uses requestId as detail when prompt is empty string", async () => {
+    const { client, fireConsent } = makeFakeClient();
+    registerAutoApproveConsentHandler(client);
+
+    let warning = "";
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      warning += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await fireConsent({ requestId: "req-empty-prompt", prompt: "" });
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(warning).toContain("req-empty-prompt");
+    expect(warning).not.toContain("prompt: ");
+  });
+
+  test("uses requestId as detail when prompt field is absent", async () => {
+    const { client, fireConsent } = makeFakeClient();
+    registerAutoApproveConsentHandler(client);
+
+    let warning = "";
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      warning += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await fireConsent({ requestId: "req-no-prompt" });
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(warning).toContain("req-no-prompt");
+  });
+});
+
+describe("registerConsentPromptHandler — confirm DI seam", () => {
+  test("calls consent.respond with approved=true when confirmFn resolves true", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const fakeConfirm = async (_opts: { message: string }): Promise<boolean | symbol> => true;
+    registerConsentPromptHandler(client, fakeConfirm);
+    await fire("consent.request", { requestId: "r-ok", prompt: "Allow?" });
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-ok", approved: true } },
+    ]);
+  });
+
+  test("calls consent.respond with approved=false when confirmFn resolves false", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const fakeConfirm = async (_opts: { message: string }): Promise<boolean | symbol> => false;
+    registerConsentPromptHandler(client, fakeConfirm);
+    await fire("consent.request", { requestId: "r-deny", prompt: "Allow?" });
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-deny", approved: false } },
+    ]);
+  });
+
+  test("calls consent.respond with approved=false when confirmFn returns a cancel symbol", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const cancelSymbol = Symbol("cancel");
+    const fakeConfirm = async (_opts: { message: string }): Promise<boolean | symbol> =>
+      cancelSymbol;
+    registerConsentPromptHandler(client, fakeConfirm);
+    await fire("consent.request", { requestId: "r-cancel" });
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-cancel", approved: false } },
+    ]);
+  });
+
+  test("uses default message when prompt is not a string", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    let capturedMessage = "";
+    const fakeConfirm = async (opts: { message: string }): Promise<boolean | symbol> => {
+      capturedMessage = opts.message;
+      return true;
+    };
+    registerConsentPromptHandler(client, fakeConfirm);
+    await fire("consent.request", { requestId: "r-nostr" });
+    expect(capturedMessage).toBe("Approve action?");
+    expect(calls[0]).toMatchObject({ params: { approved: true } });
+  });
+
+  test("uses provided prompt string as message", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    let capturedMessage = "";
+    const fakeConfirm = async (opts: { message: string }): Promise<boolean | symbol> => {
+      capturedMessage = opts.message;
+      return true;
+    };
+    registerConsentPromptHandler(client, fakeConfirm);
+    await fire("consent.request", { requestId: "r-str", prompt: "Custom prompt text" });
+    expect(capturedMessage).toBe("Custom prompt text");
+    expect(calls[0]).toMatchObject({ params: { approved: true } });
+  });
+});
+
+describe("registerScriptConsentHandler — error paths", () => {
+  test("throws ENOENT-wrapped error when source file does not exist", () => {
+    const { client } = makeMultiClient();
+    expect(() =>
+      registerScriptConsentHandler(client, "/nonexistent-path/does-not-exist.jsonl"),
+    ).toThrow("--script-consent-source: script consent source not found:");
+  });
+
+  test("rethrows non-ENOENT errors (e.g. malformed JSON)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-bad-"));
+    const source = join(tmpDir, "bad.jsonl");
+    writeFileSync(source, "not valid json\n", "utf8");
+    const { client } = makeMultiClient();
+    expect(() => registerScriptConsentHandler(client, source)).toThrow(
+      "--script-consent-source: malformed JSONL on line 1:",
+    );
+  });
+
+  test("throws on non-object JSON line (e.g. a bare string)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-str-"));
+    const source = join(tmpDir, "str.jsonl");
+    writeFileSync(source, '"just a string"\n', "utf8");
+    const { client } = makeMultiClient();
+    expect(() => registerScriptConsentHandler(client, source)).toThrow(
+      "--script-consent-source: malformed JSONL on line 1: not an object",
+    );
+  });
+
+  test("throws on JSON line with missing approved field", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-noappr-"));
+    const source = join(tmpDir, "noappr.jsonl");
+    writeFileSync(source, '{"note":"hello"}\n', "utf8");
+    const { client } = makeMultiClient();
+    expect(() => registerScriptConsentHandler(client, source)).toThrow(
+      '--script-consent-source: malformed JSONL on line 1: missing or non-boolean "approved"',
+    );
+  });
+
+  test("throws on JSON line with non-boolean approved field", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-nonbool-"));
+    const source = join(tmpDir, "nonbool.jsonl");
+    writeFileSync(source, '{"approved":"yes"}\n', "utf8");
+    const { client } = makeMultiClient();
+    expect(() => registerScriptConsentHandler(client, source)).toThrow(
+      '--script-consent-source: malformed JSONL on line 1: missing or non-boolean "approved"',
+    );
+  });
+});
+
+describe("registerScriptConsentHandler — notification handler branches", () => {
+  test("throws when cursor is exhausted (more requests than decisions)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-exhaust-"));
+    const source = join(tmpDir, "one.jsonl");
+    writeFileSync(source, '{"approved":true}\n', "utf8");
+
+    const { client, fire } = makeMultiClient();
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "first", prompt: "First" });
+      await expect(
+        fire("consent.request", { requestId: "second", prompt: "Second" }),
+      ).rejects.toThrow("--script-consent-source: no scripted decision for consent request");
+    } finally {
+      process.stdout.write = origOut;
+    }
+  });
+
+  test("ignores consent.request with no requestId (early return)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-noreqid-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":true}\n', "utf8");
+
+    const { client, fire, calls } = makeMultiClient();
+    registerScriptConsentHandler(client, source);
+    await fire("consent.request", { prompt: "no requestId here" });
+    expect(calls).toEqual([]);
+  });
+
+  test("uses '(no prompt)' when p.prompt is not a string", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-noprompt-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":true}\n', "utf8");
+
+    const { client, fire, calls } = makeMultiClient();
+
+    let capturedOut = "";
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: unknown) => {
+      capturedOut += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "r-noprompt" });
+    } finally {
+      process.stdout.write = origOut;
+    }
+    expect(capturedOut).toContain("(no prompt)");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-noprompt", approved: true } },
+    ]);
+  });
+
+  test("prints 'reject' and no note suffix when decision.approved=false and no note", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-reject-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":false}\n', "utf8");
+
+    const { client, fire, calls } = makeMultiClient();
+
+    let capturedOut = "";
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: unknown) => {
+      capturedOut += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "r-rej", prompt: "Do something risky?" });
+    } finally {
+      process.stdout.write = origOut;
+    }
+    expect(capturedOut).toContain("[scripted: reject]");
+    expect(capturedOut).not.toContain(" — ");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-rej", approved: false } },
+    ]);
+  });
+
+  test("prints 'approve' and note suffix when decision has a note", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-note-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    writeFileSync(source, '{"approved":true,"note":"because CI"}\n', "utf8");
+
+    const { client, fire, calls } = makeMultiClient();
+
+    let capturedOut = "";
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: unknown) => {
+      capturedOut += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "r-note", prompt: "Deploy?" });
+    } finally {
+      process.stdout.write = origOut;
+    }
+    expect(capturedOut).toContain("[scripted: approve]");
+    expect(capturedOut).toContain(" — because CI");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-note", approved: true } },
+    ]);
+  });
+
+  test("skips blank lines in the JSONL file", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-blank-"));
+    const source = join(tmpDir, "decisions.jsonl");
+    // Two blank lines, one real decision
+    writeFileSync(source, '\n{"approved":true}\n\n', "utf8");
+
+    const { client, fire, calls } = makeMultiClient();
+
+    const origOut = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "r-blank", prompt: "proceed?" });
+    } finally {
+      process.stdout.write = origOut;
+    }
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "r-blank", approved: true } },
+    ]);
   });
 });

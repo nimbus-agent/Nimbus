@@ -13,14 +13,19 @@ export function registerAgentChunkStdout(client: IPCClient): void {
   });
 }
 
-export function registerConsentPromptHandler(client: IPCClient): void {
+type ConfirmFn = (opts: { message: string }) => Promise<boolean | symbol>;
+
+export function registerConsentPromptHandler(
+  client: IPCClient,
+  confirmFn: ConfirmFn = confirm,
+): void {
   client.onNotification("consent.request", async (params: unknown) => {
     const p = params as { requestId?: string; prompt?: string };
     if (typeof p.requestId !== "string") {
       return;
     }
     const message = typeof p.prompt === "string" ? p.prompt : "Approve action?";
-    const ok = await confirm({ message });
+    const ok = await confirmFn({ message });
     const approved = !isCancel(ok) && ok === true;
     await client.call("consent.respond", {
       requestId: p.requestId,

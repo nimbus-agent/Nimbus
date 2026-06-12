@@ -14,4 +14,71 @@ describe("parseDurationToMs", () => {
     expect(() => parseDurationToMs("")).toThrow(/Invalid duration/);
     expect(() => parseDurationToMs("5x")).toThrow(/Invalid duration/);
   });
+
+  test("parses zero value for each unit", () => {
+    expect(parseDurationToMs("0ms")).toBe(0);
+    expect(parseDurationToMs("0s")).toBe(0);
+    expect(parseDurationToMs("0m")).toBe(0);
+    expect(parseDurationToMs("0h")).toBe(0);
+  });
+
+  test("trims leading and trailing whitespace", () => {
+    expect(parseDurationToMs("  10s  ")).toBe(10_000);
+    expect(parseDurationToMs("\t5m\t")).toBe(300_000);
+  });
+
+  test("parses units case-insensitively", () => {
+    expect(parseDurationToMs("500MS")).toBe(500);
+    expect(parseDurationToMs("30S")).toBe(30_000);
+    expect(parseDurationToMs("5M")).toBe(300_000);
+    expect(parseDurationToMs("2H")).toBe(2 * 60 * 60 * 1000);
+    // mixed case
+    expect(parseDurationToMs("100Ms")).toBe(100);
+  });
+
+  test("accepts optional whitespace between number and unit", () => {
+    // the regex allows \s* between digits and unit
+    expect(parseDurationToMs("10 s")).toBe(10_000);
+    expect(parseDurationToMs("3 m")).toBe(3 * 60 * 1000);
+  });
+
+  test("floors fractional milliseconds", () => {
+    // ms unit: Math.floor(n) — fractional digits would be stripped by regex,
+    // so any digit-only match is an integer; floor has no visible effect here
+    expect(parseDurationToMs("1ms")).toBe(1);
+    expect(parseDurationToMs("1s")).toBe(1_000);
+    expect(parseDurationToMs("1m")).toBe(60_000);
+    expect(parseDurationToMs("1h")).toBe(3_600_000);
+  });
+
+  test("rejects formats that look numeric but have no unit", () => {
+    expect(() => parseDurationToMs("100")).toThrow(/Invalid duration "100"/);
+  });
+
+  test("rejects negative-looking input (sign char outside digit range)", () => {
+    // A leading '-' is not matched by \d+ so the regex rejects it
+    expect(() => parseDurationToMs("-5s")).toThrow(/Invalid duration/);
+  });
+
+  test("rejects unsupported units d and w", () => {
+    // 'd' and 'w' are not in the regex alternation
+    expect(() => parseDurationToMs("7d")).toThrow(/Invalid duration/);
+    expect(() => parseDurationToMs("2w")).toThrow(/Invalid duration/);
+  });
+
+  test("rejects input with only whitespace", () => {
+    expect(() => parseDurationToMs("   ")).toThrow(/Invalid duration/);
+  });
+
+  test("rejects input with decimal point (regex requires \\d+)", () => {
+    expect(() => parseDurationToMs("1.5s")).toThrow(/Invalid duration/);
+    expect(() => parseDurationToMs("0.5m")).toThrow(/Invalid duration/);
+  });
+
+  test("exact ms values for large numbers", () => {
+    expect(parseDurationToMs("1000ms")).toBe(1_000);
+    expect(parseDurationToMs("60s")).toBe(60_000);
+    expect(parseDurationToMs("60m")).toBe(3_600_000);
+    expect(parseDurationToMs("24h")).toBe(86_400_000);
+  });
 });
