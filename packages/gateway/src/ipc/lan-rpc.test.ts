@@ -16,6 +16,9 @@ describe("checkLanMethodAllowed", () => {
       "profile.create",
       "chatops.status",
       "chatops.start",
+      "tribal.status",
+      "tribal.list",
+      "tribal.capture",
     ]) {
       expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
         LanError,

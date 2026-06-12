@@ -17,6 +17,7 @@ import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { PairingWindow } from "../lan-pairing.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
+import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -53,6 +54,7 @@ import {
   tryDispatchReindexRpc,
   tryDispatchSessionRpc,
   tryDispatchTeamVaultRpc,
+  tryDispatchTribalRpc,
   tryDispatchUpdaterRpc,
   tryDispatchVoiceRpc,
 } from "./dispatchers.ts";
@@ -83,6 +85,18 @@ function makeChatopsRpcCtx(overrides: Partial<ChatopsRpcCtx> = {}): ChatopsRpcCt
     start: async () => {},
     stop: async () => {},
     testParse: (text: string) => ({ kind: "read", query: text }),
+    ...overrides,
+  };
+}
+
+function makeTribalRpcCtx(overrides: Partial<TribalRpcCtx> = {}): TribalRpcCtx {
+  return {
+    status: () => ({ enabled: true, clusters: 0 }),
+    start: async () => {},
+    stop: async () => {},
+    list: () => [],
+    dismiss: async () => {},
+    scan: async () => ({ scanned: 0, fired: 0 }),
     ...overrides,
   };
 }
@@ -792,6 +806,26 @@ describe("tryDispatchChatopsRpc", () => {
   test("an unknown chatops.* method falls through to skipped", async () => {
     const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
     expect(await tryDispatchChatopsRpc(ctx, "chatops.__nope__", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchTribalRpc", () => {
+  test("skips a non-tribal method", async () => {
+    const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
+    expect(await tryDispatchTribalRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when tribalRpcCtx is not wired", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchTribalRpc(ctx, "tribal.status", {})).toBe(phase4RpcSkipped);
+  });
+  test("dispatches tribal.status when the ctx is wired", async () => {
+    const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
+    const out = await tryDispatchTribalRpc(ctx, "tribal.status", {});
+    expect(out).toMatchObject({ enabled: true, clusters: 0 });
+  });
+  test("an unknown tribal.* method falls through to skipped", async () => {
+    const { ctx } = makeCtx({ tribalRpcCtx: makeTribalRpcCtx() });
+    expect(await tryDispatchTribalRpc(ctx, "tribal.__nope__", {})).toBe(phase4RpcSkipped);
   });
 });
 

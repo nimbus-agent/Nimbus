@@ -38,6 +38,7 @@ import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
+import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import {
@@ -696,6 +697,18 @@ export async function tryDispatchChatopsRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchTribalRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("tribal.")) return phase4RpcSkipped;
+  if (ctx.options.tribalRpcCtx === undefined) return phase4RpcSkipped;
+  const out = await dispatchTribalRpc(method, params, ctx.options.tribalRpcCtx);
+  if (out.kind === "hit") return out.value;
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -750,7 +763,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → policy → chatops → admin. */
+/** Third group: lan → profile → index-reembed → policy → chatops → tribal → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -766,6 +779,8 @@ async function dispatchPhase4PlatformGroup(
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
   if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
+  const tribalOutcome = await tryDispatchTribalRpc(ctx, method, params);
+  if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
 
