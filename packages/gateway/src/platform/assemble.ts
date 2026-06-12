@@ -14,6 +14,7 @@ import {
   buildE2eSinkDispatcher,
   buildE2eSinkRunChatopsTool,
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
+import type { ReplyTarget } from "../chatops/types.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusAuditFromConfigDir,
@@ -30,6 +31,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
+  loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   resolveNimbusTomlForProfile,
 } from "../config/nimbus-toml.ts";
@@ -117,6 +119,7 @@ import type { SyncContext } from "../sync/types.ts";
 import { invokeTeamTool } from "../teamvault/team-tool-invoke.ts";
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
+import { buildTribalBoot, type TribalBoot } from "../tribal/tribal-boot.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
 import { createNimbusVault } from "../vault/factory.ts";
@@ -1050,6 +1053,37 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     httpSidecarOpts,
   });
 
+  const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
+
+  // Tribal-knowledge watcher (Phase 6 Slice 6c). Built BEFORE chatops so its `onInboundMessage`
+  // fan-out can be wired into buildChatopsBoot. The chatops↔tribal cycle (tribal needs chatops's
+  // I23 `send`; chatops needs tribal's `onInboundMessage`) is broken with a late-bound `tribalSend`
+  // closure: the watcher reads it at post time, and it's rebound to chatopsBoot.replyTo below.
+  const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
+  // Reassigned below once chatops's reply seam exists (the chatops↔tribal boot cycle).
+  let tribalSend: (target: ReplyTarget, text: string) => Promise<void> = async () => {};
+  let tribalBoot: TribalBoot | undefined;
+  if (tribalCfg.enabled) {
+    if (rt == null) {
+      throw new Error(
+        "[tribal].enabled requires the embedding runtime ([embeddings].enabled); fail-closed",
+      );
+    }
+    const embeddingRt = rt;
+    tribalBoot = buildTribalBoot({
+      db,
+      cfg: tribalCfg,
+      embedQuery: (text) => embeddingRt.embedQuery(text),
+      // Bot self-filter (review §1.1): primary guard is the Slack normalizer's bot_id/subtype skip
+      // (Task 8); this is defense-in-depth using the configured Teams bot app id. (The Slack bot
+      // user id is not resolvable without an extra API call at boot.)
+      botUserIds: new Set([chatopsCfg.teamsBotAppId].filter((s) => s !== "")),
+      send: (target, text) => tribalSend(target, text),
+      log: (m) => syncLogger.warn(m),
+    });
+    ipcOpts.tribalRpcCtx = tribalBoot.rpcCtx;
+  }
+
   // ChatOps (Phase 6 Slice 5 boot wiring — the deferred follow-up of PR #559). When
   // [chatops].enabled, build the Slack/Teams bot graph: bot-credentialed connector invocation
   // (Team-Vault entry `[chatops].bot_vault_entry`, I19 pattern), identity mapping over the Slice 3
@@ -1057,7 +1091,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // bounded I23 reply surface. The engine read path is late-bound in src/index.ts (the engine agent
   // does not exist yet); the local-consent fallback binds to the delegated-approval broker after
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
-  const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
   let chatopsBoot: ChatopsBoot | undefined;
   if (chatopsCfg.enabled) {
     const identityBootRef = identityBoot;
@@ -1068,6 +1101,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     chatopsBoot = buildChatopsBoot({
       cfg: chatopsCfg,
       policyGate,
+      ...(tribalBoot !== undefined ? { onInboundMessage: tribalBoot.onInboundMessage } : {}),
       ...(identityBootRef === undefined
         ? {}
         : {
@@ -1125,6 +1159,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     }
     const stopChatops = chatopsBoot;
     sidecarStops.push(() => void stopChatops.stop());
+    // Resolve the chatops↔tribal cycle: rebind the tribal watcher's `send` to the chatops I23
+    // reply seam now that it exists. Without chatops, `tribalSend` stays the no-op (detection
+    // still records clusters; CLI capture works; only auto-suggestion posts are suppressed).
+    if (tribalBoot !== undefined) {
+      const replyTo = chatopsBoot.replyTo;
+      tribalSend = (target, text) => replyTo(target, text);
+    }
   }
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every

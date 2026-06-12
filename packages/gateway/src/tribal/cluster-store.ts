@@ -79,6 +79,28 @@ export class TribalClusterStore {
     ).map(rowToCluster);
   }
 
+  listAll(): TribalCluster[] {
+    return (
+      this.db.query("SELECT * FROM tribal_clusters ORDER BY last_seen DESC").all() as Row[]
+    ).map(rowToCluster);
+  }
+
+  /** Clusters that carry a representative vector — the candidate set for nearest-cluster recall. */
+  listWithVec(): TribalCluster[] {
+    return (
+      this.db
+        .query("SELECT * FROM tribal_clusters WHERE representative_vec IS NOT NULL")
+        .all() as Row[]
+    )
+      .map(rowToCluster)
+      .filter((c) => c.representativeVec !== null);
+  }
+
+  count(): number {
+    const r = this.db.query("SELECT count(*) AS n FROM tribal_clusters").get() as { n: number };
+    return r.n;
+  }
+
   /**
    * Record one observation. New cluster → pending(count 1). Existing in-cooldown → unchanged
    * unless cooldown expired (then reset to pending count 1). Otherwise bump count + last_seen.

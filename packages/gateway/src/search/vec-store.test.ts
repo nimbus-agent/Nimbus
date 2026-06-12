@@ -56,4 +56,39 @@ describe("vectorSearchChunks — dim awareness", () => {
     expect(hits.length).toBe(1);
     expect(hits[0]?.itemId).toBe("s:1");
   });
+
+  test.skipIf(!VEC_AVAILABLE)(
+    "metadataChannelIn excludes hits from non-allowlisted channels",
+    () => {
+      const db = freshDb();
+      // two slack messages, different channels stored in metadata.channel
+      for (const [id, channel, rowid] of [
+        ["slack:C1:1", "C1", 1],
+        ["slack:C2:2", "C2", 2],
+      ] as const) {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, metadata)
+         VALUES (?, 'slack', 'message', ?, 'T', 'B', ?, ?, ?)`,
+          [id, String(rowid), Date.now(), Date.now(), JSON.stringify({ channel })],
+        );
+        const v = new Float32Array(384);
+        v[0] = 1;
+        db.run(`INSERT INTO vec_items_384 (rowid, embedding) VALUES (?, vec_f32(?))`, [rowid, v]);
+        db.run(
+          `INSERT INTO embedding_chunk (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)
+         VALUES (?, 0, 'hi', ?, 'minilm:all-MiniLM-L6-v2', 384, ?)`,
+          [id, rowid, Date.now()],
+        );
+      }
+      const q = new Float32Array(384);
+      q[0] = 1;
+      const hits = vectorSearchChunks(db, {
+        queryEmbedding: q,
+        model: "minilm:all-MiniLM-L6-v2",
+        limit: 10,
+        metadataChannelIn: ["C1"],
+      });
+      expect(hits.map((h) => h.itemId)).toEqual(["slack:C1:1"]);
+    },
+  );
 });

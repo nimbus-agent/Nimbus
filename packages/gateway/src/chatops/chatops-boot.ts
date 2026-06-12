@@ -22,7 +22,7 @@ import { buildConnectorPost } from "./transport/connector-post.ts";
 import { SlackSocketAdapter, type SocketLike } from "./transport/slack-socket-adapter.ts";
 import { TeamsWebhookAdapter } from "./transport/teams-webhook-adapter.ts";
 import type { ChatTransport } from "./transport/transport.ts";
-import type { ChatMessage, ChatPlatform } from "./types.ts";
+import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
 
 export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
@@ -60,6 +60,11 @@ export interface ChatopsBoot {
   bindAskEngine(fn: (query: string, namespace: string) => Promise<string>): void;
   /** Late-bind the local-owner consent fallback (IPC consent exists after createIpcServer). */
   bindLocalConsent(fn: ConsentChannel["requestApproval"]): void;
+  /**
+   * Slice 6c: the I23 reply seam (server-derived `ReplyTarget` → connector post), reused by the
+   * tribal watcher to post repeat-question suggestions. Still confined to D17's allowed post path.
+   */
+  replyTo(target: ReplyTarget, text: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -352,6 +357,7 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
     bindLocalConsent: (fn) => {
       localConsent = fn;
     },
+    replyTo: (target, text) => replyDispatcher.send(target, text),
     stop: () => service.stop(),
   };
 }
