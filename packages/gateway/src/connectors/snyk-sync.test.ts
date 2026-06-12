@@ -504,10 +504,11 @@ describeWithFetchRestore("snyk-sync", () => {
       const u = urlFromFetchInput(input);
       capturedUrls.push(u);
       if (u.includes("/v1/orgs")) {
-        return new Response(makeOrgsResponse([{ id: "org-abc" }]), { status: 200 });
+        // IDs with reserved characters so the encoding is actually observable.
+        return new Response(makeOrgsResponse([{ id: "org a/b" }]), { status: 200 });
       }
       if (u.includes("/projects") && !u.includes("aggregated-issues")) {
-        return new Response(makeProjectsResponse([{ id: "proj-xyz" }]), { status: 200 });
+        return new Response(makeProjectsResponse([{ id: "proj?xyz" }]), { status: 200 });
       }
       return new Response(makeIssuesResponse([makeIssue("SNYK-001")]), { status: 200 });
     }) as typeof fetch;
@@ -515,9 +516,12 @@ describeWithFetchRestore("snyk-sync", () => {
     const sync = makeFactory();
     await sync.sync(syncTestContext(db, createStubVault({ "snyk.token": "tok" })), null);
 
-    expect(capturedUrls.some((u) => u.includes("/v1/org/org-abc/projects"))).toBe(true);
+    // encodeURIComponent("org a/b") === "org%20a%2Fb"; encodeURIComponent("proj?xyz") === "proj%3Fxyz"
+    expect(capturedUrls.some((u) => u.includes("/v1/org/org%20a%2Fb/projects"))).toBe(true);
     expect(
-      capturedUrls.some((u) => u.includes("/v1/org/org-abc/project/proj-xyz/aggregated-issues")),
+      capturedUrls.some((u) =>
+        u.includes("/v1/org/org%20a%2Fb/project/proj%3Fxyz/aggregated-issues"),
+      ),
     ).toBe(true);
   });
 });

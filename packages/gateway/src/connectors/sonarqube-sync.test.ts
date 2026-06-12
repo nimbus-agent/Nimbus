@@ -652,7 +652,9 @@ describeWithFetchRestore("sonarqube-sync", () => {
     }) as typeof fetch;
 
     const sync = makeSyncable();
+    const before = Date.now();
     const r = await sync.sync(syncTestContext(db, VAULT_WITH_TOKEN), null);
+    const after = Date.now();
 
     expect(r.itemsUpserted).toBe(1);
     const row = db
@@ -660,8 +662,10 @@ describeWithFetchRestore("sonarqube-sync", () => {
         "SELECT modified_at FROM item WHERE service = 'sonarqube' AND external_id = 'MIN-001'",
       )
       .get() as { modified_at: number } | undefined;
-    // modified_at should be a very recent timestamp (within last 5s)
-    expect(row?.modified_at).toBeGreaterThan(Date.now() - 5000);
+    // modified_at is stamped at ingestion → it must fall within the [before, after] sync window
+    // (a fixed "now - 5s" cutoff is flaky under slow CI).
+    expect(row?.modified_at).toBeGreaterThanOrEqual(before);
+    expect(row?.modified_at).toBeLessThanOrEqual(after);
     expectServiceItemCount(db, "sonarqube", 1);
   });
 

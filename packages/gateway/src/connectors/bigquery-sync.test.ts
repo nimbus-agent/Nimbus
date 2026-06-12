@@ -1063,7 +1063,7 @@ describeWithFetchRestore("bigquery-sync — ensureBigqueryMcpRunning", () => {
 // ─── mintAccessToken exception path (line 53-54 via DI) ──────────────────────
 
 describeWithFetchRestore("bigquery-sync — mintAccessToken throws", () => {
-  test("returns http-empty cursor when mintAccessToken throws (simulates gcloudPrintAccessToken catch)", async () => {
+  test("propagates the error when an injected mintAccessToken throws (DI mint runs outside gcloudPrintAccessToken's catch)", async () => {
     const throwMint = async (_credPath: string): Promise<string | null> => {
       const err: unknown = new Error("gcloud not found");
       throw err;
