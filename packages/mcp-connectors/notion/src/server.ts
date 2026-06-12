@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { joinApiPath } from "../../shared/join-api-path.ts";
+import { parseCitationsJson } from "../../shared/kb-markdown.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
@@ -11,6 +12,7 @@ import {
   putOptionalNonEmptyString,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { buildNotionKbPageBody } from "./kb-append.ts";
 
 const NOTION_VERSION = "2022-06-28";
 const API = "https://api.notion.com/v1";
@@ -190,6 +192,34 @@ reg(
         },
       },
     };
+    const res = await notionFetch("/pages", { method: "POST", body: JSON.stringify(body) });
+    return mcpJsonResultFromTextIfOk("Notion", res);
+  },
+);
+
+const notionKbAppendSchema = z.object({
+  databaseId: z.string().min(1),
+  title: z.string().min(1),
+  bodyMarkdown: z.string().min(1),
+  citationsJson: z.string().optional(),
+  titlePropertyName: z.string().min(1).optional(),
+});
+
+reg(
+  "notion_kb_append",
+  "Create a knowledge-base page in a database from simple markdown + citations (POST /v1/pages). " +
+    "Used by Nimbus tribal-knowledge capture; the destination database is supplied by the gateway from local config only.",
+  notionKbAppendSchema,
+  async (parsed) => {
+    const body = buildNotionKbPageBody({
+      databaseId: parsed.databaseId,
+      title: parsed.title,
+      bodyMarkdown: parsed.bodyMarkdown,
+      citations: parseCitationsJson(parsed.citationsJson ?? "[]"),
+      ...(parsed.titlePropertyName !== undefined
+        ? { titlePropertyName: parsed.titlePropertyName }
+        : {}),
+    });
     const res = await notionFetch("/pages", { method: "POST", body: JSON.stringify(body) });
     return mcpJsonResultFromTextIfOk("Notion", res);
   },
