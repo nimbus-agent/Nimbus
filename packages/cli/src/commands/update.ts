@@ -1,4 +1,9 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import {
+  channelUpgradeHint,
+  type DistributionChannel,
+  resolveDistributionChannel,
+} from "../lib/distribution-channel.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export type UpdateArgs = { mode: "check" | "apply"; yes: boolean };
@@ -44,7 +49,18 @@ export async function runUpdateApply(client: IPCClient): Promise<void> {
   console.log("Update applied. Gateway will restart.");
 }
 
-export async function runUpdate(argv: string[]): Promise<void> {
+export interface RunUpdateOptions {
+  channel?: DistributionChannel | null;
+}
+
+export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Promise<void> {
+  const channel = opts.channel !== undefined ? opts.channel : resolveDistributionChannel();
+  if (channel !== null) {
+    console.log(channelUpgradeHint(channel));
+    process.exitCode = 0;
+    return;
+  }
+
   const args = parseUpdateArgs(argv);
 
   if (args.mode === "check") {

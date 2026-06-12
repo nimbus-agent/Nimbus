@@ -121,6 +121,22 @@ describe("runUpdateApply", () => {
   });
 });
 
+describe("runUpdate channel-managed short-circuit", () => {
+  it("runUpdate prints the channel hint and skips IPC when channel-managed", async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (m?: unknown) => {
+      logs.push(String(m));
+    };
+    try {
+      await runUpdate([], { channel: "homebrew" });
+    } finally {
+      console.log = origLog;
+    }
+    expect(logs.join("\n")).toContain("brew upgrade nimbus");
+  });
+});
+
 describe("runUpdate dispatcher", () => {
   let origExitCode: typeof process.exitCode;
 
