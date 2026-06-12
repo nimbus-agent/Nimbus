@@ -201,11 +201,30 @@ describe("runQuery — --service path", () => {
 });
 
 describe("runQuery — output formatting branches", () => {
+  let origIsTTY: PropertyDescriptor | undefined;
   beforeEach(() => {
     out.reset();
+    // Force a deterministic non-TTY stdout so the compact-JSON branch is exercised
+    // regardless of the runner or global isTTY pollution from other test files in the
+    // combined `bun test packages/cli/src` run (the --pretty tests force cards via the flag).
+    origIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      writable: true,
+      value: false,
+    });
   });
   afterEach(() => {
     clearFixture();
+    if (origIsTTY) {
+      Object.defineProperty(process.stdout, "isTTY", origIsTTY);
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        writable: true,
+        value: undefined,
+      });
+    }
   });
 
   // compact JSON path: no --json, no --pretty, process.stdout.isTTY is falsy in tests
