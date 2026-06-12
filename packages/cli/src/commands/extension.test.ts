@@ -36,6 +36,15 @@ const out = captureOutput();
 
 afterAll(() => {
   out.restore();
+  // This file redefines process.stdout.isTTY many times via Object.defineProperty.
+  // Reset it to the writable non-TTY default so the pollution can't leak into other
+  // test files in the combined `bun test packages/cli/src` run (it was breaking the
+  // query non-TTY tests on Linux/macOS).
+  Object.defineProperty(process.stdout, "isTTY", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
 });
 
 describe("hasFlag", () => {

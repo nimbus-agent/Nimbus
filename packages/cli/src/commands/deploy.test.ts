@@ -5,7 +5,8 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const deployMod = await import("./deploy.ts");
-const { parseDeployPreflightArgs, runDeployCli } = deployMod;
+const { formatGapTag, formatVerdictTag, parseDeployPreflightArgs, runDeployCli, shouldUseColor } =
+  deployMod;
 
 describe("nimbus deploy preflight arg parser", () => {
   test("parses service + target-ref + json", () => {
@@ -341,75 +342,27 @@ describe("runDeployCli — dispatcher", () => {
     expect(stderrChunks.join("")).toContain("malformed envelope");
   });
 
-  it("renders colored output when isTTY=true (covers shouldUseColor/formatVerdictTag/formatGapTag color branches)", async () => {
-    const envelope = {
-      service: "svc",
-      target_ref: "main",
-      verdict: "warn" as const,
-      computed_at: new Date().toISOString(),
-      checks: {
-        active_p1_incidents: { count: 0, findings: [], gap: "stale" },
-        failing_ci_runs: {
-          count: 1,
-          findings: [{ id: "r1", title: "CI red", url: null }],
-          gap: null,
-        },
-        merge_conflicts: { count: 0, findings: [], gap: null },
-      },
-    };
-    const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    // Temporarily force color output by faking isTTY and removing NO_COLOR
-    const origIsTTY = process.stdout.isTTY;
-    const hadNoColor = "NO_COLOR" in process.env;
-    const savedNoColor = process.env["NO_COLOR"];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-env
-    delete process.env["NO_COLOR"];
-    (process.stdout as { isTTY: boolean | undefined }).isTTY = true;
-    try {
-      await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
-      const out = stdoutChunks.join("");
-      // ANSI escape sequences appear in colored output
-      expect(out).toContain("\x1b[33m[warn]\x1b[0m");
-    } finally {
-      (process.stdout as { isTTY: boolean | undefined }).isTTY = origIsTTY;
-      if (hadNoColor) {
-        process.env["NO_COLOR"] = savedNoColor;
-      }
-    }
-  });
+  // Color branches are tested as PURE functions — no global process.stdout.isTTY /
+  // process.env.NO_COLOR mutation (that leaks across files in the combined run).
+  it("shouldUseColor / formatVerdictTag / formatGapTag cover the color branches (pure)", () => {
+    // shouldUseColor: a non-empty NO_COLOR suppresses; otherwise follow isTTY.
+    expect(shouldUseColor("1", true)).toBe(false);
+    expect(shouldUseColor("anything", false)).toBe(false);
+    expect(shouldUseColor(undefined, true)).toBe(true);
+    expect(shouldUseColor("", true)).toBe(true); // empty NO_COLOR is ignored
+    expect(shouldUseColor(undefined, false)).toBe(false);
+    expect(shouldUseColor(undefined, undefined)).toBe(false);
 
-  it("suppresses color when NO_COLOR is set (covers shouldUseColor NO_COLOR branch)", async () => {
-    const envelope = {
-      service: "svc",
-      target_ref: "main",
-      verdict: "ok" as const,
-      computed_at: new Date().toISOString(),
-      checks: {
-        active_p1_incidents: { count: 0, findings: [], gap: null },
-        failing_ci_runs: { count: 0, findings: [], gap: null },
-        merge_conflicts: { count: 0, findings: [], gap: null },
-      },
-    };
-    const mock = createMockIpcClient([envelope]);
-    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    const origIsTTY = process.stdout.isTTY;
-    const savedNoColor = process.env["NO_COLOR"];
-    process.env["NO_COLOR"] = "1";
-    (process.stdout as { isTTY: boolean | undefined }).isTTY = true;
-    try {
-      await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
-      const out = stdoutChunks.join("");
-      // No ANSI escapes — plain [ok]
-      expect(out).toContain("[ok]");
-      expect(out).not.toContain("\x1b[");
-    } finally {
-      (process.stdout as { isTTY: boolean | undefined }).isTTY = origIsTTY;
-      if (savedNoColor !== undefined) {
-        process.env["NO_COLOR"] = savedNoColor;
-      } else {
-        delete process.env["NO_COLOR"];
-      }
-    }
+    // formatVerdictTag: colored vs plain for each verdict.
+    expect(formatVerdictTag("ok", true)).toBe("\x1b[32m[ok]\x1b[0m");
+    expect(formatVerdictTag("ok", false)).toBe("[ok]");
+    expect(formatVerdictTag("warn", true)).toBe("\x1b[33m[warn]\x1b[0m");
+    expect(formatVerdictTag("warn", false)).toBe("[warn]");
+
+    // formatGapTag: null → empty; colored vs plain otherwise.
+    expect(formatGapTag(null, true)).toBe("");
+    expect(formatGapTag(null, false)).toBe("");
+    expect(formatGapTag("stale", true)).toBe("\x1b[2m[stale]\x1b[0m");
+    expect(formatGapTag("stale", false)).toBe("[stale]");
   });
 });

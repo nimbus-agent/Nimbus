@@ -83,17 +83,17 @@ function isEnvelope(x: unknown): x is Envelope {
   );
 }
 
-function shouldUseColor(): boolean {
-  if (process.env["NO_COLOR"] !== undefined && process.env["NO_COLOR"] !== "") return false;
-  return process.stdout.isTTY === true;
+export function shouldUseColor(noColor: string | undefined, isTty: boolean | undefined): boolean {
+  if (noColor !== undefined && noColor !== "") return false;
+  return isTty === true;
 }
 
-function formatVerdictTag(verdict: Envelope["verdict"], useColor: boolean): string {
+export function formatVerdictTag(verdict: Envelope["verdict"], useColor: boolean): string {
   if (verdict === "ok") return useColor ? "\x1b[32m[ok]\x1b[0m" : "[ok]";
   return useColor ? "\x1b[33m[warn]\x1b[0m" : "[warn]";
 }
 
-function formatGapTag(gap: string | null, useColor: boolean): string {
+export function formatGapTag(gap: string | null, useColor: boolean): string {
   if (gap === null) return "";
   return useColor ? `\x1b[2m[${gap}]\x1b[0m` : `[${gap}]`;
 }
@@ -160,7 +160,9 @@ async function runDeployPreflight(args: readonly string[]): Promise<void> {
     if (parsed.json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      process.stdout.write(`${formatPretty(result, shouldUseColor())}\n`);
+      process.stdout.write(
+        `${formatPretty(result, shouldUseColor(process.env["NO_COLOR"], process.stdout.isTTY))}\n`,
+      );
     }
     if (parsed.mode === "block" && result.verdict === "warn") {
       process.exit(1);
