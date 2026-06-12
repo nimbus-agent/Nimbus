@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Logger } from "pino";
+import { resolveDistributionChannel } from "../config/distribution-channel.ts";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { DEFAULT_NIMBUS_UPDATER_TOML } from "../config/nimbus-toml.ts";
 import { createUpdaterFromConfig } from "./factory.ts";
@@ -65,5 +66,22 @@ describe("createUpdaterFromConfig", () => {
     });
     expect(result).toBeUndefined();
     expect(warnings.length).toBe(1);
+  });
+
+  test("returns undefined when running from a package-manager channel", () => {
+    const updaterCfg: NimbusUpdaterToml = {
+      ...DEFAULT_NIMBUS_UPDATER_TOML,
+      enabled: true,
+    };
+    const result = createUpdaterFromConfig({
+      ...baseArgs,
+      updaterCfg,
+      _channelOverride: "homebrew",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("resolver returns null for a plain install path (default behavior unchanged)", () => {
+    expect(resolveDistributionChannel({ env: {}, execPath: "/usr/bin/nimbus" })).toBeNull();
   });
 });
