@@ -452,10 +452,10 @@ describe("runQuery — printItemCard field-presence branches", () => {
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toContain("same");
-    // body_preview === title → not printed twice; only once via title line
+    // body_preview === title → the body line is suppressed, so "same" renders exactly
+    // once (the title line). If it were NOT suppressed it would appear twice.
     const occurrences = out.stdout.split("same").length - 1;
-    // printed at most twice (title line + footer), NOT three times
-    expect(occurrences).toBeLessThan(3);
+    expect(occurrences).toBe(1);
   });
 
   // body_preview longer than 120 chars → gets truncated (covers truncate() long-string branch)

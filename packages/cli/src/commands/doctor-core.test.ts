@@ -616,7 +616,9 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
     // Voice lines with no binaries produce [warn] messages that escalate exit.
     // The gateway is also absent (exit=2 from "[fail] Gateway: not running").
     expect(out.stdout).toContain("[fail] Gateway: not running");
-    // Exit is at least 2 (from gateway check)
+    // Prove the voice branch actually ran (the absent gateway alone would escalate the
+    // exit code, so assert a concrete [warn] Voice: line rather than just exitCode >= 1).
+    expect(out.stdout).toMatch(/\[warn\] Voice:/);
     expect(process.exitCode).toBeGreaterThanOrEqual(1);
   });
 

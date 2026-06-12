@@ -404,4 +404,26 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
     expect(ipc.calls[1]?.method).toBe("workflow.run");
     expect(ipc.calls[1]?.params).toMatchObject({ dryRun: true, stream: false });
   });
+
+  it("stops before the real run when a --no-ttv preview surfaces HITL actions", async () => {
+    const file = join(tmpDir, "wf.json");
+    writeFileSync(file, JSON.stringify({ name: "hitl-gated", steps: [{ kind: "noop" }] }));
+    // save → preview (workflow.run, preview=true) returns a step WITH hitlActions, so the
+    // HITL gate must throw and NEVER issue the real workflow.run.
+    const ipc = createMockIpcClient([
+      { ok: true }, // workflow.save
+      { stepResults: [{ name: "risky", hitlActions: ["data.export"] }] }, // preview: flagged
+    ]);
+    await expect(
+      runWorkflowFromFileWithClient(ipc.client, file, {
+        dryRun: false,
+        noTtv: true,
+        agent: undefined,
+      }),
+    ).rejects.toThrow(/human approval \(HITL\)/);
+    // Safety contract: only save + preview ran — the real run was never called.
+    expect(ipc.calls).toHaveLength(2);
+    expect(ipc.calls[0]?.method).toBe("workflow.save");
+    expect(ipc.calls[1]?.method).toBe("workflow.run"); // the preview call, not the real run
+  });
 });

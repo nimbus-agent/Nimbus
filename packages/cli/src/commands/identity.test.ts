@@ -352,7 +352,8 @@ describe("runIdentity (outer)", () => {
   });
 
   it("writes error to stderr and exits 1 on unknown subcommand", async () => {
-    // Gateway state must be present so the parse error (not a gateway error) is hit first.
+    // runIdentity parses argv BEFORE reading gateway state, so the unknown-subcommand
+    // parse error fires regardless of gateway presence.
     // process.exit is replaced by setting process.exitCode — wrap to avoid killing the runner.
     const origExit = process.exit;
     let exitedWith: number | undefined;
@@ -360,12 +361,23 @@ describe("runIdentity (outer)", () => {
       exitedWith = code;
       throw new Error(`process.exit(${code})`);
     }) as typeof process.exit;
+    // runIdentity writes the parse error via process.stderr.write (not console.error),
+    // so detect it directly (mirrors the gateway-not-running test) and restore in finally.
+    let stderrSeen = false;
+    const origStderr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      if (String(chunk).includes("Unknown subcommand")) stderrSeen = true;
+      return origStderr(chunk);
+    };
     try {
       await runIdentity(["bogus-sub"]).catch(() => {});
     } finally {
       process.exit = origExit;
+      process.stderr.write = origStderr;
     }
     expect(exitedWith).toBe(1);
+    // Prove the PARSE branch ran (not the gateway-not-running path, which also exits 1).
+    expect(stderrSeen).toBe(true);
   });
 
   it("writes 'Gateway is not running' and exits 1 when no gateway state", async () => {

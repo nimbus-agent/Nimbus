@@ -290,7 +290,7 @@ describe("runConfigEdit", () => {
       return emitter;
     };
     try {
-      await runConfigEdit("/tmp/nimbus.toml", spawnStub);
+      await runConfigEdit(join(makeTmp(), "nimbus.toml"), spawnStub);
     } finally {
       if (savedEditor === undefined) {
         delete process.env["EDITOR"];
