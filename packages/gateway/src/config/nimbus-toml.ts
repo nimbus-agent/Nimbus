@@ -1254,6 +1254,131 @@ export function loadNimbusPreflightFromConfigDir(configDir: string): PreflightCo
   );
 }
 
+// ---------------------------------------------------------------------------
+// [tribal] — tribal-knowledge extraction (Phase 6 Slice 6c)
+// ---------------------------------------------------------------------------
+
+export type TribalMatchMode = "embedding" | "embedding+llm";
+
+export type TribalNotionTarget = { databaseId: string };
+
+export type TribalConfluenceTarget = { spaceKey: string; parentPageId: string };
+
+export type NimbusTribalToml = {
+  enabled: boolean;
+  match: TribalMatchMode;
+  minOccurrences: number;
+  windowDays: number;
+  cooldownDays: number;
+  watchChannels: readonly string[];
+  notion?: TribalNotionTarget;
+  confluence?: TribalConfluenceTarget;
+};
+
+export const DEFAULT_NIMBUS_TRIBAL_TOML: NimbusTribalToml = {
+  enabled: false,
+  match: "embedding",
+  minOccurrences: 3,
+  windowDays: 14,
+  cooldownDays: 30,
+  watchChannels: [],
+};
+
+function parseNimbusTomlTribalSection(source: string): Partial<NimbusTribalToml> {
+  const out: Partial<NimbusTribalToml> = {};
+  forEachSectionEntry(source, "[tribal]", (key, valRaw) => {
+    switch (key) {
+      case "enabled": {
+        const b = parseBool(valRaw);
+        if (b !== undefined) out.enabled = b;
+        break;
+      }
+      case "match": {
+        const v = parseString(valRaw);
+        if (v === "embedding" || v === "embedding+llm") out.match = v;
+        break;
+      }
+      case "min_occurrences": {
+        const n = parseIntDec(valRaw);
+        if (n !== undefined && n > 0) out.minOccurrences = n;
+        break;
+      }
+      case "window_days": {
+        const n = parseIntDec(valRaw);
+        if (n !== undefined && n > 0) out.windowDays = n;
+        break;
+      }
+      case "cooldown_days": {
+        const n = parseIntDec(valRaw);
+        if (n !== undefined && n >= 0) out.cooldownDays = n;
+        break;
+      }
+      case "watch_channels": {
+        try {
+          out.watchChannels = parseStringArray(valRaw);
+        } catch {
+          // malformed array — keep default
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  });
+  return out;
+}
+
+function parseTribalNotionTarget(source: string): TribalNotionTarget | undefined {
+  let databaseId: string | undefined;
+  forEachSectionEntry(source, "[tribal.notion]", (key, valRaw) => {
+    if (key === "database_id") {
+      const v = parseString(valRaw);
+      if (v.length > 0) databaseId = v;
+    }
+  });
+  return databaseId !== undefined ? { databaseId } : undefined;
+}
+
+function parseTribalConfluenceTarget(source: string): TribalConfluenceTarget | undefined {
+  let spaceKey: string | undefined;
+  let parentPageId: string | undefined;
+  forEachSectionEntry(source, "[tribal.confluence]", (key, valRaw) => {
+    if (key === "space_key") {
+      const v = parseString(valRaw);
+      if (v.length > 0) spaceKey = v;
+    } else if (key === "parent_page_id") {
+      const v = parseString(valRaw);
+      if (v.length > 0) parentPageId = v;
+    }
+  });
+  return spaceKey !== undefined && parentPageId !== undefined
+    ? { spaceKey, parentPageId }
+    : undefined;
+}
+
+export function parseNimbusTribalToml(
+  raw: string,
+  defaults: NimbusTribalToml = DEFAULT_NIMBUS_TRIBAL_TOML,
+): NimbusTribalToml {
+  const section = parseNimbusTomlTribalSection(raw);
+  const result: NimbusTribalToml = { ...defaults, ...section };
+  const notion = parseTribalNotionTarget(raw);
+  if (notion !== undefined) result.notion = notion;
+  const confluence = parseTribalConfluenceTarget(raw);
+  if (confluence !== undefined) result.confluence = confluence;
+  return result;
+}
+
+export function loadNimbusTribalFromConfigDir(configDir: string): NimbusTribalToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_TRIBAL_TOML,
+    parseNimbusTribalToml,
+  );
+}
+
+// ---------------------------------------------------------------------------
+
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
 // `export *` barrel near the top. `loadNimbusServiceConfigsFromConfigDir`
