@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Logger } from "pino";
-import { resolveDistributionChannel } from "../config/distribution-channel.ts";
+import {
+  type DistributionChannel,
+  resolveDistributionChannel,
+} from "../config/distribution-channel.ts";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { DEFAULT_NIMBUS_UPDATER_TOML } from "../config/nimbus-toml.ts";
 import { createUpdaterFromConfig } from "./factory.ts";
@@ -18,6 +21,11 @@ const baseArgs = {
   currentVersion: "0.1.0",
   emit: noopEmit,
   logger: noopLogger,
+  // Isolate construction tests from the test runner's own binary path: without
+  // this, resolveDistributionChannel() reads the real process.execPath, so a bun
+  // installed via Homebrew/Scoop would trip the channel gate and fail these tests.
+  // The channel-gate test below opts back in by overriding to "homebrew".
+  _channelOverride: null as DistributionChannel | null,
 };
 
 describe("createUpdaterFromConfig", () => {
