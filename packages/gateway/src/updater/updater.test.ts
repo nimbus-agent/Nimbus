@@ -548,15 +548,13 @@ describe("B11 — redactUrlUserinfo branches", () => {
   });
 
   test("replaces [REDACTED-URL] when matched text is not a valid URL", () => {
-    // Craft a string that matches the regex but can't be parsed as URL.
-    // The regex matches scheme://user@host — use a scheme with invalid chars after @
-    // to force the URL ctor to throw.  We embed a space after the @ which URL rejects.
-    const malformed = "foo://a:b@[invalid url here";
-    redactUrlUserinfo(malformed);
-    // The regex won't match this because [invalid contains '[' which isn't in [^\s/]
-    // So let's just test a clean success path and note that the catch arm is
-    // exercised when the URL constructor throws for an edge-case match.
-    // Use a known-good string to verify no-op when no match.
+    // A digit-leading scheme matches URL_USERINFO_RE (the scheme class allows [0-9]) but
+    // new URL() rejects a scheme that does not start with a letter → the catch arm fires
+    // and the whole match is replaced with [REDACTED-URL].
+    const out = redactUrlUserinfo("connect failed: 1http://user:topsecret@host.internal");
+    expect(out).toContain("[REDACTED-URL]");
+    expect(out).not.toContain("topsecret");
+    // a string with no userinfo URL is returned unchanged (the no-match branch)
     expect(redactUrlUserinfo("no match")).toBe("no match");
   });
 });
@@ -645,37 +643,10 @@ describe("B11 — requireApplyPreconditions branches", () => {
     await expect(u.applyUpdate()).rejects.toThrow(/no manifest loaded/);
   });
 
-  test("applyUpdate throws when target is not in manifest platforms", async () => {
-    const binary = new Uint8Array(randomBytes(256));
-    downloadServer = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      fetch: () => new Response(binary),
-    });
-    // Build a manifest that is missing the 'windows-x86_64' target
-    // We can't easily build a valid manifest missing a platform (validator requires all 4),
-    // but we CAN use a target that differs from the one in our updater.
-    // Instead: use a custom target type that won't be in any manifest.
-    // The manifest fetcher validates the 4 standard platforms. So we must
-    // make the updater use a target like "linux-x86_64" but inject lastManifest manually.
-    // Since lastManifest is private, we'll use checkNow with a standard manifest
-    // but then create a new Updater with a different target that the manifest doesn't cover.
-    // Actually the manifest has ALL 4 targets. Let's add a fake target via type cast.
-    const u = new Updater({
-      currentVersion: "0.1.0",
-      manifestUrl: `http://127.0.0.1:${0}/latest.json`,
-      publicKey: kp.publicKey,
-      target: "linux-x86_64",
-      emit: () => {},
-      timeoutMs: 2000,
-    });
-    // Manually reach applyUpdate with a manifest that has no asset for a target.
-    // The cleanest DI-safe way: subclass to expose lastManifest
-    // OR use a separate Updater with a target not in manifest.
-    // We can't easily do this without source edit since target is a union type.
-    // So instead let's just test "applyUpdate before checkNow" again with a different error.
-    await expect(u.applyUpdate()).rejects.toThrow(/no manifest loaded/);
-  });
+  // NOTE: the "no asset for target" arm in applyUpdate (platforms[target] === undefined) is
+  // unreachable via the public API — fetchUpdateManifest requires all four standard targets,
+  // and `target` is always one of them, so a loaded manifest always has the asset. Left as a
+  // defensive guard (D-candidate); a duplicate "no manifest loaded" test was removed here.
 });
 
 describe("B11 — downloadAsset branches", () => {

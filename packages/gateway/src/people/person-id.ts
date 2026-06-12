@@ -15,6 +15,13 @@ function bytesToUuid(buf: Buffer): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+/**
+ * Deterministic person-id derivation. NOTE: despite the historical name, this is
+ * NOT an RFC 4122 UUID v5 — it hashes with SHA-256 (RFC v5 uses SHA-1) and stamps
+ * the version nibble to 0x8, so the output is UUID-v8-*shaped*. The name and the
+ * namespace constant are kept for stability: changing the scheme would change every
+ * previously-generated person id. Treat the result as an opaque, stable id.
+ */
 export function uuidV5(name: string, namespaceUuid: string): string {
   const ns = uuidStringToBytes(namespaceUuid);
   const hash = createHash("sha256");

@@ -10,7 +10,8 @@ test("NIMBUS_PERSON_NAMESPACE_UUID has the expected value", () => {
 });
 
 // ---------------------------------------------------------------------------
-// uuidV5 — happy path: deterministic, UUID v5-shaped output
+// uuidV5 — happy path: deterministic, UUID-shaped output (custom SHA-256 scheme,
+// version nibble 0x8 — intentionally NOT RFC 4122 v5; see person-id.ts).
 // ---------------------------------------------------------------------------
 describe("uuidV5 — happy path", () => {
   test("returns a lowercase hyphenated UUID string", () => {
