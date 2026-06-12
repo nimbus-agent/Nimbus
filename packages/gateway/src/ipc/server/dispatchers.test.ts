@@ -31,6 +31,7 @@ import {
   sessionRpcSkipped,
 } from "./context.ts";
 import {
+  extractKbPageRef,
   tryDispatchAdminRpc,
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
@@ -807,6 +808,25 @@ describe("tryDispatchChatopsRpc", () => {
   test("an unknown chatops.* method falls through to skipped", async () => {
     const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
     expect(await tryDispatchChatopsRpc(ctx, "chatops.__nope__", {})).toBe(phase4RpcSkipped);
+  });
+});
+
+describe("extractKbPageRef", () => {
+  test("reads a top-level id and prefixes by action type", () => {
+    expect(extractKbPageRef("notion.knowledge.write", { id: "pg1" })).toBe("notion:pg1");
+    expect(extractKbPageRef("confluence.knowledge.write", { id: "99" })).toBe("confluence:99");
+  });
+  test("unwraps an MCP content-block envelope with JSON text", () => {
+    const result = { content: [{ type: "text", text: JSON.stringify({ id: "deep" }) }] };
+    expect(extractKbPageRef("notion.knowledge.write", result)).toBe("notion:deep");
+  });
+  test("returns empty (→ write_failed) when no id is present or input is not an object", () => {
+    expect(extractKbPageRef("notion.knowledge.write", { ok: true })).toBe("");
+    expect(extractKbPageRef("notion.knowledge.write", null)).toBe("");
+    expect(extractKbPageRef("notion.knowledge.write", "nope")).toBe("");
+    expect(extractKbPageRef("notion.knowledge.write", { content: [{ text: "not json" }] })).toBe(
+      "",
+    );
   });
 });
 

@@ -9,11 +9,17 @@ export interface TribalStatus {
   readonly clusters: number;
 }
 
-export interface TribalCaptureResult {
-  ok: boolean;
-  pageRef?: string;
-  error?: string;
-}
+export type TribalCaptureError =
+  | "capture_unavailable"
+  | "not_found"
+  | "not_configured"
+  | "target_ambiguous"
+  | "rejected"
+  | "write_failed";
+
+export type TribalCaptureResult =
+  | { ok: true; pageRef: string }
+  | { ok: false; error: TribalCaptureError };
 
 /**
  * Submits the capture action through the executor HITL gate. Built PER-CALL in the dispatcher with

@@ -76,6 +76,12 @@ export interface ChatopsBoot {
    * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
    */
   requestOwnerApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
+  /**
+   * Slice 6c: true if the sender resolves to a mapped (SCIM-enrolled) identity. An intercepted
+   * command (e.g. in-chat tribal capture) consults this so an unenrolled user cannot trigger the
+   * owner-HITL flow — mirroring the IntentRouter's unmapped-refusal, which the intercept bypasses.
+   */
+  isSenderMapped(platform: ChatPlatform, userId: string): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -372,6 +378,8 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
     },
     replyTo: (target, text) => replyDispatcher.send(target, text),
     requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
+    isSenderMapped: async (platform, userId) =>
+      (await mapper.resolve(platform, userId)).kind === "mapped",
     stop: () => service.stop(),
   };
 }

@@ -119,7 +119,11 @@ describe("buildE2eSinkDispatcher", () => {
       type: "deployment.rollback",
       payload: { service: "payment-service", version: "v1.4" },
     };
-    expect(await dispatch.dispatch(action)).toEqual({ ok: true, action: "deployment.rollback" });
+    expect(await dispatch.dispatch(action)).toEqual({
+      ok: true,
+      action: "deployment.rollback",
+      id: "e2e-kb-page-1",
+    });
     const [ev] = readSink();
     expect(ev).toEqual({
       kind: "dispatch",

@@ -1188,6 +1188,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       if (cmd === undefined) return false;
       const cb = chatopsBoot;
       if (cb === undefined) return false;
+      // Only an enrolled (mapped) sender may trigger the owner-HITL capture — otherwise fall
+      // through to the IntentRouter (which refuses unmapped users). Without this, any addressed
+      // channel member could spam the local owner with capture approval prompts.
+      if (!(await cb.isSenderMapped(msg.platform, msg.userId))) return false;
       const executor = new ToolExecutor(
         { requestApproval: (p, d) => cb.requestOwnerApproval(p, d) },
         localIndex,
