@@ -4,6 +4,7 @@ import {
   type ManifestInputs,
   parseSha256Sums,
   renderHomebrewFormula,
+  renderScoopManifest,
 } from "./package-manager-manifests.ts";
 
 const INPUTS: ManifestInputs = {
@@ -66,5 +67,35 @@ describe("renderHomebrewFormula", () => {
     expect(rb).toContain('bin.install "nimbus"');
     expect(rb).toContain('bin.install "nimbus-gateway"');
     expect(rb).toContain("--version");
+  });
+});
+
+describe("renderScoopManifest", () => {
+  const json = renderScoopManifest(INPUTS);
+  const parsed = JSON.parse(json) as {
+    version: string;
+    architecture: { "64bit": { url: string; hash: string } };
+    bin: string[];
+    checkver: unknown;
+    autoupdate: unknown;
+  };
+  test("is valid JSON with version + windows url + hash", () => {
+    expect(parsed.version).toBe("0.1.0");
+    expect(parsed.architecture["64bit"].url).toBe(
+      "https://github.com/nimbus-agent/Nimbus/releases/download/v0.1.0/nimbus-headless-windows-x64.zip",
+    );
+    expect(parsed.architecture["64bit"].hash).toBe("d".repeat(64));
+  });
+  test("exposes both executables on PATH", () => {
+    expect(parsed.bin).toEqual(["nimbus.exe", "nimbus-gateway.exe"]);
+  });
+  test("includes checkver + autoupdate for Scoop self-bumping", () => {
+    expect(parsed.checkver).toBeDefined();
+    expect(parsed.autoupdate).toBeDefined();
+  });
+  test("autoupdate URL keeps the LITERAL $version token (Scoop substitutes it, not us)", () => {
+    const auto = parsed.autoupdate as { architecture: { "64bit": { url: string } } };
+    expect(auto.architecture["64bit"].url).toContain("/download/v$version/");
+    expect(auto.architecture["64bit"].url).not.toContain("/download/v0.1.0/");
   });
 });
