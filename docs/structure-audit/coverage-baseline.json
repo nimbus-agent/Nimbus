@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T08:14:18.280Z",
+  "generated_at": "2026-06-12T09:41:24.543Z",
   "files": {
     "packages/cli/src/lib/interactive-ipc-handlers.ts": {
       "min_line_pct": 80,
@@ -50,26 +50,6 @@
       "min_line_pct": 80,
       "min_branch_pct": 75
     },
-    "packages/gateway/src/embedding/chunker.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 72.31
-    },
-    "packages/gateway/src/embedding/create-embedding-runtime.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75.76
-    },
-    "packages/gateway/src/embedding/create-routing-runtime.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/embedding/model.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.92
-    },
-    "packages/gateway/src/embedding/pipeline.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 69.23
-    },
     "packages/gateway/src/federation/federation-server.ts": {
       "min_line_pct": 78.26,
       "min_branch_pct": 80
@@ -81,22 +61,6 @@
     "packages/gateway/src/graph/graph-populator.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 79.79
-    },
-    "packages/gateway/src/index/drift-hints.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78.26
-    },
-    "packages/gateway/src/index/local-index.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.17
-    },
-    "packages/gateway/src/index/migrations/runner.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70.37
-    },
-    "packages/gateway/src/index/sqlite-vec-load.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 68.42
     },
     "packages/gateway/src/memory/session-memory-store.ts": {
       "min_line_pct": 75.81,
@@ -121,18 +85,6 @@
     "packages/gateway/src/preflight/preflight.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75
-    },
-    "packages/gateway/src/search/dual-search.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70
-    },
-    "packages/gateway/src/search/hybrid-internal.ts": {
-      "min_line_pct": 79.56,
-      "min_branch_pct": 58.62
-    },
-    "packages/gateway/src/search/vec-store.ts": {
-      "min_line_pct": 70,
-      "min_branch_pct": 57.14
     },
     "packages/gateway/src/sync/rate-limiter.ts": {
       "min_line_pct": 80,

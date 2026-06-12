@@ -111,6 +111,7 @@ type RoutingFactory = typeof import("./create-routing-runtime.ts").tryCreateRout
 
 async function importFactory(
   createEmbedder: Parameters<RoutingFactory>[5] = fakeLocalEmbedder,
+  checkVec: Parameters<RoutingFactory>[6] | undefined = undefined,
 ): Promise<
   (
     db: Parameters<RoutingFactory>[0],
@@ -121,6 +122,18 @@ async function importFactory(
   ) => ReturnType<RoutingFactory>
 > {
   const mod = await import(resolve(import.meta.dir, "create-routing-runtime.ts"));
+  if (checkVec !== undefined) {
+    return (db, paths, logger, toml, vault) =>
+      mod.tryCreateRoutingEmbeddingRuntime(
+        db,
+        paths,
+        logger,
+        toml,
+        vault,
+        createEmbedder,
+        checkVec,
+      );
+  }
   return (db, paths, logger, toml, vault) =>
     mod.tryCreateRoutingEmbeddingRuntime(db, paths, logger, toml, vault, createEmbedder);
 }
@@ -398,5 +411,194 @@ describe.skipIf(!VEC_AVAILABLE)(
         h.cleanup();
       }
     });
+
+    test("embedQuery returns null when local embedder returns empty array", async () => {
+      async function emptyLocalEmbedder(): Promise<Embedder> {
+        return {
+          model: "local:all-MiniLM-L6-v2",
+          dims: 384,
+          async embed(_texts: string[]): Promise<Float32Array[]> {
+            return [];
+          },
+        };
+      }
+      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      try {
+        const factory = await importFactory(emptyLocalEmbedder);
+        const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
+        const vec = await runtime?.embedQuery("hello");
+        expect(vec).toBeNull();
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    test("embedQueryDual returns null for vec384 when local embedder returns empty array", async () => {
+      // Local embed returns [] → local384[0] is undefined → vec384 is null.
+      // OpenAI embed returns 1 valid vector (via the installed fetch stub) → vec1536 is non-null.
+      async function emptyLocalEmbedder(): Promise<Embedder> {
+        return {
+          model: "local:all-MiniLM-L6-v2",
+          dims: 384,
+          async embed(_texts: string[]): Promise<Float32Array[]> {
+            return [];
+          },
+        };
+      }
+      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      try {
+        const factory = await importFactory(emptyLocalEmbedder);
+        const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
+        const out = await runtime?.embedQueryDual("hello");
+        expect(out?.vec384).toBeNull();
+        expect(out?.vec1536).toBeInstanceOf(Float32Array);
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    test("scheduleItemEmbedding catches and logs errors from embedItem", async () => {
+      const warnings: Array<Record<string, unknown>> = [];
+      const captureLogger = pino(
+        { level: "warn" },
+        {
+          write(chunk: string) {
+            try {
+              warnings.push(JSON.parse(chunk) as Record<string, unknown>);
+            } catch {
+              /* ignore */
+            }
+          },
+        },
+      );
+      async function throwingOnEmbedEmbedder(): Promise<Embedder> {
+        return {
+          model: "local:all-MiniLM-L6-v2",
+          dims: 384,
+          async embed(_texts: string[]): Promise<Float32Array[]> {
+            throw new Error("synthetic embed failure");
+          },
+        };
+      }
+      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      const now = Date.now();
+      h.db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["test:catch-1", "test", "pr", "catch-1", "Catch test item", "body", now, now],
+      );
+      try {
+        const factory = await importFactory(throwingOnEmbedEmbedder);
+        const runtime = await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
+        runtime?.scheduleItemEmbedding("test:catch-1");
+        await new Promise((r) => setTimeout(r, 80));
+        expect(
+          warnings.some(
+            (w) => typeof w["msg"] === "string" && w["msg"].includes("embedding item failed"),
+          ),
+        ).toBe(true);
+      } finally {
+        restoreFetch();
+        h.cleanup();
+      }
+    });
   },
 );
+
+describe("tryCreateRoutingEmbeddingRuntime — sqlite-vec unavailable branch", () => {
+  beforeEach(() => {
+    mock.restore();
+    installOpenaiFetchStub();
+    processEnvDelete("OPENAI_API_KEY");
+  });
+  afterEach(() => {
+    mock.restore();
+    restoreFetch();
+    processEnvDelete("OPENAI_API_KEY");
+  });
+
+  test("returns null and logs when checkVec returns false (sqlite-vec unavailable)", async () => {
+    const warnings: Array<Record<string, unknown>> = [];
+    const captureLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            warnings.push(JSON.parse(chunk) as Record<string, unknown>);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
+    );
+    const h = makeHarness({ migrateTo: 30, setApiKey: true });
+    try {
+      const alwaysFalseCheckVec = (_db: Parameters<RoutingFactory>[0], _uv: number): boolean =>
+        false;
+      const factory = await importFactory(fakeLocalEmbedder, alwaysFalseCheckVec);
+      const runtime = await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
+      expect(runtime).toBeNull();
+      expect(
+        warnings.some(
+          (w) => typeof w["msg"] === "string" && w["msg"].includes("sqlite-vec unavailable"),
+        ),
+      ).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("tryCreateRoutingEmbeddingRuntime — non-Error thrown in init", () => {
+  beforeEach(() => {
+    mock.restore();
+    processEnvDelete("OPENAI_API_KEY");
+  });
+  afterEach(() => {
+    mock.restore();
+    restoreFetch();
+    processEnvDelete("OPENAI_API_KEY");
+  });
+
+  test("handles non-Error thrown from createEmbedder (covers instanceof else branches)", async () => {
+    async function throwsStringEmbedder(): Promise<Embedder> {
+      return Promise.reject("string-shaped-error") as Promise<Embedder>;
+    }
+    const warnings: Array<Record<string, unknown>> = [];
+    const captureLogger = pino(
+      { level: "warn" },
+      {
+        write(chunk: string) {
+          try {
+            warnings.push(JSON.parse(chunk) as Record<string, unknown>);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
+    );
+    const h = makeHarness({ migrateTo: 30, setApiKey: true });
+    try {
+      const factory = await importFactory(throwsStringEmbedder);
+      const runtime = await factory(h.db, h.paths, captureLogger, h.toml, h.vault);
+      expect(runtime).toBeNull();
+      expect(
+        warnings.some(
+          (w) => typeof w["msg"] === "string" && w["msg"].includes("Hybrid embedding init failed"),
+        ),
+      ).toBe(true);
+      // When a non-Error is thrown, errName="Error" and errMessage=String(thrown)
+      expect(
+        warnings.some(
+          (w) =>
+            typeof w["errName"] === "string" &&
+            w["errName"] === "Error" &&
+            typeof w["errMessage"] === "string" &&
+            w["errMessage"] === "string-shaped-error",
+        ),
+      ).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
