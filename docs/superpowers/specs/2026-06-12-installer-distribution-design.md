@@ -1,7 +1,8 @@
 # Proper Installer & Distribution for Nimbus (headless) — Design
 
 **Date:** 2026-06-12
-**Status:** Approved (brainstorming) — pending implementation plan
+**Status:** Approved (brainstorming) — review incorporated — pending implementation plan
+**Revision:** r2 — incorporated spec review (updater coexistence, per-user install scope, uninstall, pre-release policy; see §6.1, §9)
 **Scope:** Headless Gateway + CLI distribution. The Tauri 2.0 desktop app (Phase 13) is explicitly out of scope.
 
 ---
@@ -67,7 +68,7 @@ Rejected alternatives:
 | `scripts/release/nimbus-verify.{sh,ps1}` | Checksum + GPG verification — extended to new artifacts |
 | `scripts/sign-linux-gpg.sh`, `scripts/sign-ed25519.ts` | Existing signing steps — join the unified seam convention |
 | `release.yml` | Build matrix, signing hooks, `SHA256SUMS`, SBOM, GitHub Release publish |
-| Ed25519 auto-updater + signed manifest | Untouched; native installers and package managers are additive update paths |
+| Ed25519 auto-updater + signed manifest | Direct-download path keeps it enabled; managed builds disable it via the existing `NIMBUS_UPDATER_DISABLE` switch (see §6.1) so the package manager owns updates |
 
 ---
 
@@ -91,9 +92,19 @@ Rejected alternatives:
   adds it to **User** PATH (reusing the proven logic in `scripts/install/windows/install.ps1`,
   i.e. the `.NET` `SetEnvironmentVariable` approach, never `setx`); registers an
   Add/Remove Programs entry with a stable `UpgradeCode` for in-place upgrades.
+  **Per-user, UAC-free:** the WiX `Package` is authored `InstallScope="perUser"` with
+  `ALLUSERS=""`, so the install targets `%LOCALAPPDATA%` without an elevation prompt and
+  matches the no-admin posture of the existing install scripts. Uninstall is handled
+  natively by the MSI's Add/Remove Programs registration (no custom uninstaller needed).
 - **`.pkg`** — `pkgbuild` + `productbuild` on the macOS runner
-  (`scripts/package-macos-installer.sh`). Installs binaries plus a `postinstall` that
-  symlinks into `/usr/local/bin`.
+  (`scripts/package-macos-installer.sh`). **User-scoped, no sudo:** the `.pkg` is authored as
+  a *user* install (no `RequireAuthorization`) writing to `~/.local/bin` (binaries) and
+  updating the user's shell profile via the **same idempotent PATH-marker logic already in
+  `scripts/install/unix/install.sh`** — **not** `/usr/local/bin`, which is root-owned and
+  would force an admin prompt, contradicting Nimbus's per-user philosophy. Because macOS
+  `.pkg` has no native Add/Remove-Programs equivalent, the package ships an
+  `uninstall-nimbus` script (reusing `scripts/install/unix/uninstall.sh`) and the design
+  records its installed files via the pkg receipt for clean removal.
 - **`.rpm`** — add `nfpm` to `scripts/package-linux-installers.ts` (one config →
   `.deb` + `.rpm`). Keep the existing `.deb`/AppImage/tarball outputs; nfpm runs alongside
   (or replaces only the `.deb` internals if the swap is clean and tests stay green).
@@ -110,7 +121,16 @@ Rejected alternatives:
 ### Slice 4 — Hosted apt/yum repo  *(highest effort, last)*
 
 - Static, GPG-signed repos generated with `reprepro` (apt) + `createrepo_c` (yum) from the
-  released `.deb` / `.rpm`, **signed with the existing release GPG key**.
+  released `.deb` / `.rpm`, signed with the **existing release GPG secrets**
+  (`GPG_SIGNING_SUBKEY` + `GPG_PASSPHRASE` — the same pair `sign-linux-gpg.sh` already
+  imports; **no new `NIMBUS_GPG_PRIVATE_KEY` secret**). `publish-linux-repo.yml` imports the
+  key into an ephemeral `GNUPGHOME` and never echoes it.
+- **Modern client trust (not deprecated `apt-key`).** The published install docs use the
+  `signed-by` keyring form:
+  ```bash
+  curl -fsSL https://pkg.nimbus.dev/gpg.key | gpg --dearmor -o /usr/share/keyrings/nimbus-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/nimbus-archive-keyring.gpg] https://pkg.nimbus.dev/apt stable main" | sudo tee /etc/apt/sources.list.d/nimbus.list
+  ```
 - Hosted on GitHub Pages (target domain e.g. `pkg.nimbus.dev`, TBD with the docs domain) so
   `apt install nimbus` / `dnf install nimbus` work and auto-update.
 - New workflow `publish-linux-repo.yml`.
@@ -118,6 +138,28 @@ Rejected alternatives:
 ---
 
 ## 6. Cross-Cutting Concerns
+
+### 6.1 Updater ↔ package-manager coexistence (load-bearing)
+
+The Ed25519 self-updater and a package-manager install **must not both own the binary**, or
+the package DB reports a stale version, later `apt`/`brew` upgrades clash or downgrade, and on
+Linux the running (unprivileged) process can't even write a root-owned install path. The
+design resolves this by making **package/installer builds the source of truth for updates**:
+
+- **Disable the self-updater in managed builds.** The mechanism already exists —
+  `NIMBUS_UPDATER_DISABLE=1` flips `updater.enabled=false` (`config/nimbus-toml.ts:411`). Every
+  packaged artifact (`.msi`/`.pkg`/`.rpm`/`.deb` + brew/scoop) bakes a disabled-updater default
+  (env baked into the launcher or a shipped `nimbus.toml` with `[updater].enabled=false`). No
+  new gateway mechanism is required.
+- **Channel marker + helpful nudge.** Builds stamp the channel they came from (e.g.
+  `NIMBUS_DISTRIBUTION_CHANNEL=homebrew|scoop|winget|apt|yum|msi|pkg`). When the updater is
+  disabled and the user runs `nimbus update`, the CLI prints the channel-appropriate command
+  instead of self-updating (`"Installed via Homebrew — run 'brew upgrade nimbus'."`). The
+  standalone tarball / direct-download path keeps the self-updater **enabled** (unchanged).
+- **Net effect:** each install path has exactly one updater. This is the one place the spec
+  touches CLI/gateway behavior; it is a small, additive config-default + message change, not a
+  new subsystem. (A `NIMBUS_DISTRIBUTION_CHANNEL` read is the only new code; the disable switch
+  reuses what exists.)
 
 ### Signing seam (the load-bearing design choice)
 
@@ -176,3 +218,29 @@ validate against `SHA256SUMS` + GPG; the new artifacts are staged into the same 
 Slice 1 → 2 → 3 → 4. Slice 1 yields `brew`/`scoop` one-liners almost immediately;
 Slice 2 unlocks native installers + winget; Slice 4 (hosted repo) is the heavy lift last.
 Each slice is a standalone PR.
+
+---
+
+## 9. Pre-release Policy & Deferred Implementation Details
+
+### Pre-release channel policy
+
+`release.yml` already flips `vN.N.N-{rc,beta,alpha}.*` tags to GitHub **Pre-release**.
+Package-manager channels track **stable releases only** — `publish-package-managers.yml` and
+`publish-linux-repo.yml` no-op on pre-release tags. Pre-release builds remain available as
+direct GitHub Release downloads (and via the self-updater's pre-release opt-in, unchanged).
+This keeps `brew`/`scoop`/`winget`/`apt` pointed at stable, matching ecosystem norms.
+
+### Deferred to the per-slice implementation plans (correct, but impl-level, not design)
+
+These were raised in review, accepted as correct, and belong in the slice plans rather than
+the design:
+
+- **Slice 2 — WiX bootstrap:** GitHub Windows runners lack WiX v5; the release job runs
+  `dotnet tool install --global wix` (pinned version) before `package-windows-installer.ps1`.
+- **Slice 2 — nfpm bootstrap:** nfpm isn't pre-installed; download a **version-pinned** nfpm
+  binary in the Linux packaging step (checksum-verified), not "latest".
+- **Slice 4 — apt/yum client docs** use the `signed-by` keyring form shown in §5/Slice 4;
+  no `apt-key add`.
+
+These carry no design ambiguity — they are recorded so the implementer doesn't rediscover them.
