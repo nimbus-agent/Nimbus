@@ -325,6 +325,7 @@ export function isPreflightBrief(x: unknown): x is PreflightBrief {
     Array.isArray(b["gaps"]) &&
     Array.isArray(b["downstreams"]) &&
     typeof b["anyFailed"] === "boolean" &&
+    typeof b["anyIncomplete"] === "boolean" &&
     typeof b["generatedAt"] === "number" &&
     typeof b["latencyMs"] === "number" &&
     b["query"] !== null &&

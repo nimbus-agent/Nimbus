@@ -177,6 +177,7 @@ describe("6b brief guards", () => {
     expect(isPreflightBrief({ ...preflight, gaps: 1 })).toBe(false);
     expect(isPreflightBrief({ ...preflight, downstreams: {} })).toBe(false);
     expect(isPreflightBrief({ ...preflight, anyFailed: "no" })).toBe(false);
+    expect(isPreflightBrief({ ...preflight, anyIncomplete: "no" })).toBe(false);
     expect(isPreflightBrief({ ...preflight, generatedAt: "t" })).toBe(false);
     expect(isPreflightBrief({ ...preflight, latencyMs: undefined })).toBe(false);
     expect(isPreflightBrief({ ...preflight, query: null })).toBe(false);

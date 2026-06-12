@@ -322,12 +322,17 @@ function requireJanitorParams(params: unknown): {
     throw new AgentsRpcError(-32602, "agents.janitor: object params required");
   }
   const p = params as Record<string, unknown>;
-  if (typeof p["resourceRef"] !== "string" || p["resourceRef"].length === 0) {
+  const resourceRef = typeof p["resourceRef"] === "string" ? p["resourceRef"].trim() : "";
+  if (resourceRef.length === 0) {
     throw new AgentsRpcError(-32602, "agents.janitor: resourceRef (non-empty string) required");
   }
+  const idleDaysRaw = p["idleDays"];
   return {
-    resourceRef: p["resourceRef"],
-    idleDays: typeof p["idleDays"] === "number" && p["idleDays"] > 0 ? p["idleDays"] : 14,
+    resourceRef,
+    idleDays:
+      typeof idleDaysRaw === "number" && Number.isInteger(idleDaysRaw) && idleDaysRaw > 0
+        ? idleDaysRaw
+        : 14,
     cleanupAction:
       typeof p["cleanupAction"] === "string" && p["cleanupAction"].length > 0
         ? p["cleanupAction"]
@@ -350,16 +355,18 @@ function requirePreflightParams(params: unknown): {
     throw new AgentsRpcError(-32602, "agents.preflight: object params required");
   }
   const p = params as Record<string, unknown>;
-  if (typeof p["ref"] !== "string" || p["ref"].length === 0) {
+  const ref = typeof p["ref"] === "string" ? p["ref"].trim() : "";
+  if (ref.length === 0) {
     throw new AgentsRpcError(-32602, "agents.preflight: ref (non-empty string) required");
   }
-  if (typeof p["namespace"] !== "string" || p["namespace"].length === 0) {
+  const namespace = typeof p["namespace"] === "string" ? p["namespace"].trim() : "";
+  if (namespace.length === 0) {
     throw new AgentsRpcError(-32602, "agents.preflight: namespace (non-empty string) required");
   }
   const surface = Array.isArray(p["changedSurface"])
     ? p["changedSurface"].filter((s): s is string => typeof s === "string")
     : [];
-  return { ref: p["ref"], namespace: p["namespace"], changedSurface: surface };
+  return { ref, namespace, changedSurface: surface };
 }
 
 async function handlePreflight(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {

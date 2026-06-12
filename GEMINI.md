@@ -106,7 +106,7 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 
 - [`docs/architecture.md`](./docs/architecture.md) — subsystem design, IPC method catalogue, schema reference. Read before modifying any subsystem.
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
-- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I23 rationale + anti-patterns.
+- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I24 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
 - `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in the Skill References table below): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-federation-identity`, `nimbus-agent-patterns`.
 

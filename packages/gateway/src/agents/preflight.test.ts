@@ -8,6 +8,18 @@ import { type PreflightContext, runPreflight } from "./preflight.ts";
 
 const SELF: BoxKeypair = { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) };
 
+/** Polls `predicate()` until true or the deadline — deterministic replacement for fixed sleeps. */
+async function waitForNotify(
+  predicate: () => boolean,
+  { timeoutMs = 1_000, stepMs = 5 }: { timeoutMs?: number; stepMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`waitForNotify: timed out after ${timeoutMs} ms`);
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
 function ctx(db: Database, send: NonNullable<PreflightContext["sendOverWire"]>): PreflightContext {
   const index = new LocalIndex(db);
   index.addLanPeer({
@@ -71,6 +83,6 @@ test("emitPreflightBrief fires preflight.briefReady", async () => {
     { ref: "HEAD", namespace: "n", changedSurface: [] },
     { ...base, notify: (m: string) => seen.push(m) },
   );
-  await new Promise((r) => setTimeout(r, 20));
+  await waitForNotify(() => seen.includes("preflight.briefReady"));
   expect(seen).toContain("preflight.briefReady");
 });
