@@ -428,6 +428,13 @@ export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Pr
 }
 ```
 
+> **Clean-exit requirement (verified):** the channel short-circuit MUST be the first thing in
+> `runUpdate`, before `parseUpdateArgs` and before any `withGatewayIpc(...)` call. `withGatewayIpc`
+> is the only thing that opens an IPC connection / keeps the event loop alive; reaching `return`
+> above it means the managed-install path opens no connections and the process exits cleanly. The
+> Step 5 test implicitly proves this — it injects no gateway and would hang/throw in `withGatewayIpc`
+> if the short-circuit were placed too late.
+
 - [ ] **Step 8: Run tests to verify they pass**
 
 Run: `cd packages/cli && bun test src/commands/update.test.ts src/lib/distribution-channel.test.ts`
@@ -702,6 +709,13 @@ describe("renderScoopManifest", () => {
     expect(parsed.checkver).toBeDefined();
     expect(parsed.autoupdate).toBeDefined();
   });
+  test("autoupdate URL keeps the LITERAL $version token (Scoop substitutes it, not us)", () => {
+    // Guards against accidentally writing `v${version}` (which JS would interpolate
+    // to the build-time version) instead of `v$version` (Scoop's client-side token).
+    const auto = parsed.autoupdate as { architecture: { "64bit": { url: string } } };
+    expect(auto.architecture["64bit"].url).toContain("/download/v$version/");
+    expect(auto.architecture["64bit"].url).not.toContain("/download/v0.1.0/");
+  });
 });
 ```
 
@@ -931,12 +945,20 @@ name: Publish package managers
 
 # `released` (not `published`) fires only for non-prerelease releases, so
 # rc/beta/alpha tags are skipped automatically (spec §9: channels track stable only).
+# `workflow_dispatch` lets a maintainer re-run a publish by tag if the push failed
+# transiently (GitHub outage, expired PAT) — re-running is idempotent (no-op if unchanged).
 on:
   release:
     types: [released]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag to publish (e.g. v0.5.0)"
+        required: true
+        type: string
 
 concurrency:
-  group: publish-pkgmgr-${{ github.ref }}
+  group: publish-pkgmgr-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
   cancel-in-progress: false
 
 permissions:
@@ -963,10 +985,24 @@ jobs:
         with:
           verify-lock: "false"
 
+      # Fail fast with an actionable message if the publish PAT is missing/empty.
+      # On the upstream repo a missing secret means releases would silently fail to
+      # publish, so we error loudly rather than skip. (Release events don't fire from
+      # forks, so this is not a fork-noise concern.)
+      - name: Require PACKAGE_MANAGER_PAT
+        env:
+          PKG_PAT: ${{ secrets.PACKAGE_MANAGER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PKG_PAT}" ]; then
+            echo "::error::PACKAGE_MANAGER_PAT is not set. Add a fine-grained PAT with contents:write on nimbus-agent/homebrew-tap + nimbus-agent/scoop-bucket (repo Settings → Secrets → Actions)."
+            exit 1
+          fi
+
       - name: Download SHA256SUMS from the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -974,7 +1010,7 @@ jobs:
 
       - name: Generate manifests
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -989,7 +1025,7 @@ jobs:
       - name: Publish to homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/homebrew-tap.git" tap
@@ -1006,7 +1042,7 @@ jobs:
       - name: Publish to scoop-bucket
         env:
           GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/scoop-bucket.git" bucket
