@@ -63,7 +63,7 @@ test("resolveDailyNotePath emits a warning when daily-notes.json is JSON null", 
 });
 
 // Covers: daily-notes.json contains a non-object JSON value (string, number, array)
-test("resolveDailyNotePath emits a warning when daily-notes.json is a JSON array", () => {
+test("resolveDailyNotePath does NOT warn for a JSON array (treated as Record → defaults)", () => {
   const root = mkdtempSync(join(tmpdir(), "obsidian-dn-"));
   mkdirSync(join(root, ".obsidian"), { recursive: true });
   writeFileSync(join(root, ".obsidian", "daily-notes.json"), "[1,2,3]");

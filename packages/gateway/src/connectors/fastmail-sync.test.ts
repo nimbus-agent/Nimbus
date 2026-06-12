@@ -119,49 +119,49 @@ describeWithFetchRestore("fastmail-sync", () => {
       "fastmail.api_token": "tok",
       "fastmail.base_url": "https://custom.fastmail.example/",
     });
-    let capturedUrl = "";
+    const urls: string[] = [];
+    let callCount = 0;
     globalThis.fetch = (async (
       input: SyncTestFetchParams[0],
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
-      capturedUrl = urlFromFetchInput(input);
-      return new Response(
-        JSON.stringify(makeSession({ apiUrl: "https://custom.fastmail.example/jmap/api/" })),
-        { status: 200 },
-      );
+      urls.push(urlFromFetchInput(input));
+      callCount++;
+      return callCount === 1
+        ? new Response(
+            JSON.stringify(makeSession({ apiUrl: "https://custom.fastmail.example/jmap/api/" })),
+            { status: 200 },
+          )
+        : new Response(JSON.stringify(makeEmailsResponse([])), { status: 200 });
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    // Will call session endpoint — we don't care about the query result
-    globalThis.fetch = twoCallFetch(
-      makeSession({ apiUrl: "https://custom.fastmail.example/jmap/api/" }),
-      makeEmailsResponse([]),
-    );
-    // Just verify it doesn't crash with a trailing slash base URL
     const r = await sync.sync(syncTestContext(db, vault), null);
     expect(r.cursor).toContain("nimbus-fastmail1:");
-    void capturedUrl; // captured but not the assertion goal here
+    // The trailing slash in base_url must be trimmed → session endpoint has no `//`.
+    expect(urls[0]).toBe("https://custom.fastmail.example/jmap/session");
   });
 
   // ─── loadCreds: base_url absent → uses DEFAULT_BASE_URL ────────────────────
   test("uses default base URL when base_url vault entry is absent", async () => {
     const db = createMemoryIndexDb();
-    let sessionUrl = "";
+    const urls: string[] = [];
+    let callCount = 0;
     globalThis.fetch = (async (
       input: SyncTestFetchParams[0],
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
-      sessionUrl = urlFromFetchInput(input);
-      // Return session response; second call will also go here
-      return new Response(JSON.stringify(makeSession()), { status: 200 });
+      urls.push(urlFromFetchInput(input));
+      callCount++;
+      return callCount === 1
+        ? new Response(JSON.stringify(makeSession()), { status: 200 })
+        : new Response(JSON.stringify(makeEmailsResponse([])), { status: 200 });
     }) as typeof fetch;
 
-    // Use two-call fake so emails also respond
-    globalThis.fetch = twoCallFetch(makeSession(), makeEmailsResponse([]));
     const sync = makeSyncable();
     await sync.sync(syncTestContext(db, tokenVault()), null);
-    // sessionUrl should contain default base URL (api.fastmail.com)
-    void sessionUrl; // set by first fake but overridden; test just checks no crash
+    // base_url absent → DEFAULT_BASE_URL (api.fastmail.com) is used for the session endpoint.
+    expect(urls[0]).toBe("https://api.fastmail.com/jmap/session");
   });
 
   // ─── Session HTTP error → syncPassCursorHttpEmpty ───────────────────────────
@@ -686,14 +686,24 @@ describeWithFetchRestore("fastmail-sync", () => {
       if (callCount === 1) {
         return new Response(JSON.stringify(makeSession()), { status: 200 });
       }
-      return new Response(JSON.stringify(makeEmailsResponse([])), { status: 200 });
+      return new Response(JSON.stringify(makeEmailsResponse([makeEmail()])), { status: 200 });
     }) as typeof fetch;
 
     const sync = makeSyncable();
-    await sync.sync(syncTestContext(db, tokenVault("my-secret-token")), null);
+    const r = await sync.sync(syncTestContext(db, tokenVault("my-secret-token")), null);
     expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
     for (const h of capturedHeaders) {
       expect(h).toBe("Bearer my-secret-token");
+    }
+    // Vault non-leak: the secret token must never escape into the returned cursor
+    // or any persisted item row (title/body/metadata/url).
+    expect(r.cursor ?? "").not.toContain("my-secret-token");
+    const rows = db
+      .query(`SELECT title, body_preview, metadata, url, canonical_url FROM item`)
+      .all() as Array<Record<string, unknown>>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(JSON.stringify(row)).not.toContain("my-secret-token");
     }
   });
 
