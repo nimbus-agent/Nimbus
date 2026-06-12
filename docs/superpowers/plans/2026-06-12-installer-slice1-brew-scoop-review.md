@@ -1,6 +1,6 @@
 # Review Feedback: Installer Slice 1 — Homebrew Tap + Scoop Bucket
 
-This document outlines improvements, suggestions, and open questions for the [installer-slice1-brew-scoop.md](file:///C:/gitrep/Nimbus/.claude/worktrees/installer-distribution/docs/superpowers/plans/2026-06-12-installer-slice1-brew-scoop.md) implementation plan.
+This document outlines improvements, suggestions, and open questions for the [installer-slice1-brew-scoop.md](./2026-06-12-installer-slice1-brew-scoop.md) implementation plan.
 
 ---
 

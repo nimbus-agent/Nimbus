@@ -1,7 +1,7 @@
 # Specification Review: Proper Installer & Distribution for Nimbus
 
 **Review Date:** 2026-06-12  
-**Target Design Spec:** [2026-06-12-installer-distribution-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/installer-distribution/docs/superpowers/specs/2026-06-12-installer-distribution-design.md)  
+**Target Design Spec:** [2026-06-12-installer-distribution-design.md](./2026-06-12-installer-distribution-design.md)  
 **Status:** Under Review / Recommendations Formulated
 
 ---
