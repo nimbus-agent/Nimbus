@@ -1,22 +1,5 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T15:52:05.567Z",
-  "files": {
-    "packages/cli/src/lib/parse-duration.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.92
-    },
-    "packages/gateway/src/commands/data-delete.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/federation/federation-server.ts": {
-      "min_line_pct": 78.26,
-      "min_branch_pct": 80
-    },
-    "packages/mcp-connectors/ramp/src/search-filter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70
-    }
-  }
+  "generated_at": "2026-06-12T17:50:11.182Z",
+  "files": {}
 }
