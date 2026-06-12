@@ -77,6 +77,47 @@ Per inbound channel message, a cheap → expensive pipeline:
 > a transport-scope + wiring change in `chatops/chatops-service.ts` / `chatops/transport/`, not a new
 > transport.
 
+### 2.1 Privacy scoping — the `watch_channels` allowlist is authoritative (review §1.1)
+
+The owner indexes history across *all* channels they belong to, including **private channels and
+DMs**. The risk: embedding-recall or synthesis pulls a thread from a private channel/DM and
+publishes it — with deep-link citations — to a *shared* team KB.
+
+Structural mitigation: **`watch_channels` is an explicit owner-controlled allowlist that scopes the
+entire pipeline**, not just the watcher:
+
+- **Required non-empty when `[tribal].enabled = true`** — boot fails closed with a clear error if
+  the watcher is on but no channels are listed (no "watch everything" mode; the owner must
+  deliberately enumerate the channels they consider shareable).
+- The **repeat-detector recall** and the **answer-synthesizer source retrieval** both filter index
+  reads to `service = slack|teams AND channel_id ∈ watch_channels`. A thread from a channel not on
+  the allowlist can never become a citation or contribute to a cluster.
+- **Defense-in-depth at the HITL gate:** the capture approval card lists every source citation with
+  its channel, so the owner sees provenance before approving the write.
+
+`scan` honors the same allowlist. (Whether the index records a per-message `channel_id` is a
+plan-time verification; the allowlist filter is the primary guard.)
+
+### 2.2 Cluster assignment & near-duplicate suppression (review §2.3)
+
+A new question is assigned to the **nearest existing cluster** whose representative vector is within
+the similarity threshold *before* a new cluster is created — so slightly-reworded repeats land in
+the same cluster rather than spawning duplicates. A cluster in `captured` or `dismissed` state keeps
+its representative vector and **absorbs** near-duplicate candidates into its existing cooldown
+(they do not start a fresh cluster). This makes the embedding-only `match` mode robust against
+near-duplicate double-firing.
+
+### 2.3 Message edits/deletions & embedding cost (review §2.1, §2.2)
+
+- **Edits/deletions (YAGNI):** the pipeline reads the **local index snapshot** at query time; it
+  does not track chat-side edits/deletions in real time. A deleted message simply stops appearing in
+  recall once the connector sync runner next updates the index. No bespoke deletion sync.
+- **Embedding cost:** embeddings default to **local MiniLM** (no API cost) per the existing routing;
+  an API embedding cost arises only when the owner has configured OpenAI embeddings. The cheap
+  `is-question.ts` gate filters most channel noise *before* any embedding, and the embedding path
+  reuses the existing rate-limiter. The setup guide documents the cost note for the
+  OpenAI-embeddings case.
+
 ### Components & responsibilities
 
 | File | Responsibility | Depends on |
@@ -100,7 +141,9 @@ match = "embedding"             # "embedding" | "embedding+llm"
 min_occurrences = 3             # cluster fires at N repeats
 window_days = 14                # …within this rolling window
 cooldown_days = 30              # don't re-suggest a dismissed/captured cluster for this long
-watch_channels = ["C0123..."]   # channel IDs to watch (empty = every channel the bot is in)
+watch_channels = ["C0123..."]   # REQUIRED non-empty when enabled — the authoritative allowlist that
+                                # scopes BOTH detection and source-retrieval (review §1.1). No
+                                # "watch everything" mode; boot fails closed if enabled + empty.
 
 [tribal.notion]                 # configure one OR both targets; absent = that target unavailable
 database_id = "…"               # captures = new rows (pages) in this Notion database
@@ -113,6 +156,17 @@ parent_page_id = "12345"        # captures = child pages under this parent
 Parsing lives in `config/nimbus-toml.ts`; the parsed `TribalConfig` carries the validated
 destinations. An unconfigured target makes capture to that target fail closed (`not_configured`).
 
+**Target resolution when both KBs are configured (review §3.1).** `capture` takes an optional
+`--target notion|confluence` (mirrored on the IPC method). Resolution: if exactly one target is
+configured, that is the default; if **both** are configured and `--target` is omitted, the command
+**errors asking for `--target`** (never a silent pick). This does **not** weaken I25 — both choices
+are config-resolved destinations; the caller is only selecting *which* locally-configured KB, never
+naming a page.
+
+**Cooldown semantics (review §3.2).** A cluster that enters cooldown stays there until
+`cooldown_until` passes; **new occurrences during the window are ignored** (the timer is neither
+reset nor extended). Once cooldown expires, occurrence counting for that cluster **restarts fresh**.
+
 ---
 
 ## 4. Invariant I25 (static D19)
@@ -124,8 +178,10 @@ destination, and an unconfigured destination fails closed.
 - **Production wiring:** `tribal/tribal-write-gate.ts` `captureToKnowledgeBase()` — the sole path
   from a capture request to a Notion/Confluence KB write. It (a) resolves the target from
   `[tribal.notion]` / `[tribal.confluence]` **only** (fail-closed `not_configured` if absent),
-  (b) requires the local owner's HITL approval before the write, (c) never reads a destination from
-  the request payload.
+  (b) requires the local owner's HITL approval before the write — the approval card lists every
+  source citation with its channel, so the owner vets provenance (review §1.1) — and (c) never reads
+  a destination *page* from the request payload (only the config-resolved `--target` KB selector,
+  per §3.1).
 - **Static D19:** `scripts/structure-audit/check-nimbus-invariants.ts` confines the KB write-tool
   identifiers (`notion_kb_append` / `confluence_kb_append`) to `tribal-write-gate.ts` (and the
   connector definition sites), mirroring D17/D18.
@@ -182,7 +238,8 @@ Adds `tribal_clusters`:
 
 - `status` / `start` / `stop` — watcher control (mirrors `nimbus chatops`)
 - `list` — pending / suggested clusters
-- `capture <cluster-id>` — trigger the owner-HITL synthesis + write
+- `capture <cluster-id> [--target notion|confluence]` — trigger the owner-HITL synthesis + write
+  (`--target` required only when both KBs are configured; see §3.1)
 - `dismiss <cluster-id>` — mark dismissed (enters cooldown)
 - `scan` — on-demand detection over recent indexed history *without* the live watcher (useful
   before enabling the watcher, and for deterministic testing)
@@ -229,4 +286,15 @@ internal checkpoint where nothing can write yet, de-risking the invariant work.
 - **Write target:** config-pinned KB, new invariant I25/D19. ✅
 - **Capture trigger:** both chat button and `nimbus tribal capture`. ✅
 - **Federation:** channel-scoped via the ChatOps bot; not a federated peer-query. ✅ (assumption)
+- **Privacy:** `watch_channels` allowlist scopes detection + recall + synthesis; required non-empty
+  when enabled; HITL card shows source provenance. ✅ (review §1.1)
+- **Cluster assignment:** nearest-existing-cluster-within-threshold before creating new; captured/
+  dismissed clusters absorb near-dups into their cooldown. ✅ (review §2.3)
+- **Edits/deletions:** index-snapshot only, no real-time deletion sync. ✅ (review §2.1)
+- **Embedding cost:** local-MiniLM default (no API cost), is-question pre-gate, reuse rate-limiter.
+  ✅ (review §2.2)
+- **Multi-target:** `capture --target notion|confluence`; required only when both configured; I25
+  unaffected. ✅ (review §3.1)
+- **Cooldown:** stays until `cooldown_until`, ignores in-window occurrences, resets fresh after. ✅
+  (review §3.2)
 - **Synthesis timing:** lazy (at capture), not on every fire. ✅
