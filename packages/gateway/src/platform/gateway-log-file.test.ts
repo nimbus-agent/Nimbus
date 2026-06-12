@@ -13,6 +13,57 @@ import {
   scrubRedactedValuePatterns,
 } from "./gateway-log-file.ts";
 
+/**
+ * Force `process.stdout.isTTY` to a fixed value and return a restorer that returns it to its
+ * pristine state — re-installing the original own descriptor, or DELETING the property we added
+ * when there was none (the CI-Linux case, where `isTTY` is `undefined` with no own descriptor).
+ * Keeps every isTTY-mutating test self-contained so the value never leaks across files in the
+ * combined `bun test` run (file order is per-OS, so a leak fails non-deterministically).
+ */
+function forceIsTty(value: boolean): () => void {
+  const hadOwn = Object.hasOwn(process.stdout, "isTTY");
+  const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  Object.defineProperty(process.stdout, "isTTY", {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+  return () => {
+    if (hadOwn && prev !== undefined) {
+      Object.defineProperty(process.stdout, "isTTY", prev);
+    } else {
+      Reflect.deleteProperty(process.stdout, "isTTY");
+    }
+  };
+}
+
+/**
+ * Poll the temp dir for the daily `gateway-*.log` until it contains `needle`. The gateway logger
+ * uses `pino.destination({ sync: false })`, so writes flush asynchronously — a fixed sleep is
+ * timing-flaky on a loaded CI runner. Polling with a generous deadline is deterministic.
+ */
+async function readDailyLogWhenReady(
+  dir: string,
+  needle: string,
+  deadlineMs = 5000,
+): Promise<string> {
+  const start = Date.now();
+  for (;;) {
+    const daily = readdirSync(dir).find((f) => f.startsWith("gateway-") && f.endsWith(".log"));
+    if (daily !== undefined) {
+      const content = readFileSync(join(dir, daily), "utf8");
+      if (content.includes(needle)) {
+        return content;
+      }
+    }
+    if (Date.now() - start > deadlineMs) {
+      throw new Error(`timed out after ${String(deadlineMs)}ms waiting for "${needle}" in ${dir}`);
+    }
+    await Bun.sleep(20);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // gatewayLogBasename
 // ---------------------------------------------------------------------------
@@ -123,20 +174,12 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
       // isTTY=false so we get the simpler path
-      const desc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: false,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
+      const restore = forceIsTty(false);
       try {
         const log = createGatewayPinoLogger(dir);
         expect(log.level).toBe("warn");
       } finally {
-        if (desc !== undefined) {
-          Object.defineProperty(process.stdout, "isTTY", desc);
-        }
+        restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -147,20 +190,12 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     process.env["NIMBUS_LOG_LEVEL"] = "";
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
-      const desc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: false,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
+      const restore = forceIsTty(false);
       try {
         const log = createGatewayPinoLogger(dir);
         expect(log.level).toBe("warn");
       } finally {
-        if (desc !== undefined) {
-          Object.defineProperty(process.stdout, "isTTY", desc);
-        }
+        restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -171,20 +206,12 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     process.env["NIMBUS_LOG_LEVEL"] = "verbose";
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
-      const desc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: false,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
+      const restore = forceIsTty(false);
       try {
         const log = createGatewayPinoLogger(dir);
         expect(log.level).toBe("warn");
       } finally {
-        if (desc !== undefined) {
-          Object.defineProperty(process.stdout, "isTTY", desc);
-        }
+        restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -195,20 +222,12 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     process.env["NIMBUS_LOG_LEVEL"] = "debug";
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
-      const desc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: false,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
+      const restore = forceIsTty(false);
       try {
         const log = createGatewayPinoLogger(dir);
         expect(log.level).toBe("debug");
       } finally {
-        if (desc !== undefined) {
-          Object.defineProperty(process.stdout, "isTTY", desc);
-        }
+        restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -219,20 +238,12 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     process.env["NIMBUS_LOG_LEVEL"] = "silent";
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
-      const desc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: false,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
+      const restore = forceIsTty(false);
       try {
         const log = createGatewayPinoLogger(dir);
         expect(log.level).toBe("silent");
       } finally {
-        if (desc !== undefined) {
-          Object.defineProperty(process.stdout, "isTTY", desc);
-        }
+        restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -244,70 +255,32 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
 // createGatewayPinoLogger — isTTY true/false branches
 // ---------------------------------------------------------------------------
 describe("createGatewayPinoLogger", () => {
-  let savedIsTTY: boolean | undefined;
-
-  afterEach(() => {
-    if (savedIsTTY !== undefined) {
-      Object.defineProperty(process.stdout, "isTTY", {
-        value: savedIsTTY,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      });
-      savedIsTTY = undefined;
-    }
-  });
-
   test("appends JSON to daily log file when stdout is not a TTY", async () => {
-    savedIsTTY = process.stdout.isTTY;
-    Object.defineProperty(process.stdout, "isTTY", {
-      value: false,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-
+    const restore = forceIsTty(false);
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-"));
     try {
       const log = createGatewayPinoLogger(dir);
       log.warn("unit_gateway_log_probe");
-      await Bun.sleep(150);
-      const files = readdirSync(dir);
-      const daily = files.find((f) => f.startsWith("gateway-") && f.endsWith(".log"));
-      if (daily === undefined) {
-        throw new Error("expected gateway-*.log in temp dir");
-      }
-      const content = readFileSync(join(dir, daily), "utf8");
+      const content = await readDailyLogWhenReady(dir, "unit_gateway_log_probe");
       expect(content).toContain("unit_gateway_log_probe");
     } finally {
+      restore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("creates a multistream logger when stdout is a TTY", async () => {
-    savedIsTTY = process.stdout.isTTY;
-    Object.defineProperty(process.stdout, "isTTY", {
-      value: true,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-
+    const restore = forceIsTty(true);
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-tty-log-"));
     try {
       const log = createGatewayPinoLogger(dir);
-      // Logger should be created without throwing; write a log entry
+      // Logger should be created without throwing; the file destination is still written even
+      // in TTY (multistream) mode.
       log.warn("unit_gateway_tty_probe");
-      await Bun.sleep(150);
-      // The file destination should still have been written
-      const files = readdirSync(dir);
-      const daily = files.find((f) => f.startsWith("gateway-") && f.endsWith(".log"));
-      if (daily === undefined) {
-        throw new Error("expected gateway-*.log in temp dir even in TTY mode");
-      }
-      const content = readFileSync(join(dir, daily), "utf8");
+      const content = await readDailyLogWhenReady(dir, "unit_gateway_tty_probe");
       expect(content).toContain("unit_gateway_tty_probe");
     } finally {
+      restore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
