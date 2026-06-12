@@ -54,14 +54,17 @@ export interface RunUpdateOptions {
 }
 
 export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Promise<void> {
+  // Validate flags first (pure, no IPC) so an unknown flag still errors even on a
+  // package-managed install. The channel short-circuit below stays before any
+  // withGatewayIpc() call, so the managed path still opens no IPC connection.
+  const args = parseUpdateArgs(argv);
+
   const channel = opts.channel !== undefined ? opts.channel : resolveDistributionChannel();
   if (channel !== null) {
     console.log(channelUpgradeHint(channel));
     process.exitCode = 0;
     return;
   }
-
-  const args = parseUpdateArgs(argv);
 
   if (args.mode === "check") {
     await withGatewayIpc(async (c) => {

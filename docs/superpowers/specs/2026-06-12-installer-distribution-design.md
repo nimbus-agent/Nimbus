@@ -37,7 +37,7 @@ The user wants all four gaps closed for the headless product:
 (`vN.N.N` / pre-release `vN.N.N-*`) stays the single trigger. We add
 artifact-producing steps to `release.yml` and post-release *publish* jobs for the
 package-manager channels. Channel content (Homebrew formula, Scoop manifest) lives in
-**separate small repos** under the `nimbus-dev` GitHub org, updated by CI on each release.
+**separate small repos** under the `nimbus-agent` GitHub org, updated by CI on each release.
 
 No `packages/` changes — this is pure release infrastructure under `scripts/` and
 `.github/workflows/`.
@@ -77,13 +77,13 @@ Rejected alternatives:
 
 ### Slice 1 — Homebrew tap + Scoop  *(lowest effort, biggest immediate win)*
 
-- New repos: `nimbus-dev/homebrew-tap` (`Formula/nimbus.rb`) and
-  `nimbus-dev/scoop-bucket` (`bucket/nimbus.json`).
+- New repos: `nimbus-agent/homebrew-tap` (`Formula/nimbus.rb`) and
+  `nimbus-agent/scoop-bucket` (`bucket/nimbus.json`).
 - Formula/manifest download the existing release tarball and verify its sha256 (read from
   the release `SHA256SUMS`).
 - New workflow `publish-package-managers.yml` (on release published) renders both files from
   the tag version + checksums and commits/PRs to each repo via a scoped token.
-- **Result:** `brew install nimbus-dev/tap/nimbus` and `scoop install nimbus`;
+- **Result:** `brew install nimbus-agent/tap/nimbus` and `scoop install nimbus`;
   `brew upgrade` / `scoop update` handle updates.
 
 ### Slice 2 — Native installers `.msi` + `.pkg` + `.rpm`  *(foundation for Slices 3 & 4)*
@@ -209,7 +209,7 @@ validate against `SHA256SUMS` + GPG; the new artifacts are staged into the same 
 
 ## 7. Assumed Defaults (confirm at spec review)
 
-- External channel repos live under the **`nimbus-dev`** GitHub org.
+- External channel repos live under the **`nimbus-agent`** GitHub org.
 - apt/yum repo hosted on **GitHub Pages** (final domain TBD).
 - **Reuse the existing release GPG key** for apt/yum repo signing.
 - macOS native installer is **`.pkg`**, not `.dmg`.

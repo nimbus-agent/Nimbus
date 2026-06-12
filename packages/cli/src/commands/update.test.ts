@@ -135,6 +135,10 @@ describe("runUpdate channel-managed short-circuit", () => {
     }
     expect(logs.join("\n")).toContain("brew upgrade nimbus");
   });
+
+  it("still rejects an unknown flag on a managed install (validation before short-circuit)", async () => {
+    await expect(runUpdate(["--bogus"], { channel: "homebrew" })).rejects.toThrow(/unknown flag/);
+  });
 });
 
 describe("runUpdate dispatcher", () => {
