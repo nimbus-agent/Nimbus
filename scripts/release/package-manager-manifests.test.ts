@@ -1,6 +1,11 @@
 /// <reference types="bun-types" />
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  type BuildOptions,
+  buildManifestsToDir,
   type ManifestInputs,
   parseSha256Sums,
   renderHomebrewFormula,
@@ -97,5 +102,62 @@ describe("renderScoopManifest", () => {
     const auto = parsed.autoupdate as { architecture: { "64bit": { url: string } } };
     expect(auto.architecture["64bit"].url).toContain("/download/v$version/");
     expect(auto.architecture["64bit"].url).not.toContain("/download/v0.1.0/");
+  });
+});
+
+describe("buildManifestsToDir", () => {
+  test("writes nimbus.rb + nimbus.json resolving hashes from SHA256SUMS", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mf-"));
+    try {
+      const sums = [
+        `${"a".repeat(64)}  nimbus-headless-macos-arm64.tar.gz`,
+        `${"b".repeat(64)}  nimbus-headless-macos-x64.tar.gz`,
+        `${"c".repeat(64)}  nimbus-headless-linux-amd64-v0.1.0.tar.gz`,
+        `${"d".repeat(64)}  nimbus-headless-windows-x64.zip`,
+      ].join("\n");
+      const sumsPath = join(dir, "SHA256SUMS");
+      writeFileSync(sumsPath, sums, "utf8");
+      const opts: BuildOptions = {
+        version: "0.1.0",
+        repo: "nimbus-agent/Nimbus",
+        sha256SumsPath: sumsPath,
+        outDir: dir,
+      };
+      const written = buildManifestsToDir(opts);
+      expect(written.formulaPath.endsWith("nimbus.rb")).toBe(true);
+      expect(written.scoopPath.endsWith("nimbus.json")).toBe(true);
+      expect(readFileSync(written.formulaPath, "utf8")).toContain(`sha256 "${"a".repeat(64)}"`);
+      const scoop = JSON.parse(readFileSync(written.scoopPath, "utf8")) as {
+        architecture: { "64bit": { hash: string } };
+      };
+      expect(scoop.architecture["64bit"].hash).toBe("d".repeat(64));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("throws a clear error if a required asset is missing from SHA256SUMS", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mf-"));
+    try {
+      const sumsPath = join(dir, "SHA256SUMS");
+      writeFileSync(
+        sumsPath,
+        `${[
+          `${"a".repeat(64)}  nimbus-headless-macos-arm64.tar.gz`,
+          `${"b".repeat(64)}  nimbus-headless-macos-x64.tar.gz`,
+          `${"c".repeat(64)}  nimbus-headless-linux-amd64-v0.1.0.tar.gz`,
+        ].join("\n")}\n`,
+        "utf8",
+      );
+      expect(() =>
+        buildManifestsToDir({
+          version: "0.1.0",
+          repo: "nimbus-agent/Nimbus",
+          sha256SumsPath: sumsPath,
+          outDir: dir,
+        }),
+      ).toThrow(/nimbus-headless-windows-x64\.zip/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
