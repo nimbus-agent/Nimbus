@@ -44,4 +44,37 @@ describe("signAppStoreConnectJwt", () => {
     );
     expect(ok).toBe(true);
   });
+
+  test("default nowMs branch — omitting nowMs uses Date.now() and produces a valid iat/exp", () => {
+    const before = Math.floor(Date.now() / 1000);
+    const token = signAppStoreConnectJwt(params); // no explicit nowMs → hits the default-param branch
+    const after = Math.floor(Date.now() / 1000);
+
+    const parts = token.split(".");
+    expect(parts).toHaveLength(3);
+
+    const payload = JSON.parse(
+      Buffer.from(parts[1] as string, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+
+    const iat = payload["iat"] as number;
+    const exp = payload["exp"] as number;
+
+    // iat must fall within the wall-clock window bracketing the call
+    expect(iat).toBeGreaterThanOrEqual(before);
+    expect(iat).toBeLessThanOrEqual(after);
+
+    // exp must be exactly iat + 600 (TOKEN_TTL_SECONDS)
+    expect(exp).toBe(iat + 600);
+
+    // The JWT is structurally and cryptographically valid
+    const [h, p, sig] = parts;
+    const ok = crypto.verify(
+      "sha256",
+      Buffer.from(`${h}.${p}`, "utf8"),
+      { key: crypto.createPublicKey(privateKeyPem), dsaEncoding: "ieee-p1363" },
+      Buffer.from(sig as string, "base64url"), // NOSONAR S4325: sig is string|undefined from the JWT split under noUncheckedIndexedAccess
+    );
+    expect(ok).toBe(true);
+  });
 });

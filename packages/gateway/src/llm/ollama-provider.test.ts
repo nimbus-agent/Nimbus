@@ -128,9 +128,437 @@ describe("OllamaProvider", () => {
     expect(result.text).toBe("Hello world");
     expect(result.tokensOut).toBe(2);
   });
+
+  // --- New tests for uncovered branches ---
+
+  test("constructor strips trailing slash from baseUrl", () => {
+    const p = new OllamaProvider("http://127.0.0.1:11434/", "llama3.2");
+    // If trailing slash were preserved, URL would be malformed; verify generate still calls clean URL
+    // We can verify by checking that fetch is called without double-slash
+    const calls: string[] = [];
+    globalThis.fetch = mock(async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify(FAKE_GENERATE_RESPONSE), { status: 200 });
+    }) as unknown as typeof fetch;
+    return p.generate({ task: "agent_step", prompt: "hi" }).then(() => {
+      expect(calls[0]).toBe("http://127.0.0.1:11434/api/generate");
+    });
+  });
+
+  test("isAvailable returns false when resp.ok is false (non-2xx)", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response("Service Unavailable", { status: 503 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    expect(await p.isAvailable()).toBe(false);
+  });
+
+  test("listModels throws on HTTP error", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response("Internal Server Error", { status: 500 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(p.listModels()).rejects.toThrow("Ollama listModels HTTP 500");
+  });
+
+  test("listModels returns [] when data.models is not an array", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ models: null }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const result = await p.listModels();
+    expect(result).toEqual([]);
+  });
+
+  test("listModels skips models with missing/empty name", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          models: [
+            { name: null, details: { parameter_size: "3B" }, size: 1000 },
+            { name: "", details: { parameter_size: "3B" }, size: 1000 },
+            { name: "valid:latest", details: {}, size: 500_000_000 },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const models = await p.listModels();
+    // Only the valid model should appear
+    expect(models).toHaveLength(1);
+    expect(models[0]?.modelName).toBe("valid:latest");
+  });
+
+  test("listModels handles models without parameter_size or size (no parameterCount/vramEstimateMb)", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          models: [{ name: "bare:model", details: {}, size: undefined }],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const models = await p.listModels();
+    expect(models).toHaveLength(1);
+    expect(models[0]?.parameterCount).toBeUndefined();
+    expect(models[0]?.vramEstimateMb).toBeUndefined();
+  });
+
+  test("listModels handles model with non-string quantization_level", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: "model:q",
+              details: { parameter_size: "7B", quantization_level: 42 },
+              size: 1_000_000_000,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const models = await p.listModels();
+    expect(models).toHaveLength(1);
+    // quantization_level is a number, not string → no quantization field
+    expect(models[0]?.quantization).toBeUndefined();
+  });
+
+  test("listModels handles model with non-matching parameter_size pattern (e.g. '3.2GB')", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: "model:gb",
+              details: { parameter_size: "3.2GB", quantization_level: "Q4" },
+              size: 1_000_000,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const models = await p.listModels();
+    expect(models).toHaveLength(1);
+    // "3.2GB" doesn't match /^([\d.]+)B$/i → no parameterCount
+    expect(models[0]?.parameterCount).toBeUndefined();
+  });
+
+  test("listModels handles model with non-finite size (Infinity → vramEstimateMb undefined)", async () => {
+    // parseVramMb returns undefined for non-finite numbers
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          models: [{ name: "model:inf", details: {}, size: null }],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const models = await p.listModels();
+    expect(models).toHaveLength(1);
+    expect(models[0]?.vramEstimateMb).toBeUndefined();
+  });
+
+  test("generate (batch) throws on HTTP error", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response("Bad Gateway", { status: 502 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(p.generate({ task: "agent_step", prompt: "fail" })).rejects.toThrow(
+      "Ollama generate HTTP 502",
+    );
+  });
+
+  test("generate (batch) defaults text to '' when response field is not a string", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ response: 42, prompt_eval_count: 1, eval_count: 1 }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const result = await p.generate({ task: "agent_step", prompt: "test" });
+    expect(result.text).toBe("");
+  });
+
+  test("generate (batch) uses defaults for maxTokens and temperature when not provided", async () => {
+    const capturedBodies: string[] = [];
+    globalThis.fetch = mock(async (_url: string, opts?: RequestInit) => {
+      if (typeof opts?.body === "string") capturedBodies.push(opts.body);
+      return new Response(JSON.stringify(FAKE_GENERATE_RESPONSE), { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await p.generate({ task: "agent_step", prompt: "no defaults" });
+    expect(capturedBodies).toHaveLength(1);
+    const body = JSON.parse(capturedBodies[0] ?? "{}") as {
+      options: { num_predict: number; temperature: number };
+    };
+    expect(body.options.num_predict).toBe(2048);
+    expect(body.options.temperature).toBe(0.7);
+  });
+
+  test("generate (stream) throws on HTTP error", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response("Forbidden", { status: 403 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(
+      p.generate({ task: "agent_step", prompt: "stream fail", stream: true }),
+    ).rejects.toThrow("Ollama stream HTTP 403");
+  });
+
+  test("generate (stream) throws when resp.body is null", async () => {
+    globalThis.fetch = mock(async () => {
+      // Response with no body — body will be null
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(
+      p.generate({ task: "agent_step", prompt: "no body", stream: true }),
+    ).rejects.toThrow("No response body");
+  });
+
+  test("generate (stream) handles malformed JSON lines without throwing", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        // Line 1: valid token, Line 2: malformed JSON, Line 3: valid done
+        controller.enqueue(encoder.encode('{"response":"hi","done":false}\n'));
+        controller.enqueue(encoder.encode("NOT_JSON\n"));
+        controller.enqueue(
+          encoder.encode('{"response":"","done":true,"prompt_eval_count":3,"eval_count":1}\n'),
+        );
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434", "llama3.2");
+    const result = await p.generate({
+      task: "agent_step",
+      prompt: "test",
+      stream: true,
+    });
+    // Malformed line is silently skipped; still gets "hi"
+    expect(result.text).toBe("hi");
+    expect(result.tokensIn).toBe(3);
+    expect(result.tokensOut).toBe(1);
+  });
+
+  test("generate (stream) handles empty lines without crashing", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        // Empty line followed by valid line
+        controller.enqueue(encoder.encode("\n\n"));
+        controller.enqueue(
+          encoder.encode('{"response":"ok","done":true,"prompt_eval_count":1,"eval_count":1}\n'),
+        );
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434", "llama3.2");
+    const result = await p.generate({
+      task: "agent_step",
+      prompt: "empty lines",
+      stream: true,
+    });
+    expect(result.text).toBe("ok");
+  });
+
+  test("generate (stream) with done chunk missing counts defaults tokensIn/Out to 0", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        // done=true but no prompt_eval_count / eval_count
+        controller.enqueue(encoder.encode('{"response":"text","done":true}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434", "llama3.2");
+    const result = await p.generate({
+      task: "agent_step",
+      prompt: "no counts",
+      stream: true,
+    });
+    expect(result.tokensIn).toBe(0);
+    expect(result.tokensOut).toBe(0);
+  });
+
+  test("generate (stream) without onToken still accumulates text", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"response":"silent","done":true}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434", "llama3.2");
+    // No onToken callback supplied
+    const result = await p.generate({
+      task: "agent_step",
+      prompt: "no onToken",
+      stream: true,
+    });
+    expect(result.text).toBe("silent");
+  });
+
+  test("generate (stream) uses defaults for maxTokens and temperature when not provided", async () => {
+    const capturedBodies: string[] = [];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"response":"","done":true}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(async (_url: string, opts?: RequestInit) => {
+      if (typeof opts?.body === "string") capturedBodies.push(opts.body);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await p.generate({ task: "agent_step", prompt: "stream defaults", stream: true });
+    const body = JSON.parse(capturedBodies[0] ?? "{}") as {
+      options: { num_predict: number; temperature: number };
+    };
+    expect(body.options.num_predict).toBe(2048);
+    expect(body.options.temperature).toBe(0.7);
+  });
+
+  test("pullModel throws on HTTP error", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response("Not Found", { status: 404 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(p.pullModel("no-such-model")).rejects.toThrow("Ollama pullModel HTTP 404");
+  });
+
+  test("pullModel throws when resp.body is null", async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await expect(p.pullModel("some-model")).rejects.toThrow("No response body");
+  });
+
+  test("pullModel with signal option passes it to fetch", async () => {
+    const capturedSignals: Array<AbortSignal | null | undefined> = [];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"success"}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(async (_url: string, opts?: RequestInit) => {
+      capturedSignals.push(opts?.signal as AbortSignal | null | undefined);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    const controller = new AbortController();
+    await p.pullModel("llama3.2", { signal: controller.signal });
+    expect(capturedSignals[0]).toBe(controller.signal);
+  });
+
+  test("pullModel with no signal passes null to fetch", async () => {
+    const capturedSignals: Array<AbortSignal | null | undefined> = [];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"done"}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(async (_url: string, opts?: RequestInit) => {
+      capturedSignals.push(opts?.signal as AbortSignal | null | undefined);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    // no opts at all → opts.signal ?? null
+    await p.pullModel("llama3.2");
+    expect(capturedSignals[0]).toBeNull();
+  });
+
+  test("pullModel without onProgress doesn't crash on progress chunks", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"pulling","completed":50,"total":100}\n'));
+        controller.enqueue(encoder.encode('{"status":"success"}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    // No onProgress callback — optional chaining should guard it
+    await expect(p.pullModel("llama3.2", {})).resolves.toBeUndefined();
+  });
+
+  test("pullModel skips empty lines and malformed JSON in stream", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        // Empty line, malformed JSON, then valid
+        controller.enqueue(encoder.encode("\n"));
+        controller.enqueue(encoder.encode("NOT_JSON\n"));
+        controller.enqueue(encoder.encode('{"status":"done"}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const received: PullProgressChunk[] = [];
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await p.pullModel("llama3.2", { onProgress: (c) => received.push(c) });
+    // Only the valid chunk emitted
+    expect(received).toHaveLength(1);
+    expect(received[0]?.status).toBe("done");
+  });
+
+  test("pullModel handles chunk where completed/total are non-numbers (no completedBytes/totalBytes)", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('{"status":"pulling","completed":"half","total":null}\n'),
+        );
+        controller.enqueue(encoder.encode('{"status":"success"}\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = mock(
+      async () => new Response(stream, { status: 200 }),
+    ) as unknown as typeof fetch;
+    const received: PullProgressChunk[] = [];
+    const p = new OllamaProvider("http://127.0.0.1:11434");
+    await p.pullModel("llama3.2", { onProgress: (c) => received.push(c) });
+    // First chunk has non-number completed/total so those fields are absent
+    expect(received[0]?.completedBytes).toBeUndefined();
+    expect(received[0]?.totalBytes).toBeUndefined();
+    expect(received[0]?.status).toBe("pulling");
+  });
 });
 
-describe("OllamaProvider.pullModel", () => {
+describe("OllamaProvider.pullModel (real Bun server)", () => {
   beforeEach(() => {
     globalThis.fetch = _realFetch;
   });

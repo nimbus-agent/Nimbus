@@ -1,3 +1,4 @@
+import { type DistributionChannel, resolveDistributionChannel } from "@nimbus-dev/sdk";
 import type { Logger } from "pino";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { derivePlatformTarget } from "./platform-target.ts";
@@ -14,12 +15,24 @@ export interface CreateUpdaterFromConfigArgs {
   logger: Logger;
   _platformOverride?: PlatformTarget | undefined;
   _forceUnsupported?: boolean;
+  /** Test seam: override the detected distribution channel. */
+  _channelOverride?: DistributionChannel | null;
 }
 
 export function createUpdaterFromConfig(args: CreateUpdaterFromConfigArgs): Updater | undefined {
   const { updaterCfg, currentVersion, emit, logger } = args;
 
   if (!updaterCfg.enabled) {
+    return undefined;
+  }
+
+  const channel =
+    args._channelOverride !== undefined ? args._channelOverride : resolveDistributionChannel();
+  if (channel !== null) {
+    logger.info(
+      { channel },
+      "updater: package-manager install detected; self-update disabled (manage via the package manager)",
+    );
     return undefined;
   }
 

@@ -32,6 +32,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   vault: NimbusVault,
   createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
+  checkVec: (db: Database, uv: number) => boolean = ensureSqliteVecForConnection,
 ): Promise<EmbeddingRuntime | null> {
   const apiKey = await resolveOpenAIApiKey(vault);
   if (apiKey === "") {
@@ -60,7 +61,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
   }
 
   const uv = readIndexedUserVersion(db);
-  if (!ensureSqliteVecForConnection(db, uv)) {
+  if (!checkVec(db, uv)) {
     logger.warn("sqlite-vec unavailable; hybrid mode falls back to MiniLM-only");
     return null;
   }

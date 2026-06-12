@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PlatformPaths } from "./paths.ts";
 
-function isWindowsNamedPipe(socketPath: string): boolean {
+export function isWindowsNamedPipe(socketPath: string): boolean {
   return socketPath.toLowerCase().startsWith("\\\\.\\pipe\\");
 }
 

@@ -4,13 +4,20 @@ import type { SttProvider, SttResult } from "./types.ts";
 type WhisperSttOptions = {
   whisperBin?: string;
   modelName?: string;
+  /** Optional override for Bun.which — used in tests to avoid real PATH lookups. */
+  which?: (name: string) => string | null;
+  /** Optional override for Bun.spawn — used in tests to avoid real process spawning. */
+  spawn?: typeof Bun.spawn;
 };
 
-export function resolveWhisperBin(configuredPath?: string): string {
+export function resolveWhisperBin(
+  configuredPath?: string,
+  which: (name: string) => string | null = (name) => Bun.which(name),
+): string {
   if (configuredPath !== undefined && configuredPath !== "") return configuredPath;
   const envPath = processEnvGet("NIMBUS_WHISPER_PATH");
   if (envPath !== undefined && envPath !== "") return envPath;
-  if (Bun.which("whisper-cli") !== null) return "whisper-cli";
+  if (which("whisper-cli") !== null) return "whisper-cli";
   return "main";
 }
 
@@ -21,9 +28,13 @@ function stripTimestamp(line: string): string {
 export class WhisperSttProvider implements SttProvider {
   private readonly whisperBin: string;
   private readonly modelName: string | undefined;
+  private readonly _which: (name: string) => string | null;
+  private readonly _spawn: typeof Bun.spawn;
 
   constructor(opts: WhisperSttOptions = {}) {
-    this.whisperBin = opts.whisperBin ?? resolveWhisperBin();
+    this._which = opts.which ?? ((name) => Bun.which(name));
+    this._spawn = opts.spawn ?? Bun.spawn;
+    this.whisperBin = opts.whisperBin ?? resolveWhisperBin(undefined, this._which);
     this.modelName = opts.modelName;
   }
 
@@ -35,7 +46,7 @@ export class WhisperSttProvider implements SttProvider {
         return false;
       }
     }
-    return Bun.which(this.whisperBin) !== null;
+    return this._which(this.whisperBin) !== null;
   }
 
   async transcribe(audioPath: string): Promise<SttResult> {
@@ -49,7 +60,7 @@ export class WhisperSttProvider implements SttProvider {
     }
 
     const start = Date.now();
-    const proc = Bun.spawn(cmd, {
+    const proc = this._spawn(cmd, {
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
-import { rankExpertFindings, runExpert } from "./expert.ts";
+import { emitExpertBrief, rankExpertFindings, runExpert } from "./expert.ts";
 
 describe("rankExpertFindings", () => {
   test("merges evidence from multiple streams by personId, summing weights", () => {
@@ -131,6 +131,76 @@ describe("rankExpertFindings", () => {
   });
 });
 
+describe("rankExpertFindings — additional branches", () => {
+  test("empty streams returns an empty array", () => {
+    const ranked = rankExpertFindings([], 5);
+    expect(ranked).toEqual([]);
+  });
+
+  test("all-zero weights produces score 0 and confidence low (max===0 branch)", () => {
+    const ranked = rankExpertFindings(
+      [
+        {
+          personId: "x",
+          displayName: "X",
+          evidence: [
+            {
+              weight: 0,
+              modifiedAt: Date.now(),
+              type: "commit_authored" as const,
+              serviceId: "github",
+              title: "t",
+              itemId: "i",
+            },
+          ],
+        },
+      ],
+      5,
+    );
+    expect(ranked[0]?.score).toBe(0);
+    expect(ranked[0]?.confidence).toBe("low");
+  });
+
+  test("medium confidence: score>=0.3 but evidenceCount<3 or score<0.7", () => {
+    // Top person has weight 1, second person has weight 0.4 → normalised score 0.4 with 1 evidence
+    const ranked = rankExpertFindings(
+      [
+        {
+          personId: "top",
+          displayName: "Top",
+          evidence: [
+            {
+              weight: 1,
+              modifiedAt: Date.now(),
+              type: "pr_authored" as const,
+              serviceId: "github",
+              title: "t",
+              itemId: "i1",
+            },
+          ],
+        },
+        {
+          personId: "mid",
+          displayName: "Mid",
+          evidence: [
+            {
+              weight: 0.4,
+              modifiedAt: Date.now(),
+              type: "pr_authored" as const,
+              serviceId: "github",
+              title: "t",
+              itemId: "i2",
+            },
+          ],
+        },
+      ],
+      5,
+    );
+    expect(ranked[1]?.personId).toBe("mid");
+    expect(ranked[1]?.confidence).toBe("medium");
+  });
+});
+
 describe("runExpert gap-note coverage", () => {
   test("empty index produces an empty_index gap note", async () => {
     const db = new Database(":memory:");
@@ -160,3 +230,346 @@ describe("runExpert gap-note coverage", () => {
     expect(cats).toContain("missing_relation_emit");
   });
 });
+
+/** Helper: set up a minimal non-empty DB with both sync connectors registered. */
+function makePopulatedDb(): Database {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  const now = Date.now();
+  db.run(
+    "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ["seed:1", "jira", "issue", "seed:1", "seed item", now, now],
+  );
+  db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["github"]);
+  db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["slack"]);
+  return db;
+}
+
+describe("runExpert — explicit limit input", () => {
+  test("explicit limit is respected (input.limit branch)", async () => {
+    const db = makePopulatedDb();
+    const ctx = { db, notify: () => {}, sessionId: "s-lim" };
+    const brief = await runExpert({ topicOrFile: "auth", limit: 2 }, ctx);
+    // ranked length is capped by our limit (no matching people → empty, but limit param was consumed)
+    expect(brief.ranked.length).toBeLessThanOrEqual(2);
+    expect(brief.query.topicOrFile).toBe("auth");
+  });
+});
+
+describe("runExpert — sub-agent failure path", () => {
+  test("failed sub-agents produce missing_connector gap notes with error detail", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    // Non-empty index so the preflight empty-index check passes
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["seed:1", "jira", "issue", "seed:1", "hello item", now, now],
+    );
+    // Drop person table so all JOIN-based sub-agent queries throw
+    db.run("DROP TABLE person");
+
+    const ctx = { db, notify: () => {}, sessionId: "s-err" };
+    const brief = await runExpert({ topicOrFile: "hello" }, ctx);
+
+    // At least some sub-agents fail and emit missing_connector gap notes with error text
+    const errorGaps = brief.gaps.filter((g) => g.category === "missing_connector");
+    expect(errorGaps.length).toBeGreaterThan(0);
+    // Each failed sub-agent gap note includes "failed" + a non-empty error detail
+    const allHaveFailed = errorGaps.every((g) => g.detail.includes("failed"));
+    expect(allHaveFailed).toBe(true);
+    // At least one includes the error text (the colon branch)
+    const anyHasColon = errorGaps.some((g) => g.detail.includes(":"));
+    expect(anyHasColon).toBe(true);
+  });
+});
+
+describe("runExpert — subBlame data path", () => {
+  test("commit data produces a ranked expert with commit_authored evidence", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:alice", "Alice"]);
+    // Two commits from Alice matching the search topic (exercises the merge-existing branch)
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["github:commit:1", "github", "commit", "c1", "auth fix", now, now, "person:alice"],
+    );
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        "github:commit:2",
+        "github",
+        "commit",
+        "c2",
+        "auth cleanup",
+        now - 1000,
+        now,
+        "person:alice",
+      ],
+    );
+
+    const ctx = { db, notify: () => {}, sessionId: "s-blame" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    const alice = brief.ranked.find((r) => r.personId === "person:alice");
+    expect(alice).toBeDefined();
+    expect(alice?.evidence.length).toBeGreaterThanOrEqual(1);
+    expect(alice?.evidence.some((e) => e.type === "commit_authored")).toBe(true);
+  });
+
+  test("no matching commits + github connector registered → no gap for github", async () => {
+    const db = makePopulatedDb();
+    // github connector IS registered but no commits match the topic
+    const ctx = { db, notify: () => {}, sessionId: "s-blame-empty" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+    // Should NOT have missing_connector for github (connector is registered)
+    const githubGaps = brief.gaps.filter(
+      (g) => g.category === "missing_connector" && g.detail.includes("github"),
+    );
+    expect(githubGaps).toHaveLength(0);
+  });
+
+  test("no matching commits + github connector NOT registered → missing_connector gap", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["seed:1", "jira", "issue", "seed:1", "auth seed", now, now],
+    );
+    // Only slack registered, NOT github
+    db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["slack"]);
+
+    const ctx = { db, notify: () => {}, sessionId: "s-blame-nogithub" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+    const githubGaps = brief.gaps.filter(
+      (g) => g.category === "missing_connector" && g.detail.includes("github"),
+    );
+    expect(githubGaps.length).toBeGreaterThan(0);
+  });
+});
+
+describe("runExpert — subPrAuthored data path", () => {
+  test("PR authored within 90 days surfaces pr_authored evidence", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:bob", "Bob"]);
+    // PR within 90 days matching the topic
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["github:pr:1", "github", "pr", "pr:1", "auth refactor PR", now, now, "person:bob"],
+    );
+
+    const ctx = { db, notify: () => {}, sessionId: "s-pr-authored" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    const bob = brief.ranked.find((r) => r.personId === "person:bob");
+    expect(bob).toBeDefined();
+    expect(bob?.evidence.some((e) => e.type === "pr_authored")).toBe(true);
+  });
+
+  test("no matching PRs returns empty stream (subPrAuthored empty branch)", async () => {
+    const db = makePopulatedDb();
+    // No PR items at all
+    const ctx = { db, notify: () => {}, sessionId: "s-pr-authored-empty" };
+    const brief = await runExpert({ topicOrFile: "xyzzy" }, ctx);
+    expect(brief.ranked).toEqual([]);
+  });
+
+  test("multiple PRs by same author merges evidence (subPrAuthored merge-existing branch)", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:carol", "Carol"]);
+    // Two PRs from Carol within 90 days matching the topic
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["github:pr:10", "github", "pr", "pr:10", "auth overhaul", now, now, "person:carol"],
+    );
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["github:pr:11", "github", "pr", "pr:11", "auth fix 2", now - 1000, now, "person:carol"],
+    );
+
+    const ctx = { db, notify: () => {}, sessionId: "s-pr-authored-merge" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    const carol = brief.ranked.find((r) => r.personId === "person:carol");
+    expect(carol).toBeDefined();
+    expect(carol?.evidence.filter((e) => e.type === "pr_authored").length).toBeGreaterThanOrEqual(
+      2,
+    );
+  });
+});
+
+describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", () => {
+  test("existing reviewed relation + incident entity produces no gap for those", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+    // Populate graph with 'reviewed' relation so subPrReviewed returns {}
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:pr:1", "pr", "pr:1", "PR", "github"],
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:person:1", "person", "person:1", "Person", "github"],
+    );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:person:1",
+      "ge:pr:1",
+      "reviewed",
+      now,
+    ]);
+    // Populate graph with 'incident' entity so subIncidentResolved returns {}
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:inc:1", "incident", "inc:1", "Incident", "pagerduty"],
+    );
+
+    const ctx = { db, notify: () => {}, sessionId: "s-reviewed-inc" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    const cats = brief.gaps.map((g) => g.category);
+    expect(cats).not.toContain("missing_relation_emit");
+    expect(cats).not.toContain("missing_entity_type");
+  });
+});
+
+describe("runExpert — subChatMentions data path", () => {
+  test("chat message data surfaces chat_post evidence", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:dave", "Dave"]);
+    // Message item matching the topic
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["slack:msg:1", "slack", "message", "msg:1", "auth discussion", now, now],
+    );
+    // graph_entity for the message (external_id = item.id)
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:msg:1", "message", "slack:msg:1", "msg label", "slack"],
+    );
+    // graph_entity for the person (external_id = person.id)
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:prsn:1", "person", "person:dave", "Dave", "slack"],
+    );
+    // 'posted' relation: from person entity → message entity
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:prsn:1",
+      "ge:msg:1",
+      "posted",
+      now,
+    ]);
+
+    const ctx = { db, notify: () => {}, sessionId: "s-chat" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    const dave = brief.ranked.find((r) => r.personId === "person:dave");
+    expect(dave).toBeDefined();
+    expect(dave?.evidence.some((e) => e.type === "chat_post")).toBe(true);
+  });
+
+  test("no matching messages + slack not registered → missing_connector gap for slack", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["seed:1", "jira", "issue", "seed:1", "auth seed", now, now],
+    );
+    // Only github registered, NOT slack
+    db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["github"]);
+
+    const ctx = { db, notify: () => {}, sessionId: "s-chat-noslack" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+    const slackGaps = brief.gaps.filter(
+      (g) => g.category === "missing_connector" && g.detail.includes("slack"),
+    );
+    expect(slackGaps.length).toBeGreaterThan(0);
+  });
+
+  test("no matching messages + slack registered → no missing_connector gap for slack", async () => {
+    const db = makePopulatedDb();
+    // slack IS registered but no messages match the topic
+    const ctx = { db, notify: () => {}, sessionId: "s-chat-slack-ok" };
+    const brief = await runExpert({ topicOrFile: "xyzzy" }, ctx);
+    const slackGaps = brief.gaps.filter(
+      (g) => g.category === "missing_connector" && g.detail.includes("slack"),
+    );
+    expect(slackGaps).toHaveLength(0);
+  });
+});
+
+describe("emitExpertBrief", () => {
+  test("returns sessionId synchronously and fires expert.briefReady asynchronously", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const ctx = {
+      db,
+      notify: (method: string, params: unknown) => {
+        notifications.push({ method, params });
+      },
+      sessionId: "emit-s1",
+    };
+    const result = await emitExpertBrief({ topicOrFile: "anything" }, ctx);
+    expect(result).toEqual({ sessionId: "emit-s1" });
+    // Wait for the async fire-and-forget to settle
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    expect(notifications.some((n) => n.method === "expert.briefReady")).toBe(true);
+  });
+
+  test("uses llm synthesizer when ctx.llm is provided (non-undefined llm branch)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    let llmCalled = false;
+    const ctx = {
+      db,
+      notify: (method: string, params: unknown) => {
+        notifications.push({ method, params });
+      },
+      sessionId: "emit-s2",
+      llm: {
+        generateMarkdown: async (_prompt: string): Promise<string | null> => {
+          llmCalled = true;
+          return "# Expert Summary\nLLM output";
+        },
+      },
+    };
+    await emitExpertBrief({ topicOrFile: "anything" }, ctx);
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    expect(llmCalled).toBe(true);
+    expect(notifications.some((n) => n.method === "expert.briefReady")).toBe(true);
+  });
+
+  test("fires expert.briefError when runExpert throws (catch branch)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const ctx = {
+      db,
+      notify: (method: string, params: unknown) => {
+        notifications.push({ method, params });
+      },
+      sessionId: "emit-s3",
+    };
+    // Close the db so the first db.query inside runExpert throws
+    db.close();
+
+    const result = await emitExpertBrief({ topicOrFile: "anything" }, ctx);
+    expect(result).toEqual({ sessionId: "emit-s3" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    const errNote = notifications.find((n) => n.method === "expert.briefError");
+    expect(errNote).toBeDefined();
+    const params = errNote?.params as Record<string, unknown>;
+    expect(params["sessionId"]).toBe("emit-s3");
+    expect(typeof params["error"]).toBe("string");
+    expect((params["error"] as string).length).toBeGreaterThan(0);
+  });
+});
+
+// Placeholder afterEach — no global state is mutated in these tests.
+afterEach(() => {});

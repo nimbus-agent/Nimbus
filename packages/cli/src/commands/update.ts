@@ -1,3 +1,8 @@
+import {
+  channelUpgradeHint,
+  type DistributionChannel,
+  resolveDistributionChannel,
+} from "@nimbus-dev/sdk";
 import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -44,8 +49,22 @@ export async function runUpdateApply(client: IPCClient): Promise<void> {
   console.log("Update applied. Gateway will restart.");
 }
 
-export async function runUpdate(argv: string[]): Promise<void> {
+export interface RunUpdateOptions {
+  channel?: DistributionChannel | null;
+}
+
+export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Promise<void> {
+  // Validate flags first (pure, no IPC) so an unknown flag still errors even on a
+  // package-managed install. The channel short-circuit below stays before any
+  // withGatewayIpc() call, so the managed path still opens no IPC connection.
   const args = parseUpdateArgs(argv);
+
+  const channel = opts.channel !== undefined ? opts.channel : resolveDistributionChannel();
+  if (channel !== null) {
+    console.log(channelUpgradeHint(channel));
+    process.exitCode = 0;
+    return;
+  }
 
   if (args.mode === "check") {
     await withGatewayIpc(async (c) => {

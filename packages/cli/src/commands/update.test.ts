@@ -121,6 +121,26 @@ describe("runUpdateApply", () => {
   });
 });
 
+describe("runUpdate channel-managed short-circuit", () => {
+  it("runUpdate prints the channel hint and skips IPC when channel-managed", async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (m?: unknown) => {
+      logs.push(String(m));
+    };
+    try {
+      await runUpdate([], { channel: "homebrew" });
+    } finally {
+      console.log = origLog;
+    }
+    expect(logs.join("\n")).toContain("brew upgrade nimbus");
+  });
+
+  it("still rejects an unknown flag on a managed install (validation before short-circuit)", async () => {
+    await expect(runUpdate(["--bogus"], { channel: "homebrew" })).rejects.toThrow(/unknown flag/);
+  });
+});
+
 describe("runUpdate dispatcher", () => {
   let origExitCode: typeof process.exitCode;
 
@@ -175,5 +195,104 @@ describe("runUpdate dispatcher", () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate([]);
     expect(out.stdout).toContain("Aborted.");
+  });
+
+  it("bare invocation prints Release notes when update available and notes present", async () => {
+    // The non-TTY path: readLine() resolves "" → Aborted. But "Release notes:" is still printed.
+    const mock = createMockIpcClient([
+      {
+        currentVersion: "0.5.0",
+        latestVersion: "0.5.1",
+        updateAvailable: true,
+        notes: "Performance improvements",
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runUpdate([]);
+    expect(out.stdout).toContain("Release notes: Performance improvements");
+    expect(out.stdout).toContain("Aborted.");
+  });
+
+  it("bare invocation applies update when TTY stdin returns answer immediately (chunk !== null)", async () => {
+    // Cover readLine() branch: isTTY=true, read() returns a Buffer immediately.
+    // Also covers the "yes" answer branch (line 79 closing brace reached).
+    const origIsTTY = process.stdin.isTTY;
+    const origRead = process.stdin.read.bind(process.stdin);
+    process.stdin.isTTY = true;
+    process.stdin.read = (): Buffer => Buffer.from("y\n");
+    try {
+      const mock = createMockIpcClient([
+        {
+          currentVersion: "0.5.0",
+          latestVersion: "0.5.1",
+          updateAvailable: true,
+        },
+        null, // updater.applyUpdate
+      ]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runUpdate([]);
+      expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow", "updater.applyUpdate"]);
+      expect(out.stdout).toContain("Update applied. Gateway will restart.");
+    } finally {
+      process.stdin.isTTY = origIsTTY;
+      process.stdin.read = origRead;
+    }
+  });
+
+  it("bare invocation applies update when TTY stdin emits data event (chunk === null path)", async () => {
+    // Cover readLine() branch: isTTY=true, read() returns null → waits for 'data' event.
+    const origIsTTY = process.stdin.isTTY;
+    const origRead = process.stdin.read.bind(process.stdin);
+    process.stdin.isTTY = true;
+    process.stdin.read = (): null => null;
+    try {
+      const mock = createMockIpcClient([
+        {
+          currentVersion: "0.5.0",
+          latestVersion: "0.5.1",
+          updateAvailable: true,
+        },
+        null, // updater.applyUpdate
+      ]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      // Emit 'data' on a short delay, after readLine() has registered its listener.
+      const emitTimer = setTimeout(() => {
+        process.stdin.emit("data", Buffer.from("yes\n"));
+      }, 20);
+      try {
+        await runUpdate([]);
+      } finally {
+        clearTimeout(emitTimer);
+      }
+      expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow", "updater.applyUpdate"]);
+      expect(out.stdout).toContain("Update applied. Gateway will restart.");
+    } finally {
+      process.stdin.isTTY = origIsTTY;
+      process.stdin.read = origRead;
+    }
+  });
+
+  it("bare invocation aborts when TTY stdin answers 'n'", async () => {
+    // Confirm the 'no' branch is explicit: answer fails regex, prints Aborted.
+    const origIsTTY = process.stdin.isTTY;
+    const origRead = process.stdin.read.bind(process.stdin);
+    process.stdin.isTTY = true;
+    process.stdin.read = (): Buffer => Buffer.from("n\n");
+    try {
+      const mock = createMockIpcClient([
+        {
+          currentVersion: "0.5.0",
+          latestVersion: "0.5.1",
+          updateAvailable: true,
+        },
+      ]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runUpdate([]);
+      expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow"]);
+      expect(out.stdout).toContain("Aborted.");
+    } finally {
+      process.stdin.isTTY = origIsTTY;
+      process.stdin.read = origRead;
+    }
   });
 });

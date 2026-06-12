@@ -80,6 +80,31 @@ describe("runAuditList", () => {
     await runAuditList(client, 10);
     expect(out.stdout).toContain("x");
   });
+
+  it("renders '—' when actionJson parses to a JSON array (not an object)", async () => {
+    const { client } = createMockIpcClient([
+      [
+        {
+          id: 1,
+          actionType: "file.read",
+          hitlStatus: "approved",
+          actionJson: '["a","b"]',
+          timestamp: 1700000000000,
+        },
+      ],
+    ]);
+    await runAuditList(client, 10);
+    expect(out.stdout).toContain("file.read");
+    expect(out.stdout).toContain("—");
+  });
+
+  it("renders an empty table when the rows list is empty", async () => {
+    const { client, calls } = createMockIpcClient([[]]);
+    await runAuditList(client, 5);
+    expect(calls[0]).toEqual({ method: "audit.list", params: { limit: 5 } });
+    expect(out.stdout).toContain("Timestamp");
+    expect(out.stdout).toContain("-".repeat(72));
+  });
 });
 
 describe("runAuditVerify", () => {
@@ -116,6 +141,14 @@ describe("runAuditVerify", () => {
     expect(out.stdout).toContain("[FAIL]");
     expect(out.stdout).toContain("chain break at row 6");
     expect(out.stdout).toContain("blake3 mismatch");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("uses 'unknown' as fallback reason when reason is omitted", async () => {
+    const { client } = createMockIpcClient([{ ok: false, verifiedRows: 2, firstBreakAtId: 3 }]);
+    await runAuditVerify(client, false);
+    expect(out.stdout).toContain("[FAIL]");
+    expect(out.stdout).toContain("unknown");
     expect(process.exitCode).toBe(1);
   });
 });
@@ -193,5 +226,74 @@ describe("runAudit (dispatcher)", () => {
     await expect(runAudit(["verify"])).rejects.toThrow(
       "Gateway is not running. Start with: nimbus start",
     );
+  });
+
+  it("passes --full flag through to runAuditVerify", async () => {
+    const ipc = createMockIpcClient([{ ok: true, verifiedRows: 1 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    process.exitCode = 0;
+    await runAudit(["verify", "--full"]);
+    expect(ipc.calls[0]).toEqual({ method: "audit.verify", params: { full: true } });
+    process.exitCode = 0;
+  });
+
+  it("rejects 'export' with an empty --output value", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runAudit(["export", "--output", ""])).rejects.toThrow(
+      "Usage: nimbus audit export --output",
+    );
+  });
+
+  it("dispatches 'export' with a valid --output path through withIpc", async () => {
+    const writes: { path: string; data: string }[] = [];
+    const ipc = createMockIpcClient([[{ id: 10 }]]);
+    const outPath = fakePath("export.json");
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    // Patch Bun.write via the injected writeFile — but the outer runAudit uses Bun.write directly.
+    // We test the dispatcher wiring by verifying the IPC call was made and output logged.
+    // Override Bun.write for this test to avoid actual file I/O.
+    const origWrite = Bun.write.bind(Bun);
+    (Bun as { write: unknown }).write = async (p: unknown, data: unknown): Promise<number> => {
+      writes.push({ path: String(p), data: String(data) });
+      return 0;
+    };
+    try {
+      await runAudit(["export", "--output", outPath]);
+    } finally {
+      (Bun as { write: unknown }).write = origWrite;
+    }
+    expect(ipc.calls[0]).toEqual({ method: "audit.exportAll", params: {} });
+    expect(writes[0]?.path).toBe(outPath);
+    expect(out.stdout).toContain(`wrote 1 audit rows to ${outPath}`);
+  });
+
+  it("falls back to limit 50 when --limit is given an invalid (non-finite) value", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runAudit(["--limit", "abc"]);
+    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 50 } });
+  });
+
+  it("falls back to limit 50 when --limit is zero", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runAudit(["--limit", "0"]);
+    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 50 } });
   });
 });

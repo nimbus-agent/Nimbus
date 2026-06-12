@@ -5,7 +5,8 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 
 const deployMod = await import("./deploy.ts");
-const { parseDeployPreflightArgs, runDeployCli } = deployMod;
+const { formatGapTag, formatVerdictTag, parseDeployPreflightArgs, runDeployCli, shouldUseColor } =
+  deployMod;
 
 describe("nimbus deploy preflight arg parser", () => {
   test("parses service + target-ref + json", () => {
@@ -72,6 +73,24 @@ describe("nimbus deploy preflight arg parser", () => {
 
   test("throws on missing value for --target-ref", () => {
     expect(() => parseDeployPreflightArgs(["--service", "x", "--target-ref"])).toThrow(
+      /--target-ref/,
+    );
+  });
+
+  test("throws on missing value for --mode (undefined arg)", () => {
+    expect(() =>
+      parseDeployPreflightArgs(["--service", "x", "--target-ref", "main", "--mode"]),
+    ).toThrow(/--mode/);
+  });
+
+  test("throws on whitespace-only --service value", () => {
+    expect(() => parseDeployPreflightArgs(["--service", "   ", "--target-ref", "main"])).toThrow(
+      /--service/,
+    );
+  });
+
+  test("throws on whitespace-only --target-ref value", () => {
+    expect(() => parseDeployPreflightArgs(["--service", "x", "--target-ref", "   "])).toThrow(
       /--target-ref/,
     );
   });
@@ -222,5 +241,128 @@ describe("runDeployCli — dispatcher", () => {
 
   it("routes 'annotate' sub-arg through runDeployAnnotate (exit 2 on missing --service)", async () => {
     await expect(runDeployCli(["annotate"])).rejects.toThrow("process.exit(2)");
+  });
+
+  it("renders pretty output with findings that have URLs (covers urlPart non-empty branch)", async () => {
+    const envelope = {
+      service: "svc",
+      target_ref: "main",
+      verdict: "warn" as const,
+      computed_at: new Date().toISOString(),
+      checks: {
+        active_p1_incidents: {
+          count: 2,
+          findings: [
+            { id: "f1", title: "P1 outage", url: "https://pagerduty.example.com/incident/1" },
+            { id: "f2", title: "Silent failure", url: null },
+          ],
+          gap: null,
+        },
+        failing_ci_runs: { count: 0, findings: [], gap: "no_data" },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    };
+    const mock = createMockIpcClient([envelope]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
+    const out = stdoutChunks.join("");
+    expect(out).toContain("P1 outage");
+    expect(out).toContain("https://pagerduty.example.com/incident/1");
+    expect(out).toContain("Silent failure");
+    expect(out).toContain("[warn]");
+  });
+
+  it("renders pretty output with a non-null gap tag (covers formatGapTag non-null branch)", async () => {
+    const envelope = {
+      service: "svc",
+      target_ref: "main",
+      verdict: "ok" as const,
+      computed_at: new Date().toISOString(),
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: "no_data" },
+        failing_ci_runs: { count: 0, findings: [], gap: "stale" },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    };
+    const mock = createMockIpcClient([envelope]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
+    const out = stdoutChunks.join("");
+    expect(out).toContain("[no_data]");
+    expect(out).toContain("[stale]");
+    expect(out).toContain("[ok]");
+  });
+
+  it("renders pretty output when a known check key is missing from checks (m === undefined continue)", async () => {
+    const envelope = {
+      service: "svc",
+      target_ref: "main",
+      verdict: "ok" as const,
+      computed_at: new Date().toISOString(),
+      checks: {
+        // only two of three known keys present — merge_conflicts absent
+        active_p1_incidents: { count: 0, findings: [], gap: null },
+        failing_ci_runs: { count: 0, findings: [], gap: null },
+      },
+    };
+    const mock = createMockIpcClient([envelope]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
+    const out = stdoutChunks.join("");
+    expect(out).toContain("Deploy preflight");
+    expect(out).toContain("[ok]");
+  });
+
+  it("exits 2 on null envelope response (isEnvelope null guard)", async () => {
+    const mock = createMockIpcClient([null]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(
+      runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
+    ).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("malformed envelope");
+  });
+
+  it("exits 2 on string envelope response (isEnvelope typeof guard)", async () => {
+    const mock = createMockIpcClient(["unexpected"]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(
+      runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
+    ).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("malformed envelope");
+  });
+
+  it("exits 2 on envelope with checks=null (isEnvelope checks-null guard)", async () => {
+    const mock = createMockIpcClient([
+      { service: "svc", target_ref: "main", verdict: "ok", checks: null },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(
+      runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
+    ).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("malformed envelope");
+  });
+
+  // Color branches are tested as PURE functions — no global process.stdout.isTTY /
+  // process.env.NO_COLOR mutation (that leaks across files in the combined run).
+  it("shouldUseColor / formatVerdictTag / formatGapTag cover the color branches (pure)", () => {
+    // shouldUseColor: a non-empty NO_COLOR suppresses; otherwise follow isTTY.
+    expect(shouldUseColor("1", true)).toBe(false);
+    expect(shouldUseColor("anything", false)).toBe(false);
+    expect(shouldUseColor(undefined, true)).toBe(true);
+    expect(shouldUseColor("", true)).toBe(true); // empty NO_COLOR is ignored
+    expect(shouldUseColor(undefined, false)).toBe(false);
+    expect(shouldUseColor(undefined, undefined)).toBe(false);
+
+    // formatVerdictTag: colored vs plain for each verdict.
+    expect(formatVerdictTag("ok", true)).toBe("\x1b[32m[ok]\x1b[0m");
+    expect(formatVerdictTag("ok", false)).toBe("[ok]");
+    expect(formatVerdictTag("warn", true)).toBe("\x1b[33m[warn]\x1b[0m");
+    expect(formatVerdictTag("warn", false)).toBe("[warn]");
+
+    // formatGapTag: null → empty; colored vs plain otherwise.
+    expect(formatGapTag(null, true)).toBe("");
+    expect(formatGapTag(null, false)).toBe("");
+    expect(formatGapTag("stale", true)).toBe("\x1b[2m[stale]\x1b[0m");
+    expect(formatGapTag("stale", false)).toBe("[stale]");
   });
 });

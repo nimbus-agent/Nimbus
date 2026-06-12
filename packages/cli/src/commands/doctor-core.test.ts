@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -468,5 +468,245 @@ describe("doctorVoiceLines", () => {
     expect(lines.some((l) => l.includes("[warn] Voice: piper_path is set but the binary"))).toBe(
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional branch coverage
+// ---------------------------------------------------------------------------
+
+describe("worstHealthSeverity — additional branches", () => {
+  it("does not escalate from fail to warn when a degraded entry follows an error", () => {
+    // After seeing "unauthenticated" worst="fail"; the "degraded" branch checks
+    // `if (worst === "ok")` which is false, so worst stays "fail".
+    const result = worstHealthSeverity([{ state: "unauthenticated" }, { state: "degraded" }]);
+    expect(result).toBe("fail");
+  });
+
+  it("treats a non-string state as empty string (falls through to ok)", () => {
+    // typeof r.state === "string" is false → st="" → no escalation
+    const result = worstHealthSeverity([{ state: 42 }, { connectorId: "x" }]);
+    expect(result).toBe("ok");
+  });
+});
+
+describe("doctorPrintConfigValidation — additional branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("returns 2 and prints both warnings and errors when ok=false with warnings", () => {
+    const code = doctorPrintConfigValidation({
+      ok: false,
+      errors: ["missing required field"],
+      warnings: ["deprecated key used"],
+    });
+    expect(code).toBe(2);
+    expect(out.stdout).toContain("[warn] Config: deprecated key used");
+    expect(out.stdout).toContain("[fail] Config: missing required field");
+  });
+});
+
+describe("doctorPrintIndexFromSnapshot — additional branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("returns 1 when snap has no index key at all", () => {
+    expect(doctorPrintIndexFromSnapshot({})).toBe(1);
+    expect(out.stdout).toContain("[warn] Index: zero items");
+  });
+
+  it("returns 1 when totalItems is a non-number string", () => {
+    expect(doctorPrintIndexFromSnapshot({ index: { totalItems: "many" } })).toBe(1);
+    expect(out.stdout).toContain("[warn] Index: zero items");
+  });
+
+  it("returns 1 when totalItems is Infinity (not finite)", () => {
+    expect(doctorPrintIndexFromSnapshot({ index: { totalItems: Infinity } })).toBe(1);
+    expect(out.stdout).toContain("[warn] Index: zero items");
+  });
+
+  it("returns 1 when totalItems is negative (Math.max floors to 0)", () => {
+    expect(doctorPrintIndexFromSnapshot({ index: { totalItems: -5 } })).toBe(1);
+    expect(out.stdout).toContain("[warn] Index: zero items");
+  });
+});
+
+describe("doctorPrintHealthFromSnapshot — additional branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("treats undefined connectorHealth as empty (warns: none registered)", () => {
+    expect(doctorPrintHealthFromSnapshot({})).toBe(1);
+    expect(out.stdout).toContain("[warn] Connectors: none registered.");
+  });
+
+  it("treats a non-array connectorHealth value as empty", () => {
+    expect(doctorPrintHealthFromSnapshot({ connectorHealth: "not-an-array" })).toBe(1);
+    expect(out.stdout).toContain("[warn] Connectors: none registered.");
+  });
+
+  it("falls back to '?' for non-string connectorId and state", () => {
+    const code = doctorPrintHealthFromSnapshot({
+      connectorHealth: [{ connectorId: 99, state: null }],
+    });
+    // worst severity: state="" (non-string) → ok → return 0
+    expect(code).toBe(0);
+    expect(out.stdout).toContain("?: ?");
+  });
+});
+
+describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => {
+  // Create a temp dir with a nimbus.toml that enables voice but has no
+  // binaries available, so doctorVoiceLines returns [warn] lines that
+  // escalate the exit code.
+  let voiceRoot: string;
+  let voiceConfigDir: string;
+  let origExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    out.reset();
+    origExitCode = process.exitCode;
+    process.exitCode = 0;
+    voiceRoot = mkdtempSync(join(tmpdir(), "nimbus-doctor-voice-"));
+    voiceConfigDir = join(voiceRoot, "config");
+    mkdirSync(voiceConfigDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    process.exitCode = 0;
+    if (origExitCode !== undefined) process.exitCode = origExitCode;
+  });
+
+  it("escalates exit to 1 via voice [warn] lines when toml enables voice with no binaries", async () => {
+    // Write a nimbus.toml with [voice] enabled=true so loadVoiceConfigFromDir
+    // reads it and produces warn lines (no whisper/ffmpeg/espeak in the env).
+    writeFileSync(
+      join(voiceConfigDir, "nimbus.toml"),
+      [
+        "[voice]",
+        "enabled = true",
+        'whisper_path = ""',
+        'piper_path = ""',
+        'piper_model = ""',
+      ].join("\n"),
+      "utf8",
+    );
+
+    const voicePaths: CliPlatformPaths = {
+      configDir: voiceConfigDir,
+      dataDir: join(voiceRoot, "data"),
+      logDir: join(voiceRoot, "data", "logs"),
+      socketPath: join(voiceRoot, "gateway.sock"),
+      extensionsDir: join(voiceRoot, "data", "extensions"),
+      tempDir: join(voiceRoot, "temp"),
+    };
+
+    await runDoctor(
+      [],
+      makeDeps({
+        getCliPlatformPaths: () => voicePaths,
+        gatewayStatePath: () => join(voiceRoot, "gateway.json"),
+        readGatewayState: async () => undefined,
+      }),
+    );
+
+    // Voice lines with no binaries produce [warn] messages that escalate exit.
+    // The gateway is also absent (exit=2 from "[fail] Gateway: not running").
+    expect(out.stdout).toContain("[fail] Gateway: not running");
+    // Prove the voice branch actually ran (the absent gateway alone would escalate the
+    // exit code, so assert a concrete [warn] Voice: line rather than just exitCode >= 1).
+    expect(out.stdout).toMatch(/\[warn\] Voice:/);
+    expect(process.exitCode).toBeGreaterThanOrEqual(1);
+  });
+
+  it("covers loadVoiceConfigFromDir: reads all voice keys from toml", async () => {
+    // Write a nimbus.toml with all voice keys set; this exercises applyVoiceKey
+    // for every branch (enabled, whisper_path, piper_path, piper_model) and
+    // all parseVoiceTomlLines branches (comment stripping, section detection,
+    // quoted values, unquoted values, skip non-voice sections).
+    writeFileSync(
+      join(voiceConfigDir, "nimbus.toml"),
+      [
+        "# top-level comment",
+        "[llm]",
+        'remote_model = "gpt-4"',
+        "",
+        "[voice]",
+        "enabled = true",
+        'whisper_path = "/usr/bin/whisper-cli"',
+        'piper_path = "/usr/bin/piper"',
+        'piper_model = "/models/en.onnx"',
+        "",
+        "[other]",
+        "key = value",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const voicePaths: CliPlatformPaths = {
+      configDir: voiceConfigDir,
+      dataDir: join(voiceRoot, "data"),
+      logDir: join(voiceRoot, "data", "logs"),
+      socketPath: join(voiceRoot, "gateway.sock"),
+      extensionsDir: join(voiceRoot, "data", "extensions"),
+      tempDir: join(voiceRoot, "temp"),
+    };
+
+    await runDoctor(
+      [],
+      makeDeps({
+        getCliPlatformPaths: () => voicePaths,
+        gatewayStatePath: () => join(voiceRoot, "gateway.json"),
+        readGatewayState: async () => undefined,
+      }),
+    );
+
+    // whisper_path is set so "[ok] Voice: whisper-cli is available." is printed.
+    // piper has an absolute path so no piper-binary warning.
+    // The exact TTS line depends on the test platform; we just verify it ran.
+    expect(out.stdout).toContain("[ok] Voice: whisper-cli is available.");
+    // ffmpeg may or may not be on PATH; just check the gateway line is present.
+    expect(out.stdout).toContain("[fail] Gateway: not running");
+  });
+
+  it("covers parseVoiceTomlLines: inline comments, empty key (eq<=0), unquoted values", async () => {
+    // Write a TOML variant with inline comments and an unquoted boolean,
+    // plus a malformed line (no '=') that should be skipped.
+    writeFileSync(
+      join(voiceConfigDir, "nimbus.toml"),
+      [
+        "[voice]",
+        "enabled = true # inline comment",
+        "whisper_path = /absolute/path  # another comment",
+        "bad-line-no-equals",
+        'piper_path = ""',
+        'piper_model = ""',
+      ].join("\n"),
+      "utf8",
+    );
+
+    const voicePaths: CliPlatformPaths = {
+      configDir: voiceConfigDir,
+      dataDir: join(voiceRoot, "data"),
+      logDir: join(voiceRoot, "data", "logs"),
+      socketPath: join(voiceRoot, "gateway.sock"),
+      extensionsDir: join(voiceRoot, "data", "extensions"),
+      tempDir: join(voiceRoot, "temp"),
+    };
+
+    await runDoctor(
+      [],
+      makeDeps({
+        getCliPlatformPaths: () => voicePaths,
+        gatewayStatePath: () => join(voiceRoot, "gateway.json"),
+        readGatewayState: async () => undefined,
+      }),
+    );
+
+    // whisper_path is set (unquoted absolute path parsed correctly) so whisper ok.
+    expect(out.stdout).toContain("[ok] Voice: whisper-cli is available.");
   });
 });

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import pino, { type Logger } from "pino";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -241,5 +242,308 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
       item_id: string;
     }>;
     expect(ids.map((r) => r.item_id)).toEqual(["github:e2"]);
+  });
+
+  // --- Branch coverage additions ---
+
+  test("embedItem returns early when text is entirely empty (pieces.length === 0)", async () => {
+    const db = freshDb();
+    // title and body_preview both empty → itemTextForEmbedding returns "" → chunkText returns []
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // No item in DB needed — the early return fires before any DB write
+    await pipeline.embedItem({
+      id: "x:1",
+      service: "x",
+      type: "t",
+      title: "   ",
+      body_preview: null,
+    });
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBe(0);
+  });
+
+  test("embedItem throws when embedder returns wrong vector count", async () => {
+    const db = freshDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'github', 'issue', 'e1', 'hello world', 'body text', ?, ?)`,
+      ["github:e1", Date.now(), Date.now()],
+    );
+    // Use tiny maxChunkTokens to guarantee multiple chunks are produced so
+    // that returning exactly 1 vector triggers the mismatch guard.
+    const badEmbedder: Embedder = {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dims: 384,
+      async embed(_texts) {
+        // Always return exactly 1 vector regardless of how many chunks were produced
+        return [new Float32Array(384)];
+      },
+    };
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: badEmbedder,
+      chunkOptions: { maxChunkTokens: 1, overlapTokens: 0 },
+    });
+    await expect(
+      pipeline.embedItem({
+        id: "github:e1",
+        service: "github",
+        type: "issue",
+        title: "hello world",
+        body_preview: "body text",
+      }),
+    ).rejects.toThrow(/embedder returned/);
+  });
+
+  test("embedItem throws when a returned vector has wrong dimensionality", async () => {
+    const db = freshDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'github', 'issue', 'e2', 'one sentence.', 'body text here.', ?, ?)`,
+      ["github:e2", Date.now(), Date.now()],
+    );
+    const wrongDimEmbedder: Embedder = {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dims: 384,
+      async embed(texts) {
+        // Return the right count but wrong dims
+        return texts.map(() => new Float32Array(128));
+      },
+    };
+    const pipeline = new SqliteEmbeddingPipeline({ db, embedder: wrongDimEmbedder });
+    await expect(
+      pipeline.embedItem({
+        id: "github:e2",
+        service: "github",
+        type: "issue",
+        title: "one sentence.",
+        body_preview: "body text here.",
+      }),
+    ).rejects.toThrow(/expected.*dim embedding/);
+  });
+
+  test("backfillAll without onProgress callback (branch: optional call omitted)", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'github', 'issue', 'e1', 'title here', 'body', ?, ?)`,
+      ["github:e1", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // Should not throw — onProgress is undefined, the optional call branch is taken
+    await pipeline.backfillAll();
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBeGreaterThanOrEqual(1);
+  });
+
+  test("backfillAll catches and warns on per-item embed failure", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    // Use distinct modified_at so order is deterministic (DESC → ok1 first, bad1 second)
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'github', 'issue', 'ok1', 'another title', 'other body', ?, ?)`,
+      ["github:ok1", now + 1000, now],
+    );
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'github', 'issue', 'bad1', 'some title', 'some body', ?, ?)`,
+      ["github:bad1", now, now],
+    );
+
+    // embedder succeeds for ok1 (first call), fails for bad1 (second call),
+    // then bad1 is re-queried but since it still has no embedding it comes up
+    // again — we succeed on subsequent calls to avoid an infinite loop.
+    let embedCallCount = 0;
+    const flakyEmbedder: Embedder = {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dims: 384,
+      async embed(texts) {
+        embedCallCount += 1;
+        if (embedCallCount === 2) {
+          throw new Error("network timeout");
+        }
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+
+    const warnMessages: unknown[] = [];
+    const silentBase = pino({ level: "silent" });
+    const spyLogger = {
+      ...silentBase,
+      warn(obj: unknown, _msg?: string) {
+        warnMessages.push(obj);
+      },
+    } as unknown as Logger;
+
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: flakyEmbedder,
+      logger: spyLogger,
+      backfillBatchSize: 1,
+    });
+
+    const progress: Array<[number, number]> = [];
+    await pipeline.backfillAll((done, total) => {
+      progress.push([done, total]);
+    });
+
+    // The warn was called for the failing item
+    expect(warnMessages.length).toBeGreaterThanOrEqual(1);
+    // At least one item succeeded in being embedded
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBeGreaterThanOrEqual(1);
+  });
+
+  test("backfillForRoutingKeys with empty `in` array returns immediately (no DB reads)", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'slack', 'message', 'e1', 'hello', 'body', ?, ?)`,
+      ["slack:e1", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // Empty `in` list → early return, nothing embedded
+    await pipeline.backfillForRoutingKeys({ in: [] });
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBe(0);
+  });
+
+  test("backfillForRoutingKeys with empty `notIn` array falls back to backfillAll", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'slack', 'message', 'e1', 'hello', 'body', ?, ?)`,
+      ["slack:e1", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // Empty `notIn` list → calls backfillAll (all items match)
+    await pipeline.backfillForRoutingKeys({ notIn: [] });
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBeGreaterThanOrEqual(1);
+  });
+
+  test("backfillForRoutingKeys without onProgress callback (optional branch omitted)", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'slack', 'message', 'e1', 'hello', 'body', ?, ?)`,
+      ["slack:e1", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // No onProgress — exercises the `onProgress?.()` branch where the call is skipped
+    await pipeline.backfillForRoutingKeys({ in: ["slack:message"] });
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBeGreaterThanOrEqual(1);
+  });
+
+  test("backfillForRoutingKeys catch block: logs and continues on per-item failure", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    // ok1 has higher modified_at so it's processed first (DESC order)
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'slack', 'message', 'ok1', 'good title', 'body text', ?, ?)`,
+      ["slack:ok1", now + 1000, now],
+    );
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'slack', 'message', 'bad1', 'some title', 'body text', ?, ?)`,
+      ["slack:bad1", now, now],
+    );
+
+    // ok1 succeeds (call 1), bad1 fails (call 2), bad1 re-queried but succeeds on call 3+
+    let callIdx = 0;
+    const flakyEmbedder: Embedder = {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dims: 384,
+      async embed(texts) {
+        callIdx += 1;
+        if (callIdx === 2) {
+          throw new Error("transient failure");
+        }
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+
+    const warnArgs: unknown[] = [];
+    const silentBase = pino({ level: "silent" });
+    const spyLogger = {
+      ...silentBase,
+      warn(obj: unknown, _msg?: string) {
+        warnArgs.push(obj);
+      },
+    } as unknown as Logger;
+
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: flakyEmbedder,
+      logger: spyLogger,
+      backfillBatchSize: 1,
+    });
+
+    const progress: Array<[number, number]> = [];
+    await pipeline.backfillForRoutingKeys({ in: ["slack:message"] }, (done, total) => {
+      progress.push([done, total]);
+    });
+
+    expect(warnArgs.length).toBeGreaterThanOrEqual(1);
+    // At least one item was embedded successfully
+    const c = (db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c;
+    expect(c).toBeGreaterThanOrEqual(1);
+  });
+
+  test("constructor accepts default backfillBatchSize (backfillBatchSize ?? DEFAULT_BACKFILL_BATCH branch)", async () => {
+    const db = freshDb();
+    // No backfillBatchSize provided → uses DEFAULT_BACKFILL_BATCH (50)
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    // embeddingModel / embeddingDims accessors
+    expect(pipeline.embeddingModel).toBe("Xenova/all-MiniLM-L6-v2");
+    expect(pipeline.embeddingDims).toBe(384);
+  });
+
+  test("constructor clamps backfillBatchSize to 1 when given 0", async () => {
+    const db = freshDb();
+    // Math.max(1, 0) = 1 — exercises the clamping branch
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+      backfillBatchSize: 0,
+    });
+    expect(pipeline.embeddingDims).toBe(384);
+  });
+
+  test("embedTexts delegates to embedder.embed", async () => {
+    const db = freshDb();
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+    const result = await pipeline.embedTexts(["hello", "world"]);
+    expect(result.length).toBe(2);
+    expect(result[0]).toBeInstanceOf(Float32Array);
+    expect(result[0]?.length).toBe(384);
   });
 });

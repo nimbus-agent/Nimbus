@@ -140,4 +140,142 @@ describe("tuiReducer", () => {
     ]);
     expect(s.liveBuffer).toBe("");
   });
+
+  test("stream-done for non-active streamId is ignored (returns same state reference)", () => {
+    const before = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      { type: "stream-token", streamId: "s1", text: "hello" },
+    ]);
+    const after = tuiReducer(before, { type: "stream-done", streamId: "stale" });
+    // same reference = no state change
+    expect(after).toBe(before);
+    expect(after.mode).toBe("streaming");
+    expect(after.activeStreamId).toBe("s1");
+    expect(after.liveBuffer).toBe("hello");
+  });
+
+  test("stream-error for non-active streamId is ignored (returns same state reference)", () => {
+    const before = reduce([{ type: "submit", streamId: "s1", query: "q" }]);
+    const after = tuiReducer(before, { type: "stream-error", streamId: "stale", error: "oops" });
+    expect(after).toBe(before);
+    expect(after.mode).toBe("streaming");
+    expect(after.lastError).toBeNull();
+  });
+
+  test("hitl-advance when hitlBatch is null returns same state (no-op)", () => {
+    // No hitl-requested, so hitlBatch is null
+    const before = reduce([{ type: "submit", streamId: "s1", query: "q" }]);
+    expect(before.hitlBatch).toBeNull();
+    const after = tuiReducer(before, { type: "hitl-advance", approved: true });
+    expect(after).toBe(before);
+  });
+
+  test("hitl-advance when cursor is past all requests (currentRequest undefined) returns same state", () => {
+    // Advance past the only request, then try to advance again
+    const afterFirstAdvance = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      {
+        type: "hitl-requested",
+        batchId: "b1",
+        requests: [{ actionId: "a1", action: "x", params: {} }],
+      },
+      { type: "hitl-advance", approved: true },
+    ]);
+    // cursor is now 1, but requests has length 1, so cursor >= requests.length
+    expect(afterFirstAdvance.hitlBatch?.cursor).toBe(1);
+    expect(afterFirstAdvance.hitlBatch?.requests).toHaveLength(1);
+
+    const afterSecondAdvance = tuiReducer(afterFirstAdvance, {
+      type: "hitl-advance",
+      approved: false,
+    });
+    expect(afterSecondAdvance).toBe(afterFirstAdvance);
+    // cursor and decisions unchanged
+    expect(afterSecondAdvance.hitlBatch?.cursor).toBe(1);
+    expect(afterSecondAdvance.hitlBatch?.decisions).toHaveLength(1);
+  });
+
+  test("hitl-resolve with no active stream returns to idle mode", () => {
+    // Start from idle (no submit), go hitl-requested then resolve → mode should be idle
+    const s = reduce([
+      {
+        type: "hitl-requested",
+        batchId: "b2",
+        requests: [{ actionId: "a1", action: "x", params: {} }],
+      },
+      { type: "hitl-resolve" },
+    ]);
+    expect(s.mode).toBe("idle");
+    expect(s.hitlBatch).toBeNull();
+    expect(s.activeStreamId).toBeNull();
+  });
+
+  test("submit clears a previous lastError", () => {
+    const withError = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      { type: "stream-error", streamId: "s1", error: "previous error" },
+    ]);
+    expect(withError.lastError).toBe("previous error");
+
+    const s = tuiReducer(withError, { type: "submit", streamId: "s2", query: "retry" });
+    expect(s.mode).toBe("streaming");
+    expect(s.activeStreamId).toBe("s2");
+    expect(s.lastError).toBeNull();
+  });
+
+  test("disconnect from awaiting-hitl clears hitlBatch", () => {
+    const s = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      {
+        type: "hitl-requested",
+        batchId: "b1",
+        requests: [{ actionId: "a1", action: "x", params: {} }],
+      },
+      { type: "disconnect" },
+    ]);
+    expect(s.mode).toBe("disconnected");
+    expect(s.hitlBatch).toBeNull();
+    expect(s.activeStreamId).toBeNull();
+  });
+
+  test("hitl-advance with denied decision records approved:false", () => {
+    const s = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      {
+        type: "hitl-requested",
+        batchId: "b1",
+        requests: [
+          { actionId: "a1", action: "x", params: { key: "val" } },
+          { actionId: "a2", action: "y", params: {} },
+        ],
+      },
+      { type: "hitl-advance", approved: false },
+    ]);
+    expect(s.hitlBatch?.decisions).toEqual([{ actionId: "a1", approved: false }]);
+    expect(s.hitlBatch?.cursor).toBe(1);
+  });
+
+  test("multiple hitl-advance steps build the full decision list", () => {
+    const s = reduce([
+      { type: "submit", streamId: "s1", query: "q" },
+      {
+        type: "hitl-requested",
+        batchId: "b1",
+        requests: [
+          { actionId: "a1", action: "x", params: {} },
+          { actionId: "a2", action: "y", params: {} },
+          { actionId: "a3", action: "z", params: {} },
+        ],
+      },
+      { type: "hitl-advance", approved: true },
+      { type: "hitl-advance", approved: false },
+      { type: "hitl-advance", approved: true },
+    ]);
+    expect(s.hitlBatch?.cursor).toBe(3);
+    expect(s.hitlBatch?.decisions).toEqual([
+      { actionId: "a1", approved: true },
+      { actionId: "a2", approved: false },
+      { actionId: "a3", approved: true },
+    ]);
+  });
 });

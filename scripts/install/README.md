@@ -1,5 +1,10 @@
 # Nimbus Install Scripts
 
+> **Most users:** prefer a package manager — `brew install nimbus-agent/tap/nimbus` (macOS/Linux)
+> or, on Windows, `scoop bucket add nimbus https://github.com/nimbus-agent/scoop-bucket && scoop install nimbus`.
+> See [`docs/install.md`](../../docs/install.md). The scripts below remain the universal,
+> read-it-yourself fallback.
+
 Per-user installers bundled with v0.1.0+ release tarballs.
 
 ## Why scripts (not signed `.msi` / `.pkg`)

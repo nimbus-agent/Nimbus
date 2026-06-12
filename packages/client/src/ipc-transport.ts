@@ -16,11 +16,11 @@ type Pending = {
   reject: (e: Error) => void;
 };
 
-function idKey(id: string | number): string {
+export function idKey(id: string | number): string {
   return typeof id === "number" ? `n:${id}` : `s:${id}`;
 }
 
-function jsonRpcErrorMessage(err: unknown): string {
+export function jsonRpcErrorMessage(err: unknown): string {
   if (typeof err !== "object" || err === null) {
     return "JSON-RPC error";
   }
@@ -34,7 +34,7 @@ function jsonRpcErrorMessage(err: unknown): string {
   return msg;
 }
 
-function tryParseJsonRecord(line: string): Record<string, unknown> | undefined {
+export function tryParseJsonRecord(line: string): Record<string, unknown> | undefined {
   try {
     return JSON.parse(line) as Record<string, unknown>;
   } catch {

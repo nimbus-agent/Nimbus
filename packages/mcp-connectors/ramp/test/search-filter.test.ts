@@ -64,4 +64,122 @@ describe("filterRampTransactions", () => {
     const many = Array.from({ length: 10 }, (_, i) => txn({ id: `txn_${String(i)}` }));
     expect(filterRampTransactions(many, { query: "amazon", limit: 3 })).toHaveLength(3);
   });
+
+  test("card_holder present but first_name missing — filter still matches on last_name and department", () => {
+    // Exercises the (p !== "") false arm in the .filter() for first_name = ""
+    const row = txn();
+    const holder = row["card_holder"] as Record<string, unknown>;
+    delete holder["first_name"];
+    // last_name + department_name remain, so "Lovelace" still matches
+    expect(filterRampTransactions([row], { query: "Lovelace" })).toHaveLength(1);
+    // first_name is gone — searching for "Ada" yields nothing
+    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(0);
+  });
+
+  test("card_holder present but last_name missing — filter still matches on first_name and department", () => {
+    // Exercises the (p !== "") false arm in the .filter() for last_name = ""
+    const row = txn();
+    const holder = row["card_holder"] as Record<string, unknown>;
+    delete holder["last_name"];
+    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(1);
+    expect(filterRampTransactions([row], { query: "Lovelace" })).toHaveLength(0);
+  });
+
+  test("card_holder present but department_name missing — filter still matches on first_name", () => {
+    // Exercises the (p !== "") false arm in the .filter() for department_name = ""
+    const row = txn();
+    const holder = row["card_holder"] as Record<string, unknown>;
+    delete holder["department_name"];
+    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(1);
+    expect(filterRampTransactions([row], { query: "Engineering" })).toHaveLength(0);
+  });
+
+  test("card_holder present with all name fields missing — cardHolderName returns empty string", () => {
+    // All three filter(p !== "") arms produce false; cardHolderName contributes "" to the haystack
+    const row = txn();
+    const holder = row["card_holder"] as Record<string, unknown>;
+    delete holder["first_name"];
+    delete holder["last_name"];
+    delete holder["department_name"];
+    // Still matches on merchant_name
+    expect(filterRampTransactions([row], { query: "amazon" })).toHaveLength(1);
+    // No longer matches on any holder field
+    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(0);
+    expect(filterRampTransactions([row], { query: "Engineering" })).toHaveLength(0);
+  });
+
+  test("card_holder present with non-string field values — stringField falls back to empty", () => {
+    // first_name/last_name/department_name are numbers, not strings → stringField returns ""
+    const row: Record<string, unknown> = {
+      id: "txn_xyz",
+      currency_code: "EUR",
+      merchant_name: "Stripe",
+      state: "PENDING",
+      sk_category_name: "Payment",
+      memo: "Subscription fee",
+      card_holder: {
+        first_name: 42,
+        last_name: true,
+        department_name: null,
+      },
+    };
+    // Still matches on merchant_name
+    expect(filterRampTransactions([row], { query: "stripe" })).toHaveLength(1);
+    // None of the holder name searches match since fields are wrong type
+    expect(filterRampTransactions([row], { query: "42" })).toHaveLength(0);
+  });
+
+  test("card_holder is a non-null non-plain-object (array) — treated as objectish, fields are empty", () => {
+    // asObjectish accepts arrays (typeof [] === "object" && [] !== null)
+    // so holder is defined, but first_name/last_name/department_name all undefined → stringField returns ""
+    const row: Record<string, unknown> = {
+      id: "txn_arr",
+      currency_code: "GBP",
+      merchant_name: "Acme Corp",
+      state: "CLEARED",
+      sk_category_name: "Office Supplies",
+      memo: "Desk chair",
+      card_holder: [],
+    };
+    expect(filterRampTransactions([row], { query: "acme" })).toHaveLength(1);
+    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(0);
+  });
+
+  test("top-level fields are wrong type — stringField returns empty for each", () => {
+    // merchant_name, state, sk_category_name, currency_code, memo all set to non-string values
+    const row: Record<string, unknown> = {
+      id: "txn_badtypes",
+      merchant_name: 9999,
+      state: false,
+      sk_category_name: { nested: true },
+      currency_code: ["USD"],
+      memo: null,
+      card_holder: {
+        first_name: "Bob",
+        last_name: "Smith",
+        department_name: "Finance",
+      },
+    };
+    // Matches on holder fields since those are proper strings
+    expect(filterRampTransactions([row], { query: "Bob Smith" })).toHaveLength(1);
+    // Does NOT match on the wrong-type fields
+    expect(filterRampTransactions([row], { query: "9999" })).toHaveLength(0);
+    expect(filterRampTransactions([row], { query: "false" })).toHaveLength(0);
+  });
+
+  test("card_holder is a primitive (string) — asObjectish returns undefined, cardHolderName returns empty", () => {
+    // asObjectish("Alice") → typeof "Alice" !== "object" → undefined → early return ""
+    const row: Record<string, unknown> = {
+      id: "txn_strHolder",
+      currency_code: "USD",
+      merchant_name: "Whole Foods",
+      state: "CLEARED",
+      sk_category_name: "Groceries",
+      memo: "Team lunch",
+      card_holder: "Alice Johnson",
+    };
+    expect(filterRampTransactions([row], { query: "whole foods" })).toHaveLength(1);
+    // card_holder is a string, not an object → asObjectish → undefined → returns ""
+    expect(filterRampTransactions([row], { query: "Alice Johnson" })).toHaveLength(0);
+  });
 });

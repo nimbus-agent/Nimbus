@@ -1,8 +1,14 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import type { AvailableUpdateCli, SyncResult, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");
 const {
@@ -15,8 +21,13 @@ const {
   runExtensionEnable,
   runExtensionInfo,
   runExtensionInstall,
+  runExtensionKeygen,
   runExtensionList,
   runExtensionRemove,
+  runExtensionSign,
+  runExtensionSyncWithCaller,
+  runExtensionUpdateWithCaller,
+  runExtensionDowngradeWithCaller,
   stripFlags,
   takeFlagValue,
 } = extensionMod;
@@ -25,6 +36,15 @@ const out = captureOutput();
 
 afterAll(() => {
   out.restore();
+  // This file redefines process.stdout.isTTY many times via Object.defineProperty.
+  // Reset it to the writable non-TTY default so the pollution can't leak into other
+  // test files in the combined `bun test packages/cli/src` run (it was breaking the
+  // query non-TTY tests on Linux/macOS).
+  Object.defineProperty(process.stdout, "isTTY", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
 });
 
 describe("hasFlag", () => {
@@ -463,10 +483,267 @@ describe("runExtension top-level dispatcher", () => {
     await expect(runExtension(["list"])).rejects.toThrow(/Gateway is not running/);
   });
 
-  // Note: testing the dispatch branches for individual subcommands (list,
-  // info, install, enable, disable, remove) requires a connectable IPC
-  // socket. Those branches are intentionally left to e2e tests; the
-  // per-handler logic above already covers the meaningful code paths.
+  test("throws unknown subcommand EXTENSION_USAGE error when gateway running but sub unknown", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await expect(runExtension(["__no_such_sub__"])).rejects.toThrow(/nimbus extension/);
+  });
+
+  test("keygen offline sub succeeds without gateway connection (returns, no throw)", async () => {
+    // runExtension keygen dispatches via runExtensionOffline — no gateway needed
+    const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-keygen-"));
+    const outPath = join(tmpDir, `key-${Date.now()}`);
+    const stdoutChunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      // runExtension with keygen — does NOT require a gateway
+      await runExtension(["keygen", "--out", outPath]);
+      expect(stdoutChunks.join("").trim().length).toBeGreaterThan(0);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  test("sign offline sub — sign with missing args exits 2 via process.exit", async () => {
+    // runExtensionSign with no dir returns 2 → runExtensionOffline calls process.exit(2)
+    const origExit = process.exit.bind(process);
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    try {
+      await expect(runExtension(["sign"])).rejects.toThrow("process.exit(2)");
+    } finally {
+      process.exit = origExit;
+    }
+  });
+
+  test("dispatches 'list' subcommand through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.list") return { extensions: [] };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["list"]);
+    expect(ipcCalls.some((c) => c.method === "extension.list")).toBe(true);
+    expect(out.stdout).toContain("(no extensions installed)");
+  });
+
+  test("dispatches '' (empty sub = list) through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.list") return { extensions: [] };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension([]);
+    expect(ipcCalls.some((c) => c.method === "extension.list")).toBe(true);
+  });
+
+  test("dispatches 'enable' subcommand through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.enable") return { ok: true };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["enable", "my.ext"]);
+    expect(ipcCalls.some((c) => c.method === "extension.enable")).toBe(true);
+  });
+
+  test("dispatches 'disable' subcommand through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.disable") return { ok: true };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["disable", "my.ext"]);
+    expect(ipcCalls.some((c) => c.method === "extension.disable")).toBe(true);
+  });
+
+  test("dispatches 'sync' subcommand through gateway fixture ipcClient and returns 0", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.sync") {
+            return {
+              publishersChecked: 0,
+              publishersUnchanged: 0,
+              publishersUpdated: [],
+              publishersEvicted: [],
+              failures: [],
+            };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["sync"]);
+    expect(ipcCalls.some((c) => c.method === "extension.sync")).toBe(true);
+  });
+
+  test("dispatches 'info' subcommand through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.info")
+            return { extension: { id: "ext-a", version: "1.0.0", enabled: 1 } };
+          if (method === "diag.snapshot") return {};
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["info", "ext-a"]);
+    expect(ipcCalls.some((c) => c.method === "extension.info")).toBe(true);
+  });
+
+  test("dispatches 'install' subcommand with --yes through gateway fixture ipcClient", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.install")
+            return { id: "ext-a", version: "1.0.0", installPath: "/p" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    const origIsTty = process.stdout.isTTY;
+    try {
+      await runExtension(["install", "/some/path", "--yes"]);
+      expect(ipcCalls.some((c) => c.method === "extension.install")).toBe(true);
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
+    }
+  });
+
+  test("dispatches 'remove' subcommand with --yes through gateway fixture ipcClient", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.remove") return { ok: true };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    const origIsTty = process.stdout.isTTY;
+    try {
+      await runExtension(["remove", "ext-a", "--yes"]);
+      expect(ipcCalls.some((c) => c.method === "extension.remove")).toBe(true);
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
+    }
+  });
+
+  test("dispatches 'update' subcommand through gateway fixture ipcClient", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.checkForUpdates") return [];
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["update"]);
+    expect(ipcCalls.some((c) => c.method === "extension.checkForUpdates")).toBe(true);
+  });
+
+  test("dispatches 'downgrade' subcommand — missing id returns 1 and exits via process.exit", async () => {
+    // downgrade with no id returns exit code 1 → process.exit(1) via dispatchExtensionWithCode
+    const origExit = process.exit.bind(process);
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    try {
+      await expect(runExtension(["downgrade"])).rejects.toThrow("process.exit(1)");
+    } finally {
+      process.exit = origExit;
+      process.exitCode = 0;
+    }
+  });
+
+  // Note: testing per-handler logic is covered by the dedicated describe blocks above.
 });
 
 describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
@@ -778,5 +1055,956 @@ describe("runExtensionList --tree (T2 PR 4)", () => {
     ]);
     await runExtensionList(client, ["list", "--tree"]);
     expect(out.stdout).toContain("ext-z");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionList — additional branch coverage
+// ---------------------------------------------------------------------------
+describe("runExtensionList — additional branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  test("table row uses enabled=1 when r.enabled is undefined (??1 default)", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extensions: [{ id: "my.ext", version: "1.0.0" }],
+      },
+    ]);
+    await runExtensionList(client, ["list"]);
+    expect(out.stdout).toContain("enabled");
+    expect(out.stdout).toContain("my.ext");
+  });
+
+  test("table row with publisher set renders publisher id (not unverified)", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extensions: [
+          { id: "pub.ext", version: "2.0.0", enabled: 1, publisher: { id: "acme", key: "k" } },
+        ],
+      },
+    ]);
+    await runExtensionList(client, ["list"]);
+    expect(out.stdout).toContain("acme");
+    expect(out.stdout).not.toContain("(unverified)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatExtensionListTable — boolean enabled branch
+// ---------------------------------------------------------------------------
+describe("formatExtensionListTable — boolean enabled", () => {
+  test("enabled=true renders 'enabled'", () => {
+    const formatted = formatExtensionListTable([{ id: "x", version: "1.0.0", enabled: true }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(formatted).toContain("enabled");
+    expect(formatted).not.toContain("disabled");
+  });
+
+  test("enabled=false renders 'disabled'", () => {
+    const formatted = formatExtensionListTable([{ id: "x", version: "1.0.0", enabled: false }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(formatted).toContain("disabled");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionInfo — publisher with no key string (unverified branch in print)
+// ---------------------------------------------------------------------------
+describe("runExtensionInfo — publisher without key", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  test("shows (unverified) when publisher exists but key is not a string", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext-nokey",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a" },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-nokey"], ["info", "ext-nokey"]);
+    expect(out.stdout).toContain("Publisher: (unverified)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionInfo — --deps with forward-only or reverse-only
+// ---------------------------------------------------------------------------
+describe("runExtensionInfo --deps — partial dep sets", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  test("--deps with only forward deps (no reverse) prints Forward section only", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext-fwd",
+          version: "1.0.0",
+          enabled: 1,
+          forwardDeps: [{ id: "dep-a", range: "^1.0.0" }],
+          reverseDeps: [],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-fwd"], ["info", "ext-fwd", "--deps"]);
+    expect(out.stdout).toContain("Forward");
+    expect(out.stdout).not.toContain("Reverse (required");
+  });
+
+  test("--deps with only reverse deps (no forward) prints Reverse section only", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext-rev",
+          version: "1.0.0",
+          enabled: 1,
+          forwardDeps: [],
+          reverseDeps: [{ extensionId: "parent-x", range: "^2.0.0" }],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-rev"], ["info", "ext-rev", "--deps"]);
+    expect(out.stdout).toContain("Reverse");
+    expect(out.stdout).not.toContain("Forward (this extension");
+  });
+
+  test("--deps with undefined dep arrays falls back to empty (no crash)", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext-nodeps",
+          version: "1.0.0",
+          enabled: 1,
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-nodeps"], ["info", "ext-nodeps", "--deps"]);
+    expect(out.stdout).toContain("(none)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionSyncWithCaller
+// ---------------------------------------------------------------------------
+describe("runExtensionSyncWithCaller", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+
+  function makeSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
+    return {
+      publishersChecked: 1,
+      publishersUnchanged: 1,
+      publishersUpdated: [],
+      publishersEvicted: [],
+      failures: [],
+      ...overrides,
+    };
+  }
+
+  test("happy path (no flags) prints human summary and returns 0", async () => {
+    const stderrChunks: string[] = [];
+    const stdoutChunks: string[] = [];
+    const result = makeSyncResult({ publishersChecked: 2, publishersUnchanged: 2 });
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => result,
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("publishers checked: 2");
+  });
+
+  test("--json flag emits JSON instead of human text", async () => {
+    const stdoutChunks: string[] = [];
+    const result = makeSyncResult();
+    const code = await runExtensionSyncWithCaller({
+      args: ["--json"],
+      caller: async () => result,
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as SyncResult;
+    expect(parsed.publishersChecked).toBe(1);
+  });
+
+  test("--dry-run passes dryRun:true to caller", async () => {
+    let callerArgs: Record<string, unknown> | undefined;
+    const result = makeSyncResult();
+    await runExtensionSyncWithCaller({
+      args: ["--dry-run"],
+      caller: async (params) => {
+        callerArgs = params;
+        return result;
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(callerArgs?.["dryRun"]).toBe(true);
+  });
+
+  test("error with 'air-gap' in message returns exit code 3", async () => {
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => {
+        throw new Error("air-gap: network not available");
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(code).toBe(3);
+  });
+
+  test("generic error (not air-gap) returns exit code 1", async () => {
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => {
+        throw new Error("some other failure");
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(code).toBe(1);
+  });
+
+  test("non-Error thrown returns exit code 1", async () => {
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw "plain string error";
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(code).toBe(1);
+  });
+
+  test("reverifyResult=failed in updated entry writes stderr and returns 2", async () => {
+    const stderrChunks: string[] = [];
+    const result = makeSyncResult({
+      publishersUpdated: [
+        { id: "pub-x", reverifyResult: "failed", failedExtensions: ["ext-a", "ext-b"] },
+      ],
+    });
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => result,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(2);
+    expect(stderrChunks.join("")).toContain("pub-x");
+    expect(stderrChunks.join("")).toContain("ext-a");
+  });
+
+  test("reverifyResult=ok in updated entry does not write stderr", async () => {
+    const stderrChunks: string[] = [];
+    const result = makeSyncResult({
+      publishersUpdated: [{ id: "pub-ok", reverifyResult: "ok", failedExtensions: [] }],
+    });
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => result,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(0);
+    expect(stderrChunks.join("")).not.toContain("pub-ok");
+  });
+
+  test("all publishers failed (failures.length === publishersChecked > 0) returns 4", async () => {
+    const result = makeSyncResult({
+      publishersChecked: 2,
+      publishersUnchanged: 0,
+      publishersUpdated: [],
+      failures: [
+        { id: "pub-a", reason: "timeout" },
+        { id: "pub-b", reason: "timeout" },
+      ],
+    });
+    const stderrChunks: string[] = [];
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => result,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(4);
+    expect(stderrChunks.join("")).toContain("pub-a");
+  });
+
+  test("partial failures (some pass) returns 0, not 4", async () => {
+    const result = makeSyncResult({
+      publishersChecked: 3,
+      failures: [{ id: "pub-a", reason: "timeout" }],
+    });
+    const code = await runExtensionSyncWithCaller({
+      args: [],
+      caller: async () => result,
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionUpdateWithCaller — listExtensionUpdates
+// ---------------------------------------------------------------------------
+describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+
+  function makeUpdate(overrides: Partial<AvailableUpdateCli> = {}): AvailableUpdateCli {
+    return {
+      id: "ext-a",
+      displayName: "Extension A",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      channel: "stable",
+      publisherStatus: "verified",
+      verificationStatus: "verified",
+      ...overrides,
+    };
+  }
+
+  test("no id → calls checkForUpdates; empty list prints 'No updates available'", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [],
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("No updates available");
+  });
+
+  test("no id → non-empty list prints rows", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [makeUpdate()],
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("ext-a");
+    expect(stdoutChunks.join("")).toContain("1.0.0");
+    expect(stdoutChunks.join("")).toContain("1.1.0");
+  });
+
+  test("--json flag prints JSON array", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionUpdateWithCaller({
+      args: ["--json"],
+      caller: async () => [makeUpdate()],
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as AvailableUpdateCli[];
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0]?.id).toBe("ext-a");
+  });
+
+  test("--check flag passes force:true to checkForUpdates caller", async () => {
+    let capturedParams: Record<string, unknown> | undefined;
+    await runExtensionUpdateWithCaller({
+      args: ["--check"],
+      caller: async (_method, params) => {
+        capturedParams = params as Record<string, unknown>;
+        return [];
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(capturedParams?.["force"]).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionUpdateWithCaller — applyExtensionUpdate
+// ---------------------------------------------------------------------------
+describe("runExtensionUpdateWithCaller — apply mode (with id)", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+  function makeUpdate(overrides: Partial<AvailableUpdateCli> = {}): AvailableUpdateCli {
+    return {
+      id: "ext-a",
+      displayName: "Extension A",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      channel: "stable",
+      publisherStatus: "verified",
+      verificationStatus: "verified",
+      ...overrides,
+    };
+  }
+
+  function makeApplyResult(overrides: Partial<UpdateApplyResultCli> = {}): UpdateApplyResultCli {
+    return { applied: true, ...overrides };
+  }
+
+  test("no cached update for id returns 1 with error message", async () => {
+    const stderrChunks: string[] = [];
+    // caller returns empty list → entry not found
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-b"],
+      caller: async () => [],
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("ext-b");
+  });
+
+  test("applied=true prints success message with toVersion and returns 0", async () => {
+    const stdoutChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a"],
+      caller: async (_method, _params) => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult();
+      },
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("updated ext-a to 1.1.0");
+  });
+
+  test("applied=true with jobId includes jobId in output", async () => {
+    const stdoutChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult({ jobId: "job-123" });
+      },
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("job-123");
+  });
+
+  test("--to flag overrides toVersion", async () => {
+    let applyParams: Record<string, unknown> | undefined;
+    let callCount = 0;
+    await runExtensionUpdateWithCaller({
+      args: ["ext-a", "--to", "2.0.0"],
+      caller: async (_method, params) => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        applyParams = params as Record<string, unknown>;
+        return makeApplyResult();
+      },
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(applyParams?.["toVersion"]).toBe("2.0.0");
+  });
+
+  test("applied=false prints failure reason and returns 1", async () => {
+    const stderrChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult({ applied: false, reason: "signature_failed" });
+      },
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("signature_failed");
+  });
+
+  test("applied=false with hint includes hint in stderr", async () => {
+    const stderrChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult({ applied: false, reason: "err", hint: "re-run sync" });
+      },
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("re-run sync");
+  });
+
+  test("applied=false without reason prints 'unknown'", async () => {
+    const stderrChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult({ applied: false });
+      },
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("unknown");
+  });
+
+  test("--json flag with applied=true returns 0 and JSON output", async () => {
+    const stdoutChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a", "--json"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult();
+      },
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as UpdateApplyResultCli;
+    expect(parsed.applied).toBe(true);
+  });
+
+  test("--json flag with applied=false returns 1 and JSON output", async () => {
+    const stdoutChunks: string[] = [];
+    let callCount = 0;
+    const code = await runExtensionUpdateWithCaller({
+      args: ["ext-a", "--json"],
+      caller: async () => {
+        callCount += 1;
+        if (callCount === 1) return [makeUpdate()];
+        return makeApplyResult({ applied: false });
+      },
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(1);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as UpdateApplyResultCli;
+    expect(parsed.applied).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionDowngradeWithCaller
+// ---------------------------------------------------------------------------
+describe("runExtensionDowngradeWithCaller", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+
+  function makeApplyResult(overrides: Partial<UpdateApplyResultCli> = {}): UpdateApplyResultCli {
+    return { applied: true, ...overrides };
+  }
+
+  const dummyFetchInfo = async () => ({});
+
+  test("missing id returns 1 with usage message", async () => {
+    const stderrChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: [],
+      caller: async () => makeApplyResult(),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("downgrade");
+  });
+
+  test("missing --to returns 1 with error message", async () => {
+    const stderrChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a"],
+      caller: async () => makeApplyResult(),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("--to");
+  });
+
+  test("applied=true prints success and returns 0", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0"],
+      caller: async () => makeApplyResult(),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toContain("downgraded ext-a to 0.9.0");
+  });
+
+  test("applied=false prints failure reason and returns 1", async () => {
+    const stderrChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0"],
+      caller: async () => makeApplyResult({ applied: false, reason: "not_found" }),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("not_found");
+  });
+
+  test("applied=false with hint includes hint in stderr", async () => {
+    const stderrChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0"],
+      caller: async () => makeApplyResult({ applied: false, reason: "err", hint: "check cache" }),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("check cache");
+  });
+
+  test("applied=false without reason prints 'unknown'", async () => {
+    const stderrChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0"],
+      caller: async () => makeApplyResult({ applied: false }),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: () => {},
+      writeStderr: (s) => stderrChunks.push(s),
+    });
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("unknown");
+  });
+
+  test("--json with applied=true returns 0 and JSON", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0", "--json"],
+      caller: async () => makeApplyResult(),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as UpdateApplyResultCli;
+    expect(parsed.applied).toBe(true);
+  });
+
+  test("--json with applied=false returns 1 and JSON", async () => {
+    const stdoutChunks: string[] = [];
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["ext-a", "--to", "0.9.0", "--json"],
+      caller: async () => makeApplyResult({ applied: false }),
+      fetchInfo: dummyFetchInfo,
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(code).toBe(1);
+    const parsed = JSON.parse(stdoutChunks.join("").trim()) as UpdateApplyResultCli;
+    expect(parsed.applied).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionKeygen
+// ---------------------------------------------------------------------------
+describe("runExtensionKeygen", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-keygen-test-"));
+
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+
+  test("generates a key to --out path and returns 0", async () => {
+    const outPath = join(tmpRoot, `key-${Date.now()}`);
+    const stderrChunks: string[] = [];
+    const stdoutChunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const code = await runExtensionKeygen(["--out", outPath]);
+      expect(code).toBe(0);
+      // stdout should contain the base64 pubkey
+      expect(stdoutChunks.join("").trim().length).toBeGreaterThan(0);
+      expect(stderrChunks.join("")).toBe("");
+    } finally {
+      process.stdout.write = origWrite;
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("EEXIST without --force returns 2 and writes to stderr", async () => {
+    const outPath = join(tmpRoot, `key-exist-${Date.now()}`);
+    // Write the file first so EEXIST fires
+    const { privkey } = generateEd25519Keypair();
+    writeFileSync(outPath, encodeBase64(privkey));
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const code = await runExtensionKeygen(["--out", outPath]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("refusing to overwrite");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("--force overwrites an existing key and returns 0", async () => {
+    const outPath = join(tmpRoot, `key-force-${Date.now()}`);
+    const { privkey } = generateEd25519Keypair();
+    writeFileSync(outPath, encodeBase64(privkey));
+    const stdoutChunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const code = await runExtensionKeygen(["--out", outPath, "--force"]);
+      expect(code).toBe(0);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  test("non-EEXIST write error is re-thrown", async () => {
+    // Write to a path whose parent is a FILE (not a directory) → triggers ENOTDIR (not EEXIST)
+    const parentFile = join(tmpRoot, `not-a-dir-${Date.now()}`);
+    writeFileSync(parentFile, "i am a file");
+    // Attempt to write to parentFile/subkey — parentFile is a file, not a dir
+    const outPath = join(parentFile, "subkey");
+    await expect(runExtensionKeygen(["--out", outPath])).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runExtensionSign
+// ---------------------------------------------------------------------------
+describe("runExtensionSign", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-sign-test-"));
+
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+    clearFixture();
+  });
+
+  test("missing extDir (no args) returns 2 with usage message", async () => {
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const code = await runExtensionSign([]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("usage");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("extDir starts with '--' returns 2 with usage message", async () => {
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const code = await runExtensionSign(["--some-flag"]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("usage");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("key file not found returns 2 with error message", async () => {
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    const extDir = join(tmpRoot, `sign-no-key-${Date.now()}`);
+    try {
+      const code = await runExtensionSign([extDir, "--key", join(tmpRoot, "nonexistent-key")]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("could not read key file");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("key file with wrong byte length returns 2", async () => {
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    // Write a key that is NOT 32 bytes (write a 16-byte value base64-encoded)
+    const shortKey = new Uint8Array(16);
+    const keyPath = join(tmpRoot, `short-key-${Date.now()}`);
+    writeFileSync(keyPath, encodeBase64(shortKey));
+    try {
+      const code = await runExtensionSign(["/some/ext", "--key", keyPath]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("32 bytes");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("manifest file not found returns 2 with error message", async () => {
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    // Generate a valid 32-byte key
+    const { privkey } = generateEd25519Keypair();
+    const keyPath = join(tmpRoot, `valid-key-${Date.now()}`);
+    writeFileSync(keyPath, encodeBase64(privkey));
+    const extDir = join(tmpRoot, `ext-no-manifest-${Date.now()}`);
+    try {
+      const code = await runExtensionSign([extDir, "--key", keyPath]);
+      expect(code).toBe(2);
+      expect(stderrChunks.join("")).toContain("could not read manifest");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+  });
+
+  test("happy path: signs manifest and returns 0", async () => {
+    // Set up a valid key
+    const { privkey } = generateEd25519Keypair();
+    const keyPath = join(tmpRoot, `sign-key-${Date.now()}`);
+    writeFileSync(keyPath, encodeBase64(privkey));
+
+    // Set up a valid manifest directory + file
+    const extDir = mkdtempSync(join(tmpRoot, "ext-sign-"));
+    const manifestPath = join(extDir, "nimbus.extension.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({ id: "test.ext", version: "1.0.0", name: "Test Extension" }),
+    );
+
+    const code = await runExtensionSign([extDir, "--key", keyPath]);
+    expect(code).toBe(0);
+  });
+
+  test("happy path: strips existing signature before signing", async () => {
+    // Covers the `delete parsed['signature']` branch
+    const { privkey } = generateEd25519Keypair();
+    const keyPath = join(tmpRoot, `sign-key2-${Date.now()}`);
+    writeFileSync(keyPath, encodeBase64(privkey));
+
+    const extDir = mkdtempSync(join(tmpRoot, "ext-sign2-"));
+    const manifestPath = join(extDir, "nimbus.extension.json");
+    // Include an existing signature field that should be stripped then replaced
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        id: "test.ext2",
+        version: "1.0.0",
+        name: "Test2",
+        signature: "old-signature",
+      }),
+    );
+
+    const code = await runExtensionSign([extDir, "--key", keyPath]);
+    expect(code).toBe(0);
+    // Re-read manifest and verify the signature is a new value (not the old one)
+    const { readFileSync: rfs } = await import("node:fs");
+    const updated = JSON.parse(rfs(manifestPath, "utf8")) as Record<string, unknown>;
+    expect(updated["signature"]).not.toBe("old-signature");
+    expect(typeof updated["signature"]).toBe("string");
   });
 });

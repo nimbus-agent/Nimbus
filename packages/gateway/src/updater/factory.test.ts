@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type DistributionChannel, resolveDistributionChannel } from "@nimbus-dev/sdk";
 import type { Logger } from "pino";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { DEFAULT_NIMBUS_UPDATER_TOML } from "../config/nimbus-toml.ts";
@@ -17,6 +18,11 @@ const baseArgs = {
   currentVersion: "0.1.0",
   emit: noopEmit,
   logger: noopLogger,
+  // Isolate construction tests from the test runner's own binary path: without
+  // this, resolveDistributionChannel() reads the real process.execPath, so a bun
+  // installed via Homebrew/Scoop would trip the channel gate and fail these tests.
+  // The channel-gate test below opts back in by overriding to "homebrew".
+  _channelOverride: null as DistributionChannel | null,
 };
 
 describe("createUpdaterFromConfig", () => {
@@ -65,5 +71,22 @@ describe("createUpdaterFromConfig", () => {
     });
     expect(result).toBeUndefined();
     expect(warnings.length).toBe(1);
+  });
+
+  test("returns undefined when running from a package-manager channel", () => {
+    const updaterCfg: NimbusUpdaterToml = {
+      ...DEFAULT_NIMBUS_UPDATER_TOML,
+      enabled: true,
+    };
+    const result = createUpdaterFromConfig({
+      ...baseArgs,
+      updaterCfg,
+      _channelOverride: "homebrew",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("resolver returns null for a plain install path (default behavior unchanged)", () => {
+    expect(resolveDistributionChannel({ env: {}, execPath: "/usr/bin/nimbus" })).toBeNull();
   });
 });

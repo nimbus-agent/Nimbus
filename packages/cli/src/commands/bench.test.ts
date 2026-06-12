@@ -16,6 +16,20 @@ describe("runBench (CLI command)", () => {
     expect(stdoutChunks.join("")).toMatch(/Usage:/);
   });
 
+  test("-h short flag is handled in-process and does not spawn a subprocess", async () => {
+    const stdoutChunks: string[] = [];
+    const spawnMock = mock(() => {
+      throw new Error("Bun.spawn should not be called for -h");
+    });
+    const exit = await runBench(["-h"], {
+      spawn: spawnMock as unknown as typeof Bun.spawn,
+      stdout: (s) => stdoutChunks.push(s),
+    });
+    expect(exit).toBe(0);
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(stdoutChunks.join("")).toMatch(/nimbus bench/);
+  });
+
   test("non-help args spawn the bench-runner subprocess and forward exit code", async () => {
     const calls: Array<{ cmd: string[]; opts?: unknown }> = [];
     const spawnMock = mock((cmd: string[], opts?: unknown) => {
@@ -56,5 +70,43 @@ describe("runBench (CLI command)", () => {
       spawn: spawnMock as unknown as typeof Bun.spawn,
     });
     expect(exit).toBe(2);
+  });
+
+  test("non-number subprocess exit defaults to exit code 1", async () => {
+    const spawnMock = mock(() => {
+      return {
+        exited: Promise.resolve(null),
+        kill: () => {},
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    });
+    const exit = await runBench(["--all"], {
+      spawn: spawnMock as unknown as typeof Bun.spawn,
+    });
+    expect(exit).toBe(1);
+  });
+
+  test("default stdout dep writes to process.stdout when not injected", async () => {
+    // When no stdout dep is passed, the default writes to process.stdout.write.
+    // We validate this by ensuring the help text is emitted via the default path
+    // (no stdout dep, but capture process.stdout.write directly).
+    const chunks: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: string | Uint8Array, ..._rest: unknown[]) => {
+      chunks.push(typeof s === "string" ? s : new TextDecoder().decode(s));
+      return true;
+    };
+    try {
+      const spawnMock = mock(() => {
+        throw new Error("should not spawn for --help");
+      });
+      const exit = await runBench(["--help"], {
+        spawn: spawnMock as unknown as typeof Bun.spawn,
+        // no stdout dep — exercises the `deps.stdout ?? (...)` falsy branch
+      });
+      expect(exit).toBe(0);
+      expect(chunks.join("")).toMatch(/Usage:/);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
   });
 });
