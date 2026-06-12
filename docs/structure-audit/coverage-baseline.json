@@ -1,52 +1,12 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T09:41:24.543Z",
+  "generated_at": "2026-06-12T15:52:05.567Z",
   "files": {
-    "packages/cli/src/lib/interactive-ipc-handlers.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 78
-    },
     "packages/cli/src/lib/parse-duration.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 76.92
     },
-    "packages/cli/src/mcp/adapter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.5
-    },
-    "packages/cli/src/tui/QueryInput.tsx": {
-      "min_line_pct": 79.49,
-      "min_branch_pct": 67.11
-    },
-    "packages/cli/src/tui/SubTaskPane.tsx": {
-      "min_line_pct": 80,
-      "min_branch_pct": 71.43
-    },
-    "packages/cli/src/tui/ipc-context.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/cli/src/tui/state.ts": {
-      "min_line_pct": 78.57,
-      "min_branch_pct": 79.17
-    },
-    "packages/cli/src/tui/useIpcPoll.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 70
-    },
-    "packages/client/src/ask-stream.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 72.22
-    },
-    "packages/client/src/ipc-transport.ts": {
-      "min_line_pct": 69.47,
-      "min_branch_pct": 58.93
-    },
     "packages/gateway/src/commands/data-delete.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/commands/data-export.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 75
     },
@@ -54,81 +14,9 @@
       "min_line_pct": 78.26,
       "min_branch_pct": 80
     },
-    "packages/gateway/src/federation/peer-pairing.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/graph/graph-populator.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 79.79
-    },
-    "packages/gateway/src/memory/session-memory-store.ts": {
-      "min_line_pct": 75.81,
-      "min_branch_pct": 51.52
-    },
-    "packages/gateway/src/platform/dirs.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/gateway/src/platform/gateway-log-file.ts": {
-      "min_line_pct": 66.04,
-      "min_branch_pct": 42.31
-    },
-    "packages/gateway/src/platform/register-user-mcp-sync.ts": {
-      "min_line_pct": 66.67,
-      "min_branch_pct": 80
-    },
-    "packages/gateway/src/platform/sandbox/seccomp-filter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 50
-    },
-    "packages/gateway/src/preflight/preflight.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/gateway/src/sync/rate-limiter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 77.78
-    },
-    "packages/gateway/src/teamvault/team-vault-view.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 66.67
-    },
-    "packages/gateway/src/telemetry/flush-scheduler.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 65.85
-    },
-    "packages/gateway/src/voice/stt.ts": {
-      "min_line_pct": 71.43,
-      "min_branch_pct": 48
-    },
-    "packages/mcp-connectors/dataprofile/src/profile.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 71.3
-    },
-    "packages/mcp-connectors/flux/src/search-filter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
-    "packages/mcp-connectors/launchdarkly/src/search-filter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 75
-    },
     "packages/mcp-connectors/ramp/src/search-filter.ts": {
       "min_line_pct": 80,
       "min_branch_pct": 70
-    },
-    "packages/mcp-connectors/zoom/src/search-filter.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 76.47
-    },
-    "packages/sdk/src/crypto/app-store-connect-jwt.ts": {
-      "min_line_pct": 80,
-      "min_branch_pct": 0
-    },
-    "packages/sdk/src/server.ts": {
-      "min_line_pct": 66.67,
-      "min_branch_pct": 50
     }
   }
 }

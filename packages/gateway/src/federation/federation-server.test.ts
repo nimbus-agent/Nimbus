@@ -8,11 +8,16 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { dispatchFederationRpc, type FederationRpcContext } from "../ipc/federation-rpc.ts";
 import { outboundPairHandshake, sendFederatedOverWire } from "../ipc/lan-client.ts";
 import { generateBoxKeypair } from "../ipc/lan-crypto.ts";
-import { generatePairingCode } from "../ipc/lan-pairing.ts";
+import { generatePairingCode, PairingWindow } from "../ipc/lan-pairing.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
 import { federationConsent } from "./consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "./discovery.ts";
-import { buildFederationLanServer } from "./federation-server.ts";
+import {
+  buildFederationLanServer,
+  EMPTY_DISCOVERY,
+  EMPTY_PEER_PAIRING,
+  pairingServiceFor,
+} from "./federation-server.ts";
 import { PeerPairing } from "./peer-pairing.ts";
 
 let stop: (() => Promise<void>) | undefined;
@@ -451,4 +456,37 @@ test("buildFederationLanServer threads preflight into ctx (preflight set arm)", 
 
   await cleanup();
   index.close();
+});
+
+test("pairingServiceFor adapts a PairingWindow to the PairingService interface", () => {
+  const win = new PairingWindow(60_000);
+  const svc = pairingServiceFor(win);
+
+  // closed window: isOpen false, getExpiresAt() maps null → undefined (the `?? undefined` arm)
+  expect(svc.isOpen()).toBe(false);
+  expect(svc.getExpiresAt()).toBeUndefined();
+
+  // open(): isOpen true, getExpiresAt() now returns a real expiry number (the left arm)
+  const code = generatePairingCode();
+  svc.open(code);
+  expect(svc.isOpen()).toBe(true);
+  expect(typeof svc.getExpiresAt()).toBe("number");
+
+  // consume(): wrong code rejected, correct code accepted
+  expect(svc.consume("000000")).toBe(false);
+  expect(svc.consume(code)).toBe(true);
+
+  // close(): re-open then close clears the window
+  svc.open(generatePairingCode());
+  expect(svc.isOpen()).toBe(true);
+  svc.close();
+  expect(svc.isOpen()).toBe(false);
+});
+
+test("EMPTY_DISCOVERY and EMPTY_PEER_PAIRING are inert empty providers", async () => {
+  // These defaults are only used when no discovery/pairing is wired; the methods that would
+  // invoke them (federation.discover / federation.peers) are wire-forbidden, so they are
+  // exercised directly here.
+  expect(await EMPTY_DISCOVERY.list()).toEqual([]);
+  expect(EMPTY_PEER_PAIRING.listPeers()).toEqual([]);
 });

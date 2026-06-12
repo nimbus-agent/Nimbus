@@ -12,9 +12,10 @@ function cardHolderName(row: Record<string, unknown>): string {
   if (holder === undefined) {
     return "";
   }
-  const first = stringField(holder, "first_name") ?? "";
-  const last = stringField(holder, "last_name") ?? "";
-  const dept = stringField(holder, "department_name") ?? "";
+  // stringField already returns "" for missing/non-string fields, so no `?? ""` is needed.
+  const first = stringField(holder, "first_name");
+  const last = stringField(holder, "last_name");
+  const dept = stringField(holder, "department_name");
   return [first, last, dept].filter((p) => p !== "").join(" ");
 }
 

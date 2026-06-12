@@ -81,4 +81,21 @@ describe("parseDurationToMs", () => {
     expect(parseDurationToMs("60m")).toBe(3_600_000);
     expect(parseDurationToMs("24h")).toBe(86_400_000);
   });
+
+  test("rejects an overflowing magnitude that parses to Infinity (non-finite guard)", () => {
+    // A 320-digit magnitude still matches /^(\d+)\s*(ms|s|m|h)$/, so the regex check passes —
+    // but Number(...) === Infinity, which exercises the !Number.isFinite(n) arm. That throw is
+    // distinct from the regex-mismatch throw (it omits the "use e.g." suffix), so asserting the
+    // exact message proves the non-finite branch ran rather than the format-reject branch.
+    const huge = `${"9".repeat(320)}s`;
+    expect(Number(huge.slice(0, -1))).toBe(Number.POSITIVE_INFINITY);
+    let message = "";
+    try {
+      parseDurationToMs(huge);
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(message).toBe(`Invalid duration "${huge}"`);
+    expect(message).not.toContain("use e.g.");
+  });
 });

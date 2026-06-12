@@ -6,7 +6,7 @@ import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import { PairingWindow } from "../ipc/lan-pairing.ts";
 import { LanRateLimiter } from "../ipc/lan-rate-limit.ts";
 import { LanError } from "../ipc/lan-rpc.ts";
-import { LanServer } from "../ipc/lan-server.ts";
+import { LanServer, type PairingService } from "../ipc/lan-server.ts";
 import type { DiscoveryProvider } from "./discovery.ts";
 import type { PeerPairing } from "./peer-pairing.ts";
 
@@ -54,6 +54,35 @@ function peerIdFor(pubkey: Uint8Array): string {
   return `peer:${bytesToHex(pubkey.subarray(0, 8))}`;
 }
 
+/**
+ * Adapt a {@link PairingWindow} to the {@link PairingService} the LanServer expects.
+ * Exported for testing — LanServer only invokes isOpen/consume during a handshake, so the
+ * open/close/getExpiresAt arms are otherwise exercised only here.
+ */
+export function pairingServiceFor(pairingWindow: PairingWindow): PairingService {
+  return {
+    isOpen: () => pairingWindow.isOpen(),
+    consume: (code) => pairingWindow.consume(code),
+    open: (code) => pairingWindow.open(code),
+    close: () => pairingWindow.close(),
+    // PairingWindow returns number|null; PairingService expects number|undefined
+    getExpiresAt: () => pairingWindow.getExpiresAt() ?? undefined,
+  };
+}
+
+/**
+ * Inert default providers used when no discovery/pairing is wired. The management methods that
+ * would call them (federation.discover / federation.peers) are wire-forbidden (I5), so over the
+ * wire these are never reached; they exist only to satisfy the dispatch context shape. Exported
+ * for testing.
+ */
+export const EMPTY_DISCOVERY = {
+  list: async () => [],
+} as unknown as DiscoveryProvider;
+export const EMPTY_PEER_PAIRING = {
+  listPeers: () => [],
+} as unknown as PeerPairing;
+
 /** Build (but do not start) the federation LanServer + its pairing window + rate limiter. */
 export function buildFederationLanServer(deps: BuildFederationLanServerDeps): FederationLanServer {
   const pairingWindow = new PairingWindow(deps.lan.pairingWindowSeconds * 1000);
@@ -67,14 +96,7 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
     bind: deps.lan.bind,
     port: deps.lan.port,
     hostKeypair: deps.identity,
-    pairing: {
-      isOpen: () => pairingWindow.isOpen(),
-      consume: (code) => pairingWindow.consume(code),
-      open: (code) => pairingWindow.open(code),
-      close: () => pairingWindow.close(),
-      // PairingWindow returns number|null; PairingService expects number|undefined
-      getExpiresAt: () => pairingWindow.getExpiresAt() ?? undefined,
-    },
+    pairing: pairingServiceFor(pairingWindow),
     rateLimit,
     isKnownPeer: (pubkey) => {
       const row = deps.index.getLanPeerByPubkey(pubkey);
@@ -95,8 +117,8 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
         db: deps.db,
         consentTimeoutMs: deps.consentTimeoutMs,
         notify: deps.notify,
-        discovery: deps.discovery ?? ({ list: async () => [] } as unknown as DiscoveryProvider),
-        pairing: deps.pairing ?? ({ listPeers: () => [] } as unknown as PeerPairing),
+        discovery: deps.discovery ?? EMPTY_DISCOVERY,
+        pairing: deps.pairing ?? EMPTY_PEER_PAIRING,
         ...(deps.teamVault === undefined ? {} : { teamVault: deps.teamVault }),
         ...(deps.identityGuard === undefined ? {} : { identityGuard: deps.identityGuard }),
         ...(deps.delegateApproval === undefined ? {} : { delegateApproval: deps.delegateApproval }),

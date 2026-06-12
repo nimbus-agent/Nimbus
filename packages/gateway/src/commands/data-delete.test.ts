@@ -236,4 +236,41 @@ describe("data delete", () => {
     expect(result.preflight.itemsToDelete).toBe(1);
     expect(result.deleted).toBe(false);
   });
+
+  test("vecRowsForService returns 0 when the COUNT row is absent (row?.c ?? 0 arm)", async () => {
+    // Distinct from the catch arm above: here the vec query SUCCEEDS (no throw) but yields no
+    // row, so the `row?.c ?? 0` fallback fires instead of the try/catch. A delegating proxy
+    // returns an empty statement for the vec_items_384 query and forwards everything else.
+    seed(idx, "jira", 3);
+    const realDb = idx.rawDb;
+    const dbProxy = new Proxy(realDb, {
+      get(target, prop, recv) {
+        if (prop === "query") {
+          return (sql: string) =>
+            sql.includes("vec_items_384")
+              ? // a statement whose .get() yields no row → exercises `row?.c ?? 0`
+                ({ get: () => undefined } as unknown as ReturnType<typeof target.query>)
+              : target.query(sql);
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const proxiedIndex = new Proxy(idx, {
+      get(target, prop, recv) {
+        if (prop === "rawDb") return dbProxy;
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+
+    const result = await runDataDelete({
+      service: "jira",
+      dryRun: true,
+      vault,
+      index: proxiedIndex,
+    });
+    expect(result.preflight.itemsToDelete).toBe(3);
+    expect(result.preflight.vecRowsToDelete).toBe(0);
+  });
 });
