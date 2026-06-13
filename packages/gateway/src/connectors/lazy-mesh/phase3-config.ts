@@ -57,6 +57,23 @@ function isSafeSnowflakeAccount(value: string): boolean {
 }
 
 /**
+ * Inline argv flag-smuggling guard for the Power BI tenant id before it is
+ * interpolated into `login.microsoftonline.com/${tenantId}/...` and the spawned
+ * MCP's `POWERBI_TENANT_ID` env. Mirrors isSafeSnowflakeAccount.
+ */
+function isSafePowerBiTenantId(value: string): boolean {
+  if (value.length === 0 || value.length > 253 || value.startsWith("-")) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Parse a per-tenant IMAP/SMTP port string into a valid TCP port, falling back
  * to `fallback` when empty or out of range. Mirrors the validator's 1..65535
  * bound so the spawned host:port network entry is always well-formed.
@@ -953,7 +970,12 @@ export async function phase3AddPowerBiMcp(
   const tenantId = (await readConnectorSecret(vault, "powerbi", "tenant_id"))?.trim() ?? "";
   const clientId = (await readConnectorSecret(vault, "powerbi", "client_id"))?.trim() ?? "";
   const clientSecret = (await readConnectorSecret(vault, "powerbi", "client_secret"))?.trim() ?? "";
-  if (tenantId === "" || clientId === "" || clientSecret === "") {
+  if (
+    tenantId === "" ||
+    clientId === "" ||
+    clientSecret === "" ||
+    !isSafePowerBiTenantId(tenantId)
+  ) {
     return;
   }
   servers["powerbi"] = wrap(

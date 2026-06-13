@@ -155,7 +155,6 @@ export function createPowerBiSyncable(options: PowerBiSyncableOptions): Syncable
       let totalBytes = tokenOutcome.bytes + reportsOutcome.bytes;
 
       for (const rawReport of reportsFromResponse(reportsOutcome.parsed)) {
-        const reportId = stringField(rawReport, "id");
         const datasetId = stringField(rawReport, "datasetId");
 
         // Step 3 (optional): fetch dataset tables for lineage keys
@@ -176,7 +175,6 @@ export function createPowerBiSyncable(options: PowerBiSyncableOptions): Syncable
           upsertIndexedItemForSync(ctx, mapped);
           upserted += 1;
         }
-        void reportId; // used via rawReport spread above
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);

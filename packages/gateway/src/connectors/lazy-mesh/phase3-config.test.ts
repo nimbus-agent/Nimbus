@@ -1097,6 +1097,26 @@ describe("phase3AddPowerBiMcp", () => {
     expect(servers["powerbi"]).toBeUndefined();
   });
 
+  test("no-op when tenant_id has a leading dash (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "-bad-tenant");
+    await vault.set("powerbi.client_id", "my-client-id");
+    await vault.set("powerbi.client_secret", "my-client-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
+  test("no-op when tenant_id contains a control character (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "acme\x01tenant");
+    await vault.set("powerbi.client_id", "my-client-id");
+    await vault.set("powerbi.client_secret", "my-client-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
   test("spawns with POWERBI_TENANT_ID/CLIENT_ID/CLIENT_SECRET env + static hosts in manifest", async () => {
     const vault = createMockVault();
     await vault.set("powerbi.tenant_id", "my-tenant-id");
