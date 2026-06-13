@@ -1,0 +1,21 @@
+{
+  "name": "nimbus-mcp-powerbi",
+  "version": "0.1.0",
+  "private": false,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "test": "bun test",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@nimbus-dev/sdk": "workspace:*",
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
