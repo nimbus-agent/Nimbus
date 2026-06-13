@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.6.1](https://github.com/nimbus-agent/Nimbus/compare/v0.6.0...v0.6.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **ci:** unhang the Windows gateway cross-platform leg (was 30-min "cancelled") ([#591](https://github.com/nimbus-agent/Nimbus/issues/591)) ([605e46a](https://github.com/nimbus-agent/Nimbus/commit/605e46ac2a5716b7213dc4d588e623ea7729a331))
+
 ## [0.6.0](https://github.com/nimbus-agent/Nimbus/compare/v0.5.0...v0.6.0) (2026-06-11)
 
 
