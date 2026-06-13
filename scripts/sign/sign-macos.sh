@@ -17,7 +17,10 @@ fi
 
 KEYCHAIN="$(mktemp -d)/nimbus-signing.keychain-db"
 KEYCHAIN_PW="$(uuidgen)"
-cleanup() { security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true; }
+cleanup() {
+  rm -f "$KEYCHAIN.p12"
+  security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
@@ -27,7 +30,15 @@ echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$KEYCHAIN.p12"
 security import "$KEYCHAIN.p12" -k "$KEYCHAIN" -P "${APPLE_CERT_PASSWORD:-}" \
   -T /usr/bin/codesign -T /usr/bin/productsign
 security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-security list-keychains -d user -s "$KEYCHAIN" "$(security list-keychains -d user | tr -d '"')"
+# Prepend our keychain to the user search list WITHOUT clobbering the existing
+# ones. `list-keychains -s` takes each keychain as a SEPARATE argv entry, so the
+# existing list must be split into distinct args (not one quoted string).
+existing_keychains=()
+while IFS= read -r kc; do
+  kc="$(printf '%s' "$kc" | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//')"
+  [[ -n "$kc" ]] && existing_keychains+=("$kc")
+done < <(security list-keychains -d user)
+security list-keychains -d user -s "$KEYCHAIN" "${existing_keychains[@]}"
 rm -f "$KEYCHAIN.p12"
 
 case "$TARGET" in

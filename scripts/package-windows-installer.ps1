@@ -32,7 +32,10 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 }
 
 $wxs = Join-Path $PSScriptRoot "windows\nimbus.wxs"
-New-Item -ItemType Directory -Path (Split-Path -Parent $Out) -Force | Out-Null
+# Split-Path -Parent is empty for a filename-only $Out; default to the cwd.
+$outDir = Split-Path -Parent $Out
+if ([string]::IsNullOrWhiteSpace($outDir)) { $outDir = "." }
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 & wix build $wxs -arch x64 -d "Version=$pv" -d "BinDir=$BinDir" -o $Out
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)." }

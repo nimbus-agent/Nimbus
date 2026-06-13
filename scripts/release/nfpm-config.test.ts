@@ -17,9 +17,14 @@ test("renders rpm package metadata", () => {
 
 test("declares rpm runtime deps (bubblewrap + libcap, not the .deb's libcap2-bin)", () => {
   const y = renderNfpmConfig(BASE);
-  // nfpm overrides.rpm.depends must use the RPM-distro package names.
-  expect(y).toMatch(/overrides:\s*[\s\S]*rpm:[\s\S]*depends:[\s\S]*-\s*bubblewrap/);
-  expect(y).toContain("- libcap");
+  // Isolate the rpm overrides sub-block (from `  rpm:` up to the next 2-space
+  // key, i.e. `  deb:`) so a `[\s\S]*` match can't wander into the deb block.
+  const rpmBlock = y.match(/\n {2}rpm:\n([\s\S]*?)\n {2}\w/)?.[1] ?? "";
+  expect(rpmBlock).toMatch(/-\s*bubblewrap(?:\r?\n|$)/);
+  // Full-token "- libcap": must not pass merely because "- libcap2-bin" (the deb
+  // dep) is a substring, and libcap2-bin must NOT appear in the rpm block.
+  expect(rpmBlock).toMatch(/-\s*libcap(?:\r?\n|$)/);
+  expect(rpmBlock).not.toContain("libcap2-bin");
 });
 
 test("maps binaries to /usr/lib/nimbus/bin and wrappers to /usr/local/bin", () => {

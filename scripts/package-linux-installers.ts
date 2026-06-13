@@ -361,8 +361,19 @@ function channelWrapper(channel: string, target: string): string {
 
 function buildRpm(nfpmBin: string): string {
   const stage = join(outRoot, "rpm-stage");
+  const rpmBinDir = join(stage, "bin");
   const wrapperDir = join(stage, "wrappers");
+  mkdirSync(rpmBinDir, { recursive: true });
   mkdirSync(wrapperDir, { recursive: true });
+
+  // Stage the binaries (and the helper, wherever it was resolved from) into one
+  // dir so the nfpm `src:` paths always exist. sandboxHelper may come from
+  // --sandbox-helper or the built src-native path, not necessarily bundleDir.
+  copyFileSync(gw, join(rpmBinDir, "nimbus-gateway"));
+  copyFileSync(cli, join(rpmBinDir, "nimbus"));
+  if (sandboxHelper !== null) {
+    copyFileSync(sandboxHelper, join(rpmBinDir, "nimbus-sandbox-helper"));
+  }
   writeFileSync(join(wrapperDir, "nimbus"), channelWrapper("yum", "nimbus"), "utf8");
   writeFileSync(
     join(wrapperDir, "nimbus-gateway"),
@@ -387,7 +398,7 @@ exit 0
 
   const cfg = renderNfpmConfig({
     version,
-    binDir: bundleDir,
+    binDir: rpmBinDir,
     wrapperDir,
     hasSandboxHelper: sandboxHelper !== null,
   });
