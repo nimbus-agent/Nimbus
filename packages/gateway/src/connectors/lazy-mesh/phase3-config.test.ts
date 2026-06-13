@@ -48,6 +48,7 @@ import {
   phase3AddStorybookMcp,
   phase3AddStripeMcp,
   phase3AddSupersetMcp,
+  phase3AddTableauMcp,
   phase3AddVercelMcp,
   phase3AddWizMcp,
   phase3AddZendeskMcp,
@@ -924,6 +925,72 @@ describe("phase3AddSnowflakeMcp", () => {
     const servers: Record<string, ServerSpec> = {};
     await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
     expect(servers["snowflake"]).toBeUndefined();
+  });
+});
+
+describe("phase3AddTableauMcp", () => {
+  test("no-op without tableau.url + pat_name + pat_secret", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["tableau"]).toBeUndefined();
+  });
+
+  test("no-op when only tableau.url is set (pat_name + pat_secret missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("tableau.url", "https://tableau.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["tableau"]).toBeUndefined();
+  });
+
+  test("no-op when pat_name is missing (url + pat_secret only)", async () => {
+    const vault = createMockVault();
+    await vault.set("tableau.url", "https://tableau.example.com");
+    await vault.set("tableau.pat_secret", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["tableau"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("tableau.url", "   ");
+    await vault.set("tableau.pat_name", "   ");
+    await vault.set("tableau.pat_secret", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["tableau"]).toBeUndefined();
+  });
+
+  test("spawns with TABLEAU_URL/TABLEAU_PAT_NAME/TABLEAU_PAT_SECRET env + parsed host in manifest", async () => {
+    const vault = createMockVault();
+    await vault.set("tableau.url", "https://tableau.example.com");
+    await vault.set("tableau.pat_name", "my-pat");
+    await vault.set("tableau.pat_secret", "my-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["tableau"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "tableau.example.com");
+    expect(spec.env?.["TABLEAU_URL"]).toBe("https://tableau.example.com");
+    expect(spec.env?.["TABLEAU_PAT_NAME"]).toBe("my-pat");
+    expect(spec.env?.["TABLEAU_PAT_SECRET"]).toBe("my-secret");
+  });
+
+  test("spawns even when tableau.url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("tableau.url", "not a url");
+    await vault.set("tableau.pat_name", "pat");
+    await vault.set("tableau.pat_secret", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTableauMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["tableau"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["TABLEAU_URL"]).toBe("not a url");
   });
 });
 

@@ -889,6 +889,34 @@ export async function phase3AddSnowflakeMcp(
   );
 }
 
+export async function phase3AddTableauMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, "tableau", "url"))?.trim() ?? "";
+  const patName = (await readConnectorSecret(vault, "tableau", "pat_name"))?.trim() ?? "";
+  const patSecret = (await readConnectorSecret(vault, "tableau", "pat_secret"))?.trim() ?? "";
+  if (url === "" || patName === "" || patSecret === "") {
+    return;
+  }
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host]);
+  servers["tableau"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("tableau")],
+      env: extensionProcessEnv({
+        TABLEAU_URL: url,
+        TABLEAU_PAT_NAME: patName,
+        TABLEAU_PAT_SECRET: patSecret,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSupersetMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1582,6 +1610,7 @@ export async function buildPhase3Servers(
   await phase3AddDbtMcp(vault, servers, sandboxCwd);
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
   await phase3AddSnowflakeMcp(vault, servers, sandboxCwd);
+  await phase3AddTableauMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);

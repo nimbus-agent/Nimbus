@@ -77,6 +77,7 @@ import { createStackOverflowSyncable } from "../connectors/stackoverflow-sync.ts
 import { createStorybookSyncable } from "../connectors/storybook-sync.ts";
 import { createStripeSyncable } from "../connectors/stripe-sync.ts";
 import { createSupersetSyncable } from "../connectors/superset-sync.ts";
+import { createTableauSyncable } from "../connectors/tableau-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createTestflightSyncable } from "../connectors/testflight-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
@@ -345,6 +346,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createSnowflakeSyncable({
       ensureSnowflakeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createTableauSyncable({
+      ensureTableauMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(
