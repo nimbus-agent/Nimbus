@@ -68,3 +68,45 @@ test("unknown tribal.* method is a miss", async () => {
   const out = await dispatchTribalRpc("tribal.bogus", null, makeCtx());
   expect(out.kind).toBe("miss");
 });
+
+test("tribal.dismiss rejects a non-object params payload (requireString guard)", async () => {
+  // A non-object (string) params hits the `rec === null || typeof rec !== "object"` arm of
+  // requireString — the value reads as undefined → ERR_INVALID_PARAMS.
+  await expect(dispatchTribalRpc("tribal.dismiss", "not-an-object", makeCtx())).rejects.toThrow(
+    /clusterId/,
+  );
+  // A null params hits the same guard via the `rec === null` side.
+  await expect(dispatchTribalRpc("tribal.dismiss", null, makeCtx())).rejects.toThrow(/clusterId/);
+});
+
+test("tribal.list tolerates a non-object params payload (optionalString guard → undefined)", async () => {
+  // optionalString returns undefined for a non-object payload, so list() runs with no filter.
+  const seen: (string | undefined)[] = [];
+  const out = await dispatchTribalRpc(
+    "tribal.list",
+    "not-an-object",
+    makeCtx({
+      list: (status) => {
+        seen.push(status);
+        return [];
+      },
+    }),
+  );
+  expect(out).toEqual({ kind: "hit", value: [] });
+  expect(seen).toEqual([undefined]);
+});
+
+test("tribal.list ignores a non-string status value (optionalString typeof guard)", async () => {
+  const seen: (string | undefined)[] = [];
+  await dispatchTribalRpc(
+    "tribal.list",
+    { status: 42 },
+    makeCtx({
+      list: (status) => {
+        seen.push(status);
+        return [];
+      },
+    }),
+  );
+  expect(seen).toEqual([undefined]);
+});

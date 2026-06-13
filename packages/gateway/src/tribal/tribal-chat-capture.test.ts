@@ -62,4 +62,34 @@ test("handler never throws if the capture gate throws", async () => {
     { clusterId: "k1" },
   );
   expect(replies[0]).toContain("failed");
+  expect(replies[0]).toContain("boom");
+});
+
+test("handler stringifies a non-Error throw (the String(err) branch)", async () => {
+  const replies: string[] = [];
+  await handleTribalCaptureCommand(
+    {
+      capture: async () => {
+        // intentionally throwing a non-Error to exercise the String(err) branch
+        throw "plain string failure";
+      },
+      reply: async (t) => void replies.push(t),
+    },
+    { clusterId: "k1" },
+  );
+  expect(replies[0]).toContain("failed");
+  expect(replies[0]).toContain("plain string failure");
+});
+
+test("handler reports a successful capture with its page ref in-channel", async () => {
+  const replies: string[] = [];
+  await handleTribalCaptureCommand(
+    {
+      capture: async () => ({ ok: true, pageRef: "confluence:42" }),
+      reply: async (t) => void replies.push(t),
+    },
+    { clusterId: "k1", target: "confluence" },
+  );
+  expect(replies[0]).toContain("Captured k1");
+  expect(replies[0]).toContain("confluence:42");
 });

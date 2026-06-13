@@ -51,10 +51,10 @@ export async function handleTribalCaptureCommand(
     return;
   }
   if (result.ok) {
-    await deps.reply(`✅ Captured ${cmd.clusterId} to the team KB (${result.pageRef ?? "saved"}).`);
+    // `TribalCaptureResult` makes `pageRef`/`error` non-optional on each arm of the union, so no
+    // nullish fallback is reachable here.
+    await deps.reply(`✅ Captured ${cmd.clusterId} to the team KB (${result.pageRef}).`);
   } else {
-    await deps.reply(
-      `Capture of ${cmd.clusterId} was not completed: ${result.error ?? "unknown"}.`,
-    );
+    await deps.reply(`Capture of ${cmd.clusterId} was not completed: ${result.error}.`);
   }
 }
