@@ -105,6 +105,7 @@
     "packages/mcp-connectors/localdb",
     "packages/mcp-connectors/storybook",
     "packages/mcp-connectors/dataprofile",
+    "packages/mcp-connectors/bigeye",
     "packages/vscode-extension"
   ],
   "scripts": {

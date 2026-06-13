@@ -1,0 +1,16 @@
+{
+  "id": "com.nimbus.bigeye",
+  "displayName": "Bigeye",
+  "version": "0.1.0",
+  "description": "Bigeye connector (read-only). Indexes Bigeye data-quality issues as `data_quality_test` items in the local index and exposes three read-only tools to the Nimbus agent (`bigeye_list`, `bigeye_get`, `bigeye_search`). Uses a Bearer API key against a per-tenant Bigeye instance. The per-tenant host is derived from bigeye.base_url at spawn time (like Looker/Tableau). No write tools.",
+  "author": "Nimbus",
+  "entrypoint": "dist/server.js",
+  "runtime": "bun",
+  "permissions": {
+    "network": [],
+    "filesystem": { "read": [], "write": [] }
+  },
+  "hitlRequired": [],
+  "syncInterval": 600,
+  "minNimbusVersion": "0.5.0"
+}
