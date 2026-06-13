@@ -112,7 +112,7 @@ describe("runBotToolCall — post-spawn tool dispatch (fake client, no subproces
   test("throws not-found when the matched tool has no execute", async () => {
     const client = fakeClient({ slack_chat_post: {} });
     await expect(runBotToolCall(client, "slack", "slack_chat_post", {})).rejects.toThrow(
-      /not found/,
+      /tool "slack_chat_post" not found for platform "slack"/,
     );
   });
 
