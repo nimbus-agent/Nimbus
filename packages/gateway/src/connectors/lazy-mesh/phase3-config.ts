@@ -917,6 +917,34 @@ export async function phase3AddTableauMcp(
   );
 }
 
+export async function phase3AddLookerMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const baseUrl = (await readConnectorSecret(vault, "looker", "base_url"))?.trim() ?? "";
+  const clientId = (await readConnectorSecret(vault, "looker", "client_id"))?.trim() ?? "";
+  const clientSecret = (await readConnectorSecret(vault, "looker", "client_secret"))?.trim() ?? "";
+  if (baseUrl === "" || clientId === "" || clientSecret === "") {
+    return;
+  }
+  const host = hostnameFromUrl(baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host]);
+  servers["looker"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("looker")],
+      env: extensionProcessEnv({
+        LOOKER_BASE_URL: baseUrl,
+        LOOKER_CLIENT_ID: clientId,
+        LOOKER_CLIENT_SECRET: clientSecret,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSupersetMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1611,6 +1639,7 @@ export async function buildPhase3Servers(
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
   await phase3AddSnowflakeMcp(vault, servers, sandboxCwd);
   await phase3AddTableauMcp(vault, servers, sandboxCwd);
+  await phase3AddLookerMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);

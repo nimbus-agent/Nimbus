@@ -29,6 +29,7 @@ import {
   phase3AddLaunchdarklyMcp,
   phase3AddLeverMcp,
   phase3AddLocaldbMcp,
+  phase3AddLookerMcp,
   phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
@@ -991,6 +992,72 @@ describe("phase3AddTableauMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["TABLEAU_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddLookerMcp", () => {
+  test("no-op without looker.base_url + client_id + client_secret", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["looker"]).toBeUndefined();
+  });
+
+  test("no-op when only base_url is set (client_id + client_secret missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("looker.base_url", "https://looker.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["looker"]).toBeUndefined();
+  });
+
+  test("no-op when client_id is missing (base_url + client_secret only)", async () => {
+    const vault = createMockVault();
+    await vault.set("looker.base_url", "https://looker.example.com");
+    await vault.set("looker.client_secret", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["looker"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("looker.base_url", "   ");
+    await vault.set("looker.client_id", "   ");
+    await vault.set("looker.client_secret", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["looker"]).toBeUndefined();
+  });
+
+  test("spawns with LOOKER_BASE_URL/LOOKER_CLIENT_ID/LOOKER_CLIENT_SECRET env + parsed host in manifest", async () => {
+    const vault = createMockVault();
+    await vault.set("looker.base_url", "https://looker.example.com");
+    await vault.set("looker.client_id", "my-client-id");
+    await vault.set("looker.client_secret", "my-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["looker"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "looker.example.com");
+    expect(spec.env?.["LOOKER_BASE_URL"]).toBe("https://looker.example.com");
+    expect(spec.env?.["LOOKER_CLIENT_ID"]).toBe("my-client-id");
+    expect(spec.env?.["LOOKER_CLIENT_SECRET"]).toBe("my-secret");
+  });
+
+  test("spawns even when looker.base_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("looker.base_url", "not a url");
+    await vault.set("looker.client_id", "id");
+    await vault.set("looker.client_secret", "secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddLookerMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["looker"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["LOOKER_BASE_URL"]).toBe("not a url");
   });
 });
 

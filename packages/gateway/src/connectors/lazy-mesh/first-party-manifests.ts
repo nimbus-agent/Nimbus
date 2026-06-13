@@ -290,6 +290,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Looker (Tier-3, metadata-only). Per-tenant host (derived from
+  // looker.base_url) is added at spawn time by phase3AddLookerMcp via
+  // manifestWithExtraNetworkHosts.
+  looker: baseManifest("com.nimbus.looker", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

@@ -93,6 +93,7 @@ describe("manifestForFirstParty", () => {
       "metabase",
       "snowflake",
       "tableau",
+      "looker",
       "superset",
       "databricks",
       "mlflow",

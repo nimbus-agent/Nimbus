@@ -155,6 +155,12 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // secret) against the Tableau REST API. Indexes dashboards/views as metadata
   // only — NEVER row data or underlying cell values.
   tableau: ["tableau.url", "tableau.pat_name", "tableau.pat_secret"],
+  // Looker (Tier-3 no-row-data BI). Uses OAuth2 client-credentials
+  // (client_id + client_secret) against the Looker API 4.0. Indexes dashboards
+  // and LookML views as metadata only — NEVER row data or underlying cell values.
+  // LookML view sql_table_name fields are normalized via normalizeDataModelKey
+  // to produce cross-connector lineage edges (Looker→dbt).
+  looker: ["looker.base_url", "looker.client_id", "looker.client_secret"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

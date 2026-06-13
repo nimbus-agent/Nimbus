@@ -49,6 +49,7 @@ import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createLocaldbSyncable } from "../connectors/localdb-sync.ts";
+import { createLookerSyncable } from "../connectors/looker-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMiroSyncable } from "../connectors/miro-sync.ts";
@@ -351,6 +352,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createTableauSyncable({
       ensureTableauMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createLookerSyncable({
+      ensureLookerMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

@@ -87,6 +87,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "dataprofile",
   "snowflake",
   "tableau",
+  "looker",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -199,6 +200,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   dataprofile: MIN10,
   snowflake: MIN10,
   tableau: MIN10,
+  looker: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -309,6 +311,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "uses an OAuth token or key-pair JWT + account identifier (connector.auth snowflake) — no PKCE flow",
   tableau:
     "uses a Personal Access Token (PAT name + secret) + server URL (connector.auth tableau) — no PKCE flow",
+  looker:
+    "uses OAuth2 client-credentials (client id + client secret) + instance base URL (connector.auth looker) — no PKCE flow",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
