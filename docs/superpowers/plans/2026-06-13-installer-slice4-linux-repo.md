@@ -133,9 +133,12 @@ describe("renderYumRepoFile", () => {
     expect(repo).toContain("gpgkey=https://nimbus-agent.github.io/linux-repo/gpg.key");
   });
 
-  test("enables gpg + repo_gpg checks (the repo metadata is signed)", () => {
-    expect(repo).toContain("gpgcheck=1");
+  test("verifies signed repo metadata but not per-RPM headers (packages aren't header-signed)", () => {
+    // repo_gpgcheck=1 verifies the signed repomd.xml (the trust anchor); gpgcheck=0
+    // because the .rpm is not header-signed. ("repo_gpgcheck=1" contains the substring
+    // "gpgcheck=1", so assert the explicit gpgcheck=0 line rather than a negative match.)
     expect(repo).toContain("repo_gpgcheck=1");
+    expect(repo).toContain("\ngpgcheck=0\n");
   });
 
   test("strips a trailing slash on baseUrl so URLs aren't doubled", () => {
@@ -235,7 +238,9 @@ export function renderYumRepoFile(opts: YumRepoOptions): string {
     "name=Nimbus headless",
     `baseurl=${base}/yum`,
     "enabled=1",
-    "gpgcheck=1",
+    // gpgcheck=0: the .rpm is not header-signed; trust comes from the signed repomd
+    // metadata (repo_gpgcheck=1), which chains to package integrity via checksums.
+    "gpgcheck=0",
     "repo_gpgcheck=1",
     `gpgkey=${base}/gpg.key`,
     "",

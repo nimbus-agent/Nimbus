@@ -46,8 +46,13 @@ tracks **stable releases only**.
 **Debian / Ubuntu (apt):**
 
 ```bash
-curl -fsSL https://nimbus-agent.github.io/linux-repo/gpg.key \
-  | gpg --dearmor | sudo tee /usr/share/keyrings/nimbus-archive-keyring.gpg > /dev/null
+curl -fsSL https://nimbus-agent.github.io/linux-repo/gpg.key -o /tmp/nimbus.key
+# Verify the key fingerprint BEFORE trusting it — it must match the Nimbus
+# release signing key (also used to sign every release's SHA256SUMS):
+gpg --show-keys --with-fingerprint /tmp/nimbus.key
+#   expected: 5A20 457C CD8B 53FF AA94  5240 886A DA6B 487C AB6E
+gpg --dearmor < /tmp/nimbus.key \
+  | sudo tee /usr/share/keyrings/nimbus-archive-keyring.gpg > /dev/null
 echo "deb [signed-by=/usr/share/keyrings/nimbus-archive-keyring.gpg] https://nimbus-agent.github.io/linux-repo/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/nimbus.list
 sudo apt update && sudo apt install nimbus-headless
