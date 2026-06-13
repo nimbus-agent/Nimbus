@@ -491,6 +491,24 @@ Sonar thread.
 
 ---
 
+## Review dispositions (2026-06-13)
+
+Addressing [the plan review](./2026-06-13-true-coverage-C2-property-suite-review.md). All three
+points are **validations with no requested change** — ACKNOWLEDGED, no plan edits:
+
+1. **§2.1 `timingSafeEqual` on empty strings — ACKNOWLEDGED.** `fc.string({ unit: "binary" })`
+   includes `""`; the existing `constantTimeStringEqual("","") === true` unit test already covers the
+   equal-length-zero-buffer path. No crypto error on 0-length equal buffers. (utf16le of `""` is a
+   0-byte buffer, same as utf8 — unchanged.)
+2. **§2.2 hex-corruption position generator — ACKNOWLEDGED.** `fc.integer({ min: 0, max: 63 })`
+   covers all positions incl. boundaries 0 and 63; confirms early-termination lets no invalid byte
+   through.
+3. **§2.3 attr-breakout negated class — ACKNOWLEDGED.** `[^"<>]*` matches newlines, so a multiline
+   service/tool value (newlines are not escaped by `escapeAttr`, and are harmless in a double-quoted
+   attr) still satisfies the opening-tag assertion; the `^…$` (no `m` flag) anchors hold because the
+   sliced `openTag` ends at the real `>`. Verified during spec review that the first raw `>` always
+   closes the opening tag (`>`/`<`/`&` are escaped in attrs).
+
 ## Self-review notes (author)
 
 - **Spec coverage:** §2a fix + 3 timing-safe properties (Task 1) ✓ · §2b 2 envelope properties (Task 2) ✓
