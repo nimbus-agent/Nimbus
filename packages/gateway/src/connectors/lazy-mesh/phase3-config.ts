@@ -1652,6 +1652,30 @@ export async function phase3AddGreatExpectationsMcp(
   });
 }
 
+export async function phase3AddMonteCarloMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiId = (await readConnectorSecret(vault, "montecarlo", "api_id"))?.trim() ?? "";
+  const apiToken = (await readConnectorSecret(vault, "montecarlo", "api_token"))?.trim() ?? "";
+  if (apiId === "" || apiToken === "") {
+    return;
+  }
+  servers["montecarlo"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("monte-carlo")],
+      env: extensionProcessEnv({
+        MONTECARLO_API_ID: apiId,
+        MONTECARLO_API_TOKEN: apiToken,
+      }),
+    },
+    "montecarlo",
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -1718,5 +1742,6 @@ export async function buildPhase3Servers(
   await phase3AddStorybookMcp(vault, servers, sandboxCwd);
   await phase3AddDataprofileMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
+  await phase3AddMonteCarloMcp(vault, servers, sandboxCwd);
   return servers;
 }

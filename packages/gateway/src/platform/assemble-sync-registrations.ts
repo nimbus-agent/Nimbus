@@ -54,6 +54,7 @@ import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMiroSyncable } from "../connectors/miro-sync.ts";
 import { createMlflowSyncable } from "../connectors/mlflow-sync.ts";
+import { createMonteCarloSyncable } from "../connectors/monte-carlo-sync.ts";
 import { createNetlifySyncable } from "../connectors/netlify-sync.ts";
 import { createNewrelicSyncable } from "../connectors/newrelic-sync.ts";
 import { createNotionSyncable } from "../connectors/notion-sync.ts";
@@ -540,6 +541,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGreatExpectationsSyncable({
       ensureGreatExpectationsMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMonteCarloSyncable({
+      ensureMonteCarloMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
 }

@@ -307,6 +307,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Monte Carlo (Tier-3, data-quality observability). Uses a fixed static host
+  // api.getmontecarlo.com for the Monte Carlo GraphQL API. An API key pair
+  // (api_id + api_token) is passed as headers — no per-tenant host derivation.
+  montecarlo: baseManifest("com.nimbus.monte-carlo", {
+    network: ["api.getmontecarlo.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

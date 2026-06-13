@@ -33,6 +33,7 @@ import {
   phase3AddMercuryMcp,
   phase3AddMetabaseMcp,
   phase3AddMlflowMcp,
+  phase3AddMonteCarloMcp,
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
   phase3AddPipedriveMcp,
@@ -2302,5 +2303,56 @@ describe("dir-manifest connectors (addDirManifestServer)", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["GREAT_EXPECTATIONS_RESULTS_DIR"]).toBe("/gx/uncommitted");
+  });
+});
+
+describe("phase3AddMonteCarloMcp", () => {
+  test("no-op when both credentials are absent", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["montecarlo"]).toBeUndefined();
+  });
+
+  test("no-op when api_id is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("montecarlo.api_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["montecarlo"]).toBeUndefined();
+  });
+
+  test("no-op when api_token is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("montecarlo.api_id", "id");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["montecarlo"]).toBeUndefined();
+  });
+
+  test("spawns sandboxed server with MONTECARLO_API_ID and MONTECARLO_API_TOKEN env", async () => {
+    const vault = createMockVault();
+    await vault.set("montecarlo.api_id", "my-api-id");
+    await vault.set("montecarlo.api_token", "my-api-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["montecarlo"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.getmontecarlo.com");
+    expect(spec.env?.["MONTECARLO_API_ID"]).toBe("my-api-id");
+    expect(spec.env?.["MONTECARLO_API_TOKEN"]).toBe("my-api-token");
+  });
+
+  test("manifest declares api.getmontecarlo.com in network", async () => {
+    const vault = createMockVault();
+    await vault.set("montecarlo.api_id", "id");
+    await vault.set("montecarlo.api_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddMonteCarloMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["montecarlo"];
+    if (spec === undefined) return;
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network).toContain("api.getmontecarlo.com");
   });
 });

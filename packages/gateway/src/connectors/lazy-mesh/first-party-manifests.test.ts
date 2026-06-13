@@ -130,6 +130,7 @@ describe("manifestForFirstParty", () => {
       "canva",
       "figma",
       "powerbi",
+      "montecarlo",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();
