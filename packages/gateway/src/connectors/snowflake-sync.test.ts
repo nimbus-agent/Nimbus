@@ -267,8 +267,10 @@ describeWithFetchRestore("snowflake-sync", () => {
     expect(r.cursor).toContain("nimbus-snowflake1:");
   });
 
-  test("row with non-string row_count is left as-is (no numeric conversion)", async () => {
+  test("string row_count from API is coerced to number in stored metadata.rowCountEstimate", async () => {
     const db = createMemoryIndexDb();
+    // Snowflake's statements API returns ROW_COUNT as a string (e.g. "42"), not a number.
+    // rowsFromStatementsResponse coerces it; mapSnowflakeTableToItem stores it as rowCountEstimate.
     installFetch(
       () =>
         new Response(
@@ -287,6 +289,15 @@ describeWithFetchRestore("snowflake-sync", () => {
       null,
     );
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
+    // Fetch the stored item and assert numeric coercion
+    const row = db
+      .prepare("SELECT metadata FROM item WHERE service = 'snowflake' LIMIT 1")
+      .get() as { metadata: string } | null;
+    expect(row).not.toBeNull();
+    const meta = JSON.parse(row!.metadata) as Record<string, unknown>;
+    // Must be the NUMBER 42, not the string "42"
+    expect(meta["rowCountEstimate"]).toBe(42);
+    expect(typeof meta["rowCountEstimate"]).toBe("number");
   });
 
   test("table row that mapper rejects (mapped === null) is skipped", async () => {
