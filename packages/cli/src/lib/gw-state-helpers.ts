@@ -1,3 +1,16 @@
+// ⚠️ DELIBERATE DUPLICATE of `./gateway-process.ts` — do NOT deduplicate.
+//
+// `gateway-process.ts` is the module the 40+ CLI command modules import, and
+// `test/helpers/cli-mocks.ts` replaces it via `mock.module(".../gateway-process.ts")`.
+// Bun's `mock.module` is process-global, so in the combined `bun test packages/cli/src`
+// run that global stub leaks into every test file. `gateway-process.test.ts` needs the
+// REAL implementation, so it imports this independent copy instead.
+//
+// A re-export facade (`export * from "./gateway-process.ts"`) does NOT work: Bun's
+// mock follows the re-export and shadows the target too (verified — PR #592). The only
+// arrangement that keeps the test on the real code is a physically independent module
+// that shares nothing with the mocked one. Keep these two files in sync by hand.
+
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";

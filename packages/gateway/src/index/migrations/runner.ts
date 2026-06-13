@@ -1,20 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CONNECTOR_REMOVE_INTENT_V15_SQL } from "../../connectors/remove-intent.ts";
 import { computeAuditRowHash } from "../../db/audit-chain.ts";
+import { vacuumAndGzip } from "../../db/vacuum-gzip.ts";
 import { dbExec, dbRun, dbStmtRun } from "../../db/write.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
@@ -516,35 +506,8 @@ function writePreMigrationBackup(
     `pre-migration-${String(version)}-${String(timestamp)}-${uniq}.db`,
   );
   const gzPath = `${tmpPath}.gz`;
-  const gzPartial = `${tmpPath}.${uniq}.gz.partial`;
 
-  dbRun(db, `VACUUM INTO ?`, [tmpPath]);
-  try {
-    chmodSync(tmpPath, 0o600);
-  } catch {
-    /* best-effort */
-  }
-
-  const raw = readFileSync(tmpPath);
-  const compressed = Bun.gzipSync(raw);
-  const fd = openSync(gzPartial, "wx", 0o600);
-  try {
-    writeSync(fd, compressed);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    renameSync(gzPartial, gzPath);
-  } catch {
-    rmSync(gzPath, { force: true });
-    renameSync(gzPartial, gzPath);
-  }
-
-  try {
-    rmSync(tmpPath);
-  } catch {
-    /* non-fatal */
-  }
+  vacuumAndGzip(db, tmpPath, gzPath);
 
   return gzPath;
 }

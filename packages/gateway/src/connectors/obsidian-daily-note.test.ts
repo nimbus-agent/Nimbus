@@ -179,29 +179,27 @@ test("formatDailyNoteFilename pads two-digit year with leading zero when needed"
   expect(formatDailyNoteFilename("YY-MM-DD", d)).toBe("05-03-07");
 });
 
-// Covers: readFileSync catch arm — file exists but cannot be read (non-Windows only)
-test("resolveDailyNotePath emits a warning when daily-notes.json exists but is unreadable", () => {
-  if (platform() === "win32") {
-    // chmod 000 is not reliably enforceable on Windows; skip this branch there.
-    expect(true).toBe(true); // placeholder so the test is counted
-    return;
-  }
-  const root = mkdtempSync(join(tmpdir(), "obsidian-dn-"));
-  mkdirSync(join(root, ".obsidian"), { recursive: true });
-  const cfgPath = join(root, ".obsidian", "daily-notes.json");
-  writeFileSync(cfgPath, JSON.stringify({ folder: "", format: "YYYY-MM-DD" }));
-  chmodSync(cfgPath, 0o000);
-  const now = new Date();
-  try {
-    const out = resolveDailyNotePath(root, now);
-    expect(out.warning).toBe("could not read daily-notes.json");
-    expect(out.relativePath).toMatch(/^\d{4}-\d{2}-\d{2}\.md$/);
-  } finally {
+// chmod 000 is not reliably enforceable on Windows; skip this branch there.
+test.skipIf(platform() === "win32")(
+  "resolveDailyNotePath emits a warning when daily-notes.json exists but is unreadable",
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "obsidian-dn-"));
+    mkdirSync(join(root, ".obsidian"), { recursive: true });
+    const cfgPath = join(root, ".obsidian", "daily-notes.json");
+    writeFileSync(cfgPath, JSON.stringify({ folder: "", format: "YYYY-MM-DD" }));
+    chmodSync(cfgPath, 0o000);
+    const now = new Date();
     try {
-      chmodSync(cfgPath, 0o644);
-      rmSync(root, { recursive: true, force: true });
-    } catch {
-      // best-effort cleanup
+      const out = resolveDailyNotePath(root, now);
+      expect(out.warning).toBe("could not read daily-notes.json");
+      expect(out.relativePath).toMatch(/^\d{4}-\d{2}-\d{2}\.md$/);
+    } finally {
+      try {
+        chmodSync(cfgPath, 0o644);
+        rmSync(root, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
     }
-  }
-});
+  },
+);

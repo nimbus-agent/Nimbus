@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- scripts/macos/distribution.xml -->
+<!-- User-domain install: no admin prompt, payload relative to the user's home. -->
+<installer-gui-script minSpecVersion="2">
+  <title>Nimbus</title>
+  <organization>dev.nimbus</organization>
+  <!-- enable_currentUserHome makes install-location relative to ~ and runs scripts as the user. -->
+  <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false" />
+  <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64" />
+  <choices-outline>
+    <line choice="default" />
+  </choices-outline>
+  <choice id="default">
+    <pkg-ref id="dev.nimbus.headless" />
+  </choice>
+  <pkg-ref id="dev.nimbus.headless">nimbus-component.pkg</pkg-ref>
+</installer-gui-script>

@@ -42,6 +42,29 @@ export function tagText(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
+/**
+ * Extract tag names from an array of `{name: string}` tag objects (e.g. Airflow, DependencyTrack).
+ * Returns "" when `tags` is absent, not an array, or contains no object entries with a string `name`.
+ */
+export function tagNamesFromObjects(row: Record<string, unknown>): string {
+  const tags = row["tags"];
+  if (!Array.isArray(tags)) {
+    return "";
+  }
+  const names: string[] = [];
+  for (const t of tags) {
+    const tag = asObjectish(t);
+    if (tag === undefined) {
+      continue;
+    }
+    const name = tag["name"];
+    if (typeof name === "string" && name !== "") {
+      names.push(name);
+    }
+  }
+  return names.join(" ");
+}
+
 export function filterByQuery<T>(items: readonly T[], options: FilterByQueryOptions<T>): T[] {
   const needle = options.query.toLowerCase();
   const cap = options.limit ?? 50;

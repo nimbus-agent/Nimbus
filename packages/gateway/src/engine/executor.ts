@@ -173,6 +173,18 @@ function auditPayload(
 }
 
 /**
+ * The connector/service prefix of an action type — the segment before the first ".", or the whole
+ * type when it has no dot (e.g. "email.send" → "email"). Used to match a service-scoped delegation.
+ * Exported so the no-dot arm is branch-coverable directly (the HITL gate only ever sees dotted
+ * action types). Equivalent to `action.type.split(".")[0] ?? ""` but without the unreachable
+ * nullish-coalesce arm (`String.prototype.split` always yields a string at index 0).
+ */
+export function serviceOf(actionType: string): string {
+  const dot = actionType.indexOf(".");
+  return dot === -1 ? actionType : actionType.slice(0, dot);
+}
+
+/**
  * Optional multi-user/delegated-HITL wiring (Slice 2). When present, the gate routes a HITL
  * action's approval to an active in-scope delegate before falling back to the local owner prompt.
  */
@@ -199,7 +211,7 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     if (this.delegation === undefined) return "fallback";
     const del = this.delegation;
-    const service = action.type.split(".")[0] ?? "";
+    const service = serviceOf(action.type);
     const now = Date.now();
     if (del.store.activeDelegateePeer(action.type, service, now) === undefined) return "fallback";
     const outcome = await resolveDelegatedApproval({
@@ -230,14 +242,16 @@ export class ToolExecutor {
     const requiresHITL = HITL_REQUIRED.has(action.type);
 
     let hitlStatus: "approved" | "rejected" | "not_required";
-    let rejectReason: string | undefined;
+    // Reason for the rejected path. Defaults to the user-declined message (the only other
+    // rejection source — a consent disconnect — overwrites it below), so it is always a defined
+    // string by the time the rejected branch returns it (no nullish fallback needed).
+    let rejectReason = "User declined consent gate.";
     let auditExtras: { hitlRejectReason?: string } | undefined;
 
     try {
       if (requiresHITL) {
         const approved = await this.resolveHitlApproval(action);
         hitlStatus = approved ? "approved" : "rejected";
-        if (!approved) rejectReason = "User declined consent gate.";
       } else {
         hitlStatus = "not_required";
       }
@@ -261,7 +275,7 @@ export class ToolExecutor {
     });
 
     if (hitlStatus === "rejected") {
-      return { status: "rejected", reason: rejectReason ?? "User declined consent gate." };
+      return { status: "rejected", reason: rejectReason };
     }
     return "proceed";
   }

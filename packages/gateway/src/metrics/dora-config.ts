@@ -69,3 +69,19 @@ export function providerServiceColumns(provider: DoraProvider): {
       return { prServices: [], ciServices: ["circleci"] };
   }
 }
+
+export function distinctCiServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
+  const out = new Set<string>();
+  for (const r of repos) {
+    for (const s of providerServiceColumns(r.provider).ciServices) out.add(s);
+  }
+  return Array.from(out);
+}
+
+export function distinctPrServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
+  const out = new Set<string>();
+  for (const r of repos) {
+    for (const s of providerServiceColumns(r.provider).prServices) out.add(s);
+  }
+  return Array.from(out);
+}

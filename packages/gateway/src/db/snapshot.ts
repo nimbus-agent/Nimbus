@@ -1,20 +1,8 @@
 import { Database as BunDatabase, type Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { dbRun } from "./write.ts";
+import { vacuumAndGzip } from "./vacuum-gzip.ts";
 
 export type SnapshotEntry = {
   path: string;
@@ -51,35 +39,8 @@ export function takeSnapshot(db: Database, dataDir: string): string {
   const uniq = randomUUID();
   const tmpPath = join(dir, `nimbus-${String(timestamp)}-${uniq}.db`);
   const gzPath = join(dir, `nimbus-${String(timestamp)}.db.gz`);
-  const gzPartial = join(dir, `nimbus-${String(timestamp)}-${uniq}.db.gz.partial`);
 
-  dbRun(db, `VACUUM INTO ?`, [tmpPath]);
-  try {
-    chmodSync(tmpPath, 0o600);
-  } catch {
-    /* best-effort — snapshot still proceeds */
-  }
-
-  const raw = readFileSync(tmpPath);
-  const compressed = Bun.gzipSync(raw);
-  const fd = openSync(gzPartial, "wx", 0o600);
-  try {
-    writeSync(fd, compressed);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    renameSync(gzPartial, gzPath);
-  } catch {
-    rmSync(gzPath, { force: true });
-    renameSync(gzPartial, gzPath);
-  }
-
-  try {
-    rmSync(tmpPath);
-  } catch {
-    /* non-fatal */
-  }
+  vacuumAndGzip(db, tmpPath, gzPath);
 
   return gzPath;
 }

@@ -56,7 +56,7 @@ function fromPath(execPath: string, realpath: (p: string) => string): Distributi
   // Resolve symlinks first: package managers expose the binary via a symlink whose
   // own path may not contain the tell-tale Cellar/apps segment.
   const resolved = realpath(execPath);
-  const p = resolved.replace(/\\/g, "/").toLowerCase();
+  const p = resolved.replaceAll("\\", "/").toLowerCase();
   // Homebrew: macOS `/opt/homebrew/Cellar/...` or `/usr/local/Cellar/...`,
   // Linuxbrew `/home/linuxbrew/.linuxbrew/...`.
   if (p.includes("/cellar/") || p.includes("/.linuxbrew/")) {

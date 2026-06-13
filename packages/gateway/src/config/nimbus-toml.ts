@@ -1003,7 +1003,7 @@ function collectQuorumKvSections(source: string): Map<string, Record<string, str
       continue;
     }
     if (currentId === undefined) continue;
-    applyQuorumKvLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -1025,7 +1025,7 @@ function beginQuorumTable(
 }
 
 /** Records a `key = value` line into the current sub-table's bucket, if any. */
-function applyQuorumKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
+function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
   if (bucket === undefined) return;
   const kv = splitKeyValue(trimmed);
   if (kv !== undefined) bucket[kv.key] = kv.valRaw;
@@ -1186,7 +1186,7 @@ function collectPreflightKvSections(source: string): Map<string, Record<string, 
       continue;
     }
     if (currentId === undefined) continue;
-    applyPreflightKvLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -1205,13 +1205,6 @@ function beginPreflightTable(
   if (id.length === 0) return undefined;
   if (!accum.has(id)) accum.set(id, {});
   return id;
-}
-
-/** Records a `key = value` line into the current sub-table's bucket, if any. */
-function applyPreflightKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
-  if (bucket === undefined) return;
-  const kv = splitKeyValue(trimmed);
-  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
 }
 
 /**
@@ -1284,6 +1277,12 @@ export const DEFAULT_NIMBUS_TRIBAL_TOML: NimbusTribalToml = {
   watchChannels: [],
 };
 
+/** Parse an integer kv value with a minimum floor; returns undefined when absent/non-numeric/below `min`. */
+function parseIntWithMin(valRaw: string, min: number): number | undefined {
+  const n = parseIntDec(valRaw);
+  return n !== undefined && n >= min ? n : undefined;
+}
+
 /** Apply one `[tribal]` key/value to the accumulator (silently ignores malformed/unknown entries). */
 function applyTribalEntry(out: Partial<NimbusTribalToml>, key: string, valRaw: string): void {
   switch (key) {
@@ -1298,18 +1297,18 @@ function applyTribalEntry(out: Partial<NimbusTribalToml>, key: string, valRaw: s
       return;
     }
     case "min_occurrences": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.minOccurrences = n;
+      const n = parseIntWithMin(valRaw, 1);
+      if (n !== undefined) out.minOccurrences = n;
       return;
     }
     case "window_days": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.windowDays = n;
+      const n = parseIntWithMin(valRaw, 1);
+      if (n !== undefined) out.windowDays = n;
       return;
     }
     case "cooldown_days": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 0) out.cooldownDays = n;
+      const n = parseIntWithMin(valRaw, 0);
+      if (n !== undefined) out.cooldownDays = n;
       return;
     }
     case "watch_channels": {

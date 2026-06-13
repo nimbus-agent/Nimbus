@@ -102,7 +102,7 @@ async function main(): Promise<void> {
     { cwd: gatewayPkgDir, stdio: "inherit", env: process.env },
   );
 
-  const status = r.status === null ? 1 : r.status;
+  const status = r.status ?? 1;
   if (status !== 0) {
     process.exit(status);
   }

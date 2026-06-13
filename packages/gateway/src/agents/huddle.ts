@@ -41,29 +41,12 @@ function lite(it: {
   return { title: it.title, snippet: it.snippet, service: it.service, modifiedAt: it.modifiedAt };
 }
 
-export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise<HuddleBrief> {
-  const start = performance.now();
-  const gaps: GapNote[] = [];
-  const sinceMs = input.sinceMs ?? DEFAULT_SINCE_MS;
-  const cutoff = (ctx.now ?? Date.now)() - sinceMs;
-
-  const namespaces =
-    input.namespaces.length > 0
-      ? input.namespaces
-      : [...new Set(ctx.store.list().map((r) => r.namespace))];
-  pushFederationReachGaps(gaps, {
-    namespaceCount: namespaces.length,
-    peerCount: ctx.index.listLanPeers().length,
-  });
-
-  const deps = buildFanoutDeps(ctx);
-
+function aggregateContributions(
+  queryResults: Array<Awaited<ReturnType<typeof fanOutQuery>>>,
+  cutoff: number,
+  gaps: GapNote[],
+): HuddleContribution[] {
   const byPeer = new Map<string, HuddleContribution>();
-  const queryResults = await Promise.all(
-    namespaces.map((ns) =>
-      fanOutQuery(deps, { namespace: ns, purpose: "huddle", types: [...HUDDLE_TYPES] }),
-    ),
-  );
   for (const q of queryResults) {
     gaps.push(...q.gaps);
     for (const peer of q.perPeer) {
@@ -85,6 +68,32 @@ export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise
       byPeer.set(peer.peerId, contrib);
     }
   }
+  return [...byPeer.values()];
+}
+
+export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise<HuddleBrief> {
+  const start = performance.now();
+  const gaps: GapNote[] = [];
+  const sinceMs = input.sinceMs ?? DEFAULT_SINCE_MS;
+  const cutoff = (ctx.now ?? Date.now)() - sinceMs;
+
+  const namespaces =
+    input.namespaces.length > 0
+      ? input.namespaces
+      : [...new Set(ctx.store.list().map((r) => r.namespace))];
+  pushFederationReachGaps(gaps, {
+    namespaceCount: namespaces.length,
+    peerCount: ctx.index.listLanPeers().length,
+  });
+
+  const deps = buildFanoutDeps(ctx);
+
+  const queryResults = await Promise.all(
+    namespaces.map((ns) =>
+      fanOutQuery(deps, { namespace: ns, purpose: "huddle", types: [...HUDDLE_TYPES] }),
+    ),
+  );
+  const contributions = aggregateContributions(queryResults, cutoff, gaps);
 
   return {
     kind: "huddle",
@@ -93,7 +102,7 @@ export async function runHuddle(input: HuddleInput, ctx: HuddleContext): Promise
     latencyMs: Math.round(performance.now() - start),
     gaps,
     query: { sinceMs },
-    contributions: [...byPeer.values()].filter(
+    contributions: contributions.filter(
       (c) => c.prs.length + c.tickets.length + c.incidents.length > 0,
     ),
   };

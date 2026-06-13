@@ -6,7 +6,19 @@ export interface FileFloor {
 export interface Baseline {
   readonly version: 2;
   readonly generated_at: string;
+  /**
+   * Below-floor debt: files that have NOT yet cleared the 80% line+branch floor. The ratchet
+   * (`computeUpdatedBaseline`) grinds these up and drops each one once it clears both floors.
+   */
   readonly files: Map<string, FileFloor>;
+  /**
+   * Flagship 100% targets (hand-curated, NEVER auto-generated). A file listed here must meet its
+   * required pct on BOTH axes regardless of the global floor — `check.ts` flags `below_target`
+   * otherwise. The ratchet leaves this section untouched (`computeUpdatedBaseline` round-trips it
+   * verbatim), so a reseed can never silently lower a pinned 100% ceiling. Disjoint from `files`:
+   * a target is by definition above the debt floor and must never also be a ratchet entry.
+   */
+  readonly targets: Map<string, FileFloor>;
 }
 
 export interface BaselineDiff {
@@ -72,17 +84,71 @@ export function parseBaseline(text: string): Baseline {
       });
     }
   }
-  return { version: 2, generated_at: obj["generated_at"], files };
+  const targets = parseFloorMap(obj["targets"], "target", files);
+  return { version: 2, generated_at: obj["generated_at"], files, targets };
+}
+
+/**
+ * Parse the optional `targets` map (flagship 100% ceilings). Same `{min_line_pct, min_branch_pct}`
+ * shape as v2 `files`, but never has a v1 form. A target path must not also be a `files` entry —
+ * the two carry contradictory intent (debt-below-floor vs pinned-above-floor).
+ */
+function parseFloorMap(
+  raw: unknown,
+  label: string,
+  files: ReadonlyMap<string, FileFloor>,
+): Map<string, FileFloor> {
+  const out = new Map<string, FileFloor>();
+  if (raw === undefined) return out;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`baseline ${label}s must be an object`);
+  }
+  for (const [path, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (path.includes("\\")) {
+      throw new Error(
+        `baseline ${label} contains backslash separator: ${JSON.stringify(path)} — use forward slashes`,
+      );
+    }
+    if (files.has(path)) {
+      throw new Error(
+        `baseline path ${JSON.stringify(path)} is in both files and ${label}s — a ${label} is above the debt floor and must not also be a ratchet entry`,
+      );
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`baseline ${label} ${path}: must be an object`);
+    }
+    const e = entry as Record<string, unknown>;
+    out.set(path, {
+      line: assertPct(`${label}s.${path}.min_line_pct`, e["min_line_pct"]),
+      branch: assertPct(`${label}s.${path}.min_branch_pct`, e["min_branch_pct"]),
+    });
+  }
+  return out;
+}
+
+function serializeFloorMap(
+  m: ReadonlyMap<string, FileFloor>,
+): Record<string, { min_line_pct: number; min_branch_pct: number }> {
+  const sortedKeys = Array.from(m.keys()).sort((x, y) => (x > y ? 1 : -1));
+  const out: Record<string, { min_line_pct: number; min_branch_pct: number }> = {};
+  for (const k of sortedKeys) {
+    const v = m.get(k);
+    if (v !== undefined) out[k] = { min_line_pct: v.line, min_branch_pct: v.branch };
+  }
+  return out;
 }
 
 export function serializeBaseline(b: Baseline): string {
-  const sortedKeys = Array.from(b.files.keys()).sort((a, b) => (a > b ? 1 : -1));
-  const files: Record<string, { min_line_pct: number; min_branch_pct: number }> = {};
-  for (const k of sortedKeys) {
-    const v = b.files.get(k);
-    if (v !== undefined) files[k] = { min_line_pct: v.line, min_branch_pct: v.branch };
-  }
-  return `${JSON.stringify({ version: 2, generated_at: b.generated_at, files }, null, 2)}\n`;
+  return `${JSON.stringify(
+    {
+      version: 2,
+      generated_at: b.generated_at,
+      files: serializeFloorMap(b.files),
+      targets: serializeFloorMap(b.targets),
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 export function computeBaselineDiff(

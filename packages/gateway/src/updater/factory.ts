@@ -27,7 +27,7 @@ export function createUpdaterFromConfig(args: CreateUpdaterFromConfigArgs): Upda
   }
 
   const channel =
-    args._channelOverride !== undefined ? args._channelOverride : resolveDistributionChannel();
+    args._channelOverride === undefined ? resolveDistributionChannel() : args._channelOverride;
   if (channel !== null) {
     logger.info(
       { channel },

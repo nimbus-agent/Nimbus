@@ -36,7 +36,14 @@ export type Violation =
       actual: number;
     }
   | { kind: "must_raise"; path: string }
-  | { kind: "must_remove"; path: string };
+  | { kind: "must_remove"; path: string }
+  | {
+      kind: "below_target";
+      dimension: "line" | "branch";
+      path: string;
+      actual: number;
+      required: number;
+    };
 
 export interface EvaluateResult {
   readonly exitCode: 0 | 1;
@@ -72,6 +79,30 @@ export function evaluateCheck(input: EvaluateInput): EvaluateResult {
   }
   for (const m of diff.mustRaise) violations.push({ kind: "must_raise", path: m.path });
   for (const m of diff.mustRemove) violations.push({ kind: "must_remove", path: m.path });
+  // Flagship 100% targets — a stricter, hand-curated ceiling above the global floor. Each listed
+  // file must meet its required line AND branch pct; a missing target file reads as 0% line
+  // (fail-closed). This is purely additive to the floor/ratchet pass above and is never relaxed by
+  // `update-baseline` (the targets section is round-tripped verbatim).
+  for (const [path, req] of input.baseline.targets) {
+    const line = input.actualLine.get(path) ?? 0;
+    const branch = input.actualBranch.get(path) ?? 100;
+    if (line < req.line)
+      violations.push({
+        kind: "below_target",
+        dimension: "line",
+        path,
+        actual: line,
+        required: req.line,
+      });
+    if (branch < req.branch)
+      violations.push({
+        kind: "below_target",
+        dimension: "branch",
+        path,
+        actual: branch,
+        required: req.branch,
+      });
+  }
   return { exitCode: violations.length === 0 ? 0 : 1, violations, diff };
 }
 
@@ -99,7 +130,9 @@ export function computeUpdatedBaseline(
     if (isExempt(path)) continue;
     consider(path);
   }
-  return { version: 2, generated_at: generatedAt, files: next };
+  // Round-trip the flagship 100% targets verbatim — the ratchet only manages below-floor debt and
+  // must never touch (or drop) a hand-curated 100% ceiling.
+  return { version: 2, generated_at: generatedAt, files: next, targets: baseline.targets };
 }
 
 export async function discoverSourceFiles(): Promise<string[]> {
@@ -186,6 +219,11 @@ function printViolations(violations: ReadonlyArray<Violation>): void {
           `::error file=${v.path}::coverage now clears both floors — remove the baseline entry: bun run audit:coverage-floor:update-baseline`,
         );
         break;
+      case "below_target":
+        console.error(
+          `::error file=${v.path}::${v.dimension} coverage ${v.actual}% < required ${v.required}% (flagship target — this security-core file is pinned at ${v.required}%; add tests, do NOT lower the target)`,
+        );
+        break;
     }
   }
 }
@@ -223,6 +261,7 @@ async function main(): Promise<void> {
         version: 2 as const,
         generated_at: new Date().toISOString(),
         files: new Map<string, { line: number; branch: number }>(),
+        targets: new Map<string, { line: number; branch: number }>(),
       } as Baseline);
   const sourceFiles = await discoverSourceFiles();
 

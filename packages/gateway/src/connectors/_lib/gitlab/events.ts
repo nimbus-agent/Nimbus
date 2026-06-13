@@ -36,7 +36,13 @@ type GitlabEventUpsertFields = {
   authorName: string | undefined;
 };
 
-function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
+type GitlabItemShape = {
+  type: "pr" | "issue";
+  idSeparator: "!" | "#";
+  urlSegment: string;
+};
+
+function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShape): void {
   const {
     ctx,
     pathWithNamespace,
@@ -49,9 +55,9 @@ function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
     authorUsername,
     authorName,
   } = f;
-  const externalId = `${pathWithNamespace}!${String(iid)}`;
+  const externalId = `${pathWithNamespace}${shape.idSeparator}${String(iid)}`;
   const encPath = encodeURIComponent(pathWithNamespace);
-  const url = `${webOrigin}/${pathWithNamespace}/-/merge_requests/${String(iid)}`;
+  const urlPath = `${shape.urlSegment}/${String(iid)}`;
   const modified = Date.parse(createdAt);
   const meta: Record<string, unknown> = {
     iid,
@@ -67,12 +73,12 @@ function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
       : null;
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
-    type: "pr",
+    type: shape.type,
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
     bodyPreview: "",
-    url,
-    canonicalUrl: `${webOrigin}/${encPath}/-/merge_requests/${String(iid)}`,
+    url: `${webOrigin}/${pathWithNamespace}/-/${urlPath}`,
+    canonicalUrl: `${webOrigin}/${encPath}/-/${urlPath}`,
     modifiedAt: Number.isFinite(modified) ? modified : now,
     authorId,
     metadata: meta,
@@ -81,49 +87,12 @@ function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
   });
 }
 
+function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
+  upsertGitlabEventItem(f, { type: "pr", idSeparator: "!", urlSegment: "merge_requests" });
+}
+
 function upsertFromIssueEvent(f: GitlabEventUpsertFields): void {
-  const {
-    ctx,
-    pathWithNamespace,
-    iid,
-    title,
-    actionName,
-    createdAt,
-    now,
-    webOrigin,
-    authorUsername,
-    authorName,
-  } = f;
-  const externalId = `${pathWithNamespace}#${String(iid)}`;
-  const encPath = encodeURIComponent(pathWithNamespace);
-  const url = `${webOrigin}/${pathWithNamespace}/-/issues/${String(iid)}`;
-  const modified = Date.parse(createdAt);
-  const meta: Record<string, unknown> = {
-    iid,
-    project: pathWithNamespace,
-    action: actionName,
-  };
-  const authorId =
-    authorUsername !== undefined && authorUsername !== ""
-      ? resolvePersonForSync(ctx.db, {
-          gitlabLogin: authorUsername,
-          displayName: authorName ?? authorUsername,
-        })
-      : null;
-  upsertIndexedItemForSync(ctx, {
-    service: SERVICE_ID,
-    type: "issue",
-    externalId,
-    title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: "",
-    url,
-    canonicalUrl: `${webOrigin}/${encPath}/-/issues/${String(iid)}`,
-    modifiedAt: Number.isFinite(modified) ? modified : now,
-    authorId,
-    metadata: meta,
-    pinned: false,
-    syncedAt: now,
-  });
+  upsertGitlabEventItem(f, { type: "issue", idSeparator: "#", urlSegment: "issues" });
 }
 
 function processEvent(

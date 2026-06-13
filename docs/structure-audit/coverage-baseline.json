@@ -1,5 +1,15 @@
 {
   "version": 2,
-  "generated_at": "2026-06-12T17:50:11.182Z",
-  "files": {}
+  "generated_at": "2026-06-13T06:14:31.440Z",
+  "files": {},
+  "targets": {
+    "packages/gateway/src/engine/executor.ts": {
+      "min_line_pct": 100,
+      "min_branch_pct": 100
+    },
+    "packages/gateway/src/engine/tool-output-envelope.ts": {
+      "min_line_pct": 100,
+      "min_branch_pct": 100
+    }
+  }
 }

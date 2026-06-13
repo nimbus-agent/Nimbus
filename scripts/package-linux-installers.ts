@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { renderNfpmConfig } from "./release/nfpm-config.ts";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
@@ -36,6 +37,7 @@ Builds Linux release artifacts from a headless bundle directory:
   - nimbus-headless-linux-amd64-v<ver>.tar.gz
   - nimbus-headless_<ver>_amd64.deb
   - nimbus-headless-<ver>-x86_64.AppImage
+  - nimbus-headless-<ver>-x86_64.rpm           (with --rpm)
 
 Options:
   --bundle <dir>          Input: directory containing nimbus + nimbus-gateway
@@ -57,6 +59,8 @@ Options:
                           declare bubblewrap as a dep, but the helper-setcap
                           step in postinst becomes a no-op and the sandbox
                           runs in fallback mode at runtime.
+  --rpm                   Also build an .rpm via nfpm.
+  --nfpm <path>           Path to the nfpm binary (default: nfpm on PATH).
   --help, -h              Show this message.
 
 Prerequisites: /usr/bin/tar, /usr/bin/dpkg-deb, and (unless --skip-appimage)
@@ -86,6 +90,8 @@ const skipAppImage = hasFlag("--skip-appimage");
 const appImageToolOverride = parseArg("--appimagetool");
 const sandboxHelperOverride = parseArg("--sandbox-helper");
 const skipSandboxHelper = hasFlag("--skip-sandbox-helper");
+const buildRpmFlag = hasFlag("--rpm");
+const nfpmOverride = parseArg("--nfpm");
 
 const gw = join(bundleDir, "nimbus-gateway");
 const cli = join(bundleDir, "nimbus");
@@ -110,6 +116,11 @@ if (existsSync(outRoot)) {
 }
 mkdirSync(outRoot, { recursive: true });
 
+/**
+ * Resolve the privileged Linux sandbox helper to bundle: an explicit
+ * `--sandbox-helper`/bundled binary if present, else one built from
+ * `src-native`, else `null` (the sandbox then runs in fallback mode).
+ */
 function resolveSandboxHelper(): string | null {
   if (skipSandboxHelper) {
     return null;
@@ -153,6 +164,10 @@ function resolveSandboxHelper(): string | null {
 
 const sandboxHelper = resolveSandboxHelper();
 
+/**
+ * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check plus, when
+ * the helper is bundled, the `setcap cap_net_admin+ep` grant for it.
+ */
 function linuxPostInstallScript(hasHelper: boolean): string {
   const helperBlock = hasHelper
     ? `HELPER="$HOME/.local/bin/nimbus-sandbox-helper"
@@ -193,6 +208,10 @@ echo "Linux post-install checks complete."
 `;
 }
 
+/**
+ * Build the portable `.tar.gz`: binaries under `bin/` plus the README,
+ * install/uninstall scripts, and the Linux post-install script.
+ */
 function buildTarball(): string {
   const tarStage = join(outRoot, "tar-stage");
   const tarBin = join(tarStage, "bin");
@@ -270,6 +289,10 @@ ${helperNote}`,
   return tgzPath;
 }
 
+/**
+ * Build the bespoke `.deb`: real binaries under `/usr/lib/nimbus/bin`,
+ * apt-channel-stamped wrappers in `/usr/local/bin`, and a `setcap` postinst.
+ */
 function buildDeb(): string {
   const debName = `nimbus-headless_${version}_amd64.deb`;
   const debRoot = join(outRoot, "deb-stage");
@@ -287,16 +310,8 @@ function buildDeb(): string {
     chmodSync(join(debInst, "nimbus-sandbox-helper"), 0o755);
   }
 
-  writeFileSync(
-    join(debBin, "nimbus"),
-    '#!/bin/sh\nexec /usr/lib/nimbus/bin/nimbus "$@"\n',
-    "utf8",
-  );
-  writeFileSync(
-    join(debBin, "nimbus-gateway"),
-    '#!/bin/sh\nexec /usr/lib/nimbus/bin/nimbus-gateway "$@"\n',
-    "utf8",
-  );
+  writeFileSync(join(debBin, "nimbus"), channelWrapper("apt", "nimbus"), "utf8");
+  writeFileSync(join(debBin, "nimbus-gateway"), channelWrapper("apt", "nimbus-gateway"), "utf8");
   chmodSync(join(debBin, "nimbus"), 0o755);
   chmodSync(join(debBin, "nimbus-gateway"), 0o755);
 
@@ -352,6 +367,99 @@ exit 0
   return debPath;
 }
 
+/**
+ * Render a `/usr/local/bin` launcher that stamps the distribution channel and
+ * disables the self-updater, then execs the real binary under `/usr/lib/nimbus/bin`.
+ */
+function channelWrapper(channel: string, target: string): string {
+  return (
+    "#!/bin/sh\n" +
+    `export NIMBUS_DISTRIBUTION_CHANNEL=${channel}\n` +
+    "export NIMBUS_UPDATER_DISABLE=1\n" +
+    `exec /usr/lib/nimbus/bin/${target} "$@"\n`
+  );
+}
+
+/**
+ * Build the `.rpm` via nfpm: stage the binaries, helper, and yum-channel
+ * wrappers into a temp dir, render the nfpm config, and shell out to the
+ * (pinned) nfpm binary. Cleans up the stage on both success and failure.
+ */
+function buildRpm(nfpmBin: string): string {
+  const stage = join(outRoot, "rpm-stage");
+  const rpmBinDir = join(stage, "bin");
+  const wrapperDir = join(stage, "wrappers");
+  mkdirSync(rpmBinDir, { recursive: true });
+  mkdirSync(wrapperDir, { recursive: true });
+
+  // Stage the binaries (and the helper, wherever it was resolved from) into one
+  // dir so the nfpm `src:` paths always exist. sandboxHelper may come from
+  // --sandbox-helper or the built src-native path, not necessarily bundleDir.
+  copyFileSync(gw, join(rpmBinDir, "nimbus-gateway"));
+  copyFileSync(cli, join(rpmBinDir, "nimbus"));
+  if (sandboxHelper !== null) {
+    copyFileSync(sandboxHelper, join(rpmBinDir, "nimbus-sandbox-helper"));
+  }
+  writeFileSync(join(wrapperDir, "nimbus"), channelWrapper("yum", "nimbus"), "utf8");
+  writeFileSync(
+    join(wrapperDir, "nimbus-gateway"),
+    channelWrapper("yum", "nimbus-gateway"),
+    "utf8",
+  );
+
+  if (sandboxHelper !== null) {
+    writeFileSync(
+      join(wrapperDir, "rpm-postinstall.sh"),
+      `#!/bin/sh
+set -e
+HELPER="/usr/lib/nimbus/bin/nimbus-sandbox-helper"
+if [ -x "$HELPER" ] && command -v setcap >/dev/null 2>&1; then
+  setcap cap_net_admin+ep "$HELPER" || echo "WARNING: setcap failed; sandbox runs in fallback mode."
+fi
+exit 0
+`,
+      "utf8",
+    );
+  }
+
+  const cfg = renderNfpmConfig({
+    version,
+    binDir: rpmBinDir,
+    wrapperDir,
+    hasSandboxHelper: sandboxHelper !== null,
+  });
+  const cfgPath = join(stage, "nfpm.yaml");
+  writeFileSync(cfgPath, cfg, "utf8");
+
+  const rpmName = `nimbus-headless-${version}-x86_64.rpm`;
+  const rpmPath = join(outRoot, rpmName);
+  const res = spawnSync(nfpmBin, ["package", "-f", cfgPath, "-p", "rpm", "-t", rpmPath], {
+    stdio: "inherit",
+    cwd: repoRoot,
+  });
+  if (res.status !== 0 || !existsSync(rpmPath)) {
+    rmSync(stage, { recursive: true, force: true });
+    if (res.status === null) {
+      console.error(
+        `package-linux-installers: could not spawn nfpm at '${nfpmBin}' — not found or not executable.\n` +
+          "  Pass --nfpm <path> to a valid nfpm binary or install a pinned one. See docs/install.md.",
+      );
+    } else {
+      console.error(
+        `package-linux-installers: nfpm failed (exit ${res.status}).\n` +
+          "  Install a pinned nfpm binary or pass --nfpm <path>.",
+      );
+    }
+    process.exit(res.status ?? 1);
+  }
+  rmSync(stage, { recursive: true, force: true });
+  return rpmPath;
+}
+
+/**
+ * Build the `.AppImage` from a staged AppDir (AppRun + desktop entry + icon +
+ * binaries) using the provided appimagetool.
+ */
 function buildAppImage(toolPath: string): string {
   const appDirName = `nimbus-headless-${version}.AppDir`;
   const appDir = join(outRoot, appDirName);
@@ -402,6 +510,19 @@ const debPath = buildDeb();
 console.log(`Linux installers written to ${outRoot}`);
 console.log(`  ${tgzPath}`);
 console.log(`  ${debPath}`);
+
+if (buildRpmFlag) {
+  const nfpmBin = nfpmOverride ?? "nfpm";
+  if (!nfpmOverride && spawnSync(nfpmBin, ["--version"], { stdio: "ignore" }).status !== 0) {
+    console.error(
+      "package-linux-installers: --rpm requested but `nfpm` not found on PATH.\n" +
+        "  Pass --nfpm <path> or install a pinned nfpm binary. See docs/install.md.",
+    );
+    process.exit(1);
+  }
+  const rpmPath = buildRpm(nfpmBin);
+  console.log(`  ${rpmPath}`);
+}
 
 if (!skipAppImage) {
   const toolPath = appImageToolOverride ?? "/usr/local/bin/appimagetool";
