@@ -24,6 +24,7 @@
 ## Task 1: S7735 negated conditions ×4 (Commit 1, part a)
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/update.ts:62`
 - Modify: `packages/gateway/src/updater/factory.ts:30`
 - Modify: `packages/cli/src/commands/huddle.ts:38`
@@ -32,10 +33,13 @@
 - [ ] **Step 1: Edit `update.ts:62`** — invert the negated `!== undefined` and swap branches.
 
 Before:
+
 ```ts
 const channel = opts.channel !== undefined ? opts.channel : resolveDistributionChannel();
 ```
+
 After:
+
 ```ts
 const channel = opts.channel === undefined ? resolveDistributionChannel() : opts.channel;
 ```
@@ -43,11 +47,14 @@ const channel = opts.channel === undefined ? resolveDistributionChannel() : opts
 - [ ] **Step 2: Edit `factory.ts:29-30`** — same inversion.
 
 Before:
+
 ```ts
 const channel =
   args._channelOverride !== undefined ? args._channelOverride : resolveDistributionChannel();
 ```
+
 After:
+
 ```ts
 const channel =
   args._channelOverride === undefined ? resolveDistributionChannel() : args._channelOverride;
@@ -56,10 +63,13 @@ const channel =
 - [ ] **Step 3: Edit `huddle.ts:38`** — invert the spread ternary.
 
 Before:
+
 ```ts
     ...(parsed.sinceMs !== undefined ? { sinceMs: parsed.sinceMs } : {}),
 ```
+
 After:
+
 ```ts
     ...(parsed.sinceMs === undefined ? {} : { sinceMs: parsed.sinceMs }),
 ```
@@ -67,13 +77,16 @@ After:
 - [ ] **Step 4: Edit `index-reembed-rpc.ts:263-266`** — invert and swap.
 
 Before:
+
 ```ts
   const pipeline: ReembedSink =
     ctx._sinkFactory !== undefined
       ? ctx._sinkFactory(embedder)
       : new SqliteEmbeddingPipeline({ db: ctx.db, embedder, logger: ctx.logger });
 ```
+
 After:
+
 ```ts
   const pipeline: ReembedSink =
     ctx._sinkFactory === undefined
@@ -96,16 +109,20 @@ Expected: PASS (re-grep the actual test filenames with `Glob` if a path differs)
 ## Task 2: S6606 + S7781 (Commit 1, part b)
 
 **Files:**
+
 - Modify: `packages/gateway/compile-gateway.ts:105`
 - Modify: `packages/sdk/src/distribution-channel.ts:59`
 
 - [ ] **Step 1: Edit `compile-gateway.ts:105`** — ternary → nullish (`r.status` is `number | null`, so `?? 1` is equivalent).
 
 Before:
+
 ```ts
   const status = r.status === null ? 1 : r.status;
 ```
+
 After:
+
 ```ts
   const status = r.status ?? 1;
 ```
@@ -113,10 +130,13 @@ After:
 - [ ] **Step 2: Edit `distribution-channel.ts:59`** — `replace` global-regex → `replaceAll` literal.
 
 Before:
+
 ```ts
   const p = resolved.replace(/\\/g, "/").toLowerCase();
 ```
+
 After:
+
 ```ts
   const p = resolved.replaceAll("\\", "/").toLowerCase();
 ```
@@ -136,6 +156,7 @@ Expected: PASS (the Homebrew/Scoop path-classification tests still pass — `rep
 ## Task 3: S5914 — `test.skipIf` in obsidian test (Commit 1, part c)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/obsidian-daily-note.test.ts:183-207`
 
 - [ ] **Step 1: Confirm the test import** supports `.skipIf`.
@@ -146,6 +167,7 @@ Expected: `test` (or `it`) is imported from `bun:test`. `test.skipIf` is a Bun b
 - [ ] **Step 2: Replace the sentinel with `test.skipIf`.**
 
 Before (lines 183-188):
+
 ```ts
 test("resolveDailyNotePath emits a warning when daily-notes.json exists but is unreadable", () => {
   if (platform() === "win32") {
@@ -155,7 +177,9 @@ test("resolveDailyNotePath emits a warning when daily-notes.json exists but is u
   }
   const root = mkdtempSync(join(tmpdir(), "obsidian-dn-"));
 ```
+
 After:
+
 ```ts
 // chmod 000 is not reliably enforceable on Windows; skip this branch there.
 test.skipIf(platform() === "win32")(
@@ -164,7 +188,7 @@ test.skipIf(platform() === "win32")(
     const root = mkdtempSync(join(tmpdir(), "obsidian-dn-"));
 ```
 
-Then fix the trailing close: the test's body now ends with `});` → re-indent the body one level and close with `  },\n);`. (The `finally` cleanup block and assertions stay verbatim, just indented one extra level.)
+Then fix the trailing close: the test's body now ends with `});` → re-indent the body one level and close with `},\n);`. (The `finally` cleanup block and assertions stay verbatim, just indented one extra level.)
 
 - [ ] **Step 3: Typecheck + run the file.**
 
@@ -176,11 +200,13 @@ Expected: typecheck clean; on this (Windows) box the test reports **skipped**, o
 ## Task 4: S3358 — nested ternary in preflight-gate (Commit 1, part d)
 
 **Files:**
+
 - Modify: `packages/gateway/src/federation/preflight-gate.ts:127-132`
 
 - [ ] **Step 1: Replace the nested ternary with an if/else chain** assigned to a typed `let`.
 
 Before:
+
 ```ts
   const hitlStatus =
     entry.decision === "answered"
@@ -189,7 +215,9 @@ Before:
         ? "rejected"
         : "not_required";
 ```
+
 After:
+
 ```ts
   let hitlStatus: "approved" | "rejected" | "not_required" = "not_required";
   if (entry.decision === "answered") hitlStatus = "approved";
@@ -214,11 +242,13 @@ git commit -m "refactor(sonar): clear 8 minor/major smells (S7735, S6606, S7781,
 ## Task 5: S4144 — collapse identical kv-line helpers (Commit 2, part a)
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (functions @1028 `applyQuorumKvLine` and @1211 `applyPreflightKvLine`)
 
 `applyQuorumKvLine` and `applyPreflightKvLine` are byte-identical (verified). Collapse to one shared `applyKvLine`.
 
 - [ ] **Step 1: Rename `applyQuorumKvLine` to `applyKvLine`** at its definition (~line 1028) and keep the body identical:
+
 ```ts
 /** Records a `key = value` line into the current sub-table's bucket, if any. */
 function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
@@ -250,6 +280,7 @@ Expected: PASS — both the quorum and preflight `[...]` sub-table kv parsing te
 ## Task 6: S107 — too many params in filesystem-v2-sync (Commit 2, part b)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/filesystem-v2-sync.ts` (`upsertCodeSymbolsForFile` @276 + caller @357)
 
 Bundle the 6 file-context params into one `file` options object → 3 params total.
@@ -257,6 +288,7 @@ Bundle the 6 file-context params into one `file` options object → 3 params tot
 - [ ] **Step 1: Change the signature (lines 276-285) and destructure** at the top of the body.
 
 Before:
+
 ```ts
 function upsertCodeSymbolsForFile(
   ctx: SyncContext,
@@ -270,7 +302,9 @@ function upsertCodeSymbolsForFile(
 ): { upserted: number; blameRanges: BlameRange[] } {
   let upserted = 0;
 ```
+
 After:
+
 ```ts
 function upsertCodeSymbolsForFile(
   ctx: SyncContext,
@@ -280,15 +314,19 @@ function upsertCodeSymbolsForFile(
   const { src, root, relNorm, rk, mtime, now } = file;
   let upserted = 0;
 ```
+
 (The rest of the body references `src`/`root`/`relNorm`/`rk`/`mtime`/`now` as locals — unchanged.)
 
 - [ ] **Step 2: Update the call site (line 357).**
 
 Before:
+
 ```ts
     const fileResult = upsertCodeSymbolsForFile(ctx, src, symbols, root, relNorm, rk, mtime, now);
 ```
+
 After:
+
 ```ts
     const fileResult = upsertCodeSymbolsForFile(ctx, symbols, { src, root, relNorm, rk, mtime, now });
 ```
@@ -297,6 +335,7 @@ After:
 
 Run: `cd packages/gateway && bun run typecheck` then `bun test src/connectors/filesystem-v2-sync.test.ts` (re-glob the exact test filename if needed).
 Expected: PASS.
+
 ```bash
 bunx biome check --write --linter-enabled=false packages/gateway/src/config/nimbus-toml.ts packages/gateway/src/connectors/filesystem-v2-sync.ts
 git add -A
@@ -308,11 +347,13 @@ git commit -m "refactor(sonar): dedupe kv-line helper (S4144) + options-object f
 ## Task 7: S3776 — `applyTribalEntry` 16→15 (Commit 3, part a)
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts:1288` (`applyTribalEntry`)
 
 Only 1 over. The three numeric cases (`min_occurrences`, `window_days`, `cooldown_days`) repeat the `parseIntDec` + positive-guard + assign pattern. Extract one helper to remove two `if` branches' worth of complexity.
 
 - [ ] **Step 1: Add a small helper above `applyTribalEntry`:**
+
 ```ts
 /** Parse an integer kv value with a minimum floor; returns undefined when absent/non-numeric/below `min`. */
 function parseIntWithMin(valRaw: string, min: number): number | undefined {
@@ -320,11 +361,13 @@ function parseIntWithMin(valRaw: string, min: number): number | undefined {
   return n !== undefined && n >= min ? n : undefined;
 }
 ```
+
 (Named `parseIntWithMin`, not `parsePositiveInt*` — `cooldown_days` uses a floor of `0`, which is non-negative, not positive.)
 
 - [ ] **Step 2: Rewrite the three numeric cases** to use it (note the differing floors: occurrences/days `> 0` i.e. min 1; cooldown `>= 0` i.e. min 0).
 
 After:
+
 ```ts
     case "min_occurrences": {
       const n = parseIntWithMin(valRaw, 1);
@@ -342,6 +385,7 @@ After:
       return;
     }
 ```
+
 (Each case still has exactly one `if`, but the inner `&&`-compound condition moved into the helper — that's what drops the count below 16.)
 
 - [ ] **Step 3: Typecheck + test.**
@@ -350,6 +394,7 @@ Run: `cd packages/gateway && bun run typecheck` then `bun test src/config/nimbus
 Expected: PASS — the `[tribal]` parsing tests (min_occurrences/window_days/cooldown_days accept/reject) unchanged; cooldown still accepts 0, occurrences/days still reject 0.
 
 - [ ] **Step 4: Commit 3a.**
+
 ```bash
 bunx biome check --write --linter-enabled=false packages/gateway/src/config/nimbus-toml.ts
 git add -A
@@ -361,9 +406,11 @@ git commit -m "refactor(sonar): reduce applyTribalEntry cognitive complexity 16-
 ## Task 8: S3776 — `runHuddle` 17→15 (Commit 3, part b)
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/huddle.ts:44` (`runHuddle`) — extract the per-peer contribution loop.
 
 - [ ] **Step 1: Add a module-scope helper** (place it just above `runHuddle`, after the `lite(...)` helper). Move the triple-nested loop body (current lines 61-87) into it:
+
 ```ts
 function aggregateContributions(
   queryResults: Array<Awaited<ReturnType<typeof fanOutQuery>>>,
@@ -395,14 +442,17 @@ function aggregateContributions(
   return [...byPeer.values()];
 }
 ```
+
 `fanOutQuery` is already a **value** import in `huddle.ts:2` (`from "../federation/peer-fanout.ts"`), so `Awaited<ReturnType<typeof fanOutQuery>>` types `queryResults`'s element exactly with no new import and auto-tracks future signature changes. `q.gaps`, `q.perPeer`, `peer.{peerId,displayName,items}`, `it.{modifiedAt,type}` are all reachable through it (they're the same accesses `runHuddle` already makes).
 
 - [ ] **Step 2: Replace the inline loop in `runHuddle` (lines 61-87)** with:
+
 ```ts
   const contributions = aggregateContributions(queryResults, cutoff, gaps);
 ```
 
 - [ ] **Step 3: Update the return** to filter `contributions` instead of `byPeer`:
+
 ```ts
     contributions: contributions.filter(
       (c) => c.prs.length + c.tickets.length + c.incidents.length > 0,
@@ -415,6 +465,7 @@ Run: `cd packages/gateway && bun run typecheck` then `bun test src/agents/huddle
 Expected: PASS — same contributions, same gaps, same filtering. Behaviour identical.
 
 - [ ] **Step 5: Commit 3b.**
+
 ```bash
 bunx biome check --write --linter-enabled=false packages/gateway/src/agents/huddle.ts
 git add -A
@@ -426,6 +477,7 @@ git commit -m "refactor(sonar): extract aggregateContributions from runHuddle 17
 ## Task 9: S3776 — `assemblePlatformServices` 34→15 (Commit 3, part c)
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts:921` (`assemblePlatformServices`)
 
 The dominant complexity is the inline `if (tribalCfg.enabled) { ... }` block (starts ~line 1079) — it contains the `gatherSources` closure (for-loop + `if` + try/catch + `typeof` guard), the `tribalSynthesize` closure, and the watcher wiring. Extract that whole block into a helper.
@@ -437,6 +489,7 @@ The dominant complexity is the inline `if (tribalCfg.enabled) { ... }` block (st
 Run: `grep -n "if (tribalCfg.enabled)" packages/gateway/src/platform/assemble.ts` then read from that line to where the block (and the chatops wiring that consumes `tribalSend`/`tribalBoot`/`tribalInterceptCommand`) closes. Identify exactly which of `{ tribalSend, tribalBoot, tribalInterceptCommand }` are read *after* the block — those are the helper's return values.
 
 - [ ] **Step 2: Extract `bootTribalKnowledge(...)`** as a module-scope `async function` (or sync if no await inside) that takes the inputs the block reads (`tribalCfg`, `rt`, `db`, `syncLogger`, `paths`, and whatever else the block closes over) and returns the late-bound values:
+
 ```ts
 async function bootTribalKnowledge(deps: {
   tribalCfg: NimbusTribalToml;
@@ -452,15 +505,18 @@ async function bootTribalKnowledge(deps: {
   // ... the moved block body, returning the three values ...
 }
 ```
+
 Move the body **verbatim** (the `gatherSources`/`tribalSynthesize` closures and the watcher build). Where the original mutated outer `let`s, return them instead.
 
 - [ ] **Step 3: Replace the inline block in `assemblePlatformServices`** with the late-bound declarations + a call:
+
 ```ts
   const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
   const { tribalSend, tribalBoot, tribalInterceptCommand } = tribalCfg.enabled
     ? await bootTribalKnowledge({ tribalCfg, rt, db, syncLogger /* + captured deps */ })
     : { tribalSend: async () => {}, tribalBoot: undefined, tribalInterceptCommand: undefined };
 ```
+
 Keep the downstream chatops wiring (the rebind of `tribalSend` to `chatopsBoot.replyTo`) working — if `tribalSend` was reassigned later via `let`, preserve that by keeping the `let` and reassigning after the chatops boot (read the original to mirror the cycle exactly).
 
 - [ ] **Step 4: Typecheck.**
@@ -479,6 +535,7 @@ Run: `bun run scripts/structure-audit/check-nimbus-invariants.ts` (or the `audit
 Expected: PASS.
 
 - [ ] **Step 7: Commit 3c.**
+
 ```bash
 bunx biome check --write --linter-enabled=false packages/gateway/src/platform/assemble.ts
 git add -A
@@ -525,6 +582,7 @@ For **each** cluster decided "extract" in Task 10:
 - [ ] **Step 4: Run the affected tests** (`bun test <files>`; ui/vscode use `bunx vitest run`).
 
 - [ ] **Step 5: Format + commit** this cluster:
+
 ```bash
 bunx biome check --write --linter-enabled=false <changed files>
 git add -A

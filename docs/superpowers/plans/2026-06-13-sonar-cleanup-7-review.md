@@ -8,8 +8,10 @@
 ## Observations & Suggestions
 
 ### 1. Robust Type Safety for `aggregateContributions` (Task 8)
+
 * **Observation:** The plan suggests determining the type of `queryResults` by checking `fanOutQuery` and standardizing. Since `fanOutQuery` returns `Promise<PeerFanoutOutcome<PeerQueryResult>>`, we could manually import those types.
 * **Suggestion:** To keep imports clean and prevent tight coupling of internal structures, use TypeScript utility types to type `queryResults` dynamically:
+
   ```typescript
   import { fanOutQuery } from "../federation/peer-fanout.ts";
   // ...
@@ -19,16 +21,20 @@
     gaps: GapNote[],
   ): HuddleContribution[]
   ```
+
   This is fully self-documenting and automatically adapts to any future signature updates of `fanOutQuery`.
 
 ### 2. Precise Typing of `rt` in `bootTribalKnowledge` (Task 9)
+
 * **Observation:** The plan mentions using `rt: EmbeddingRuntime | undefined` as an optional type.
 * **Fact Check:** In [assemble.ts](file:///C:/gitrep/Nimbus/packages/gateway/src/platform/assemble.ts#L198), `createLocalIndexWithEmbeddingRuntime` specifies the return type for `rt` as non-nullable `EmbeddingRuntime`.
 * **Suggestion:** Declare the parameter as `rt: EmbeddingRuntime` in the helper's dependency interface to stay strictly typed.
 
 ### 3. More Accurate Naming for Bounded Integer Parser (Task 7)
+
 * **Observation:** The parser helper in Task 7 is named `parsePositiveIntOrUndefined` but is also called with a floor of `0` for `cooldown_days`. `0` is non-negative, not positive.
 * **Suggestion:** Rename the helper to `parseIntWithMin` or `parseBoundedInt` for conceptual clarity:
+
   ```typescript
   function parseIntWithMin(valRaw: string, min: number): number | undefined {
     const n = parseIntDec(valRaw);
@@ -37,6 +43,7 @@
   ```
 
 ### 4. Dependency Rule Enforcement for Duplication (Task 11)
+
 * **Observation:** When extracting duplication from the `github-actions` workspace, we must make sure we don't introduce cross-package dependency cycles or violate monorepo boundaries.
 * **Suggestion:** Since `annotate-action` and `preflight-query` are standalone action packages, any shared code between them should either live in a common local directory, or their types should be duplicated locally if establishing a shared dependency adds packaging overhead. Keep the dependency layout flat.
 
