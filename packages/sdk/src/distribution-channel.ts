@@ -92,7 +92,7 @@ export function channelUpgradeHint(channel: DistributionChannel): string {
     case "scoop":
       return "Installed via Scoop — run 'scoop update nimbus' to update.";
     case "winget":
-      return "Installed via winget — run 'winget upgrade nimbus' to update.";
+      return "Installed via winget — run 'winget upgrade NimbusAgent.Nimbus' to update.";
     case "apt":
       return "Installed via apt — run 'sudo apt update && sudo apt upgrade nimbus' to update.";
     case "yum":

@@ -96,7 +96,7 @@ describe("channelUpgradeHint", () => {
   test.each([
     ["homebrew", "brew upgrade nimbus"],
     ["scoop", "scoop update nimbus"],
-    ["winget", "winget upgrade nimbus"],
+    ["winget", "winget upgrade NimbusAgent.Nimbus"],
     ["apt", "apt upgrade nimbus"],
     ["yum", "dnf upgrade nimbus"],
     ["msi", ".msi"],
