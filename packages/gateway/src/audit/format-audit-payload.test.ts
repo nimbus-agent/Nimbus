@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 
-import { formatAuditPayload, redactAuditPayload } from "./format-audit-payload.ts";
+import {
+  formatAuditPayload,
+  redactAuditPayload,
+  SENSITIVE_VALUE_PATTERNS,
+} from "./format-audit-payload.ts";
 
 describe("formatAuditPayload", () => {
   test("returns JSON unchanged when under cap", () => {
@@ -215,5 +219,16 @@ describe("redactAuditPayload — property: ordinary prose is preserved", () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+describe("redactAuditPayload — structural: every pattern has a generator", () => {
+  test("GENERATORS keys are 1:1 with SENSITIVE_VALUE_PATTERNS keys", () => {
+    const patternKeys = [...SENSITIVE_VALUE_PATTERNS.keys()].sort();
+    const generatorKeys = [...GENERATORS.keys()].sort();
+    // If this fails, a token family was added/removed in the production scrubber
+    // without updating GENERATORS (or vice-versa) — the property suite would stop
+    // fuzzing it. Fix by adding the matching generator/pattern.
+    expect(generatorKeys).toEqual(patternKeys);
   });
 });
