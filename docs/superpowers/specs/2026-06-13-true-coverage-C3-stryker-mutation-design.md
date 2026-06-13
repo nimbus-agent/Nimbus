@@ -48,10 +48,26 @@ which runner the committed config uses.
   `thresholds: { high: 80, low: 60, break: null }` (**`break: null` = never fails a build**);
   default `mutate` = the two security-core files; test scope limited to their test files so runs
   stay fast (executor*/tool-output-envelope/security-invariants).
+  - **Monorepo sandbox (review §2.1):** Stryker copies the project into `.stryker-tmp/sandbox-<id>`
+    and runs tests there; in a bun workspace, module resolution can break. The plan's smoke test
+    verifies resolution and chooses the working option: prefer **`inPlace: true`** (Stryker mutates
+    the real files and restores them — sidesteps sandbox dependency resolution entirely, acceptable
+    for a local dev-only tool; git is the safety net if a run is killed mid-restore). If a sandbox
+    copy is used instead, confirm `symlinkNodeModules: true` (Stryker default) and add the workspace
+    config files (`tsconfig*.json`, `package.json`, `bun.lock`) to the Stryker `files` array.
+  - **Command-runner command is tightly scoped (review §2.3):** under the fallback, the command
+    runner cannot do perTest and reruns the whole configured command per mutant — so
+    `commandRunner.command` is explicitly `bun test <security-core test files>` (executor* +
+    tool-output-envelope + security-invariants), **never** a bare `bun test`/whole-workspace run.
 - **`scripts/mutation/run-mutation.ts`** — thin wrapper: with no args, runs the configured
   security-core scope; with `--diff`, computes changed **non-test** `packages/gateway/src/**/*.ts`
   vs `origin/main` and passes them to Stryker as `--mutate` (the per-PR git-diff scoping the parent
   spec calls for). Used by the C3 run itself, so it is not dead code.
+  - **Empty-diff behavior (review §2.2):** if `--diff` yields **zero** changed gateway source files,
+    the script logs an explanatory message and **exits 0 without invoking Stryker** — it must never
+    fall through to an unscoped whole-codebase mutation run (which would be hours-slow), and it does
+    not silently substitute the security-core scope (that would surprise a developer who explicitly
+    asked for the diff).
 - **Root `package.json` scripts:** `"mutation": "stryker run"` and
   `"mutation:diff": "bun scripts/mutation/run-mutation.ts --diff"`.
 - **`docs/contributors/mutation-testing.md`** — how to run, the recorded **security-core mutation
@@ -99,6 +115,8 @@ subsystem is deferred until scores are stable across subsystems (parent spec §5
 | Mutation runs slow | Tight scope (2 files + their tests); `--diff` for per-PR future runs |
 | Stryker tries to auto-install plugins / needs a package manager it can't drive | Set `packageManager` appropriately and rely on the already-installed pinned deps; no network install in the run |
 | Adding deps/scripts trips an audit (SDK dep-free, preflight-gate drift) | Deps are root devDeps only (no shipped package); no CI gate added → no manifest drift; SDK surface untouched |
+| Monorepo sandbox copy breaks bun-workspace module resolution | Smoke test verifies; prefer `inPlace: true` (no sandbox), else `symlinkNodeModules` + workspace `files` (§4) |
+| `--diff` with no changes runs mutation over the whole codebase | Wrapper exits 0 on empty diff without invoking Stryker (§4) |
 | Stryker temp/report dirs pollute the tree | `.gitignore` `reports/` + `.stryker-tmp/` |
 
 ## 9. Open questions
@@ -106,3 +124,20 @@ subsystem is deferred until scores are stable across subsystems (parent spec §5
 - Exact bun-runner config keys (test-file scoping option) — finalized in the plan's smoke-test task
   by reading the runner's README/installed schema.
 - Whether the security-core run surfaces a real assertion gap — fixed in-slice if so.
+
+## 10. Review dispositions (2026-06-13)
+
+Addressing [the design review](./2026-06-13-true-coverage-C3-stryker-mutation-design-review.md). All
+three points ACCEPTED — config/script refinements, folded into §4:
+
+1. **§2.1 Monorepo sandbox / symlinks — ACCEPTED.** Stryker's sandbox copy can break bun-workspace
+   module resolution. The smoke test (plan task 1) verifies resolution and chooses: prefer
+   `inPlace: true` (no sandbox copy → sidesteps the problem; safe for a local dev tool, git as the
+   net); else `symlinkNodeModules: true` (default) + the workspace config files in `files`. Added a
+   sub-bullet in §4 and a risk row.
+2. **§2.2 Empty-diff fallback — ACCEPTED.** `run-mutation.ts --diff` with zero changed gateway
+   source files logs + exits 0 without invoking Stryker — never an unscoped whole-codebase run, and
+   not a silent substitution of the security-core scope. Specified in §4.
+3. **§2.3 Command-runner test scoping — ACCEPTED.** The fallback `commandRunner.command` is
+   explicitly `bun test <security-core test files>` (the command runner reruns the whole command per
+   mutant and can't do perTest), never a bare workspace-wide `bun test`. Specified in §4.
