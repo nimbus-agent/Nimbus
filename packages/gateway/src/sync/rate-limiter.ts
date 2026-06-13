@@ -78,7 +78,8 @@ export type Provider =
   | "snowflake"
   | "tableau"
   | "looker"
-  | "powerbi";
+  | "powerbi"
+  | "montecarlo";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -166,6 +167,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   tableau: { requestsPerMinute: 60, burstSize: 10 },
   looker: { requestsPerMinute: 60, burstSize: 10 },
   powerbi: { requestsPerMinute: 60, burstSize: 10 },
+  montecarlo: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

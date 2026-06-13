@@ -167,6 +167,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // Dataset table names are normalized via normalizeDataModelKey to produce
   // cross-connector lineage edges (Power BI → data warehouse).
   powerbi: ["powerbi.tenant_id", "powerbi.client_id", "powerbi.client_secret"],
+  // Monte Carlo (Tier-3 data-quality observability). Uses an API key pair
+  // (api_id + api_token) against the Monte Carlo GraphQL API at the fixed static
+  // host api.getmontecarlo.com. Indexes data-quality incidents as
+  // data_quality_test items with monitoredDataModelKeys lineage edges.
+  montecarlo: ["montecarlo.api_id", "montecarlo.api_token"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
