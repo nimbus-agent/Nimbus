@@ -76,8 +76,8 @@ COMPONENT="${WORK}/nimbus-component.pkg"
 pkgbuild --root "$ROOT" --install-location ".local" --scripts "$SCRIPTS" \
   --identifier "dev.nimbus.headless" --version "$PV" "$COMPONENT"
 
-# productbuild expects the component pkg beside the distribution by reference name.
-cp "$COMPONENT" "${WORK}/nimbus-component.pkg"
+# The component pkg already sits at ${WORK}/nimbus-component.pkg, the name the
+# distribution's <pkg-ref> references; productbuild finds it via --package-path.
 productbuild --distribution "${SCRIPT_DIR}/macos/distribution.xml" \
   --package-path "$WORK" "$OUT"
 
