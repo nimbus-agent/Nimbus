@@ -93,7 +93,11 @@ jobs:
             --distributions-out staging/apt/conf/distributions \
             --repo-file-out staging/nimbus.repo
           # Verify the downloaded artifacts match SHA256SUMS before publishing.
-          ( cd out && sha256sum -c <(grep -E 'nimbus-headless(_|-)' SHA256SUMS) )
+          # Match ONLY the two files we downloaded (the .deb + .rpm), anchored to
+          # end-of-line so the `.asc` lines are excluded: SHA256SUMS lists every
+          # release asset (.msi/.pkg/tarballs/AppImage/...), and a broad grep would
+          # make `sha256sum -c` fail on the assets this job never fetches.
+          ( cd out && sha256sum -c <(grep -E "(nimbus-headless_${VERSION}_amd64\.deb|nimbus-headless-${VERSION}-x86_64\.rpm)\$" SHA256SUMS) )
 
       - name: Import GPG signing key (ephemeral GNUPGHOME)
         env:
