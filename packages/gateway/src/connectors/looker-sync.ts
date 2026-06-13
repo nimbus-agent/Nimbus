@@ -85,11 +85,7 @@ function viewsFromModelsResponse(parsed: unknown): Record<string, unknown>[] {
     for (const exploreItem of explores) {
       const explore = asRecord(exploreItem);
       if (explore === undefined) continue;
-      const views = Array.isArray(explore["view_file_map"])
-        ? explore["view_file_map"]
-        : Array.isArray(explore["views"])
-          ? explore["views"]
-          : [];
+      const views = Array.isArray(explore["views"]) ? explore["views"] : [];
       for (const viewItem of views) {
         const view = asRecord(viewItem);
         if (view === undefined) continue;

@@ -210,6 +210,12 @@ describeWithFetchRestore("looker-sync", () => {
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(2);
     expect(r.cursor).toContain("nimbus-looker1:");
     expectServiceItemCount(db, "looker", r.itemsUpserted);
+    const types = (
+      db.prepare("SELECT type FROM item WHERE service = 'looker' ORDER BY type").all() as {
+        type: string;
+      }[]
+    ).map((t) => t.type);
+    expect(types).toEqual(["dashboard", "data_model"]);
   });
 
   test("dashboard item has externalId looker:dashboard/<id>", async () => {
