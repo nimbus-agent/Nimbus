@@ -566,6 +566,10 @@ async function sendEncryptedPayload(
 
   return new Promise((resolve) => {
     let phase: "hello" | "rpc" = "hello";
+    // Reassemble length-prefixed frames: the server writes the 4-byte header and
+    // the payload as two separate socket.write() calls, which TCP may deliver split
+    // across data callbacks (or coalesced). Buffer bytes and only act on complete frames.
+    let buf = new Uint8Array(0);
     const conn = Bun.connect({
       hostname: "127.0.0.1",
       port: serverPort,
@@ -575,27 +579,38 @@ async function sendEncryptedPayload(
           socket.write(helloBytes);
         },
         data(socket, chunk) {
-          try {
-            if (chunk.length < 4) return;
-            const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-            const len = view.getUint32(0, false);
-            const body = chunk.slice(4, 4 + len);
-            const text = new TextDecoder().decode(body);
-            if (phase === "hello" && text.includes("hello_ok")) {
-              phase = "rpc";
-              socket.write(frameHeader);
-              socket.write(frame);
-            } else if (phase === "rpc") {
-              const plain = openBoxFrame(body, hostPubkey, clientKeypair.secretKey);
-              const parsed = JSON.parse(new TextDecoder().decode(plain)) as {
-                result?: unknown;
-                error?: { code: string; message: string };
-              };
-              resolve(parsed);
+          const merged = new Uint8Array(buf.length + chunk.length);
+          merged.set(buf, 0);
+          merged.set(chunk, buf.length);
+          buf = merged;
+          while (buf.length >= 4) {
+            const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(
+              0,
+              false,
+            );
+            if (buf.length < 4 + len) break; // wait for the rest of the frame
+            const body = buf.slice(4, 4 + len);
+            buf = buf.slice(4 + len);
+            if (phase === "hello") {
+              if (new TextDecoder().decode(body).includes("hello_ok")) {
+                phase = "rpc";
+                socket.write(frameHeader);
+                socket.write(frame);
+              }
+            } else {
+              try {
+                const plain = openBoxFrame(body, hostPubkey, clientKeypair.secretKey);
+                const parsed = JSON.parse(new TextDecoder().decode(plain)) as {
+                  result?: unknown;
+                  error?: { code: string; message: string };
+                };
+                resolve(parsed);
+              } catch {
+                resolve(null);
+              }
               socket.end();
+              return;
             }
-          } catch {
-            resolve(null);
           }
         },
         error() {

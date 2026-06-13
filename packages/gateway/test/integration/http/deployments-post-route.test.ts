@@ -233,7 +233,9 @@ describe("POST /v1/deployments (integration)", () => {
     expect(limited.headers.get("Retry-After")).not.toBeNull();
     const body = (await limited.json()) as { error?: string };
     expect(body.error).toBe("rate_limited");
-  });
+    // 61 sequential HTTP round-trips: slow on Windows CI runners (~5s), so the
+    // default 5000ms bun-test timeout is too tight. Allow generous headroom.
+  }, 30_000);
 
   test("401 writes a deployment.annotation_rejected audit row", async () => {
     handle = startServer();
@@ -297,5 +299,6 @@ describe("POST /v1/deployments (integration)", () => {
     };
     expect(parsed.result_code).toBe(429);
     expect(parsed.reason).toBe("rate_limited");
-  });
+    // 61 sequential HTTP round-trips: slow on Windows CI runners; see note above.
+  }, 30_000);
 });
