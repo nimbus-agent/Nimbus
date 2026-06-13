@@ -21,3 +21,10 @@ test("collapses empty parts from dot-only or double-dot input", () => {
   expect(normalizeDataModelKey("a..b")).toBe("a.b");
   expect(normalizeDataModelKey(".")).toBeNull();
 });
+test("returns null for non-string input (typeof raw !== 'string' branch)", () => {
+  // Exercises the typeof guard: line 13 branch 0
+  expect(normalizeDataModelKey(123 as unknown as string)).toBeNull();
+  expect(normalizeDataModelKey(null as unknown as string)).toBeNull();
+  expect(normalizeDataModelKey(undefined as unknown as string)).toBeNull();
+  expect(normalizeDataModelKey([] as unknown as string)).toBeNull();
+});

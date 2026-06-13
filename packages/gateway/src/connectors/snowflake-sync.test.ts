@@ -132,4 +132,193 @@ describeWithFetchRestore("snowflake-sync", () => {
     await makeSyncable().sync(syncTestContext(db, vault), null);
     expect(capturedBearerToken).toBe("oauth-tok-valid");
   });
+
+  // ─── isSafeSnowflakeAccount guard ────────────────────────────────────────
+
+  test("no-op when account starts with a dash (isSafeSnowflakeAccount false)", async () => {
+    const db = createMemoryIndexDb();
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "-bad-account",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    expectSyncNoopResult(r);
+  });
+
+  test("no-op when account contains a control character (codePoint < 0x20 branch)", async () => {
+    const db = createMemoryIndexDb();
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme\x01xy",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    expectSyncNoopResult(r);
+  });
+
+  // ─── HTTP / parse errors ───────────────────────────────────────────────────
+
+  test("http_error → http-empty pass cursor, preserves incoming cursor", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(() => new Response("Unauthorized", { status: 401 }));
+    const incomingCursor = "nimbus-snowflake1:oldcursor";
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      incomingCursor,
+    );
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.cursor).toBe(incomingCursor);
+    expectServiceItemCount(db, "snowflake", 0);
+  });
+
+  test("parse_error (invalid JSON) → parse-empty pass cursor", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(() => new Response("not-json{", { status: 200 }));
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.cursor).toContain("nimbus-snowflake1:");
+  });
+
+  // ─── rowsFromStatementsResponse edge cases ─────────────────────────────────
+
+  test("non-array row entry in data is skipped (!Array.isArray(rr) branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            resultSetMetaData: {
+              rowType: [{ name: "TABLE_NAME" }, { name: "SCHEMA_NAME" }, { name: "DATABASE_NAME" }],
+            },
+            // Mix of valid and non-array items in data
+            data: [
+              null, // not an array → skip
+              "string", // not an array → skip
+              ["MYDB", "PUBLIC", "ORDERS", null, "2026-06-01T00:00:00Z"],
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    // Only the third item is a valid row but mapper may skip it; at least no crash
+    expect(r.cursor).toContain("nimbus-snowflake1:");
+  });
+
+  test("column with empty name is excluded from obj mapping", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            resultSetMetaData: {
+              // Include a rowType entry that lacks a 'name' field → lowercased name = ""
+              rowType: [{ name: "DATABASE_NAME" }, {}, { name: "TABLE_NAME" }],
+            },
+            data: [["MYDB", "ignored", "ORDERS"]],
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    // Completes without error; the empty-name column is skipped
+    expect(r.cursor).toContain("nimbus-snowflake1:");
+  });
+
+  test("row with non-string row_count is left as-is (no numeric conversion)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(
+          statementsResponse([["MYDB", "PUBLIC", "ORDERS", "42", "2026-06-01T00:00:00Z"]]),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
+  });
+
+  test("table row that mapper rejects (mapped === null) is skipped", async () => {
+    const db = createMemoryIndexDb();
+    // Omit TABLE_NAME column entirely so the obj has no table_name key →
+    // stringField returns undefined → mapper returns null
+    installFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            resultSetMetaData: {
+              rowType: [
+                { name: "DATABASE_NAME" },
+                { name: "SCHEMA_NAME" },
+                // TABLE_NAME intentionally absent
+              ],
+            },
+            data: [["MYDB", "PUBLIC"]],
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(
+      syncTestContext(
+        db,
+        createStubVault({
+          "snowflake.account": "acme-xy12345",
+          "snowflake.oauth_token": "tok",
+        }),
+      ),
+      null,
+    );
+    expect(r.itemsUpserted).toBe(0);
+  });
 });

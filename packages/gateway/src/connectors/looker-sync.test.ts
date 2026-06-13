@@ -337,4 +337,183 @@ describeWithFetchRestore("looker-sync", () => {
     expect(r.cursor).toBe(incomingCursor);
     expect(r.itemsUpserted).toBe(0);
   });
+
+  // ─── lookml_models parse_error ─────────────────────────────────────────────
+
+  test("lookml_models parse_error → parse-empty pass cursor", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response("garbage{", { status: 200 });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.cursor).toContain("nimbus-looker1:");
+  });
+
+  // ─── dashboardsFromResponse edge branches ──────────────────────────────────
+
+  test("dashboards response that is not an array → zero dashboard upserts", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards"))
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("dashboard array entry that is not a record is skipped", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards"))
+        return new Response(JSON.stringify([null, "string", dashboard("10", "Valid")]), {
+          status: 200,
+        });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    // null and "string" are skipped; "Valid" dashboard is indexed
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("dashboard mapper returns null (missing id) → skipped", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards"))
+        // No id field → mapper returns null
+        return new Response(JSON.stringify([{ title: "No ID" }]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  // ─── viewsFromModelsResponse edge branches ─────────────────────────────────
+
+  test("models response that is not an array → zero view upserts", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("model array entry that is not a record is skipped", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(
+        JSON.stringify([
+          null, // not a record → skipped
+          lookmlModel("ecommerce", [{ name: "orders", sql_table_name: "DB.SCH.ORDERS" }]),
+        ]),
+        { status: 200 },
+      );
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("model with empty name is skipped (modelName empty branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(
+        JSON.stringify([
+          { name: "", explores: [{ views: [{ name: "v", sql_table_name: "DB.S.T" }] }] },
+          lookmlModel("good", [{ name: "v2", sql_table_name: "DB.S.T2" }]),
+        ]),
+        { status: 200 },
+      );
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    // Only the "good" model's view is indexed
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("model with no 'explores' array → zero views (non-array explores branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify([{ name: "ecommerce", explores: "not-an-array" }]), {
+        status: 200,
+      });
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("explore entry that is not a record is skipped", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(
+        JSON.stringify([
+          {
+            name: "ecommerce",
+            explores: [
+              null, // not a record → skipped
+              { views: [{ name: "orders", sql_table_name: "DB.S.ORDERS" }] },
+            ],
+          },
+        ]),
+        { status: 200 },
+      );
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("explore with non-array 'views' → zero views (non-array views branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(
+        JSON.stringify([{ name: "ecommerce", explores: [{ views: "not-array" }] }]),
+        { status: 200 },
+      );
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("view entry that is not a record inside explore is skipped", async () => {
+    const db = createMemoryIndexDb();
+    installFetch((url) => {
+      if (url.includes("/login")) return loginOk();
+      if (url.includes("/dashboards")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(
+        JSON.stringify([
+          {
+            name: "ecommerce",
+            explores: [
+              {
+                views: [
+                  null, // not a record → skipped
+                  { name: "orders", sql_table_name: "DB.S.ORDERS" },
+                ],
+              },
+            ],
+          },
+        ]),
+        { status: 200 },
+      );
+    });
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(1);
+  });
 });

@@ -200,4 +200,87 @@ describeWithFetchRestore("monte-carlo-sync", () => {
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "montecarlo", 1);
   });
+
+  // ─── incidentsFromResponse edge branches ───────────────────────────────────
+
+  test("response body is not a record (root === undefined) → empty result, zero upserts", async () => {
+    const db = createMemoryIndexDb();
+    // A JSON array at the root is not a record → root branch
+    installFetch(() => new Response(JSON.stringify([{ incidentId: "1" }]), { status: 200 }));
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(r.cursor).toContain("nimbus-montecarlo1:");
+  });
+
+  test("response has no 'data' key (data === undefined) → zero upserts", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(() => new Response(JSON.stringify({ other: "field" }), { status: 200 }));
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("response 'data' has no 'getIncidents' key → zero upserts", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(() => new Response(JSON.stringify({ data: { otherQuery: {} } }), { status: 200 }));
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("'edges' value is not an array → falls back to empty (Array.isArray false branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(JSON.stringify({ data: { getIncidents: { edges: "not-an-array" } } }), {
+          status: 200,
+        }),
+    );
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(0);
+  });
+
+  test("edge entry that is not a record is skipped (e === undefined branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              getIncidents: {
+                edges: [
+                  null, // not a record → skipped
+                  "string", // not a record → skipped
+                  { node: { incidentId: "7", status: "open", severity: "low" } },
+                ],
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    // Only the third edge has a valid node
+    expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("edge with no 'node' field is skipped (node !== undefined false branch)", async () => {
+    const db = createMemoryIndexDb();
+    installFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              getIncidents: {
+                edges: [
+                  { cursor: "abc" }, // has no 'node' key → skipped
+                  { node: { incidentId: "8", status: "fixed" } },
+                ],
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    expect(r.itemsUpserted).toBe(1);
+  });
 });
