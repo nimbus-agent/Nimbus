@@ -201,7 +201,10 @@ test("embedding+llm match mode forwards an llmJudge into the detector (spread br
     ts: "1",
     addressedToBot: false,
   });
-  // The detector found no prior cluster row for "tq_seed" yet (recall is a stub), so llmJudge is not
-  // necessarily called, but the spread arm IS exercised; a suggestion still fires at minOccurrences 1.
-  expect(sent.length).toBeGreaterThanOrEqual(0);
+  // The recalled "tq_seed" cluster has no stored row, so resolveClusterId returns it WITHOUT invoking
+  // llmJudge — the spread arm is still exercised (it's forwarded into the detector deps). The new
+  // occurrence then upserts a pending cluster that fires at minOccurrences 1, so exactly one
+  // suggestion is sent and the judge is never called.
+  expect(judged).toHaveLength(0);
+  expect(sent).toHaveLength(1);
 });

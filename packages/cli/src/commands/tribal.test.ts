@@ -99,8 +99,8 @@ function captureStdio(): {
 }
 
 afterEach(() => {
-  // A capture-failure arm sets process.exitCode = 1; restoring an undefined baseline would
-  // otherwise leak a failing exit code into the rest of the suite (bun exit-code leak).
+  // A capture-failure arm sets process.exitCode = 1; resetting it to 0 here keeps a failing
+  // exit code from leaking into the rest of the suite (bun exit-code leak).
   process.exitCode = 0;
 });
 

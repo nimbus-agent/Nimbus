@@ -328,7 +328,8 @@ test("scan logs and continues when a suggestion post throws (catch arm)", async 
 function seedCluster(db: Database, id = "k1"): void {
   db.run(
     `INSERT INTO tribal_clusters (cluster_id, representative_question, occurrence_count, first_seen, last_seen, status, channel_id, platform)
-     VALUES ('${id}', 'how do I deploy?', 3, 1000, 2000, 'suggested', 'C1', 'slack')`,
+     VALUES (?, 'how do I deploy?', 3, 1000, 2000, 'suggested', 'C1', 'slack')`,
+    [id],
   );
 }
 
