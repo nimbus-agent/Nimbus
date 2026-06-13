@@ -10,6 +10,15 @@ All downloads are checksummed in `SHA256SUMS` and GPG-signed; verify with
 | --- | --- |
 | macOS / Linux (Homebrew) | `brew install nimbus-agent/tap/nimbus` |
 | Windows (Scoop) | `scoop bucket add nimbus https://github.com/nimbus-agent/scoop-bucket; scoop install nimbus` |
+| Windows (winget) | `winget install NimbusAgent.Nimbus` |
+
+> **winget availability & trust:** the winget package tracks **stable releases only**
+> and is published by an automated `wingetcreate` PR to
+> [`microsoft/winget-pkgs`](https://github.com/microsoft/winget-pkgs) on each release, so
+> a new version appears once Microsoft's PR review merges it (not instantly). The installer
+> it delivers is the same per-user `.msi` as the direct download — currently **unsigned**, so
+> Microsoft's PR review + SmartScreen reputation are the trust signals until code-signing
+> lands (see the signing note at the bottom of this page).
 
 ## Native installers (double-click)
 
