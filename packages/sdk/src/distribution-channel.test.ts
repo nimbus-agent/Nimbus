@@ -72,6 +72,24 @@ describe("resolveDistributionChannel", () => {
       }),
     ).toBe("homebrew");
   });
+
+  test("resolves the Windows .msi install path to the msi channel", () => {
+    const channel = resolveDistributionChannel({
+      env: {},
+      execPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Nimbus\\bin\\nimbus.exe",
+      realpath: (p) => p,
+    });
+    expect(channel).toBe("msi");
+  });
+
+  test("a plain Windows path is not mistaken for an msi install", () => {
+    const channel = resolveDistributionChannel({
+      env: {},
+      execPath: "C:\\tools\\nimbus\\nimbus.exe",
+      realpath: (p) => p,
+    });
+    expect(channel).toBeNull();
+  });
 });
 
 describe("channelUpgradeHint", () => {

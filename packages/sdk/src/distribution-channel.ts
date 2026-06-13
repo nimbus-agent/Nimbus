@@ -66,6 +66,10 @@ function fromPath(execPath: string, realpath: (p: string) => string): Distributi
   if (p.includes("/scoop/apps/")) {
     return "scoop";
   }
+  // MSI: per-user install into %LOCALAPPDATA%\Programs\Nimbus\bin (installer-exclusive).
+  if (p.includes("/programs/nimbus/")) {
+    return "msi";
+  }
   return null;
 }
 
