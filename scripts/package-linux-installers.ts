@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { renderNfpmConfig } from "./release/nfpm-config.ts";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
@@ -36,6 +37,7 @@ Builds Linux release artifacts from a headless bundle directory:
   - nimbus-headless-linux-amd64-v<ver>.tar.gz
   - nimbus-headless_<ver>_amd64.deb
   - nimbus-headless-<ver>-x86_64.AppImage
+  - nimbus-headless-<ver>-x86_64.rpm           (with --rpm)
 
 Options:
   --bundle <dir>          Input: directory containing nimbus + nimbus-gateway
@@ -57,6 +59,8 @@ Options:
                           declare bubblewrap as a dep, but the helper-setcap
                           step in postinst becomes a no-op and the sandbox
                           runs in fallback mode at runtime.
+  --rpm                   Also build an .rpm via nfpm.
+  --nfpm <path>           Path to the nfpm binary (default: nfpm on PATH).
   --help, -h              Show this message.
 
 Prerequisites: /usr/bin/tar, /usr/bin/dpkg-deb, and (unless --skip-appimage)
@@ -86,6 +90,8 @@ const skipAppImage = hasFlag("--skip-appimage");
 const appImageToolOverride = parseArg("--appimagetool");
 const sandboxHelperOverride = parseArg("--sandbox-helper");
 const skipSandboxHelper = hasFlag("--skip-sandbox-helper");
+const buildRpmFlag = hasFlag("--rpm");
+const nfpmOverride = parseArg("--nfpm");
 
 const gw = join(bundleDir, "nimbus-gateway");
 const cli = join(bundleDir, "nimbus");
@@ -289,12 +295,18 @@ function buildDeb(): string {
 
   writeFileSync(
     join(debBin, "nimbus"),
-    '#!/bin/sh\nexec /usr/lib/nimbus/bin/nimbus "$@"\n',
+    "#!/bin/sh\n" +
+      "export NIMBUS_DISTRIBUTION_CHANNEL=apt\n" +
+      "export NIMBUS_UPDATER_DISABLE=1\n" +
+      'exec /usr/lib/nimbus/bin/nimbus "$@"\n',
     "utf8",
   );
   writeFileSync(
     join(debBin, "nimbus-gateway"),
-    '#!/bin/sh\nexec /usr/lib/nimbus/bin/nimbus-gateway "$@"\n',
+    "#!/bin/sh\n" +
+      "export NIMBUS_DISTRIBUTION_CHANNEL=apt\n" +
+      "export NIMBUS_UPDATER_DISABLE=1\n" +
+      'exec /usr/lib/nimbus/bin/nimbus-gateway "$@"\n',
     "utf8",
   );
   chmodSync(join(debBin, "nimbus"), 0o755);
@@ -352,6 +364,63 @@ exit 0
   return debPath;
 }
 
+function rpmWrapper(target: string): string {
+  return (
+    "#!/bin/sh\n" +
+    "export NIMBUS_DISTRIBUTION_CHANNEL=yum\n" +
+    "export NIMBUS_UPDATER_DISABLE=1\n" +
+    `exec /usr/lib/nimbus/bin/${target} "$@"\n`
+  );
+}
+
+function buildRpm(nfpmBin: string): string {
+  const stage = join(outRoot, "rpm-stage");
+  const wrapperDir = join(stage, "wrappers");
+  mkdirSync(wrapperDir, { recursive: true });
+  writeFileSync(join(wrapperDir, "nimbus"), rpmWrapper("nimbus"), "utf8");
+  writeFileSync(join(wrapperDir, "nimbus-gateway"), rpmWrapper("nimbus-gateway"), "utf8");
+
+  if (sandboxHelper !== null) {
+    writeFileSync(
+      join(wrapperDir, "rpm-postinstall.sh"),
+      `#!/bin/sh
+set -e
+HELPER="/usr/lib/nimbus/bin/nimbus-sandbox-helper"
+if [ -x "$HELPER" ] && command -v setcap >/dev/null 2>&1; then
+  setcap cap_net_admin+ep "$HELPER" || echo "WARNING: setcap failed; sandbox runs in fallback mode."
+fi
+exit 0
+`,
+      "utf8",
+    );
+  }
+
+  const cfg = renderNfpmConfig({
+    version,
+    binDir: bundleDir,
+    wrapperDir,
+    hasSandboxHelper: sandboxHelper !== null,
+  });
+  const cfgPath = join(stage, "nfpm.yaml");
+  writeFileSync(cfgPath, cfg, "utf8");
+
+  const rpmName = `nimbus-headless-${version}-x86_64.rpm`;
+  const rpmPath = join(outRoot, rpmName);
+  const res = spawnSync(nfpmBin, ["package", "-f", cfgPath, "-p", "rpm", "-t", rpmPath], {
+    stdio: "inherit",
+    cwd: repoRoot,
+  });
+  if (res.status !== 0 || !existsSync(rpmPath)) {
+    console.error(
+      `package-linux-installers: nfpm failed (exit ${res.status ?? "null"}).\n` +
+        "  Install a pinned nfpm binary or pass --nfpm <path>.",
+    );
+    process.exit(res.status ?? 1);
+  }
+  rmSync(stage, { recursive: true, force: true });
+  return rpmPath;
+}
+
 function buildAppImage(toolPath: string): string {
   const appDirName = `nimbus-headless-${version}.AppDir`;
   const appDir = join(outRoot, appDirName);
@@ -402,6 +471,19 @@ const debPath = buildDeb();
 console.log(`Linux installers written to ${outRoot}`);
 console.log(`  ${tgzPath}`);
 console.log(`  ${debPath}`);
+
+if (buildRpmFlag) {
+  const nfpmBin = nfpmOverride ?? "nfpm";
+  if (!nfpmOverride && spawnSync(nfpmBin, ["--version"], { stdio: "ignore" }).status !== 0) {
+    console.error(
+      "package-linux-installers: --rpm requested but `nfpm` not found on PATH.\n" +
+        "  Pass --nfpm <path> or install a pinned nfpm binary. See docs/install.md.",
+    );
+    process.exit(1);
+  }
+  const rpmPath = buildRpm(nfpmBin);
+  console.log(`  ${rpmPath}`);
+}
 
 if (!skipAppImage) {
   const toolPath = appImageToolOverride ?? "/usr/local/bin/appimagetool";

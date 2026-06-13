@@ -202,3 +202,52 @@ linuxTest("tarball ships nimbus-sandbox-helper when --sandbox-helper is set", ()
   expect(tarList.status).toBe(0);
   expect(tarList.stdout).toContain("bin/nimbus-sandbox-helper");
 });
+
+linuxTest(".deb wrappers stamp the apt channel + disable the self-updater", () => {
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  expect(r.status).toBe(0);
+  const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
+  const extractDir = join(workDir, "deb-data");
+  mkdirSync(extractDir, { recursive: true });
+  const x = spawnSync("/usr/bin/dpkg-deb", ["-x", debPath, extractDir], { encoding: "utf8" });
+  expect(x.status).toBe(0);
+  const wrapper = readFileSync(join(extractDir, "usr/local/bin/nimbus"), "utf8");
+  expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=apt");
+  expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
+});
+
+linuxTest("--rpm renders an nfpm config and invokes the nfpm binary (stubbed)", () => {
+  const argvLog = join(workDir, "nfpm-argv.txt");
+  const nfpmStub = makeStub(
+    "stub-nfpm",
+    `printf '%s\\n' "$@" > "${argvLog}"\n` +
+      `prev=""\nfor a in "$@"; do\n  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n  prev="$a"\ndone`,
+  );
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper", "--rpm", "--nfpm", nfpmStub]);
+  expect(r.status).toBe(0);
+  const rpmPath = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.rpm");
+  expect(existsSync(rpmPath)).toBe(true);
+  expect(readFileSync(rpmPath).subarray(0, 3).toString()).toBe("RPM");
+  const argv = readFileSync(argvLog, "utf8");
+  expect(argv).toContain("rpm");
+});
+
+linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () => {
+  const cfgOut = join(workDir, "captured-nfpm.yaml");
+  const nfpmStub = makeStub(
+    "cfg-recording-nfpm",
+    `prev=""\nfor a in "$@"; do\n` +
+      `  if [ "$prev" = "-f" ] || [ "$prev" = "--config" ]; then cp "$a" "${cfgOut}"; fi\n` +
+      `  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n` +
+      `  prev="$a"\ndone`,
+  );
+  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper", "--rpm", "--nfpm", nfpmStub]);
+  expect(r.status).toBe(0);
+  const cfg = readFileSync(cfgOut, "utf8");
+  expect(cfg).toContain("dst: /usr/local/bin/nimbus");
+  const wrapperSrc = cfg.match(/src:\s*(\S+)\s*\n\s*dst:\s*\/usr\/local\/bin\/nimbus\b/)?.[1];
+  expect(wrapperSrc).toBeTruthy();
+  const wrapper = readFileSync(wrapperSrc as string, "utf8");
+  expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");
+  expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
+});
