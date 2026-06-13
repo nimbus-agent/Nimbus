@@ -101,7 +101,10 @@ const GENERATORS: ReadonlyMap<string, fc.Arbitrary<string>> = new Map([
       .tuple(fc.constantFrom("b", "o", "a", "p", "r"), fc.boolean(), charsetArb(ALNUM_D, 10))
       .map(([c, s, b]) => `xox${c}${s ? "s" : ""}-${b}`),
   ],
-  ["bearer", charsetArb(BEARER_BODY, 16).map((b) => `Bearer ${b}`)],
+  [
+    "bearer",
+    fc.tuple(charsetArb(BEARER_BODY, 16), fc.constantFrom("", "=", "==")).map(([b, eq]) => `Bearer ${b}${eq}`),
+  ],
   [
     "jwt",
     fc
@@ -210,7 +213,11 @@ export const SENSITIVE_VALUE_PATTERNS: ReadonlyMap<string, RegExp> = new Map([
   ["openai", /(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g],
   ["anthropic", /(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g],
   ["slack", /(?<![A-Za-z0-9])xox[boapr]s?-[A-Za-z0-9-]{10,}(?![A-Za-z0-9-])/g],
-  ["bearer", /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9_.\-+/]{16,}={0,2}(?![A-Za-z0-9_./+-])/g],
+  // Trailing lookahead EXCLUDES `=` on purpose: a token with 3+ trailing `=`
+  // (e.g. `Bearer <body>===`) would otherwise backtrack-fail and LEAK the whole
+  // credential. Excluding `=` lets `={0,2}` consume the padding and redact.
+  // (verified during plan review §2.3). Hyphen escaped for lint/consistency.
+  ["bearer", /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9_.\-+/]{16,}={0,2}(?![A-Za-z0-9_./+\-])/g],
   ["jwt", /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g],
   ["aws", /(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])/g],
 ]);
@@ -406,6 +413,22 @@ cross-platform leg is the chronic flake — rerun, don't chase. Fix and resolve 
 Sonar thread.
 
 ---
+
+## Review dispositions (2026-06-13)
+
+Addressing [the plan review](./2026-06-13-true-coverage-C1-redaction-fix-review.md):
+
+1. **§2.1 Bearer generator padding — ACCEPTED.** The `bearer` generator now emits 0/1/2 trailing
+   `=` (`fc.constantFrom("", "=", "==")`), exercising the production regex's `={0,2}` suffix.
+   Verified all padding lengths redact, including when an `=` separator follows.
+2. **§2.2 Escape the hyphen in the Bearer lookahead — ACCEPTED.** Changed `(?![A-Za-z0-9_./+-])`
+   → `(?![A-Za-z0-9_./+\-])`. Confirmed byte-identical behavior (trailing `-` was already literal);
+   the escape is for lint-safety + consistency with the body class `[A-Za-z0-9_.\-+/]`.
+3. **§2.3 `=` excluded from the Bearer lookahead — ACKNOWLEDGED, no change; now empirically
+   confirmed + documented in code.** Tested the rejected alternative (`=` *in* the lookahead): a
+   `Bearer <body>===` input **leaks the entire credential** (backtrack-fail), whereas the accepted
+   design redacts it. Added an inline comment at the pattern so a future editor doesn't "tidy" `=`
+   into the lookahead and silently re-open the leak.
 
 ## Self-review notes (author)
 

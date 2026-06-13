@@ -100,7 +100,7 @@ Per-pattern boundary corrections (applied uniformly):
 | `github_pat_` (fine-grained) | `[A-Za-z0-9_]` | `(?![A-Za-z0-9_])` |
 | `sk-` / `sk-ant-` | `[A-Za-z0-9_-]` | `(?![A-Za-z0-9_-])` |
 | `xox` | `[A-Za-z0-9-]` | `(?![A-Za-z0-9-])` |
-| `Bearer …` | `[A-Za-z0-9_.\-+/]…={0,2}` | `(?![A-Za-z0-9_./+-])` (replaces the fragile trailing `\b`; `=` is terminal padding, excluded) |
+| `Bearer …` | `[A-Za-z0-9_.\-+/]…={0,2}` | `(?![A-Za-z0-9_./+\-])` (replaces the fragile trailing `\b`; `=` is **deliberately excluded** — including it makes `Bearer …===` backtrack-fail and **leak the whole credential**, verified) |
 | JWT `eyJ…` | `[A-Za-z0-9_-]` | `(?![A-Za-z0-9_-])` |
 | `AKIA` / `ASIA` | `[A-Z0-9]` | `(?![A-Z0-9])` |
 
