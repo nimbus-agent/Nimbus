@@ -1,16 +1,38 @@
-# Installing Nimbus (headless gateway + CLI)
+# Installing Nimbus (headless)
 
-| Platform | One-liner |
-|---|---|
+Nimbus ships a headless Gateway + CLI. Pick the channel that fits your platform.
+All downloads are checksummed in `SHA256SUMS` and GPG-signed; verify with
+`scripts/release/nimbus-verify.sh --version <ver>` (or `nimbus-verify.ps1`).
+
+## Package managers (recommended — auto-updating)
+
+| Platform | Command |
+| --- | --- |
 | macOS / Linux (Homebrew) | `brew install nimbus-agent/tap/nimbus` |
-| Windows (Scoop) | `scoop bucket add nimbus https://github.com/nimbus-agent/scoop-bucket && scoop install nimbus` |
-| Any (script) | Download the latest release tarball/zip and run `install.sh` / `install.ps1` |
+| Windows (Scoop) | `scoop bucket add nimbus https://github.com/nimbus-agent/scoop-bucket; scoop install nimbus` |
 
-Updates are owned by your installer: `brew upgrade nimbus`, `scoop update nimbus`, or
-re-running the install script. When Nimbus is installed via a package manager its built-in
-self-updater is disabled automatically, and `nimbus update` will point you back at your
-package manager.
+## Native installers (double-click)
 
-Direct downloads (raw binaries, `.tar.gz`, `.zip`, Linux `.deb` / AppImage) and their
-`SHA256SUMS` + GPG signature remain on the
-[releases page](https://github.com/nimbus-agent/Nimbus/releases).
+| Platform | Artifact | Scope |
+| --- | --- | --- |
+| Windows | `nimbus-headless-windows-x64.msi` | Per-user (`%LOCALAPPDATA%`), no admin |
+| macOS (Apple Silicon) | `nimbus-headless-macos-arm64.pkg` | Per-user (`~/.local`), no sudo |
+| macOS (Intel) | `nimbus-headless-macos-x64.pkg` | Per-user (`~/.local`), no sudo |
+| Linux (RPM) | `nimbus-headless-<ver>-x86_64.rpm` | `sudo dnf install ./...rpm` |
+| Linux (DEB) | `nimbus-headless_<ver>_amd64.deb` | `sudo dpkg -i ...deb` |
+
+Native installers and package-manager builds disable the self-updater — the
+installer/package owns updates. The standalone tarball keeps the self-updater on.
+
+To remove: Windows uses Add/Remove Programs; macOS runs `uninstall-nimbus`;
+RPM/DEB use `sudo dnf remove nimbus-headless` / `sudo apt remove nimbus-headless`.
+
+## Universal fallback (scripted)
+
+The read-it-yourself `install.sh` / `install.ps1` in each release archive install
+per-user with no admin and keep the self-updater enabled. See
+[`scripts/install/README.md`](../scripts/install/README.md).
+
+> **Signing status:** Windows/macOS installers are currently **unsigned** (no
+> certificates yet). You may see a SmartScreen / Gatekeeper warning. Verify the
+> download's checksum + GPG signature as your trust anchor until signing lands.
