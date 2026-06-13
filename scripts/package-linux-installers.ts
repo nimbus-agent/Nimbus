@@ -293,22 +293,8 @@ function buildDeb(): string {
     chmodSync(join(debInst, "nimbus-sandbox-helper"), 0o755);
   }
 
-  writeFileSync(
-    join(debBin, "nimbus"),
-    "#!/bin/sh\n" +
-      "export NIMBUS_DISTRIBUTION_CHANNEL=apt\n" +
-      "export NIMBUS_UPDATER_DISABLE=1\n" +
-      'exec /usr/lib/nimbus/bin/nimbus "$@"\n',
-    "utf8",
-  );
-  writeFileSync(
-    join(debBin, "nimbus-gateway"),
-    "#!/bin/sh\n" +
-      "export NIMBUS_DISTRIBUTION_CHANNEL=apt\n" +
-      "export NIMBUS_UPDATER_DISABLE=1\n" +
-      'exec /usr/lib/nimbus/bin/nimbus-gateway "$@"\n',
-    "utf8",
-  );
+  writeFileSync(join(debBin, "nimbus"), channelWrapper("apt", "nimbus"), "utf8");
+  writeFileSync(join(debBin, "nimbus-gateway"), channelWrapper("apt", "nimbus-gateway"), "utf8");
   chmodSync(join(debBin, "nimbus"), 0o755);
   chmodSync(join(debBin, "nimbus-gateway"), 0o755);
 
@@ -364,10 +350,10 @@ exit 0
   return debPath;
 }
 
-function rpmWrapper(target: string): string {
+function channelWrapper(channel: string, target: string): string {
   return (
     "#!/bin/sh\n" +
-    "export NIMBUS_DISTRIBUTION_CHANNEL=yum\n" +
+    `export NIMBUS_DISTRIBUTION_CHANNEL=${channel}\n` +
     "export NIMBUS_UPDATER_DISABLE=1\n" +
     `exec /usr/lib/nimbus/bin/${target} "$@"\n`
   );
@@ -377,8 +363,12 @@ function buildRpm(nfpmBin: string): string {
   const stage = join(outRoot, "rpm-stage");
   const wrapperDir = join(stage, "wrappers");
   mkdirSync(wrapperDir, { recursive: true });
-  writeFileSync(join(wrapperDir, "nimbus"), rpmWrapper("nimbus"), "utf8");
-  writeFileSync(join(wrapperDir, "nimbus-gateway"), rpmWrapper("nimbus-gateway"), "utf8");
+  writeFileSync(join(wrapperDir, "nimbus"), channelWrapper("yum", "nimbus"), "utf8");
+  writeFileSync(
+    join(wrapperDir, "nimbus-gateway"),
+    channelWrapper("yum", "nimbus-gateway"),
+    "utf8",
+  );
 
   if (sandboxHelper !== null) {
     writeFileSync(
@@ -411,10 +401,18 @@ exit 0
     cwd: repoRoot,
   });
   if (res.status !== 0 || !existsSync(rpmPath)) {
-    console.error(
-      `package-linux-installers: nfpm failed (exit ${res.status ?? "null"}).\n` +
-        "  Install a pinned nfpm binary or pass --nfpm <path>.",
-    );
+    rmSync(stage, { recursive: true, force: true });
+    if (res.status === null) {
+      console.error(
+        `package-linux-installers: could not spawn nfpm at '${nfpmBin}' — not found or not executable.\n` +
+          "  Pass --nfpm <path> to a valid nfpm binary or install a pinned one. See docs/install.md.",
+      );
+    } else {
+      console.error(
+        `package-linux-installers: nfpm failed (exit ${res.status}).\n` +
+          "  Install a pinned nfpm binary or pass --nfpm <path>.",
+      );
+    }
     process.exit(res.status ?? 1);
   }
   rmSync(stage, { recursive: true, force: true });
