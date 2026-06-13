@@ -73,27 +73,68 @@ function dashboardsFromResponse(parsed: unknown): Record<string, unknown>[] {
   return out;
 }
 
+function viewsFromExplore(
+  explore: Record<string, unknown>,
+  modelName: string,
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const views = Array.isArray(explore["views"]) ? explore["views"] : [];
+  for (const viewItem of views) {
+    const view = asRecord(viewItem);
+    if (view !== undefined) {
+      out.push({ ...view, model: modelName });
+    }
+  }
+  return out;
+}
+
+function viewsFromModel(modelItem: unknown): Record<string, unknown>[] {
+  const model = asRecord(modelItem);
+  if (model === undefined) return [];
+  const modelName = stringField(model, "name");
+  if (modelName === undefined || modelName === "") return [];
+  const explores = Array.isArray(model["explores"]) ? model["explores"] : [];
+  const out: Record<string, unknown>[] = [];
+  for (const exploreItem of explores) {
+    const explore = asRecord(exploreItem);
+    if (explore !== undefined) {
+      out.push(...viewsFromExplore(explore, modelName));
+    }
+  }
+  return out;
+}
+
 function viewsFromModelsResponse(parsed: unknown): Record<string, unknown>[] {
   if (!Array.isArray(parsed)) return [];
   const out: Record<string, unknown>[] = [];
   for (const modelItem of parsed) {
-    const model = asRecord(modelItem);
-    if (model === undefined) continue;
-    const modelName = stringField(model, "name");
-    if (modelName === undefined || modelName === "") continue;
-    const explores = Array.isArray(model["explores"]) ? model["explores"] : [];
-    for (const exploreItem of explores) {
-      const explore = asRecord(exploreItem);
-      if (explore === undefined) continue;
-      const views = Array.isArray(explore["views"]) ? explore["views"] : [];
-      for (const viewItem of views) {
-        const view = asRecord(viewItem);
-        if (view === undefined) continue;
-        out.push({ ...view, model: modelName });
-      }
-    }
+    out.push(...viewsFromModel(modelItem));
   }
   return out;
+}
+
+function upsertDashboards(ctx: SyncContext, parsed: unknown, now: number): number {
+  let upserted = 0;
+  for (const rawDashboard of dashboardsFromResponse(parsed)) {
+    const mapped = mapLookerDashboardToItem(rawDashboard, { syncedAt: now });
+    if (mapped !== null) {
+      upsertIndexedItemForSync(ctx, mapped);
+      upserted += 1;
+    }
+  }
+  return upserted;
+}
+
+function upsertModelViews(ctx: SyncContext, parsed: unknown, now: number): number {
+  let upserted = 0;
+  for (const rawView of viewsFromModelsResponse(parsed)) {
+    const mapped = mapLookerViewToItem(rawView, { syncedAt: now });
+    if (mapped !== null) {
+      upsertIndexedItemForSync(ctx, mapped);
+      upserted += 1;
+    }
+  }
+  return upserted;
 }
 
 export function createLookerSyncable(options: LookerSyncableOptions): Syncable {
@@ -152,23 +193,9 @@ export function createLookerSyncable(options: LookerSyncableOptions): Syncable {
       }
 
       const now = Date.now();
-      let upserted = 0;
-
-      for (const rawDashboard of dashboardsFromResponse(dashboardsOutcome.parsed)) {
-        const mapped = mapLookerDashboardToItem(rawDashboard, { syncedAt: now });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          upserted += 1;
-        }
-      }
-
-      for (const rawView of viewsFromModelsResponse(modelsOutcome.parsed)) {
-        const mapped = mapLookerViewToItem(rawView, { syncedAt: now });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          upserted += 1;
-        }
-      }
+      const upserted =
+        upsertDashboards(ctx, dashboardsOutcome.parsed, now) +
+        upsertModelViews(ctx, modelsOutcome.parsed, now);
 
       return syncPassCursorSuccess(
         t0,
