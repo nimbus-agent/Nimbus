@@ -116,6 +116,11 @@ if (existsSync(outRoot)) {
 }
 mkdirSync(outRoot, { recursive: true });
 
+/**
+ * Resolve the privileged Linux sandbox helper to bundle: an explicit
+ * `--sandbox-helper`/bundled binary if present, else one built from
+ * `src-native`, else `null` (the sandbox then runs in fallback mode).
+ */
 function resolveSandboxHelper(): string | null {
   if (skipSandboxHelper) {
     return null;
@@ -159,6 +164,10 @@ function resolveSandboxHelper(): string | null {
 
 const sandboxHelper = resolveSandboxHelper();
 
+/**
+ * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check plus, when
+ * the helper is bundled, the `setcap cap_net_admin+ep` grant for it.
+ */
 function linuxPostInstallScript(hasHelper: boolean): string {
   const helperBlock = hasHelper
     ? `HELPER="$HOME/.local/bin/nimbus-sandbox-helper"
@@ -199,6 +208,10 @@ echo "Linux post-install checks complete."
 `;
 }
 
+/**
+ * Build the portable `.tar.gz`: binaries under `bin/` plus the README,
+ * install/uninstall scripts, and the Linux post-install script.
+ */
 function buildTarball(): string {
   const tarStage = join(outRoot, "tar-stage");
   const tarBin = join(tarStage, "bin");
@@ -276,6 +289,10 @@ ${helperNote}`,
   return tgzPath;
 }
 
+/**
+ * Build the bespoke `.deb`: real binaries under `/usr/lib/nimbus/bin`,
+ * apt-channel-stamped wrappers in `/usr/local/bin`, and a `setcap` postinst.
+ */
 function buildDeb(): string {
   const debName = `nimbus-headless_${version}_amd64.deb`;
   const debRoot = join(outRoot, "deb-stage");
@@ -350,6 +367,10 @@ exit 0
   return debPath;
 }
 
+/**
+ * Render a `/usr/local/bin` launcher that stamps the distribution channel and
+ * disables the self-updater, then execs the real binary under `/usr/lib/nimbus/bin`.
+ */
 function channelWrapper(channel: string, target: string): string {
   return (
     "#!/bin/sh\n" +
@@ -359,6 +380,11 @@ function channelWrapper(channel: string, target: string): string {
   );
 }
 
+/**
+ * Build the `.rpm` via nfpm: stage the binaries, helper, and yum-channel
+ * wrappers into a temp dir, render the nfpm config, and shell out to the
+ * (pinned) nfpm binary. Cleans up the stage on both success and failure.
+ */
 function buildRpm(nfpmBin: string): string {
   const stage = join(outRoot, "rpm-stage");
   const rpmBinDir = join(stage, "bin");
@@ -430,6 +456,10 @@ exit 0
   return rpmPath;
 }
 
+/**
+ * Build the `.AppImage` from a staged AppDir (AppRun + desktop entry + icon +
+ * binaries) using the provided appimagetool.
+ */
 function buildAppImage(toolPath: string): string {
   const appDirName = `nimbus-headless-${version}.AppDir`;
   const appDir = join(outRoot, appDirName);
