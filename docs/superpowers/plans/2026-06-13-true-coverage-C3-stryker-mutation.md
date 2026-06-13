@@ -236,9 +236,21 @@ export function filterMutableFiles(changed: readonly string[]): string[] {
     );
 }
 
-/** Changed gateway-src files vs origin/main (merge-base), filtered to mutable ones. */
+/** First valid base ref among origin/main, main — else a helpful error. */
+function resolveBaseRef(): string {
+  for (const ref of ["origin/main", "main"]) {
+    const r = spawnSync("git", ["rev-parse", "--verify", "--quiet", ref], { encoding: "utf8" });
+    if (r.status === 0) return ref;
+  }
+  throw new Error(
+    "[mutation] Neither 'origin/main' nor 'main' is a valid git ref — run `git fetch origin main` first.",
+  );
+}
+
+/** Changed gateway-src files vs the base ref (merge-base), filtered to mutable ones. */
 function diffMutableFiles(): string[] {
-  const out = spawnSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
+  const baseRef = resolveBaseRef();
+  const out = spawnSync("git", ["diff", "--name-only", `${baseRef}...HEAD`], {
     encoding: "utf8",
   });
   if (out.status !== 0) {
@@ -482,6 +494,19 @@ Watch that the new root devDeps don't trip the JS-license-compliance or dependen
 are dev-only, common test tooling — if flagged, add the standard allow per the existing pattern).
 
 ---
+
+## Review dispositions (2026-06-13)
+
+Addressing [the plan review](./2026-06-13-true-coverage-C3-stryker-mutation-review.md):
+
+1. **§2.1 Git-ref robustness for `--diff` — ACCEPTED (refined).** `diffMutableFiles` now resolves
+   the base ref via `resolveBaseRef()`, trying `origin/main` then local `main`, and throws a
+   *helpful* error (`run git fetch origin main first`) if neither verifies — stronger than the naive
+   two-level fallback because in a worktree both can be missing/stale. Code updated in Task 2 Step 3.
+2. **§2.2 `inPlace` safety — ACKNOWLEDGED, no change.** The reviewer confirms the contributor doc
+   already documents the `git restore` recovery for an aborted run (Task 3 Step 2). Left as-is.
+3. **§2.3 Empty-diff unit test — ACKNOWLEDGED (validation), no change.** The `filterMutableFiles([])
+   === []` test already covers the graceful-bypass condition (Task 2 Step 1).
 
 ## Self-review notes (author)
 
