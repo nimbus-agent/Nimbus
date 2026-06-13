@@ -44,6 +44,16 @@ if (!HAS_PWSH) {
   );
 }
 
+// Dummy release artifacts the fixture writes + lists in SHA256SUMS. Includes the
+// three native installers wired into release.yml (Task 7) so the verifier is
+// exercised over real release-asset filenames, not just hello.bin.
+const ARTIFACTS = [
+  "hello.bin",
+  "nimbus-headless-windows-x64.msi",
+  "nimbus-headless-macos-arm64.pkg",
+  "nimbus-headless-0.5.0-x86_64.rpm",
+] as const;
+
 let work: string;
 let gnupghome: string;
 let cwd: string;
@@ -77,10 +87,15 @@ beforeEach(() => {
   if (genRes.status !== 0) throw new Error(`gen-test-key.sh failed: ${genRes.stderr}`);
   fingerprint = genRes.stdout.trim();
 
-  writeFileSync(join(cwd, "hello.bin"), "hello world", "utf8");
-  const helloBytes = readFileSync(join(cwd, "hello.bin"));
-  const hashHex = createHash("sha256").update(helloBytes).digest("hex");
-  writeFileSync(join(cwd, "SHA256SUMS"), `${hashHex}  hello.bin\n`, "utf8");
+  // Write one dummy file per artifact and build a SHA256SUMS over all of them.
+  let manifest = "";
+  for (const name of ARTIFACTS) {
+    writeFileSync(join(cwd, name), `dummy bytes for ${name}`, "utf8");
+    const bytes = readFileSync(join(cwd, name));
+    const hashHex = createHash("sha256").update(bytes).digest("hex");
+    manifest += `${hashHex}  ${name}\n`;
+  }
+  writeFileSync(join(cwd, "SHA256SUMS"), manifest, "utf8");
   spawnSync(
     GPG_BIN,
     [
@@ -110,6 +125,9 @@ test.skipIf(!HAS_PWSH)(
     const r = run(["-NoFetch"]);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("✅");
+    for (const name of ARTIFACTS) {
+      expect(r.stdout).toContain(name);
+    }
   },
   PWSH_TEST_TIMEOUT_MS,
 );
