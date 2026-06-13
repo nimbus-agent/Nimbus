@@ -440,8 +440,10 @@ const BACKFILL_LABELS: readonly string[] = [
   "team_vault_entries/grants + hitl_delegations (team vault + multi-user/quorum HITL v35) (backfilled)",
   "org_policy_state + policy_anchor_pin (policy v36) (backfilled)",
   "gdpr_purge_job + gdpr_purge_request (gdpr purge ledger v37) (backfilled)",
-  "federation_known_namespaces asker-side cache (backfilled)",
-  "tribal_clusters (tribal-knowledge cluster ledger v39) (backfilled)",
+  // NOTE: BACKFILL_LABELS intentionally stops at v37. The ledger has existed since v18, so any DB
+  // at v38+ already has populated `_schema_migrations` rows and backfill short-circuits before the
+  // loop — newer migrations need no backfill label. (runner.test.ts pins the missing-label throw to
+  // v38.) Do NOT append a label per new migration or that error branch becomes unreachable.
 ];
 
 function backfillMigrationsLedger(db: Database): void {

@@ -2,7 +2,7 @@
 
 **Review Date:** 2026-06-12  
 **Reviewer:** Antigravity (AI Coding Assistant)  
-**Target Spec:** [2026-06-12-phase6-slice6c-tribal-knowledge-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/phase6-slice6c/docs/superpowers/specs/2026-06-12-phase6-slice6c-tribal-knowledge-design.md)
+**Target Spec:** [2026-06-12-phase6-slice6c-tribal-knowledge-design.md](./2026-06-12-phase6-slice6c-tribal-knowledge-design.md)
 
 ---
 
