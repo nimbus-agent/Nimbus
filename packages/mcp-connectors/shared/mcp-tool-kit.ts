@@ -150,8 +150,13 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Compose with a caller-provided signal rather than clobbering it, so callers
+  // can still cancel via their own abort signal on top of the timeout.
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, signal });
   } finally {
     clearTimeout(timer);
   }

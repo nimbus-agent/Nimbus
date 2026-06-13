@@ -220,4 +220,22 @@ describe("fetchWithTimeout", () => {
       globalThis.fetch = orig;
     }
   });
+
+  it("honors a caller-provided abort signal in addition to the timeout", async () => {
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = ((_input: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        })) as typeof fetch;
+      const caller = new AbortController();
+      const p = fetchWithTimeout("https://example.com/slow", { signal: caller.signal }, 60_000);
+      caller.abort();
+      await expect(p).rejects.toThrow();
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
 });
