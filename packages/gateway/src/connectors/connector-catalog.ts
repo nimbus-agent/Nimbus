@@ -85,6 +85,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "localdb",
   "storybook",
   "dataprofile",
+  "snowflake",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -195,6 +196,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   localdb: MIN10,
   storybook: MIN10,
   dataprofile: MIN10,
+  snowflake: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -301,6 +303,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "reads a local Storybook manifest from a configured output dir (connector.auth storybook) — no live credentials",
   dataprofile:
     "profiles local data files (parquet/csv/jsonl/json) in a configured dir for schema only (connector.auth dataprofile) — no live credentials",
+  snowflake:
+    "uses an OAuth token or key-pair JWT + account identifier (connector.auth snowflake) — no PKCE flow",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

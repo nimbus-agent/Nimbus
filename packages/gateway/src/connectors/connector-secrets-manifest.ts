@@ -147,6 +147,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // Local data profiling: a single non-secret PATH to the dir holding local data
   // files (.parquet/.csv/.jsonl/.json) to schema-profile. No live credential.
   dataprofile: ["dataprofile.dir"],
+  // Snowflake (Tier-3 no-row-data warehouse). Uses OAuth token or key-pair JWT
+  // for auth against the Snowflake SQL REST API. Indexes schema/table metadata
+  // (column names + tags, row-count estimates) only — NEVER row data.
+  snowflake: ["snowflake.account", "snowflake.oauth_token", "snowflake.key_pair_jwt"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

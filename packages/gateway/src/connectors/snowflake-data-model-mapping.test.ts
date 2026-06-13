@@ -15,8 +15,8 @@ test("maps a table to a data_model item with a normalized key and no cell values
   );
   expect(item?.type).toBe("data_model");
   expect(item?.externalId).toBe("snowflake:analytics.public.revenue");
-  expect(item?.metadata.dataModelKey).toBe("analytics.public.revenue");
-  expect(item?.metadata.rowCountEstimate).toBe(1234);
+  expect(item?.metadata["dataModelKey"]).toBe("analytics.public.revenue");
+  expect(item?.metadata["rowCountEstimate"]).toBe(1234);
 });
 
 test("returns null when the table name is missing", () => {
