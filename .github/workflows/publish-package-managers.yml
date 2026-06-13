@@ -117,3 +117,97 @@ jobs:
           if git diff --cached --quiet; then echo "no manifest change"; exit 0; fi
           git commit -m "nimbus ${TAG#v}"
           git push
+
+  winget:
+    name: Submit winget manifest PR
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # No step-security/harden-runner here: it supports Linux runners only.
+    steps:
+      - name: Checkout Nimbus
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+
+      # Fail fast with an actionable message if the winget submission PAT is missing.
+      # wingetcreate must fork microsoft/winget-pkgs + open a cross-repo PR, which the
+      # fine-grained PACKAGE_MANAGER_PAT (scoped to our own channel repos) cannot do —
+      # this needs a classic PAT with the `public_repo` scope.
+      - name: Require WINGET_PAT
+        shell: pwsh
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:WINGET_PAT)) {
+            Write-Output "::error::WINGET_PAT is not set. Add a classic PAT with the 'public_repo' scope so wingetcreate can fork microsoft/winget-pkgs, push to the fork, and open a PR (the fine-grained PACKAGE_MANAGER_PAT cannot). Repo Settings -> Secrets -> Actions."
+            exit 1
+          }
+
+      - name: Download the released .msi + SHA256SUMS
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          gh release download "$env:TAG" --repo "$env:GITHUB_REPOSITORY" `
+            --pattern SHA256SUMS --pattern nimbus-headless-windows-x64.msi --dir out
+          if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $env:TAG" }
+
+      - name: Resolve .msi URL + expected sha256 from SHA256SUMS
+        id: msi
+        shell: pwsh
+        env:
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          $version = $env:TAG -replace '^v',''
+          bun scripts/release/winget-manifest.ts `
+            --version $version --repo "$env:GITHUB_REPOSITORY" --sha256sums out/SHA256SUMS
+          if ($LASTEXITCODE -ne 0) { throw "winget-manifest helper failed (is the .msi in SHA256SUMS?)" }
+
+      - name: Verify the downloaded .msi matches SHA256SUMS
+        shell: pwsh
+        run: |
+          $expected = "${{ steps.msi.outputs.sha256 }}"
+          $actual = (Get-FileHash -Algorithm SHA256 out/nimbus-headless-windows-x64.msi).Hash
+          if ($actual.ToLower() -ne $expected.ToLower()) {
+            Write-Output "::error::.msi sha256 mismatch (SHA256SUMS=$expected computed=$actual). Refusing to submit a winget PR for a tampered/incomplete asset."
+            exit 1
+          }
+          Write-Output "verified .msi sha256 = $($actual.ToLower())"
+
+      - name: Bootstrap wingetcreate (pinned + checksum-verified)
+        shell: pwsh
+        run: |
+          $wcVersion = "1.12.8.0"
+          $wcSha256 = "8bd738851b524885410112678e3771b341c5c716de60fbbecb88ab0a363ed85d"
+          $wcUrl = "https://github.com/microsoft/winget-create/releases/download/v$wcVersion/wingetcreate.exe"
+          Invoke-WebRequest -Uri $wcUrl -OutFile wingetcreate.exe
+          $actual = (Get-FileHash -Algorithm SHA256 wingetcreate.exe).Hash
+          if ($actual.ToLower() -ne $wcSha256) {
+            Write-Output "::error::wingetcreate.exe sha256 mismatch (pinned v$wcVersion): expected=$wcSha256 computed=$($actual.ToLower())"
+            exit 1
+          }
+          Write-Output "wingetcreate v$wcVersion verified"
+
+      - name: Submit winget manifest PR
+        shell: pwsh
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          $version = $env:TAG -replace '^v',''
+          $url = "${{ steps.msi.outputs.url }}"
+          $id = "${{ steps.msi.outputs.identifier }}"
+          # `update` requires NimbusAgent.Nimbus to already exist in microsoft/winget-pkgs.
+          # The FIRST-EVER submission is a one-time manual `wingetcreate new` by a maintainer
+          # (see docs/install.md); CI then handles every subsequent stable release here.
+          ./wingetcreate.exe update $id --version $version --urls "$url" --submit --token $env:WINGET_PAT
+          if ($LASTEXITCODE -ne 0) {
+            throw "wingetcreate submit failed. If this is the first release, $id may not yet exist in winget-pkgs — bootstrap it once with 'wingetcreate new' (see docs/install.md)."
+          }
