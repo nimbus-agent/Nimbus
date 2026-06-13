@@ -314,29 +314,30 @@ Only 1 over. The three numeric cases (`min_occurrences`, `window_days`, `cooldow
 
 - [ ] **Step 1: Add a small helper above `applyTribalEntry`:**
 ```ts
-/** Parse a positive integer kv value; returns undefined when absent/non-numeric/below `min`. */
-function parsePositiveIntOrUndefined(valRaw: string, min: number): number | undefined {
+/** Parse an integer kv value with a minimum floor; returns undefined when absent/non-numeric/below `min`. */
+function parseIntWithMin(valRaw: string, min: number): number | undefined {
   const n = parseIntDec(valRaw);
   return n !== undefined && n >= min ? n : undefined;
 }
 ```
+(Named `parseIntWithMin`, not `parsePositiveInt*` — `cooldown_days` uses a floor of `0`, which is non-negative, not positive.)
 
 - [ ] **Step 2: Rewrite the three numeric cases** to use it (note the differing floors: occurrences/days `> 0` i.e. min 1; cooldown `>= 0` i.e. min 0).
 
 After:
 ```ts
     case "min_occurrences": {
-      const n = parsePositiveIntOrUndefined(valRaw, 1);
+      const n = parseIntWithMin(valRaw, 1);
       if (n !== undefined) out.minOccurrences = n;
       return;
     }
     case "window_days": {
-      const n = parsePositiveIntOrUndefined(valRaw, 1);
+      const n = parseIntWithMin(valRaw, 1);
       if (n !== undefined) out.windowDays = n;
       return;
     }
     case "cooldown_days": {
-      const n = parsePositiveIntOrUndefined(valRaw, 0);
+      const n = parseIntWithMin(valRaw, 0);
       if (n !== undefined) out.cooldownDays = n;
       return;
     }
@@ -365,7 +366,7 @@ git commit -m "refactor(sonar): reduce applyTribalEntry cognitive complexity 16-
 - [ ] **Step 1: Add a module-scope helper** (place it just above `runHuddle`, after the `lite(...)` helper). Move the triple-nested loop body (current lines 61-87) into it:
 ```ts
 function aggregateContributions(
-  queryResults: Array<{ gaps: GapNote[]; perPeer: PerPeerResult[] }>,
+  queryResults: Array<Awaited<ReturnType<typeof fanOutQuery>>>,
   cutoff: number,
   gaps: GapNote[],
 ): HuddleContribution[] {
@@ -394,7 +395,7 @@ function aggregateContributions(
   return [...byPeer.values()];
 }
 ```
-**Verify the exact element types** of `queryResults` / `perPeer` / `PerPeerResult` by reading the return type of `fanOutQuery` and the `q.perPeer` element shape; use the real exported type names (don't invent `PerPeerResult` if it's named differently — `grep` for `perPeer` and the `fanOutQuery` return type). Adjust the helper's param types to match.
+`fanOutQuery` is already a **value** import in `huddle.ts:2` (`from "../federation/peer-fanout.ts"`), so `Awaited<ReturnType<typeof fanOutQuery>>` types `queryResults`'s element exactly with no new import and auto-tracks future signature changes. `q.gaps`, `q.perPeer`, `peer.{peerId,displayName,items}`, `it.{modifiedAt,type}` are all reachable through it (they're the same accesses `runHuddle` already makes).
 
 - [ ] **Step 2: Replace the inline loop in `runHuddle` (lines 61-87)** with:
 ```ts
@@ -439,7 +440,7 @@ Run: `grep -n "if (tribalCfg.enabled)" packages/gateway/src/platform/assemble.ts
 ```ts
 async function bootTribalKnowledge(deps: {
   tribalCfg: NimbusTribalToml;
-  rt: EmbeddingRuntime | undefined;  // use the real type from createLocalIndexWithEmbeddingRuntime
+  rt: EmbeddingRuntime;  // assemble.ts:177 alias `Awaited<ReturnType<typeof createEmbeddingRuntime>>` ALREADY includes `| null` — do NOT add `| undefined`; the block's `embeddingRt == null` / `rt?.` guards handle the null arm
   db: Database;
   syncLogger: Logger;
   // ...any other captured deps the block references
@@ -513,7 +514,7 @@ Run: `bunx jscpd@4 --min-lines 10 --min-tokens 70 --reporters json --output "$TE
 For **each** cluster decided "extract" in Task 10:
 
 - [ ] **Step 1: Identify the shared module location.**
-  - Cross-package (`github-actions`): the twin `main.ts`/`output.ts` blocks — extract the shared logic into a small local module in each package, or a shared util if one package already depends on the other. **Do not** introduce a new cross-package dependency that violates the dependency rules (gateway imports nothing from cli/ui; sdk dep-free). When in doubt, duplicate the *type* but share via an existing shared location.
+  - Cross-package (`github-actions`): `annotate-action` and `preflight-query` are **standalone action packages** — keep the layout flat. Extract the shared logic into a small local module *within each* package; **do not** create a new package-to-package dependency or cycle between the two action packages. If establishing a shared dependency adds packaging overhead, **duplicate the types locally** and only de-dupe the genuinely-shared *logic*. Never introduce a cross-package import that violates the dependency rules (gateway imports nothing from cli/ui; sdk dep-free).
   - `mcp-connectors` `search-filter.ts` twins: extract into `packages/mcp-connectors/shared/` (relative-import folder; no external deps — `[[shared-folder-external-deps]]`).
   - gateway internal twins: a `_lib/` helper next to the consumers.
 
@@ -555,6 +556,6 @@ Expected: PASS (MD031/MD032/MD040-clean).
 ## Self-review notes
 
 - **Spec coverage:** all 13 issues map to Tasks 1-9; duplication → Tasks 10-11; verification/skip-list → Task 12. ✅
-- **Types:** `applyKvLine` (Task 5) used consistently. `aggregateContributions` / `bootTribalKnowledge` flagged as "verify real type names" since the exact exported types must be read at implementation time (huddle's `perPeer` element, assemble's `rt`/`TribalBoot`). ✅
+- **Types:** `applyKvLine` (Task 5) / `parseIntWithMin` (Task 7) used consistently. `aggregateContributions` typed via `Awaited<ReturnType<typeof fanOutQuery>>` (Task 8); `bootTribalKnowledge`'s `rt: EmbeddingRuntime` (Task 9) — both resolved against real code, no invented names. `TribalBoot` / `ReplyTarget` / `ChatMessage` types must be imported from their existing modules at implementation time (already referenced in `assemble.ts`). ✅
 - **No silent caps:** Task 11 Step 6 requires logging intentionally-skipped dups. ✅
 - **Invariants:** Task 9 has explicit I22/I25 runtime + static guards. ✅
