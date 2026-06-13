@@ -258,6 +258,14 @@ describe("buildChatopsBoot — full production graph", () => {
     await h.boot.service.stop();
   });
 
+  test("isSenderMapped distinguishes enrolled from unmapped senders (Slice 6c intercept gate)", async () => {
+    const h = buildHarness();
+    await h.boot.service.start();
+    expect(await h.boot.isSenderMapped("slack", "U_BOB")).toBe(true);
+    expect(await h.boot.isSenderMapped("slack", "U_EVE")).toBe(false);
+    await h.boot.service.stop();
+  });
+
   test("rpcCtx: status reflects transports; testParse parses a known write", async () => {
     const h = buildHarness();
     expect(h.boot.rpcCtx.status().enabled).toBe(true);

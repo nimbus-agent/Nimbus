@@ -7,6 +7,8 @@ import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
+import { TribalClusterStore } from "./tribal/cluster-store.ts";
+import { captureToKnowledgeBase } from "./tribal/tribal-write-gate.ts";
 
 const SRC_ROOT = import.meta.dir;
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
@@ -517,9 +519,25 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 88", async () => {
+  test("allowlist_exact_size assertion is 90", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*88\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*90\s*\)/);
+  });
+
+  test("Slice 6c: read-only tribal.status/list allowed; control-plane tribal methods stay absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["tribal.status", "tribal.list"]) {
+      expect(rust).toContain(`"${m}"`);
+    }
+    for (const m of [
+      "tribal.start",
+      "tribal.stop",
+      "tribal.dismiss",
+      "tribal.scan",
+      "tribal.capture",
+    ]) {
+      expect(rust).not.toMatch(new RegExp(`^\\s*"${m.replace(".", "\\.")}",\\s*$`, "m"));
+    }
   });
 
   test("Slice 4: read-only admin/policy/team-audit methods are allowed; privileged policy/team-purge methods stay absent", async () => {
@@ -720,6 +738,17 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
     await walk(dir, "");
     expect(offenders).toEqual([]);
   });
+
+  test("(c) no tribal module references the connector post tools — suggestions only via the injected I23 send seam (D17)", async () => {
+    const dir = resolve(import.meta.dir, "tribal");
+    const offenders: string[] = [];
+    for (const ent of await readdir(dir, { withFileTypes: true })) {
+      if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
+      const c = await readFile(resolve(dir, ent.name), "utf8");
+      if (/\b(?:slack_chat_post|teams_chat_post)\b/.test(c)) offenders.push(ent.name);
+    }
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("I24 — a federated preflight executes only behind the LOCAL owner's HITL gate", () => {
@@ -763,6 +792,104 @@ describe("I24 — a federated preflight executes only behind the LOCAL owner's H
   test("D18 confines runPreflightCommand to preflight-gate/preflight-runner", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D18-preflight-runner");
+  });
+});
+
+describe("I25 — a tribal KB capture writes only the config destination, behind the owner's HITL gate", () => {
+  function seededStore(): TribalClusterStore {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 39);
+    const store = new TribalClusterStore(db);
+    store.upsertOccurrence({
+      clusterId: "k1",
+      question: "how do I deploy?",
+      vec: null,
+      channelId: "C1",
+      platform: "slack",
+      now: 1000,
+    });
+    return store;
+  }
+
+  const draft = {
+    title: "Deploying",
+    bodyMarkdown: "Run deploy",
+    citations: [] as { itemId: string; channelId: string; url: string | null }[],
+  };
+
+  test("(a) the destination is the config databaseId — never a caller value", async () => {
+    const submitted: { type: string; payload: Record<string, unknown> }[] = [];
+    const store = seededStore();
+    const cluster = store.get("k1");
+    expect(cluster).toBeDefined();
+    const r = await captureToKnowledgeBase(
+      {
+        cfg: { notion: { databaseId: "db_cfg" } },
+        synthesize: async () => draft,
+        submitAction: async (action) => {
+          submitted.push(action);
+          return { status: "approved", result: { pageRef: "notion:pg1" } };
+        },
+        store,
+        cooldownDays: 30,
+        now: () => 5000,
+      },
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      cluster!,
+      "notion",
+    );
+    expect(r).toEqual({ ok: true, pageRef: "notion:pg1" });
+    expect(submitted[0]?.type).toBe("notion.knowledge.write");
+    expect(submitted[0]?.payload["databaseId"]).toBe("db_cfg");
+    expect(store.get("k1")?.status).toBe("captured");
+  });
+
+  test("(b) an unconfigured target fails closed (not_configured) and never submits an action", async () => {
+    let submitCalls = 0;
+    const store = seededStore();
+    const r = await captureToKnowledgeBase(
+      {
+        cfg: {},
+        synthesize: async () => draft,
+        submitAction: async () => {
+          submitCalls += 1;
+          return { status: "approved", result: { pageRef: "x" } };
+        },
+        store,
+        cooldownDays: 30,
+        now: () => 5000,
+      },
+      // biome-ignore lint/style/noNonNullAssertion: seeded above
+      store.get("k1")!,
+      "notion",
+    );
+    expect(r).toEqual({ ok: false, error: "not_configured" });
+    expect(submitCalls).toBe(0);
+    expect(store.get("k1")?.status).toBe("pending");
+  });
+
+  test("(c) a rejected HITL leaves the cluster uncaptured", async () => {
+    const store = seededStore();
+    const r = await captureToKnowledgeBase(
+      {
+        cfg: { notion: { databaseId: "db_cfg" } },
+        synthesize: async () => draft,
+        submitAction: async () => ({ status: "rejected" }),
+        store,
+        cooldownDays: 30,
+        now: () => 5000,
+      },
+      // biome-ignore lint/style/noNonNullAssertion: seeded above
+      store.get("k1")!,
+      "notion",
+    );
+    expect(r).toEqual({ ok: false, error: "rejected" });
+    expect(store.get("k1")?.status).toBe("pending");
+  });
+
+  test("(d) D19 confines the KB-write tool ids to the write-gate + connector sites", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain("D19-tribal-kb-write");
   });
 });
 

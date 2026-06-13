@@ -51,6 +51,7 @@ const msg: ChatMessage = {
   userId: "U1",
   text: "@nimbus hi",
   ts: "1.1",
+  addressedToBot: true,
 };
 
 describe("ChatopsService", () => {

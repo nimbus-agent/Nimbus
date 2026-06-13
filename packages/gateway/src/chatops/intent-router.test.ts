@@ -44,6 +44,7 @@ const msg = (text: string): ChatMessage => ({
   userId: "U_BOB",
   text,
   ts: "1.1",
+  addressedToBot: true,
 });
 
 describe("IntentRouter", () => {

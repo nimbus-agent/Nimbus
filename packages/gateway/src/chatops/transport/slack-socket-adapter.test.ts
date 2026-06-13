@@ -24,15 +24,71 @@ describe("Slack adapter helpers", () => {
       userId: "U1",
       text: "<@U0> hi",
       ts: "1.2",
+      addressedToBot: true,
     });
   });
 
-  test("non-mention events normalize to undefined", () => {
+  test("plain channel message → ChatMessage with addressedToBot=false", () => {
+    const n = new SlackEventNormalizer();
+    const m = n.normalize({
+      type: "events_api",
+      payload: {
+        event: { type: "message", channel: "C1", user: "U1", text: "how do I deploy?", ts: "1.2" },
+      },
+    });
+    expect(m).toEqual({
+      platform: "slack",
+      channelId: "C1",
+      userId: "U1",
+      text: "how do I deploy?",
+      ts: "1.2",
+      addressedToBot: false,
+    });
+  });
+
+  test("app_mention → addressedToBot=true", () => {
+    const n = new SlackEventNormalizer();
+    const m = n.normalize({
+      type: "events_api",
+      payload: {
+        event: { type: "app_mention", channel: "C1", user: "U1", text: "<@B> hi", ts: "1.3" },
+      },
+    });
+    expect(m?.addressedToBot).toBe(true);
+  });
+
+  test("bot/subtype messages are skipped (feedback-loop guard)", () => {
+    const n = new SlackEventNormalizer();
+    expect(
+      n.normalize({
+        type: "events_api",
+        payload: {
+          event: { type: "message", subtype: "bot_message", channel: "C1", text: "x", ts: "1" },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      n.normalize({
+        type: "events_api",
+        payload: { event: { type: "message", bot_id: "B9", channel: "C1", text: "x", ts: "1" } },
+      }),
+    ).toBeUndefined();
+  });
+
+  test("non-message/mention events normalize to undefined", () => {
     const n = new SlackEventNormalizer();
     expect(n.normalize({ type: "hello" })).toBeUndefined();
     expect(n.normalize(null)).toBeUndefined();
+    // a `message` event missing text → undefined (type-guard short-circuit)
     expect(
       n.normalize({ type: "events_api", payload: { event: { type: "message", channel: "C1" } } }),
+    ).toBeUndefined();
+    // an unrelated event type (reaction_added) → undefined
+    expect(
+      n.normalize({
+        type: "events_api",
+        payload: { event: { type: "reaction_added", channel: "C1", text: "x", ts: "1" } },
+      }),
     ).toBeUndefined();
   });
 

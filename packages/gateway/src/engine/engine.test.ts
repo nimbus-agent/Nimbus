@@ -117,6 +117,11 @@ describe("HITL_REQUIRED", () => {
   test("includes extension.downgrade (T2 PR 3)", () => {
     expect(HITL_REQUIRED.has("extension.downgrade")).toBe(true);
   });
+
+  test("includes tribal-knowledge KB write action types (Slice 6c / I25)", () => {
+    expect(HITL_REQUIRED.has("notion.knowledge.write")).toBe(true);
+    expect(HITL_REQUIRED.has("confluence.knowledge.write")).toBe(true);
+  });
 });
 
 function createMocks(initialApprove = true): {

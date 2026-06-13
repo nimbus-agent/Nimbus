@@ -9,6 +9,7 @@ describe("chatops types", () => {
       userId: "U1",
       text: "@nimbus ping",
       ts: "1.2",
+      addressedToBot: true,
     };
     const c: ParsedCommand = { kind: "read", query: "ping" };
     expect(m.platform).toBe("slack");

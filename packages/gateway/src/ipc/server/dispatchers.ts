@@ -38,6 +38,7 @@ import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
+import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import {
@@ -696,6 +697,93 @@ export async function tryDispatchChatopsRpc(
   return phase4RpcSkipped;
 }
 
+function tribalParamString(params: unknown, key: string): string | undefined {
+  const rec = asRecord(params);
+  const v = rec === undefined ? undefined : rec[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+/**
+ * Extract a stable pageRef (`notion:<id>` / `confluence:<id>`) from a KB-append connector result.
+ * The result is the MCP tool envelope wrapping the created page JSON; tolerant of shapes, returns
+ * "" if no id is found (→ the write-gate reports write_failed, never a false success).
+ */
+/** Recursively dig a page `id` out of a KB-append result envelope (top-level or nested in JSON text). */
+function findKbPageId(v: unknown): string | undefined {
+  if (v === null || typeof v !== "object") return undefined;
+  const rec = v as Record<string, unknown>;
+  if (typeof rec["id"] === "string") return rec["id"];
+  const content = rec["content"];
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    const text = (block as { text?: unknown } | null)?.text;
+    if (typeof text !== "string") continue;
+    const id = findKbPageIdInText(text);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/** Parse a content-block's text as JSON and recurse; non-JSON text yields no id. */
+function findKbPageIdInText(text: string): string | undefined {
+  try {
+    return findKbPageId(JSON.parse(text) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+export function extractKbPageRef(actionType: string, result: unknown): string {
+  const prefix = actionType.startsWith("notion") ? "notion" : "confluence";
+  const id = findKbPageId(result);
+  return id === undefined ? "" : `${prefix}:${id}`;
+}
+
+export async function tryDispatchTribalRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("tribal.")) return phase4RpcSkipped;
+  const rpc = ctx.options.tribalRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+
+  // I25: capture is special-cased — it needs a per-call HITL consent channel bound to the
+  // initiating client (the local owner who ran `nimbus tribal capture`), which only the dispatcher
+  // has. The submitAction runs the KB write through the executor gate; the destination comes from
+  // local config inside the write-gate, never from these params.
+  if (method === "tribal.capture") {
+    const clusterId = tribalParamString(params, "clusterId");
+    if (clusterId === undefined || clusterId === "") {
+      throw new RpcMethodError(-32602, "ERR_INVALID_PARAMS: clusterId (string) required");
+    }
+    const target = tribalParamString(params, "target");
+    const dispatcher = ctx.options.tribalConnectorDispatcher;
+    const index = ctx.options.localIndex;
+    if (dispatcher === undefined || index === undefined) {
+      return rpc.capture(clusterId, target, async () => ({ status: "rejected" }));
+    }
+    const executor = new ToolExecutor(
+      bindConsentChannel(ctx.consentImpl, clientId),
+      index,
+      dispatcher,
+    );
+    return rpc.capture(clusterId, target, async (action) => {
+      const result = await executor.execute({ type: action.type, payload: action.payload });
+      if (result.status !== "ok") return { status: "rejected" };
+      return {
+        status: "approved",
+        result: { pageRef: extractKbPageRef(action.type, result.result) },
+      };
+    });
+  }
+
+  const out = await dispatchTribalRpc(method, params, rpc);
+  if (out.kind === "hit") return out.value;
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -750,11 +838,12 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → policy → chatops → admin. */
+/** Third group: lan → profile → index-reembed → policy → chatops → tribal → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   const lanOutcome = await tryDispatchLanRpc(ctx, method, params);
   if (lanOutcome !== phase4RpcSkipped) return lanOutcome;
@@ -766,6 +855,8 @@ async function dispatchPhase4PlatformGroup(
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
   if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
+  const tribalOutcome = await tryDispatchTribalRpc(ctx, method, params, clientId);
+  if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
 
@@ -779,7 +870,7 @@ export async function tryDispatchPhase4Rpc(
   if (coreOutcome !== phase4RpcSkipped) return coreOutcome;
   const teamMetricsOutcome = await dispatchPhase4TeamMetricsGroup(ctx, method, params, clientId);
   if (teamMetricsOutcome !== phase4RpcSkipped) return teamMetricsOutcome;
-  const platformOutcome = await dispatchPhase4PlatformGroup(ctx, method, params);
+  const platformOutcome = await dispatchPhase4PlatformGroup(ctx, method, params, clientId);
   if (platformOutcome !== phase4RpcSkipped) return platformOutcome;
   return tryDispatchReindexRpc(ctx, method, params, clientId);
 }

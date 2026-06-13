@@ -14,6 +14,7 @@ import {
   buildE2eSinkDispatcher,
   buildE2eSinkRunChatopsTool,
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
+import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusAuditFromConfigDir,
@@ -30,6 +31,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
+  loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   resolveNimbusTomlForProfile,
 } from "../config/nimbus-toml.ts";
@@ -67,8 +69,9 @@ import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
-import type { ExecutorDelegationDep } from "../engine/executor.ts";
+import { type ExecutorDelegationDep, ToolExecutor } from "../engine/executor.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
+import type { ConnectorDispatcher } from "../engine/types.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -95,6 +98,8 @@ import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { createIpcServer } from "../ipc/index.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
+import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
+import type { TribalSubmitAction } from "../ipc/tribal-rpc.ts";
 import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
@@ -111,12 +116,20 @@ import { refreshPolicy } from "../policy/policy-runtime.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
+import { vectorSearchChunks } from "../search/vec-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { invokeTeamTool } from "../teamvault/team-tool-invoke.ts";
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
+import { type SynthSource, synthesizeAnswer } from "../tribal/answer-synthesizer.ts";
+import type { TribalCluster } from "../tribal/cluster-store.ts";
+import { buildTribalBoot, type TribalBoot } from "../tribal/tribal-boot.ts";
+import {
+  handleTribalCaptureCommand,
+  parseTribalCaptureCommand,
+} from "../tribal/tribal-chat-capture.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
 import { createNimbusVault } from "../vault/factory.ts";
@@ -1050,6 +1063,163 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     httpSidecarOpts,
   });
 
+  const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
+
+  // Tribal-knowledge watcher (Phase 6 Slice 6c). Built BEFORE chatops so its `onInboundMessage`
+  // fan-out can be wired into buildChatopsBoot. The chatops↔tribal cycle (tribal needs chatops's
+  // I23 `send`; chatops needs tribal's `onInboundMessage`) is broken with a late-bound `tribalSend`
+  // closure: the watcher reads it at post time, and it's rebound to chatopsBoot.replyTo below.
+  const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
+  // Reassigned below once chatops's reply seam exists (the chatops↔tribal boot cycle).
+  let tribalSend: (target: ReplyTarget, text: string) => Promise<void> = async () => {};
+  let tribalBoot: TribalBoot | undefined;
+  // Slice 6c in-chat capture: recognizes `@nimbus tribal capture <id>` and routes it to the I25
+  // write-gate with the owner's chatops HITL consent. Built in the tribal block, consumed by chatops.
+  let tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
+  if (tribalCfg.enabled) {
+    // Embeddings absent is a DEGRADATION, not a security boundary: repeat detection needs the
+    // embedder, so without it the watcher is inert (embedQuery → null), but the IPC surface,
+    // CLI list/dismiss, and owner-HITL capture still work. The privacy fail-closed (empty
+    // watch_channels) is enforced inside buildTribalBoot regardless.
+    const embeddingRt = rt;
+    if (embeddingRt == null) {
+      syncLogger.warn(
+        "[tribal].enabled but the embedding runtime is unavailable — repeat detection is inert; capture/list still work",
+      );
+    }
+    const tribalModel = embeddingRt?.getEmbeddingModel() ?? "";
+    const tribalWatch = tribalCfg.watchChannels;
+    const tribalWatchSet = new Set(tribalWatch);
+    // Recall the cluster's source threads from the index, channel-filtered IN SQL (review §2.1),
+    // and hydrate each hit with its channel + url for citations. Empty when the cluster has no vec.
+    const gatherSources = (cluster: TribalCluster): SynthSource[] => {
+      const vec = cluster.representativeVec;
+      if (vec === null) return [];
+      const hits = [
+        ...vectorSearchChunks(db, {
+          queryEmbedding: vec,
+          model: tribalModel,
+          limit: 5,
+          service: "slack",
+          itemType: "message",
+          metadataChannelIn: tribalWatch,
+        }),
+        ...vectorSearchChunks(db, {
+          queryEmbedding: vec,
+          model: tribalModel,
+          limit: 5,
+          service: "teams",
+          itemType: "message",
+          metadataChannelIn: tribalWatch,
+        }),
+      ];
+      const out: SynthSource[] = [];
+      const seen = new Set<string>();
+      for (const h of hits) {
+        if (seen.has(h.itemId)) continue;
+        seen.add(h.itemId);
+        const row = db.query("SELECT metadata, url FROM item WHERE id = ?").get(h.itemId) as {
+          metadata: string | null;
+          url: string | null;
+        } | null;
+        let channelId = "";
+        if (row?.metadata != null) {
+          try {
+            const m = JSON.parse(row.metadata) as { channel?: unknown };
+            if (typeof m.channel === "string") channelId = m.channel;
+          } catch {
+            // non-JSON metadata → leave channelId empty (filtered out by the watch-set check)
+          }
+        }
+        out.push({ itemId: h.itemId, channelId, url: row?.url ?? null, text: h.chunkText });
+      }
+      return out;
+    };
+    // v1 synthesis: a deterministic draft (title = the question, body = the source snippets) that
+    // the owner reviews + edits at the HITL gate. The injected-llm seam keeps swapping in an
+    // LLM-authored prose draft a one-line change (answer-synthesizer.ts SYNTH_PROMPT is ready).
+    const tribalSynthesize = (cluster: TribalCluster) =>
+      synthesizeAnswer(
+        {
+          gatherSources,
+          watchChannels: tribalWatchSet,
+          llm: async (question, srcs) => ({
+            title: question.slice(0, 120),
+            bodyMarkdown:
+              srcs.length === 0
+                ? "No source context was found — please write the answer manually before saving."
+                : `Drafted from ${srcs.length} source message(s) — review and edit before saving.\n\n${srcs
+                    .map((s) => `- ${s.text}`)
+                    .join("\n")}`,
+          }),
+        },
+        cluster,
+      );
+    tribalBoot = buildTribalBoot({
+      db,
+      cfg: tribalCfg,
+      embedQuery: (text) =>
+        embeddingRt == null ? Promise.resolve(null) : embeddingRt.embedQuery(text),
+      // Bot self-filter (review §1.1): primary guard is the Slack normalizer's bot_id/subtype skip
+      // (Task 8); this is defense-in-depth using the configured Teams bot app id. (The Slack bot
+      // user id is not resolvable without an extra API call at boot.)
+      botUserIds: new Set([chatopsCfg.teamsBotAppId].filter((s) => s !== "")),
+      send: (target, text) => tribalSend(target, text),
+      synthesize: tribalSynthesize,
+      log: (m) => syncLogger.warn(m),
+    });
+    ipcOpts.tribalRpcCtx = tribalBoot.rpcCtx;
+    // I25 capture write target: the e2e sink when set (Task 20), else the real connector mesh.
+    const tribalE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
+    const tribalDispatcher: ConnectorDispatcher =
+      tribalE2eSinkDir === undefined || tribalE2eSinkDir === ""
+        ? createConnectorDispatcher({
+            listTools: () => connectorMesh.listToolsForDispatcher(),
+            getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+          })
+        : buildE2eSinkDispatcher(tribalE2eSinkDir);
+    ipcOpts.tribalConnectorDispatcher = tribalDispatcher;
+    // In-chat capture trigger (Task 19): `@nimbus tribal capture <id>` → I25 write-gate with the
+    // owner's chatops HITL consent. `chatopsBoot` is late-bound (assigned just below), so the
+    // closure reads it at message time. Skips cleanly if chatops isn't up.
+    const tribalRpcCtx = tribalBoot.rpcCtx;
+    tribalInterceptCommand = async (msg: ChatMessage): Promise<boolean> => {
+      const cmd = parseTribalCaptureCommand(msg.text);
+      if (cmd === undefined) return false;
+      const cb = chatopsBoot;
+      if (cb === undefined) return false;
+      // Only an enrolled (mapped) sender may trigger the owner-HITL capture — otherwise fall
+      // through to the IntentRouter (which refuses unmapped users). Without this, any addressed
+      // channel member could spam the local owner with capture approval prompts.
+      if (!(await cb.isSenderMapped(msg.platform, msg.userId))) return false;
+      const executor = new ToolExecutor(
+        { requestApproval: (p, d) => cb.requestOwnerApproval(p, d) },
+        localIndex,
+        tribalDispatcher,
+      );
+      const submit: TribalSubmitAction = async (action) => {
+        const res = await executor.execute({ type: action.type, payload: action.payload });
+        if (res.status !== "ok") return { status: "rejected" };
+        return {
+          status: "approved",
+          result: { pageRef: extractKbPageRef(action.type, res.result) },
+        };
+      };
+      await handleTribalCaptureCommand(
+        {
+          capture: (id, t) => tribalRpcCtx.capture(id, t, submit),
+          reply: (text) =>
+            cb.replyTo(
+              { kind: "originating", platform: msg.platform, channelId: msg.channelId },
+              text,
+            ),
+        },
+        cmd,
+      );
+      return true;
+    };
+  }
+
   // ChatOps (Phase 6 Slice 5 boot wiring — the deferred follow-up of PR #559). When
   // [chatops].enabled, build the Slack/Teams bot graph: bot-credentialed connector invocation
   // (Team-Vault entry `[chatops].bot_vault_entry`, I19 pattern), identity mapping over the Slice 3
@@ -1057,7 +1227,6 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // bounded I23 reply surface. The engine read path is late-bound in src/index.ts (the engine agent
   // does not exist yet); the local-consent fallback binds to the delegated-approval broker after
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
-  const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
   let chatopsBoot: ChatopsBoot | undefined;
   if (chatopsCfg.enabled) {
     const identityBootRef = identityBoot;
@@ -1068,6 +1237,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     chatopsBoot = buildChatopsBoot({
       cfg: chatopsCfg,
       policyGate,
+      ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
+      ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
       ...(identityBootRef === undefined
         ? {}
         : {
@@ -1125,6 +1296,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     }
     const stopChatops = chatopsBoot;
     sidecarStops.push(() => void stopChatops.stop());
+    // Resolve the chatops↔tribal cycle: rebind the tribal watcher's `send` to the chatops I23
+    // reply seam now that it exists. Without chatops, `tribalSend` stays the no-op (detection
+    // still records clusters; CLI capture works; only auto-suggestion posts are suppressed).
+    if (tribalBoot !== undefined) {
+      const replyTo = chatopsBoot.replyTo;
+      tribalSend = (target, text) => replyTo(target, text);
+    }
   }
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every

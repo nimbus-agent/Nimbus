@@ -732,7 +732,7 @@ Phase 6 bundles several independent subsystems; it ships as **9 sequenced delive
 | 3 | Identity — SSO/OIDC/SAML + SCIM (✅ OIDC device-code + SCIM trust-anchor delivered 2026-06-05, invariant I18; SAML deferred) | 1 |
 | 4 | Org Policy Engine + Admin Console + Observability (✅ delivered 2026-06-07, invariant I22) | 1 |
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) (✅ delivered 2026-06-09, invariant I23) | 1, 2 |
-| 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) — **Slice 6a** (ghost / conflicts / huddle agents + V38 known-namespaces cache) ✅ 2026-06-11; 6b (cloud janitor + blast-radius preflight) + 6c (tribal-knowledge) remain | 1 |
+| 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) — **Slice 6a** (ghost / conflicts / huddle agents + V38 known-namespaces cache) ✅ 2026-06-11; **6b** (cloud janitor + blast-radius preflight, I24) ✅ 2026-06-12; **6c** (tribal-knowledge extraction, I25/V39) ✅ 2026-06-12 — Slice 6 COMPLETE | 1 |
 | 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) | 2, 3 |
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing |
 | 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent |
@@ -744,7 +744,7 @@ Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; S
 - **Slice 3** ↔ "Identity & Access" (SSO/OIDC/SAML, SCIM, role-based access control)
 - **Slice 4** ↔ "Shared Workflows & Policy" (org-level policy engine + enforcement) + "Admin & Observability"
 - **Slice 5** ↔ "ChatOps"
-- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight) — **Slice 6a** ✅ 2026-06-11: ghost / conflicts / huddle agents + V38 `federation_known_namespaces` cache; **6b** (cloud janitor + blast-radius preflight) + **6c** (tribal-knowledge) remain
+- **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight) — **Slice 6a** ✅ 2026-06-11: ghost / conflicts / huddle agents + V38 `federation_known_namespaces` cache; **6b** ✅ 2026-06-12: cloud janitor + blast-radius preflight (I24); **6c** ✅ 2026-06-12: tribal-knowledge extraction (repeated-question detection → owner-approved Notion/Confluence KB capture; I25/D19; V39 `tribal_clusters`). **Slice 6 COMPLETE.**
 - **Slice 7** ↔ "Data Warehouses & BI (SSO-gated)"
 - **Slice 8** ↔ "Share & Virality Primitives"
 - **Slice 9** ↔ "Deferred from Phase 5"

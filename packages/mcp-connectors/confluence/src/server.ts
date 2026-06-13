@@ -7,11 +7,13 @@ import {
   requireTrimmedEnv,
 } from "../../shared/atlassian-json-fetch.ts";
 import { joinApiPath } from "../../shared/join-api-path.ts";
+import { parseCitationsJson } from "../../shared/kb-markdown.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResultFromTextIfOk,
 } from "../../shared/mcp-tool-kit.ts";
+import { buildConfluenceKbPageBody } from "./kb-append.ts";
 
 function wikiRoot(siteBase: string): string {
   const b = normalizeRequiredSiteBaseUrl(siteBase, "CONFLUENCE_BASE_URL is empty");
@@ -180,6 +182,32 @@ reg(
     if (parsed.parentPageId !== undefined) {
       body["ancestors"] = [{ id: parsed.parentPageId }];
     }
+    const res = await confFetch("/content", { method: "POST", body: JSON.stringify(body) });
+    return mcpJsonResultFromTextIfOk("Confluence", res);
+  },
+);
+
+const confluenceKbAppendSchema = z.object({
+  spaceKey: z.string().min(1),
+  parentPageId: z.string().min(1),
+  title: z.string().min(1),
+  bodyMarkdown: z.string().min(1),
+  citationsJson: z.string().optional(),
+});
+
+reg(
+  "confluence_kb_append",
+  "Create a knowledge-base page under a parent from simple markdown + citations (POST /content). " +
+    "Used by Nimbus tribal-knowledge capture; the destination space/parent is supplied by the gateway from local config only.",
+  confluenceKbAppendSchema,
+  async (parsed) => {
+    const body = buildConfluenceKbPageBody({
+      spaceKey: parsed.spaceKey,
+      parentPageId: parsed.parentPageId,
+      title: parsed.title,
+      bodyMarkdown: parsed.bodyMarkdown,
+      citations: parseCitationsJson(parsed.citationsJson ?? "[]"),
+    });
     const res = await confFetch("/content", { method: "POST", body: JSON.stringify(body) });
     return mcpJsonResultFromTextIfOk("Confluence", res);
   },

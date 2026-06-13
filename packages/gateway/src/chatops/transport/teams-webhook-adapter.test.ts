@@ -17,6 +17,7 @@ describe("Teams activity normalization", () => {
       userId: "29:user",
       text: "<at>Nimbus</at> who's on call?",
       ts: "act-1",
+      addressedToBot: true,
     });
   });
 

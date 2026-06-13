@@ -14,6 +14,8 @@ export interface ChatMessage {
   readonly text: string;
   /** Platform message timestamp/id - used as the idempotency key with channelId. */
   readonly ts: string;
+  /** true if the message @-mentions the bot (routes to IntentRouter); false = ambient (tribal-only). */
+  readonly addressedToBot: boolean;
 }
 
 /** Result of parsing a message: either a free-form read or a structured write. */

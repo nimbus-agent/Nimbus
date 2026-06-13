@@ -1,5 +1,6 @@
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
@@ -21,6 +22,7 @@ import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import type { ClientSession } from "../session.ts";
+import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
 
 export type BunSessionData = { session: ClientSession };
@@ -90,4 +92,12 @@ export type CreateIpcServerOptions = {
   // ChatOps (Phase 6 Slice 5). The dependency seam behind the chatops.* IPC namespace (status,
   // start, stop, test). Present only when [chatops].enabled at boot; the dispatcher skips when unset.
   chatopsRpcCtx?: ChatopsRpcCtx;
+  // Tribal-knowledge extraction (Phase 6 Slice 6c). The dependency seam behind the tribal.* IPC
+  // namespace (status, start, stop, list, dismiss, scan; capture added with the write path).
+  // Present only when [tribal].enabled at boot; the dispatcher skips when unset. LAN-forbidden.
+  tribalRpcCtx?: TribalRpcCtx;
+  // Connector dispatch seam for the I25 tribal capture write (the KB-append tools). The capture
+  // executor is built PER-CALL in the dispatcher with the initiating client's consent; this
+  // provides the MCP dispatch target. Present only when [tribal].enabled at boot.
+  tribalConnectorDispatcher?: ConnectorDispatcher;
 };

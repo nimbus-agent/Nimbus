@@ -18,6 +18,12 @@ export function vectorSearchChunks(
     service?: string;
     itemType?: string;
     since?: number;
+    /**
+     * Slice 6c: restrict hits to items whose `metadata.channel` is in this allowlist
+     * (`json_extract(i.metadata,'$.channel') IN (...)`). Empty/undefined → no channel filter.
+     * The KNN already bounds candidates to the top-`limit`; this filters within that set.
+     */
+    metadataChannelIn?: readonly string[];
   },
 ): VectorChunkHit[] {
   const dims = options.queryEmbedding.length;
@@ -53,6 +59,11 @@ export function vectorSearchChunks(
   if (options.since !== undefined && options.since > 0) {
     sql += ` AND i.modified_at >= ?`;
     params.push(options.since);
+  }
+  if (options.metadataChannelIn !== undefined && options.metadataChannelIn.length > 0) {
+    const placeholders = options.metadataChannelIn.map(() => "?").join(", ");
+    sql += ` AND json_extract(i.metadata, '$.channel') IN (${placeholders})`;
+    for (const ch of options.metadataChannelIn) params.push(ch);
   }
   sql += ` ORDER BY knn.distance`;
   const rows = db.query(sql).all(...params) as Array<{

@@ -126,6 +126,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "teamvault.list",
     "telemetry.getStatus",
     "telemetry.setEnabled",
+    "tribal.list",
+    "tribal.status",
     "updater.applyUpdate",
     "updater.checkNow",
     "updater.getStatus",
@@ -477,8 +479,21 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_tribal_read_only() {
+        // Slice 6c: only the read-only status + list are renderer-callable; control-plane /
+        // mutating ops (start/stop/dismiss/scan/capture) stay CLI-only, off the Tauri surface (I7).
+        assert!(is_method_allowed("tribal.status"));
+        assert!(is_method_allowed("tribal.list"));
+        assert!(!is_method_allowed("tribal.start"));
+        assert!(!is_method_allowed("tribal.stop"));
+        assert!(!is_method_allowed("tribal.dismiss"));
+        assert!(!is_method_allowed("tribal.scan"));
+        assert!(!is_method_allowed("tribal.capture"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 88);
+        assert_eq!(ALLOWED_METHODS.len(), 90);
     }
 
     #[test]

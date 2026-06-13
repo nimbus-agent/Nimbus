@@ -22,7 +22,7 @@ import { buildConnectorPost } from "./transport/connector-post.ts";
 import { SlackSocketAdapter, type SocketLike } from "./transport/slack-socket-adapter.ts";
 import { TeamsWebhookAdapter } from "./transport/teams-webhook-adapter.ts";
 import type { ChatTransport } from "./transport/transport.ts";
-import type { ChatMessage, ChatPlatform } from "./types.ts";
+import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
 
 export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
@@ -46,6 +46,14 @@ export interface ChatopsBootDeps {
   /** Test seams for the Slack Socket Mode adapter. */
   readonly socketFactory?: (url: string) => SocketLike;
   readonly scheduleReconnect?: (ms: number, fn: () => void) => void;
+  /** Slice 6c: called for every inbound message (before routing). Never throws. */
+  readonly onInboundMessage?: (m: ChatMessage) => Promise<void>;
+  /**
+   * Slice 6c: a chance to intercept an addressed message as a special command BEFORE the
+   * IntentRouter (e.g. `tribal capture <id>`). Returns true if it handled the message (routing is
+   * then skipped). Kept generic so chatops stays decoupled from the tribal subsystem.
+   */
+  readonly interceptCommand?: (m: ChatMessage) => Promise<boolean>;
 }
 
 export interface ChatopsBoot {
@@ -58,6 +66,22 @@ export interface ChatopsBoot {
   bindAskEngine(fn: (query: string, namespace: string) => Promise<string>): void;
   /** Late-bind the local-owner consent fallback (IPC consent exists after createIpcServer). */
   bindLocalConsent(fn: ConsentChannel["requestApproval"]): void;
+  /**
+   * Slice 6c: the I23 reply seam (server-derived `ReplyTarget` → connector post), reused by the
+   * tribal watcher to post repeat-question suggestions. Still confined to D17's allowed post path.
+   */
+  replyTo(target: ReplyTarget, text: string): Promise<void>;
+  /**
+   * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
+   * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
+   */
+  requestOwnerApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
+  /**
+   * Slice 6c: true if the sender resolves to a mapped (SCIM-enrolled) identity. An intercepted
+   * command (e.g. in-chat tribal capture) consults this so an unenrolled user cannot trigger the
+   * owner-HITL flow — mirroring the IntentRouter's unmapped-refusal, which the intercept bypasses.
+   */
+  isSenderMapped(platform: ChatPlatform, userId: string): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -254,6 +278,9 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
 
   const handleMessage = async (msg: ChatMessage): Promise<void> => {
     lastPlatformByChannel.set(msg.channelId, msg.platform);
+    // Slice 6c fan-out: every inbound message (addressed or ambient) flows to the tribal
+    // watcher first. It swallows its own errors, so this never breaks the command path.
+    if (deps.onInboundMessage !== undefined) await deps.onInboundMessage(msg);
     const normalized = normalizeChatText(msg.text).toLowerCase();
     if (normalized === "approve" || normalized === "reject") {
       const requestId = pendingCardByChannel.get(msg.channelId);
@@ -272,6 +299,11 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
         return; // a verdict on a live card is never routed as a command
       }
     }
+    // Ambient (non-addressed) messages are tribal-only — never routed as a command. Today all
+    // delivered messages were @-mentions (addressedToBot=true), so this preserves behavior.
+    if (!msg.addressedToBot) return;
+    // Slice 6c: a special command (e.g. `tribal capture <id>`) is intercepted before the router.
+    if (deps.interceptCommand !== undefined && (await deps.interceptCommand(msg))) return;
     await routerFor(msg).handle(msg);
   };
 
@@ -344,6 +376,10 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
     bindLocalConsent: (fn) => {
       localConsent = fn;
     },
+    replyTo: (target, text) => replyDispatcher.send(target, text),
+    requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
+    isSenderMapped: async (platform, userId) =>
+      (await mapper.resolve(platform, userId)).kind === "mapped",
     stop: () => service.stop(),
   };
 }

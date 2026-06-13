@@ -46,6 +46,7 @@ import {
   runTeam,
   runTelemetry,
   runTest,
+  runTribal,
   runTui,
   runUpdate,
   runVault,
@@ -115,6 +116,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   scim: runScim,
   policy: runPolicy,
   chatops: runChatops,
+  tribal: runTribal,
   admin: runAdmin,
   "mcp-server": runMcpServer,
 };

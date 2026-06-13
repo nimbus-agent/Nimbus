@@ -1303,6 +1303,67 @@ nimbus chatops test "run deployment.rollback service=payment-service version=v1.
 
 ---
 
+## Tribal-Knowledge Extraction
+
+Detects repeated questions in an allowlisted set of Slack/Teams channels and, on your HITL approval, captures a synthesized Q&A into a config-pinned shared knowledge base (Notion/Confluence) — Phase 6 Slice 6c, behind invariant `I25` (the KB write destination comes from local config only, never the caller). Disabled by default; enable via the `[tribal]` section in `nimbus.toml`. The subcommands are local/CLI-only (forbidden over the LAN wire); only `tribal.status` / `tribal.list` are exposed to the desktop UI.
+
+**Configuration (`nimbus.toml`):**
+
+```toml
+[tribal]
+enabled = true
+match = "embedding"            # or "embedding+llm" for a precision second pass
+min_occurrences = 3            # fire a suggestion after N occurrences of a question
+window_days = 14               # within this rolling window
+cooldown_days = 30             # after capture/dismiss, suppress re-suggestion this long
+watch_channels = ["C123ABC"]   # REQUIRED non-empty when enabled (fail-closed privacy boundary)
+
+# At least one capture destination — the owner's local config is the ONLY source of the
+# destination (I25); a `--target` selector on capture just picks which one.
+[tribal.notion]
+database_id = "<notion-database-id>"
+
+[tribal.confluence]
+space_key = "ENG"
+parent_page_id = "<parent-page-id>"
+```
+
+> **Deployment note (Slack):** seeing non-mention channel messages requires the deployed Slack app manifest to subscribe to the `message.channels` bot event. Without it the watcher only sees `@nimbus` mentions (degraded, not broken). **Cost note:** every watched-channel question is embedded locally (MiniLM, no network) before the cheap question-classifier and the channel allowlist short-circuit non-questions — keep `watch_channels` scoped to the channels where Q&A actually happens.
+
+### `nimbus tribal status`
+
+Show whether the watcher is enabled and how many clusters are tracked. Default subcommand.
+
+```bash
+nimbus tribal status
+```
+
+### `nimbus tribal start` / `nimbus tribal stop`
+
+Pause/resume ingestion of inbound messages without restarting the gateway.
+
+### `nimbus tribal list [status]`
+
+List tracked clusters, optionally filtered by `pending` / `suggested` / `captured` / `dismissed`.
+
+```bash
+nimbus tribal list suggested
+```
+
+### `nimbus tribal capture <cluster-id> [--target notion|confluence]`
+
+Synthesize a draft answer + citations for a cluster and write it to the KB **after your HITL approval**. `--target` is required only when both `[tribal.notion]` and `[tribal.confluence]` are configured; the destination database/space/parent is always taken from local config, never from the command. Also available in-chat as `@nimbus tribal capture <cluster-id>`.
+
+```bash
+nimbus tribal capture tq_ab12cd34ef56 --target notion
+```
+
+### `nimbus tribal dismiss <cluster-id>` · `nimbus tribal scan`
+
+`dismiss` suppresses a cluster (enters cooldown); `scan` re-fires suggestions for any pending cluster that already crossed the threshold.
+
+---
+
 ## Admin Console
 
 Local-only helpers for the admin read-surface (Phase 6 Slice 4). The read-surface bearer is the Vault credential `http_api.deployment_token` — the same bearer that protects the `I13` HTTP write surface. The CLI talks to the gateway IPC-only and never holds the Vault, so `console` and `token` print a resolver command rather than echoing the secret; both are local-only (no gateway round-trip).
