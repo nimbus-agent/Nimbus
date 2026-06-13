@@ -280,7 +280,7 @@ git commit -m "test(coverage-D1): un-exclude mdns-discovery-provider via bonjour
 - Modify: `scripts/coverage-floor/exclusions.ts` (drop the entry)
 - Modify: `sonar-project.properties` (drop the `team-tool-spawn.ts` coverage-exclusion entry)
 
-⚠️ **I19/D15:** This task only ADDs exports (`spawnerFor`, `runSpawnedToolCall`); the public `spawnTeamToolAndCall(req)` signature is unchanged and the real spawners still carry I1 (`extensionProcessEnv`) + I15 (`wrapServerSpec`). The I19 runtime test injects at the `invoke-gate.ts`/`team-tool-invoke.ts` layer (not `spawnTeamToolAndCall`), so it is unaffected — Task 4 re-verifies.
+⚠️ **I19/D15:** This task ADDs exports (`spawnerFor`, `runSpawnedToolCall`) and makes **one tested, strictly-safer error-path change** (moving `await spawner(ctx)` inside the try so a partially-registered client is cleaned up if the spawner throws — Antigravity review 2.1). The public `spawnTeamToolAndCall(req)` signature is unchanged, and **the I19 secret path is untouched**: the seam selects *which* spawner; secrets still flow only through the real spawner's subprocess env (I1 `extensionProcessEnv` + I15 `wrapServerSpec`). The I19 runtime test injects at the `invoke-gate.ts`/`team-tool-invoke.ts` layer (not `spawnTeamToolAndCall`), so it is unaffected — Task 4 re-verifies.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -376,6 +376,21 @@ describe("runSpawnedToolCall", () => {
     expect(result).toBe("ok");
     expect(disconnected).toBe(1); // rejection swallowed, no throw
   });
+
+  test("disconnects partially-registered clients if the spawner throws mid-registration", async () => {
+    let disconnected = 0;
+    const partial = fakeClient({}, () => {
+      disconnected += 1;
+      return Promise.resolve();
+    });
+    const spawner = async (ctx: MeshSpawnContext): Promise<void> => {
+      ctx.setLazyClient("partial", partial);
+      throw new Error("spawn boom");
+    };
+    // The spawner error propagates, but the already-registered client is still disconnected.
+    await expect(runSpawnedToolCall(spawner, req())).rejects.toThrow("spawn boom");
+    expect(disconnected).toBe(1);
+  });
 });
 ```
 
@@ -399,7 +414,8 @@ export function spawnerFor(service: string): Spawner {
  * The testable lifecycle of {@link spawnTeamToolAndCall}: run `spawner` (which populates the
  * clients map), call the named tool on whichever spawned client exposes it, and disconnect all.
  * Extracted so the spawn-call-drain logic is unit-testable with a fake spawner + fake clients,
- * without opening a real connector subprocess.
+ * without opening a real connector subprocess. `spawner(ctx)` runs INSIDE the try so a
+ * partially-registered client is still disconnected if the spawner throws mid-registration.
  */
 export async function runSpawnedToolCall(
   spawner: Spawner,
@@ -418,8 +434,8 @@ export async function runSpawnedToolCall(
     scheduleLazyDisconnect: () => {},
   };
 
-  await spawner(ctx);
   try {
+    await spawner(ctx);
     for (const client of clients.values()) {
       const tools = await listLazyMeshClientTools(client);
       const tool = tools[req.toolId];
@@ -450,7 +466,7 @@ export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<u
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd packages/gateway && bun test src/teamvault/team-tool-spawn.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests: 2 `spawnerFor` + 6 `runSpawnedToolCall`).
 
 - [ ] **Step 5: Drop the gate exclusion + the Sonar coverage-exclusion**
 
