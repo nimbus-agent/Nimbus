@@ -55,6 +55,7 @@ coverage/
 !scripts/coverage/**
 # JUnit XML for CI lives under junit-reports/ (not ignored — dorny/test-reporter uses fast-glob with gitignore).
 reports/
+.stryker-tmp/
 .nyc_output/
 lcov.info
 *.lcov

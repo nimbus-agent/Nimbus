@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Dev-only, advisory mutation harness (True Coverage C3). break:null => never fails a build. inPlace:true => instrument real files + restore (no monorepo sandbox). Uses the built-in COMMAND runner: the experimental @hughescr/stryker-bun-runner's Bun-Inspector WebSocket fails to connect locally (esp. Windows); the command runner just runs a scoped `bun test` and is reliable cross-platform. NOTE: security-invariants.test.ts is intentionally NOT in this scope — it makes source-TEXT assertions (reads the .ts and regex-matches) that break once Stryker instruments the file in place; executor.ts behavior is covered by executor-delegation + executor-flagship (which pinned it to 100%). See docs/contributors/mutation-testing.md.",
+  "testRunner": "command",
+  "coverageAnalysis": "off",
+  "commandRunner": {
+    "command": "bun test packages/gateway/src/engine/executor-delegation.test.ts packages/gateway/src/engine/executor-flagship.test.ts packages/gateway/src/engine/tool-output-envelope.test.ts"
+  },
+  "inPlace": true,
+  "mutate": [
+    "packages/gateway/src/engine/executor.ts",
+    "packages/gateway/src/engine/tool-output-envelope.ts"
+  ],
+  "thresholds": { "high": 80, "low": 60, "break": null }
+}
