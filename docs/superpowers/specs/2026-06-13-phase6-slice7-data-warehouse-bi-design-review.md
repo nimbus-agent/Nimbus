@@ -43,6 +43,7 @@ unbuilt. Delivering the full 6-hop chain in Slice 7 would require also making th
 connectors graph-participating — a scope expansion the design hid.
 
 **Decision (recommended (b)):**
+
 - **(a)** Expand 7a to also add dbt-`data_model` + Airflow-DAG graph participation → full chain
   achievable, but ~2 extra connectors' worth of graph work bleeds into a "warehouse/BI" slice.
 - **(b) [chosen]** Scope the gating acceptance to the hops **Slice 7 owns**: Tableau→Snowflake,

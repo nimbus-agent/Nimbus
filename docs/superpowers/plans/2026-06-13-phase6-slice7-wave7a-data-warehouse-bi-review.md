@@ -2,7 +2,7 @@
 
 **Review Date:** 2026-06-13  
 **Reviewer:** AI Coding Assistant (Antigravity)  
-**Target Plan:** [2026-06-13-phase6-slice7-wave7a-data-warehouse-bi.md](file:///C:/gitrep/Nimbus/.claude/worktrees/phase6-slice7/docs/superpowers/plans/2026-06-13-phase6-slice7-wave7a-data-warehouse-bi.md)
+**Target Plan:** [2026-06-13-phase6-slice7-wave7a-data-warehouse-bi.md](2026-06-13-phase6-slice7-wave7a-data-warehouse-bi.md)
 
 ---
 
@@ -15,13 +15,15 @@ This review analyzes the Wave 7a implementation plan for the Data Warehouse & BI
 ## 2. Inconsistencies & Critical Feedback
 
 ### Q2.1: Discrepancy in Lineage Relation Naming (`feeds` vs. `upstream_refs`)
-* **The Issue:** 
-  - The design spec (§4) specifies the relationship name as **`feeds`** (`data_model` → `dashboard`).
-  - The implementation plan (Task 2 & Task 5) uses **`upstream_refs`** for the same relationship.
+
+* **The Issue:**
+  * The design spec (§4) specifies the relationship name as **`feeds`** (`data_model` → `dashboard`).
+  * The implementation plan (Task 2 & Task 5) uses **`upstream_refs`** for the same relationship.
 * **Impact:** This mismatch can lead to integration errors or confusion during query-time BFS traversal in `relationship-graph.ts`.
 * **Recommendation:** Standardize on one relation name across both documents. If `upstream_refs` is preferred to align with `agents/impact.ts` (as noted in Task 2), update the design spec to match.
 
 ### Q2.2: Invalid Snowflake API Endpoint URL
+
 * **The Issue:** Task 8 step 3 specifies querying:
   `https://${creds.account}.snowflakecomputing.com/api/v2/information-schema/tables`
 * **The Reality:** Snowflake does not expose a native `/api/v2/information-schema/tables` endpoint. To fetch metadata via Snowflake's REST/SQL API, one must send a `POST` request to the statement execution endpoint:
@@ -34,14 +36,17 @@ This review analyzes the Wave 7a implementation plan for the Data Warehouse & BI
 ## 3. Technical Improvements & Edge Cases
 
 ### S3.1: Parsing Quoted Dots in `normalizeDataModelKey()`
+
 * **The Issue:** In Task 3, `normalizeDataModelKey` splits the input string blindly on the `.` character.
 * **The Risk:** If a schema or table identifier contains a literal dot and is quoted (e.g., `ANALYTICS.PUBLIC."Sales.2026"`), the blind split will slice `"Sales` and `2026"` into separate parts, resulting in a corrupted normalized key:
   `analytics.public.sales.2026` instead of `analytics.public.sales.2026` representing a 3-part identifier.
 * **Recommendation:** While simple split handles most cases, we should note in the codebase comment that literal dots inside quoted identifiers are not supported, or implement a regex-based identifier tokenizer that ignores dots inside quotes.
 
 ### S3.2: Task 16 `toRow` Adaptor Signature
+
 * **The Issue:** Task 16 references `toRow(...)` as a local helper to convert a mapped row into an `upsertIndexedItem` input.
 * **Recommendation:** Explicitly outline the helper structure in the test file so implementers do not get stuck, e.g.:
+
   ```typescript
   function toRow(mapped: any) {
     return {

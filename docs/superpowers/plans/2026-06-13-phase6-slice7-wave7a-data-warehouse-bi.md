@@ -15,12 +15,14 @@
 ## File Structure
 
 **New gateway-side files:**
+
 - `packages/gateway/src/connectors/data-model-key.ts` — `normalizeDataModelKey()` (the cross-connector edge key)
 - `packages/gateway/src/index/graph-lineage-types-v40-sql.ts` — V40 relation-type seed
 - `packages/gateway/src/connectors/{snowflake,tableau,looker,powerbi,monte-carlo,bigeye}-sync.ts` — 6 sync handlers
 - `packages/gateway/src/connectors/{snowflake-data-model,tableau-dashboard,looker-content,powerbi-dashboard,monte-carlo-dq,bigeye-dq}-mapping.ts` — 6 pure mappers (Looker emits two types from one file)
 
 **Modified gateway-side files:**
+
 - `packages/gateway/src/graph/relationship-graph.ts` — extend `ITEM_LINKED_ENTITY_TYPES`
 - `packages/gateway/src/graph/graph-populator.ts` — 3 new handlers + dispatch
 - `packages/gateway/src/index/migrations/runner.ts` — register V40
@@ -39,6 +41,7 @@
 ### Task 1: Make `data_model` / `dashboard` / `data_quality_test` graph-participating
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/relationship-graph.ts:6-20`
 - Test: `packages/gateway/src/graph/relationship-graph.test.ts`
 
@@ -90,6 +93,7 @@ git commit -m "feat(graph): make data_model/dashboard/data_quality_test graph-pa
 ### Task 2: V40 migration — seed the lineage relation types
 
 **Files:**
+
 - Create: `packages/gateway/src/index/graph-lineage-types-v40-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts` (import + append a `simpleStep`)
 - Test: `packages/gateway/src/index/migrations/runner-v40.test.ts`
@@ -181,6 +185,7 @@ git commit -m "feat(index): V40 seed lineage relation types (upstream_refs/deriv
 ### Task 3: `normalizeDataModelKey()` — the canonical cross-connector edge key
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/data-model-key.ts`
 - Test: `packages/gateway/src/connectors/data-model-key.test.ts`
 
@@ -270,6 +275,7 @@ git commit -m "feat(connectors): normalizeDataModelKey for cross-connector linea
 ### Task 4: `syncDataModelGraph` populator handler (+ `derived_from` edges)
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/graph-populator.ts` (add handler + dispatch branch)
 - Test: `packages/gateway/src/graph/graph-populator.test.ts`
 
@@ -369,6 +375,7 @@ git commit -m "feat(graph): syncDataModelGraph emits derived_from lineage edges"
 ### Task 5: `syncDashboardGraph` populator handler (+ `upstream_refs` edges)
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/graph-populator.ts`
 - Test: `packages/gateway/src/graph/graph-populator.test.ts`
 
@@ -452,6 +459,7 @@ git commit -m "feat(graph): syncDashboardGraph emits upstream_refs lineage edges
 ### Task 6: `syncDataQualityTestGraph` populator handler (+ `monitors` edges)
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/graph-populator.ts`
 - Test: `packages/gateway/src/graph/graph-populator.test.ts`
 
@@ -543,6 +551,7 @@ git commit -m "feat(graph): syncDataQualityTestGraph emits monitors lineage edge
 ### Task 7: Snowflake `data_model` mapper
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/snowflake-data-model-mapping.ts`
 - Test: `packages/gateway/src/connectors/snowflake-data-model-mapping.test.ts`
 
@@ -650,6 +659,7 @@ git commit -m "feat(snowflake): data_model mapper (schema-only, normalized key)"
 ### Task 8: Snowflake sync handler
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/snowflake-sync.ts`
 - Test: `packages/gateway/test/unit/connectors/snowflake-sync.test.ts`
 
@@ -846,6 +856,7 @@ git commit -m "feat(snowflake): gateway sync handler (data_model indexing)"
 ### Task 9: Register Snowflake (secrets manifest + catalog + rate-limiter)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts`
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts`
 - Modify: `packages/gateway/src/sync/rate-limiter.ts`
@@ -893,6 +904,7 @@ git commit -m "feat(snowflake): register secrets/catalog/rate-limiter"
 ### Task 10: Snowflake MCP package + config + sync-registry wiring
 
 **Files:**
+
 - Create: `packages/mcp-connectors/snowflake/{package.json,tsconfig.json,nimbus.extension.json,README.md,src/server.ts}`
 - Modify: wherever syncables are assembled into the scheduler (grep for `createMetabaseSyncable(` to find the registration site, e.g. `connectors/registry.ts` or `platform/assemble.ts`)
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (add a `[connectors.snowflake]` parser section, mirroring an existing connector section)
@@ -1019,6 +1031,7 @@ Each connector repeats Tasks 7–10 (mapper → sync → registration → MCP pa
 ### Task 16: Slice-7 sub-chain lineage integration test (<500ms, zero live API)
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/slice7-lineage.test.ts`
 
 **Asserts** the four owned hops compose via the existing `traverseGraph` over a real SQLite db seeded purely by running the mappers (no network):
@@ -1085,6 +1098,7 @@ git commit -m "test(slice7): lineage sub-chain resolves <500ms with zero live AP
 ### Task 17: Full-chain stretch test (skipped) + preflight
 
 **Files:**
+
 - Modify: `packages/gateway/test/integration/slice7-lineage.test.ts`
 
 - [ ] **Step 1: Add a `test.skip` documenting the stretch**
