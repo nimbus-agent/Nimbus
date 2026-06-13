@@ -282,6 +282,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Tableau (Tier-3, metadata-only). Per-tenant host (derived from
+  // tableau.url) is added at spawn time by phase3AddTableauMcp via
+  // manifestWithExtraNetworkHosts.
+  tableau: baseManifest("com.nimbus.tableau", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

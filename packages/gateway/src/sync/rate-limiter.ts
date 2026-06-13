@@ -75,7 +75,8 @@ export type Provider =
   | "fastmail"
   | "protonmail"
   | "great_expectations"
-  | "snowflake";
+  | "snowflake"
+  | "tableau";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -160,6 +161,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   fastmail: { requestsPerMinute: 60, burstSize: 10 },
   protonmail: { requestsPerMinute: 60, burstSize: 10 },
   snowflake: { requestsPerMinute: 60, burstSize: 10 },
+  tableau: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

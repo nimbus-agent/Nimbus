@@ -151,6 +151,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // for auth against the Snowflake SQL REST API. Indexes schema/table metadata
   // (column names + tags, row-count estimates) only — NEVER row data.
   snowflake: ["snowflake.account", "snowflake.oauth_token", "snowflake.key_pair_jwt"],
+  // Tableau (Tier-3 no-row-data BI). Uses a Personal Access Token (PAT name +
+  // secret) against the Tableau REST API. Indexes dashboards/views as metadata
+  // only — NEVER row data or underlying cell values.
+  tableau: ["tableau.url", "tableau.pat_name", "tableau.pat_secret"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
