@@ -40,4 +40,6 @@ test("includes the sandbox helper + a postinstall setcap scriptlet when present"
 test("omits the helper + postinstall when absent", () => {
   const y = renderNfpmConfig({ ...BASE, hasSandboxHelper: false });
   expect(y).not.toContain("nimbus-sandbox-helper");
+  expect(y).not.toContain("scripts:");
+  expect(y).not.toContain("postinstall:");
 });
