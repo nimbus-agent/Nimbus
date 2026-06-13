@@ -41,6 +41,7 @@ import {
   phase3AddReadwiseMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
+  phase3AddSnowflakeMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
   phase3AddStackoverflowMcp,
@@ -823,6 +824,79 @@ describe("phase3AddMetabaseMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["METABASE_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddSnowflakeMcp", () => {
+  test("no-op without snowflake.account + token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("no-op when account is present but token is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "acme-xy12345");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("no-op when token is present but account is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.oauth_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("no-op when both are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "   ");
+    await vault.set("snowflake.oauth_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("spawns with SNOWFLAKE_ACCOUNT/SNOWFLAKE_TOKEN env + derived host in manifest", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "acme-xy12345");
+    await vault.set("snowflake.oauth_token", "tok-test");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["snowflake"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "acme-xy12345.snowflakecomputing.com");
+    expect(spec.env?.["SNOWFLAKE_ACCOUNT"]).toBe("acme-xy12345");
+    expect(spec.env?.["SNOWFLAKE_TOKEN"]).toBe("tok-test");
+  });
+
+  test("prefers oauth_token over key_pair_jwt when both are set", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "acme-xy12345");
+    await vault.set("snowflake.oauth_token", "oauth-tok");
+    await vault.set("snowflake.key_pair_jwt", "jwt-tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["snowflake"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["SNOWFLAKE_TOKEN"]).toBe("oauth-tok");
+  });
+
+  test("falls back to key_pair_jwt when oauth_token is absent", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "acme-xy12345");
+    await vault.set("snowflake.key_pair_jwt", "jwt-only");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["snowflake"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["SNOWFLAKE_TOKEN"]).toBe("jwt-only");
   });
 });
 

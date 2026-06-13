@@ -70,6 +70,7 @@ import { createSalesforceSyncable } from "../connectors/salesforce-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
 import { createSentrySyncable } from "../connectors/sentry-sync.ts";
 import { createSlackSyncable } from "../connectors/slack-sync.ts";
+import { createSnowflakeSyncable } from "../connectors/snowflake-sync.ts";
 import { createSnykSyncable } from "../connectors/snyk-sync.ts";
 import { createSonarqubeSyncable } from "../connectors/sonarqube-sync.ts";
 import { createStackOverflowSyncable } from "../connectors/stackoverflow-sync.ts";
@@ -339,6 +340,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMetabaseSyncable({
       ensureMetabaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createSnowflakeSyncable({
+      ensureSnowflakeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

@@ -845,6 +845,32 @@ export async function phase3AddMetabaseMcp(
   );
 }
 
+export async function phase3AddSnowflakeMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const account = (await readConnectorSecret(vault, "snowflake", "account"))?.trim() ?? "";
+  const token =
+    (await readConnectorSecret(vault, "snowflake", "oauth_token"))?.trim() ??
+    (await readConnectorSecret(vault, "snowflake", "key_pair_jwt"))?.trim() ??
+    "";
+  if (account === "" || token === "") {
+    return;
+  }
+  const host = `${account}.snowflakecomputing.com`;
+  const manifest = manifestWithExtraNetworkHosts("snowflake", [host]);
+  servers["snowflake"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("snowflake")],
+      env: extensionProcessEnv({ SNOWFLAKE_ACCOUNT: account, SNOWFLAKE_TOKEN: token }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSupersetMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1537,6 +1563,7 @@ export async function buildPhase3Servers(
   await phase3AddFluxMcp(vault, servers, sandboxCwd);
   await phase3AddDbtMcp(vault, servers, sandboxCwd);
   await phase3AddMetabaseMcp(vault, servers, sandboxCwd);
+  await phase3AddSnowflakeMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);
