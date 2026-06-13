@@ -1,6 +1,6 @@
 # Signing Key Lifecycle
 
-Operational runbooks for the two signing keys Nimbus depends on: the **updater signing key** (Ed25519, gates auto-update) and the **release signing key** (GPG, signs release artifacts). The security *model* and reporting policy live in [`../SECURITY.md`](../SECURITY.md); this file is the maintainer-facing procedure for rotation and compromise response.
+Operational runbooks for the two signing keys Nimbus depends on: the **updater signing key** (Ed25519, gates auto-update) and the **release signing key** (GPG, signs release artifacts). The security *model* and reporting policy live in [`../SECURITY.md`](../SECURITY.md); this file is the maintainer-facing procedure for rotation and compromise response. The full inventory of every CI/release secret (PATs, signing certs, publish tokens) and how to mint each one is in [`../ci-secrets.md`](../ci-secrets.md).
 
 ---
 
