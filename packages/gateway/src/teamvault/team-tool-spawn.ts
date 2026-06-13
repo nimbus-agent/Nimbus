@@ -35,18 +35,23 @@ const SINGLE_SERVICE_SPAWNERS: Readonly<Record<string, Spawner>> = {
   salesforce: spawners.ensureSalesforceMcp,
 };
 
-function spawnerFor(service: string): Spawner {
+export function spawnerFor(service: string): Spawner {
   // Phase-3 cloud/observability/data connectors (aws, azure, gcp, grafana, sentry, datadog, …)
   // are all started by the bundle spawner, which only launches the credentialed server.
   return SINGLE_SERVICE_SPAWNERS[service] ?? spawners.ensurePhase3BundleMcp;
 }
 
 /**
- * The real ephemeral-spawn seam for {@link invokeTeamTool}. Spawns a throwaway connector instance
- * fed by the team-scoped vault view, calls the named tool, and tears the instance down. The team
- * secret only ever lives in the spawned subprocess env + the view's call scope — never returned.
+ * The testable lifecycle of {@link spawnTeamToolAndCall}: run `spawner` (which populates the
+ * clients map), call the named tool on whichever spawned client exposes it, and disconnect all.
+ * Extracted so the spawn-call-drain logic is unit-testable with a fake spawner + fake clients,
+ * without opening a real connector subprocess. `spawner(ctx)` runs INSIDE the try so a
+ * partially-registered client is still disconnected if the spawner throws mid-registration.
  */
-export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<unknown> {
+export async function runSpawnedToolCall(
+  spawner: Spawner,
+  req: TeamToolSpawnRequest,
+): Promise<unknown> {
   const clients = new Map<string, MCPClient>();
   const ctx: MeshSpawnContext = {
     vault: req.vaultView,
@@ -60,8 +65,8 @@ export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<u
     scheduleLazyDisconnect: () => {},
   };
 
-  await spawnerFor(req.service)(ctx);
   try {
+    await spawner(ctx);
     for (const client of clients.values()) {
       const tools = await listLazyMeshClientTools(client);
       const tool = tools[req.toolId];
@@ -75,4 +80,13 @@ export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<u
       await client.disconnect().catch(() => {});
     }
   }
+}
+
+/**
+ * The real ephemeral-spawn seam for {@link invokeTeamTool}. Spawns a throwaway connector instance
+ * fed by the team-scoped vault view, calls the named tool, and tears the instance down. The team
+ * secret only ever lives in the spawned subprocess env + the view's call scope — never returned.
+ */
+export async function spawnTeamToolAndCall(req: TeamToolSpawnRequest): Promise<unknown> {
+  return runSpawnedToolCall(spawnerFor(req.service), req);
 }
