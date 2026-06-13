@@ -98,6 +98,41 @@ function tablesFromResponse(parsed: unknown): string[] {
   return out;
 }
 
+/**
+ * Process a single report row: optionally fetch its dataset tables, map it to
+ * an indexed item, and upsert. Returns the number of extra bytes consumed by
+ * the optional tables fetch (0 when skipped or when the fetch fails).
+ */
+async function processReport(
+  ctx: SyncContext,
+  rawReport: Record<string, unknown>,
+  authHeader: { Authorization: string; Accept: string },
+  now: number,
+): Promise<{ upserted: number; extraBytes: number }> {
+  const datasetId = stringField(rawReport, "datasetId");
+
+  // Step 3 (optional): fetch dataset tables for lineage keys
+  let datasetTables: string[] = [];
+  let extraBytes = 0;
+  if (datasetId !== undefined && datasetId !== "") {
+    const tablesUrl = `https://api.powerbi.com/v1.0/myorg/datasets/${datasetId}/tables`;
+    const tablesOutcome = await connectorFetch(ctx, SERVICE_ID, tablesUrl, {
+      headers: authHeader,
+    });
+    if (tablesOutcome.kind === "ok") {
+      datasetTables = tablesFromResponse(tablesOutcome.parsed);
+      extraBytes = tablesOutcome.bytes;
+    }
+  }
+
+  const mapped = mapPowerBiReportToItem({ ...rawReport, datasetTables }, { syncedAt: now });
+  if (mapped !== null) {
+    upsertIndexedItemForSync(ctx, mapped);
+    return { upserted: 1, extraBytes };
+  }
+  return { upserted: 0, extraBytes };
+}
+
 export function createPowerBiSyncable(options: PowerBiSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -155,26 +190,9 @@ export function createPowerBiSyncable(options: PowerBiSyncableOptions): Syncable
       let totalBytes = tokenOutcome.bytes + reportsOutcome.bytes;
 
       for (const rawReport of reportsFromResponse(reportsOutcome.parsed)) {
-        const datasetId = stringField(rawReport, "datasetId");
-
-        // Step 3 (optional): fetch dataset tables for lineage keys
-        let datasetTables: string[] = [];
-        if (datasetId !== undefined && datasetId !== "") {
-          const tablesUrl = `https://api.powerbi.com/v1.0/myorg/datasets/${datasetId}/tables`;
-          const tablesOutcome = await connectorFetch(ctx, SERVICE_ID, tablesUrl, {
-            headers: authHeader,
-          });
-          if (tablesOutcome.kind === "ok") {
-            datasetTables = tablesFromResponse(tablesOutcome.parsed);
-            totalBytes += tablesOutcome.bytes;
-          }
-        }
-
-        const mapped = mapPowerBiReportToItem({ ...rawReport, datasetTables }, { syncedAt: now });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          upserted += 1;
-        }
+        const result = await processReport(ctx, rawReport, authHeader, now);
+        upserted += result.upserted;
+        totalBytes += result.extraBytes;
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);

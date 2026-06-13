@@ -39,29 +39,12 @@ function isSafeRegion(value: string): boolean {
 }
 
 /**
- * Inline argv flag-smuggling guard for the Snowflake account identifier before it
- * is interpolated into `${account}.snowflakecomputing.com` and the spawned MCP's
- * `SNOWFLAKE_ACCOUNT` env. A value that is empty, over-long, `-`-prefixed, or
- * carries control characters is rejected so the caller noops.
+ * Shared argv flag-smuggling guard for host-identifier-style values (Snowflake
+ * account identifiers, Power BI tenant ids, etc.) before they are interpolated
+ * into URLs or spawned-MCP env vars. A value that is empty, over-long, `-`-prefixed,
+ * or carries control characters is rejected so the caller noops.
  */
-function isSafeSnowflakeAccount(value: string): boolean {
-  if (value.length === 0 || value.length > 253 || value.startsWith("-")) {
-    return false;
-  }
-  for (let i = 0; i < value.length; i += 1) {
-    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Inline argv flag-smuggling guard for the Power BI tenant id before it is
- * interpolated into `login.microsoftonline.com/${tenantId}/...` and the spawned
- * MCP's `POWERBI_TENANT_ID` env. Mirrors isSafeSnowflakeAccount.
- */
-function isSafePowerBiTenantId(value: string): boolean {
+function isSafeHostIdentifier(value: string): boolean {
   if (value.length === 0 || value.length > 253 || value.startsWith("-")) {
     return false;
   }
@@ -889,9 +872,13 @@ export async function phase3AddSnowflakeMcp(
   const oauth = (await readConnectorSecret(vault, "snowflake", "oauth_token"))?.trim();
   const jwt = (await readConnectorSecret(vault, "snowflake", "key_pair_jwt"))?.trim();
   // Use empty-string check (not ??) so a blank vault value falls through to the next option.
-  const token =
-    oauth !== undefined && oauth !== "" ? oauth : jwt !== undefined && jwt !== "" ? jwt : "";
-  if (account === "" || token === "" || !isSafeSnowflakeAccount(account)) {
+  let token = "";
+  if (oauth !== undefined && oauth !== "") {
+    token = oauth;
+  } else if (jwt !== undefined && jwt !== "") {
+    token = jwt;
+  }
+  if (account === "" || token === "" || !isSafeHostIdentifier(account)) {
     return;
   }
   const host = `${account}.snowflakecomputing.com`;
@@ -975,7 +962,7 @@ export async function phase3AddPowerBiMcp(
     tenantId === "" ||
     clientId === "" ||
     clientSecret === "" ||
-    !isSafePowerBiTenantId(tenantId)
+    !isSafeHostIdentifier(tenantId)
   ) {
     return;
   }
