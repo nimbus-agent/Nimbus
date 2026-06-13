@@ -21,6 +21,29 @@ export interface ChatopsBotToolRequest {
 }
 
 /**
+ * The testable post-spawn dispatch of {@link spawnChatopsBotToolAndCall}: look up the tool (by id,
+ * then platform-prefixed id), execute it, and disconnect in `finally`. Extracted so the dispatch
+ * logic is unit-testable with a fake MCPClient, without opening a real bot connector subprocess.
+ */
+export async function runBotToolCall(
+  client: MCPClient,
+  platform: "slack" | "teams",
+  toolId: string,
+  args: unknown,
+): Promise<unknown> {
+  try {
+    const tools = await listLazyMeshClientTools(client);
+    const tool = tools[toolId] ?? tools[`${platform}_${toolId}`];
+    if (tool?.execute === undefined) {
+      throw new Error(`chatops: tool "${toolId}" not found for platform "${platform}"`);
+    }
+    return await tool.execute(args);
+  } finally {
+    await client.disconnect().catch(() => {});
+  }
+}
+
+/**
  * Ephemeral bot-credentialed spawn-and-call (mirrors `teamvault/team-tool-spawn.ts`): spawn a
  * throwaway connector with the bot env, call the named tool, tear the instance down. The bot
  * secret only ever lives in the spawned subprocess env — never returned to the caller.
@@ -42,14 +65,5 @@ export async function spawnChatopsBotToolAndCall(req: ChatopsBotToolRequest): Pr
     throw new Error(`chatops: bot credentials missing for "${req.platform}" (fail-closed)`);
   }
   const client = new MCPClient({ id: `nimbus-chatops-${req.platform}-${randomUUID()}`, servers });
-  try {
-    const tools = await listLazyMeshClientTools(client);
-    const tool = tools[req.toolId] ?? tools[`${req.platform}_${req.toolId}`];
-    if (tool?.execute === undefined) {
-      throw new Error(`chatops: tool "${req.toolId}" not found for platform "${req.platform}"`);
-    }
-    return await tool.execute(req.args);
-  } finally {
-    await client.disconnect().catch(() => {});
-  }
+  return runBotToolCall(client, req.platform, req.toolId, req.args);
 }

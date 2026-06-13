@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { MCPClient } from "@mastra/mcp";
+import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   type ChatopsBotToolRequest,
+  runBotToolCall,
   spawnChatopsBotToolAndCall,
 } from "./chatops-bot-spawn-call.ts";
 
@@ -70,5 +73,59 @@ describe("spawnChatopsBotToolAndCall — fail-closed before any subprocess spawn
         }),
       ),
     ).rejects.toThrow(/fail-closed/);
+  });
+});
+
+function fakeClient(
+  tools: LazyMeshToolMap,
+  onDisconnect: () => Promise<void> = () => Promise.resolve(),
+): MCPClient {
+  return {
+    listTools: () => Promise.resolve(tools),
+    disconnect: onDisconnect,
+  } as unknown as MCPClient;
+}
+
+describe("runBotToolCall — post-spawn tool dispatch (fake client, no subprocess)", () => {
+  test("calls the tool by its exact id and returns the result", async () => {
+    const client = fakeClient({
+      slack_chat_post: { execute: (a) => Promise.resolve({ posted: a }) },
+    });
+    expect(await runBotToolCall(client, "slack", "slack_chat_post", { text: "hi" })).toEqual({
+      posted: { text: "hi" },
+    });
+  });
+
+  test("falls back to the platform-prefixed tool id", async () => {
+    const client = fakeClient({ slack_chat_post: { execute: () => Promise.resolve("ok") } });
+    // caller passes the bare id; lookup falls back to `${platform}_${toolId}`
+    expect(await runBotToolCall(client, "slack", "chat_post", {})).toBe("ok");
+  });
+
+  test("throws not-found when neither the id nor the prefixed id resolves to an executable tool", async () => {
+    const client = fakeClient({ unrelated: { execute: () => Promise.resolve(1) } });
+    await expect(runBotToolCall(client, "teams", "teams_chat_post", {})).rejects.toThrow(
+      /tool "teams_chat_post" not found for platform "teams"/,
+    );
+  });
+
+  test("throws not-found when the matched tool has no execute", async () => {
+    const client = fakeClient({ slack_chat_post: {} });
+    await expect(runBotToolCall(client, "slack", "slack_chat_post", {})).rejects.toThrow(
+      /not found/,
+    );
+  });
+
+  test("disconnects in finally, swallowing disconnect errors", async () => {
+    let disconnected = 0;
+    const client = fakeClient(
+      { slack_chat_post: { execute: () => Promise.resolve("done") } },
+      () => {
+        disconnected += 1;
+        return Promise.reject(new Error("disconnect boom"));
+      },
+    );
+    expect(await runBotToolCall(client, "slack", "slack_chat_post", {})).toBe("done");
+    expect(disconnected).toBe(1);
   });
 });
