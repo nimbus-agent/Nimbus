@@ -34,6 +34,7 @@ import {
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
+import { GRAPH_LINEAGE_TYPES_V40_SQL } from "../graph-lineage-types-v40-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
@@ -399,6 +400,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     39,
     "tribal_clusters (tribal-knowledge cluster ledger v39)",
     TRIBAL_CLUSTERS_V39_SQL,
+  ),
+  simpleStep(
+    39,
+    40,
+    "graph lineage relation types (data-warehouse/BI lineage v40)",
+    GRAPH_LINEAGE_TYPES_V40_SQL,
   ),
 ];
 
