@@ -27,6 +27,14 @@ installer/package owns updates. The standalone tarball keeps the self-updater on
 To remove: Windows uses Add/Remove Programs; macOS runs `uninstall-nimbus`;
 RPM/DEB use `sudo dnf remove nimbus-headless` / `sudo apt remove nimbus-headless`.
 
+## Direct downloads
+
+Every artifact — the native installers above, the raw `nimbus` / `nimbus-gateway`
+binaries, the portable `.tar.gz` (macOS/Linux) and `.zip` (Windows) archives, the
+Linux `.AppImage`, and the `SHA256SUMS` + GPG signature — is published on the
+[releases page](https://github.com/nimbus-agent/Nimbus/releases). The portable
+archives and raw binaries keep the self-updater enabled.
+
 ## Universal fallback (scripted)
 
 The read-it-yourself `install.sh` / `install.ps1` in each release archive install
