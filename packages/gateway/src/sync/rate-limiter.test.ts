@@ -241,21 +241,27 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
   test("wait-for-refill branch: a token deficit sleeps, then a later refill satisfies it", async () => {
     // Genuinely exercise the deficit → sleepMs → retry path in acquireUnderLock (the branch the
     // previous tests missed by pre-advancing the clock so refill succeeded on the first pass).
-    // The clock stays at `base` while tokens are short — forcing the wait branch — then jumps
-    // forward so a later loop iteration refills enough and returns. Flipping `advanced` only after
-    // a macrotask tick guarantees the acquire has already parked in its sleep, so the deficit
-    // branch is hit; if it ever isn't, the loop simply re-sleeps until `advanced`, so it always
-    // terminates AND always covers the wait path.
+    //
+    // The clock is driven off the nowFn READ COUNT, not an external flag flipped from a macrotask.
+    // The earlier flag-via-`await Bun.sleep(0)` version raced the acquire's internal `setTimeout`
+    // sleep and hung `bun test` indefinitely on Windows (passed on Linux/macOS) — the job then
+    // burned its full 30-minute ceiling and was reported "cancelled". Counting reads makes the
+    // clock jump deterministic and removes the real-timer race entirely.
+    //
+    // nowFn reads, in order (refill() takes `now` as a param — it does NOT call nowFn):
+    //   [0] constructor seeds the buckets
+    //   [1] acquire("github", 2) loop iteration 1 → drains both burst tokens
+    //   [2] acquire("github", 1) loop iteration 1 → 0 tokens, elapsed 0 → DEFICIT branch → sleepMs
+    //   [3] acquire("github", 1) loop iteration 2 → clock jumped → refill → resolve
     const base = 20_000_000;
-    let advanced = false;
-    const nowFn = () => (advanced ? base + 60_000 : base);
+    let reads = 0;
+    const nowFn = () => (reads++ >= 3 ? base + 60_000 : base);
     const quota = { requestsPerMinute: 600_000, burstSize: 2 };
     const limiter = new ProviderRateLimiter({ github: quota }, nowFn);
-    await limiter.acquire("github", 2); // drain both burst tokens
-    const waiting = limiter.acquire("github", 1); // 0 tokens → must wait for a refill
-    await Bun.sleep(0); // let the acquire reach its sleepMs (the deficit branch)
-    advanced = true; // next iteration sees the advanced clock → refill → resolve
-    await expect(waiting).resolves.toBeUndefined();
+    await limiter.acquire("github", 2); // drain both burst tokens (reads 0 + 1)
+    // 0 tokens → iteration 1 hits the deficit branch and sleeps; iteration 2 sees the advanced
+    // clock, refills to the burst cap, and resolves. No external flag, no macrotask race.
+    await expect(limiter.acquire("github", 1)).resolves.toBeUndefined();
   });
 });
 
