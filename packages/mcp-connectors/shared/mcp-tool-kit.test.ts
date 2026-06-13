@@ -195,7 +195,7 @@ describe("fetchWithTimeout", () => {
   it("resolves with the response when fetch completes before the timeout", async () => {
     const orig = globalThis.fetch;
     try {
-      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      globalThis.fetch = (async (_input: string | URL, _init?: RequestInit) =>
         new Response("ok", { status: 200 })) as typeof fetch;
       const res = await fetchWithTimeout("https://example.com/api", {}, 5_000);
       expect(res.status).toBe(200);
@@ -208,7 +208,7 @@ describe("fetchWithTimeout", () => {
   it("aborts with a DOMException when the timeout fires before fetch resolves", async () => {
     const orig = globalThis.fetch;
     try {
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      globalThis.fetch = ((_input: string | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           // Propagate the abort signal so the promise rejects on abort
           init?.signal?.addEventListener("abort", () => {
