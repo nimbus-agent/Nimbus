@@ -179,3 +179,57 @@ test("data_quality_test with no monitoredDataModelKeys creates no edges", () => 
     .get();
   expect(count?.c).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+// Re-sync / stale-edge replacement
+// ---------------------------------------------------------------------------
+
+test("re-syncing data_model replaces stale derived_from edges (no leak)", () => {
+  const db = makeGraphDb();
+  syncGraphFromIndexedItem(db, {
+    id: "dbt:model/orders",
+    service: "dbt",
+    type: "data_model",
+    title: "orders",
+    authorId: null,
+    metadata: { dataModelKey: "db.schema.orders", derivedFromKeys: ["old.upstream"] },
+  });
+  syncGraphFromIndexedItem(db, {
+    id: "dbt:model/orders",
+    service: "dbt",
+    type: "data_model",
+    title: "orders",
+    authorId: null,
+    metadata: { dataModelKey: "db.schema.orders", derivedFromKeys: ["new.upstream"] },
+  });
+  const rels = db
+    .query<{ to_ext: string }, []>(
+      `SELECT g.external_id AS to_ext FROM graph_relation r
+       JOIN graph_entity f ON f.id = r.from_id AND f.external_id = 'db.schema.orders'
+       JOIN graph_entity g ON g.id = r.to_id
+       WHERE r.type = 'derived_from'`,
+    )
+    .all();
+  expect(rels).toHaveLength(1);
+  expect(rels[0]?.to_ext).toBe("new.upstream");
+});
+
+// ---------------------------------------------------------------------------
+// stringArrayField — non-string filtering
+// ---------------------------------------------------------------------------
+
+test("stringArrayField drops non-string entries in monitoredDataModelKeys", () => {
+  const db = makeGraphDb();
+  syncGraphFromIndexedItem(db, {
+    id: "bigeye:monitor/1",
+    service: "bigeye",
+    type: "data_quality_test",
+    title: "mixed array test",
+    authorId: null,
+    metadata: { monitoredDataModelKeys: ["analytics.public.revenue", 42, null, true] },
+  });
+  const count = db
+    .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM graph_relation WHERE type = 'monitors'")
+    .get();
+  expect(count?.c).toBe(1);
+});
