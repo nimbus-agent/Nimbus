@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterLookerDashboards } from "./search-filter.ts";
 
@@ -34,7 +34,7 @@ function clientSecret(): string {
 async function lookerLogin(): Promise<string> {
   const base = apiBase();
   const body = `client_id=${encodeURIComponent(clientId())}&client_secret=${encodeURIComponent(clientSecret())}`;
-  const res = await fetch(`${base}/api/4.0/login`, {
+  const res = await fetchWithTimeout(`${base}/api/4.0/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -60,7 +60,7 @@ async function lookerLogin(): Promise<string> {
 
 async function listDashboards(token: string): Promise<unknown[]> {
   const base = apiBase();
-  const res = await fetch(`${base}/api/4.0/dashboards`, {
+  const res = await fetchWithTimeout(`${base}/api/4.0/dashboards`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
   const text = await res.text();

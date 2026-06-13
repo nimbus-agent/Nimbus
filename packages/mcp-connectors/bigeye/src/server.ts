@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterBigeyeIssues } from "./search-filter.ts";
 
@@ -20,7 +20,7 @@ function authHeader(): Record<string, string> {
 }
 
 async function fetchIssues(): Promise<unknown[]> {
-  const res = await fetch(`${apiBase()}/api/v1/issues`, { headers: authHeader() });
+  const res = await fetchWithTimeout(`${apiBase()}/api/v1/issues`, { headers: authHeader() });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Bigeye ${String(res.status)}: ${text.slice(0, 400)}`);

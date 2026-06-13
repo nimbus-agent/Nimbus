@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterTableauViews } from "./search-filter.ts";
 
@@ -38,7 +38,7 @@ interface SigninResult {
 
 async function tableauSignin(): Promise<SigninResult> {
   const base = apiBase();
-  const res = await fetch(`${base}/api/3.4/auth/signin`, {
+  const res = await fetchWithTimeout(`${base}/api/3.4/auth/signin`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
@@ -78,7 +78,7 @@ async function tableauSignin(): Promise<SigninResult> {
 
 async function listViews(token: string, siteId: string): Promise<unknown[]> {
   const base = apiBase();
-  const res = await fetch(`${base}/api/3.4/sites/${encodeURIComponent(siteId)}/views`, {
+  const res = await fetchWithTimeout(`${base}/api/3.4/sites/${encodeURIComponent(siteId)}/views`, {
     headers: { "X-Tableau-Auth": token, Accept: "application/json" },
   });
   const text = await res.text();

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSnowflakeTables } from "./search-filter.ts";
 
@@ -59,7 +59,7 @@ function rowsFromStatementsResponse(parsed: unknown): Record<string, unknown>[] 
 
 async function fetchTables(): Promise<Record<string, unknown>[]> {
   const url = `https://${snowflakeAccount()}.snowflakecomputing.com/api/v2/statements`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: authHeader(),
     body: JSON.stringify({ statement: TABLES_SQL, timeout: 60 }),

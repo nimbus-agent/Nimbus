@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterPowerBiReports } from "./search-filter.ts";
 
@@ -22,7 +22,7 @@ async function fetchAccessToken(
     `&client_id=${encodeURIComponent(clientId)}` +
     `&client_secret=${encodeURIComponent(clientSecret)}` +
     `&scope=${encodeURIComponent("https://analysis.windows.net/powerbi/api/.default")}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -46,7 +46,7 @@ async function fetchAccessToken(
 }
 
 async function listReports(accessToken: string): Promise<unknown[]> {
-  const res = await fetch("https://api.powerbi.com/v1.0/myorg/reports", {
+  const res = await fetchWithTimeout("https://api.powerbi.com/v1.0/myorg/reports", {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
   });
   const text = await res.text();

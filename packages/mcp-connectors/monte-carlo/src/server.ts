@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMonteCarloIncidents } from "./search-filter.ts";
 
@@ -51,7 +51,7 @@ function incidentsFromResponse(parsed: unknown): unknown[] {
 }
 
 async function fetchIncidents(apiId: string, apiToken: string): Promise<unknown[]> {
-  const res = await fetch(GRAPHQL_URL, {
+  const res = await fetchWithTimeout(GRAPHQL_URL, {
     method: "POST",
     headers: {
       "x-mcd-id": apiId,

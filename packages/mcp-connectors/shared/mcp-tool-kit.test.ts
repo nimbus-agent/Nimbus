@@ -4,6 +4,7 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   encodeBasicAuthHeader,
+  fetchWithTimeout,
   type HttpJsonBodyResponse,
   type HttpTextResponse,
   mcpJsonResult,
@@ -187,5 +188,36 @@ describe("encodeBasicAuthHeader", () => {
     const header = encodeBasicAuthHeader("a@b.com", "tok");
     expect(header).toBe(`Basic ${Buffer.from("a@b.com:tok", "utf8").toString("base64")}`);
     expect(header.startsWith("Basic ")).toBe(true);
+  });
+});
+
+describe("fetchWithTimeout", () => {
+  it("resolves with the response when fetch completes before the timeout", async () => {
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response("ok", { status: 200 })) as typeof fetch;
+      const res = await fetchWithTimeout("https://example.com/api", {}, 5_000);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ok");
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it("aborts with a DOMException when the timeout fires before fetch resolves", async () => {
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          // Propagate the abort signal so the promise rejects on abort
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        })) as typeof fetch;
+      await expect(fetchWithTimeout("https://example.com/slow", {}, 1)).rejects.toThrow();
+    } finally {
+      globalThis.fetch = orig;
+    }
   });
 });
