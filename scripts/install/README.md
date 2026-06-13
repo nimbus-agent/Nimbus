@@ -6,11 +6,12 @@
 
 Per-user installers bundled with v0.1.0+ release tarballs.
 
-## Why scripts (not signed `.msi` / `.pkg`)
+## Why scripts (alongside `.msi` / `.pkg`)
 
-v0.1.0 ships unsigned on macOS and Windows. A signed installer would still trip
-SmartScreen / Gatekeeper warnings until the publisher reputation builds, so we
-keep the install surface as a plain text script you can read before running.
+Native `.msi`/`.pkg` installers now ship (see [`docs/install.md`](../../docs/install.md))
+but are currently **unsigned** until code-signing certificates are provisioned, so
+SmartScreen / Gatekeeper warnings still apply — these scripts remain the universal,
+read-it-yourself fallback you can inspect before running.
 
 ## What they do
 

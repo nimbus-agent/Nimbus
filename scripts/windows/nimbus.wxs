@@ -39,6 +39,9 @@
       <Component Id="NimbusPath" Guid="3F1A8C6B-9D2E-4A7F-8B5C-6E0D2A4F1C9B">
         <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLFOLDER]"
                      Part="last" Action="set" Permanent="no" System="no" />
+        <!-- Channel marker so the self-updater steps aside; package owns updates. -->
+        <Environment Id="SetChannel" Name="NIMBUS_DISTRIBUTION_CHANNEL" Value="msi"
+                     Action="set" Permanent="no" System="no" />
         <RegistryValue Root="HKCU" Key="Software\Nimbus" Name="installed"
                        Type="integer" Value="1" KeyPath="yes" />
       </Component>
