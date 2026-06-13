@@ -1003,7 +1003,7 @@ function collectQuorumKvSections(source: string): Map<string, Record<string, str
       continue;
     }
     if (currentId === undefined) continue;
-    applyQuorumKvLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -1025,7 +1025,7 @@ function beginQuorumTable(
 }
 
 /** Records a `key = value` line into the current sub-table's bucket, if any. */
-function applyQuorumKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
+function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
   if (bucket === undefined) return;
   const kv = splitKeyValue(trimmed);
   if (kv !== undefined) bucket[kv.key] = kv.valRaw;
@@ -1186,7 +1186,7 @@ function collectPreflightKvSections(source: string): Map<string, Record<string, 
       continue;
     }
     if (currentId === undefined) continue;
-    applyPreflightKvLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -1205,13 +1205,6 @@ function beginPreflightTable(
   if (id.length === 0) return undefined;
   if (!accum.has(id)) accum.set(id, {});
   return id;
-}
-
-/** Records a `key = value` line into the current sub-table's bucket, if any. */
-function applyPreflightKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
-  if (bucket === undefined) return;
-  const kv = splitKeyValue(trimmed);
-  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
 }
 
 /**

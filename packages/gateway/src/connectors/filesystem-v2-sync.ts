@@ -275,14 +275,10 @@ function fileMtimeOrFallback(fp: string, fallback: number): number {
 
 function upsertCodeSymbolsForFile(
   ctx: SyncContext,
-  src: string,
   symbols: readonly { name: string; kind: string }[],
-  root: string,
-  relNorm: string,
-  rk: string,
-  mtime: number,
-  now: number,
+  file: { src: string; root: string; relNorm: string; rk: string; mtime: number; now: number },
 ): { upserted: number; blameRanges: BlameRange[] } {
+  const { src, root, relNorm, rk, mtime, now } = file;
   let upserted = 0;
   const blameRanges: BlameRange[] = [];
   for (const sym of symbols) {
@@ -354,7 +350,14 @@ async function syncFilesystemCodeSymbolsForRoot(
     const relNorm = relative(root, fp).replaceAll("\\", "/");
     const symbols = extractExportedSymbols(src, fp);
     const mtime = fileMtimeOrFallback(fp, now);
-    const fileResult = upsertCodeSymbolsForFile(ctx, src, symbols, root, relNorm, rk, mtime, now);
+    const fileResult = upsertCodeSymbolsForFile(ctx, symbols, {
+      src,
+      root,
+      relNorm,
+      rk,
+      mtime,
+      now,
+    });
     upserted += fileResult.upserted;
     if (gitAware && fileResult.blameRanges.length > 0) {
       await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges);
