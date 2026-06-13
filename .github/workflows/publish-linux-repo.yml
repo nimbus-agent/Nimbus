@@ -3,7 +3,8 @@ name: Publish Linux repo
 # `released` (not `published`) fires only for non-prerelease releases, so
 # rc/beta/alpha tags are skipped automatically (the apt/yum channel tracks
 # stable only). `workflow_dispatch` lets a maintainer re-publish a tag if a
-# push failed transiently — re-running is idempotent.
+# push failed transiently — re-running is safe (it republishes the same
+# inputs; signature timestamps mean a re-run lands a fresh commit, not a no-op).
 on:
   release:
     types: [released]

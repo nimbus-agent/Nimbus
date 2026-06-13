@@ -71,7 +71,18 @@ export interface YumRepoOptions {
   baseUrl: string;
 }
 
-/** Render the yum client `.repo` file (`baseurl` -> /yum, `gpgkey` -> /gpg.key). */
+/**
+ * Render the yum client `.repo` file (`baseurl` -> /yum, `gpgkey` -> /gpg.key).
+ *
+ * `repo_gpgcheck=1` (verify the GPG-signed `repomd.xml`) is the trust anchor —
+ * the same repo-metadata-signing model as the apt `[signed-by=...]` setup, and
+ * it chains to per-package integrity via the checksums inside the signed
+ * metadata. `gpgcheck=0` because the `.rpm` packages themselves are NOT
+ * header-signed (`rpm --addsign`) — nfpm doesn't header-sign and the release
+ * pipeline emits only a detached `.asc`, so `gpgcheck=1` would make `dnf` reject
+ * every install with "package is not signed". Flip to `1` only once the build
+ * header-signs the RPM.
+ */
 export function renderYumRepoFile(opts: YumRepoOptions): string {
   const base = opts.baseUrl.replace(/\/+$/, "");
   return [
@@ -79,7 +90,7 @@ export function renderYumRepoFile(opts: YumRepoOptions): string {
     "name=Nimbus headless",
     `baseurl=${base}/yum`,
     "enabled=1",
-    "gpgcheck=1",
+    "gpgcheck=0",
     "repo_gpgcheck=1",
     `gpgkey=${base}/gpg.key`,
     "",

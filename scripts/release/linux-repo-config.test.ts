@@ -68,9 +68,13 @@ describe("renderYumRepoFile", () => {
     expect(repo).toContain("gpgkey=https://nimbus-agent.github.io/linux-repo/gpg.key");
   });
 
-  test("enables gpg + repo_gpg checks (the repo metadata is signed)", () => {
-    expect(repo).toContain("gpgcheck=1");
+  test("verifies signed repo metadata but not per-RPM headers (packages aren't header-signed)", () => {
+    // repo_gpgcheck=1 verifies the signed repomd.xml (the trust anchor).
     expect(repo).toContain("repo_gpgcheck=1");
+    // gpgcheck=0: the .rpm is not header-signed, so per-package checks would
+    // make dnf reject every install. (Substring note: "repo_gpgcheck=1" itself
+    // contains "gpgcheck=1", so assert the explicit gpgcheck=0 line instead.)
+    expect(repo).toContain("\ngpgcheck=0\n");
   });
 
   test("strips a trailing slash on baseUrl so URLs aren't doubled", () => {
