@@ -61,6 +61,74 @@ describe("parseBaseline", () => {
     });
     expect(() => parseBaseline(json)).toThrow(/forward slashes/);
   });
+
+  test("parses a flagship `targets` section into the targets map", () => {
+    const json = JSON.stringify({
+      version: 2,
+      generated_at: "x",
+      files: {},
+      targets: {
+        "packages/gateway/src/engine/executor.ts": { min_line_pct: 100, min_branch_pct: 100 },
+      },
+    });
+    const got = parseBaseline(json);
+    expect(got.files.size).toBe(0);
+    expect(got.targets.get("packages/gateway/src/engine/executor.ts")).toEqual({
+      line: 100,
+      branch: 100,
+    });
+  });
+
+  test("defaults targets to an empty map when the section is absent (back-compat)", () => {
+    const json = JSON.stringify({ version: 2, generated_at: "x", files: {} });
+    expect(parseBaseline(json).targets.size).toBe(0);
+  });
+
+  test("a v1 baseline has no targets (empty map)", () => {
+    const json = JSON.stringify({
+      version: 1,
+      generated_at: "x",
+      files: { "a.ts": { min_coverage_pct: 70 } },
+    });
+    expect(parseBaseline(json).targets.size).toBe(0);
+  });
+
+  test("throws when a path is in BOTH files and targets (contradictory intent)", () => {
+    const json = JSON.stringify({
+      version: 2,
+      generated_at: "x",
+      files: {
+        "packages/gateway/src/engine/executor.ts": { min_line_pct: 78, min_branch_pct: 40 },
+      },
+      targets: {
+        "packages/gateway/src/engine/executor.ts": { min_line_pct: 100, min_branch_pct: 100 },
+      },
+    });
+    expect(() => parseBaseline(json)).toThrow(/both files and targets/);
+  });
+
+  test("validates target pct range and rejects backslash target paths", () => {
+    expect(() =>
+      parseBaseline(
+        JSON.stringify({
+          version: 2,
+          generated_at: "x",
+          files: {},
+          targets: { "a.ts": { min_line_pct: 100, min_branch_pct: 101 } },
+        }),
+      ),
+    ).toThrow(/min_branch_pct/);
+    expect(() =>
+      parseBaseline(
+        JSON.stringify({
+          version: 2,
+          generated_at: "x",
+          files: {},
+          targets: { "a\\b.ts": { min_line_pct: 100, min_branch_pct: 100 } },
+        }),
+      ),
+    ).toThrow(/forward slashes/);
+  });
 });
 
 describe("serializeBaseline", () => {
@@ -69,9 +137,31 @@ describe("serializeBaseline", () => {
       version: 2,
       generated_at: "2026-06-07T00:00:00Z",
       files: new Map([["packages/gateway/src/a.ts", { line: 78.6, branch: 40 }]]),
+      targets: new Map(),
     };
     const reparsed = parseBaseline(serializeBaseline(original));
     expect(reparsed.files.get("packages/gateway/src/a.ts")).toEqual({ line: 78.6, branch: 40 });
+  });
+
+  test("round-trips the targets section (a pinned 100% ceiling survives serialize→parse)", () => {
+    const original: Baseline = {
+      version: 2,
+      generated_at: "2026-06-13T00:00:00Z",
+      files: new Map(),
+      targets: new Map([
+        ["packages/gateway/src/engine/executor.ts", { line: 100, branch: 100 }],
+        ["packages/gateway/src/engine/tool-output-envelope.ts", { line: 100, branch: 100 }],
+      ]),
+    };
+    const reparsed = parseBaseline(serializeBaseline(original));
+    expect(reparsed.targets.get("packages/gateway/src/engine/executor.ts")).toEqual({
+      line: 100,
+      branch: 100,
+    });
+    expect(reparsed.targets.get("packages/gateway/src/engine/tool-output-envelope.ts")).toEqual({
+      line: 100,
+      branch: 100,
+    });
   });
 
   test("sorts entries alphabetically and ends with a single newline", () => {
@@ -82,6 +172,7 @@ describe("serializeBaseline", () => {
         ["z.ts", { line: 1, branch: 1 }],
         ["a.ts", { line: 2, branch: 2 }],
       ]),
+      targets: new Map(),
     });
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("z.ts"));
     expect(text.endsWith("\n")).toBe(true);
@@ -94,6 +185,7 @@ describe("computeBaselineDiff (dual-axis, file-level)", () => {
     version: 2,
     generated_at: "x",
     files: new Map([["a.ts", { line, branch }]]),
+    targets: new Map(),
   });
 
   test("no diff when both axes meet their stored floors and neither is fully clear", () => {

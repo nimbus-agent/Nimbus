@@ -73,6 +73,64 @@ describe("executor gate — delegation branch", () => {
     expect(localPrompted).toBe(true);
   });
 
+  it("delegation dep present but NO active delegate → falls back to the local owner prompt", async () => {
+    const db = db35();
+    const store = new DelegationStore(db); // empty: no delegation was ever created
+    let localPrompted = false;
+    const consent = {
+      requestApproval: async () => {
+        localPrompted = true;
+        return true;
+      },
+    };
+    const exec = new ToolExecutor(consent, audit, connectors, {
+      store,
+      isOperatorValid: () => true,
+      // requestRemote must never be reached: activeDelegateePeer() returns undefined first.
+      requestRemote: async (): Promise<RemoteApprovalOutcome> => {
+        throw new Error("requestRemote must not be called when there is no active delegate");
+      },
+    });
+    const r = await exec.gate({ type: "email.send", payload: {} });
+    expect(r).toBe("proceed");
+    expect(localPrompted).toBe(true);
+  });
+
+  it("honors a delegate's REJECTION (no local prompt; default reject reason; I20)", async () => {
+    const db = db35();
+    const store = new DelegationStore(db);
+    store.create({
+      delegatePeer: "peer:bob",
+      scopeKind: "action_type",
+      scopeValue: "email.send",
+      expiresAt: 9e15,
+      nowMs: 1,
+    });
+    let localPrompted = false;
+    const consent = {
+      requestApproval: async () => {
+        localPrompted = true;
+        return true; // would approve — must be bypassed by the delegate's deny
+      },
+    };
+    const remote = async (): Promise<RemoteApprovalOutcome> => ({
+      kind: "answered",
+      peerId: "peer:bob",
+      approved: false,
+    });
+    const exec = new ToolExecutor(consent, audit, connectors, {
+      store,
+      isOperatorValid: () => true,
+      requestRemote: remote,
+    });
+    const r = await exec.gate({ type: "email.send", payload: {} });
+    expect(r).not.toBe("proceed");
+    expect((r as { status: string; reason: string }).status).toBe("rejected");
+    // The delegate-rejection path never sets rejectReason explicitly — proves the default holds.
+    expect((r as { status: string; reason: string }).reason).toBe("User declined consent gate.");
+    expect(localPrompted).toBe(false);
+  });
+
   it("no delegation dep → always uses the local owner prompt (back-compat)", async () => {
     let localPrompted = false;
     const consent = {

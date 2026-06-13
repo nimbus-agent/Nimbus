@@ -4,7 +4,12 @@ import type { Baseline } from "./baseline.ts";
 import { computeUpdatedBaseline, evaluateCheck, lcovHasBranchData } from "./check.ts";
 import { parseLcov } from "./lcov-parse.ts";
 
-const emptyBaseline: Baseline = { version: 2, generated_at: "x", files: new Map() };
+const emptyBaseline: Baseline = {
+  version: 2,
+  generated_at: "x",
+  files: new Map(),
+  targets: new Map(),
+};
 
 describe("lcovHasBranchData (instrumentation canary)", () => {
   test("true when at least one file carries BRDA branch records", () => {
@@ -69,6 +74,7 @@ describe("evaluateCheck (dual-axis)", () => {
       version: 2,
       generated_at: "x",
       files: new Map([["packages/gateway/src/a.ts", { line: 78, branch: 40 }]]),
+      targets: new Map(),
     };
     const r = evaluateCheck({
       sourceFiles: ["packages/gateway/src/a.ts"],
@@ -90,10 +96,93 @@ describe("evaluateCheck (dual-axis)", () => {
   });
 });
 
+describe("evaluateCheck — flagship 100% targets overlay", () => {
+  const FLAGSHIP = "packages/gateway/src/engine/executor.ts";
+  const withTarget = (line: number, branch: number): Baseline => ({
+    version: 2,
+    generated_at: "x",
+    files: new Map(),
+    targets: new Map([[FLAGSHIP, { line, branch }]]),
+  });
+
+  test("passes when a targeted file meets its 100/100 ceiling", () => {
+    const r = evaluateCheck({
+      sourceFiles: [FLAGSHIP],
+      actualLine: new Map([[FLAGSHIP, 100]]),
+      actualBranch: new Map([[FLAGSHIP, 100]]),
+      baseline: withTarget(100, 100),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.violations).toEqual([]);
+  });
+
+  test("flags below_target on the line axis when a pinned file slips to 99", () => {
+    const r = evaluateCheck({
+      sourceFiles: [FLAGSHIP],
+      actualLine: new Map([[FLAGSHIP, 99]]),
+      actualBranch: new Map([[FLAGSHIP, 100]]),
+      baseline: withTarget(100, 100),
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.violations).toContainEqual({
+      kind: "below_target",
+      dimension: "line",
+      path: FLAGSHIP,
+      actual: 99,
+      required: 100,
+    });
+  });
+
+  test("flags below_target on the branch axis when a pinned file drops one branch", () => {
+    const r = evaluateCheck({
+      sourceFiles: [FLAGSHIP],
+      actualLine: new Map([[FLAGSHIP, 100]]),
+      actualBranch: new Map([[FLAGSHIP, 97.7]]),
+      baseline: withTarget(100, 100),
+    });
+    expect(r.violations).toContainEqual({
+      kind: "below_target",
+      dimension: "branch",
+      path: FLAGSHIP,
+      actual: 97.7,
+      required: 100,
+    });
+  });
+
+  test("fail-closed: a targeted file missing from the lcov reads as 0% line (below_target)", () => {
+    const r = evaluateCheck({
+      sourceFiles: [FLAGSHIP],
+      actualLine: new Map(),
+      actualBranch: new Map(),
+      baseline: withTarget(100, 100),
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.violations).toContainEqual({
+      kind: "below_target",
+      dimension: "line",
+      path: FLAGSHIP,
+      actual: 0,
+      required: 100,
+    });
+  });
+
+  test("a passing target sits ABOVE the floor pass — no below_floor, no must_* churn", () => {
+    // The same file clears the 80 floor AND its 100 target: exactly zero violations, proving the
+    // overlay is purely additive (it never double-reports or interferes with the ratchet).
+    const r = evaluateCheck({
+      sourceFiles: [FLAGSHIP],
+      actualLine: new Map([[FLAGSHIP, 100]]),
+      actualBranch: new Map([[FLAGSHIP, 100]]),
+      baseline: withTarget(100, 100),
+    });
+    expect(r.violations).toEqual([]);
+  });
+});
+
 describe("computeUpdatedBaseline (dual-axis)", () => {
   test("captures a sub-floor file at its actuals; satisfied axis pinned at the floor", () => {
     const next = computeUpdatedBaseline(
-      { version: 2, generated_at: "x", files: new Map() },
+      { version: 2, generated_at: "x", files: new Map(), targets: new Map() },
       new Map([["packages/gateway/src/a.ts", 90]]), // line satisfied
       new Map([["packages/gateway/src/a.ts", 55]]), // branch below floor
       ["packages/gateway/src/a.ts"],
@@ -108,6 +197,7 @@ describe("computeUpdatedBaseline (dual-axis)", () => {
         version: 2,
         generated_at: "x",
         files: new Map([["packages/gateway/src/a.ts", { line: 78, branch: 40 }]]),
+        targets: new Map(),
       },
       new Map([["packages/gateway/src/a.ts", 85]]),
       new Map([["packages/gateway/src/a.ts", 82]]),
@@ -123,6 +213,7 @@ describe("computeUpdatedBaseline (dual-axis)", () => {
         version: 2,
         generated_at: "x",
         files: new Map([["packages/gateway/src/a.ts", { line: 50, branch: 30 }]]),
+        targets: new Map(),
       },
       new Map([["packages/gateway/src/a.ts", 60]]),
       new Map([["packages/gateway/src/a.ts", 20]]), // dropped below stored — keep the higher watermark
@@ -130,5 +221,26 @@ describe("computeUpdatedBaseline (dual-axis)", () => {
       "now",
     );
     expect(next.files.get("packages/gateway/src/a.ts")).toEqual({ line: 60, branch: 30 });
+  });
+
+  test("round-trips the flagship targets section verbatim (a reseed never drops a 100% ceiling)", () => {
+    const targets = new Map([
+      ["packages/gateway/src/engine/executor.ts", { line: 100, branch: 100 }],
+    ]);
+    const next = computeUpdatedBaseline(
+      { version: 2, generated_at: "x", files: new Map(), targets },
+      // executor.ts clears both floors at 100/100, so the ratchet drops it from `files`...
+      new Map([["packages/gateway/src/engine/executor.ts", 100]]),
+      new Map([["packages/gateway/src/engine/executor.ts", 100]]),
+      ["packages/gateway/src/engine/executor.ts"],
+      "now",
+    );
+    expect(next.files.has("packages/gateway/src/engine/executor.ts")).toBe(false);
+    // ...but it stays pinned in `targets`, untouched.
+    expect(next.targets).toBe(targets);
+    expect(next.targets.get("packages/gateway/src/engine/executor.ts")).toEqual({
+      line: 100,
+      branch: 100,
+    });
   });
 });
