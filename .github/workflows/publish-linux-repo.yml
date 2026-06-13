@@ -104,7 +104,11 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_SIGNING_SUBKEY }}
         run: |
           set -euo pipefail
-          GNUPGHOME="$(mktemp -d)"
+          # `export` so THIS step's `gpg --import` lands in the ephemeral home;
+          # GITHUB_ENV then propagates the same path to the later sign/export steps.
+          # (Without export, the import would use the default ~/.gnupg and the sign
+          # step — which reads GNUPGHOME from GITHUB_ENV — would find no secret key.)
+          export GNUPGHOME="$(mktemp -d)"
           chmod 700 "$GNUPGHOME"
           echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
