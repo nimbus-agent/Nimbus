@@ -41,6 +41,11 @@ test("capture rejects a missing cluster id or a bad --target", () => {
   expect(() => parseTribalArgs(["capture", "k1", "--target", "jira"])).toThrow(/--target must be/);
 });
 
+test("capture fails fast on a second positional or an unknown flag", () => {
+  expect(() => parseTribalArgs(["capture", "k1", "k2"])).toThrow(/single <cluster-id>/);
+  expect(() => parseTribalArgs(["capture", "k1", "--bogus"])).toThrow(/Unknown option for capture/);
+});
+
 test("unknown subcommand throws usage", () => {
   expect(() => parseTribalArgs(["bogus"])).toThrow(/Unknown subcommand/);
 });

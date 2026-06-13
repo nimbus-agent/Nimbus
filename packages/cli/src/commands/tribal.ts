@@ -44,8 +44,13 @@ function parseCaptureArgs(rest: string[]): TribalCommand {
       }
       target = v;
       i++;
-    } else if (a !== undefined && !a.startsWith("--") && clusterId === undefined) {
+    } else if (a !== undefined && !a.startsWith("--")) {
+      if (clusterId !== undefined) {
+        throw new Error("nimbus tribal capture takes a single <cluster-id>");
+      }
       clusterId = a;
+    } else if (a !== undefined) {
+      throw new Error(`Unknown option for capture: ${a}`);
     }
   }
   if (clusterId === undefined || clusterId === "") {
