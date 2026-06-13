@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import fc from "fast-check";
 import { constantTimeStringEqual, sha256HexEqualConstantTime } from "./timing-safe-compare.ts";
 
 const HEX_A = "a".repeat(64);
@@ -77,5 +78,74 @@ describe("constantTimeStringEqual", () => {
     const t = "n1mb_dep1oy_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     expect(constantTimeStringEqual(t, t)).toBe(true);
     expect(constantTimeStringEqual(t, `${t.slice(0, -1)}Z`)).toBe(false);
+  });
+});
+
+describe("timing-safe-compare — properties (fast-check)", () => {
+  // constantTimeStringEqual must agree with `===` for EVERY pair of JS strings,
+  // including ill-formed ones (lone surrogates). `unit: "binary"` generates the
+  // full 16-bit code-unit range, including lone surrogates.
+  const anyString = fc.string({ unit: "binary" });
+
+  test("constantTimeStringEqual(a, b) === (a === b) over arbitrary strings", () => {
+    fc.assert(
+      fc.property(anyString, anyString, (a, b) => {
+        expect(constantTimeStringEqual(a, b)).toBe(a === b);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  test("constantTimeStringEqual is reflexive over arbitrary strings", () => {
+    fc.assert(
+      fc.property(anyString, (a) => {
+        expect(constantTimeStringEqual(a, a)).toBe(true);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  test("constantTimeStringEqual distinguishes distinct lone surrogates (regression)", () => {
+    // Two DIFFERENT lone surrogates both UTF-8-encode to the replacement bytes
+    // EF BF BD; a utf8 buffer compare collides and falsely returns true.
+    expect(constantTimeStringEqual("\uD800", "\uDC00")).toBe(false);
+    expect(constantTimeStringEqual("�", "\uD800")).toBe(false);
+  });
+
+  // sha256HexEqualConstantTime compares the DECODED bytes (hex is case-insensitive),
+  // not the strings.
+  const hex64 = fc
+    .array(fc.constantFrom(..."0123456789abcdefABCDEF".split("")), { minLength: 64, maxLength: 64 })
+    .map((a) => a.join(""));
+
+  test("sha256HexEqualConstantTime === decoded-byte equality for valid 64-hex", () => {
+    fc.assert(
+      fc.property(hex64, hex64, (a, b) => {
+        const expected = Buffer.from(a, "hex").equals(Buffer.from(b, "hex"));
+        expect(sha256HexEqualConstantTime(a, b)).toBe(expected);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  test("sha256HexEqualConstantTime reflexive + case-insensitive for valid 64-hex", () => {
+    fc.assert(
+      fc.property(hex64, (a) => {
+        expect(sha256HexEqualConstantTime(a, a)).toBe(true);
+        expect(sha256HexEqualConstantTime(a.toLowerCase(), a.toUpperCase())).toBe(true);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  test("sha256HexEqualConstantTime is false for a 64-char string with any non-hex char", () => {
+    const nonHex = fc.constantFrom(..."ghijklmnopqrstuvwxyzGHIJKLMNOPQRSTUVWXYZ!@ _-".split(""));
+    fc.assert(
+      fc.property(hex64, fc.integer({ min: 0, max: 63 }), nonHex, (h, pos, bad) => {
+        const corrupted = h.slice(0, pos) + bad + h.slice(pos + 1);
+        expect(sha256HexEqualConstantTime(corrupted, h)).toBe(false);
+      }),
+      { numRuns: 500 },
+    );
   });
 });

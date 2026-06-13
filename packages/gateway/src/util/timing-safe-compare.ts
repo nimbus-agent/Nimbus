@@ -15,8 +15,11 @@ export function sha256HexEqualConstantTime(a: string, b: string): boolean {
 }
 
 export function constantTimeStringEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a, "utf8");
-  const bBuf = Buffer.from(b, "utf8");
+  // utf16le is a bijection on JS strings (2 bytes per code unit, no replacement),
+  // so distinct strings — including lone surrogates — never produce equal buffers.
+  // (utf8 collapses lone surrogates / U+FFFD to EF BF BD, a false-positive source.)
+  const aBuf = Buffer.from(a, "utf16le");
+  const bBuf = Buffer.from(b, "utf16le");
   if (aBuf.length !== bBuf.length) {
     timingSafeEqual(aBuf, aBuf);
     return false;
