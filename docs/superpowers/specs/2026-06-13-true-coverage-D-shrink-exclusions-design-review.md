@@ -1,86 +1,88 @@
-# Spec Review — True Coverage Sub-project D (Shrink exclusions)
+# Review: True Coverage — Sub-project D: Shrink exclusions — Design
 
-**Date:** 2026-06-13
-**Reviewer:** adversarial design review (empirically verified against the tc-D worktree)
-**Spec:** [`2026-06-13-true-coverage-D-shrink-exclusions-design.md`](./2026-06-13-true-coverage-D-shrink-exclusions-design.md)
-**Verdict:** Sound to proceed to planning after the 3 MAJOR fixes below. No architectural BLOCKERs.
+**Date:** 2026-06-13  
+**Reviewer:** AI Assistant (Antigravity)  
+**Status:** Review Completed  
+**Target Spec:** [`2026-06-13-true-coverage-D-shrink-exclusions-design.md`](./2026-06-13-true-coverage-D-shrink-exclusions-design.md)
 
-Each finding is dispositioned **FIX** (corrected in the spec), **DEFER** (handled at plan time),
-or **EXPLAIN** (no change, rationale recorded). Confirmed-correct claims are listed last.
+---
 
-## MAJOR
+## 1. Executive Summary
 
-1. **`chatops-tool-runner-e2e-sink.ts` is NOT test-only — production boot (`assemble.ts`) statically
-   imports it.** `assemble.ts:13-16` imports `buildE2eSinkDispatcher`/`buildE2eSinkRunChatopsTool`
-   and calls them at runtime (assemble.ts:1060/1332/1340) when `NIMBUS_CHATOPS_E2E_SINK_DIR` is set.
-   Relocating it under `testing/` would point a production import into the coverage-skipped tree.
-   The exclusions.ts comment ("imported solely by *.test.ts") is factually wrong.
-   → **FIX.** §3(c) and §4 D3 now treat it as a separate **env-gated production-imported** case:
-   keep excluded, **do not relocate**, correct the comment to "env-gated (`NIMBUS_CHATOPS_E2E_SINK_DIR`),
-   inert in a normal boot" rather than "test-only." Only the 4 genuine pure test-helpers relocate.
+The design for Sub-project D (Shrink Exclusions) is highly disciplined, focusing on an "honest-shrink" philosophy that rejects vanity coverage in favor of meaningful DI-based tests. The triage of the ~40 files in `exclusions.ts` into clear categories (DI-refactorable, type-only, test-only, and genuinely-untestable) is precise.
 
-2. **D2 prejudgment "start.ts/team.ts likely real; cores already covered" is half-wrong.**
-   `team.ts`: `runTeamCommand` (the covered core) only handles the vault subset via
-   `runTeamVaultRpc`; the ~80-line **federation switch** (discover/grant/query/pair/audit…) lives
-   inside `runTeam` and is uncovered — a real extraction opportunity, not "core already covered."
-   `start.ts` (258L) is mostly irreducible subprocess/socket I/O glue (`spawnGateway`,
-   `IPCClient.connect` races, ready-polling, log-tailing), not arg-routing — honest-shrink likely
-   **demotes most of it to documented**.
-   → **FIX.** §4 D2 reframed to "triage on read": team.ts win = extract the federation switch to an
-   injectable `runTeamFederationRpc(client, cmd)` sibling (mirrors `runTeamVaultRpc`); start.ts
-   likely demotes to documented (extract its 3 small pure helpers if not already covered).
+We have reviewed the design and identified a few key points of note and recommendations regarding security boundaries, process state helpers, worker deserialization safety, and file renaming.
 
-3. **`embedding-worker.ts` (133L) carries non-trivial INLINE orchestration**, not a thin shell:
-   `setupDb`, the init IIFE (embedder + pipeline + backfill), `embed_texts`/`embed_item` handlers,
-   and a serialized `embedChain` promise queue. Extraction is a real refactor (an
-   `EmbeddingWorkerCore` taking injected `sendToMain`/db/embedder), not a quick probe.
-   `query-guard-worker.ts` (27L) IS genuinely thin (security check already in `worker-security.ts`).
-   → **FIX.** §6 now flags embedding-worker as needing a real, budgeted extraction; query-guard
-   stays a documented thin shell. The documented exclusion remains the guaranteed fallback for both.
+---
 
-## MINOR
+## 2. Detailed Feedback & Suggestions
 
-1. **`connectors/mapped-row.ts` double-listed** in §3(b) (correct, type-only) and §3(d) (stray
-   duplicate). → **FIX.** Removed the §3(d) mention.
+### 2.1. Invariant Boundary Protection on DI Seams (§3a)
 
-2. **`chatops/transport/transport.ts` not folded into the type-only group.** It is a 9th type-only
-   file (existing comment confirms). → **FIX.** Added to the §3(b) group (now 9 files); D3 folds it
-   into the shared type-only block.
+- **Observation:** `team-tool-spawn.ts` (under I19) and `chatops-bot-spawn-call.ts` (under I15/I23) are security-sensitive paths.
+- **Recommendation:** When injecting mock spawners/clients, ensure the tests explicitly assert that security context rules remain intact. For example, verify that the mock environment still rejects unauthorized actions or inputs if they bypass the wrapper, confirming that the DI seam only mocks execution results and does not bypass environment checks (I1/I15/I19).
 
-3. **`cli/src/commands/tui.tsx` had no disposition.** React/Ink entry point. → **FIX.** Assigned to
-   §3(d) genuinely-untestable (UI entry).
+---
 
-4. **Per-file relocation importer counts** (for D3 churn budget): `tui/test-helpers/context.ts` → 2
-   (both tests); `identity/identity-test-helpers.ts` → 5 tests; `updater/updater-test-fixtures.ts`
-   → 3 tests; `cli-test-helpers.ts` → ~0 importers (**possibly dead config** — confirm at plan time,
-   may be a delete not a relocate). → **DEFER** to D3 plan (counts recorded here).
+### 2.2. Test State Cleanup for `gateway-process.ts` (§3a)
 
-## NIT
+- **Observation:** `gateway-process.ts` manages state-file helper functions (`gatewayStatePath`, `ensureGatewayDirs`, etc.).
+- **Recommendation:** In the unit tests for `gateway-process.ts`:
+  1. Ensure all file operations (reads/writes/directories) target temporary directories created dynamically during the test run (e.g. using `os.tmpdir()` or a project-local temp dir).
+  2. Implement comprehensive `afterEach` or `afterAll` cleanup to delete these state files, preventing test pollution.
+  3. Ensure testing of `isProcessAlive` handles OS differences (e.g., checking own process PID `process.pid` vs an invalid PID, handling potential `ESRCH` or `EPERM` errors gracefully).
 
-1. **Seam signature changes understated.** team-tool-spawn, chatops-bot-spawn-call, and mdns-provider
-   currently have NO injection point — each needs a new optional param / ctor-default (still
-   zero-behavior-change per §7, but a real small public-signature edit). → **EXPLAIN/FIX.** Added a
-   one-line note after the §3(a) table; §7 already covers the zero-behavior-change bar.
+---
 
-2. **mdns fake typing caveat:** `InstanceType<typeof BonjourLib>` makes the fake non-trivial to type
-   without `any` (forbidden). → **DEFER** to D1 plan (use a structural interface for the seam, not
-   the imported class type).
+### 2.3. Deserialization and Queue Safety for extracted Worker Core (§6)
 
-3. **chatops-bot happy-path also needs the seam** (tool-not-found + `${platform}_${toolId}` fallback
-    branches), not just the creds-absent throw. → **EXPLAIN.** Already implied by "injected
-    client-factory covers the happy path"; the plan will enumerate the branches.
+- **Observation:** The plan proposes extracting `embedding-worker.ts` logic into a pure sibling `EmbeddingWorkerCore`.
+- **Recommendation:** Worker realms communicate using serialized message events. When testing `EmbeddingWorkerCore` directly:
+  1. Verify the serialization/deserialization boundaries of the message queue.
+  2. Specifically test that malformed payloads or failed task promises inside the queue do not result in unhandled rejections or silent failures, which would crash the background thread under normal execution.
 
-## Confirmed correct (claims that empirically hold — no change)
+---
 
-- `cli/lib/gateway-process.ts` spawns nothing; pure state-file + `isProcessAlive` helpers →
-  ≥80% with temp-dir/own-pid tests, no seam. **Slam-dunk.**
-- `team-tool-spawn.ts` spawner-injection does **not** violate D15 static (`'teamvault.'` prefix
-  check only) nor the I19 runtime test (which injects at the `invoke-gate`/`team-tool-invoke`
-  layer, not `spawnTeamToolAndCall`); I1/I15 live inside the real spawners the seam *selects*.
-- `chatops-bot-spawn-call.ts` creds-absent path throws **before** `new MCPClient`; not confined by
-  any static audit (D17 only confines `slack_chat_post`/`teams_chat_post`; I15 is `lazy-mesh/`-scoped).
-- All 8 (now 9 incl. transport) type-only files have **zero executable lines** — correct category.
-- `sdk/testing/sandbox-probe.ts` exact exclusion **is** redundant (check.ts:160 `/testing/` skip).
-- `repl.ts`/`doctor.ts` are genuinely thin (delegate to injected-deps `*-core.ts`) → documented.
-- §5 reseed mechanics (PR-own-merge-lcov, removed-set check, `targets` round-trip, 3 drift classes)
-  are consistent with the verified `check.ts` logic.
+### 2.4. File Relocation Hygiene (§3c)
+
+- **Observation:** Relocating test-helpers (e.g., `identity-test-helpers.ts` under a `testing/` directory) automatically exempts them from coverage checks.
+- **Recommendation:** Proactively use Git renaming (`git mv`) rather than deleting and creating files. This preserves git history and ensures that diffs remain clean and readable during the PR review process.
+
+---
+
+## 3. Conclusion
+
+The Sub-project D design is approved. The proposed categorization and slicing strategy are logical and ready to guide the implementation of the final True Coverage milestone.
+
+---
+
+## 4. Dispositions (applied 2026-06-13)
+
+All four points dispositioned **FIX** (corrected in the spec); none rejected. Empirically
+validated before recording.
+
+- **2.1 Invariant boundary on DI seams → FIX (§7).** Strengthened the security-invariants bullet:
+  D1 tests must assert the **default (no-injection) path resolves the real spawner/builder** (so I1
+  `extensionProcessEnv` + I15 `wrapServerSpec` still run on the real path), the fake is test-only
+  with no production behavior change, and `security-invariants.test.ts` + `audit:invariants` stay
+  green in the same PR. **EXPLAIN nuance recorded in-spec:** the I19/I15 authorization *gate* is
+  upstream (`invoke-gate.ts` / `lazy-mesh`), not inside `spawnTeamToolAndCall` /
+  `spawnChatopsBotToolAndCall` — those run **post-gate** (verified during the empirical review). So
+  the assertion is "the seam does not relocate/weaken the spec-build," not "the spawn fn re-checks
+  authorization." The recommendation is honored with this correct framing.
+
+- **2.2 `gateway-process.ts` test hygiene → FIX (§7).** Added a file-based-helper testing bullet:
+  `mkdtempSync(join(tmpdir(),…))` temp dirs + `afterEach` cleanup; `isProcessAlive` via own
+  `process.pid` (alive) + unused PID (dead). **Empirical note:** the current `process.kill(pid,0)`
+  catch treats **EPERM** as not-alive (process exists but no permission) — D **characterizes
+  existing behavior** (zero behavior change per §7); any EPERM-semantics fix is a separate
+  follow-up, out of D scope (flagged in-spec).
+
+- **2.3 `EmbeddingWorkerCore` queue/payload safety → FIX (§6).** Added explicit test requirements:
+  cover malformed/unknown message payloads and a **failed task promise in the `embedChain` queue**,
+  asserting **no unhandled rejection** + **no silent failure** (error surfaced/posted back, queue
+  keeps draining). The `embedChain` serialized promise queue was confirmed real during the spec's
+  own empirical review, so this concern is well-founded.
+
+- **2.4 File-relocation hygiene (`git mv`) → FIX (§3c).** Spec now mandates relocating the test
+  helpers via `git mv` to preserve history + keep the diff clean.

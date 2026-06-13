@@ -76,8 +76,9 @@ across every consumer for marginal gain; decided 2026-06-13).
 
 `discoverSourceFiles` (check.ts:160) already auto-skips any `/testing/` path (verified).
 
-**Genuine pure test-helpers → relocate under a `testing/` dir** (e.g. `cli/src/tui/testing/context.ts`),
-update importers, **drop the exact exclusions** (importer counts from grep, for the D3 churn budget):
+**Genuine pure test-helpers → relocate under a `testing/` dir** (e.g. `cli/src/tui/testing/context.ts`)
+via **`git mv`** (preserve history + clean diff — Antigravity review 2.4), update importers, **drop
+the exact exclusions** (importer counts from grep, for the D3 churn budget):
 
 - `cli/src/tui/test-helpers/context.ts` → 2 test importers.
 - `gateway/src/identity/identity-test-helpers.ts` → 5 test importers.
@@ -222,6 +223,13 @@ The two workers differ in shape (review finding — verified):
    cheap, instrument and drop the exclusion; otherwise the documented exclusion stands as the
    accepted fallback (reviewer concurred this is solid).
 
+**`EmbeddingWorkerCore` test requirements (Antigravity review 2.3):** since the real worker
+communicates via serialized message events, the core's tests must cover (a) malformed / unknown
+message payloads and (b) a **failed task promise inside the `embedChain` queue** — asserting **no
+unhandled rejection** and **no silent failure** (the error is surfaced to the caller / posted back,
+the queue keeps draining and does not wedge). These are the failure modes that would crash the
+background thread under normal execution but are invisible from the worker realm.
+
 Either path **terminates** with a documented outcome. The probe is not on the critical path —
 the documented exclusion is the guaranteed fallback.
 
@@ -232,10 +240,23 @@ the documented exclusion is the guaranteed fallback.
 - **No `any`** (use `unknown`), **no `biome-ignore`**, **no `istanbul-ignore`**. A provably-dead
   branch is removed via a type-safe refactor (§5 policy / the flagship `serviceOf` precedent),
   not suppressed.
-- **Security invariants:** the `team-tool-spawn` (I19/D15) and `chatops-bot-spawn-call`
-  (I15/I23) seams must leave the spec-build/sandbox path untouched; assert
-  `security-invariants.test.ts` (currently 69/69) + `audit:invariants` (static D10/D15/D17)
-  stay green in D1.
+- **Security invariants (strengthened — Antigravity review 2.1):** the `team-tool-spawn`
+  (I19/D15) and `chatops-bot-spawn-call` (I15/I23) seams must leave the spec-build/sandbox path
+  untouched. The seam injects only the spawner/client *selection* (i.e. the execution result), it
+  must **not** become an env-check bypass. D1 tests assert: (a) the **default** path (no injection)
+  resolves the **real** `spawnerFor` / real bot-server builder — so I1 `extensionProcessEnv` +
+  I15 `wrapServerSpec` still run on the real path; (b) the injected fake is reachable only in tests
+  and changes no production behavior; (c) `security-invariants.test.ts` (currently 69/69) +
+  `audit:invariants` (static D10/D15/D17) stay green in the same PR. *Note:* the I19/I15
+  authorization **gate** is upstream (`invoke-gate.ts` / `lazy-mesh`), not inside the spawn
+  function — the spawn fn runs post-gate, so the assertion is "the seam does not relocate or
+  weaken the spec-build," not "the spawn fn re-checks authorization."
+- **File-based-helper tests (Antigravity review 2.2):** `gateway-process.ts` tests target
+  `mkdtempSync(join(tmpdir(),…))` temp dirs with `afterEach` cleanup (no state-file pollution);
+  `isProcessAlive` is tested via own `process.pid` (alive) + an unused PID (dead). The current
+  `process.kill(pid, 0)` catch treats **EPERM** (process exists, no permission) as not-alive — D
+  **characterizes existing behavior** (zero behavior change); any EPERM-semantics correction is a
+  separate follow-up, out of D scope.
 - **Tests** follow the connector/cli exemplars already in the tree (real in-memory SQLite, no DB
   mocks; URL-keyed `globalThis.fetch` fakes restored in `afterEach`; deterministic state — no
   reliance on global `process.std*`/`env` defaults per the B10/B13 cross-file-leak lessons).
