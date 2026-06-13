@@ -57,8 +57,9 @@ which runner the committed config uses.
     config files (`tsconfig*.json`, `package.json`, `bun.lock`) to the Stryker `files` array.
   - **Command-runner command is tightly scoped (review §2.3):** under the fallback, the command
     runner cannot do perTest and reruns the whole configured command per mutant — so
-    `commandRunner.command` is explicitly `bun test <security-core test files>` (`executor-delegation`
-    + `executor-flagship` + `tool-output-envelope`), **never** a bare `bun test`/whole-workspace run.
+    `commandRunner.command` is explicitly `bun test <security-core test files>` (the
+    `executor-delegation`, `executor-flagship`, and `tool-output-envelope` tests), **never** a bare
+    `bun test`/whole-workspace run.
     `security-invariants.test.ts` is **excluded** from the scope: it makes source-*text* assertions
     (reads the `.ts` and regex-matches), which break once Stryker instruments the file in place.
 - **`scripts/mutation/run-mutation.ts`** — thin wrapper: with no args, runs the configured
