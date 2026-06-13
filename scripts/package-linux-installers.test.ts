@@ -233,21 +233,20 @@ linuxTest("--rpm renders an nfpm config and invokes the nfpm binary (stubbed)", 
 });
 
 linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () => {
-  const cfgOut = join(workDir, "captured-nfpm.yaml");
+  const wrapperOut = join(workDir, "captured-nimbus-wrapper");
+  // The stub runs while buildRpm's temp stage still exists; copy the staged
+  // wrapper out (config lives at <stage>/nfpm.yaml, wrappers at <stage>/wrappers/)
+  // because buildRpm rmSync's the stage on success before the test could read it.
   const nfpmStub = makeStub(
     "cfg-recording-nfpm",
     `prev=""\nfor a in "$@"; do\n` +
-      `  if [ "$prev" = "-f" ] || [ "$prev" = "--config" ]; then cp "$a" "${cfgOut}"; fi\n` +
+      `  if [ "$prev" = "-f" ] || [ "$prev" = "--config" ]; then cp "$(dirname "$a")/wrappers/nimbus" "${wrapperOut}"; fi\n` +
       `  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n` +
       `  prev="$a"\ndone`,
   );
   const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper", "--rpm", "--nfpm", nfpmStub]);
   expect(r.status).toBe(0);
-  const cfg = readFileSync(cfgOut, "utf8");
-  expect(cfg).toContain("dst: /usr/local/bin/nimbus");
-  const wrapperSrc = cfg.match(/src:\s*(\S+)\s*\n\s*dst:\s*\/usr\/local\/bin\/nimbus\b/)?.[1];
-  expect(wrapperSrc).toBeTruthy();
-  const wrapper = readFileSync(wrapperSrc as string, "utf8");
+  const wrapper = readFileSync(wrapperOut, "utf8");
   expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");
   expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
 });
