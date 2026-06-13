@@ -17,3 +17,7 @@ test("returns null for empty / unusable input", () => {
   expect(normalizeDataModelKey("")).toBeNull();
   expect(normalizeDataModelKey("   ")).toBeNull();
 });
+test("collapses empty parts from dot-only or double-dot input", () => {
+  expect(normalizeDataModelKey("a..b")).toBe("a.b");
+  expect(normalizeDataModelKey(".")).toBeNull();
+});

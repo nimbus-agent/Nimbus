@@ -635,29 +635,29 @@ describe("runIndexedSchemaMigrations — no pruning when backupOptions absent", 
 });
 
 // ---------------------------------------------------------------------------
-// Full migration stack — V1 through V38
+// Full migration stack — V1 through V40
 // ---------------------------------------------------------------------------
 
-describe("runIndexedSchemaMigrations — full stack V1→V38", () => {
-  it("advances to V38 without throwing", () => {
+describe("runIndexedSchemaMigrations — full stack V1→V40", () => {
+  it("advances to V40 without throwing", () => {
     const db = freshDb();
-    expect(() => runIndexedSchemaMigrations(db, 38)).not.toThrow();
-    expect(userVersion(db)).toBe(38);
+    expect(() => runIndexedSchemaMigrations(db, 40)).not.toThrow();
+    expect(userVersion(db)).toBe(40);
     db.close();
   });
 
-  it("records 38 ledger rows", () => {
+  it("records 40 ledger rows", () => {
     const db = freshDb();
-    runIndexedSchemaMigrations(db, 38);
-    expect(migrationCount(db)).toBe(38);
+    runIndexedSchemaMigrations(db, 40);
+    expect(migrationCount(db)).toBe(40);
     db.close();
   });
 
-  it("is idempotent at V38", () => {
+  it("is idempotent at V40", () => {
     const db = freshDb();
-    runIndexedSchemaMigrations(db, 38);
-    expect(() => runIndexedSchemaMigrations(db, 38)).not.toThrow();
-    expect(migrationCount(db)).toBe(38);
+    runIndexedSchemaMigrations(db, 40);
+    expect(() => runIndexedSchemaMigrations(db, 40)).not.toThrow();
+    expect(migrationCount(db)).toBe(40);
     db.close();
   });
 });
@@ -717,8 +717,8 @@ describe("runIndexedSchemaMigrations — incremental steps", () => {
 
 describe("backfillMigrationsLedger — label missing error branch", () => {
   it("throws when user_version exceeds BACKFILL_LABELS length (label missing)", () => {
-    // Run to V38 (the max), then delete all ledger rows.
-    // At V38, BACKFILL_LABELS only has 37 entries (indices 0–36),
+    // Run to V38 (BACKFILL_LABELS covers only V1–V37), then delete all ledger rows.
+    // BACKFILL_LABELS only has 37 entries (indices 0–36),
     // so backfill at v=38 accesses BACKFILL_LABELS[37] === undefined → throw.
     const db = freshDb();
     runIndexedSchemaMigrations(db, 38);
