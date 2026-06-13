@@ -261,9 +261,9 @@ async function runReembed(
   }
   const embedder = await resolveEmbedder(p.model, ctx);
   const pipeline: ReembedSink =
-    ctx._sinkFactory !== undefined
-      ? ctx._sinkFactory(embedder)
-      : new SqliteEmbeddingPipeline({ db: ctx.db, embedder, logger: ctx.logger });
+    ctx._sinkFactory === undefined
+      ? new SqliteEmbeddingPipeline({ db: ctx.db, embedder, logger: ctx.logger })
+      : ctx._sinkFactory(embedder);
 
   const counters: BatchCounters = { succeeded: 0, skipped: 0 };
   for (let i = 0; i < candidates.length; i += batchSize) {

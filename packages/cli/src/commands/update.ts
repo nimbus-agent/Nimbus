@@ -59,7 +59,7 @@ export async function runUpdate(argv: string[], opts: RunUpdateOptions = {}): Pr
   // withGatewayIpc() call, so the managed path still opens no IPC connection.
   const args = parseUpdateArgs(argv);
 
-  const channel = opts.channel !== undefined ? opts.channel : resolveDistributionChannel();
+  const channel = opts.channel === undefined ? resolveDistributionChannel() : opts.channel;
   if (channel !== null) {
     console.log(channelUpgradeHint(channel));
     process.exitCode = 0;

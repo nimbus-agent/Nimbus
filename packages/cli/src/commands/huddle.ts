@@ -35,7 +35,7 @@ export async function runHuddleCli(args: string[]): Promise<void> {
   const parsed = parseHuddleArgs(args);
   const params: { sinceMs?: number; namespaces: string[] } = {
     namespaces: parsed.namespaces,
-    ...(parsed.sinceMs !== undefined ? { sinceMs: parsed.sinceMs } : {}),
+    ...(parsed.sinceMs === undefined ? {} : { sinceMs: parsed.sinceMs }),
   };
   await runAgentBriefCli<HuddleBrief>({
     kind: "huddle",

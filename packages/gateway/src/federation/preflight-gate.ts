@@ -124,12 +124,9 @@ export function appendPreflightAudit(
   // audit_log.hitl_status is CHECK-constrained to approved|rejected|not_required. `answered` ran
   // after a local approval; `denied` was owner-rejected; the fail-closed pre-HITL decisions
   // (no_grant / not_configured / invalid) never reached the gate → not_required.
-  const hitlStatus =
-    entry.decision === "answered"
-      ? "approved"
-      : entry.decision === "denied"
-        ? "rejected"
-        : "not_required";
+  let hitlStatus: "approved" | "rejected" | "not_required" = "not_required";
+  if (entry.decision === "answered") hitlStatus = "approved";
+  else if (entry.decision === "denied") hitlStatus = "rejected";
   appendAuditEntry(db, {
     actionType: `federation.preflight.${entry.decision}`,
     hitlStatus,
