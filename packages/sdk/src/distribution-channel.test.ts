@@ -72,6 +72,24 @@ describe("resolveDistributionChannel", () => {
       }),
     ).toBe("homebrew");
   });
+
+  test("an explicit NIMBUS_DISTRIBUTION_CHANNEL=msi env marker resolves to the msi channel", () => {
+    const channel = resolveDistributionChannel({
+      env: { NIMBUS_DISTRIBUTION_CHANNEL: "msi" },
+      execPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Nimbus\\bin\\nimbus.exe",
+      realpath: (p) => p,
+    });
+    expect(channel).toBe("msi");
+  });
+
+  test("a scripted install.ps1 path (same %LOCALAPPDATA%\\Programs\\Nimbus dir, no env) is NOT msi", () => {
+    const channel = resolveDistributionChannel({
+      env: {},
+      execPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Nimbus\\bin\\nimbus.exe",
+      realpath: (p) => p,
+    });
+    expect(channel).toBeNull();
+  });
 });
 
 describe("channelUpgradeHint", () => {
