@@ -32,18 +32,18 @@ export function mapMonteCarloIncidentToItem(
   const severity = stringField(r, "severity") ?? null;
   const firstSeenAt = stringField(r, "firstSeenAt") ?? null;
 
-  const normalizedKey = monitoredTable !== null ? normalizeDataModelKey(monitoredTable) : null;
-  const monitoredDataModelKeys: string[] = normalizedKey !== null ? [normalizedKey] : [];
+  const normalizedKey = monitoredTable === null ? null : normalizeDataModelKey(monitoredTable);
+  const monitoredDataModelKeys: string[] = normalizedKey === null ? [] : [normalizedKey];
 
-  const statusSuffix = status !== null ? ` [${status}]` : "";
+  const statusSuffix = status === null ? "" : ` [${status}]`;
   const title = clampSyncTitle(`Monte Carlo incident ${incidentId}${statusSuffix}`);
   const bodyPreview = clampSyncTitle(
     `Incident ${incidentId}` +
-      (severity !== null ? ` · severity=${severity}` : "") +
-      (monitoredTable !== null ? ` · table=${monitoredTable}` : ""),
+      (severity === null ? "" : ` · severity=${severity}`) +
+      (monitoredTable === null ? "" : ` · table=${monitoredTable}`),
   );
 
-  const parsedAt = firstSeenAt !== null ? Date.parse(firstSeenAt) : Number.NaN;
+  const parsedAt = firstSeenAt === null ? Number.NaN : Date.parse(firstSeenAt);
   const modifiedAt = Number.isNaN(parsedAt) ? ctx.syncedAt : parsedAt;
 
   return {

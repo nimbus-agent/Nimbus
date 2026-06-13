@@ -28,12 +28,13 @@ export function mapTableauViewToItem(
     .filter((t): t is string => typeof t === "string" && t !== "")
     .map((t) => normalizeDataModelKey(t))
     .filter((k): k is string => k !== null);
+  const authorSuffix = author === null ? "" : ` · ${author}`;
   return {
     service: SERVICE,
     type: TYPE,
     externalId: `tableau:${luid}`,
     title: name,
-    bodyPreview: `Tableau dashboard${author !== null ? ` · ${author}` : ""}`,
+    bodyPreview: `Tableau dashboard${authorSuffix}`,
     url: null,
     canonicalUrl: null,
     modifiedAt: ctx.syncedAt,

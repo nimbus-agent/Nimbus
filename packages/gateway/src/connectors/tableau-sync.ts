@@ -64,7 +64,7 @@ function parseSigninResponse(parsed: unknown): SigninResult | null {
   if (creds === undefined) return null;
   const token = stringField(creds, "token");
   const site = asRecord(creds["site"]);
-  const siteId = site !== undefined ? stringField(site, "id") : undefined;
+  const siteId = site === undefined ? undefined : stringField(site, "id");
   if (token === undefined || siteId === undefined) return null;
   return { token, siteId };
 }
@@ -80,10 +80,10 @@ function viewsFromResponse(parsed: unknown): Record<string, unknown>[] {
     // Extract name: prefer the view name, fall back to workbook name
     const name = stringField(r, "name") ?? "";
     const workbook = asRecord(r["workbook"]);
-    const workbookName = workbook !== undefined ? (stringField(workbook, "name") ?? "") : "";
-    const displayName = name !== "" ? name : workbookName;
+    const workbookName = workbook === undefined ? "" : (stringField(workbook, "name") ?? "");
+    const displayName = name === "" ? workbookName : name;
     const owner = asRecord(r["owner"]);
-    const author = owner !== undefined ? (stringField(owner, "name") ?? null) : null;
+    const author = owner === undefined ? null : (stringField(owner, "name") ?? null);
     // dataSourceTables is best-effort; Tableau REST API v3.4 views endpoint
     // does not return upstream table info — emit empty array. The edge is
     // exercised at the mapper + graph level via explicit test fixtures.

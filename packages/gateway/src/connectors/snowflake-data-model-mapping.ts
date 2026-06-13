@@ -31,12 +31,13 @@ export function mapSnowflakeTableToItem(
     .filter((c) => c.name !== "");
   const rowCountEstimate = numberField(r, "row_count") ?? null;
   const lastAltered = stringField(r, "last_altered") ?? null;
+  const rowCountSummary = rowCountEstimate === null ? "rows unknown" : `~${rowCountEstimate} rows`;
   return {
     service: SERVICE,
     type: TYPE,
     externalId: `snowflake:${key}`,
     title: `${schema}.${table}`,
-    bodyPreview: `${columns.length} columns · ${rowCountEstimate === null ? "rows unknown" : `~${rowCountEstimate} rows`}`,
+    bodyPreview: `${columns.length} columns · ${rowCountSummary}`,
     url: null,
     canonicalUrl: null,
     modifiedAt: (() => {

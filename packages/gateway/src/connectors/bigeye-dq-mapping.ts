@@ -31,15 +31,15 @@ export function mapBigeyeIssueToItem(
   const slaStatus = stringField(r, "slaStatus") ?? null;
   const anomaly = stringField(r, "anomaly") ?? null;
 
-  const normalizedKey = monitoredTable !== null ? normalizeDataModelKey(monitoredTable) : null;
-  const monitoredDataModelKeys: string[] = normalizedKey !== null ? [normalizedKey] : [];
+  const normalizedKey = monitoredTable === null ? null : normalizeDataModelKey(monitoredTable);
+  const monitoredDataModelKeys: string[] = normalizedKey === null ? [] : [normalizedKey];
 
-  const slaStatusSuffix = slaStatus !== null ? ` [${slaStatus}]` : "";
+  const slaStatusSuffix = slaStatus === null ? "" : ` [${slaStatus}]`;
   const title = clampSyncTitle(`Bigeye issue ${issueId}${slaStatusSuffix}`);
   const bodyPreview = clampSyncTitle(
     `Issue ${issueId}` +
-      (slaStatus !== null ? ` · slaStatus=${slaStatus}` : "") +
-      (monitoredTable !== null ? ` · table=${monitoredTable}` : ""),
+      (slaStatus === null ? "" : ` · slaStatus=${slaStatus}`) +
+      (monitoredTable === null ? "" : ` · table=${monitoredTable}`),
   );
 
   return {

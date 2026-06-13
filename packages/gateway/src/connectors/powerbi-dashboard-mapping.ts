@@ -35,12 +35,13 @@ export function mapPowerBiReportToItem(
     .filter((t): t is string => typeof t === "string" && t !== "")
     .map((t) => normalizeDataModelKey(t))
     .filter((k): k is string => k !== null);
+  const workspaceSuffix = workspace === null ? "" : ` · ${workspace}`;
   return {
     service: SERVICE,
     type: TYPE,
     externalId: `powerbi:${id}`,
     title: name,
-    bodyPreview: `Power BI dashboard${workspace !== null ? ` · ${workspace}` : ""}`,
+    bodyPreview: `Power BI dashboard${workspaceSuffix}`,
     url: null,
     canonicalUrl: null,
     modifiedAt: ctx.syncedAt,

@@ -59,7 +59,7 @@ export function mapLookerViewToItem(
   const name = stringField(r, "name");
   if (model === undefined || model === "" || name === undefined || name === "") return null;
   const sqlTableName = stringField(r, "sql_table_name");
-  const dataModelKey = sqlTableName !== undefined ? normalizeDataModelKey(sqlTableName) : null;
+  const dataModelKey = sqlTableName === undefined ? null : normalizeDataModelKey(sqlTableName);
   if (dataModelKey === null) return null;
   const derivedFromKeys = [dataModelKey];
   return {

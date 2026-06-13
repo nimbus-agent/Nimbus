@@ -41,7 +41,9 @@ function issueId(item: unknown): string {
   if (item === null || typeof item !== "object" || Array.isArray(item)) return "";
   const row = item as Record<string, unknown>;
   const v = row["id"];
-  return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return "";
 }
 
 await runReadOnlyMcpConnector("nimbus-bigeye", (reg) => {
