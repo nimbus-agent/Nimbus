@@ -29,6 +29,14 @@ describe("wrapToolOutput (S8-F3 / chain C4)", () => {
     expect(env.includes("&quot;")).toBe(true);
   });
 
+  test("escapes &, <, > to their named entities (not merely dropping them)", () => {
+    // Assert the exact escaped form so a mutant that REPLACES with "" (drops the
+    // char) instead of the entity is caught — "no raw <" alone would pass on a drop.
+    const env = wrapToolOutput({ service: "a&b<c>d", tool: "x" }, "ok");
+    const openTag = env.slice(0, env.indexOf(">") + 1);
+    expect(openTag).toBe('<tool_output service="a&amp;b&lt;c&gt;d" tool="x">');
+  });
+
   test("handles non-object results (string, number, null)", () => {
     const a = wrapToolOutput({ service: "x", tool: "y" }, "plain string");
     expect(a.includes('"plain string"')).toBe(true);
