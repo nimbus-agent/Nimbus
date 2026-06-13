@@ -33,16 +33,19 @@ source coverage only holds or rises).
 ## Task 1: Fix the boundary bug, locked by behavioral property tests
 
 **Files:**
+
 - Modify: `packages/gateway/src/audit/format-audit-payload.ts:1-49`
 - Test: `packages/gateway/src/audit/format-audit-payload.test.ts`
 
 - [ ] **Step 0: Confirm no security-invariant test pins these regex literals**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 grep -rn "SENSITIVE_VALUE_PATTERNS\|gh\[pousr\]\|redactAuditPayload" packages/gateway/src/security-invariants.test.ts || echo "NONE — safe"
 ```
+
 Expected: `NONE — safe` (the audit scrubber is a sibling of I11, not an invariant wiring site). If
 any hit appears, stop and reconcile with the spec §3.4 before proceeding.
 
@@ -171,10 +174,12 @@ describe("redactAuditPayload — property: ordinary prose is preserved", () => {
 - [ ] **Step 2: Run the new property tests against the LIVE (unfixed) module — verify they FAIL**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 bun test packages/gateway/src/audit/format-audit-payload.test.ts -t "property" 2>&1 | tail -25
 ```
+
 Expected: **FAIL.** fast-check finds and shrinks counterexamples — at minimum the `github_fine_grained`
 family (prefix never matched) and the `github_classic`/others with an `_` separator on a side
 (boundary escape). This proves the §3.1 blind spot on the real module before the fix.
@@ -236,19 +241,23 @@ Leave the rest of the file (`redact`, `formatAuditPayload`, `redactAuditPayload`
 - [ ] **Step 4: Run the full audit test file — verify ALL pass (new properties + existing 7)**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 bun test packages/gateway/src/audit/format-audit-payload.test.ts 2>&1 | tail -15
 ```
+
 Expected: **PASS** — all property tests green and the 7 pre-existing tests still green (the change
 only ever redacts more; the `"sketch a plan"` guard and the key-based redactions are unaffected).
 
 - [ ] **Step 5: Typecheck the changed package**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C/packages/gateway && bun run typecheck 2>&1 | tail -15
 ```
+
 Expected: no errors in `audit/format-audit-payload.ts` or its test. (If `@nimbus-dev/client`
 false-fails, run `cd packages/client && bun run build` once, per the worktree gotcha.)
 
@@ -277,6 +286,7 @@ Prevents a future pattern being added to the production scrubber (or a generator
 counterpart — the property suite would otherwise silently stop covering it.
 
 **Files:**
+
 - Test: `packages/gateway/src/audit/format-audit-payload.test.ts`
 
 - [ ] **Step 1: Import the exported pattern map**
@@ -307,18 +317,22 @@ describe("redactAuditPayload — structural: every pattern has a generator", () 
 - [ ] **Step 3: Run the file — verify the guard passes**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 bun test packages/gateway/src/audit/format-audit-payload.test.ts 2>&1 | tail -12
 ```
+
 Expected: **PASS** — the 8 production keys match the 8 generator keys.
 
 - [ ] **Step 4: Prove the guard actually catches drift (temporary, do NOT commit)**
 
 Temporarily delete one generator entry (e.g. the `aws` line in `GENERATORS`) and re-run:
+
 ```bash
 bun test packages/gateway/src/audit/format-audit-payload.test.ts -t "1:1" 2>&1 | tail -8
 ```
+
 Expected: **FAIL** on the keyset mismatch. Then restore the deleted line and re-run to confirm
 green again. (This is a manual sanity check — leave the file restored.)
 
@@ -341,21 +355,25 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Confirm I11 / audit invariants still hold**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 bun test packages/gateway/src/security-invariants.test.ts 2>&1 | tail -8
 bun run audit:invariants 2>&1 | tail -8
 ```
+
 Expected: both **PASS** (no invariant references the scrubber regexes; this change is behavior-only).
 
 - [ ] **Step 2: Run the cheap static pre-flight + the audit subtree**
 
 Run:
+
 ```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/tc-C
 bun run preflight:fast 2>&1 | tail -20
 bun test packages/gateway/src/audit 2>&1 | tail -10
 ```
+
 Expected: pre-flight static gates green; the whole `audit/` subtree green. (Biome may be skipped in
 the worktree via `!**/.claude` — if `preflight:fast` reports 0 lint files, validate with
 `bunx biome check packages/gateway/src/audit/format-audit-payload.ts packages/gateway/src/audit/format-audit-payload.test.ts`.)

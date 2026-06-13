@@ -81,10 +81,12 @@ boundary but **not** alphanumerics, and add the fine-grained PAT family:
   fine-grained includes it), they are kept as **two separate patterns** rather than one union — a
   shared trailing lookahead over a union forces a single charset, and `(?![A-Za-z0-9_])` on the
   union reintroduces the `ghp_…_x` escape we are fixing (validated, see §3.2 note):
-  ```
+
+  ```text
   (?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])        # classic — body excludes _
   (?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])     # fine-grained — body includes _
   ```
+
 - **Token cores stay specific** (prefix + minimum length + charset) so non-secret prose is
   preserved — in particular the existing guard test `"sketch a plan"` stays un-redacted (`sk-`
   still requires the hyphen).
@@ -173,7 +175,7 @@ Each test runs in the normal suite. Per-target findings get fixed in C2's plan.
 Resolved from the §11 background research (2026-06-13):
 
 - **Versions:** `@stryker-mutator/core@9.6.1` (current 9.x; Node ≥20 — satisfied, Node v24 present)
-  + `@hughescr/stryker-bun-runner` (requires Bun **≥1.3.7**; we run 1.3.14 — it depends on a
+  - `@hughescr/stryker-bun-runner` (requires Bun **≥1.3.7**; we run 1.3.14 — it depends on a
   *recent* Bun Inspector/TestReporter feature, so it tracks new Bun rather than being bit-rotted).
   The runner is a single-maintainer experimental community plugin outside the official
   `@stryker-mutator` org.

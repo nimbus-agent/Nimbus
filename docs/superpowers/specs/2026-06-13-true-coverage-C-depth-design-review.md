@@ -18,11 +18,14 @@ We have reviewed the specification and identified a few minor areas of improveme
 ## 2. Detailed Feedback & Suggestions
 
 ### 2.1. Regex Lookahead & Charset Alignment (Section 3.2)
+
 - **Observation:** In the proposed pattern for the GitHub PAT family:
-  ```
+
+  ```text
   (?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})(?![A-Za-z0-9])
   ```
-  The body of `github_pat_` allows underscores (`_`), but the trailing negative lookahead is `(?![A-Za-z0-9])`. 
+
+  The body of `github_pat_` allows underscores (`_`), but the trailing negative lookahead is `(?![A-Za-z0-9])`.
 - **Recommendation:** Align the trailing negative lookahead charset with the body charset of the pattern being matched. If a token body can contain `_`, the lookahead should ensure we don't match a partial token prefix before an underscore. Although greediness `{20,}` prevents premature stopping in most cases, using:
   - `(?![A-Za-z0-9_])` for `github_pat_`
   - `(?![A-Za-z0-9_-])` for `sk-`/`sk-ant-`/`xox`/`eyJ`
@@ -33,6 +36,7 @@ We have reviewed the specification and identified a few minor areas of improveme
 ---
 
 ### 2.2. Fast-Check Generator Completeness & Sync (Section 3.3)
+
 - **Observation:** As the codebase evolves, new token formats may be added to `SENSITIVE_VALUE_PATTERNS` in `format-audit-payload.ts`.
 - **Recommendation:** To prevent property-test drift (where a new pattern is added to the production scrubber but is forgotten in the property test generators):
   1. Add a structural assertion in the test file that verifies the count of `SENSITIVE_VALUE_PATTERNS` matches the number of registered fast-check generators.
@@ -41,16 +45,18 @@ We have reviewed the specification and identified a few minor areas of improveme
 ---
 
 ### 2.3. StrykerJS Performance & Configuration (Section 5)
+
 - **Observation:** Using the `command` runner fallback runs the command for each mutant. Even with Bun's sub-10ms startup, running the entire test suite on hundreds of mutants can lead to noticeable execution times.
-- **Recommendation:** 
+- **Recommendation:**
   1. Ensure the fallback `commandRunner.command` is tightly scoped to the target test suite (e.g., `bun test packages/gateway/src/audit/format-audit-payload.test.ts`) rather than `bun test` globally.
   2. Add `coverageAnalysis: "perTest"` (supported by the experimental bun-runner) but fall back to `coverageAnalysis: "all"` or `"off"` for the command runner to guarantee correctness.
 
 ---
 
 ### 2.4. Cross-Runtime Compatibility (Stryker under Node)
+
 - **Observation:** StrykerJS core runs under Node.js (v20+ is present).
-- **Verification:** Ensure that the regexes using advanced lookbehinds and lookaheads function identically under both Bun (JSC) and Stryker's execution environment (Node/V8). 
+- **Verification:** Ensure that the regexes using advanced lookbehinds and lookaheads function identically under both Bun (JSC) and Stryker's execution environment (Node/V8).
 - **Status:** Lookbehinds (`(?<!...)`) and lookaheads (`(?!...)`) are fully standard in ES2018+ and are natively supported in all target runtimes (JSC/V8). No compatibility issues are expected.
 
 ---
