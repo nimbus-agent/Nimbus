@@ -38,22 +38,36 @@ Every entry receives one of five dispositions:
 
 ### (a) DI-refactorable I/O shells — *un-exclude* (the real work)
 
-Files with real executable logic reachable behind a clean seam:
+Files with real executable logic reachable behind a clean seam (the **3 confirmed D1 un-excludes**
+after reading each, 2026-06-13):
 
 | File | LOC | Seam | Notes |
 |---|---|---|---|
-| `cli/src/lib/gateway-process.ts` | 67 | **none** | Despite the name it spawns nothing now — pure state-file helpers (`isGatewayStateRaw`, `readGatewayState`, `gatewayStatePath`, `ensureGatewayDirs`) + `isProcessAlive`. Slam-dunk, temp-dir + own-pid tests. |
-| `federation/mdns-discovery-provider.ts` | 54 | bonjour factory (ctor default) | `find`-callback host-extraction (`addresses[0] ?? host` + type guards), `advertise`/`stop`/`list`/`addManualPeer`. |
-| `teamvault/team-tool-spawn.ts` | 78 | spawner injection (optional param, real default) | `spawnerFor` map lookup + spawn/call/not-found/disconnect lifecycle without a subprocess. **⚠️ I19/D15** — seam injects *which spawner*, never touches the spec-build / `extensionProcessEnv` (I1) / `wrapServerSpec` (I15) path. |
-| `chatops/chatops-bot-spawn-call.ts` | 55 | client-factory injection | A creds-absent `vaultView` drives the fail-closed `servers===undefined` throw with no subprocess; injected client-factory covers happy/not-found/disconnect. **⚠️ I15/I23** — reuses the already-covered sandbox-wrapped spec builders, authors no `ServerSpec`. |
-| `platform/sandbox/sandbox-wrapper.ts` | 66 | TBD (read in planning) | Include in D1 only if a clean seam clears ≥80%; else demote to documented. |
-| `client/src/stream-events.ts` | 47 | TBD (read in planning) | Include in D1 only if a clean seam clears ≥80%; else demote to documented. |
+| `federation/mdns-discovery-provider.ts` | 54 | bonjour factory (ctor default) | `find`-callback host-extraction (`addresses[0] ?? host` + type guards), `advertise`/`stop`/`list`/`addManualPeer`. Type the seam via a **structural interface**, not `InstanceType<typeof BonjourLib>` (avoids `any`). No existing test → new file. |
+| `teamvault/team-tool-spawn.ts` | 78 | **extract** `runSpawnedToolCall(spawner, req)` + export `spawnerFor` | Test the lifecycle with a fake spawner that populates the clients map (no subprocess); `spawnTeamToolAndCall` stays a 1-line composition. **⚠️ I19/D15** — only ADDs exports; the public `spawnTeamToolAndCall` signature is unchanged, the real spawners still carry I1/I15. No existing test → new file. |
+| `chatops/chatops-bot-spawn-call.ts` | 55 | **extract** `runBotToolCall(client, …)` | Existing test (`chatops-bot-spawn-call.test.ts`, 4 fail-closed tests via `fakeVault`) already covers the creds-absent throw; **extend** it with `runBotToolCall` happy/not-found/`${platform}_${toolId}`-fallback/disconnect-swallow tests using a fake client. **⚠️ I15/I23** — reuses the already-covered sandbox-wrapped builders, authors no `ServerSpec`. |
 
-> **Seam-signature note:** `team-tool-spawn`, `chatops-bot-spawn-call`, and `mdns-discovery-provider`
-> currently have **no** injection point — each un-exclude adds a new optional param / ctor-default
-> (still zero-behavior-change per §7, but a real small public-signature edit, not a pure test
-> addition). The mdns fake should be typed against a **structural interface** for the seam, not the
-> imported `InstanceType<typeof BonjourLib>` class type (avoids an `any`).
+**The default-param coverage trap (why "extract", not "inject-with-default"):** an optional
+`spawner = spawnerFor(req.service)` / `makeClient = () => new MCPClient(…)` default param leaves the
+*default-evaluation* branch uncovered unless a test omits the arg — and omitting it runs the **real**
+subprocess. So instead we **extract** the testable lifecycle to an exported helper tested directly
+with a fake, and leave the irreducible real-construction line (`spawnerFor(req.service)` /
+`new MCPClient(…)`) inside the thin public fn. That thin residual is ~1–3 uncovered lines with no
+branches, so the file still clears the ≥80% floor (≈90–95% line, ≈100% branch).
+
+**Demoted after read (NOT D1 un-excludes):**
+
+- `cli/src/lib/gateway-process.ts` → **(d) documented.** It is a **deliberate duplicate** (`gw-state-helpers.ts`
+  is its byte-identical twin) imported by 40+ CLI command modules and **`mock.module`'d
+  process-globally** in `test/helpers/cli-mocks.ts`; in the combined `bun test packages/cli/src` run
+  its coverage reflects the *stub*, not the real code. The real logic is already tested via the
+  un-excluded `gw-state-helpers.ts` twin (`gateway-process.test.ts`, 257L). Un-excluding it would
+  require removing `mock.module` from 40+ files (re-export facade fails — PR #592) → out of scope.
+- `platform/sandbox/sandbox-wrapper.ts` → **(d) documented.** It's a `#!/usr/bin/env bun` **process
+  entry point** (`await main()`, `process.argv`, `process.exit`, `createSandboxRunner().spawn()`) —
+  same class as the boot entries; testing needs a real subprocess.
+- `client/src/stream-events.ts` → **(b) type-only.** All `export type` (StreamEvent / AskStreamOptions /
+  AskStreamHandle / HitlRequest), zero executable lines — can never rejoin the floor.
 
 ### (b) Type-only / zero-executable — *keep excluded, document + group* (decided: no rename)
 
@@ -64,11 +78,12 @@ to test.
 
 `index/ranked-item.ts`, `embedding/embedding-runtime.ts`, `vault/nimbus-vault.ts`,
 `ipc/agent-invoke.ts`, `ipc/workflow-invoke.ts`, `connectors/mapped-row.ts`,
-`ipc/connector-rpc-handlers/context.ts`, `connectors/lazy-mesh/slot.ts`, and the
-already-documented `chatops/transport/transport.ts` (9 files total — `transport.ts` is the same
-class, just currently commented separately).
+`ipc/connector-rpc-handlers/context.ts`, `connectors/lazy-mesh/slot.ts`,
+`client/src/stream-events.ts` (demoted from (a) after read), and the already-documented
+`chatops/transport/transport.ts` (**10 files total** — `transport.ts` is the same class, just
+currently commented separately).
 
-**Disposition (D3):** move all 9 into a single clearly-labeled "type-only / zero executable lines"
+**Disposition (D3):** move all 10 into a single clearly-labeled "type-only / zero executable lines"
 block in `exclusions.ts` with a shared rationale comment. **No rename** (avoids import churn
 across every consumer for marginal gain; decided 2026-06-13).
 
@@ -106,7 +121,8 @@ Keep excluded; D3 ensures each carries a clear category comment.
 
 - **FFI (Vault):** `vault/{win32,darwin,linux,ffi-ptr}.ts` — DPAPI / Keychain / libsecret FFI.
 - **Platform-gated:** `platform/{win32,darwin,linux,browser}.ts`, `platform/sandbox/{linux,darwin,win32,orphan-reap,sandbox-runner}.ts` — OS-specific; a single CI-Linux runner takes one branch per OS.
-- **Boot orchestrators / index barrels / factories:** `gateway/src/index.ts`, `cli/src/index.ts`, `platform/assemble.ts`, `platform/assemble-sync-registrations.ts`, `platform/index.ts`, `platform/sandbox/index.ts`, `connectors/index.ts`, `vault/factory.ts`, `ipc/server/options.ts` (unless D2 finds a seam), `sdk/src/ipc/index.ts`, `client/src/index.ts`.
+- **Boot orchestrators / index barrels / factories / process entry points:** `gateway/src/index.ts`, `cli/src/index.ts`, `platform/assemble.ts`, `platform/assemble-sync-registrations.ts`, `platform/index.ts`, `platform/sandbox/index.ts`, `platform/sandbox/sandbox-wrapper.ts` (a `#!/usr/bin/env bun` process entry, demoted from (a)), `connectors/index.ts`, `vault/factory.ts`, `ipc/server/options.ts` (unless D2 finds a seam), `sdk/src/ipc/index.ts`, `client/src/index.ts`.
+- **`mock.module`-shadowed (real logic tested via a documented twin):** `cli/src/lib/gateway-process.ts` — imported by 40+ CLI command modules and `mock.module`'d process-globally; the real code is covered via the un-excluded byte-identical `gw-state-helpers.ts` twin (demoted from (a); see §3(a)).
 - **Workers:** `db/query-guard-worker.ts`, `embedding/embedding-worker.ts` — see §6.
 - **Generated SQL:** `index/*-v\d+-sql.ts` (pathRegex).
 - **Connect-shell regexes:** `mcp-connectors/*/src/{server,tools}.ts`, `github-actions/*/src/main.ts`.
@@ -123,11 +139,12 @@ Final per-file assignment firms up in each slice's plan, but the structure is fi
 
 ### D1 — Gateway I/O-shell un-excludes (high-value, clean seams)
 
-`cli/lib/gateway-process.ts`, `federation/mdns-discovery-provider.ts`,
-`teamvault/team-tool-spawn.ts`, `chatops/chatops-bot-spawn-call.ts`, and
-`platform/sandbox/sandbox-wrapper.ts` + `client/src/stream-events.ts` **if** they clear ≥80%
-with a clean seam (else demoted). Coverage-touching → reseed dance (§5). Security-care on
-`team-tool-spawn` (I19) and `chatops-bot-spawn-call` (I15/I23).
+**3 confirmed un-excludes** (after reading each, 2026-06-13): `federation/mdns-discovery-provider.ts`,
+`teamvault/team-tool-spawn.ts`, `chatops/chatops-bot-spawn-call.ts`. The two original "TBD" entries
+and the `gateway-process` candidate were **demoted on read** (see §3(a)): `gateway-process.ts`
+(mock.module-shadowed twin), `sandbox-wrapper.ts` (process entry), `stream-events.ts` (type-only).
+Coverage-touching → reseed dance (§5). Security-care on `team-tool-spawn` (I19) and
+`chatops-bot-spawn-call` (I15/I23). Plan: `docs/superpowers/plans/2026-06-13-true-coverage-D1.md`.
 
 ### D2 — Heavy / borderline triage
 
