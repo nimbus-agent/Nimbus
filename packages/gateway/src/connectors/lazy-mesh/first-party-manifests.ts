@@ -315,6 +315,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Bigeye (Tier-3, data-quality observability). Per-tenant host (derived from
+  // bigeye.base_url) is added at spawn time by phase3AddBigeyeMcp via
+  // manifestWithExtraNetworkHosts — mirrors the Looker/Tableau pattern.
+  bigeye: baseManifest("com.nimbus.bigeye", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

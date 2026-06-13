@@ -11,6 +11,7 @@ import {
   phase3AddArgocdMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
+  phase3AddBigeyeMcp,
   phase3AddDagsterMcp,
   phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
@@ -2354,5 +2355,69 @@ describe("phase3AddMonteCarloMcp", () => {
     if (spec === undefined) return;
     const manifest = readManifest(spec);
     expect(manifest.permissions.network).toContain("api.getmontecarlo.com");
+  });
+});
+
+describe("phase3AddBigeyeMcp", () => {
+  test("no-op when both credentials are absent", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["bigeye"]).toBeUndefined();
+  });
+
+  test("no-op when base_url is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("bigeye.api_key", "key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["bigeye"]).toBeUndefined();
+  });
+
+  test("no-op when api_key is missing", async () => {
+    const vault = createMockVault();
+    await vault.set("bigeye.base_url", "https://app.bigeye.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["bigeye"]).toBeUndefined();
+  });
+
+  test("spawns sandboxed server with BIGEYE_BASE_URL and BIGEYE_API_KEY env + parsed host in manifest", async () => {
+    const vault = createMockVault();
+    await vault.set("bigeye.base_url", "https://app.bigeye.com");
+    await vault.set("bigeye.api_key", "my-api-key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["bigeye"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "app.bigeye.com");
+    expect(spec.env?.["BIGEYE_BASE_URL"]).toBe("https://app.bigeye.com");
+    expect(spec.env?.["BIGEYE_API_KEY"]).toBe("my-api-key");
+  });
+
+  test("manifest contains parsed host from base_url", async () => {
+    const vault = createMockVault();
+    await vault.set("bigeye.base_url", "https://app.bigeye.com");
+    await vault.set("bigeye.api_key", "key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["bigeye"];
+    if (spec === undefined) return;
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network).toContain("app.bigeye.com");
+  });
+
+  test("spawns even when base_url is not a parseable URL (hostname=null branch)", async () => {
+    const vault = createMockVault();
+    await vault.set("bigeye.base_url", "not a url");
+    await vault.set("bigeye.api_key", "key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigeyeMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["bigeye"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["BIGEYE_BASE_URL"]).toBe("not a url");
   });
 });

@@ -1676,6 +1676,32 @@ export async function phase3AddMonteCarloMcp(
   );
 }
 
+export async function phase3AddBigeyeMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const baseUrl = (await readConnectorSecret(vault, "bigeye", "base_url"))?.trim() ?? "";
+  const apiKey = (await readConnectorSecret(vault, "bigeye", "api_key"))?.trim() ?? "";
+  if (baseUrl === "" || apiKey === "") {
+    return;
+  }
+  const host = hostnameFromUrl(baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host]);
+  servers["bigeye"] = wrapServerSpec(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("bigeye")],
+      env: extensionProcessEnv({
+        BIGEYE_BASE_URL: baseUrl,
+        BIGEYE_API_KEY: apiKey,
+      }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function buildPhase3Servers(
   vault: NimbusVault,
   sandboxCwd: string,
@@ -1743,5 +1769,6 @@ export async function buildPhase3Servers(
   await phase3AddDataprofileMcp(vault, servers, sandboxCwd);
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   await phase3AddMonteCarloMcp(vault, servers, sandboxCwd);
+  await phase3AddBigeyeMcp(vault, servers, sandboxCwd);
   return servers;
 }
