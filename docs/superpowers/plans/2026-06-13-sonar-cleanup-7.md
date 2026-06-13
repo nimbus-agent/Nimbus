@@ -552,7 +552,7 @@ git commit -m "refactor(sonar): extract bootTribalKnowledge from assemblePlatfor
 
 - [ ] **Step 1: Run the repo-wide jscpd oracle** (Sonar matches blocks project-wide; single-dir runs miss cross-file dups).
 
-Run: `bunx jscpd@4 --min-lines 10 --min-tokens 70 --reporters json --output "$TEMP/jscpd-7" --format typescript,tsx packages`
+Run (in a **bash-compatible shell** — the worktree uses Git Bash; `$TEMP` is the OS temp dir there. On `cmd`/PowerShell substitute an explicit writable temp path, or use a portable one such as ``--output "$(node -e "console.log(require('os').tmpdir())")/jscpd-7"``): `bunx jscpd@4 --min-lines 10 --min-tokens 70 --reporters json --output "$TEMP/jscpd-7" --format typescript,tsx packages`
 (Non-zero exit is jscpd's own threshold — the JSON in `$TEMP/jscpd-7/jscpd-report.json` is still written.)
 
 - [ ] **Step 2: Read the report** and confirm the live duplicated clusters against the Sonar list in the spec. Prioritise these **clear-win** extractions, and **skip** `auth/oauth-registry.ts` + `connectors/lazy-mesh/phase3-config.ts` (declarative — DRY hurts readability):

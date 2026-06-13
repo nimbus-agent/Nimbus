@@ -39,7 +39,7 @@
 
 * **`gateway/src/platform/assemble.ts:921` (`assemblePlatformServices`)**:
   * **Approach:** This function is ~230 lines long and handles a long chain of platform initializations sequentially.
-  * **Suggestion:** Extract cohesive logical steps into private named helper functions inside [assemble.ts](file:///C:/gitrep/Nimbus/packages/gateway/src/platform/assemble.ts). For instance:
+  * **Suggestion:** Extract cohesive logical steps into private named helper functions inside `packages/gateway/src/platform/assemble.ts`. For instance:
     * `bootCoreStorage(paths)`: Handles directory creation, vault setup, and DB opening.
     * `bootPolicyAndAuditing(db, paths, auditCfg)`: Handles policy gate booting, tool call log retention, and the audit shipper.
     * `bootTribalKnowledge(rt, db, tribalCfg, syncLogger)`: Handles tribal knowledge watcher logic and synthesis mapping.
@@ -60,7 +60,7 @@
 ### 4. Collapse Identical Functions (S4144) in `nimbus-toml.ts`
 
 * **Problem:** `applyQuorumKvLine` (line 1028) and `applyPreflightKvLine` (line 1211) have identical implementations.
-* **Suggestion:** Remove both and replace them with a single helper function `applyKvLine` in [nimbus-toml.ts](file:///C:/gitrep/Nimbus/packages/gateway/src/config/nimbus-toml.ts):
+* **Suggestion:** Remove both and replace them with a single helper function `applyKvLine` in `packages/gateway/src/config/nimbus-toml.ts`:
 
   ```typescript
   function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {

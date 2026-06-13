@@ -52,7 +52,7 @@ be accurate; re-grep the construct before editing (drift-safe habit).
 | File:line | Current → target | Approach |
 | --- | --- | --- |
 | `gateway/src/config/nimbus-toml.ts:1288` (`applyTribalEntry`) | 16 → 15 | **only 1 over** — minimal extraction: pull the repeated `parseIntDec` + positive-guard + assign pattern (the 3 numeric cases `min_occurrences`/`window_days`/`cooldown_days`) into a small helper |
-| `gateway/src/agents/huddle.ts:44` (`runHuddle`) | 17 → 15 | extract the triple-nested per-peer contribution loop into `aggregateContributions(queryResults, cutoff)`; leaves `runHuddle` a clean coordinator |
+| `gateway/src/agents/huddle.ts:44` (`runHuddle`) | 17 → 15 | extract the triple-nested per-peer contribution loop into `aggregateContributions(queryResults, cutoff, gaps)` (the `gaps` accumulator is threaded in so `q.gaps` propagation stays inside the helper — behaviour-preserving); leaves `runHuddle` a clean coordinator |
 | `gateway/src/platform/assemble.ts:921` (`assemblePlatformServices`) | 34 → 15 | the big one (~230 lines). Extract cohesive boot steps into named local helpers (e.g. `bootTribalKnowledge(...)` for the whole `if (tribalCfg.enabled)` block — its nested `gatherSources` loop + try/catch dominate the count). Preserve exact execution order **and** the I22 policy-gate / I25 tribal-write-gate wiring |
 
 S3776 refactors **must not change behaviour** — existing tests (subsystems ~90.9%

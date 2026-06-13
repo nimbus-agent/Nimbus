@@ -27,7 +27,7 @@
 ### 2. Precise Typing of `rt` in `bootTribalKnowledge` (Task 9)
 
 * **Observation:** The plan mentions using `rt: EmbeddingRuntime | undefined` as an optional type.
-* **Fact Check:** In [assemble.ts](file:///C:/gitrep/Nimbus/packages/gateway/src/platform/assemble.ts#L198), `createLocalIndexWithEmbeddingRuntime` specifies the return type for `rt` as non-nullable `EmbeddingRuntime`.
+* **Fact Check:** In `packages/gateway/src/platform/assemble.ts:198`, `createLocalIndexWithEmbeddingRuntime` specifies the return type for `rt` as non-nullable `EmbeddingRuntime`.
 * **Suggestion:** Declare the parameter as `rt: EmbeddingRuntime` in the helper's dependency interface to stay strictly typed.
 
 ### 3. More Accurate Naming for Bounded Integer Parser (Task 7)
