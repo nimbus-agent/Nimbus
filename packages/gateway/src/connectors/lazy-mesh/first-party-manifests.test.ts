@@ -44,6 +44,15 @@ describe("manifestForFirstParty", () => {
     }
   });
 
+  test("powerbi manifest declares static hosts login.microsoftonline.com + api.powerbi.com", () => {
+    const m = manifestForFirstParty("powerbi");
+    expect(m.id).toBe("com.nimbus.powerbi");
+    expect(m.permissions.network).toContain("login.microsoftonline.com");
+    expect(m.permissions.network).toContain("api.powerbi.com");
+    expect(m.permissions.filesystem.read).toEqual([]);
+    expect(m.permissions.filesystem.write).toEqual([]);
+  });
+
   test("FIRST_PARTY_MANIFESTS contains the spec's enumerated connectors", () => {
     const expected = [
       "filesystem",
@@ -120,6 +129,7 @@ describe("manifestForFirstParty", () => {
       "miro",
       "canva",
       "figma",
+      "powerbi",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();

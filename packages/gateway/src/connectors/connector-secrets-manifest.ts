@@ -161,6 +161,12 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // LookML view sql_table_name fields are normalized via normalizeDataModelKey
   // to produce cross-connector lineage edges (Looker→dbt).
   looker: ["looker.base_url", "looker.client_id", "looker.client_secret"],
+  // Power BI (Tier-3 no-row-data BI). Uses Azure AD client-credentials
+  // (tenant_id + client_id + client_secret) against the Power BI REST API.
+  // Indexes reports/dashboards as metadata only — NEVER row data or cell values.
+  // Dataset table names are normalized via normalizeDataModelKey to produce
+  // cross-connector lineage edges (Power BI → data warehouse).
+  powerbi: ["powerbi.tenant_id", "powerbi.client_id", "powerbi.client_secret"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

@@ -36,6 +36,7 @@ import {
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
   phase3AddPipedriveMcp,
+  phase3AddPowerBiMcp,
   phase3AddPrefectMcp,
   phase3AddRaindropMcp,
   phase3AddRampMcp,
@@ -1058,6 +1059,61 @@ describe("phase3AddLookerMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["LOOKER_BASE_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddPowerBiMcp", () => {
+  test("no-op without powerbi.tenant_id + client_id + client_secret", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
+  test("no-op when only tenant_id is set (client_id + client_secret missing)", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "my-tenant");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
+  test("no-op when client_secret is missing (tenant_id + client_id only)", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "my-tenant");
+    await vault.set("powerbi.client_id", "my-client");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
+  test("no-op when credentials are whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "   ");
+    await vault.set("powerbi.client_id", "   ");
+    await vault.set("powerbi.client_secret", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["powerbi"]).toBeUndefined();
+  });
+
+  test("spawns with POWERBI_TENANT_ID/CLIENT_ID/CLIENT_SECRET env + static hosts in manifest", async () => {
+    const vault = createMockVault();
+    await vault.set("powerbi.tenant_id", "my-tenant-id");
+    await vault.set("powerbi.client_id", "my-client-id");
+    await vault.set("powerbi.client_secret", "my-client-secret");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["powerbi"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "login.microsoftonline.com");
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network).toContain("login.microsoftonline.com");
+    expect(manifest.permissions.network).toContain("api.powerbi.com");
+    expect(spec.env?.["POWERBI_TENANT_ID"]).toBe("my-tenant-id");
+    expect(spec.env?.["POWERBI_CLIENT_ID"]).toBe("my-client-id");
+    expect(spec.env?.["POWERBI_CLIENT_SECRET"]).toBe("my-client-secret");
   });
 });
 

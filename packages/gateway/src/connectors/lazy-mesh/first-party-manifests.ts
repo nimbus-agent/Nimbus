@@ -298,6 +298,15 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Power BI (Tier-3, metadata-only). Uses fixed well-known hosts:
+  // login.microsoftonline.com for AAD client-credentials token, and
+  // api.powerbi.com for the Power BI REST API. No per-tenant host derivation
+  // is needed — the static hosts are declared directly in the manifest.
+  powerbi: baseManifest("com.nimbus.powerbi", {
+    network: ["login.microsoftonline.com", "api.powerbi.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

@@ -945,6 +945,32 @@ export async function phase3AddLookerMcp(
   );
 }
 
+export async function phase3AddPowerBiMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const tenantId = (await readConnectorSecret(vault, "powerbi", "tenant_id"))?.trim() ?? "";
+  const clientId = (await readConnectorSecret(vault, "powerbi", "client_id"))?.trim() ?? "";
+  const clientSecret = (await readConnectorSecret(vault, "powerbi", "client_secret"))?.trim() ?? "";
+  if (tenantId === "" || clientId === "" || clientSecret === "") {
+    return;
+  }
+  servers["powerbi"] = wrap(
+    {
+      command: "bun",
+      args: [mcpConnectorServerScript("powerbi")],
+      env: extensionProcessEnv({
+        POWERBI_TENANT_ID: tenantId,
+        POWERBI_CLIENT_ID: clientId,
+        POWERBI_CLIENT_SECRET: clientSecret,
+      }),
+    },
+    "powerbi",
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddSupersetMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
@@ -1640,6 +1666,7 @@ export async function buildPhase3Servers(
   await phase3AddSnowflakeMcp(vault, servers, sandboxCwd);
   await phase3AddTableauMcp(vault, servers, sandboxCwd);
   await phase3AddLookerMcp(vault, servers, sandboxCwd);
+  await phase3AddPowerBiMcp(vault, servers, sandboxCwd);
   await phase3AddSupersetMcp(vault, servers, sandboxCwd);
   await phase3AddDatabricksMcp(vault, servers, sandboxCwd);
   await phase3AddMlflowMcp(vault, servers, sandboxCwd);

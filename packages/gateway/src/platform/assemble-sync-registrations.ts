@@ -61,6 +61,7 @@ import { createOneDriveSyncable } from "../connectors/onedrive-sync.ts";
 import { createOutlookSyncable } from "../connectors/outlook-sync.ts";
 import { createPagerdutySyncable } from "../connectors/pagerduty-sync.ts";
 import { createPipedriveSyncable } from "../connectors/pipedrive-sync.ts";
+import { createPowerBiSyncable } from "../connectors/powerbi-sync.ts";
 import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
 import { createProtonmailSyncable } from "../connectors/protonmail-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
@@ -357,6 +358,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLookerSyncable({
       ensureLookerMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createPowerBiSyncable({
+      ensurePowerBiMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

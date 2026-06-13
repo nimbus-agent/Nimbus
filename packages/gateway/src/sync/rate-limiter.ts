@@ -77,7 +77,8 @@ export type Provider =
   | "great_expectations"
   | "snowflake"
   | "tableau"
-  | "looker";
+  | "looker"
+  | "powerbi";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -164,6 +165,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   snowflake: { requestsPerMinute: 60, burstSize: 10 },
   tableau: { requestsPerMinute: 60, burstSize: 10 },
   looker: { requestsPerMinute: 60, burstSize: 10 },
+  powerbi: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
