@@ -36,27 +36,29 @@ be accurate; re-grep the construct before editing (drift-safe habit).
 | S7735 | minor | `cli/src/commands/huddle.ts:38` | same |
 | S7735 | minor | `gateway/src/ipc/index-reembed-rpc.ts:264` | same |
 | S6606 | minor | `gateway/compile-gateway.ts:105` | ternary → `??` nullish |
-| S7781 | minor | `sdk/src/distribution-channel.ts:59` | `Set.has` over multi-`===` (verify rule intent) |
-| S5914 | major | `gateway/src/connectors/obsidian-daily-note.test.ts:186` | `expect(true)` sentinel → real assertion |
+| S7781 | minor | `sdk/src/distribution-channel.ts:59` | `resolved.replace(/\\/g, "/")` → `resolved.replaceAll("\\", "/")` (rule = *Prefer `String#replaceAll()` over `String#replace()`*; verified via live Sonar msg) |
+| S5914 | major | `gateway/src/connectors/obsidian-daily-note.test.ts:186` | replace the `if (win32) { expect(true)...; return }` sentinel with `test.skipIf(platform() === "win32")(...)` — eliminates the smell and the dummy assertion entirely |
 | S3358 | major | `gateway/src/federation/preflight-gate.ts:130` | nested ternary → if/else or extracted var |
 
 ### Commit 2 — medium
 
 | Rule | Sev | File:line | Fix |
 | --- | --- | --- | --- |
-| S4144 | major | `gateway/src/config/nimbus-toml.ts:1211` | two identical fn bodies — collapse to one shared impl **after** confirming truly identical (not coincidental) |
-| S107 | major | `gateway/src/connectors/filesystem-v2-sync.ts:276` | too many params → options object |
+| S4144 | major | `gateway/src/config/nimbus-toml.ts:1211` | `applyPreflightKvLine`@1211 is **byte-identical** to `applyQuorumKvLine`@1028 (verified) — collapse both into one shared `applyKvLine(bucket, trimmed)` |
+| S107 | major | `gateway/src/connectors/filesystem-v2-sync.ts:276` | `upsertCodeSymbolsForFile` has 8 params (max 7) → bundle into an options object |
 
 ### Commit 3 — S3776 cognitive complexity (one sub-change each, behaviour-preserving)
 
-| File:line | Approach |
-| --- | --- |
-| `gateway/src/config/nimbus-toml.ts:1288` | extract helper(s) to lower branch nesting; guarded by config-parse tests |
-| `gateway/src/agents/huddle.ts:44` | extract decompose/aggregation helpers |
-| `gateway/src/platform/assemble.ts:921` | extract boot sub-steps into named local fns (consult old branch's approach as reference) |
+| File:line | Current → target | Approach |
+| --- | --- | --- |
+| `gateway/src/config/nimbus-toml.ts:1288` (`applyTribalEntry`) | 16 → 15 | **only 1 over** — minimal extraction: pull the repeated `parseIntDec` + positive-guard + assign pattern (the 3 numeric cases `min_occurrences`/`window_days`/`cooldown_days`) into a small helper |
+| `gateway/src/agents/huddle.ts:44` (`runHuddle`) | 17 → 15 | extract the triple-nested per-peer contribution loop into `aggregateContributions(queryResults, cutoff)`; leaves `runHuddle` a clean coordinator |
+| `gateway/src/platform/assemble.ts:921` (`assemblePlatformServices`) | 34 → 15 | the big one (~230 lines). Extract cohesive boot steps into named local helpers (e.g. `bootTribalKnowledge(...)` for the whole `if (tribalCfg.enabled)` block — its nested `gatherSources` loop + try/catch dominate the count). Preserve exact execution order **and** the I22 policy-gate / I25 tribal-write-gate wiring |
 
 S3776 refactors **must not change behaviour** — existing tests (subsystems ~90.9%
-covered) are the guardrail. Any observable change = stop and verify.
+covered) are the guardrail. Any observable change = stop and verify. Refactors in
+`assemble.ts` / tribal parsing **must preserve I22 (policy gate) + I25 (tribal
+write-gate) wiring** — verify the security-invariants test stays green.
 
 ## Part B — pragmatic duplication
 
