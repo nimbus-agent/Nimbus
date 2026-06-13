@@ -179,6 +179,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/bigeye": {
+      "name": "nimbus-mcp-bigeye",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/bigquery": {
       "name": "nimbus-mcp-bigquery",
       "version": "0.1.0",
@@ -747,6 +759,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/looker": {
+      "name": "nimbus-mcp-looker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/mercury": {
       "name": "nimbus-mcp-mercury",
       "version": "0.1.0",
@@ -785,6 +809,18 @@
     },
     "packages/mcp-connectors/mlflow": {
       "name": "nimbus-mcp-mlflow",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/monte-carlo": {
+      "name": "nimbus-mcp-monte-carlo",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -893,6 +929,18 @@
     },
     "packages/mcp-connectors/pipedrive": {
       "name": "nimbus-mcp-pipedrive",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/powerbi": {
+      "name": "nimbus-mcp-powerbi",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -1029,6 +1077,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/snowflake": {
+      "name": "nimbus-mcp-snowflake",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/snyk": {
       "name": "nimbus-mcp-snyk",
       "version": "0.1.0",
@@ -1091,6 +1151,18 @@
     },
     "packages/mcp-connectors/superset": {
       "name": "nimbus-mcp-superset",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/tableau": {
+      "name": "nimbus-mcp-tableau",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -3272,6 +3344,8 @@
 
     "nimbus-mcp-azure": ["nimbus-mcp-azure@workspace:packages/mcp-connectors/azure"],
 
+    "nimbus-mcp-bigeye": ["nimbus-mcp-bigeye@workspace:packages/mcp-connectors/bigeye"],
+
     "nimbus-mcp-bigquery": ["nimbus-mcp-bigquery@workspace:packages/mcp-connectors/bigquery"],
 
     "nimbus-mcp-bitbucket": ["nimbus-mcp-bitbucket@workspace:packages/mcp-connectors/bitbucket"],
@@ -3360,6 +3434,8 @@
 
     "nimbus-mcp-localdb": ["nimbus-mcp-localdb@workspace:packages/mcp-connectors/localdb"],
 
+    "nimbus-mcp-looker": ["nimbus-mcp-looker@workspace:packages/mcp-connectors/looker"],
+
     "nimbus-mcp-mercury": ["nimbus-mcp-mercury@workspace:packages/mcp-connectors/mercury"],
 
     "nimbus-mcp-metabase": ["nimbus-mcp-metabase@workspace:packages/mcp-connectors/metabase"],
@@ -3367,6 +3443,8 @@
     "nimbus-mcp-miro": ["nimbus-mcp-miro@workspace:packages/mcp-connectors/miro"],
 
     "nimbus-mcp-mlflow": ["nimbus-mcp-mlflow@workspace:packages/mcp-connectors/mlflow"],
+
+    "nimbus-mcp-monte-carlo": ["nimbus-mcp-monte-carlo@workspace:packages/mcp-connectors/monte-carlo"],
 
     "nimbus-mcp-netlify": ["nimbus-mcp-netlify@workspace:packages/mcp-connectors/netlify"],
 
@@ -3383,6 +3461,8 @@
     "nimbus-mcp-pagerduty": ["nimbus-mcp-pagerduty@workspace:packages/mcp-connectors/pagerduty"],
 
     "nimbus-mcp-pipedrive": ["nimbus-mcp-pipedrive@workspace:packages/mcp-connectors/pipedrive"],
+
+    "nimbus-mcp-powerbi": ["nimbus-mcp-powerbi@workspace:packages/mcp-connectors/powerbi"],
 
     "nimbus-mcp-prefect": ["nimbus-mcp-prefect@workspace:packages/mcp-connectors/prefect"],
 
@@ -3404,6 +3484,8 @@
 
     "nimbus-mcp-slack": ["nimbus-mcp-slack@workspace:packages/mcp-connectors/slack"],
 
+    "nimbus-mcp-snowflake": ["nimbus-mcp-snowflake@workspace:packages/mcp-connectors/snowflake"],
+
     "nimbus-mcp-snyk": ["nimbus-mcp-snyk@workspace:packages/mcp-connectors/snyk"],
 
     "nimbus-mcp-sonarqube": ["nimbus-mcp-sonarqube@workspace:packages/mcp-connectors/sonarqube"],
@@ -3415,6 +3497,8 @@
     "nimbus-mcp-stripe": ["nimbus-mcp-stripe@workspace:packages/mcp-connectors/stripe"],
 
     "nimbus-mcp-superset": ["nimbus-mcp-superset@workspace:packages/mcp-connectors/superset"],
+
+    "nimbus-mcp-tableau": ["nimbus-mcp-tableau@workspace:packages/mcp-connectors/tableau"],
 
     "nimbus-mcp-teams": ["nimbus-mcp-teams@workspace:packages/mcp-connectors/teams"],
 

@@ -4,9 +4,8 @@
  *   syncDashboardGraph   — upstream_refs edges
  *   syncDataQualityTestGraph — monitors edges
  *
- * The V40 migration (which seeds these relation types into graph_relation_type)
- * is not yet landed.  We seed them here so the graph_relation FK is satisfied
- * and each test is self-contained.
+ * We seed the V40 relation types directly so each test is self-contained
+ * and independent of the migration runner.
  */
 import type { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
@@ -21,7 +20,7 @@ const openedDbs: Database[] = [];
 
 function makeGraphDb(): Database {
   const db = createMemoryIndexDb();
-  // Seed relation types that will be added by V40; keeps tests self-contained.
+  // Seed V40 relation types directly; keeps tests self-contained.
   db.run(
     `INSERT OR IGNORE INTO graph_relation_type (name, directed) VALUES
        ('derived_from', 1),
