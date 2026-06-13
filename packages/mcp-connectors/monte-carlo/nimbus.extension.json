@@ -1,0 +1,16 @@
+{
+  "id": "com.nimbus.monte-carlo",
+  "displayName": "Monte Carlo",
+  "version": "0.1.0",
+  "description": "Monte Carlo connector (read-only). Indexes Monte Carlo data-quality incidents as `montecarlo:data_quality_test` items in the local index and exposes three read-only tools to the Nimbus agent (`montecarlo_list`, `montecarlo_get`, `montecarlo_search`). Uses the Monte Carlo GraphQL API at `api.getmontecarlo.com` with API key pair auth (x-mcd-id / x-mcd-token headers). The gateway injects `MONTECARLO_API_ID` and `MONTECARLO_API_TOKEN` at spawn time. No write tools.",
+  "author": "Nimbus",
+  "entrypoint": "dist/server.js",
+  "runtime": "bun",
+  "permissions": {
+    "network": ["api.getmontecarlo.com"],
+    "filesystem": { "read": [], "write": [] }
+  },
+  "hitlRequired": [],
+  "syncInterval": 600,
+  "minNimbusVersion": "0.5.0"
+}
