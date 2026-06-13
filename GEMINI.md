@@ -5,7 +5,7 @@
 Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that maintains a private SQLite index of the user's data across ~80 cloud services (Google / Microsoft / GitHub / GitLab / Slack / Jira / Notion + observability, CI-CD, security-quality, feature-flags, GitOps, data-BI, deploy, finance, and support tools — full roster: `CONNECTOR_VAULT_SECRET_KEYS` in `packages/gateway/src/connectors/connector-secrets-manifest.ts`), optional `[[filesystem.roots]]` indexing, and the local filesystem via first-party MCP (Model Context Protocol) connectors, and executes multi-step agentic workflows on the user's behalf. Clients (CLI, Tauri 2.0 desktop) talk to the Gateway only over JSON-RPC 2.0 IPC.
 
 **Runtime:** Bun v1.2+ / TypeScript 6.x strict · **Linter:** Biome · **License:** AGPL-3.0 (GNU Affero GPL; gateway/cli/mcp-connectors) + MIT (sdk)
-**Status:** Phase 5 ✅ (2026-06-04) · Phase 6 (Team) 🚧 in progress — Slices 1–5 shipped (1 & 3: 2026-06-05; 2 & 4: 2026-06-07; 5: 2026-06-09); Slice 6a shipped 2026-06-11; Slice 6b shipped 2026-06-12; Slice 6c (tribal-knowledge extraction) shipped 2026-06-12; invariants through I25; schema V39. Latest release `v0.5.0` (2026-06-04); `v0.1.0` was the first headless GA (2026-05-09; Gateway + CLI + VS Code extension; Tauri desktop deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
+**Status:** Phase 5 ✅ (2026-06-04) · Phase 6 (Team) 🚧 in progress — Slices 1–5 shipped (1 & 3: 2026-06-05; 2 & 4: 2026-06-07; 5: 2026-06-09); Slice 6a shipped 2026-06-11; Slice 6b shipped 2026-06-12; Slice 6c (tribal-knowledge extraction) shipped 2026-06-12; Slice 7 (Wave 7a — data-warehouse/BI connectors + cross-warehouse lineage) shipped 2026-06-13; invariants through I25; schema V40. Latest release `v0.6.1` (2026-06-13); `v0.1.0` was the first headless GA (2026-05-09; Gateway + CLI + VS Code extension; Tauri desktop deferred to Phase 13). Dated log: [`docs/CHANGELOG.md`](./docs/CHANGELOG.md). Status + acceptance criteria: [`docs/roadmap.md`](./docs/roadmap.md).
 
 Companion file: [`CLAUDE.md`](./CLAUDE.md) is the canonical source; both must stay aligned when changing commands, roadmap rows, or non-negotiables.
 
@@ -109,7 +109,7 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
 - [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I25 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
-- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in the Skill References table below): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-federation-identity`, `nimbus-agent-patterns`.
+- `.claude/commands/nimbus-*.md` — domain skills, loaded on demand via `view_file` (full trigger descriptions in the Skill References table below): `nimbus-architecture`, `nimbus-file-map`, `nimbus-commands`, `nimbus-ipc`, `nimbus-testing`, `nimbus-preflight`, `nimbus-security-invariants`, `nimbus-tauri-allowlist`, `nimbus-http-write-surface`, `nimbus-tool-output-envelope`, `nimbus-connector-authoring`, `nimbus-db-migrations`, `nimbus-embedding-routing`, `nimbus-cicd-data-layer`, `nimbus-data-warehouse-lineage`, `nimbus-federation-identity`, `nimbus-agent-patterns`.
 
 ---
 
@@ -133,5 +133,6 @@ Domain skills live in `.claude/commands/nimbus-*.md`, **loaded on demand** via t
 | `nimbus-db-migrations` | Authoring a SQLite migration or new table |
 | `nimbus-embedding-routing` | Embedding-table routing for a new item type; `nimbus index reembed` |
 | `nimbus-cicd-data-layer` | DORA metrics, preflight checks, deployment annotation (Phase 5 T4) |
+| `nimbus-data-warehouse-lineage` | Authoring/extending a data-warehouse or BI connector + the cross-warehouse lineage graph (Phase 6 Slice 7); no-row-data contract, V40 lineage edges, `normalizeDataModelKey` |
 | `nimbus-federation-identity` | Phase 6 Team federation (I17 query gate, namespaces/RBAC, pairing/discovery) + identity/SSO/SCIM (I18, OIDC device-code, SCIM-on-I13); touching `gateway/src/{federation,identity}/` |
 | `nimbus-agent-patterns` | Authoring a built-in read-only agent |

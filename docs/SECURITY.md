@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-Nimbus is in active development (**Phase 6 — Team**, in progress; **Phase 5 — The Extended Surface** is complete). Security fixes land on `main` and are folded into the next `v0.5.x` patch release.
+Nimbus is in active development (**Phase 6 — Team**, in progress; **Phase 5 — The Extended Surface** is complete). Security fixes land on `main` and are folded into the next `v0.6.x` patch release.
 
 | Branch / Tag | Supported |
 |---|---|
 | `main` (HEAD) | ✅ Yes — tracks the upcoming version |
-| `v0.5.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
-| Older `v0.x` releases (`v0.1`–`v0.4`) | ❌ No — upgrade to the latest patch |
+| `v0.6.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
+| Older `v0.x` releases (`v0.1`–`v0.5`) | ❌ No — upgrade to the latest patch |
 | Pre-`v0.1.0` commits | ❌ No |
 
 ### Linux runtime support — glibc floor

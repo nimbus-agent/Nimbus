@@ -130,16 +130,34 @@ bun run audit:doc-refs                  # doc-ref drift (broken markdown links +
 Baselines: `docs/structure-audit/{any-baseline.json,baseline.md,churn-90d.json,coverage-baseline.json,db-run-census.json}`.
 CI gate (reusable workflow): `.github/workflows/_structure.yml`.
 
-## Headless packaging + Linux installers
+## Mutation testing (dev-only, advisory — True Coverage Sub-project C)
+
+StrykerJS over `packages/gateway/src/` (non-test `.ts` only). Advisory, not a blocking CI gate; run it to find weak assertions in well-covered code.
+
+```bash
+bun run mutation          # stryker run — full configured scope (stryker.conf.*)
+bun run mutation:diff     # scripts/mutation/run-mutation.ts --diff — only files changed vs origin/main…HEAD
+```
+
+`mutation:diff` is the per-PR mode: it diffs gateway-src files against the `origin/main` (fallback `main`) merge-base and mutates only those, so a focused change doesn't trigger a whole-package mutation run. Security-core has a tracked baseline; the 100%-pinned `executor.ts` / `tool-output-envelope.ts` are the ideal first substrate.
+
+## Headless packaging + installers
 
 After compiling gateway + CLI to `dist/`:
 
 ```bash
 bun run package:headless                            # bundle headless gateway + CLI
-bun run package:installers:linux -- --version 0.1.0 # Linux .deb + tarball
+bun run package:installers:linux -- --version 0.1.0 # Linux .deb + .rpm + tarball (nfpm)
 ```
 
 Optional: set `NIMBUS_EMBEDDING_MODEL_DIR` (or pass `--embedding-model-dir`) to embed pre-downloaded MiniLM weights in the bundle.
+
+**Native installers + package-manager channels** (driven by CI on release tags, not local bun scripts):
+
+- macOS `.pkg` — `scripts/package-macos-installer.sh`; Windows `.msi` — `scripts/package-windows-installer.ps1`.
+- Package-manager manifests are generated from `scripts/release/`: `package-manager-manifests.ts` (Homebrew formula + Scoop manifest), `winget-manifest.ts` (`NimbusAgent.Nimbus`), `linux-repo-config.ts` + `nfpm-config.ts` (hosted GPG-signed apt/yum repo at `nimbus-agent.github.io/linux-repo`).
+- Signing helpers: `scripts/sign/sign-{macos.sh,windows.ps1}`, `scripts/sign-linux-gpg.sh`, `scripts/sign-ed25519.ts` (updater manifest).
+- End-user install matrix (brew/scoop/winget/apt/yum + native installers + verification) is documented in **[`docs/install.md`](../../docs/install.md)** — the canonical source; keep it in sync when a channel changes.
 
 ## CLI subcommands (reference)
 

@@ -12,7 +12,7 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 ![Platforms](https://img.shields.io/badge/platforms-Windows_%7C_macOS_%7C_Linux-blue)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](../LICENSE)
-[![Release: v0.5.0](https://img.shields.io/badge/release-v0.5.0-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.5.0)
+[![Release: v0.6.1](https://img.shields.io/badge/release-v0.6.1-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.6.1)
 ![Status: Phase 6 In Progress](https://img.shields.io/badge/status-Phase_6_In_Progress-brightgreen)
 
 <picture>
@@ -176,7 +176,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 5 (✅ complete):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Remaining:** Tier-4 email (generic IMAP, Fastmail JMAP, ProtonMail Bridge) and Tier-5 local (DB schema indexing, filesystem-v2 profiling, Storybook). Local data-file profiling (Parquet / CSV / JSONL — header / footer / line counts only, never cell values) lands with Tier 5.
 
-**Phase 6 (Team tier, 🚧 in progress):** Federation Core + Identity/SSO/SCIM shipped (Slices 1 & 3). The SSO-gated warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) are a later slice (Slice 7 — depends on Team Vault + Identity).
+**Phase 6 (Team tier, 🚧 in progress):** Federation Core, Team Vault + Quorum HITL, Identity/SSO/SCIM, Org Policy + Admin + Observability, ChatOps, and cross-colleague intelligence shipped (Slices 1–6). The warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) shipped 2026-06-13 with a cross-warehouse lineage graph (Slice 7 / Wave 7a). Remaining: Share & Virality primitives (Slice 8) and deferred Phase 5 write-path items (Slice 9).
 
 See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 
@@ -334,6 +334,20 @@ Gateway binaries built with `bun build --compile` bundle JavaScript into a singl
 Once installed, run **`nimbus doctor`** — it checks every prerequisite above and prints actionable remediation for anything missing.
 
 ### Install
+
+#### Package managers (recommended — auto-updating)
+
+| Platform | Command |
+| --- | --- |
+| macOS / Linux (Homebrew) | `brew install nimbus-agent/tap/nimbus` |
+| Windows (Scoop) | `nimbus` bucket — see [`install.md`](./install.md#package-managers-recommended--auto-updating) |
+| Windows (winget) | `winget install NimbusAgent.Nimbus` |
+| Debian / Ubuntu (apt) | signed repo — see [`install.md`](./install.md#linux-repositories-apt--yum) |
+| Fedora / RHEL (dnf) | signed repo — see [`install.md`](./install.md#linux-repositories-apt--yum) |
+
+Package-manager and native-installer builds disable the self-updater (the package owns updates); the portable archives below keep it on. The full install matrix — native `.msi` / `.pkg` / `.rpm` installers, the GPG-signed apt/yum repositories, and download verification — lives in **[`install.md`](./install.md)**.
+
+The manual / portable-archive instructions below remain for unsupported distros and air-gapped installs.
 
 #### Linux (`.deb`)
 
@@ -618,11 +632,11 @@ nimbus extension list
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/…/Nimbus` | `~/.config/nimbus` |
 | **Desktop UI** | WebView2 | WKWebView | WebKitGTK |
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |
-| **Release** | `.zip` (unsigned, v0.1.0 cut-line) † | `.tar.gz` (unsigned, v0.1.0 cut-line) † | `.deb` (GPG-signed) + AppImage |
+| **Release** | `.zip` + `.msi` (currently unsigned) † | `.tar.gz` + `.pkg` (currently unsigned) † | `.deb` / `.rpm` + AppImage + GPG-signed apt/yum repo |
 
 † **Ubuntu 22.04 is supported for source builds only.** Pre-built Linux binaries are compiled on Ubuntu 24.04 and require **glibc ≥ 2.39** at runtime (Ubuntu 24.04+, Fedora 40+, Debian 13+, Arch / other current rolling releases). Ubuntu 22.04 LTS, Debian 12, and RHEL 9 (and derivatives) will fail with `GLIBC_2.39 not found`. See [SECURITY.md](./SECURITY.md#linux-runtime-support--glibc-floor) for the canonical supported-distro list and rationale.
 
-† **macOS and Windows ship unsigned in v0.1.0.** Cross-platform integrity is provided by the GPG-signed `SHA256SUMS.asc` manifest. macOS Gatekeeper and Windows SmartScreen will prompt on first run; this is expected. Apple Developer notarization and Windows Authenticode signing are deferred to a later point release — see [signing-keys.md](./release/signing-keys.md#v010-signing-cut-line).
+† **macOS and Windows installers currently ship unsigned** (signing not yet landed). Cross-platform integrity is provided by the GPG-signed `SHA256SUMS.asc` manifest. macOS Gatekeeper and Windows SmartScreen will prompt on first run; this is expected. Apple Developer notarization and Windows Authenticode signing are deferred to a later point release — see [signing-keys.md](./release/signing-keys.md#v010-signing-cut-line).
 
 ---
 
