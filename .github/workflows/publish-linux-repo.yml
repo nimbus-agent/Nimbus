@@ -1,0 +1,173 @@
+name: Publish Linux repo
+
+# `released` (not `published`) fires only for non-prerelease releases, so
+# rc/beta/alpha tags are skipped automatically (the apt/yum channel tracks
+# stable only). `workflow_dispatch` lets a maintainer re-publish a tag if a
+# push failed transiently — re-running is idempotent.
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag to publish (e.g. v0.5.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: publish-linux-repo-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-linux-repo:
+    name: Build + publish apt/yum repo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout Nimbus
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+
+      # Fail fast with actionable messages if any required secret is missing.
+      - name: Require publish + signing secrets
+        env:
+          PKG_PAT: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_SIGNING_SUBKEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PKG_PAT}" ]; then
+            echo "::error::PACKAGE_MANAGER_PAT is not set. Grant the fine-grained PAT contents:write on nimbus-agent/linux-repo (repo Settings -> Secrets -> Actions)."
+            exit 1
+          fi
+          if [ -z "${GPG_PRIVATE_KEY}" ] || [ -z "${GPG_PASSPHRASE}" ]; then
+            echo "::error::GPG_SIGNING_SUBKEY and/or GPG_PASSPHRASE are not set. They sign the apt Release + yum repomd (same secrets release.yml already uses)."
+            exit 1
+          fi
+
+      - name: Install reprepro + createrepo_c
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends reprepro createrepo-c
+
+      - name: Download released .deb + .rpm + SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          VERSION="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir out \
+            --pattern SHA256SUMS \
+            --pattern "nimbus-headless_${VERSION}_amd64.deb" \
+            --pattern "nimbus-headless-${VERSION}-x86_64.rpm"
+
+      - name: Resolve + verify artifact checksums
+        id: art
+        env:
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          bun scripts/release/linux-repo-config.ts \
+            --version "$VERSION" \
+            --sha256sums out/SHA256SUMS \
+            --base-url "https://nimbus-agent.github.io/linux-repo" \
+            --distributions-out staging/apt/conf/distributions \
+            --repo-file-out staging/nimbus.repo
+          # Verify the downloaded artifacts match SHA256SUMS before publishing.
+          ( cd out && sha256sum -c <(grep -E 'nimbus-headless(_|-)' SHA256SUMS) )
+
+      - name: Import GPG signing key (ephemeral GNUPGHOME)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_SIGNING_SUBKEY }}
+        run: |
+          set -euo pipefail
+          GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Clone the linux-repo Pages repo
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/linux-repo.git" repo
+
+      - name: Build the apt repo (reprepro) + the yum repo (createrepo_c)
+        env:
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          DEB="$PWD/out/nimbus-headless_${VERSION}_amd64.deb"
+          RPM="$PWD/out/nimbus-headless-${VERSION}-x86_64.rpm"
+
+          # --- apt (reprepro) ---
+          mkdir -p repo/apt/conf
+          cp staging/apt/conf/distributions repo/apt/conf/distributions
+          # Drop any prior version first so re-running a tag (or bumping) never
+          # trips reprepro's "already registered" guard. Tolerate "not present".
+          reprepro -b repo/apt remove stable nimbus-headless 2>/dev/null || true
+          reprepro -b repo/apt includedeb stable "$DEB"
+
+          # --- yum (createrepo_c) ---
+          mkdir -p repo/yum
+          cp "$RPM" repo/yum/
+          createrepo_c --update repo/yum
+
+      - name: Sign apt Release + yum repomd (loopback gpg)
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          REL="repo/apt/dists/stable/Release"
+          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --pinentry-mode loopback \
+            --detach-sign --armor -o "${REL}.gpg" "$REL"
+          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --pinentry-mode loopback \
+            --clearsign -o "repo/apt/dists/stable/InRelease" "$REL"
+          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --pinentry-mode loopback \
+            --detach-sign --armor "repo/yum/repodata/repomd.xml"
+
+      - name: Write the public key, client .repo, and .nojekyll
+        run: |
+          set -euo pipefail
+          gpg --batch --armor --export > repo/gpg.key
+          cp staging/nimbus.repo repo/nimbus.repo
+          # Disable Jekyll so Pages serves the apt/yum trees verbatim.
+          touch repo/.nojekyll
+
+      - name: Commit + push to linux-repo
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          cd repo
+          git config user.name "nimbus-release-bot"
+          git config user.email "release-bot@nimbus-agent.invalid"
+          # Stage first: first-publish files are untracked, and `git diff`
+          # ignores untracked files — staging then diffing --cached makes the
+          # no-op check see new files too.
+          git add -A
+          if git diff --cached --quiet; then echo "no repo change"; exit 0; fi
+          git commit -m "nimbus ${TAG#v}"
+          git push
