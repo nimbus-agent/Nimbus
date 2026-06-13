@@ -15,7 +15,7 @@ export interface BonjourBrowserLike {
 }
 export interface BonjourLike {
   find(opts: { type: string }, onUp: (service: BonjourServiceLike) => void): BonjourBrowserLike;
-  publish(opts: { name: string; type: string; port: number }): void;
+  publish(opts: { name: string; type: string; port: number }): unknown;
   destroy(): void;
 }
 export type BonjourFactory = () => BonjourLike;
