@@ -187,9 +187,10 @@ jobs:
           $wcVersion = "1.12.8.0"
           $wcSha256 = "8bd738851b524885410112678e3771b341c5c716de60fbbecb88ab0a363ed85d"
           $wcUrl = "https://github.com/microsoft/winget-create/releases/download/v$wcVersion/wingetcreate.exe"
+          $ProgressPreference = "SilentlyContinue"  # progress bar makes Invoke-WebRequest order-of-magnitude slower
           Invoke-WebRequest -Uri $wcUrl -OutFile wingetcreate.exe
           $actual = (Get-FileHash -Algorithm SHA256 wingetcreate.exe).Hash
-          if ($actual.ToLower() -ne $wcSha256) {
+          if ($actual.ToLower() -ne $wcSha256.ToLower()) {
             Write-Output "::error::wingetcreate.exe sha256 mismatch (pinned v$wcVersion): expected=$wcSha256 computed=$($actual.ToLower())"
             exit 1
           }
