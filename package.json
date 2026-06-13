@@ -127,6 +127,8 @@
     "audit:structure": "bun scripts/structure-audit/audit-structure.ts",
     "audit:boundaries": "bunx dependency-cruiser --config .dependency-cruiser.cjs --no-progress packages",
     "audit:coverage-floor": "bun scripts/coverage-floor/check.ts",
+    "mutation": "stryker run",
+    "mutation:diff": "bun scripts/mutation/run-mutation.ts --diff",
     "audit:coverage-floor:build-lcov": "bash scripts/coverage-floor/build-lcov.sh",
     "audit:coverage-floor:update-baseline": "bun scripts/coverage-floor/check.ts --update-baseline",
     "coverage:merge": "bun scripts/coverage/merge-coverage.ts",
