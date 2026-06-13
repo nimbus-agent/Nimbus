@@ -1237,8 +1237,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     chatopsBoot = buildChatopsBoot({
       cfg: chatopsCfg,
       policyGate,
-      ...(tribalBoot !== undefined ? { onInboundMessage: tribalBoot.onInboundMessage } : {}),
-      ...(tribalInterceptCommand !== undefined ? { interceptCommand: tribalInterceptCommand } : {}),
+      ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
+      ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
       ...(identityBootRef === undefined
         ? {}
         : {

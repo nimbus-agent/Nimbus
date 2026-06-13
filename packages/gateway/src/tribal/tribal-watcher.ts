@@ -46,7 +46,7 @@ export class TribalWatcher {
           windowDays: this.deps.windowDays,
           matchMode: this.deps.matchMode,
           similarityThreshold: 0.85,
-          ...(this.deps.llmJudge !== undefined ? { llmJudge: this.deps.llmJudge } : {}),
+          ...(this.deps.llmJudge === undefined ? {} : { llmJudge: this.deps.llmJudge }),
           now: this.deps.now,
         },
         { text: msg.text, channelId: msg.channelId, platform: msg.platform },

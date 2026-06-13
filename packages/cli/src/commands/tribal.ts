@@ -112,19 +112,7 @@ export async function runTribalCommand(client: TribalIpc, cmd: TribalCommand): P
       break;
     }
     case "list": {
-      const rows = await client.call<TribalClusterRow[]>(
-        "tribal.list",
-        cmd.status === undefined ? {} : { status: cmd.status },
-      );
-      if (rows.length === 0) {
-        process.stdout.write("No clusters.\n");
-        break;
-      }
-      for (const c of rows) {
-        process.stdout.write(
-          `  ${c.clusterId} [${c.status}] ×${c.occurrenceCount} (${c.channelId}) — ${c.representativeQuestion}\n`,
-        );
-      }
+      await runTribalList(client, cmd.status);
       break;
     }
     case "dismiss": {
@@ -138,20 +126,44 @@ export async function runTribalCommand(client: TribalIpc, cmd: TribalCommand): P
       break;
     }
     case "capture": {
-      const r = await client.call<{ ok: boolean; pageRef?: string; error?: string }>(
-        "tribal.capture",
-        cmd.target === undefined
-          ? { clusterId: cmd.clusterId }
-          : { clusterId: cmd.clusterId, target: cmd.target },
-      );
-      if (r.ok) {
-        process.stdout.write(`Captured ${cmd.clusterId} → ${r.pageRef ?? "(no ref)"}\n`);
-      } else {
-        process.stderr.write(`Capture failed: ${r.error ?? "unknown"}\n`);
-        process.exitCode = 1;
-      }
+      await runTribalCapture(client, cmd.clusterId, cmd.target);
       break;
     }
+  }
+}
+
+/** `tribal list [--status]`: print each cluster row, or a placeholder when empty. */
+async function runTribalList(client: TribalIpc, status: string | undefined): Promise<void> {
+  const rows = await client.call<TribalClusterRow[]>(
+    "tribal.list",
+    status === undefined ? {} : { status },
+  );
+  if (rows.length === 0) {
+    process.stdout.write("No clusters.\n");
+    return;
+  }
+  for (const c of rows) {
+    process.stdout.write(
+      `  ${c.clusterId} [${c.status}] ×${c.occurrenceCount} (${c.channelId}) — ${c.representativeQuestion}\n`,
+    );
+  }
+}
+
+/** `tribal capture <id> [--target]`: run the owner-HITL capture and report the outcome. */
+async function runTribalCapture(
+  client: TribalIpc,
+  clusterId: string,
+  target: "notion" | "confluence" | undefined,
+): Promise<void> {
+  const r = await client.call<{ ok: boolean; pageRef?: string; error?: string }>(
+    "tribal.capture",
+    target === undefined ? { clusterId } : { clusterId, target },
+  );
+  if (r.ok) {
+    process.stdout.write(`Captured ${clusterId} → ${r.pageRef ?? "(no ref)"}\n`);
+  } else {
+    process.stderr.write(`Capture failed: ${r.error ?? "unknown"}\n`);
+    process.exitCode = 1;
   }
 }
 

@@ -111,7 +111,7 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
     windowDays: deps.cfg.windowDays,
     matchMode: deps.cfg.match,
     now,
-    ...(deps.log !== undefined ? { log: deps.log } : {}),
+    ...(deps.log === undefined ? {} : { log: deps.log }),
   });
 
   let running = true;
@@ -165,8 +165,8 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
       const r = await captureToKnowledgeBase(
         {
           cfg: {
-            ...(deps.cfg.notion !== undefined ? { notion: deps.cfg.notion } : {}),
-            ...(deps.cfg.confluence !== undefined ? { confluence: deps.cfg.confluence } : {}),
+            ...(deps.cfg.notion === undefined ? {} : { notion: deps.cfg.notion }),
+            ...(deps.cfg.confluence === undefined ? {} : { confluence: deps.cfg.confluence }),
           },
           synthesize: deps.synthesize,
           submitAction,

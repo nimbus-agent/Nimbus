@@ -21,10 +21,10 @@ export function parseSimpleMarkdown(md: string): KbLine[] {
     const line = raw.trim();
     if (line === "") continue;
     const bullet = /^[-*]\s+(.*)$/.exec(line);
-    if (bullet !== null) {
-      out.push({ kind: "bullet", text: bullet[1] ?? "" });
-    } else {
+    if (bullet === null) {
       out.push({ kind: "paragraph", text: line });
+    } else {
+      out.push({ kind: "bullet", text: bullet[1] ?? "" });
     }
   }
   return out;
@@ -32,11 +32,11 @@ export function parseSimpleMarkdown(md: string): KbLine[] {
 
 function escapeHtml(s: string): string {
   return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function citationLabel(c: KbCitation): string {
@@ -93,7 +93,8 @@ export function markdownToConfluenceStorage(md: string, citations: readonly KbCi
   let bulletBuffer: string[] = [];
   const flushBullets = (): void => {
     if (bulletBuffer.length === 0) return;
-    parts.push(`<ul>${bulletBuffer.map((b) => `<li>${b}</li>`).join("")}</ul>`);
+    const lis = bulletBuffer.map((b) => `<li>${b}</li>`).join("");
+    parts.push(`<ul>${lis}</ul>`);
     bulletBuffer = [];
   };
   for (const line of parseSimpleMarkdown(md)) {

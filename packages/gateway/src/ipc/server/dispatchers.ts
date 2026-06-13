@@ -708,30 +708,34 @@ function tribalParamString(params: unknown, key: string): string | undefined {
  * The result is the MCP tool envelope wrapping the created page JSON; tolerant of shapes, returns
  * "" if no id is found (→ the write-gate reports write_failed, never a false success).
  */
+/** Recursively dig a page `id` out of a KB-append result envelope (top-level or nested in JSON text). */
+function findKbPageId(v: unknown): string | undefined {
+  if (v === null || typeof v !== "object") return undefined;
+  const rec = v as Record<string, unknown>;
+  if (typeof rec["id"] === "string") return rec["id"];
+  const content = rec["content"];
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    const text = (block as { text?: unknown } | null)?.text;
+    if (typeof text !== "string") continue;
+    const id = findKbPageIdInText(text);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/** Parse a content-block's text as JSON and recurse; non-JSON text yields no id. */
+function findKbPageIdInText(text: string): string | undefined {
+  try {
+    return findKbPageId(JSON.parse(text) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
 export function extractKbPageRef(actionType: string, result: unknown): string {
   const prefix = actionType.startsWith("notion") ? "notion" : "confluence";
-  const findId = (v: unknown): string | undefined => {
-    if (v === null || typeof v !== "object") return undefined;
-    const rec = v as Record<string, unknown>;
-    if (typeof rec["id"] === "string") return rec["id"];
-    const content = rec["content"];
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        const text = (block as { text?: unknown } | null)?.text;
-        if (typeof text === "string") {
-          try {
-            const parsed = JSON.parse(text) as unknown;
-            const id = findId(parsed);
-            if (id !== undefined) return id;
-          } catch {
-            // not JSON — ignore
-          }
-        }
-      }
-    }
-    return undefined;
-  };
-  const id = findId(result);
+  const id = findKbPageId(result);
   return id === undefined ? "" : `${prefix}:${id}`;
 }
 

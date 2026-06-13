@@ -216,9 +216,9 @@ reg(
       title: parsed.title,
       bodyMarkdown: parsed.bodyMarkdown,
       citations: parseCitationsJson(parsed.citationsJson ?? "[]"),
-      ...(parsed.titlePropertyName !== undefined
-        ? { titlePropertyName: parsed.titlePropertyName }
-        : {}),
+      ...(parsed.titlePropertyName === undefined
+        ? {}
+        : { titlePropertyName: parsed.titlePropertyName }),
     });
     const res = await notionFetch("/pages", { method: "POST", body: JSON.stringify(body) });
     return mcpJsonResultFromTextIfOk("Notion", res);

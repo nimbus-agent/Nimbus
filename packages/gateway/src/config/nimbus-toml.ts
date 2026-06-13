@@ -1284,46 +1284,51 @@ export const DEFAULT_NIMBUS_TRIBAL_TOML: NimbusTribalToml = {
   watchChannels: [],
 };
 
+/** Apply one `[tribal]` key/value to the accumulator (silently ignores malformed/unknown entries). */
+function applyTribalEntry(out: Partial<NimbusTribalToml>, key: string, valRaw: string): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      return;
+    }
+    case "match": {
+      const v = parseString(valRaw);
+      if (v === "embedding" || v === "embedding+llm") out.match = v;
+      return;
+    }
+    case "min_occurrences": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.minOccurrences = n;
+      return;
+    }
+    case "window_days": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.windowDays = n;
+      return;
+    }
+    case "cooldown_days": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n >= 0) out.cooldownDays = n;
+      return;
+    }
+    case "watch_channels": {
+      try {
+        out.watchChannels = parseStringArray(valRaw);
+      } catch {
+        // malformed array — keep default
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 function parseNimbusTomlTribalSection(source: string): Partial<NimbusTribalToml> {
   const out: Partial<NimbusTribalToml> = {};
   forEachSectionEntry(source, "[tribal]", (key, valRaw) => {
-    switch (key) {
-      case "enabled": {
-        const b = parseBool(valRaw);
-        if (b !== undefined) out.enabled = b;
-        break;
-      }
-      case "match": {
-        const v = parseString(valRaw);
-        if (v === "embedding" || v === "embedding+llm") out.match = v;
-        break;
-      }
-      case "min_occurrences": {
-        const n = parseIntDec(valRaw);
-        if (n !== undefined && n > 0) out.minOccurrences = n;
-        break;
-      }
-      case "window_days": {
-        const n = parseIntDec(valRaw);
-        if (n !== undefined && n > 0) out.windowDays = n;
-        break;
-      }
-      case "cooldown_days": {
-        const n = parseIntDec(valRaw);
-        if (n !== undefined && n >= 0) out.cooldownDays = n;
-        break;
-      }
-      case "watch_channels": {
-        try {
-          out.watchChannels = parseStringArray(valRaw);
-        } catch {
-          // malformed array — keep default
-        }
-        break;
-      }
-      default:
-        break;
-    }
+    applyTribalEntry(out, key, valRaw);
   });
   return out;
 }
@@ -1336,7 +1341,7 @@ function parseTribalNotionTarget(source: string): TribalNotionTarget | undefined
       if (v.length > 0) databaseId = v;
     }
   });
-  return databaseId !== undefined ? { databaseId } : undefined;
+  return databaseId === undefined ? undefined : { databaseId };
 }
 
 function parseTribalConfluenceTarget(source: string): TribalConfluenceTarget | undefined {

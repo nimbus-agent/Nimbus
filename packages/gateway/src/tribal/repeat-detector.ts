@@ -43,6 +43,25 @@ function newClusterId(text: string): string {
   return `tq_${createHash("sha256").update(norm).digest("hex").slice(0, 16)}`;
 }
 
+/**
+ * Pick the cluster id for an incoming question: the nearest existing cluster within threshold
+ * (optionally confirmed by the LLM judge), else a fresh id. Behavior-preserving extraction of the
+ * near-match resolution branch from {@link detectRepeat} (keeps that function under the complexity gate).
+ */
+async function resolveClusterId(
+  deps: RepeatDetectorDeps,
+  text: string,
+  nearest: RecallHit | undefined,
+): Promise<string> {
+  const fresh = newClusterId(text);
+  if (nearest === undefined || nearest.distance > 1 - deps.similarityThreshold) return fresh;
+  if (deps.matchMode !== "embedding+llm" || deps.llmJudge === undefined) return nearest.clusterId;
+  const existing = deps.store.get(nearest.clusterId);
+  if (existing === undefined) return nearest.clusterId;
+  const same = await deps.llmJudge(existing.representativeQuestion, text);
+  return same ? nearest.clusterId : fresh;
+}
+
 export async function detectRepeat(
   deps: RepeatDetectorDeps,
   msg: { text: string; channelId: string; platform: string },
@@ -59,20 +78,7 @@ export async function detectRepeat(
     .recall(vec)
     .filter((h) => deps.watchChannels.has(h.channelId))
     .sort((a, b) => a.distance - b.distance);
-  let clusterId = newClusterId(msg.text);
-  const nearest = hits[0];
-  if (nearest !== undefined && nearest.distance <= 1 - deps.similarityThreshold) {
-    if (deps.matchMode === "embedding+llm" && deps.llmJudge !== undefined) {
-      const existing = deps.store.get(nearest.clusterId);
-      const same =
-        existing !== undefined
-          ? await deps.llmJudge(existing.representativeQuestion, msg.text)
-          : true;
-      if (same) clusterId = nearest.clusterId;
-    } else {
-      clusterId = nearest.clusterId;
-    }
-  }
+  const clusterId = await resolveClusterId(deps, msg.text, hits[0]);
 
   const cluster = deps.store.upsertOccurrence({
     clusterId,
