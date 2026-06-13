@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
-import { providerServiceColumns } from "../metrics/dora-config.ts";
+import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/dora-config.ts";
 
 export type PreflightGap =
   | null
@@ -57,22 +57,6 @@ export type DeployPreflightResult = {
 };
 
 const FAILED_CONCLUSIONS = ["failure", "cancelled", "timed_out"] as const;
-
-function distinctCiServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
-  const out = new Set<string>();
-  for (const r of repos) {
-    for (const s of providerServiceColumns(r.provider).ciServices) out.add(s);
-  }
-  return Array.from(out);
-}
-
-function distinctPrServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
-  const out = new Set<string>();
-  for (const r of repos) {
-    for (const s of providerServiceColumns(r.provider).prServices) out.add(s);
-  }
-  return Array.from(out);
-}
 
 function repoFilterClause(repos: readonly ParsedDoraRepoUrn[]): {
   clause: string;

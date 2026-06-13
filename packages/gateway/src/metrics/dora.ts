@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "./dora-config.ts";
-import { providerServiceColumns } from "./dora-config.ts";
+import { distinctCiServiceColumns, distinctPrServiceColumns } from "./dora-config.ts";
 
 export type DoraGap =
   | null
@@ -51,22 +51,6 @@ function medianOfSorted(sorted: readonly number[]): number {
   const b = sorted[n / 2];
   if (a === undefined || b === undefined) throw new Error("medianOfSorted: undefined entry");
   return Math.floor((a + b) / 2);
-}
-
-function distinctCiServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
-  const out = new Set<string>();
-  for (const r of repos) {
-    for (const s of providerServiceColumns(r.provider).ciServices) out.add(s);
-  }
-  return Array.from(out);
-}
-
-function distinctPrServiceColumns(repos: readonly ParsedDoraRepoUrn[]): string[] {
-  const out = new Set<string>();
-  for (const r of repos) {
-    for (const s of providerServiceColumns(r.provider).prServices) out.add(s);
-  }
-  return Array.from(out);
 }
 
 function repoLikeMatchesUrn(
