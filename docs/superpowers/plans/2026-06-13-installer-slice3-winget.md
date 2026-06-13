@@ -435,10 +435,10 @@ git commit -m "docs(install): winget install one-liner + honest review/signing n
 
 ## Final verification (before opening the PR)
 
-- [ ] **Run the full scripts test suite** (picks up the new helper test):
+- [ ] **Run the release-scripts tests** (the new helper + its sibling generator):
 
 Run: `bun test scripts/release/winget-manifest.test.ts scripts/release/package-manager-manifests.test.ts`
-Expected: all PASS.
+Expected: all PASS. (For the whole `scripts/` tree, run `bun test scripts` — the `test:scripts` gate.)
 
 - [ ] **Run the SDK channel tests:**
 
