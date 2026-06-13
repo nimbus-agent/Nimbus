@@ -228,6 +228,11 @@ Create `packages/gateway/src/connectors/data-model-key.ts`:
  * connector so cross-connector lineage edges converge on ONE graph node.
  * Lower-cases, strips quoting (`"` / `` ` `` / `[]`), trims each part, and
  * joins with `.`. Returns null when no usable identifier survives.
+ *
+ * LIMITATION (deliberate, YAGNI): splits blindly on `.`, so a *quoted literal
+ * dot* inside an identifier (e.g. `ANALYTICS.PUBLIC."Sales.2026"`) is split
+ * into extra parts. Warehouse identifiers containing literal dots are
+ * vanishingly rare; a quote-aware tokenizer is intentionally not implemented.
  */
 export function normalizeDataModelKey(raw: string): string | null {
   if (typeof raw !== "string") {
@@ -652,38 +657,68 @@ git commit -m "feat(snowflake): data_model mapper (schema-only, normalized key)"
 
 - [ ] **Step 1: Write the failing test**
 
+This uses the REAL test helpers (verified): `createMemoryIndexDb`, `createStubVault`,
+`syncTestContext`, `describeWithFetchRestore` (saves/restores `globalThis.fetch`), and
+`expectServiceItemCount`. Network connectors fake by replacing `globalThis.fetch` — there is no
+fetch-enqueue fixture. The vault is a read-only stub keyed by full `"<service>.<key>"` keys.
+
 ```typescript
 import { expect, test } from "bun:test";
-import { createConnectorSyncFixture } from "../../../src/connectors/connector-sync-test-helpers.ts";
+import {
+  createMemoryIndexDb,
+  createStubVault,
+  describeWithFetchRestore,
+  expectServiceItemCount,
+  syncTestContext,
+} from "../../../src/connectors/connector-sync-test-helpers.ts";
 import { createSnowflakeSyncable } from "../../../src/connectors/snowflake-sync.ts";
 
-test("indexes Snowflake tables as data_model items", async () => {
-  const fx = createConnectorSyncFixture();
-  await fx.vault.set("snowflake.account", "acme-xy12345");
-  await fx.vault.set("snowflake.oauth_token", "tok");
-  fx.fetchFake.enqueueJson({
-    data: [
-      { database_name: "ANALYTICS", schema_name: "PUBLIC", table_name: "REVENUE", row_count: 10, columns: [{ name: "AMOUNT" }] },
-    ],
-  });
-  const syncable = createSnowflakeSyncable({ ensureSnowflakeMcpRunning: async () => {} });
-  const res = await syncable.sync(fx.createSyncContext(), null);
-  expect(res.itemsUpserted).toBe(1);
-  const row = fx.db
-    .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'snowflake'")
-    .get();
-  expect(row?.external_id).toBe("snowflake:analytics.public.revenue");
-});
+// Snowflake's statements API returns column metadata + row-arrays, not named objects.
+function statementsResponse(rows: string[][]): Response {
+  return new Response(
+    JSON.stringify({
+      resultSetMetaData: {
+        rowType: [
+          { name: "DATABASE_NAME" },
+          { name: "SCHEMA_NAME" },
+          { name: "TABLE_NAME" },
+          { name: "ROW_COUNT" },
+          { name: "LAST_ALTERED" },
+        ],
+      },
+      data: rows,
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
 
-test("no creds → noop (zero upserts)", async () => {
-  const fx = createConnectorSyncFixture();
-  const syncable = createSnowflakeSyncable({ ensureSnowflakeMcpRunning: async () => {} });
-  const res = await syncable.sync(fx.createSyncContext(), null);
-  expect(res.itemsUpserted).toBe(0);
+describeWithFetchRestore("snowflake-sync", () => {
+  test("indexes Snowflake tables as data_model items", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "snowflake.account": "acme-xy12345", "snowflake.oauth_token": "tok" });
+    globalThis.fetch = (async () =>
+      statementsResponse([["ANALYTICS", "PUBLIC", "REVENUE", "10", "2026-06-01T00:00:00Z"]])) as typeof fetch;
+
+    const syncable = createSnowflakeSyncable({ ensureSnowflakeMcpRunning: async () => {} });
+    const res = await syncable.sync(syncTestContext(db, vault), null);
+
+    expect(res.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "snowflake", 1);
+    const row = db
+      .query<{ external_id: string }, []>("SELECT external_id FROM item WHERE service = 'snowflake'")
+      .get();
+    expect(row?.external_id).toBe("snowflake:analytics.public.revenue");
+  });
+
+  test("no creds → noop (zero upserts)", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({}); // no snowflake.* keys
+    const syncable = createSnowflakeSyncable({ ensureSnowflakeMcpRunning: async () => {} });
+    const res = await syncable.sync(syncTestContext(db, vault), null);
+    expect(res.itemsUpserted).toBe(0);
+  });
 });
 ```
-
-> Verify the exact fixture API (`createConnectorSyncFixture`, `fetchFake.enqueueJson`, `vault.set`, `createSyncContext`, `db`) against `packages/gateway/src/connectors/connector-sync-test-helpers.ts` and an existing network-connector test (e.g. `metabase-sync.test.ts`); adjust method names to match if they differ.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -725,11 +760,33 @@ async function loadCreds(ctx: SyncContext): Promise<SnowflakeCreds | null> {
   return { account, token };
 }
 
-function extractArray(parsed: unknown): unknown[] {
-  if (Array.isArray(parsed)) return parsed;
-  const data = asRecord(parsed)?.["data"];
-  return Array.isArray(data) ? data : [];
+// Snowflake's SQL REST API (POST /api/v2/statements) returns column metadata in
+// `resultSetMetaData.rowType` and rows as positional arrays in `data`. Zip them
+// into the lower-cased named objects the mapper consumes. (No native
+// /information-schema endpoint exists — review finding Q2.2.)
+function rowsFromStatementsResponse(parsed: unknown): Record<string, unknown>[] {
+  const root = asRecord(parsed);
+  const meta = asRecord(root?.["resultSetMetaData"]);
+  const rowType = Array.isArray(meta?.["rowType"]) ? meta["rowType"] : [];
+  const names = rowType.map((c) => (asRecord(c)?.["name"] as string | undefined)?.toLowerCase() ?? "");
+  const data = Array.isArray(root?.["data"]) ? root["data"] : [];
+  const out: Record<string, unknown>[] = [];
+  for (const r of data) {
+    if (!Array.isArray(r)) continue;
+    const obj: Record<string, unknown> = {};
+    names.forEach((name, i) => {
+      if (name !== "") obj[name] = r[i];
+    });
+    // row_count arrives as a string; coerce so the mapper's numberField reads it.
+    if (typeof obj["row_count"] === "string") obj["row_count"] = Number(obj["row_count"]);
+    out.push(obj);
+  }
+  return out;
 }
+
+const TABLES_SQL =
+  "SELECT table_catalog AS database_name, table_schema AS schema_name, table_name, " +
+  "row_count, last_altered FROM information_schema.tables WHERE table_schema <> 'INFORMATION_SCHEMA'";
 
 export function createSnowflakeSyncable(options: SnowflakeSyncableOptions): Syncable {
   return {
@@ -742,9 +799,15 @@ export function createSnowflakeSyncable(options: SnowflakeSyncableOptions): Sync
       const creds = await loadCreds(ctx);
       if (creds === null) return syncNoopResult(cursor, t0);
 
-      const url = `https://${creds.account}.snowflakecomputing.com/api/v2/information-schema/tables`;
+      const url = `https://${creds.account}.snowflakecomputing.com/api/v2/statements`;
       const outcome = await connectorFetch(ctx, SERVICE_ID, url, {
-        headers: { Authorization: `Bearer ${creds.token}`, Accept: "application/json" },
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${creds.token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ statement: TABLES_SQL, timeout: 60 }),
       });
       if (outcome.kind !== "ok") {
         return outcome.kind === "http_error"
@@ -753,7 +816,7 @@ export function createSnowflakeSyncable(options: SnowflakeSyncableOptions): Sync
       }
       const now = Date.now();
       let upserted = 0;
-      for (const rawRow of extractArray(outcome.parsed)) {
+      for (const rawRow of rowsFromStatementsResponse(outcome.parsed)) {
         const mapped = mapSnowflakeTableToItem(rawRow, { syncedAt: now });
         if (mapped !== null) {
           upsertIndexedItemForSync(ctx, mapped);
@@ -797,6 +860,11 @@ In `connector-secrets-manifest.ts`, inside `CONNECTOR_VAULT_SECRET_KEYS`:
 ```typescript
   snowflake: ["snowflake.account", "snowflake.oauth_token", "snowflake.key_pair_jwt"],
 ```
+
+> **Typing constraint (do not "simplify" to bare keys):** `ConnectorSecretKeyOf<S>` statically
+> requires every entry to be `` `${serviceId}.${suffix}` `` (`connector-vault.ts:97`), and
+> `readConnectorSecret(ctx.vault, "snowflake", "account")` reads `vault.get("snowflake.account")`.
+> The `service.` prefix is mandatory — a bare `"account"` is a `tsc` error.
 
 - [ ] **Step 2: Add the catalog entries**
 
@@ -922,6 +990,12 @@ Each connector repeats Tasks 7–10 (mapper → sync → registration → MCP pa
 
 ### Task 14: Monte Carlo (`data_quality_test`)
 
+> **Canonical service id is `montecarlo`** (no hyphen) at every TYPED site — the mapper `service`
+> literal, the `CONNECTOR_VAULT_SECRET_KEYS` prefix (`montecarlo.api_id`), `CONNECTOR_SERVICE_IDS`,
+> the rate-limiter `Provider`, and the `connectorFetch(ctx, "montecarlo", …)` arg. Only the package
+> directory (`monte-carlo/`) and manifest id (`com.nimbus.monte-carlo`) may use the hyphen. A split
+> breaks the `ConnectorSecretKeyOf` template-literal match (review finding R4).
+
 - **Mapper** `monte-carlo-dq-mapping.ts` → `MappedRow<"montecarlo","data_quality_test">`. Item per incident/monitor. `externalId: "montecarlo:<incidentId>"`. Metadata: `{ monitoredDataModelKeys (from the monitored table → normalizeDataModelKey), status, severity, firstSeenAt }`.
 - **Sync** `monte-carlo-sync.ts`: creds `montecarlo.api_id` + `montecarlo.api_token`; GraphQL `POST https://api.getmontecarlo.com/graphql` (headers `x-mcd-id`, `x-mcd-token`).
 - **Register**: secret keys `["montecarlo.api_id","montecarlo.api_token"]`; catalog `montecarlo: MIN10`; rate-limiter `montecarlo`.
@@ -964,18 +1038,20 @@ import { mapMonteCarloIncidentToItem } from "../../src/connectors/monte-carlo-dq
 test("Slice-7 lineage sub-chain resolves in <500ms with zero live API calls", () => {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
+  // upsertIndexedItem takes the MappedRow shape directly AND already calls
+  // syncGraphFromIndexedItem internally, so seeding items auto-populates the graph.
   // 1. Snowflake table → data_model node 'analytics.public.revenue'
-  upsertIndexedItem(db, toRow(mapSnowflakeTableToItem(
+  upsertIndexedItem(db, mapSnowflakeTableToItem(
     { database_name: "ANALYTICS", schema_name: "PUBLIC", table_name: "REVENUE", row_count: 1, columns: [{ name: "amount" }] },
-    { syncedAt: 1 })!));
+    { syncedAt: 1 })!);
   // 2. Tableau view referencing that table → dashboard, edge data_model --upstream_refs--> dashboard
-  upsertIndexedItem(db, toRow(mapTableauViewToItem(
+  upsertIndexedItem(db, mapTableauViewToItem(
     { luid: "v1", name: "Q1 Revenue", dataSourceTables: ["ANALYTICS.PUBLIC.REVENUE"] },
-    { syncedAt: 1 })!));
+    { syncedAt: 1 })!);
   // 3. Monte Carlo incident on that table → data_quality_test, edge ... --monitors--> data_model
-  upsertIndexedItem(db, toRow(mapMonteCarloIncidentToItem(
+  upsertIndexedItem(db, mapMonteCarloIncidentToItem(
     { incidentId: "42", monitoredTable: "ANALYTICS.PUBLIC.REVENUE", status: "open", severity: "high" },
-    { syncedAt: 1 })!));
+    { syncedAt: 1 })!);
 
   const t0 = performance.now();
   const edges = db
@@ -992,7 +1068,7 @@ test("Slice-7 lineage sub-chain resolves in <500ms with zero live API calls", ()
 });
 ```
 
-> `toRow(...)` adapts a `MappedRow` to the `upsertIndexedItem` input — copy the field mapping the sync path uses (`upsertIndexedItemForSync`); verify its exact signature in `item-store.ts` and inline a small local helper.
+> `mapTableauViewToItem` / `mapMonteCarloIncidentToItem` are defined in Tasks 11 & 14 — keep their example input shapes here in sync with what those tasks implement.
 
 - [ ] **Step 2: Run it**
 

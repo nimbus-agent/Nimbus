@@ -201,7 +201,7 @@ credential is team-shared, the write additionally rides the I19 path from §5.
 
 ## 7. Schema & config
 
-- **V40 migration** (Wave 7a only): seed `feeds` / `derived_from` / `monitors` into
+- **V40 migration** (Wave 7a only): seed `upstream_refs` / `derived_from` / `monitors` into
   `graph_relation_type` (`INSERT OR IGNORE`). No new tables, no column adds — the lightest possible
   migration. New `runner-v40.test.ts` per the db-migrations skill.
 - **Code constant:** extend `ITEM_LINKED_ENTITY_TYPES` with `data_model`, `dashboard`,
