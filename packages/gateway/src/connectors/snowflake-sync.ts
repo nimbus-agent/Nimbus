@@ -14,6 +14,23 @@ import { asRecord } from "./unknown-record.ts";
 const SERVICE_ID = "snowflake";
 const CURSOR_PREFIX = "nimbus-snowflake1:";
 
+/**
+ * Guard against flag-smuggling via the account identifier before it is
+ * interpolated into the fetch URL (`${account}.snowflakecomputing.com`).
+ * Mirrors the identical check in phase3-config.ts's isSafeSnowflakeAccount.
+ */
+function isSafeSnowflakeAccount(value: string): boolean {
+  if (value.length === 0 || value.length > 253 || value.startsWith("-")) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
+      return false;
+    }
+  }
+  return true;
+}
+
 type SnowflakeCursorV1 = { pass: number };
 
 function pass1Cursor(): string {
@@ -35,7 +52,7 @@ async function loadCreds(ctx: SyncContext): Promise<SnowflakeCreds | null> {
     (await readConnectorSecret(ctx.vault, "snowflake", "oauth_token"))?.trim() ??
     (await readConnectorSecret(ctx.vault, "snowflake", "key_pair_jwt"))?.trim() ??
     "";
-  if (account === "" || token === "") return null;
+  if (account === "" || token === "" || !isSafeSnowflakeAccount(account)) return null;
   return { account, token };
 }
 
@@ -54,7 +71,9 @@ function rowsFromStatementsResponse(parsed: unknown): Record<string, unknown>[] 
     names.forEach((name, i) => {
       if (name !== "") obj[name] = rr[i];
     });
-    if (typeof obj["row_count"] === "string") obj["row_count"] = Number(obj["row_count"]);
+    if (typeof obj["row_count"] === "string" && obj["row_count"] !== "") {
+      obj["row_count"] = Number(obj["row_count"]);
+    }
     out.push(obj);
   }
   return out;

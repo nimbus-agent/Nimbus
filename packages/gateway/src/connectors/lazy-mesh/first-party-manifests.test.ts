@@ -91,6 +91,7 @@ describe("manifestForFirstParty", () => {
       "flux",
       "dbt",
       "metabase",
+      "snowflake",
       "superset",
       "databricks",
       "mlflow",

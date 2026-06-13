@@ -274,6 +274,14 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Snowflake (Tier-3, metadata-only). Per-tenant host
+  // (${account}.snowflakecomputing.com) is derived at spawn time by
+  // phase3AddSnowflakeMcp via manifestWithExtraNetworkHosts.
+  snowflake: baseManifest("com.nimbus.snowflake", {
+    network: [],
+    filesystem: { read: [], write: [] },
+  }),
+
   superset: baseManifest("com.nimbus.superset", {
     network: [],
     filesystem: { read: [], write: [] },

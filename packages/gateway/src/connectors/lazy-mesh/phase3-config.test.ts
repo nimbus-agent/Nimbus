@@ -898,6 +898,33 @@ describe("phase3AddSnowflakeMcp", () => {
     if (spec === undefined) return;
     expect(spec.env?.["SNOWFLAKE_TOKEN"]).toBe("jwt-only");
   });
+
+  test("no-op when account has a leading dash (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "-bad-account");
+    await vault.set("snowflake.oauth_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("no-op when account contains a control character (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "acme\x01xy");
+    await vault.set("snowflake.oauth_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
+
+  test("no-op when account exceeds 253 characters (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("snowflake.account", "a".repeat(254));
+    await vault.set("snowflake.oauth_token", "tok");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["snowflake"]).toBeUndefined();
+  });
 });
 
 describe("phase3AddSupersetMcp", () => {

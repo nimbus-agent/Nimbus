@@ -39,6 +39,24 @@ function isSafeRegion(value: string): boolean {
 }
 
 /**
+ * Inline argv flag-smuggling guard for the Snowflake account identifier before it
+ * is interpolated into `${account}.snowflakecomputing.com` and the spawned MCP's
+ * `SNOWFLAKE_ACCOUNT` env. A value that is empty, over-long, `-`-prefixed, or
+ * carries control characters is rejected so the caller noops.
+ */
+function isSafeSnowflakeAccount(value: string): boolean {
+  if (value.length === 0 || value.length > 253 || value.startsWith("-")) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Parse a per-tenant IMAP/SMTP port string into a valid TCP port, falling back
  * to `fallback` when empty or out of range. Mirrors the validator's 1..65535
  * bound so the spawned host:port network entry is always well-formed.
@@ -855,7 +873,7 @@ export async function phase3AddSnowflakeMcp(
     (await readConnectorSecret(vault, "snowflake", "oauth_token"))?.trim() ??
     (await readConnectorSecret(vault, "snowflake", "key_pair_jwt"))?.trim() ??
     "";
-  if (account === "" || token === "") {
+  if (account === "" || token === "" || !isSafeSnowflakeAccount(account)) {
     return;
   }
   const host = `${account}.snowflakecomputing.com`;
