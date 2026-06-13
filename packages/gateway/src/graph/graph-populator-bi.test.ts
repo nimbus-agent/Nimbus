@@ -214,6 +214,99 @@ test("re-syncing data_model replaces stale derived_from edges (no leak)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// Bug 1 — cross-connector edges survive a data_model re-sync
+// ---------------------------------------------------------------------------
+
+test("upstream_refs edge survives a data_model re-sync (cross-connector edge not wiped)", () => {
+  const db = makeGraphDb();
+  // Step 1: tableau syncs a dashboard with upstream = "a.b.c" → creates upstream_refs edge
+  syncGraphFromIndexedItem(db, {
+    id: "tableau:view/dash1",
+    service: "tableau",
+    type: "dashboard",
+    title: "Dash 1",
+    authorId: null,
+    metadata: { upstreamDataModelKeys: ["a.b.c"] },
+  });
+  // Verify the upstream_refs edge is present
+  const beforeEdge = db
+    .query<{ t: string }, []>(
+      `SELECT r.type AS t FROM graph_relation r
+       JOIN graph_entity f ON f.id = r.from_id AND f.external_id = 'a.b.c'
+       JOIN graph_entity g ON g.id = r.to_id   AND g.type = 'dashboard'`,
+    )
+    .get();
+  expect(beforeEdge?.t).toBe("upstream_refs");
+
+  // Step 2: snowflake re-syncs the data_model "a.b.c" — must NOT wipe the upstream_refs edge
+  syncGraphFromIndexedItem(db, {
+    id: "snowflake:a.b.c",
+    service: "snowflake",
+    type: "data_model",
+    title: "a.b.c",
+    authorId: null,
+    metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
+  });
+  syncGraphFromIndexedItem(db, {
+    id: "snowflake:a.b.c",
+    service: "snowflake",
+    type: "data_model",
+    title: "a.b.c",
+    authorId: null,
+    metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
+  });
+
+  // The upstream_refs edge written by tableau must still exist
+  const afterEdge = db
+    .query<{ t: string }, []>(
+      `SELECT r.type AS t FROM graph_relation r
+       JOIN graph_entity f ON f.id = r.from_id AND f.external_id = 'a.b.c'
+       JOIN graph_entity g ON g.id = r.to_id   AND g.type = 'dashboard'`,
+    )
+    .get();
+  expect(afterEdge?.t).toBe("upstream_refs");
+});
+
+// ---------------------------------------------------------------------------
+// Bug 2 — reference stubs must not clobber the real node's service
+// ---------------------------------------------------------------------------
+
+test("tableau upstream reference does not overwrite service of a snowflake-owned data_model node", () => {
+  const db = makeGraphDb();
+  // Step 1: snowflake creates the authoritative data_model node
+  syncGraphFromIndexedItem(db, {
+    id: "snowflake:a.b.c",
+    service: "snowflake",
+    type: "data_model",
+    title: "a.b.c",
+    authorId: null,
+    metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
+  });
+  const before = db
+    .query<{ service: string | null }, []>(
+      "SELECT service FROM graph_entity WHERE external_id = 'a.b.c' AND type = 'data_model'",
+    )
+    .get();
+  expect(before?.service).toBe("snowflake");
+
+  // Step 2: tableau references "a.b.c" as upstream — stub must not overwrite service
+  syncGraphFromIndexedItem(db, {
+    id: "tableau:view/dash1",
+    service: "tableau",
+    type: "dashboard",
+    title: "Dash 1",
+    authorId: null,
+    metadata: { upstreamDataModelKeys: ["a.b.c"] },
+  });
+  const after = db
+    .query<{ service: string | null }, []>(
+      "SELECT service FROM graph_entity WHERE external_id = 'a.b.c' AND type = 'data_model'",
+    )
+    .get();
+  expect(after?.service).toBe("snowflake");
+});
+
+// ---------------------------------------------------------------------------
 // stringArrayField — non-string filtering
 // ---------------------------------------------------------------------------
 

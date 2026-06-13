@@ -89,7 +89,7 @@ function viewsFromModelsResponse(parsed: unknown): Record<string, unknown>[] {
       for (const viewItem of views) {
         const view = asRecord(viewItem);
         if (view === undefined) continue;
-        out.push({ model: modelName, ...view });
+        out.push({ ...view, model: modelName });
       }
     }
   }

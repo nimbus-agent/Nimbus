@@ -73,6 +73,32 @@ export function upsertGraphEntity(
   return id;
 }
 
+/**
+ * Inserts a graph entity only when no row with the same (type, external_id)
+ * already exists.  Use this for reference/stub nodes created by a connector
+ * that does NOT own the entity, so an existing real node's label/service is
+ * never overwritten.
+ */
+export function ensureGraphEntity(
+  db: Database,
+  row: {
+    type: string;
+    externalId: string;
+    label: string;
+    service?: string | null;
+  },
+): string {
+  const id = deterministicGraphEntityId(row.type, row.externalId);
+  dbRun(
+    db,
+    `INSERT INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES (?, ?, ?, ?, ?, NULL)
+     ON CONFLICT (type, external_id) DO NOTHING`,
+    [id, row.type, row.externalId, row.label, row.service ?? null],
+  );
+  return id;
+}
+
 export function upsertGraphRelation(
   db: Database,
   fromId: string,

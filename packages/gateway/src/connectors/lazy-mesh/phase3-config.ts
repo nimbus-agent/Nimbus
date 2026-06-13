@@ -886,10 +886,11 @@ export async function phase3AddSnowflakeMcp(
   sandboxCwd: string,
 ): Promise<void> {
   const account = (await readConnectorSecret(vault, "snowflake", "account"))?.trim() ?? "";
+  const oauth = (await readConnectorSecret(vault, "snowflake", "oauth_token"))?.trim();
+  const jwt = (await readConnectorSecret(vault, "snowflake", "key_pair_jwt"))?.trim();
+  // Use empty-string check (not ??) so a blank vault value falls through to the next option.
   const token =
-    (await readConnectorSecret(vault, "snowflake", "oauth_token"))?.trim() ??
-    (await readConnectorSecret(vault, "snowflake", "key_pair_jwt"))?.trim() ??
-    "";
+    oauth !== undefined && oauth !== "" ? oauth : jwt !== undefined && jwt !== "" ? jwt : "";
   if (account === "" || token === "" || !isSafeSnowflakeAccount(account)) {
     return;
   }

@@ -43,7 +43,8 @@ export function mapMonteCarloIncidentToItem(
       (monitoredTable !== null ? ` · table=${monitoredTable}` : ""),
   );
 
-  const modifiedAt = firstSeenAt !== null ? Date.parse(firstSeenAt) || ctx.syncedAt : ctx.syncedAt;
+  const parsedAt = firstSeenAt !== null ? Date.parse(firstSeenAt) : Number.NaN;
+  const modifiedAt = Number.isNaN(parsedAt) ? ctx.syncedAt : parsedAt;
 
   return {
     service: "montecarlo",

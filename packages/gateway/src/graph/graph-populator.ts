@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import {
+  ensureGraphEntity,
   isItemLinkedGraphType,
   upsertGraphEntity,
   upsertGraphRelation,
@@ -309,13 +310,17 @@ function syncDataModelGraph(db: Database, row: IndexedItemGraphInput, now: numbe
     label: row.title,
     service: row.service,
   });
-  clearRelationsTouchingEntity(db, modelId);
+  // Clear only the derived_from edges THIS handler owns (from_id = modelId).
+  // Do NOT call clearRelationsTouchingEntity — the data_model node is SHARED
+  // across connectors, and upstream_refs (written by syncDashboardGraph) and
+  // monitors (written by syncDataQualityTestGraph) edges must not be deleted.
+  dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type = 'derived_from'", [modelId]);
   for (const upstream of stringArrayField(row.metadata, "derivedFromKeys")) {
-    const upId = upsertGraphEntity(db, {
+    const upId = ensureGraphEntity(db, {
       type: "data_model",
       externalId: upstream,
       label: upstream,
-      service: row.service,
+      service: null,
     });
     upsertGraphRelation(db, modelId, upId, "derived_from", now);
   }
@@ -330,11 +335,13 @@ function syncDashboardGraph(db: Database, row: IndexedItemGraphInput, now: numbe
   });
   clearRelationsTouchingEntity(db, dashId);
   for (const upstream of stringArrayField(row.metadata, "upstreamDataModelKeys")) {
-    const modelId = upsertGraphEntity(db, {
+    // Use ensureGraphEntity so a tableau/powerbi reference stub does NOT
+    // overwrite the service/label of a real snowflake data_model node.
+    const modelId = ensureGraphEntity(db, {
       type: "data_model",
       externalId: upstream,
       label: upstream,
-      service: row.service,
+      service: null,
     });
     upsertGraphRelation(db, modelId, dashId, "upstream_refs", now);
   }
@@ -349,11 +356,13 @@ function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now:
   });
   clearRelationsTouchingEntity(db, dqId);
   for (const table of stringArrayField(row.metadata, "monitoredDataModelKeys")) {
-    const modelId = upsertGraphEntity(db, {
+    // Use ensureGraphEntity so a montecarlo/bigeye reference stub does NOT
+    // overwrite the service/label of a real snowflake data_model node.
+    const modelId = ensureGraphEntity(db, {
       type: "data_model",
       externalId: table,
       label: table,
-      service: row.service,
+      service: null,
     });
     upsertGraphRelation(db, dqId, modelId, "monitors", now);
   }

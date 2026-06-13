@@ -24,3 +24,32 @@ test("returns null when the table name is missing", () => {
     mapSnowflakeTableToItem({ database_name: "A", schema_name: "B" }, { syncedAt: 1 }),
   ).toBeNull();
 });
+
+test("epoch-0 last_altered yields modifiedAt === 0, not the syncedAt fallback", () => {
+  const item = mapSnowflakeTableToItem(
+    {
+      database_name: "ANALYTICS",
+      schema_name: "PUBLIC",
+      table_name: "ORDERS",
+      row_count: 0,
+      last_altered: "1970-01-01T00:00:00.000Z",
+    },
+    { syncedAt: 999_999 },
+  );
+  expect(item).not.toBeNull();
+  expect(item?.modifiedAt).toBe(0);
+});
+
+test("invalid last_altered string falls back to syncedAt", () => {
+  const item = mapSnowflakeTableToItem(
+    {
+      database_name: "ANALYTICS",
+      schema_name: "PUBLIC",
+      table_name: "ORDERS",
+      row_count: 0,
+      last_altered: "not-a-date",
+    },
+    { syncedAt: 55_000 },
+  );
+  expect(item?.modifiedAt).toBe(55_000);
+});

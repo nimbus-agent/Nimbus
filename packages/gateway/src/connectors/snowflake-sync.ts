@@ -48,10 +48,11 @@ interface SnowflakeCreds {
 
 async function loadCreds(ctx: SyncContext): Promise<SnowflakeCreds | null> {
   const account = (await readConnectorSecret(ctx.vault, "snowflake", "account"))?.trim() ?? "";
+  const oauth = (await readConnectorSecret(ctx.vault, "snowflake", "oauth_token"))?.trim();
+  const jwt = (await readConnectorSecret(ctx.vault, "snowflake", "key_pair_jwt"))?.trim();
+  // Use empty-string check (not ??) so a blank vault value falls through to the next option.
   const token =
-    (await readConnectorSecret(ctx.vault, "snowflake", "oauth_token"))?.trim() ??
-    (await readConnectorSecret(ctx.vault, "snowflake", "key_pair_jwt"))?.trim() ??
-    "";
+    oauth !== undefined && oauth !== "" ? oauth : jwt !== undefined && jwt !== "" ? jwt : "";
   if (account === "" || token === "" || !isSafeSnowflakeAccount(account)) return null;
   return { account, token };
 }

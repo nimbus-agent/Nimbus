@@ -39,7 +39,11 @@ export function mapSnowflakeTableToItem(
     bodyPreview: `${columns.length} columns · ${rowCountEstimate === null ? "rows unknown" : `~${rowCountEstimate} rows`}`,
     url: null,
     canonicalUrl: null,
-    modifiedAt: lastAltered !== null ? Date.parse(lastAltered) || ctx.syncedAt : ctx.syncedAt,
+    modifiedAt: (() => {
+      if (lastAltered === null) return ctx.syncedAt;
+      const parsed = Date.parse(lastAltered);
+      return Number.isNaN(parsed) ? ctx.syncedAt : parsed;
+    })(),
     metadata: { dataModelKey: key, columns, rowCountEstimate, lastAltered },
     syncedAt: ctx.syncedAt,
   };
