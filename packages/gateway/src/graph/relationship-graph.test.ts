@@ -3,7 +3,13 @@ import { describe, expect, test } from "bun:test";
 
 import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { traverseGraph } from "./relationship-graph.ts";
+import { isItemLinkedGraphType, traverseGraph } from "./relationship-graph.ts";
+
+test("data warehouse/BI item types are graph-participating", () => {
+  expect(isItemLinkedGraphType("data_model")).toBe(true);
+  expect(isItemLinkedGraphType("dashboard")).toBe(true);
+  expect(isItemLinkedGraphType("data_quality_test")).toBe(true);
+});
 
 describe("relationship graph (v7)", () => {
   test("PR upsert creates repo, person, and authored/targets edges", () => {

@@ -17,6 +17,9 @@ const ITEM_LINKED_ENTITY_TYPES = [
   "api_endpoint",
   "code_symbol",
   "obsidian_note",
+  "data_model",
+  "dashboard",
+  "data_quality_test",
 ] as const;
 
 export type ItemLinkedEntityType = (typeof ITEM_LINKED_ENTITY_TYPES)[number];
