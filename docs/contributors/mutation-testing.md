@@ -7,8 +7,8 @@ the preflight-gate manifest.
 
 ## Running it
 
-- `bun run mutation` — mutate the configured security core (`engine/executor.ts`
-  - `engine/tool-output-envelope.ts`).
+- `bun run mutation` — mutate the configured security core
+  (`engine/executor.ts` and `engine/tool-output-envelope.ts`).
 - `bun run mutation:diff` — mutate only the `packages/gateway/src/*.ts` files
   changed vs the base ref (`origin/main`, falling back to local `main`). An empty
   diff exits cleanly without running Stryker.
