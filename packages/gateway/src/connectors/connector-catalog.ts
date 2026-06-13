@@ -90,6 +90,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "looker",
   "powerbi",
   "montecarlo",
+  "bigeye",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -205,6 +206,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   looker: MIN10,
   powerbi: MIN10,
   montecarlo: MIN10,
+  bigeye: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -321,6 +323,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "uses Azure AD client-credentials (tenant id + client id + client secret) against the Power BI REST API (connector.auth powerbi) — no PKCE flow",
   montecarlo:
     "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
+  bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

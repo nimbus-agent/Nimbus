@@ -172,6 +172,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // host api.getmontecarlo.com. Indexes data-quality incidents as
   // data_quality_test items with monitoredDataModelKeys lineage edges.
   montecarlo: ["montecarlo.api_id", "montecarlo.api_token"],
+  // Bigeye (Tier-3 data-quality observability). Uses an API key (Bearer token)
+  // against a per-tenant Bigeye instance (base_url + api_key). Indexes
+  // data-quality issues as data_quality_test items with monitoredDataModelKeys
+  // lineage edges. base_url is per-tenant (like Looker/Tableau).
+  bigeye: ["bigeye.base_url", "bigeye.api_key"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

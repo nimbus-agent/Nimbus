@@ -79,7 +79,8 @@ export type Provider =
   | "tableau"
   | "looker"
   | "powerbi"
-  | "montecarlo";
+  | "montecarlo"
+  | "bigeye";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -168,6 +169,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   looker: { requestsPerMinute: 60, burstSize: 10 },
   powerbi: { requestsPerMinute: 60, burstSize: 10 },
   montecarlo: { requestsPerMinute: 60, burstSize: 10 },
+  bigeye: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {
