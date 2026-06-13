@@ -49,7 +49,9 @@ callers (ASCII/hex/base64 tokens) are unaffected — utf16le is identical in beh
 - `sha256HexEqualConstantTime(a, b)` oracle: for two generated valid 64-char hex strings (any
   case), result === (the decoded bytes are equal) — i.e. case-insensitive byte equality, **not**
   string equality. For malformed inputs (length ≠ 64, non-hex chars, decoded length ≠ 32), result
-  is `false`.
+  is `false`. Includes an explicit case (review §2.2): a 64-char string with ≥1 injected non-hex
+  char always returns `false` (validates `Buffer.from(…, "hex")`'s stop-on-invalid → length < 32
+  guard).
 
 **Documented:** fast-check verifies **functional** equality only; it cannot verify the
 constant-time property, which stays a manual/review invariant (parent spec §9 note). The fix does
@@ -67,9 +69,11 @@ body with `<\/tool_output>`, HTML-escapes the `service`/`tool` attributes, and w
   containing `</tool_output>`, `<tool_output>`, `"`, `<`, `>`, unicode), the output contains
   **exactly one** literal `</tool_output>` (the real closing tag) and begins with the well-formed
   opening tag `<tool_output service="…" tool="…">`.
-- **Attributes cannot break out.** For arbitrary `service`/`tool` strings (incl. `"`, `<`, `>`,
-  `&`), the rendered attribute values contain no raw `"`, `<`, or `>` (all escaped), so a crafted
-  service/tool can't terminate the attribute or the opening tag early.
+- **Attributes cannot break out.** For arbitrary `service`/`tool` strings — the generator includes
+  `"`, `<`, `>`, `&`, **single quotes, backslashes, and control chars** (review §2.3) — the rendered
+  attribute values contain no raw `"`, `<`, or `>` (all escaped), and the opening tag's first `>` is
+  the intended one. Note: `'` and `\` are deliberately **not** escaped and need not be — they are
+  harmless inside a double-quoted attribute; the assertion is no-breakout, not "everything escaped."
 
 **Scope decision:** the exact `</tool_output>` token is the contract — the LLM is instructed on that
 exact delimiter and no lenient XML parser is in the consumption path. C2 does **not** harden against
@@ -87,7 +91,9 @@ No test file exists today — C2 creates `vault/key-format.test.ts`.
 - **Manifest invariant:** every key in `CONNECTOR_VAULT_SECRET_KEYS` (flattened across all services)
   passes `isWellFormedVaultKey`. Catches a malformed/typo'd manifest entry at test time.
 - **Total function:** `isWellFormedVaultKey` never throws on an arbitrary string — always returns a
-  boolean.
+  boolean. The generator explicitly includes **>256-char strings, CRLF/newlines, and control chars**
+  (review §2.4) — verified no throw and no catastrophic backtracking (a 10 002-char pathological
+  input resolves in <1 ms; the regex's required `.`-anchored groups have no exponential ambiguity).
 - **Consistency:** `validateVaultKeyOrThrow(k)` throws ⟺ `!isWellFormedVaultKey(k)`, over arbitrary
   strings and over the manifest keys.
 
@@ -135,3 +141,25 @@ C2 → merge → C3 (StrykerJS; parent spec §5, runner §11 resolved) → Sub-p
 
 - Whether the envelope or key-format properties surface a real bug (as the surrogate probe did for
   timing-safe) — handled in-slice if so.
+
+## 8. Review dispositions (2026-06-13)
+
+Addressing [the design review](./2026-06-13-true-coverage-C2-property-suite-design-review.md). All
+four points are validations or generator-strengthening suggestions — no design change; the
+refinements fold into the property generators (plan-level), captured inline above.
+
+1. **§2.1 UTF-16LE injectivity / timing symmetry — ACKNOWLEDGED (validation).** Confirms the fix:
+   utf16le byte-length is exactly `2 × code-unit-length`, so the length-mismatch branch (and its
+   dummy `timingSafeEqual`) fires identically to before; constant-time profile unchanged.
+2. **§2.2 Hex stop-on-invalid guard — ACCEPTED.** Added an explicit property case: a 64-char string
+   with ≥1 non-hex char always returns `false` (the decoded buffer is < 32 bytes → length guard).
+   (§2a updated.)
+3. **§2.3 Attribute-escape coverage — ACCEPTED (with a nuance).** The attr generator now includes
+   nested `"`, `'`, `\`, and control chars. Verified: the breakout attempt `x" tool="pwned">…`
+   fully escapes to `&quot;`/`&gt;`/`&lt;` and the tag structure stays intact. The assertion is
+   **no-breakout** (no raw `"`/`<`/`>` in attr values), not "everything escaped" — `'` and `\` are
+   correctly left raw (harmless in a double-quoted attribute). (§2b updated.)
+4. **§2.4 Total-function robustness — ACCEPTED.** The generator now includes >256-char strings,
+   CRLF/newlines, and control chars. Verified no throw and **no catastrophic backtracking** (10 002
+   chars in <1 ms; the regex's `.`-anchored alternation groups have no exponential ambiguity).
+   (§2c updated.)
