@@ -3,6 +3,7 @@ import {
   makeQueryFilter,
   type SearchMatchOptions,
   stringField,
+  tagNamesFromObjects,
 } from "../../shared/search-filter.ts";
 
 export type AirflowSearchMatchOptions = SearchMatchOptions;
@@ -21,25 +22,6 @@ function ownerNames(row: Record<string, unknown>): string {
   return names.join(" ");
 }
 
-function tagNames(row: Record<string, unknown>): string {
-  const tags = row["tags"];
-  if (!Array.isArray(tags)) {
-    return "";
-  }
-  const names: string[] = [];
-  for (const t of tags) {
-    const tag = asObjectish(t);
-    if (tag === undefined) {
-      continue;
-    }
-    const name = tag["name"];
-    if (typeof name === "string" && name !== "") {
-      names.push(name);
-    }
-  }
-  return names.join(" ");
-}
-
 function fieldsOf(item: unknown): readonly string[] | null {
   const row = asObjectish(item);
   if (row === undefined) {
@@ -49,7 +31,7 @@ function fieldsOf(item: unknown): readonly string[] | null {
     stringField(row, "dag_id"),
     stringField(row, "description"),
     ownerNames(row),
-    tagNames(row),
+    tagNamesFromObjects(row),
   ];
 }
 

@@ -3,28 +3,10 @@ import {
   makeQueryFilter,
   type SearchMatchOptions,
   stringField,
+  tagNamesFromObjects,
 } from "../../shared/search-filter.ts";
 
 export type DependencyTrackSearchMatchOptions = SearchMatchOptions;
-
-function tagNames(row: Record<string, unknown>): string {
-  const tags = row["tags"];
-  if (!Array.isArray(tags)) {
-    return "";
-  }
-  const names: string[] = [];
-  for (const t of tags) {
-    const tag = asObjectish(t);
-    if (tag === undefined) {
-      continue;
-    }
-    const name = tag["name"];
-    if (typeof name === "string" && name !== "") {
-      names.push(name);
-    }
-  }
-  return names.join(" ");
-}
 
 function fieldsOf(item: unknown): readonly string[] | null {
   const row = asObjectish(item);
@@ -35,7 +17,7 @@ function fieldsOf(item: unknown): readonly string[] | null {
     stringField(row, "name"),
     stringField(row, "version"),
     stringField(row, "classifier"),
-    tagNames(row),
+    tagNamesFromObjects(row),
   ];
 }
 
