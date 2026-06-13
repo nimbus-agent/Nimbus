@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
 
 import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
@@ -7,6 +9,9 @@ import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { TeamToolSpawnRequest } from "./team-tool-invoke.ts";
 import { runSpawnedToolCall, spawnerFor } from "./team-tool-spawn.ts";
+
+// Inert in these tests (the fake spawner never reads it), but built cross-platform per convention.
+const TEST_CWD = join(tmpdir(), "nimbus-team-tool-spawn-test");
 
 const fakeVault: NimbusVault = {
   get: () => Promise.resolve(null),
@@ -21,7 +26,7 @@ function req(over: Partial<TeamToolSpawnRequest> = {}): TeamToolSpawnRequest {
     toolId: "list_issues",
     args: { a: 1 },
     vaultView: fakeVault,
-    sandboxCwd: "/cwd",
+    sandboxCwd: TEST_CWD,
     ...over,
   };
 }

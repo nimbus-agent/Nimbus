@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
 import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -7,6 +9,10 @@ import {
   runBotToolCall,
   spawnChatopsBotToolAndCall,
 } from "./chatops-bot-spawn-call.ts";
+
+// Inert in these tests (the fail-closed path returns before any spawn reads it), but built
+// cross-platform per convention.
+const TEST_CWD = join(tmpdir(), "nimbus-chatops-bot-spawn-test");
 
 /**
  * The success path of `spawnChatopsBotToolAndCall` constructs a REAL `MCPClient` against a bot
@@ -32,7 +38,7 @@ function req(over: Partial<ChatopsBotToolRequest>): ChatopsBotToolRequest {
     toolId: "slack_chat_post",
     args: {},
     vaultView: fakeVault({}),
-    sandboxCwd: "/cwd",
+    sandboxCwd: TEST_CWD,
     ...over,
   };
 }
