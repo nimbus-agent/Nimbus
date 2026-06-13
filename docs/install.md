@@ -36,6 +36,34 @@ installer/package owns updates. The standalone tarball keeps the self-updater on
 To remove: Windows uses Add/Remove Programs; macOS runs `uninstall-nimbus`;
 RPM/DEB use `sudo dnf remove nimbus-headless` / `sudo apt remove nimbus-headless`.
 
+## Linux repositories (apt / yum)
+
+For auto-updating Linux installs, add the signed Nimbus repository. The repository
+**metadata is GPG-signed** (the native apt/yum trust model), so `apt`/`dnf` verify it
+cryptographically — a stronger trust path than the standalone `.deb`/`.rpm`. The channel
+tracks **stable releases only**.
+
+**Debian / Ubuntu (apt):**
+
+```bash
+curl -fsSL https://nimbus-agent.github.io/linux-repo/gpg.key \
+  | gpg --dearmor | sudo tee /usr/share/keyrings/nimbus-archive-keyring.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/nimbus-archive-keyring.gpg] https://nimbus-agent.github.io/linux-repo/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/nimbus.list
+sudo apt update && sudo apt install nimbus-headless
+```
+
+**Fedora / RHEL (dnf/yum):**
+
+```bash
+sudo curl -fsSL https://nimbus-agent.github.io/linux-repo/nimbus.repo \
+  -o /etc/yum.repos.d/nimbus.repo
+sudo dnf install nimbus-headless
+```
+
+`apt upgrade` / `dnf upgrade` then keep Nimbus current. (Uses the modern `signed-by`
+keyring form — not the deprecated `apt-key add`.)
+
 ## Direct downloads
 
 Every artifact — the native installers above, the raw `nimbus` / `nimbus-gateway`
