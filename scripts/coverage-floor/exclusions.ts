@@ -111,13 +111,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
 
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
 
-  // The gateway-side IMAP fetcher is a thin imapflow socket adapter (constructs
-  // `new ImapFlow(...)` and opens a real TLS connection) with no injection seam —
-  // the same untestable I/O shell as a connector `server.ts`. The testable logic
-  // (mapping, cursor, transient-failure handling) lives in `imap-sync.ts` +
-  // `imap-email-mapping.ts`, which ARE covered.
-  { kind: "exact", path: "packages/gateway/src/connectors/_lib/imap-client.ts" },
-
   { kind: "pathRegex", re: /^packages\/mcp-connectors\/[^/]+\/src\/server\.ts$/ },
   // Each MCP connector's `src/tools.ts` is the same connect-shell class as its
   // `server.ts`: thin `reg(name, desc, schema, handler)` registrations whose
