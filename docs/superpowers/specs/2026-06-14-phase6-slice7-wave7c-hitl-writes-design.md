@@ -69,6 +69,31 @@ Each tool id (the `<service>_<verb>` column) is reference-API-pinned: the exact 
 fixed in the plan from the connector's existing `*-sync.ts` read code + the vendor REST/GraphQL docs
 before any handler is written (the #595 reference-impl lesson).
 
+**Scoping-id args (review §3).** Write-arg Zod schemas validate the container ids each endpoint
+requires, and the agent sources them from indexed metadata:
+
+- *Power BI* needs the **group GUID** (`/groups/{g}/...`). Wave 7a indexes only the workspace
+  *display name* (`workspace`), not the GUID — so `powerbi-dashboard-mapping.ts` is extended to also
+  index `groupId` (GUID) alongside the existing `datasetId`. The refresh schemas require
+  `groupId` + (`datasetId`|`dataflowId`).
+- *Tableau* site is connector-scoped (resolved from the connector's own auth/env inside the
+  subprocess), so writes need only the workbook/datasource **luid** — already the `externalId`.
+- *Snowflake* fully-qualified object name is the `data_model` key; *Looker*/*Monte Carlo*/*Bigeye*
+  ids are the indexed item native ids. A plan task verifies each write's required ids are retrievable
+  from indexed metadata and adds any missing field (mirroring the Power BI `groupId` extension).
+
+**Async write output shape (review §2).** Refresh writes (Tableau/Power BI) return `202 Accepted`
+with a job/run id. Each such tool's result (through the I11 `wrapToolOutput` envelope) returns the
+job/run id and an explicit `status: "queued"` marker, so the agent does not treat the refresh as
+synchronously complete. Verification of completion is via the next scheduled metadata sync
+(Tableau already indexes `extractRefreshStatus`); a dedicated poll tool is **out of scope** (§8).
+
+**Error surfacing (review §5).** API errors from a write (rate-limit `429` / refresh-quota,
+privilege/role `403`/object-not-found) are propagated with provider status + message through the
+I11 envelope rather than swallowed, so the agent/user can diagnose. Bespoke per-error suggestion
+templating is **out of scope** (§8) — the raw provider message (e.g. Snowflake's) is already
+actionable.
+
 ---
 
 ## 4. Architecture
@@ -118,6 +143,14 @@ invokeConnectorWrite(ctx, { service, writeToolId, args, credential, entry })
   a single-tool sibling of the existing `answerLocalOperatorList` (entry/service validation →
   `runTool` with injected secret → audit). Keeps I19 the sole team-credential-consuming path. The
   twelve write tool ids must be invocable here (local owner) yet rejected on the peer path — see I26.
+- **Confinement of the local write path (review §1).** `answerLocalOperatorInvoke` and
+  `invokeConnectorWrite` are strictly internal to the gateway connector-execution layer. They are
+  **not** IPC methods, **not** in the Tauri `ALLOWED_METHODS` allowlist (I7), **not** LAN-reachable
+  (I5), and **not** HTTP write routes (I13). The *only* trigger is `connectors.dispatch` →
+  `invokeConnectorWrite`, reached only after `executor.gate()` returns `proceed` — so the I2 HITL
+  check is structurally upstream of every write, and no local IPC client (CLI/UI) can reach the
+  team-credentialed write without clearing I2. D20 statically asserts neither symbol is imported
+  under `packages/gateway/src/ipc/` or `packages/ui/src-tauri/`.
 
 ### 4.3 Single source of truth for the write surface
 
@@ -164,19 +197,26 @@ this predicate (local owner is allowed to write).
    `answerFederatedInvoke` returns an error and **`runTool` is never called** (also assert
    `answerLocalOperatorInvoke` DOES call `runTool` for the same tool id).
 4. *Static:* **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — asserts
-   `invoke-gate.ts` consults `isWriteForbiddenToolId` in `answerFederatedInvoke`, and that the
+   `invoke-gate.ts` consults `isWriteForbiddenToolId` in `answerFederatedInvoke`; that the
    write tool id literals are confined to `warehouse-write-tools.ts` + the connector servers +
-   the dispatch/transport sites (no other module references them). Runs before the test suite.
+   the dispatch/transport sites (no other module references them); and (review §1) that
+   `answerLocalOperatorInvoke` / `invokeConnectorWrite` are **not** imported under
+   `packages/gateway/src/ipc/` or `packages/ui/src-tauri/`. Runs before the test suite.
 
 `CURRENT_INVARIANT_COUNT`-style assertions and the security-invariants test count bump from 25→26.
 
 ### 4.5 Folded-in Wave 7b deferrals
 
 - **Audit identity-subject refinement.** `teamvault/team-vault-audit.ts` audit rows gain an optional
-  `identitySubject?: string`. When identity is enabled, the resolved subject (from the verifier
-  already threaded into the invoke gate as `identity`) is recorded alongside the principal kind, at
-  every audit site in `invoke-gate.ts` (`answerFederatedInvoke`, `answerLocalOperatorList`,
-  `answerLocalOperatorInvoke`). Backward-compatible (optional column/field); offline-testable.
+  `identitySubject?: string`, recorded at every audit site in `invoke-gate.ts`
+  (`answerFederatedInvoke`, `answerLocalOperatorList`, `answerLocalOperatorInvoke`). The audit is
+  serialized as JSON into the existing audit-chain (`federationJson`), **not** a table column — so
+  this needs **no migration** (verified against `team-vault-audit.ts`). Fallback semantics
+  (review §4): when identity is **enabled**, the field carries the resolved verifier subject; when
+  identity is **disabled**, the field is **omitted** rather than set to a sentinel, because
+  `principal.kind` (`peer`/`localOperator`) already disambiguates who acted, and emitting a synthetic
+  `"local-owner"` subject could be misread as a *verified* identity in the tamper-evident trail.
+  (This is a deliberate, narrow divergence from the review's sentinel suggestion.)
 - **Live-API cursor-contract verification.** (a) A **shape** contract test enumerating the documented
   paged-response shapes each connector's read path parses (the `{ items, nextCursor }` envelope +
   each vendor's native cursor field) and asserting `drainPagedList` + the per-connector parse handle
@@ -205,6 +245,8 @@ run sequentially, commit per connector):
 - `mcp-connectors/<svc>/src/server.ts` — two write tools + `assertHitlRequired`
 - `mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired` includes the write permission
 - gateway-side parse/shape helper for the write args if the connector needs one
+- any scoping-id metadata the write needs but 7a does not index (e.g. Power BI `groupId` GUID in
+  `powerbi-dashboard-mapping.ts`) — extended in the same per-connector commit (review §3)
 - the connector's server-tool test + a transport/dispatch test for its two action types
 
 No change to: `CONNECTOR_VAULT_SECRET_KEYS`, `TEAM_SECRET_ANYOF_GROUPS`, rate-limiter providers,
@@ -248,4 +290,22 @@ Run once against a sandbox/staging account per connector before declaring the li
 - Federated peer-requested writes behind local HITL (the I24-style option) — explicitly deferred;
   Wave 7c is local-owner-only by design.
 - Snowflake arbitrary SQL execute; destructive (`delete`/drop) writes; monitor mute/silence.
+- A dedicated "check refresh status" poll tool (review §2) — rely on the scheduled metadata sync.
+- Bespoke per-error privilege-suggestion templating (review §5) — surface raw provider errors.
 - Slice 8 (Share & Virality) and Slice 9 (deferred Phase 5 connectors) follow this wave.
+
+---
+
+## 9. Review responses (review doc 2026-06-14, fix/defer triage)
+
+| # | Review point | Decision | Where |
+|---|---|---|---|
+| 1 | IPC/network isolation of `answerLocalOperatorInvoke` | **Fix** — confinement note + D20 static non-exposure assertion | §4.2, §4.4 |
+| 2 | Async refresh job tracking / UX | **Fix (output shape) + Defer (poll tool)** — return job id + `status:"queued"`; no poll tool | §3, §8 |
+| 3 | Scoping-id validation (Power BI group GUID / Tableau site) | **Fix** — index Power BI `groupId`; require ids in write schemas | §3, §5-files |
+| 4 | Audit identity-subject fallback when identity disabled | **Fix (clarify)** — omit field (not sentinel); verified no-migration | §4.5 |
+| 5 | Privilege/role mismatch UX | **Fix (surface errors) + Defer (suggestion templating)** | §3, §8 |
+
+Verified during triage: team-vault audit is JSON-serialized (no migration for #4); Power BI 7a
+metadata stores the workspace *name* not the group GUID (confirms the #3 gap); Tableau site is
+connector-scoped so writes need only the workbook/datasource luid.
