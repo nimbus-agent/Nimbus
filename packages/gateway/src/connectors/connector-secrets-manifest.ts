@@ -64,6 +64,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   pipedrive: ["pipedrive.token"],
   stackoverflow: ["stackoverflow.token", "stackoverflow.team"],
   zotero: ["zotero.api_key", "zotero.library"],
+  // Mendeley (Elsevier) reference manager. Uses the OAuth2 authorization-code
+  // flow (api.mendeley.com); the access/refresh token bundle is stored under
+  // the single `mendeley.oauth` vault key, mirroring the other OAuth connectors.
+  mendeley: ["mendeley.oauth"],
   dependencytrack: ["dependencytrack.base_url", "dependencytrack.api_key"],
   elasticsearch: ["elasticsearch.url", "elasticsearch.api_key"],
   airflow: ["airflow.base_url", "airflow.username", "airflow.password"],

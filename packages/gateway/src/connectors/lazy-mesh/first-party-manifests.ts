@@ -403,6 +403,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  mendeley: baseManifest("com.nimbus.mendeley", {
+    network: ["api.mendeley.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   dependencytrack: baseManifest("com.nimbus.dependencytrack", {
     network: [],
     filesystem: { read: [], write: [] },

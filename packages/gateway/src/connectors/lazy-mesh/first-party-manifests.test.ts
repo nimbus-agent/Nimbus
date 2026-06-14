@@ -119,6 +119,7 @@ describe("manifestForFirstParty", () => {
       "pipedrive",
       "stackoverflow",
       "zotero",
+      "mendeley",
       "dependencytrack",
       "airflow",
       "prefect",
