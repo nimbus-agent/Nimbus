@@ -107,7 +107,7 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
 
   // ── Type-only / zero-executable-line modules ──────────────────────────────────────────────────
   // These emit NO `SF:` lcov record (no executable statements) → the gate reads them as 0% and they
-  // can NEVER rejoin the floor — same class as the `types.ts` / `-types.ts` basenameRegex below. There
+  // can NEVER rejoin the floor — same class as the `types.ts` / `-types.ts` basenameRegex above. There
   // is nothing to test. Each file carries a guardian header forbidding runtime logic. No rename
   // (avoids import churn across every consumer for marginal gain).
   { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
