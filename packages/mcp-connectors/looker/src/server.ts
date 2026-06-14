@@ -167,6 +167,62 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
       return jsonResult({ matches });
     },
   );
+
+  reg(
+    "looker_datagroup_trigger",
+    "Invalidate a Looker datagroup to force a PDT/cache rebuild (`PATCH /api/4.0/datagroups/{datagroupId}`). Sets `stale_before` to the current epoch so all cached results are considered stale. Requires HITL approval.",
+    z.object({
+      datagroupId: z.string().min(1),
+    }),
+    async (p) => {
+      const token = await lookerLogin();
+      const base = apiBase();
+      const epochSeconds = Math.floor(Date.now() / 1000);
+      const res = await fetchWithTimeout(`${base}/api/4.0/datagroups/${p.datagroupId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ stale_before: epochSeconds }),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(`Looker datagroup trigger ${res.status}: ${text.slice(0, 400)}`);
+      }
+      return jsonResult({ status: "ok", datagroupId: p.datagroupId });
+    },
+  );
+
+  reg(
+    "looker_schedule_run_once",
+    "Run a Looker scheduled plan immediately (`POST /api/4.0/scheduled_plans/{scheduledPlanId}/run_once`). Triggers a one-off execution of the plan outside its normal schedule. Requires HITL approval.",
+    z.object({
+      scheduledPlanId: z.string().min(1),
+    }),
+    async (p) => {
+      const token = await lookerLogin();
+      const base = apiBase();
+      const res = await fetchWithTimeout(
+        `${base}/api/4.0/scheduled_plans/${p.scheduledPlanId}/run_once`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({}),
+        },
+      );
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(`Looker schedule run_once ${res.status}: ${text.slice(0, 400)}`);
+      }
+      return jsonResult({ status: "queued", scheduledPlanId: p.scheduledPlanId });
+    },
+  );
 }
 
 // Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
