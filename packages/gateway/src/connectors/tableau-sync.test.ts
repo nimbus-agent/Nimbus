@@ -84,4 +84,36 @@ describe("tableau-sync (unified spawn transport)", () => {
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "tableau", 0);
   });
+
+  test("a view with no own name falls back to the workbook name", async () => {
+    // Covers shapeTableauView's `name === "" ? workbookName : name` fallback arm: the view has no
+    // `name` (stringField → undefined → ""), so the workbook's name is used as the dashboard title.
+    __setPersonalDrainForTest(async () => [{ luid: "v9", workbook: { name: "Quarterly WB" } }]);
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+
+    const r = await createTableauSyncable().sync(ctx, null);
+
+    expect(r.itemsUpserted).toBe(1);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'tableau'").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Quarterly WB");
+  });
+
+  test("a view with no workbook and no owner reshapes with empty/null fallbacks", async () => {
+    // Covers the `workbook === undefined` and `owner === undefined` arms: a bare view (only luid+name)
+    // still reshapes cleanly (author=null) and is indexed.
+    __setPersonalDrainForTest(async () => [{ luid: "v10", name: "Bare View" }]);
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "tableau.url": "https://t" }));
+
+    const r = await createTableauSyncable().sync(ctx, null);
+
+    expect(r.itemsUpserted).toBe(1);
+    const row = db.prepare("SELECT title FROM item WHERE service = 'tableau'").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("Bare View");
+  });
 });

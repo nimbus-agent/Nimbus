@@ -31,6 +31,16 @@ describe("createServiceScopedVaultView", () => {
     expect(await v.listKeys()).toEqual(["snowflake.account"]);
   });
 
+  it("listKeys with an explicit sub-prefix scopes under the service prefix", async () => {
+    // Covers the `listPrefix !== undefined` arm: a caller-supplied prefix is nested under `<service>.`,
+    // and the result is still re-filtered to the service keyspace.
+    const v = createServiceScopedVaultView(
+      fakeVault({ "snowflake.account": "a", "snowflake.token": "t", "tableau.url": "u" }),
+      "snowflake",
+    );
+    expect(await v.listKeys("acc")).toEqual(["snowflake.account"]);
+  });
+
   it("refuses writes (read-only spawn scope)", async () => {
     const v = createServiceScopedVaultView(fakeVault({}), "snowflake");
     await expect(v.set("snowflake.account", "x")).rejects.toThrow(/read-only/);
