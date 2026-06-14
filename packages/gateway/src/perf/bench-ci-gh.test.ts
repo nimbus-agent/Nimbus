@@ -62,6 +62,14 @@ describe("GhCli", () => {
     ).toEqual([]);
   });
 
+  test("runListRecentSuccesses: non-array JSON → empty array (no throw)", async () => {
+    const { spawn } = makeFakeRunner([{ exitCode: 0, stdout: '{"oops":true}\n', stderr: "" }]);
+    const gh = new GhCli({ spawn });
+    expect(
+      await gh.runListRecentSuccesses({ workflow: "_perf.yml", branch: "main", limit: 5 }),
+    ).toEqual([]);
+  });
+
   test("runListRecentSuccesses: drops malformed entries missing databaseId/headSha", async () => {
     const { spawn } = makeFakeRunner([
       {
@@ -141,6 +149,20 @@ describe("GhCli", () => {
       { id: "1", body: "hi" },
       { id: "2", body: "bye" },
     ]);
+  });
+
+  test("prCommentList: non-array JSON → empty array (no throw)", async () => {
+    const { spawn } = makeFakeRunner([{ exitCode: 0, stdout: '"not-an-array"\n', stderr: "" }]);
+    const gh = new GhCli({ spawn });
+    expect(await gh.prCommentList({ pr: 99 })).toEqual([]);
+  });
+
+  test("prCommentList: drops entries missing id/body", async () => {
+    const { spawn } = makeFakeRunner([
+      { exitCode: 0, stdout: '[{"id":"1","body":"hi"},{"id":"2"},{"body":"no-id"}]\n', stderr: "" },
+    ]);
+    const gh = new GhCli({ spawn });
+    expect(await gh.prCommentList({ pr: 99 })).toEqual([{ id: "1", body: "hi" }]);
   });
 
   test("prCommentCreate: passes --body-file path", async () => {
