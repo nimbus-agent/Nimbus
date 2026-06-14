@@ -52,4 +52,31 @@ describe("parseNimbusConnectorsToml", () => {
       /connectors\.github is not a supported team-credential connector/,
     );
   });
+
+  it("implicit personal default — no credential key yields { credential: 'personal' }", () => {
+    const raw = "[connectors.snowflake]\n";
+    const cfg = parseNimbusConnectorsToml(raw);
+    expect(cfg.get("snowflake")).toEqual({ credential: "personal" });
+  });
+
+  it("duplicate table sections merge (last-key-wins)", () => {
+    const raw = [
+      "[connectors.snowflake]",
+      'credential = "team"',
+      "[connectors.snowflake]",
+      'team_entry = "prod-snowflake"',
+    ].join("\n");
+    const cfg = parseNimbusConnectorsToml(raw);
+    expect(cfg.get("snowflake")).toEqual({ credential: "team", teamEntry: "prod-snowflake" });
+  });
+
+  it("CRLF line endings parse identically to LF", () => {
+    const raw = [
+      "[connectors.snowflake]",
+      'credential = "team"',
+      'team_entry = "prod-snowflake"',
+    ].join("\r\n");
+    const cfg = parseNimbusConnectorsToml(raw);
+    expect(cfg.get("snowflake")).toEqual({ credential: "team", teamEntry: "prod-snowflake" });
+  });
 });

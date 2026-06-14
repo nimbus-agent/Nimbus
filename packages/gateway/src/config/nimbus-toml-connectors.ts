@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENTRY_RE } from "../teamvault/team-vault-keys.ts";
+import { isTableHeader, parseString, splitKeyValue, stripComment } from "./toml-primitives.ts";
 
 export const TEAM_CREDENTIAL_CONNECTORS = [
   "snowflake",
@@ -21,20 +22,6 @@ export type ConnectorsConfig = ReadonlyMap<TeamCredentialConnector, ConnectorCre
 
 const TABLE_PREFIX = "[connectors.";
 
-function isTableHeader(line: string): boolean {
-  return line.startsWith("[") && line.endsWith("]");
-}
-
-function stripComment(line: string): string {
-  const i = line.indexOf("#");
-  return i === -1 ? line : line.slice(0, i);
-}
-
-function parseQuoted(raw: string): string {
-  const t = raw.trim();
-  return t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
-}
-
 export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
   const accum = new Map<string, Record<string, string>>();
   let current: string | undefined;
@@ -50,12 +37,10 @@ export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
       continue;
     }
     if (current === undefined) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = parseQuoted(trimmed.slice(eq + 1));
+    const kv = splitKeyValue(trimmed);
+    if (kv === undefined) continue;
     const bag = accum.get(current);
-    if (bag !== undefined) bag[key] = val;
+    if (bag !== undefined) bag[kv.key] = parseString(kv.valRaw);
   }
 
   const out = new Map<TeamCredentialConnector, ConnectorCredentialConfig>();
