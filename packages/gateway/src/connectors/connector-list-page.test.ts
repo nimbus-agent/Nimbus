@@ -62,7 +62,7 @@ describe("drainPagedList", () => {
     expect(items).toEqual([{ id: 1 }, { id: 1 }]);
   });
 
-  it("stops at MAX_PAGES (1000) when the cursor always advances", async () => {
+  it("stops at MAX_PAGES (1000) and warns on stderr when the cursor always advances", async () => {
     let callCount = 0;
     const session: ConnectorToolSession = {
       call: async (_toolId, args) => {
@@ -80,8 +80,40 @@ describe("drainPagedList", () => {
         };
       },
     };
-    const items = await drainPagedList(session, "snowflake_list", 1);
-    expect(callCount).toBe(1000);
-    expect(items.length).toBe(1000);
+    const origWrite = process.stderr.write.bind(process.stderr);
+    let warned = "";
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      warned += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const items = await drainPagedList(session, "snowflake_list", 1);
+      expect(callCount).toBe(1000);
+      expect(items.length).toBe(1000);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    expect(warned).toContain("hit the 1000-page drain cap");
+    expect(warned).toContain("snowflake_list");
+  });
+
+  it("does NOT warn when the list drains normally (nextCursor reaches null)", async () => {
+    const session: ConnectorToolSession = {
+      call: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ items: [{ id: 1 }], nextCursor: null }) }],
+      }),
+    };
+    const origWrite = process.stderr.write.bind(process.stderr);
+    let warned = "";
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      warned += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await drainPagedList(session, "snowflake_list", 200);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    expect(warned).toBe("");
   });
 });

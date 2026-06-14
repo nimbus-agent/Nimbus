@@ -45,7 +45,10 @@ import {
   CONNECTOR_SERVICE_IDS,
   defaultSyncIntervalMsForService,
 } from "../connectors/connector-catalog.ts";
-import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import {
+  CONNECTOR_VAULT_SECRET_KEYS,
+  TEAM_SECRET_ANYOF_GROUPS,
+} from "../connectors/connector-secrets-manifest.ts";
 import {
   migrateToPerServiceOAuthKeys,
   readConnectorSecret,
@@ -599,6 +602,8 @@ async function bootFederationIntoIpcOpts(
           sandboxCwd: paths.dataDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          anyOfSecretGroupsFor: (service: string) =>
+            TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           spawnAndCall: spawnTeamToolAndCall,
         },
         input,
@@ -1168,6 +1173,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
           sandboxCwd: paths.dataDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          anyOfSecretGroupsFor: (service: string) =>
+            TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           openSession: resolveTeamListOpenSession(
             processEnvGet("NIMBUS_WAREHOUSE_E2E_SINK_DIR"),
             drainTeamListSession,

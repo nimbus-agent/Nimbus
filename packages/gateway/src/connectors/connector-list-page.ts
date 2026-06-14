@@ -42,12 +42,24 @@ export async function drainPagedList(
 ): Promise<unknown[]> {
   const items: unknown[] = [];
   let cursor: string | null = null;
+  let exhausted = false;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const res = await session.call(listToolId, { cursor, limit: pageSize });
     const { items: pageItems, nextCursor } = parseMcpListPage(res);
     items.push(...pageItems);
-    if (nextCursor === null || nextCursor === cursor) break;
+    if (nextCursor === null || nextCursor === cursor) {
+      exhausted = true;
+      break;
+    }
     cursor = nextCursor;
+  }
+  if (!exhausted) {
+    // Hit the MAX_PAGES backstop with the cursor still advancing: surface the cap on stderr rather
+    // than silently returning a partial list (repo convention: no silent truncation).
+    process.stderr.write(
+      `connector list: "${listToolId}" hit the ${String(MAX_PAGES)}-page drain cap ` +
+        `(${String(items.length)} items); result may be truncated\n`,
+    );
   }
   return items;
 }

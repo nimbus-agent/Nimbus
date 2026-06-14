@@ -112,6 +112,64 @@ describe("invokeTeamTool (I19)", () => {
   });
 });
 
+describe("alternative-auth (anyOf) secret groups — Snowflake account + one-of token", () => {
+  // Mirrors the production manifest: all three keys are "known" (D11/redaction), but the spawner
+  // (phase3AddSnowflakeMcp) needs account + EITHER oauth_token OR key_pair_jwt — never both.
+  const snowflakeKeys = ["snowflake.account", "snowflake.oauth_token", "snowflake.key_pair_jwt"];
+  const snowflakeAnyOf = [["snowflake.oauth_token", "snowflake.key_pair_jwt"]];
+  const listReq = { entry: "dw", service: "snowflake", listToolId: "snowflake_list" } as const;
+
+  function snowflakeListDeps(seed: Record<string, string>): {
+    d: InvokeTeamToolListDeps;
+    sessionCalled: { value: boolean };
+  } {
+    const sessionCalled = { value: false };
+    const d: InvokeTeamToolListDeps = {
+      vault: fakeVault(seed),
+      sandboxCwd: "/tmp/sbx",
+      requiredSecretKeysFor: (service) => (service === "snowflake" ? snowflakeKeys : undefined),
+      anyOfSecretGroupsFor: (service) => (service === "snowflake" ? snowflakeAnyOf : undefined),
+      openSession: async () => {
+        sessionCalled.value = true;
+        return [{ schema: "PUBLIC" }];
+      },
+    };
+    return { d, sessionCalled };
+  }
+
+  it("succeeds with account + ONLY oauth_token (key_pair_jwt absent)", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.account": "ACCT",
+      "teamvault.dw.snowflake.oauth_token": "OAUTH",
+    });
+    expect(await invokeTeamToolList(d, listReq)).toEqual([{ schema: "PUBLIC" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("succeeds with account + ONLY key_pair_jwt (oauth_token absent)", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.account": "ACCT",
+      "teamvault.dw.snowflake.key_pair_jwt": "JWT",
+    });
+    expect(await invokeTeamToolList(d, listReq)).toEqual([{ schema: "PUBLIC" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("fails CLOSED (no session) when account is present but BOTH tokens are absent", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({ "teamvault.dw.snowflake.account": "ACCT" });
+    await expect(invokeTeamToolList(d, listReq)).rejects.toThrow(/missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+
+  it("fails CLOSED when a non-group key (account) is absent even if a token is present", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.oauth_token": "OAUTH",
+    });
+    await expect(invokeTeamToolList(d, listReq)).rejects.toThrow(/missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+});
+
 describe("invokeTeamToolList (I19 — paginated list drain)", () => {
   it("returns the array openSession resolves when the team secret is present", async () => {
     const { d, sessionCalled } = listDeps();

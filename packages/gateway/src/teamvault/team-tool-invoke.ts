@@ -19,6 +19,9 @@ export interface InvokeTeamToolDeps {
   readonly sandboxCwd: string;
   /** Required vault secret keys for a service (CONNECTOR_VAULT_SECRET_KEYS[service]); undefined → unknown service. */
   readonly requiredSecretKeysFor: (service: string) => readonly string[] | undefined;
+  /** Alternative-auth groups (TEAM_SECRET_ANYOF_GROUPS[service]): each group needs at least ONE key
+   *  present instead of all (e.g. Snowflake oauth_token | key_pair_jwt). Omitted → every key is AND-required. */
+  readonly anyOfSecretGroupsFor?: (service: string) => readonly (readonly string[])[] | undefined;
   /** Spawns an ephemeral team-credentialed connector and calls the tool. Heavy I/O lives here so the
    *  fail-closed secret logic above stays unit-testable. */
   readonly spawnAndCall: (req: TeamToolSpawnRequest) => Promise<unknown>;
@@ -51,6 +54,7 @@ async function assertTeamSecretsPresentAndView(
   deps: {
     vault: NimbusVault;
     requiredSecretKeysFor: (service: string) => readonly string[] | undefined;
+    anyOfSecretGroupsFor?: (service: string) => readonly (readonly string[])[] | undefined;
   },
   service: string,
   entry: string,
@@ -63,14 +67,34 @@ async function assertTeamSecretsPresentAndView(
     );
   }
   const vaultView = createTeamVaultView(deps.vault, entry);
+  const anyOfGroups = deps.anyOfSecretGroupsFor?.(service) ?? [];
+  const anyOfKeys = new Set(anyOfGroups.flat());
+  const missing = (): never => {
+    throw new TeamToolError(
+      "team_secret_missing",
+      `team-vault: entry "${entry}" is missing required secret for ${service}`,
+    );
+  };
+  const isPresent = async (key: string): Promise<boolean> => {
+    const value = await vaultView.get(key);
+    return value !== null && value !== "";
+  };
+
+  // Keys outside any alternative-auth group are each individually required (AND).
   for (const key of requiredKeys) {
-    const present = await vaultView.get(key);
-    if (present === null || present === "") {
-      throw new TeamToolError(
-        "team_secret_missing",
-        `team-vault: entry "${entry}" is missing required secret for ${service}`,
-      );
+    if (anyOfKeys.has(key)) continue;
+    if (!(await isPresent(key))) missing();
+  }
+  // Each alternative-auth group needs at least ONE key present (e.g. Snowflake oauth_token | key_pair_jwt).
+  for (const group of anyOfGroups) {
+    let satisfied = false;
+    for (const key of group) {
+      if (await isPresent(key)) {
+        satisfied = true;
+        break;
+      }
     }
+    if (!satisfied) missing();
   }
   return vaultView;
 }
@@ -113,6 +137,9 @@ export interface InvokeTeamToolListDeps {
   readonly sandboxCwd: string;
   /** Required vault secret keys for a service; undefined → unknown/unsupported service. */
   readonly requiredSecretKeysFor: (service: string) => readonly string[] | undefined;
+  /** Alternative-auth groups (TEAM_SECRET_ANYOF_GROUPS[service]): each group needs at least ONE key
+   *  present instead of all. Omitted → every key is AND-required. */
+  readonly anyOfSecretGroupsFor?: (service: string) => readonly (readonly string[])[] | undefined;
   /**
    * Open a connector session and drain the paginated list tool. The production implementation
    * (drainTeamListSession) wraps withConnectorSession + drainPagedList (D9: one spawn, N pages).
