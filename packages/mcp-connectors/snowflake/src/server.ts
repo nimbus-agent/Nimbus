@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSnowflakeTables } from "./search-filter.ts";
 
 function snowflakeAccount(): string {
@@ -57,12 +60,25 @@ function rowsFromStatementsResponse(parsed: unknown): Record<string, unknown>[] 
   return out;
 }
 
-async function fetchTables(): Promise<Record<string, unknown>[]> {
+/**
+ * Fetch table metadata. With no `page`, returns the full set (used by `snowflake_get` /
+ * `snowflake_search`, which must scan every table). With a `page`, appends a deterministic
+ * `ORDER BY … LIMIT … OFFSET …` so `snowflake_list` can drain pages — only numbers are
+ * interpolated, so there is no SQL-injection surface.
+ */
+async function fetchTables(page?: {
+  limit: number;
+  offset: number;
+}): Promise<Record<string, unknown>[]> {
+  const statement =
+    page === undefined
+      ? TABLES_SQL
+      : `${TABLES_SQL} ORDER BY table_schema, table_name LIMIT ${page.limit} OFFSET ${page.offset}`;
   const url = `https://${snowflakeAccount()}.snowflakecomputing.com/api/v2/statements`;
   const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: authHeader(),
-    body: JSON.stringify({ statement: TABLES_SQL, timeout: 60 }),
+    body: JSON.stringify({ statement, timeout: 60 }),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -78,17 +94,28 @@ function tableKey(row: Record<string, unknown>): string {
   return `${db}.${schema}.${table}`;
 }
 
-await runReadOnlyMcpConnector("nimbus-snowflake", (reg) => {
+/**
+ * Register the three read-only Snowflake tools on `reg`. Exported (rather than inlined into the
+ * `runReadOnlyMcpConnector` call) so the tool handlers can be exercised in unit tests without
+ * starting a real stdio transport.
+ */
+export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
   reg(
     "snowflake_list",
-    "List Snowflake tables across all databases and schemas. `limit` (default 200, max 500) caps the returned list.",
+    "List Snowflake tables across all databases and schemas. Paginated: `cursor` (opaque offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
     z.object({
+      cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     async (p) => {
-      const tables = await fetchTables();
-      const cap = p.limit ?? 200;
-      return jsonResult({ items: tables.slice(0, cap) });
+      const limit = p.limit ?? 200;
+      const offset =
+        p.cursor === null || p.cursor === undefined || p.cursor === ""
+          ? 0
+          : Math.max(0, Number.parseInt(p.cursor, 10) || 0);
+      const items = await fetchTables({ limit, offset });
+      const nextCursor = items.length === limit ? String(offset + limit) : null;
+      return jsonResult({ items, nextCursor });
     },
   );
 
@@ -122,4 +149,9 @@ await runReadOnlyMcpConnector("nimbus-snowflake", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+}
+
+// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-snowflake", registerSnowflakeTools);
+}
