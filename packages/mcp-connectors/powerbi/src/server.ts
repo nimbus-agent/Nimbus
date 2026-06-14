@@ -171,13 +171,18 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
   reg(
     "powerbi_dataset_refresh",
     "Trigger a dataset refresh (requires HITL powerbi.dataset.refresh). groupId optional (omit for My Workspace). Async (202).",
-    z.object({ groupId: z.string().min(1).optional(), datasetId: z.string().min(1) }),
+    // groupId is nullish: indexed dashboard metadata stores `null` for "My Workspace" reports, and
+    // Zod `.optional()` would reject a literal null — `.nullish()` accepts both null and undefined.
+    z.object({ groupId: z.string().min(1).nullish(), datasetId: z.string().min(1) }),
     async (p) => {
       const token = await accessToken();
+      // Narrow to a non-empty string in a local so encodeURIComponent sees `string` (not nullish).
+      const group =
+        p.groupId === undefined || p.groupId === null || p.groupId === "" ? undefined : p.groupId;
       const datasetUrl =
-        p.groupId === undefined || p.groupId === ""
+        group === undefined
           ? `${POWERBI_API_BASE}/v1.0/myorg/datasets/${encodeURIComponent(p.datasetId)}/refreshes`
-          : `${POWERBI_API_BASE}/v1.0/myorg/groups/${encodeURIComponent(p.groupId)}/datasets/${encodeURIComponent(p.datasetId)}/refreshes`;
+          : `${POWERBI_API_BASE}/v1.0/myorg/groups/${encodeURIComponent(group)}/datasets/${encodeURIComponent(p.datasetId)}/refreshes`;
       const res = await fetchWithTimeout(datasetUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -190,7 +195,7 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
       }
       return jsonResult({
         status: "queued",
-        ...(p.groupId !== undefined && p.groupId !== "" ? { groupId: p.groupId } : {}),
+        ...(group === undefined ? {} : { groupId: group }),
         datasetId: p.datasetId,
       });
     },

@@ -178,15 +178,18 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
       const token = await lookerLogin();
       const base = apiBase();
       const epochSeconds = Math.floor(Date.now() / 1000);
-      const res = await fetchWithTimeout(`${base}/api/4.0/datagroups/${p.datagroupId}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
+      const res = await fetchWithTimeout(
+        `${base}/api/4.0/datagroups/${encodeURIComponent(p.datagroupId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ stale_before: epochSeconds }),
         },
-        body: JSON.stringify({ stale_before: epochSeconds }),
-      });
+      );
       const text = await res.text();
       if (!res.ok) {
         throw new Error(`Looker datagroup trigger ${res.status}: ${text.slice(0, 400)}`);
@@ -205,7 +208,7 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
       const token = await lookerLogin();
       const base = apiBase();
       const res = await fetchWithTimeout(
-        `${base}/api/4.0/scheduled_plans/${p.scheduledPlanId}/run_once`,
+        `${base}/api/4.0/scheduled_plans/${encodeURIComponent(p.scheduledPlanId)}/run_once`,
         {
           method: "POST",
           headers: {

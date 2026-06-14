@@ -69,6 +69,18 @@ describe("power bi write tools", () => {
     expect(calls[0]?.url).not.toContain("/groups/");
   });
 
+  it("dataset refresh accepts a null groupId (My-Workspace metadata) → My-Workspace endpoint", async () => {
+    const out = payload(
+      await (captureTools().get("powerbi_dataset_refresh") as Handler)({
+        groupId: null,
+        datasetId: "d1",
+      }),
+    );
+    expect(out).toEqual({ status: "queued", datasetId: "d1" });
+    expect(calls[0]?.url).toContain("/v1.0/myorg/datasets/d1/refreshes");
+    expect(calls[0]?.url).not.toContain("/groups/");
+  });
+
   it("dataflow refresh targets the group-scoped dataflow endpoint", async () => {
     const out = payload(
       await (captureTools().get("powerbi_dataflow_refresh") as Handler)({

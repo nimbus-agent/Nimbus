@@ -139,7 +139,13 @@ async function tableauRefresh(kind: "datasources" | "workbooks", id: string): Pr
   if (!res.ok)
     throw new Error(`Tableau ${kind} refresh ${String(res.status)}: ${text.slice(0, 400)}`);
   const root = JSON.parse(text) as { job?: { id?: string } };
-  return root.job?.id ?? "";
+  const jobId = root.job?.id;
+  if (jobId === undefined || jobId === "") {
+    // Fail closed: a 2xx with no job id is a malformed response; do not report it as a queued
+    // refresh (which would make the agent treat a non-started refresh as success).
+    throw new Error(`Tableau ${kind} refresh: response missing job.id: ${text.slice(0, 400)}`);
+  }
+  return jobId;
 }
 
 export function registerTableauTools(reg: ZodToolRegistrar): void {

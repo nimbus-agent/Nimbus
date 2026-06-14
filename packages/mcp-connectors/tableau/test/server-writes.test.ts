@@ -79,7 +79,7 @@ describe("tableau write tools", () => {
     ).rejects.toThrow("403");
   });
 
-  it("returns empty jobId when job id is absent from response", async () => {
+  it("throws (fail-closed) when job id is absent from the response", async () => {
     globalThis.fetch = (async (url: string) => {
       const u = String(url);
       if (u.includes("/auth/signin")) {
@@ -91,9 +91,8 @@ describe("tableau write tools", () => {
       return new Response(JSON.stringify({ job: {} }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const out = payload(
-      await (captureTools().get("tableau_datasource_refresh") as Handler)({ id: "ds-2" }),
-    );
-    expect(out).toEqual({ status: "queued", jobId: "" });
+    await expect(
+      (captureTools().get("tableau_datasource_refresh") as Handler)({ id: "ds-2" }),
+    ).rejects.toThrow(/missing job\.id/);
   });
 });
