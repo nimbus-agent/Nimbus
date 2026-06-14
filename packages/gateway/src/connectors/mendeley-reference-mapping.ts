@@ -14,7 +14,7 @@ function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-export function authorNames(raw: unknown): string[] {
+function authorNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -34,7 +34,7 @@ export function authorNames(raw: unknown): string[] {
   return names;
 }
 
-export function keywordList(raw: unknown): string[] {
+function keywordList(raw: unknown): string[] {
   return Array.isArray(raw)
     ? raw.filter((k): k is string => typeof k === "string" && k !== "")
     : [];
