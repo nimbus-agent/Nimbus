@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterPowerBiReports } from "./search-filter.ts";
 
 function requireEnv(name: string): string {
@@ -45,6 +48,12 @@ async function fetchAccessToken(
   return token;
 }
 
+function asRec(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 async function listReports(accessToken: string): Promise<unknown[]> {
   const res = await fetchWithTimeout("https://api.powerbi.com/v1.0/myorg/reports", {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
@@ -53,19 +62,45 @@ async function listReports(accessToken: string): Promise<unknown[]> {
   if (!res.ok) {
     throw new Error(`Power BI reports error ${String(res.status)}: ${text.slice(0, 400)}`);
   }
-  const parsed = JSON.parse(text) as unknown;
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return [];
-  }
-  const value = (parsed as Record<string, unknown>)["value"];
+  const value = asRec(JSON.parse(text) as unknown)?.["value"];
   return Array.isArray(value) ? value : [];
 }
 
-await runReadOnlyMcpConnector("nimbus-powerbi", (reg) => {
+/** Fetch a dataset's table names for lineage (`GET /datasets/{id}/tables`); empty on any failure. */
+async function fetchDatasetTables(accessToken: string, datasetId: string): Promise<string[]> {
+  const res = await fetchWithTimeout(
+    `https://api.powerbi.com/v1.0/myorg/datasets/${encodeURIComponent(datasetId)}/tables`,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+  );
+  if (!res.ok) return [];
+  const value = asRec(JSON.parse(await res.text()) as unknown)?.["value"];
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    const name = asRec(item)?.["name"];
+    if (typeof name === "string" && name !== "") out.push(name);
+  }
+  return out;
+}
+
+/** Attach each report's dataset-table refs in-session, so the gateway never makes a second credentialed call. */
+async function expandReport(accessToken: string, report: unknown): Promise<unknown> {
+  const r = asRec(report);
+  if (r === undefined) return report;
+  const datasetId = r["datasetId"];
+  const datasetTables =
+    typeof datasetId === "string" && datasetId !== ""
+      ? await fetchDatasetTables(accessToken, datasetId)
+      : [];
+  return { ...r, datasetTables };
+}
+
+export function registerPowerBiTools(reg: ZodToolRegistrar): void {
   reg(
     "powerbi_list",
-    "List Power BI reports (`GET /v1.0/myorg/reports`). `limit` (default 200, max 500) caps the returned list client-side.",
+    "List Power BI reports (`GET /v1.0/myorg/reports`), each expanded with its dataset-table refs for lineage. Single fetch — `cursor` is accepted and ignored, `nextCursor` is always null; `limit` (default 200, max 500) caps defensively.",
     z.object({
+      cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     async (p) => {
@@ -73,9 +108,9 @@ await runReadOnlyMcpConnector("nimbus-powerbi", (reg) => {
       const clientId = requireEnv("POWERBI_CLIENT_ID");
       const clientSecret = requireEnv("POWERBI_CLIENT_SECRET");
       const accessToken = await fetchAccessToken(tenantId, clientId, clientSecret);
-      const reports = await listReports(accessToken);
-      const cap = p.limit ?? 200;
-      return jsonResult({ items: reports.slice(0, cap) });
+      const reports = (await listReports(accessToken)).slice(0, p.limit ?? 200);
+      const items = await Promise.all(reports.map((r) => expandReport(accessToken, r)));
+      return jsonResult({ items, nextCursor: null });
     },
   );
 
@@ -119,4 +154,9 @@ await runReadOnlyMcpConnector("nimbus-powerbi", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+}
+
+// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-powerbi", registerPowerBiTools);
+}

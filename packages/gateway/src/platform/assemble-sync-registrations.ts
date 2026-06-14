@@ -350,11 +350,7 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(createSnowflakeSyncable());
   syncScheduler.register(createTableauSyncable());
   syncScheduler.register(createLookerSyncable());
-  syncScheduler.register(
-    createPowerBiSyncable({
-      ensurePowerBiMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createPowerBiSyncable());
   syncScheduler.register(
     createSupersetSyncable({
       ensureSupersetMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
