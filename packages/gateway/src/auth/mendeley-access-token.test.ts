@@ -53,4 +53,19 @@ describe("getValidMendeleyAccessToken", () => {
       /Mendeley OAuth not configured/,
     );
   });
+
+  it("throws when token is expired but NIMBUS_OAUTH_MENDELEY_CLIENT_ID/SECRET are not set", async () => {
+    await vault.set(
+      "mendeley.oauth",
+      JSON.stringify({
+        accessToken: "old-access",
+        refreshToken: "r-old",
+        expiresAt: Date.now() - 60_000,
+      }),
+    );
+
+    await expect(getValidMendeleyAccessToken(vault)).rejects.toThrow(
+      "NIMBUS_OAUTH_MENDELEY_CLIENT_ID",
+    );
+  });
 });
