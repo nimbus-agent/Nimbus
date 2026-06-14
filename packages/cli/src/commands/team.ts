@@ -1,7 +1,7 @@
 import { confirm, isCancel } from "@clack/prompts";
 
 import { IPCClient } from "../ipc-client/index.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
+import { type GatewayStateFile, readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 export type TeamCommand =
@@ -42,6 +42,18 @@ export type TeamCommand =
 /** Minimal IPC surface the team-vault/invoke/delegation subcommands need (injectable for tests). */
 export interface TeamRpcClient {
   call<T = unknown>(method: string, params?: unknown): Promise<T>;
+}
+
+/**
+ * The full client surface the connect → dispatch → disconnect orchestration needs: {@link
+ * TeamRpcClient} plus the connection lifecycle and notification registration. {@link IPCClient}
+ * satisfies it; injectable so {@link dispatchTeamCommand} / {@link runTeamWithIo} / the consent
+ * listener are unit-testable with a fake.
+ */
+export interface TeamClient extends TeamRpcClient {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  onNotification(method: string, handler: (params: unknown) => void): void;
 }
 
 /** The `confirm`-shaped prompt the consent listener uses, injected so the decision logic is unit-testable. */
@@ -343,24 +355,31 @@ export async function handleConsentNotification(
   prompt: ConfirmPrompt,
   isCancelled: (value: unknown) => boolean,
 ): Promise<void> {
+  // `params` is external (notification payload) — narrow safely before any property access so a
+  // null / non-object payload can't throw in this fire-and-forget listener path.
+  if (typeof params !== "object" || params === null) return;
   const p = params as {
-    requestId?: string;
-    peerId?: string;
-    namespace?: string;
-    purpose?: string;
+    requestId?: unknown;
+    peerId?: unknown;
+    namespace?: unknown;
+    purpose?: unknown;
   };
-  if (typeof p.requestId !== "string") return;
+  const requestId = typeof p.requestId === "string" ? p.requestId : undefined;
+  if (requestId === undefined) return;
+  const peerId = typeof p.peerId === "string" ? p.peerId : "?";
+  const namespace = typeof p.namespace === "string" ? p.namespace : "?";
+  const purpose = typeof p.purpose === "string" ? p.purpose : "?";
   const ok = await prompt({
-    message: `Peer ${p.peerId ?? "?"} requests namespace "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
+    message: `Peer ${peerId} requests namespace "${namespace}" (purpose: ${purpose}). Approve?`,
   });
   if (isCancelled(ok)) {
     // Esc/cancel: do NOT submit a deny — leave the query to time out on the answerer.
-    process.stdout.write(`consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`);
+    process.stdout.write(`consent prompt cancelled for ${requestId}; leaving it to time out.\n`);
     return;
   }
   try {
     await client.call("federation.consentRespond", {
-      requestId: p.requestId,
+      requestId,
       approved: ok === true,
     });
   } catch (e) {
@@ -370,13 +389,21 @@ export async function handleConsentNotification(
   }
 }
 
-async function runConsentListener(client: IPCClient): Promise<void> {
+/**
+ * Prints the banner and registers the `federation.consentRequest` handler, binding the real clack
+ * `confirm` + `isCancel` (the single untestable shell call site). Extracted from {@link
+ * runConsentListener} so the registration + dispatch-to-handler is unit-testable; the handler stays
+ * DI-only so all its branches are coverable.
+ */
+export function registerConsentListener(client: TeamClient): void {
   process.stdout.write("Listening for federation consent requests. Press Ctrl-C to stop.\n");
   client.onNotification("federation.consentRequest", (params: unknown) => {
-    // Bind the real clack `confirm` + `isCancel` here (the single, untestable shell call site); the
-    // extracted handler stays DI-only so all its branches — incl. cancel — are unit-coverable.
     void handleConsentNotification(client, params, confirm, isCancel);
   });
+}
+
+export async function runConsentListener(client: TeamClient): Promise<void> {
+  registerConsentListener(client);
   await new Promise<void>(() => {}); // run until interrupted (Ctrl-C)
 }
 
@@ -585,33 +612,72 @@ export async function runTeamCommand(
   if (!handled) throw new Error(`runTeamCommand does not handle subcommand: ${cmd.kind}`);
 }
 
-export async function runTeam(argv: string[]): Promise<void> {
-  let cmd: TeamCommand;
+/**
+ * Post-connect dispatch: team-vault / invoke / delegation subcommands first, then the long-lived
+ * `listen` loop, otherwise the federation subcommands — always disconnecting afterwards. The
+ * `listen` seam is injected (not defaulted) so a test can cover the listen branch without blocking
+ * on its run-until-interrupted wait; {@link runTeamWithIo} passes the real {@link
+ * runConsentListener}. Exported so the branch + always-disconnect logic is unit-testable with a fake
+ * client.
+ */
+export async function dispatchTeamCommand(
+  client: TeamClient,
+  cmd: TeamCommand,
+  listen: (client: TeamClient) => Promise<void>,
+): Promise<void> {
   try {
-    cmd = parseTeamArgs(argv);
-  } catch (e) {
-    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(1);
-  }
-
-  const state = await readGatewayState(getCliPlatformPaths());
-  if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
-    process.exit(1);
-  }
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  try {
-    // Slice-2 team-vault / invoke / delegation subcommands first; fall through to federation below.
     if (await runTeamVaultRpc(client, cmd)) {
       return;
     }
     if (cmd.kind === "listen") {
-      await runConsentListener(client);
+      await listen(client);
       return;
     }
     await runTeamFederationRpc(client, cmd);
   } finally {
     await client.disconnect().catch(() => {});
   }
+}
+
+/** I/O seams for {@link runTeam}, injectable so the orchestration (parse-error exit, gateway-down
+ *  exit, connect → dispatch → disconnect) is unit-testable; {@link runTeam} wires the real ones. */
+export interface RunTeamIo {
+  readGatewayState: () => Promise<GatewayStateFile | undefined>;
+  makeClient: (socketPath: string) => TeamClient;
+  exit: (code: number) => never;
+}
+
+/**
+ * The team subcommand orchestration over injected I/O seams: parse → (error → exit 1) →
+ * read gateway state → (down → exit 1) → connect → dispatch → disconnect. All branch logic lives
+ * here (and in {@link dispatchTeamCommand}); the exported {@link runTeam} is the thin shell that
+ * binds the real seams.
+ */
+export async function runTeamWithIo(argv: string[], io: RunTeamIo): Promise<void> {
+  let cmd: TeamCommand;
+  try {
+    cmd = parseTeamArgs(argv);
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    return io.exit(1);
+  }
+
+  const state = await io.readGatewayState();
+  if (state === undefined) {
+    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
+    return io.exit(1);
+  }
+  const client = io.makeClient(state.socketPath);
+  await client.connect();
+  await dispatchTeamCommand(client, cmd, runConsentListener);
+}
+
+const REAL_TEAM_IO: RunTeamIo = {
+  readGatewayState: () => readGatewayState(getCliPlatformPaths()),
+  makeClient: (socketPath) => new IPCClient(socketPath),
+  exit: (code) => process.exit(code),
+};
+
+export async function runTeam(argv: string[]): Promise<void> {
+  await runTeamWithIo(argv, REAL_TEAM_IO);
 }
