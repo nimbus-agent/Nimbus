@@ -528,11 +528,7 @@ export function registerConnectorMeshSyncables(
       ensureGreatExpectationsMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
-  syncScheduler.register(
-    createMonteCarloSyncable({
-      ensureMonteCarloMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createMonteCarloSyncable());
   syncScheduler.register(
     createBigeyeSyncable({
       ensureBigeyeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),

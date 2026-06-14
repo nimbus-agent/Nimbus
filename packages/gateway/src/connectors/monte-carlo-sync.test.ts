@@ -1,286 +1,96 @@
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   createMemoryIndexDb,
   createStubVault,
-  describeWithFetchRestore,
   expectServiceItemCount,
-  expectSyncNoopResult,
-  type SyncTestFetchParams,
   syncTestContext,
-  urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
 import { createMonteCarloSyncable } from "./monte-carlo-sync.ts";
+import { __setPersonalDrainForTest } from "./warehouse-sync-transport.ts";
 
-const FULL_CREDS = {
-  "montecarlo.api_id": "test-api-id",
-  "montecarlo.api_token": "test-api-token",
-};
-
-type FetchHandler = (url: string, init: SyncTestFetchParams[1]) => Response;
-
-function installFetch(handler: FetchHandler): void {
-  globalThis.fetch = (async (
-    input: SyncTestFetchParams[0],
-    init?: SyncTestFetchParams[1],
-  ): Promise<Response> => handler(urlFromFetchInput(input), init)) as typeof fetch;
+/** A raw Monte Carlo incident node in the shape montecarlo_list emits. */
+function rawIncident(incidentId: string, monitoredTable: string): Record<string, unknown> {
+  return { incidentId, monitoredTable, status: "open", severity: "high" };
 }
 
-function graphqlResponse(incidents: Record<string, unknown>[]): Response {
-  return new Response(
-    JSON.stringify({
-      data: {
-        getIncidents: {
-          edges: incidents.map((node) => ({ node })),
-        },
-      },
-    }),
-    { status: 200 },
-  );
-}
-
-function makeSyncable() {
-  return createMonteCarloSyncable({ ensureMonteCarloMcpRunning: async () => {} });
-}
-
-describeWithFetchRestore("monte-carlo-sync", () => {
-  // ─── No-op when credentials are missing ────────────────────────────────────
-
-  test("no-op when api_id is missing", async () => {
-    const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "montecarlo.api_token": "tok" })),
-      null,
-    );
-    expectSyncNoopResult(r);
-    expectServiceItemCount(db, "montecarlo", 0);
+describe("monte-carlo-sync (unified spawn transport)", () => {
+  afterEach(() => {
+    __setPersonalDrainForTest(undefined);
   });
 
-  test("no-op when api_token is missing", async () => {
+  test("personal: maps + indexes incidents drained from montecarlo_list", async () => {
+    __setPersonalDrainForTest(async () => [rawIncident("42", "ANALYTICS.PUBLIC.REVENUE")]);
     const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" })),
-      null,
-    );
-    expectSyncNoopResult(r);
-  });
+    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }));
 
-  test("no-op when both credentials are missing", async () => {
-    const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault({})), null);
-    expectSyncNoopResult(r);
-  });
+    const r = await createMonteCarloSyncable().sync(ctx, null);
 
-  // ─── HTTP / parse errors ────────────────────────────────────────────────────
-
-  test("http_error → http-empty pass cursor", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response("Unauthorized", { status: 401 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toContain("nimbus-montecarlo1:");
-    expectServiceItemCount(db, "montecarlo", 0);
-  });
-
-  test("parse_error (invalid JSON) → parse-empty pass cursor", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response("not-json{", { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toContain("nimbus-montecarlo1:");
-  });
-
-  test("incoming cursor is preserved on http_error", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response("Bad Gateway", { status: 502 }));
-    const incomingCursor = "nimbus-montecarlo1:oldcursor";
-    const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault(FULL_CREDS)),
-      incomingCursor,
-    );
-    expect(r.cursor).toBe(incomingCursor);
-  });
-
-  // ─── Happy path ─────────────────────────────────────────────────────────────
-
-  test("happy path: indexes one incident with externalId montecarlo:42", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() =>
-      graphqlResponse([
-        {
-          incidentId: "42",
-          monitoredTable: "ANALYTICS.PUBLIC.REVENUE",
-          status: "open",
-          severity: "high",
-        },
-      ]),
-    );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
     expect(r.itemsUpserted).toBe(1);
-    expect(r.cursor).toContain("nimbus-montecarlo1:");
     expectServiceItemCount(db, "montecarlo", 1);
-    const row = db.prepare("SELECT external_id FROM item WHERE service = 'montecarlo'").get() as {
+    const row = db
+      .prepare("SELECT external_id, metadata FROM item WHERE service = 'montecarlo'")
+      .get() as {
       external_id: string;
-    } | null;
-    expect(row?.external_id).toBe("montecarlo:42");
-  });
-
-  test("monitoredDataModelKeys is stored normalized in metadata", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() =>
-      graphqlResponse([
-        {
-          incidentId: "42",
-          monitoredTable: "ANALYTICS.PUBLIC.REVENUE",
-          status: "open",
-          severity: "high",
-        },
-      ]),
-    );
-    await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    const row = db.prepare("SELECT metadata FROM item WHERE service = 'montecarlo'").get() as {
       metadata: string;
     } | null;
+    expect(row?.external_id).toBe("montecarlo:42");
     const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
     expect(meta["monitoredDataModelKeys"]).toEqual(["analytics.public.revenue"]);
   });
 
-  test("empty incident list → success with zero upserts", async () => {
+  test("team: routes through runTeamList (gate), indexes the returned incidents", async () => {
     const db = createMemoryIndexDb();
-    installFetch(() => graphqlResponse([]));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toContain("nimbus-montecarlo1:");
-  });
+    let listReq: unknown;
+    const ctx = {
+      ...syncTestContext(db, createStubVault({})),
+      credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-montecarlo" }),
+      runTeamList: async (req: unknown) => {
+        listReq = req;
+        return [rawIncident("42", "ANALYTICS.PUBLIC.REVENUE")];
+      },
+    };
 
-  test("cursor is nimbus-montecarlo1: prefixed on success", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => graphqlResponse([]));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.cursor).toMatch(/^nimbus-montecarlo1:/);
-  });
+    const r = await createMonteCarloSyncable().sync(ctx, null);
 
-  test("POST uses x-mcd-id and x-mcd-token headers", async () => {
-    const db = createMemoryIndexDb();
-    let capturedHeaders: Record<string, string> = {};
-    installFetch((_url, init) => {
-      capturedHeaders = (init?.headers as Record<string, string> | undefined) ?? {};
-      return graphqlResponse([]);
-    });
-    await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(capturedHeaders["x-mcd-id"]).toBe("test-api-id");
-    expect(capturedHeaders["x-mcd-token"]).toBe("test-api-token");
-  });
-
-  test("POST sends application/json body to the GraphQL endpoint", async () => {
-    const db = createMemoryIndexDb();
-    let capturedUrl = "";
-    let capturedBody = "";
-    installFetch((url, init) => {
-      capturedUrl = url;
-      capturedBody = typeof init?.body === "string" ? init.body : "";
-      return graphqlResponse([]);
-    });
-    await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(capturedUrl).toBe("https://api.getmontecarlo.com/graphql");
-    expect(() => JSON.parse(capturedBody)).not.toThrow();
-    const body = JSON.parse(capturedBody) as { query: string };
-    expect(body.query).toContain("getIncidents");
-  });
-
-  test("incidents missing incidentId are skipped", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() =>
-      graphqlResponse([
-        { status: "open" }, // no incidentId → skipped
-        { incidentId: "5", status: "fixed" },
-      ]),
-    );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
     expect(r.itemsUpserted).toBe(1);
+    expect(listReq).toEqual({
+      entry: "prod-montecarlo",
+      service: "montecarlo",
+      listToolId: "montecarlo_list",
+    });
     expectServiceItemCount(db, "montecarlo", 1);
   });
 
-  // ─── incidentsFromResponse edge branches ───────────────────────────────────
-
-  test("response body is not a record (root === undefined) → empty result, zero upserts", async () => {
+  test("team no-leak: a secret-shaped value never lands in an indexed row", async () => {
+    const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
-    // A JSON array at the root is not a record → root branch
-    installFetch(() => new Response(JSON.stringify([{ incidentId: "1" }]), { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
+    const ctx = {
+      ...syncTestContext(db, createStubVault({})),
+      credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-montecarlo" }),
+      runTeamList: async () => [rawIncident("42", "ANALYTICS.PUBLIC.REVENUE")],
+    };
+
+    await createMonteCarloSyncable().sync(ctx, null);
+
+    const rows = db.prepare("SELECT * FROM item WHERE service = 'montecarlo'").all() as Array<
+      Record<string, unknown>
+    >;
+    for (const row of rows) {
+      for (const v of Object.values(row)) {
+        expect(String(v)).not.toContain(SECRET);
+      }
+    }
+  });
+
+  test("a non-object row and an incident missing its incidentId are both skipped", async () => {
+    __setPersonalDrainForTest(async () => ["not-an-object", { status: "open" }]);
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "montecarlo.api_id": "id" }));
+
+    const r = await createMonteCarloSyncable().sync(ctx, null);
+
     expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toContain("nimbus-montecarlo1:");
-  });
-
-  test("response has no 'data' key (data === undefined) → zero upserts", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response(JSON.stringify({ other: "field" }), { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-  });
-
-  test("response 'data' has no 'getIncidents' key → zero upserts", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response(JSON.stringify({ data: { otherQuery: {} } }), { status: 200 }));
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-  });
-
-  test("'edges' value is not an array → falls back to empty (Array.isArray false branch)", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(
-      () =>
-        new Response(JSON.stringify({ data: { getIncidents: { edges: "not-an-array" } } }), {
-          status: 200,
-        }),
-    );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(0);
-  });
-
-  test("edge entry that is not a record is skipped (e === undefined branch)", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(
-      () =>
-        new Response(
-          JSON.stringify({
-            data: {
-              getIncidents: {
-                edges: [
-                  null, // not a record → skipped
-                  "string", // not a record → skipped
-                  { node: { incidentId: "7", status: "open", severity: "low" } },
-                ],
-              },
-            },
-          }),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    // Only the third edge has a valid node
-    expect(r.itemsUpserted).toBe(1);
-  });
-
-  test("edge with no 'node' field is skipped (node !== undefined false branch)", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(
-      () =>
-        new Response(
-          JSON.stringify({
-            data: {
-              getIncidents: {
-                edges: [
-                  { cursor: "abc" }, // has no 'node' key → skipped
-                  { node: { incidentId: "8", status: "fixed" } },
-                ],
-              },
-            },
-          }),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(syncTestContext(db, createStubVault(FULL_CREDS)), null);
-    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "montecarlo", 0);
   });
 });
