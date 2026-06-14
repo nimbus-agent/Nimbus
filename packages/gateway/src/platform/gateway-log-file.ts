@@ -132,9 +132,15 @@ export function createGatewayPinoLogger(logDir: string): Logger {
     hooks: { logMethod: pinoLogMethodHook },
   };
 
-  // Ensure the target directory exists before the async destination opens it; the daily log is
-  // best-effort, so a missing dir must never throw out of logger construction.
-  mkdirSync(logDir, { recursive: true });
+  // Ensure the target directory exists before the async destination opens it. The daily log is
+  // best-effort, so directory creation must never throw out of logger construction — mkdirSync can
+  // fail (EACCES/ENOSPC/EROFS); swallow it and let the destination's async `error` handler below
+  // absorb the subsequent open failure (mirrors emergencyGatewayLog's defensive try/catch).
+  try {
+    mkdirSync(logDir, { recursive: true });
+  } catch {
+    /* best-effort daily log — ignore directory-creation failures */
+  }
 
   const fileDest = pino.destination({ dest: logPath, sync: false });
   // `sync: false` opens and flushes on a later tick via a background SonicBoom stream. Without an

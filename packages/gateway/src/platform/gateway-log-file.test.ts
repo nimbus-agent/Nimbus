@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -266,6 +266,22 @@ describe("createGatewayPinoLogger", () => {
     } finally {
       restore();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not throw when the log directory cannot be created (best-effort)", () => {
+    const restore = forceIsTty(false);
+    const base = mkdtempSync(join(tmpdir(), "nimbus-gw-baddir-"));
+    // Make a regular file, then use a path *under* it as the log dir: mkdirSync(recursive) fails
+    // with ENOTDIR because a path component is a file. The logger must swallow it and not throw.
+    const filePath = join(base, "not-a-dir");
+    writeFileSync(filePath, "x", "utf8");
+    const badLogDir = join(filePath, "logs");
+    try {
+      expect(() => createGatewayPinoLogger(badLogDir)).not.toThrow();
+    } finally {
+      restore();
+      rmSync(base, { recursive: true, force: true });
     }
   });
 
