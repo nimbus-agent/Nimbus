@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Baseline } from "./baseline.ts";
-import { computeUpdatedBaseline, evaluateCheck, lcovHasBranchData } from "./check.ts";
+import {
+  computeUpdatedBaseline,
+  discoverSourceFiles,
+  evaluateCheck,
+  lcovHasBranchData,
+} from "./check.ts";
 import { parseLcov } from "./lcov-parse.ts";
 
 const emptyBaseline: Baseline = {
@@ -176,6 +181,16 @@ describe("evaluateCheck — flagship 100% targets overlay", () => {
       baseline: withTarget(100, 100),
     });
     expect(r.violations).toEqual([]);
+  });
+});
+
+describe("discoverSourceFiles — structural exemptions", () => {
+  test("never yields a file under a /testing/ dir (relocated test-helpers are auto-skipped)", async () => {
+    // Test-helper/fixture files live under `testing/` dirs; the skip in discoverSourceFiles
+    // is the exemption (replacing the former explicit EXCLUSIONS entries). The relocated B0
+    // helpers (e.g. cli/src/commands/testing/cli-test-helpers.ts) must not appear here.
+    const files = await discoverSourceFiles();
+    expect(files.some((f) => f.includes("/testing/"))).toBe(false);
   });
 });
 

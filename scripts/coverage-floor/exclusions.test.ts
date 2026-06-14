@@ -87,19 +87,11 @@ describe("EXCLUSIONS — registry shape", () => {
   });
 });
 
-describe("isExempt — test-only support files (B0)", () => {
-  test("tui/test-helpers/context.ts is exempt", () => {
-    expect(isExempt("packages/cli/src/tui/test-helpers/context.ts")).toBe(true);
-  });
-  test("commands/cli-test-helpers.ts is exempt", () => {
-    expect(isExempt("packages/cli/src/commands/cli-test-helpers.ts")).toBe(true);
-  });
-  test("identity/identity-test-helpers.ts is exempt", () => {
-    expect(isExempt("packages/gateway/src/identity/identity-test-helpers.ts")).toBe(true);
-  });
-  test("updater/updater-test-fixtures.ts is exempt", () => {
-    expect(isExempt("packages/gateway/src/updater/updater-test-fixtures.ts")).toBe(true);
-  });
+describe("isExempt — production files are never exempt", () => {
+  // The former test-helper files (tui/context, cli-test-helpers, identity-test-helpers,
+  // updater-test-fixtures) were relocated under `testing/` dirs; their exemption is now
+  // structural (the `discoverSourceFiles` `/testing/` skip — covered in check.test.ts),
+  // NOT an `isExempt`/EXCLUSIONS entry. A real production file stays non-exempt.
   test("ipc-context.ts (production) is NOT exempt", () => {
     expect(isExempt("packages/cli/src/tui/ipc-context.ts")).toBe(false);
   });
