@@ -61,6 +61,14 @@ to: env-gated (`NIMBUS_CHATOPS_E2E_SINK_DIR`), inert in a normal boot — the fi
 transport that stands in for the bot-credentialed connector subprocess in the e2e. Move the entry
 into the genuinely-untestable (d) block.
 
+**Production-bundle safety (verified 2026-06-14, review point 1):** because the file is statically
+imported by a production orchestrator, it must not pull test-only/dev npm packages into the production
+bundle. Verified clean — it imports only `node:fs` (`appendFileSync`/`readFileSync`), `node:path`, and
+two `import type` internal types (`ConnectorDispatcher`/`PlannedAction`, `RunChatopsTool` — erased at
+compile). No mock framework, no `devDependencies` runtime import. The static import is safe; no
+dynamic-import / `try`-catch guard in `assemble.ts` is warranted (and an `assemble.ts` boot-wiring
+change is out of D3 scope — D3 corrects the comment only).
+
 ### D. Group the 11 type-only / zero-SF entries
 
 Consolidate all 11 (§2) into a single clearly-labeled block:
@@ -75,6 +83,21 @@ Consolidate all 11 (§2) into a single clearly-labeled block:
 No rename. The existing `types.ts`/`-types.ts` basenameRegex stays separate (it is a regex, not an
 exact-path list). The `chatops/transport/transport.ts` and `ipc/server/options.ts` entries (currently
 commented individually) fold into this block.
+
+**Per-file guardian header (review point 5.1, adopted):** add a 2-line header comment to each of the
+11 type-only files — e.g. `// Type-only module: NO executable runtime logic (it is exact-path-excluded`
+`// from the coverage floor in scripts/coverage-floor/exclusions.ts — added logic would silently`
+`// bypass the gate). Put runtime logic in a separate covered module.` The warning lands at the point
+of edit (the file itself), which is more effective at prevention than the central exclusions.ts block
+comment alone; it is pure prose (zero `SF:` impact, so the files stay zero-SF). **Pre-grouping check:**
+before grouping, confirm each of the 11 genuinely emits no `SF:` lcov record (don't trust the label) —
+any that has executable lines is mis-categorized and must be handled as an I/O shell instead.
+
+**Deferred (review point 5.2 — own scope, NOT in D3):** a static `check.ts` enhancement that parses
+each "type-only"-categorized exclusion and fails if it contains executable AST nodes would be a
+stronger, self-enforcing guarantee than the header comment. It is a genuinely good idea but a **new
+gate mechanism** that needs its own tests + coverage; adding it to the program-*close* PR risks
+gold-plating the finale. Recorded as a documented follow-up (memory), not D3 work.
 
 ### E. Worker handling — extract `EmbeddingWorkerCore` + run the §5.3 probe
 
@@ -94,10 +117,29 @@ comment (genuinely-thin worker realm; security check lives in `worker-security.t
   `sendToMain`/`Database`/`createLocalEmbedder`+`SqliteEmbeddingPipeline`, and routes messages to it.
 - New `embedding-worker-core.test.ts` drives the core ≥80% line+branch. Per Antigravity review 2.3,
   it MUST cover: (a) **malformed / unknown message payloads** (no throw, ignored), (b) a **failed task
-  inside the `embedChain` queue** — asserting **no unhandled rejection**, the error is surfaced/posted
-  back as appropriate, and **the queue keeps draining** (a later task still runs; the chain is not
-  wedged), and (c) the init-error path (`init_error` posted), the not-ready guard, and the
-  `embed_texts` ok/error + `embed_item` row-found / row-missing branches.
+  inside the `embedChain` queue** — asserting **no unhandled rejection** and **the queue keeps draining**
+  (a later task still runs; the chain is not wedged), and (c) the init-error path (`init_error` posted),
+  the not-ready guard, and the `embed_texts` ok/error + `embed_item` row-found / row-missing branches.
+
+- **`embedChain` liveness — characterize, don't change (review point 2):** the existing production
+  pattern `embedChain = embedChain.then(task).catch(swallow)` **already** guarantees the queue cannot
+  wedge — the tail `.catch` makes `embedChain` always *resolve*, so the next enqueue's `.then` always
+  runs, and the empty catch body cannot itself throw. The extraction preserves this verbatim. Critically,
+  `embed_item` failures are **intentionally silent best-effort** today (fire-and-forget; there is no
+  result `id` to correlate a failure back to a caller, unlike `embed_texts` which posts
+  `{ok:false,error}` keyed by `id`). The test therefore asserts *liveness* (no unhandled rejection;
+  the next queued task still runs) **without** introducing new error-posting for `embed_item` — adding
+  `sendToMain` on the embed_item failure path would be a behavior change, forbidden in a
+  zero-behavior-change refactor. (This declines the review's `.then(nextTask, nextTask)` rewrite, which
+  would alter the swallow semantics; the current `.then(task).catch()` is equivalent for queue liveness.)
+
+- **Origin gating is the realm boundary, not the core's job (review point 3):** verified
+  `isAcceptableWorkerOrigin(ev)` is a pure function over the `MessageEvent` + `globalThis.origin` (no
+  `self.location` or other mutable worker-global state) → it stays fully functional in the residual
+  shell. The `EmbeddingWorkerCore` methods accept **already-parsed** message payloads and are
+  production-reachable **only** through the residual `onmessage` that runs `isAcceptableWorkerOrigin`
+  first. Unit tests instantiate the core directly (origin gating is not the core's responsibility — the
+  realm boundary is); the extraction must not relocate or weaken the origin check in the residual shell.
 
 **Coverage discipline (D2 lesson):** the new core file is NEW source counted by **both** the local
 whole-file floor (≥80%) **and** the Sonar `new_coverage` diff gate (≥80% of CHANGED lines). Because
@@ -179,13 +221,20 @@ lcov agrees). Since `files` is `{}`, a clean D3 keeps it `{}`.
 - **No `any`** (use `unknown`), **no `biome-ignore`**, **no `istanbul-ignore`**.
 - The `EmbeddingWorkerCore` extraction is a **pure refactor of an internal worker module** — it
   changes no production behavior, no public IPC, and no security invariant (the worker is spawned
-  from the embedding runtime; the core's seams are construction-only). `security-invariants.test.ts`
-  + `audit:invariants` stay green in the same PR.
+  from the embedding runtime; the core's seams are construction-only). Both `security-invariants.test.ts`
+  and `audit:invariants` stay green in the same PR.
 - The `isAcceptableWorkerOrigin` origin check stays in the residual `onmessage` (it guards the realm
   boundary; the core operates post-validation) — the extraction must not relocate or weaken it.
 - **Tests** follow the gateway exemplars: real in-memory `bun:sqlite` (no DB mocks), injected fakes
   for the embedder/pipeline (no model download), deterministic (no reliance on global `process.std*`
   / env defaults per the B10/B13 cross-file-leak lessons), fakes restored in `afterEach`.
+- **Resource cleanup (review point 4):** the test owns the injected in-memory `bun:sqlite` handle and
+  **closes it in `afterEach`** (`db.close()`) — the B13 graph-populator lesson (untracked in-memory DBs
+  leak handles across the combined run). Verified the worker carries **no timers** (no
+  `setTimeout`/`setInterval`; backfill and `embedChain` are promise-based) → no timer disposal is
+  needed, and the timerless core needs **no `dispose()` method** — the test, which created the injected
+  DB, closes it. (Declines the review's `dispose()`-method suggestion as YAGNI for a timerless core; if
+  the core is later given a timer/owned resource, revisit.)
 
 ## 6. CI gates & doc traps (carry forward)
 
@@ -228,3 +277,15 @@ lcov agrees). Since `files` is `{}`, a clean D3 keeps it `{}`.
 | Test-helper relocation breaks importers / CI | Update all importers in the same commit; `tsc` + scoped test run before push; `/testing/` auto-skip verified at check.ts:160 |
 | Reseed picks up drift on untouched files | Reseed from the PR's own merge lcov; disambiguate the three drift classes per §4 |
 | markdownlint `+`-bullet / lychee absolute-link / suppressed-output regression | Run `lint:markdown` + `lychee` from in-worktree, read output, comma prose, relative links |
+
+## 9. Review dispositions (external review, 2026-06-14)
+
+Each point verified against the code before disposition (receiving-code-review discipline).
+
+| # | Review point | Disposition | Reason |
+|---|---|---|---|
+| 1 | e2e-sink may pull dev-only deps into the production bundle | **Resolve (no change)** | Verified: imports only `node:fs`/`node:path` + 2 `import type` (erased). Zero dev/test npm runtime imports → risk absent. Static import safe; `assemble.ts` dynamic-import is out of D3 scope. Recorded in §3.C. |
+| 2 | `embedChain` must stay unblocked on task failure | **Fix as clarification; decline rewrite** | Existing `.then(task).catch(swallow)` already guarantees liveness (chain always resolves; empty catch can't throw). The `.then(nextTask,nextTask)` rewrite would surface `embed_item` errors = behavior change (they're intentionally silent fire-and-forget, no `id`). §3.E now mandates characterizing existing behavior + testing liveness only. |
+| 3 | Verify origin gating survives extraction / core doesn't trust unvalidated payloads | **Fix (make explicit)** | Verified `isAcceptableWorkerOrigin(ev)` is pure over the event + `globalThis.origin` (no `self.location` state) → fully functional in the residual shell. §3.E now states the core takes pre-parsed payloads, is reachable in prod only via the validated `onmessage`, and the origin check stays in the residual shell. |
+| 4 | Close DBs / clear timers in test teardown | **Fix (DB close); decline `dispose()`** | §5 now requires `db.close()` in `afterEach` (B13 lesson). Verified the worker has no timers → no timer disposal; timerless core needs no `dispose()` (test owns + closes the injected DB) → declining that as YAGNI. |
+| 5 | Guard type-only files from silently gaining executable logic | **Adopt 5.1; defer 5.2** | 5.1 (per-file guardian header, zero-SF, effective at point of edit) adopted in §3.D, plus a pre-grouping zero-SF verification. 5.2 (check.ts AST-node static check) is a strong but new self-enforcing gate needing its own tests/coverage — gold-plating the finale → documented follow-up. |
