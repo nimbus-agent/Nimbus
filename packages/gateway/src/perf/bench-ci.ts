@@ -186,6 +186,11 @@ export async function runBenchCiMain(args: string[], deps: RunBenchCiDeps): Prom
     }
   }
 
+  // Push-to-main publishes the baseline + feeds the trend; it has no PR to
+  // attribute a regression to, so it never gates. Only pull_request events gate
+  // (gate-class only, via isFailingComparison inside decideExit).
+  if (env["GITHUB_EVENT_NAME"] !== "pull_request") return 0;
+
   return decideExit(comparisons);
 }
 

@@ -240,6 +240,90 @@ describe("runBenchCiMain", () => {
     }
   });
 
+  test("gate-class delta-fail on a PUSH event returns 0 (publish-only, never gates)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
+    try {
+      // S2-a is gate-class; current 200ms vs baseline 50ms is a hard delta-fail.
+      const current: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 200 } },
+      };
+      const currentPath = writeHistory(dir, "current.jsonl", current);
+
+      const runs = [{ databaseId: 1, headSha: "s1" }];
+      const prevDir = join(dir, "prev");
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(join(prevDir, "s1"), { recursive: true });
+      const baseline: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 50 } },
+      };
+      await fs.writeFile(
+        join(prevDir, "s1", "run-history.jsonl"),
+        `${JSON.stringify(baseline)}\n`,
+        "utf8",
+      );
+
+      const { spawn } = spawnSequence([
+        { exitCode: 0, stdout: `${JSON.stringify(runs)}\n`, stderr: "" }, // run list
+        { exitCode: 0, stdout: "", stderr: "" }, // run download
+      ]);
+      const exit = await runBenchCiMain(
+        ["--current", currentPath, "--runner", "gha-ubuntu", "--prev-dir", prevDir],
+        { gh: new GhCli({ spawn, sleep: async () => {} }), env: { GITHUB_EVENT_NAME: "push" } },
+      );
+      expect(exit).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("gate-class delta-fail on a PULL_REQUEST event returns 1 (gates)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
+    try {
+      const current: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 200 } },
+      };
+      const currentPath = writeHistory(dir, "current.jsonl", current);
+
+      const runs = [{ databaseId: 1, headSha: "s1" }];
+      const prevDir = join(dir, "prev");
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(join(prevDir, "s1"), { recursive: true });
+      const baseline: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 50 } },
+      };
+      await fs.writeFile(
+        join(prevDir, "s1", "run-history.jsonl"),
+        `${JSON.stringify(baseline)}\n`,
+        "utf8",
+      );
+
+      const { spawn } = spawnSequence([
+        { exitCode: 0, stdout: `${JSON.stringify(runs)}\n`, stderr: "" }, // run list
+        { exitCode: 0, stdout: "", stderr: "" }, // run download
+        { exitCode: 0, stdout: "[]\n", stderr: "" }, // pr comment list
+        { exitCode: 0, stdout: "", stderr: "" }, // pr comment create
+      ]);
+      const exit = await runBenchCiMain(
+        ["--current", currentPath, "--runner", "gha-ubuntu", "--prev-dir", prevDir],
+        {
+          gh: new GhCli({ spawn, sleep: async () => {} }),
+          env: {
+            GITHUB_EVENT_NAME: "pull_request",
+            GITHUB_REPOSITORY: "asafgolombek/Nimbus",
+            GITHUB_REF: "refs/pull/99/merge",
+          },
+        },
+      );
+      expect(exit).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("per-artifact download failure is skipped (not fatal), remaining baseline empty → exits 0", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
