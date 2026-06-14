@@ -16,6 +16,8 @@
     "forceConsistentCasingInFileNames": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
 
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
