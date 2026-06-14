@@ -3,6 +3,7 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connecto
 import {
   checkSpawnInvariant,
   checkVaultKeyAllowList,
+  checkWarehouseWriteConfinement,
   collectDbRunCensus,
   DB_RUN_EXEC_ALLOW_LIST,
   type FileEntry,
@@ -226,5 +227,58 @@ describe("D12 — direct db.run / db.exec outside allow-list", () => {
 
   test("DB_RUN_EXEC_ALLOW_LIST contains exactly the wrapper file", () => {
     expect([...DB_RUN_EXEC_ALLOW_LIST]).toEqual(["packages/gateway/src/db/write.ts"]);
+  });
+});
+
+describe("D20 — warehouse write-id confinement", () => {
+  test("flags a write tool id referenced outside the allowed sites", () => {
+    const v = checkWarehouseWriteConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.ts",
+        contents: `dispatch("tableau_datasource_refresh")`,
+      },
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("D20-warehouse-write");
+  });
+
+  test("allows the SSoT, connector servers, and transport/dispatch sites", () => {
+    const v = checkWarehouseWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
+        contents: `"tableau_datasource_refresh"`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("requires answerFederatedInvoke to consult isWriteForbiddenToolId", () => {
+    const v = checkWarehouseWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `export async function answerFederatedInvoke() { return; }`,
+      },
+    ]);
+    expect(v.some((x) => x.rule === "D20-invoke-gate-predicate")).toBe(true);
+  });
+
+  test("does NOT flag invoke-gate.ts when it consults isWriteForbiddenToolId", () => {
+    const v = checkWarehouseWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("ignores .test.ts files", () => {
+    const v = checkWarehouseWriteConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.test.ts",
+        contents: `dispatch("tableau_datasource_refresh")`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
   });
 });

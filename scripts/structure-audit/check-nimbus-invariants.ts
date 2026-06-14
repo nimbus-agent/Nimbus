@@ -398,6 +398,56 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
   return out;
 }
 
+// D20 (I26): warehouse/BI write tool ids may be NAMED only in the SSoT, the connector servers, and
+// the gateway transport/dispatch sites. Any other reference could route a write outside the local
+// executor I2 gate. Also requires answerFederatedInvoke (federation/invoke-gate.ts) to consult the
+// write-id predicate (isWriteForbiddenToolId) so a federated peer can never trigger a warehouse write.
+const WAREHOUSE_WRITE_ALLOWED = [
+  "packages/gateway/src/connectors/warehouse-write-tools.ts",
+  "packages/gateway/src/connectors/warehouse-write-transport.ts",
+  "packages/gateway/src/connectors/warehouse-write-dispatch.ts",
+  "packages/mcp-connectors/snowflake/src/server.ts",
+  "packages/mcp-connectors/tableau/src/server.ts",
+  "packages/mcp-connectors/looker/src/server.ts",
+  "packages/mcp-connectors/powerbi/src/server.ts",
+  "packages/mcp-connectors/monte-carlo/src/server.ts",
+  "packages/mcp-connectors/bigeye/src/server.ts",
+];
+const WAREHOUSE_WRITE_RE =
+  /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve)\b/;
+
+export function checkWarehouseWriteConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (f.relPath === "packages/gateway/src/federation/invoke-gate.ts") {
+      if (!/isWriteForbiddenToolId/.test(stripComments(f.contents))) {
+        out.push({
+          rule: "D20-invoke-gate-predicate",
+          file: f.relPath,
+          line: 1,
+          snippet: "answerFederatedInvoke must consult isWriteForbiddenToolId (I26)",
+        });
+      }
+      continue;
+    }
+    if (WAREHOUSE_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (WAREHOUSE_WRITE_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D20-warehouse-write",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -531,6 +581,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D19 tribal KB-write tool referenced outside the write-gate/connector sites — bypasses I25: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkWarehouseWriteConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D20 warehouse write tool referenced/wired outside allowed sites — bypasses I26: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

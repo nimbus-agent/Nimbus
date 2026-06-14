@@ -480,6 +480,25 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I26 — warehouse/BI writes execute only behind the local HITL gate; the federated invoke gate rejects them
+
+**Statement:** Warehouse / BI write actions (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) execute ONLY behind the LOCAL owner's executor HITL gate (I2) — their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (`isWarehouseWriteToolId`): a peer's `federation.invoke` for a warehouse write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a warehouse write over the wire. The write tool ids themselves are confined to the single source of truth (`connectors/warehouse-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
+
+**Wired at:**
+
+- `packages/gateway/src/connectors/warehouse-write-tools.ts` — the SSoT: `WAREHOUSE_BI_WRITES` (each `{ actionType, toolId, service }`), the `WAREHOUSE_BI_WRITE_TOOL_IDS` set, and the `isWarehouseWriteToolId(toolId)` predicate. Kept in drift-sync with `HITL_REQUIRED_BACKING` in `executor.ts`.
+- `packages/gateway/src/engine/executor.ts` — every warehouse write `actionType` is a member of `HITL_REQUIRED_BACKING` (I2), so the local executor gate always fires before connector dispatch.
+- `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isWarehouseWriteToolId` into the `answerFederatedInvoke` ctx, so the gate rejects warehouse writes asked for by a peer.
+- `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`; on a match it records a `write_forbidden` audit decision and returns fail-closed without invoking the tool.
+- Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a warehouse write tool id causes `audit:invariants` to exit 1; additionally `invoke-gate.ts` must reference `isWriteForbiddenToolId` or the check fails (`D20-invoke-gate-predicate`).
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isWarehouseWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `WAREHOUSE_BI_WRITES` action type is HITL-gated, plus a `D20` presence assertion.
+
+**Anti-pattern:** exposing a warehouse write over `federation.invoke` without the predicate; calling a warehouse write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a warehouse write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + `WAREHOUSE_BI_WRITES`.
+
+**How to comply:** keep `WAREHOUSE_BI_WRITES` and `HITL_REQUIRED_BACKING` in sync; route every warehouse write through the local executor gate; pass `isWriteForbiddenToolId: isWarehouseWriteToolId` to any federated invoke ctx; never name a write tool id outside the allow-listed sites.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.
