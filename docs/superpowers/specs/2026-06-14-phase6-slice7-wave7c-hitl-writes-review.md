@@ -11,10 +11,12 @@
 ### Context
 
 In **§4.2** (Local write flow), the design introduces a new function/flow:
+
 ```text
 team     → answerLocalOperatorInvoke (NEW, I19 local-operator single-tool variant)
               → withConnectorSession(teamVaultView) → session.call(writeToolId, args)
 ```
+
 Since this function accesses Team Vault credentials for local writes and bypasses the peer restriction checks applied to federated invokes, we must be absolutely certain about its exposure.
 
 ### Suggestions / Open Questions
@@ -31,6 +33,7 @@ Since this function accesses Team Vault credentials for local writes and bypasse
 ### Context
 
 In **§3** (Write surface) and **§7** (Manual checklist), several actions trigger asynchronous operations:
+
 - `tableau.datasource.refresh` / `tableau.workbook.refresh`
 - `powerbi.dataset.refresh` / `powerbi.dataflow.refresh`
 
@@ -51,6 +54,7 @@ These API calls typically return a `202 Accepted` status and a job/run ID, with 
 ### Context
 
 The REST API endpoints for Tableau and Power BI writes require container/scoping IDs:
+
 - Tableau: `/sites/{site}/datasources/{id}/refresh`
 - Power BI: `/groups/{g}/datasets/{id}/refreshes`
 
