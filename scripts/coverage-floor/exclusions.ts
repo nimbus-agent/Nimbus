@@ -84,7 +84,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/updater/updater-test-fixtures.ts" },
 
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
-  { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
   // `assemble.ts` is the boot-assembly I/O orchestrator (opens SQLite, spawns sidecars,
   // wires every runtime together) — same untestable shell class as `gateway/src/index.ts`
   // and `ipc/server/options.ts`. The new federation glue block is inert by default
@@ -110,6 +109,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // executable lines) — lcov emits no SF: record for it, so the gate reads it as 0%. Same
   // type-only class as the `types.ts` basenameRegex above; excluded for the identical reason.
   { kind: "exact", path: "packages/gateway/src/chatops/transport/transport.ts" },
+
+  // `ipc/server/options.ts` is a types-only module (`CreateIpcServerOptions` + `BunSessionData`
+  // over `import type` lines, zero executable statements) — lcov emits no SF: record, so the gate
+  // reads it as 0%. Same type-only class as the `types.ts` basenameRegex and `transport.ts`.
+  { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
 
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
 
