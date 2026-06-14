@@ -48,11 +48,13 @@ describe("powerbi_list (single fetch + expanded dataset tables)", () => {
 
   function installFetch(): void {
     globalThis.fetch = (async (url: string) => {
-      const u = String(url);
-      if (u.includes("login.microsoftonline.com")) {
+      // Route by parsed host/path (not substring) so an attacker-shaped URL can't slip through —
+      // CodeQL js/incomplete-url-substring-sanitization.
+      const u = new URL(String(url));
+      if (u.hostname === "login.microsoftonline.com") {
         return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
       }
-      if (u.endsWith("/v1.0/myorg/reports")) {
+      if (u.pathname.endsWith("/v1.0/myorg/reports")) {
         reportsCalls += 1;
         return new Response(
           JSON.stringify({
