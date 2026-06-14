@@ -27,6 +27,28 @@ const NO_ARTIFACT_PATTERNS = [
   /not found.*artifact/i,
 ];
 
+/**
+ * Parse `gh --json` stdout as an array of objects, validating shape at the boundary. External
+ * data is treated as `unknown` (never asserted): non-array JSON or malformed entries are dropped
+ * rather than throwing mid-pipeline. `pick` runs only on entries `isValid` has already vetted.
+ */
+function parseJsonObjectArray<T>(
+  out: string,
+  isValid: (rec: Record<string, unknown>) => boolean,
+  pick: (rec: Record<string, unknown>) => T,
+): T[] {
+  const parsed: unknown = JSON.parse(out);
+  if (!Array.isArray(parsed)) return [];
+  const result: T[] = [];
+  for (const x of parsed) {
+    if (typeof x === "object" && x !== null) {
+      const rec = x as Record<string, unknown>;
+      if (isValid(rec)) result.push(pick(rec));
+    }
+  }
+  return result;
+}
+
 function defaultSpawn(): GhSpawnFn {
   return async (args, opts) => {
     const proc = Bun.spawn(["gh", ...args], {
@@ -77,7 +99,11 @@ export class GhCli {
     );
   }
 
-  async runListLatestSuccess(args: { workflow: string; branch: string }): Promise<number | null> {
+  async runListRecentSuccesses(args: {
+    workflow: string;
+    branch: string;
+    limit: number;
+  }): Promise<{ databaseId: number; headSha: string }[]> {
     const r = await this.#run([
       "run",
       "list",
@@ -88,31 +114,17 @@ export class GhCli {
       "--status",
       "success",
       "--limit",
-      "1",
+      String(args.limit),
       "--json",
-      "databaseId",
-      "--jq",
-      ".[0].databaseId",
+      "databaseId,headSha",
     ]);
     const out = r.stdout.trim();
-    if (out === "") return null;
-    const id = Number.parseInt(out, 10);
-    if (!Number.isFinite(id)) return null;
-    return id;
-  }
-
-  async runViewHeadSha(args: { runId: number }): Promise<string | null> {
-    const r = await this.#run([
-      "run",
-      "view",
-      String(args.runId),
-      "--json",
-      "headSha",
-      "--jq",
-      ".headSha",
-    ]);
-    const sha = r.stdout.trim();
-    return sha === "" ? null : sha;
+    if (out === "") return [];
+    return parseJsonObjectArray(
+      out,
+      (rec) => typeof rec["databaseId"] === "number" && typeof rec["headSha"] === "string",
+      (rec) => ({ databaseId: rec["databaseId"] as number, headSha: rec["headSha"] as string }),
+    );
   }
 
   async runDownloadArtifact(args: { runId: number; name: string; dir: string }): Promise<boolean> {
@@ -146,13 +158,11 @@ export class GhCli {
     ]);
     const out = r.stdout.trim();
     if (out === "") return [];
-    const parsed = JSON.parse(out) as { id?: string; body?: string }[];
-    return parsed
-      .filter(
-        (c): c is { id: string; body: string } =>
-          typeof c.id === "string" && typeof c.body === "string",
-      )
-      .map(({ id, body }) => ({ id, body }));
+    return parseJsonObjectArray(
+      out,
+      (rec) => typeof rec["id"] === "string" && typeof rec["body"] === "string",
+      (rec) => ({ id: rec["id"] as string, body: rec["body"] as string }),
+    );
   }
 
   async prCommentCreate(args: { pr: number; bodyFile: string }): Promise<void> {
