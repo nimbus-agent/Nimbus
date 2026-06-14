@@ -50,7 +50,7 @@ Vault keys:
 
 | Key | Required | Purpose |
 | --- | --- | --- |
-| `oauth.mendeley_access_token` | yes (after auth) | Elsevier OAuth2 access token (stored in Vault after `nimbus connector auth mendeley`). |
+| `mendeley.oauth` | yes (after auth) | Elsevier OAuth2 token bundle (access + refresh), stored in the Vault after `nimbus connector auth mendeley`. The client id/secret are NOT stored here — they are read from the `NIMBUS_OAUTH_MENDELEY_CLIENT_ID`/`_SECRET` environment variables at token-exchange time. |
 
 The API host is fixed at `https://api.mendeley.com` (no host override key — it is
 a SaaS host).
