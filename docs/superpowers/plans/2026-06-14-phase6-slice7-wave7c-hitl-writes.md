@@ -1325,6 +1325,18 @@ describe("snowflake write tools", () => {
     expect((bodies[0] as { statement: string }).statement).toContain("'yes''no'"); // doubled quote
   });
 
+  it("accepts a double-quoted identifier part (review §1)", async () => {
+    const tools = captureTools();
+    const out = payload(
+      await (tools.get("snowflake_comment_set") as Handler)({
+        object: `DB.SCHEMA."My-Table"`,
+        comment: "c",
+      }),
+    );
+    expect(out["status"]).toBe("ok");
+    expect((bodies[0] as { statement: string }).statement).toContain(`DB.SCHEMA."My-Table"`);
+  });
+
   it("rejects an unsafe identifier", async () => {
     const tools = captureTools();
     await expect(
@@ -1337,13 +1349,22 @@ describe("snowflake write tools", () => {
 - [ ] **Step 2: Run** → FAIL (tools not registered).
 
 - [ ] **Step 3: Implement** — add to `registerSnowflakeTools`, reusing the existing `executeStatement`
-  helper (the `snowflake_list` handler shows the exact POST/headers; reuse it):
+  helper (the `snowflake_list` handler shows the exact POST/headers; reuse it). The identifier
+  validator is per-part so it accepts both unquoted identifiers AND double-quoted parts
+  (`"My-Table"`, lowercase/special chars — common in Snowflake; review §1). Each part must be a safe
+  unquoted identifier or a fully `"..."`-quoted token; the validated dotted `name` is then safe to
+  interpolate. A quoted part containing an embedded `"` or `.` is rejected (fail-closed):
 
 ```typescript
-// identifier: dotted, each part [A-Za-z_][A-Za-z0-9_$]* or "quoted"
-const SF_IDENT = /^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)*$/;
+// Each dot-separated part is an unquoted identifier OR a fully double-quoted token (no embedded ").
+const SF_IDENT_PART = /^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+")$/;
 function assertSfIdentifier(name: string, label: string): string {
-  if (!SF_IDENT.test(name)) throw new Error(`unsafe Snowflake identifier for ${label}: ${name}`);
+  const parts = name.split(".");
+  for (const part of parts) {
+    if (!SF_IDENT_PART.test(part)) {
+      throw new Error(`unsafe Snowflake identifier component for ${label}: ${part} in ${name}`);
+    }
+  }
   return name;
 }
 function sfLiteral(v: string): string {
@@ -1547,8 +1568,13 @@ Header `Authorization: token <access_token>`.
 
 **API (pin against `powerbi_list`; Power BI uses an AAD bearer token):**
 
-- dataset refresh: `POST ${base}/v1.0/myorg/groups/${groupId}/datasets/${datasetId}/refreshes` body `{ notifyOption: "NoNotification" }` → 202
-- dataflow refresh: `POST ${base}/v1.0/myorg/groups/${groupId}/dataflows/${dataflowId}/refreshes` body `{ notifyOption: "NoNotification" }` → 202
+- dataset refresh: `POST ${base}/v1.0/myorg/groups/${groupId}/datasets/${datasetId}/refreshes`
+  body `{ notifyOption: "NoNotification" }` → 202. **`groupId` is OPTIONAL (review §2):** datasets
+  can live in the user's personal "My Workspace", which has no group — when `groupId` is absent, target
+  the My-Workspace form `POST ${base}/v1.0/myorg/datasets/${datasetId}/refreshes`.
+- dataflow refresh: `POST ${base}/v1.0/myorg/groups/${groupId}/dataflows/${dataflowId}/refreshes`
+  body `{ notifyOption: "NoNotification" }` → 202. `groupId` stays REQUIRED here — dataflows are
+  workspace-scoped in the Power BI API (no My-Workspace dataflow endpoint).
 Header `Authorization: Bearer <token>`.
 
 - [ ] **Step 1a: Failing test for the mapper `groupId`** — append to `powerbi-dashboard-mapping.test.ts`:
@@ -1569,6 +1595,7 @@ test("groupId defaults to null when absent", () => {
 
 - [ ] **Step 1b: Failing test for the two write tools** — mirror Task 11's harness; assert:
   - `powerbi_dataset_refresh({ groupId: "g1", datasetId: "d1" })` → POST, url contains `/groups/g1/datasets/d1/refreshes`, body `{ notifyOption: "NoNotification" }`; returns `{ status: "queued" }`.
+  - `powerbi_dataset_refresh({ datasetId: "d1" })` (no groupId, My Workspace; review §2) → url contains `/v1.0/myorg/datasets/d1/refreshes` and does NOT contain `/groups/`.
   - `powerbi_dataflow_refresh({ groupId: "g1", dataflowId: "f1" })` → url contains `/groups/g1/dataflows/f1/refreshes`.
 
 - [ ] **Step 2: Run** → FAIL (both).
@@ -1586,9 +1613,20 @@ and add `groupId` to the returned `metadata`:
 ```
 
 - [ ] **Step 3b: Implement the two write tools** in `registerPowerBiTools`, reusing the existing AAD
-  token helper; schemas `z.object({ groupId: z.string().min(1), datasetId: z.string().min(1) })` and
-  `z.object({ groupId: z.string().min(1), dataflowId: z.string().min(1) })`; throw on non-OK; return
-  `jsonResult({ status: "queued", groupId, datasetId|dataflowId })`.
+  token helper. Schemas: dataset `z.object({ groupId: z.string().min(1).optional(), datasetId: z.string().min(1) })`
+  (review §2 — optional group for My Workspace); dataflow `z.object({ groupId: z.string().min(1), dataflowId: z.string().min(1) })`.
+  Build the dataset URL dynamically:
+
+```typescript
+const datasetUrl =
+  p.groupId === undefined || p.groupId === ""
+    ? `${base}/v1.0/myorg/datasets/${encodeURIComponent(p.datasetId)}/refreshes`
+    : `${base}/v1.0/myorg/groups/${encodeURIComponent(p.groupId)}/datasets/${encodeURIComponent(p.datasetId)}/refreshes`;
+```
+
+  POST `{ notifyOption: "NoNotification" }`; throw on non-OK; return
+  `jsonResult({ status: "queued", ...(p.groupId ? { groupId: p.groupId } : {}), datasetId })`
+  (dataflow returns `{ status: "queued", groupId, dataflowId }`).
 
 - [ ] **Step 4: Manifest** — `"hitlRequired": ["write"]`.
 
@@ -1636,16 +1674,19 @@ GraphQL query shows the auth + POST shape).
 
 **Files:** `packages/mcp-connectors/bigeye/src/server.ts`, `nimbus.extension.json`, `test/server-writes.test.ts`.
 
-**API (pin against `bigeye_list`; Bigeye REST, header `Authorization: apikey <key>` or workspace
-token):** `POST ${base}/api/v1/issues` body `{ issueId: <id>, status: <STATUS> }` (the `updateIssue`
-endpoint). acknowledge → `status: "ISSUE_STATUS_ACKNOWLEDGED"`; resolve → `status: "ISSUE_STATUS_CLOSED"`.
+**API (pin against `bigeye_list`):** Bigeye REST. **Auth: reuse the existing `authHeader()` helper in
+`bigeye/src/server.ts`** (verified — it returns `{ Authorization: \`Bearer ${BIGEYE_API_KEY}\`, Accept: ... }`;
+do NOT hand-roll an `apikey`-scheme header — review §3). `POST ${base}/api/v1/issues` body
+`{ issueId: <id>, status: <STATUS> }` (the `updateIssue` endpoint). acknowledge →
+`status: "ISSUE_STATUS_ACKNOWLEDGED"`; resolve →`status: "ISSUE_STATUS_CLOSED"`.
 **Verify the exact endpoint + status enum in the reference-pin step.**
 
-- [ ] **Step 1: Failing test** — stub fetch; assert the POST body `{ issueId, status }` (the two enum
-  values) and the returned `{ status: "ok", issueId }`. Schema `z.object({ issueId: z.string().min(1) })`.
+- [ ] **Step 1: Failing test** — stub fetch; assert the request `Authorization` header is `Bearer <key>`
+  (from `authHeader()`), the POST body `{ issueId, status }` (the two enum values), and the returned
+  `{ status: "ok", issueId }`. Schema `z.object({ issueId: z.string().min(1) })`.
 - [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement** — one shared `updateIssueStatus(issueId, status)` helper reusing the
-  existing Bigeye auth/POST helper; two `reg(...)` wrappers; throw on non-OK.
+- [ ] **Step 3: Implement** — one shared `updateIssueStatus(issueId, status)` helper that POSTs with
+  `headers: authHeader()` (the existing helper); two `reg(...)` wrappers; throw on non-OK.
 - [ ] **Step 4: Manifest** — `"hitlRequired": ["write"]`.
 - [ ] **Step 5: Run** → PASS.
 - [ ] **Step 6: Commit** — `git add packages/mcp-connectors/bigeye/ && git commit -m "feat(7c): Bigeye issue acknowledge/resolve write tools (HITL)"`
@@ -1744,3 +1785,18 @@ gh pr create --title "feat(connectors): Phase 6 Slice 7 Wave 7c — HITL-gated w
 `LocalOperatorInvokeCtx`/`answerLocalOperatorInvoke` (Task 3) used by Task 8; `isWarehouseWriteToolId`
 (Task 1) used by Task 6 wiring + the D20 predicate; `extractToolInput` exported in Task 5 used by the
 decorator. `runTeamInvoke` shape `{entry,service,toolId,args}` matches `LocalOperatorInvokeRequest`. ✓
+
+---
+
+## Plan review responses (review doc 2026-06-14, fix/defer triage)
+
+| # | Review point | Decision | Where |
+|---|---|---|---|
+| 1 | Snowflake validator rejects quoted/lowercase identifiers | **Fix** — per-part validator accepting `"..."`-quoted parts (still fail-closed on embedded `"`/`.`); added a quoted-identifier test | Task 10 |
+| 2 | Power BI `groupId` required breaks My Workspace | **Fix** — dataset `groupId` optional + dynamic My-Workspace URL + test; dataflow stays required (no My-Workspace dataflow endpoint) | Task 13 |
+| 3 | Bigeye auth header inconsistency | **Fix** — verified `authHeader()` returns `Bearer <key>`; corrected the (wrong) `apikey` description; instruct reuse + assert the header in the test | Task 15 |
+
+All three verified before adopting: Bigeye `authHeader()` confirmed `Authorization: Bearer ${BIGEYE_API_KEY}`
+in `bigeye/src/server.ts`; the Power BI My-Workspace refresh endpoint (`/v1.0/myorg/datasets/{id}/refreshes`)
+and Snowflake quoted-identifier semantics are standard vendor behavior (re-confirm in each task's
+reference-pin step).
