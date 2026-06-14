@@ -32,6 +32,7 @@ The six Wave-7a warehouse/BI connectors — **snowflake, tableau, looker, powerb
 | D6 | Connector read-tool pagination | The 6 `<svc>_list` tools gain `cursor`/`limit` and return `{ items, nextCursor }`, so unified sync keeps Wave-7a pagination parity |
 | D7 | Config entry reference | **Explicit `team_entry`**; `credential="team"` with no `team_entry` is a fail-closed config error |
 | D8 | Quorum on reads | **None** — the read-sync tool carries no `[hitl.quorum]` rule; quorum stays reserved for Wave 7c writes |
+| D9 | Pagination spawn lifecycle (resolves O2) | **One spawn, N calls:** spawn the connector once per sync cycle and loop `<svc>_list(cursor)` on that live client until `nextCursor === null`, then disconnect. **Not** spawn-per-page (Windows spawn is expensive). No streaming channel (the MCP tool transport is request/response — out of scope) |
 
 ### 2.1 Why faithful-spawn over a gateway-side team-view read
 
@@ -74,7 +75,10 @@ team_entry  = "prod-snowflake" # required iff credential = "team"
   - `credential = "team"` with absent/empty `team_entry` → config error.
   - `team_entry` must satisfy the Team Vault entry-name rule (`ENTRY_RE` in `team-vault-keys.ts`: lowercase alnum + dashes, no dots).
   - A `[connectors.<name>]` for a name that is not one of the six → config error (keeps the surface tight; can widen later).
-- **Back-compat:** no section, or `credential` absent → `personal`. Solo machines with no federation are unaffected.
+- **Back-compat:** no section, or `credential` absent → `personal`. Solo machines with no federation are unaffected. An explicit parse test asserts a config with **no** `[connectors.*]` section resolves every connector to `personal` (the upgrade-without-edits path).
+- **Actionable errors (fail-closed, two distinct sites):**
+  - *Config-shape* errors (parse time): name the offending key and the rule, e.g. `connectors.snowflake.team_entry is required when credential = "team"` and `connectors.snowflake.team_entry "prod.snow" is invalid (lowercase alnum + dashes, no dots)`.
+  - *Missing-secret* error (sync time): `invokeTeamTool` throws `team_secret_missing` with the entry name **and the resolution command** — the real CLI is `nimbus team vault put <entry> <service> --secret <key>=<value>` (NOT `nimbus team-vault add`). The sync result surfaces this verbatim. The presence of an entry name in config is **not** sufficient — the secret must exist in Team Vault, checked at sync time, never at parse time.
 - The selection never materializes the secret into config; when `team`, the secret is injected ephemerally by the I19 machinery (§5/§6).
 
 ---
@@ -93,8 +97,10 @@ export type InvokePrincipal =
 - **Authorization branch:**
   - `peer` → unchanged: `store.getEntry(entry)` + `store.checkGrant(entry, peerId, toolId)`, then quorum (if a rule exists).
   - `localOperator` → authorized by the **config pin**: the connector's `team_entry` resolves to an existing entry whose `service` matches the connector, **and** if `[identity]` is enabled, `identity.isOperatorValid()` must hold (I18). **No `checkGrant`, no quorum** for the read tool (D8).
+- **Identity-disabled is an explicit bypass, not a gap.** The gate already guards on `identity?.enabled === true && !isOperatorValid()` (see `answerFederatedInvoke`); when `[identity]` is absent/disabled — the default for solo/offline machines — the validity check is skipped and authorization rests on the config pin + entry presence alone. Zero friction for single-player setups, by design.
+- **Expired-identity UX (local operator only).** When `[identity]` is enabled and `isOperatorValid()` is false, the **peer** path stays opaque (`no_grant`, audited `identity_invalid` — no identity-state leak to a remote peer). The **localOperator** path may surface an actionable error in the *local* sync result (e.g. re-run the device-code login) because there is no cross-principal leak on the operator's own machine. The exact CLI verb is resolved in the plan against the Slice-3 login command (do not hardcode `nimbus login` until verified).
 - Both branches converge on the **same** `runTool` → `invokeTeamTool` → spawn. The secret chokepoint and injection are unchanged.
-- **Audit** records the real principal: the `teamvault.invoke.<decision>` audit row carries `localOperator` (not a synthetic peer id). Audit fields: extend `team-vault-audit.ts` to accept a principal descriptor instead of a required `peerId`.
+- **Audit** records the real principal **kind**: the `teamvault.invoke.<decision>` row carries `localOperator` (not a synthetic peer id). Audit fields: extend `team-vault-audit.ts` to accept a principal descriptor (`{kind:"peer",peerId}` | `{kind:"localOperator"}`) instead of a required `peerId`. **Deferred (out of scope for 7b):** annotating the row with the OIDC subject/email or OS username — that is a cross-cutting *audit-identity* concern (it would apply to every local audit row, not just teamvault) and Nimbus is single-operator-per-machine, so the multi-user-on-one-box motivation is thin here. Tracked for a dedicated future change, not bolted onto this slice.
 
 This is F3's resolution: not "synthetic peer into `answerFederatedInvoke`" and not a duplicated sibling — a single honest gate that both the wire path and the local sync path enter, with `invokeTeamTool` remaining the one secret-consumption chokepoint named by I19.
 
@@ -121,7 +127,7 @@ The cursor is vendor-specific (resolved in the plan): Snowflake SQL-API offset/`
 
 - When `credential="team"` for the service, the handler instead routes through the gate: `principal = { kind: "localOperator" }`, `entry = teamEntry`, `toolId = "<svc>_list"` → `invokeTeamTool` → `spawnTeamToolAndCall` with `createTeamVaultView(vault, teamEntry)` → `<svc>_list` → returns raw items (leak-proof; secret stayed in the subprocess) → gateway maps + indexes.
 - **Fail-closed:** missing team secret → `invokeTeamTool` throws `team_secret_missing`; the sync records a failed cycle and surfaces an actionable error — it never falls back to a personal credential (D8 of Slice 2 carried forward).
-- **Pagination across one spawn (open item §9):** prefer spawning once and looping `<svc>_list(cursor)` calls within that spawn (a small `invokeTeamTool` variant that calls the tool N times before disconnect), versus a spawn-per-page fallback. Resolved in the plan against latency/coverage.
+- **Pagination across one spawn (locked — D9):** spawn once and loop `<svc>_list(cursor)` on the live client until `nextCursor === null`, then disconnect — never spawn-per-page (Windows spawn cost). This needs a small `invokeTeamTool`/`spawnTeamToolAndCall` variant that keeps the connection open across N tool calls (today `spawnTeamToolAndCall` tears down after one call). The plan resolves the exact seam shape + its coverage.
 
 ---
 
@@ -139,8 +145,9 @@ The cursor is vendor-specific (resolved in the plan): Snowflake SQL-API offset/`
 
 Per the Nimbus testing philosophy (`nimbus-testing`):
 
-- **Team-vault no-leak test** (the Vault standard): no shared secret value escapes the local path through the result, audit, IPC, or logs; assert on a populated indexed item that no secret-shaped value is present.
-- **Fail-closed test:** `credential="team"` with the team secret absent → sync fails closed (no personal fallback, actionable error).
+- **Team-vault no-leak test** (the Vault standard): no shared secret value escapes the local path through the result, audit, IPC, or logs. Assert explicitly on the **persisted SQLite indexed item** (not just the in-memory `SyncResult`) that no secret-shaped value is present, and on the audit row + captured gateway log buffer.
+- **Not-through-the-gate negative test (I19 chokepoint proof):** with `credential="team"` configured, invoking the read tool through a *normal* (non-polymorphic-gate) tool-invocation context must **fail to acquire the secret** (fail-closed) — proving the team secret is reachable *only* via `invoke-gate.ts` → `invokeTeamTool`, never through the ordinary connector path.
+- **Fail-closed test:** `credential="team"` with the team secret absent → sync fails closed (no personal fallback, actionable error naming the entry + `nimbus team vault put …`).
 - **Gate regression:** the federated peer path (`kind:"peer"`) behaves identically pre/post refactor — grant + quorum + audit unchanged.
 - **Config tests:** parse/validate `[connectors.<name>]`; team-without-`team_entry` and unknown-connector are errors; absent → personal.
 - **Connector read-tool tests:** `<svc>_list` pagination (cursor round-trip, `nextCursor` termination) per connector, fetch faked at the HTTP boundary (`describeWithFetchRestore` + URL-branching `fetch` stub) — no live cloud.
@@ -160,10 +167,10 @@ Per the Nimbus testing philosophy (`nimbus-testing`):
 ## 9. Open items for the plan (not blockers)
 
 - **O1 — personal tool-call helper:** the lazy-mesh persistent-connector "call a tool" path the personal sync needs (analogue of `spawnTeamToolAndCall`), and how `SyncContext`/the mesh exposes the spawned client to the 6 handlers.
-- **O2 — pagination within one team spawn:** one spawn + N tool calls vs spawn-per-page; resolve against latency + coverage.
+- **O2 — pagination within one team spawn:** ~~one spawn + N tool calls vs spawn-per-page~~ **RESOLVED → D9 (one spawn, N calls).** Remaining plan work is only the seam shape + coverage for the keep-alive variant.
 - **O3 — per-vendor `<svc>_list` cursor contract:** the concrete cursor/offset token for each of the six APIs.
 - **O4 — e2e seam reuse:** which `NIMBUS_*_E2E_SINK_DIR`-style seam (from Slice 5) drives the team e2e without a live warehouse.
-- **O5 — audit shape:** extend `team-vault-audit.ts` to record a principal descriptor (`localOperator` vs peer id) without breaking the existing federated audit rows / their tests.
+- **O5 — audit shape:** extend `team-vault-audit.ts` to record a principal descriptor (principal *kind*: `localOperator` vs peer id) without breaking the existing federated audit rows / their tests. OIDC-subject/OS-username annotation is explicitly **out of scope** (see §5, deferred).
 - **O6 — staging:** land config → gate refactor (+ I19 test) → one connector end-to-end (**snowflake**) → fan out the other five sequentially (commit per connector to avoid subagent-death mid-registration) → docs + preflight + Docker coverage dry-run.
 
 ---
@@ -175,3 +182,21 @@ Per the Nimbus testing philosophy (`nimbus-testing`):
 - **Prefer DI over `mock.module`** for anything in the combined `bun test packages/cli/src` / gateway runs (process-global leak).
 - **Now-relative fixtures**, never hardcoded dates (the date-rollover trap).
 - **`bun test` ≠ `tsc --noEmit`** — run the full typecheck; connector wiring failures hide from `bun test`.
+
+---
+
+## 11. Review dispositions (2026-06-14 review feedback)
+
+Feedback in `2026-06-14-phase6-slice7-wave7b-team-credentials-review.md`, evaluated against verified code:
+
+| Review § | Item | Disposition | Landing |
+|----------|------|-------------|---------|
+| 1 | Persistent spawn, avoid spawn-per-page | **Fixed** — locked as **D9** | §2 (D9), §6.3, O2 |
+| 1 | Streaming channel alternative | **Rejected (YAGNI)** — MCP tool transport is request/response; no streaming seam exists | D9 note |
+| 2.1 | Document `[identity]`-disabled bypass | **Fixed (doc)** — already the gate's behavior; now explicit | §5 |
+| 2.2 | Actionable re-auth on expired identity | **Fixed (local-operator branch only)** — peer path stays opaque | §5 |
+| 3 | Actionable config + missing-secret errors | **Fixed — with corrected CLI string** (`nimbus team vault put …`, not `team-vault add`) | §4 |
+| 3 | Upgrade-without-edits back-compat | **Fixed (test)** — explicit "no section → personal" parse test | §4, §8 |
+| 4 | Annotate audit with OIDC subject / OS user | **Deferred** — record principal *kind* only (O5); subject-in-audit is a cross-cutting audit-identity change, single-operator-per-machine model makes it low-value here | §5, O5 |
+| 5 | No-leak into result/sqlite/logs | **Fixed** — explicit persisted-indexed-item + audit + log assertions | §8 |
+| 5 | Not-through-the-gate fail-closed negative test | **Fixed** — proves the I19 chokepoint | §8 |
