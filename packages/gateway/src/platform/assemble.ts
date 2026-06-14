@@ -20,6 +20,7 @@ import {
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
   loadNimbusChatopsFromConfigDir,
+  loadNimbusConnectorsFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusFederationFromConfigDir,
@@ -36,6 +37,7 @@ import {
   type NimbusChatopsToml,
   type NimbusTribalToml,
   resolveNimbusTomlForProfile,
+  type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
@@ -80,6 +82,7 @@ import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
+import { answerLocalOperatorList, type LocalOperatorListCtx } from "../federation/invoke-gate.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
@@ -122,8 +125,13 @@ import { vectorSearchChunks } from "../search/vec-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
-import { invokeTeamTool } from "../teamvault/team-tool-invoke.ts";
+import {
+  drainTeamListSession,
+  invokeTeamTool,
+  invokeTeamToolList,
+} from "../teamvault/team-tool-invoke.ts";
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
+import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { type SynthSource, synthesizeAnswer } from "../tribal/answer-synthesizer.ts";
 import type { TribalCluster } from "../tribal/cluster-store.ts";
@@ -532,6 +540,19 @@ function buildStatusReaders(deps: {
 
 function asBroadcastParams(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+}
+
+/** Actionable local-operator sync error (Wave 7b). The localOperator path may surface a distinct,
+ *  actionable message (no cross-principal leak on the operator's own machine) — the peer path stays
+ *  opaque. The login verb is verified: `nimbus identity login` (cli/src/commands/identity.ts). */
+function teamListErrorMessage(
+  error: "no_grant" | "identity_invalid",
+  req: { entry: string; service: string },
+): string {
+  if (error === "identity_invalid") {
+    return `team-credential sync for ${req.service} blocked: your identity is invalid/expired — re-run the device-code login with: nimbus identity login`;
+  }
+  return `team-credential sync for ${req.service} failed: team-vault entry "${req.entry}" not found or service mismatch. Add it with: nimbus team vault put ${req.entry} ${req.service} --secret <key>=<value>`;
 }
 
 interface BootFederationOpts {
@@ -1128,7 +1149,59 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   await resumePendingRemovals(vault, localIndex);
 
-  const syncBase: SyncContext = { vault, db, logger: syncLogger, rateLimiter };
+  // Wave 7b — team-shared credentials. `credentialFor` reads the per-connector [connectors.<name>]
+  // pin (default personal); `runTeamList` routes the localOperator path through the principal-
+  // polymorphic gate (I19 — the one secret-consumption chokepoint). identityBoot is built later in
+  // assembly, so the operator-validity check is late-bound through `identityBootRef` and fails closed
+  // until identity has booted (I18: identity-enabled but unbooted is treated as invalid).
+  const connectorsConfig = loadNimbusConnectorsFromConfigDir(paths.configDir);
+  const identityEnabled = loadNimbusIdentityFromConfigDir(paths.configDir).enabled;
+  let identityBootRef: ReturnType<typeof buildIdentityBoot> | undefined;
+  const localOpListCtx: LocalOperatorListCtx = {
+    db,
+    store: new TeamVaultStore(db),
+    runListTool: (input) =>
+      invokeTeamToolList(
+        {
+          vault,
+          sandboxCwd: paths.dataDir,
+          requiredSecretKeysFor: (service: string) =>
+            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          openSession: drainTeamListSession,
+        },
+        input,
+      ),
+    ...(identityEnabled
+      ? {
+          identity: {
+            enabled: true,
+            isOperatorValid: () => {
+              const store = identityBootRef?.store;
+              const issuer = identityBootRef?.issuer;
+              if (store === undefined || issuer === undefined) return false; // fail-closed until booted
+              return isOperatorValid(store, issuer, Date.now(), identityBootRef?.graceSeconds ?? 0);
+            },
+          },
+        }
+      : {}),
+  };
+  const teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList"> = {
+    sandboxCwd: paths.dataDir,
+    credentialFor: (service: string) =>
+      connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
+    runTeamList: (req) =>
+      answerLocalOperatorList(localOpListCtx, req).then((r) => {
+        if (r.kind === "error") throw new Error(teamListErrorMessage(r.error, req));
+        return [...r.items];
+      }),
+  };
+  const syncBase: SyncContext = {
+    vault,
+    db,
+    logger: syncLogger,
+    rateLimiter,
+    ...teamCredentialExtras,
+  };
   const syncContext: SyncContext = scheduleItemEmbedding
     ? { ...syncBase, scheduleItemEmbedding }
     : syncBase;
@@ -1245,6 +1318,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     ipcOpts,
     httpSidecarOpts,
   });
+  // Bind the late-bound operator-validity guard used by the Wave 7b team-credential sync path (I18).
+  identityBootRef = identityBoot;
 
   const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
 

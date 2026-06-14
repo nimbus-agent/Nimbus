@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
@@ -18,6 +19,9 @@ function testContext(db: Database): SyncContext {
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
+    sandboxCwd: os.tmpdir(),
+    credentialFor: () => ({ credential: "personal" }),
+    runTeamList: async () => [],
   };
 }
 

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import { LocalIndex } from "../index/local-index.ts";
@@ -17,6 +18,9 @@ function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
+    sandboxCwd: os.tmpdir(),
+    credentialFor: () => ({ credential: "personal" }),
+    runTeamList: async () => [],
   };
   const sched = new SyncScheduler(ctx, {}, { initialOnline: false });
   return { idx, sched, db };

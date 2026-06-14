@@ -10,6 +10,12 @@ export interface SyncContext {
   logger: Logger;
   rateLimiter: ProviderRateLimiter;
   scheduleItemEmbedding?: (itemId: string) => void;
+  // Wave 7b:
+  sandboxCwd: string;
+  /** Per-connector credential selection from [connectors.<name>]; defaults to personal. */
+  credentialFor: (service: string) => { credential: "personal" | "team"; teamEntry?: string };
+  /** Gate-routed localOperator team list drain (I19). Returns raw items or throws an actionable error. */
+  runTeamList: (req: { entry: string; service: string; listToolId: string }) => Promise<unknown[]>;
 }
 
 export interface Syncable {
