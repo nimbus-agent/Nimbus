@@ -272,6 +272,12 @@ describe("renderAuditTable / cellText", () => {
 describe("handleConsentNotification", () => {
   const approve: ConfirmPrompt = async () => true;
   const deny: ConfirmPrompt = async () => false;
+  const notCancelled = (_v: unknown): boolean => false;
+  // clack's real isCancel only matches its module-private CANCEL_SYMBOL (verified: it returns false
+  // for Symbol.for/Symbol), so the cancel branch is reachable ONLY by injecting the predicate.
+  const CANCEL = Symbol("test-cancel");
+  const cancelPrompt: ConfirmPrompt = async () => CANCEL;
+  const isCancelled = (v: unknown): boolean => v === CANCEL;
 
   it("approve → consentRespond(approved:true)", async () => {
     const { client, calls } = fakeClient();
@@ -279,6 +285,7 @@ describe("handleConsentNotification", () => {
       client,
       { requestId: "r1", peerId: "p", namespace: "ns", purpose: "why" },
       approve,
+      notCancelled,
     );
     expect(calls[0]).toEqual({
       method: "federation.consentRespond",
@@ -288,23 +295,40 @@ describe("handleConsentNotification", () => {
 
   it("deny → consentRespond(approved:false)", async () => {
     const { client, calls } = fakeClient();
-    await handleConsentNotification(client, { requestId: "r1" }, deny);
+    await handleConsentNotification(client, { requestId: "r1" }, deny, notCancelled);
     expect(calls[0]).toEqual({
       method: "federation.consentRespond",
       params: { requestId: "r1", approved: false },
     });
   });
 
-  it("non-string requestId → no call", async () => {
+  it("cancel → no consentRespond call (left to time out)", async () => {
     const { client, calls } = fakeClient();
-    await handleConsentNotification(client, { requestId: 123 }, approve);
+    await handleConsentNotification(client, { requestId: "r1" }, cancelPrompt, isCancelled);
     expect(calls).toHaveLength(0);
   });
 
-  it("swallows an rpc error (no throw, no unhandled rejection)", async () => {
-    await expect(
-      handleConsentNotification(throwingClient(), { requestId: "r1" }, approve),
-    ).resolves.toBeUndefined();
+  it("non-string requestId → no call", async () => {
+    const { client, calls } = fakeClient();
+    await handleConsentNotification(client, { requestId: 123 }, approve, notCancelled);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("swallows an rpc error and writes it to stderr (no throw)", async () => {
+    const origWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      captured += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await expect(
+        handleConsentNotification(throwingClient(), { requestId: "r1" }, approve, notCancelled),
+      ).resolves.toBeUndefined();
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    expect(captured).toContain("Error sending consent decision");
   });
 });
 ```
@@ -345,7 +369,8 @@ unchanged). Leave `cellText` module-private (covered transitively through `rende
 - [ ] **Step 6: Extract `handleConsentNotification` and shrink `runConsentListener`**
 
 Replace the entire existing `runConsentListener` function with these two functions (the handler is
-the former inner `void (async () => {…})()` body, now taking an injected `prompt`):
+the former inner `void (async () => {…})()` body, now taking an injected `prompt` + `isCancelled`
+predicate so every branch — incl. cancel — is unit-coverable without `mock.module`):
 
 ```ts
 /**
@@ -358,6 +383,7 @@ export async function handleConsentNotification(
   client: TeamRpcClient,
   params: unknown,
   prompt: ConfirmPrompt,
+  isCancelled: (value: unknown) => boolean,
 ): Promise<void> {
   const p = params as {
     requestId?: string;
@@ -369,7 +395,7 @@ export async function handleConsentNotification(
   const ok = await prompt({
     message: `Peer ${p.peerId ?? "?"} requests namespace "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
   });
-  if (isCancel(ok)) {
+  if (isCancelled(ok)) {
     // Esc/cancel: do NOT submit a deny — leave the query to time out on the answerer.
     process.stdout.write(`consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`);
     return;
@@ -389,7 +415,9 @@ export async function handleConsentNotification(
 async function runConsentListener(client: IPCClient): Promise<void> {
   process.stdout.write("Listening for federation consent requests. Press Ctrl-C to stop.\n");
   client.onNotification("federation.consentRequest", (params: unknown) => {
-    void handleConsentNotification(client, params, confirm);
+    // Bind the real clack `confirm` + `isCancel` here (the single, untestable shell call site); the
+    // extracted handler stays DI-only so all its branches — incl. cancel — are unit-coverable.
+    void handleConsentNotification(client, params, confirm, isCancel);
   });
   await new Promise<void>(() => {}); // run until interrupted (Ctrl-C)
 }
@@ -513,8 +541,8 @@ In `runTeam`, replace the whole `try { … } finally { … }` block (from `try {
 
 Run: `cd packages/cli && bun test src/commands/team-federation.test.ts`
 Expected: PASS (all `runTeamFederationRpc` / `renderAuditTable` / `handleConsentNotification`
-blocks green). The cancel branch is intentionally not asserted (clack `CANCEL_SYMBOL` is
-unexported — accepted uncovered residual, per spec §4).
+blocks green — incl. the cancel branch, reached via the injected `isCancelled` predicate, so the
+extracted function hits 100% branch).
 
 - [ ] **Step 10: Run the full team test surface (no regressions)**
 
@@ -803,7 +831,34 @@ the chronic windows flake if it's the only red. Leave the squash-merge to the us
 - **Placeholder scan:** none — every code/test block is complete; `<pr-run-id>` in T7.5 is a runtime
   value (the actual CI run id), not a plan placeholder.
 - **Type consistency:** `TeamRpcClient` (existing), `ConfirmPrompt` (T2.3), `runTeamFederationRpc`
-  (T2.7), `handleConsentNotification(client, params, prompt)` (T2.6), `renderAuditTable` exported
-  (T2.5) — all names match between the test (T2.1) and the implementation steps.
+  (T2.7), `handleConsentNotification(client, params, prompt, isCancelled)` (T2.6), `renderAuditTable`
+  exported (T2.5) — all four args + names match between the test (T2.1) and the implementation steps.
 - **Invariants:** no new invariant; `team.ts` is a CLI IPC client (federation gates are gateway-side);
   `security-invariants.test.ts` (69/69) + `audit:invariants` stay green (run in T7.1 preflight).
+
+---
+
+## Review dispositions (Antigravity plan review, applied 2026-06-14)
+
+Both points dispositioned; each empirically validated before recording.
+
+- **2.1 Cover the `handleConsentNotification` cancel branch → FIX (via predicate injection) +
+  EXPLAIN.** The reviewer's specific fix (mock prompt returns `Symbol.for("clack:cancel")`) **does
+  not work** and its test would fail: verified 2026-06-14 that the *real* `isCancel` from
+  `@clack/prompts` returns **false** for both `Symbol.for("clack:cancel")` and a fresh `Symbol(...)`
+  (clack's `CANCEL_SYMBOL` is a module-private unregistered `Symbol("clack:cancel")`). `cli-mocks.ts`
+  only matches it because it **`mock.module`s** `@clack/prompts` wholesale (its own
+  `isCancel: (v) => v === Symbol.for("clack:cancel")`, line 48) — and D2 forbids `mock.module`. With
+  the real `isCancel`, the reviewer's mock would fall through to a `consentRespond(approved:false)`
+  call, so `expect(calls).toHaveLength(0)` fails. **The reviewer's goal (100% branch) is still
+  achieved** — by the route they missed: inject the cancel predicate (`isCancelled`) as a required
+  4th param (idiomatic, type-safe — the real `isCancel` type-guard is assignable to
+  `(value: unknown) => boolean`; runtime-verified). The DI test passes `(v) => v === SENTINEL`; the
+  real `runConsentListener` shell binds the real `isCancel`. 100% branch on the extracted function,
+  DI-only. (Plan T2 step 1/6/9 + spec §4 updated.)
+
+- **2.2 Suppress stderr noise in the error test → FIX (and strengthen).** The error test now spies
+  `process.stderr.write` (capture into a local, **restore in `finally`** for leak-safety per the
+  B10/B13 cross-file-global lessons), which both silences the test-run noise **and** asserts the
+  error arm's content (`"Error sending consent decision"`) — a stronger test than the original
+  resolves-undefined-only check. (Plan T2 step 1 updated.)

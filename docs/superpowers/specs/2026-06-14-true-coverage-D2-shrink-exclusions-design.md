@@ -80,18 +80,30 @@ shell residual in `runTeam`:
    `respondToConsent` (currently typed `IPCClient` but only uses `.call` → widen to `TeamRpcClient`)
    and the `audit` rendering (`renderAuditTable`/`cellText`). Mirrors the existing
    `runTeamVaultRpc(client, cmd)` sibling exactly.
-2. **`handleConsentNotification(client, params, prompt): Promise<void>`** — the body of the
-   `client.onNotification("federation.consentRequest", …)` callback. Takes `TeamRpcClient` +
-   `unknown` params + an **injected `prompt`** (the `confirm`-shaped fn, a **required** param — no
-   default, per the D1 EXTRACT-not-inject-with-default rule, so no test ever falls through to the
-   real TTY-blocking `confirm`). Covers the typeof-requestId guard, the `confirm`/`isCancel`
-   branches, the respond call, and the **error arm** (it **retains the existing `try/catch`** around
-   `client.call` that `runConsentListener` already has at team.ts:352–361, writing the failure to
-   stderr — preserved verbatim, and the call-error arm is one of the covered branches). The thin
-   `runConsentListener` residual binds the real `confirm` at the single call site
-   (`onNotification((p) => handleConsentNotification(client, p, confirm))`) and keeps only the
-   irreducible `await new Promise<void>(() => {})` infinite wait — that real-`confirm` binding line
-   lives in the uncovered shell, exactly mirroring the D1 residual-construction-line pattern.
+2. **`handleConsentNotification(client, params, prompt, isCancelled): Promise<void>`** — the body of
+   the `client.onNotification("federation.consentRequest", …)` callback. Takes `TeamRpcClient` +
+   `unknown` params + an **injected `prompt`** (the `confirm`-shaped fn) + an **injected
+   `isCancelled`** predicate (`(value: unknown) => boolean`). **Both injected deps are required
+   params** — no default, per the D1 EXTRACT-not-inject-with-default rule, so no test falls through
+   to the real TTY-blocking `confirm`, **and** the cancel branch becomes coverable via DI (see
+   below). Covers the typeof-requestId guard, the cancel branch, the approve/deny respond call, and
+   the **error arm** (it **retains the existing `try/catch`** around `client.call` that
+   `runConsentListener` already has at team.ts:352–361, writing the failure to stderr — preserved
+   verbatim). The thin `runConsentListener` residual binds the **real** `confirm` + `isCancel` at the
+   single call site (`onNotification((p) => handleConsentNotification(client, p, confirm, isCancel))`)
+   and keeps only the irreducible `await new Promise<void>(() => {})` infinite wait — those
+   real-binding args live in the uncovered shell, mirroring the D1 residual-construction-line pattern.
+
+   **Why `isCancelled` is injected (not a residual):** clack's `isCancel` only recognizes its own
+   module-private `CANCEL_SYMBOL = Symbol("clack:cancel")` (verified 2026-06-14 — the real
+   `isCancel` returns **false** for both `Symbol.for("clack:cancel")` and a fresh `Symbol(...)`;
+   `cli-mocks.ts` only matches it because it `mock.module`s `@clack/prompts` wholesale, which D2
+   forbids). So a DI-only test cannot make the *real* `isCancel` fire. Injecting the predicate
+   (a pure fn — the real `isCancel` is a type-guard, assignable to `(value: unknown) => boolean`)
+   lets the test pass a fake `(v) => v === SENTINEL` and assert "cancel → no respond call", reaching
+   **100% branch** on the extracted function without `mock.module`. This is idiomatic predicate
+   injection (the same shape as the `prompt` seam), not coverage vanity — the assertion is a real
+   behavioral contract (cancel leaves the query to time out).
 
 **Residual `runTeam` shell (stays uncovered, no branches that matter):** read gateway state,
 construct the real `IPCClient`, `connect`, dispatch `runTeamVaultRpc` ‖ `runConsentListener` (for
@@ -115,15 +127,13 @@ suite.) Specifically:
 - `renderAuditTable` + `cellText` — **export and test as pure functions** directly (empty list,
   primitive cells, object cells → `""`, numeric-timestamp ISO formatting, 12-char hash truncation),
   rather than asserting the `audit` branch's stdout.
-- `handleConsentNotification` — fake `TeamRpcClient` + an **injected fake `prompt`** returning
-  `true` / `false`; assert approve → `consentRespond(approved:true)`, deny →
-  `consentRespond(approved:false)`, bad params (non-string `requestId`) → early return (no call),
-  call-error → swallowed-to-stderr (the retained try/catch). **The `isCancel` true-arm
-  (cancel-leaves-to-timeout) is an accepted uncovered residual** (1 branch): verified 2026-06-14
-  that clack's `CANCEL_SYMBOL = Symbol("clack:cancel")` is **unregistered and unexported** (only
-  `isCancel` is exported), so no unit test can produce a value `isCancel` accepts without
-  `mock.module` (forbidden). One unreached branch out of the file's hundreds does **not** threaten
-  the ≥80% floor — confirmed in the Docker dry-run; it is **not** `istanbul-ignore`d, just unreached.
+- `handleConsentNotification` — fake `TeamRpcClient` + injected fake `prompt` + injected
+  `isCancelled` predicate; assert approve → `consentRespond(approved:true)`, deny →
+  `consentRespond(approved:false)`, **cancel** (`isCancelled` → true) → **no call** (left to time
+  out), bad params (non-string `requestId`) → early return (no call), call-error → swallowed-to-
+  stderr. The error test **spies `process.stderr.write`** (capture + assert the message + restore in
+  `finally` — leak-safe per B10/B13) so it asserts the error arm's content *and* silences the test-
+  run stderr noise. All branches covered → **100% branch on the extracted function**, DI-only.
 
 **No `mock.module`** — DI only (the cli combined run is process-global; `team.ts` is the unit under
 test and its `TeamRpcClient` + `prompt` deps are injected). Deterministic; no reliance on global
