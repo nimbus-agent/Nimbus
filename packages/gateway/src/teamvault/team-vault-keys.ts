@@ -1,7 +1,7 @@
 /** The reserved Vault keyspace for team-scoped secrets. D15: this prefix is named ONLY here. */
 export const TEAM_VAULT_PREFIX = "teamvault." as const;
 
-const ENTRY_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const ENTRY_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
  * Derive the OS-Vault key for a team secret. The team keyspace mirrors the connector's own
