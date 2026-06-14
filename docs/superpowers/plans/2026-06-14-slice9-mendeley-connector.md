@@ -110,10 +110,12 @@
 }
 ```
 
-- [ ] **Step 4: Install workspace deps** so the new package links
+- [ ] **Step 4: Register the package in the root workspaces, then install**
+
+The root `package.json` `workspaces` array lists every connector individually (there is no `packages/mcp-connectors/*` glob). Add `"packages/mcp-connectors/mendeley"` to it (e.g. right after the `zotero` entry) **before** installing — otherwise `bun install` is a no-op and the package never links (the documented "workspaces-before-install" trap).
 
 Run: `bun install`
-Expected: completes; `packages/mcp-connectors/mendeley/node_modules` symlinks `@nimbus-dev/sdk`.
+Expected: "Saved lockfile"; `packages/mcp-connectors/mendeley/node_modules` symlinks `@nimbus-dev/sdk`. Verify: `ls packages/mcp-connectors/mendeley/node_modules/@nimbus-dev`.
 
 - [ ] **Step 5: Commit**
 
