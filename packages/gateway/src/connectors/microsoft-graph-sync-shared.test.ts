@@ -86,7 +86,7 @@ describe("decodeMicrosoftGraphDeltaCursor", () => {
 
   // Invalid base64 payload
   test("returns undefined for invalid base64 payload", () => {
-    expect(decodeMicrosoftGraphDeltaCursor(PREFIX + "!!!notbase64!!!", PREFIX)).toBeUndefined();
+    expect(decodeMicrosoftGraphDeltaCursor(`${PREFIX}!!!notbase64!!!`, PREFIX)).toBeUndefined();
   });
 });
 

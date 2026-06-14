@@ -58,7 +58,7 @@ describe("encodeWatermarkCursorV1 / decodeWatermarkCursorV1", () => {
   });
 
   it("returns null when payload is not valid base64url JSON (malformed)", () => {
-    expect(decodeWatermarkCursorV1(PREFIX + "!!!!", PREFIX)).toBeNull();
+    expect(decodeWatermarkCursorV1(`${PREFIX}!!!!`, PREFIX)).toBeNull();
   });
 
   it("returns null when watermark field is a non-string, non-null value", () => {

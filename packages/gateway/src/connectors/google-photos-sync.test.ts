@@ -386,7 +386,7 @@ describe("createGooglePhotosSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGooglePhotosSyncable({ ensureGoogleMcpRunning: async () => {} });
 
-    const longFilename = "x".repeat(600) + ".jpg";
+    const longFilename = `${"x".repeat(600)}.jpg`;
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = requestUrlString(input);
       if (url.includes("mediaItems:search")) {

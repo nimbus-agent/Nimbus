@@ -596,9 +596,12 @@ describe("askStream", () => {
     expect(handle.streamId).toBe("resolved-id");
 
     // Cleanup: finish the stream so no pending waiter hangs
-    slowIpc.notifHandlers.get("engine.streamDone")?.forEach((h) => {
-      h({ streamId: "resolved-id" });
-    });
+    const handlers = slowIpc.notifHandlers.get("engine.streamDone");
+    if (handlers) {
+      for (const h of handlers) {
+        h({ streamId: "resolved-id" });
+      }
+    }
     await Promise.resolve();
   });
 });
