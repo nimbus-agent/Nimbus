@@ -28,7 +28,7 @@ describe("power bi write tools", () => {
     process.env["POWERBI_CLIENT_SECRET"] = "secret-1";
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       const u = String(url);
-      if (u.includes("login.microsoftonline.com")) {
+      if (new URL(u).hostname === "login.microsoftonline.com") {
         return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
       }
       calls.push({
@@ -85,7 +85,7 @@ describe("power bi write tools", () => {
   it("propagates a non-ok dataset refresh status as a thrown error", async () => {
     globalThis.fetch = (async (url: string) => {
       const u = String(url);
-      if (u.includes("login.microsoftonline.com")) {
+      if (new URL(u).hostname === "login.microsoftonline.com") {
         return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
       }
       return new Response("Forbidden", { status: 403 });
@@ -102,7 +102,7 @@ describe("power bi write tools", () => {
   it("propagates a non-ok dataflow refresh status as a thrown error", async () => {
     globalThis.fetch = (async (url: string) => {
       const u = String(url);
-      if (u.includes("login.microsoftonline.com")) {
+      if (new URL(u).hostname === "login.microsoftonline.com") {
         return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
       }
       return new Response("Forbidden", { status: 403 });
