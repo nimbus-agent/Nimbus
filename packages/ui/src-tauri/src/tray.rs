@@ -130,7 +130,7 @@ pub fn init_tray(app: &AppHandle) -> tauri::Result<()> {
             return;
         };
         let bytes = icon_bytes(change.icon);
-        let _ = tray_for_listener.set_icon(Some(Image::from_bytes(bytes).unwrap()));
+        let _ = tray_for_listener.set_icon(Some(Image::from_bytes(bytes).expect("invalid icon bytes")));
         let tooltip = if change.badge > 0 {
             format!("Nimbus ({} pending)", change.badge)
         } else {
