@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.7.1](https://github.com/nimbus-agent/Nimbus/compare/v0.7.0...v0.7.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **perf:** gate S11-a latency on Linux only (completes the spawn-jitter set) ([#628](https://github.com/nimbus-agent/Nimbus/issues/628)) ([f107082](https://github.com/nimbus-agent/Nimbus/commit/f107082655a3f031776b7717d8509328d24111b3))
+
 ## [0.7.0](https://github.com/nimbus-agent/Nimbus/compare/v0.6.3...v0.7.0) (2026-06-14)
 
 
