@@ -7,7 +7,10 @@ import { answerLocalOperatorList, type LocalOperatorListCtx } from "../federatio
 import { invokeTeamToolList } from "../teamvault/team-tool-invoke.ts";
 import { teamVaultKey } from "../teamvault/team-vault-keys.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
-import { CONNECTOR_VAULT_SECRET_KEYS } from "./connector-secrets-manifest.ts";
+import {
+  CONNECTOR_VAULT_SECRET_KEYS,
+  TEAM_SECRET_ANYOF_GROUPS,
+} from "./connector-secrets-manifest.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -20,12 +23,15 @@ import { resolveTeamListOpenSession } from "./warehouse-sync-transport.ts";
 const ENTRY = "prod-snowflake";
 const SECRET = "tv-secret-do-not-leak";
 
-/** A team vault holding all three snowflake secret keys (the gate requires every one present). */
+/**
+ * A team vault holding `account` + ONLY `oauth_token` (no `key_pair_jwt`) — exactly what a real
+ * Snowflake team entry stores. This exercises the production anyOf path (account + one-of token);
+ * the gate must NOT demand the second, mutually-exclusive auth key.
+ */
 function seedTeamVault() {
   return createStubVault({
     [teamVaultKey(ENTRY, "snowflake.account")]: "acme-xy12345",
     [teamVaultKey(ENTRY, "snowflake.oauth_token")]: SECRET,
-    [teamVaultKey(ENTRY, "snowflake.key_pair_jwt")]: "jwt-value",
   });
 }
 
@@ -73,6 +79,8 @@ describe("warehouse team-credential sync (e2e via sink seam)", () => {
             sandboxCwd: sinkDir,
             requiredSecretKeysFor: (s) =>
               CONNECTOR_VAULT_SECRET_KEYS[s as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+            anyOfSecretGroupsFor: (s) =>
+              TEAM_SECRET_ANYOF_GROUPS[s as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
             // The sink replaces only the spawn; the gate's secret check still runs first.
             openSession: resolveTeamListOpenSession(sinkDir, () => {
               throw new Error("production spawn must not run when the e2e sink is set");

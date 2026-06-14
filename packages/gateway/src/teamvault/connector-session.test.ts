@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
 import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
 import type { MeshSpawnContext } from "../connectors/lazy-mesh/slot.ts";
@@ -9,6 +11,9 @@ import {
   spawnerFor,
   withConnectorSession,
 } from "./connector-session.ts";
+
+// Opaque cwd handed to the (faked) spawner — built cross-platform per repo convention.
+const SANDBOX_CWD = join(tmpdir(), "nimbus-connector-session-test");
 
 const fakeVault: NimbusVault = {
   get: async () => "secret",
@@ -37,7 +42,7 @@ describe("withConnectorSession", () => {
     });
 
     const calls = await withConnectorSession(
-      { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
       async (s) => {
         const a = await s.call("snowflake_list", { cursor: null });
         const b = await s.call("snowflake_list", { cursor: "1" });
@@ -61,7 +66,7 @@ describe("withConnectorSession", () => {
     }));
     await expect(
       withConnectorSession(
-        { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+        { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
         async () => {
           throw new Error("boom");
         },
@@ -74,7 +79,7 @@ describe("withConnectorSession", () => {
     __setSessionSpawnerForTest(() => undefined);
     await expect(
       withConnectorSession(
-        { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+        { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
         async () => "unreachable",
       ),
     ).rejects.toThrow(/no server spawned for service "snowflake"/);
@@ -87,7 +92,7 @@ describe("withConnectorSession", () => {
     }));
     await expect(
       withConnectorSession(
-        { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+        { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
         async (s) => s.call("does_not_exist", { cursor: null }),
       ),
     ).rejects.toThrow(/tool "does_not_exist" not found for service "snowflake"/);
@@ -100,7 +105,7 @@ describe("withConnectorSession", () => {
     }));
     await expect(
       withConnectorSession(
-        { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+        { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
         async (s) => s.call("snowflake_list", { cursor: null }),
       ),
     ).rejects.toThrow(/tool "snowflake_list" not found/);
@@ -120,7 +125,7 @@ describe("realSpawn (deterministic client-assembly, injected spawner)", () => {
       ctx.setLazyClient("snowflake-slot", fakeMcpClient());
     };
     const client = await realSpawn(
-      { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
       () => spawner,
     );
     expect(client).toBeDefined();
@@ -132,7 +137,7 @@ describe("realSpawn (deterministic client-assembly, injected spawner)", () => {
   it("returns undefined when the spawner registers no client", async () => {
     const noopSpawner = async (): Promise<void> => {};
     const client = await realSpawn(
-      { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
       () => noopSpawner,
     );
     expect(client).toBeUndefined();
@@ -148,7 +153,7 @@ describe("realSpawn (deterministic client-assembly, injected spawner)", () => {
       } as unknown as MCPClient);
     };
     const client = await realSpawn(
-      { service: "snowflake", vaultView: fakeVault, sandboxCwd: "/tmp" },
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
       () => spawner,
     );
     // .catch(() => {}) inside disconnect must absorb the rejection.

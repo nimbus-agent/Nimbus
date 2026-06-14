@@ -76,7 +76,14 @@ describe("looker-sync (unified spawn transport)", () => {
     const ctx = {
       ...syncTestContext(db, createStubVault({})),
       credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-looker" }),
-      runTeamList: async (req: { listToolId: string }) => byTool(req.listToolId),
+      // Inject the secret as an extra field on every drained item so the assertion is non-vacuous:
+      // it proves the mapper indexes only known fields and never copies arbitrary connector output
+      // (where a leaked team credential could otherwise ride along) into a row.
+      runTeamList: async (req: { listToolId: string }) =>
+        byTool(req.listToolId).map((item) => ({
+          ...(item as Record<string, unknown>),
+          leakedSecret: SECRET,
+        })),
     };
 
     await createLookerSyncable().sync(ctx, null);

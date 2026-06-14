@@ -67,6 +67,8 @@ export function warehouseSinkOpenSession(sinkDir: string): TeamListOpenSession {
         const { cursor } = args as { cursor: string | null };
         const idx = cursor === null ? 0 : Number.parseInt(cursor, 10);
         const nextCursor = idx + 1 < pages.length ? String(idx + 1) : null;
+        // An out-of-range idx makes `pages[idx]` undefined → JSON.stringify drops the key →
+        // parseMcpListPage defaults `items` to [] (its Array.isArray guard). Safe without a local guard.
         return Promise.resolve({
           content: [{ type: "text", text: JSON.stringify({ items: pages[idx], nextCursor }) }],
         });

@@ -1,7 +1,7 @@
 # Review & Feedback: Phase 6 Slice 7 — Wave 7b Team-Shared Credentials Implementation Plan
 
 **Review Date:** 2026-06-14  
-**Plan Document Reviewed:** [2026-06-14-phase6-slice7-wave7b-team-credentials.md](file:///C:/gitrep/Nimbus/.claude/worktrees/dev+asafgolombek+phase6-slice7-wave7b/docs/superpowers/plans/2026-06-14-phase6-slice7-wave7b-team-credentials.md)  
+**Plan Document Reviewed:** [2026-06-14-phase6-slice7-wave7b-team-credentials.md](./2026-06-14-phase6-slice7-wave7b-team-credentials.md)  
 **Status:** Plan Feedback / Suggestions / Improvements
 
 ---

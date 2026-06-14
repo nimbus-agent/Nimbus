@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { __setSessionSpawnerForTest } from "./connector-session.ts";
 import {
@@ -9,6 +11,9 @@ import {
   invokeTeamToolList,
   type TeamToolSpawnRequest,
 } from "./team-tool-invoke.ts";
+
+// Opaque cwd handed to the (injected) spawn seam — built cross-platform per repo convention.
+const SANDBOX_CWD = join(tmpdir(), "nimbus-team-tool-invoke-test");
 
 function fakeVault(seed: Record<string, string> = {}): NimbusVault {
   const store = new Map<string, string>(Object.entries(seed));
@@ -28,7 +33,7 @@ function deps(over: Partial<InvokeTeamToolDeps> = {}): {
   const spawnCalls: TeamToolSpawnRequest[] = [];
   const d: InvokeTeamToolDeps = {
     vault: fakeVault({ "teamvault.prod-aws.github.pat": "TEAMPAT" }),
-    sandboxCwd: "/tmp/sbx",
+    sandboxCwd: SANDBOX_CWD,
     requiredSecretKeysFor: (service) => (service === "github" ? ["github.pat"] : undefined),
     spawnAndCall: async (req) => {
       spawnCalls.push(req);
@@ -46,7 +51,7 @@ function listDeps(over: Partial<InvokeTeamToolListDeps> = {}): {
   const sessionCalled = { value: false };
   const d: InvokeTeamToolListDeps = {
     vault: fakeVault({ "teamvault.dw-snowflake.snowflake.account": "ACCT123" }),
-    sandboxCwd: "/tmp/sbx",
+    sandboxCwd: SANDBOX_CWD,
     requiredSecretKeysFor: (service) =>
       service === "snowflake" ? ["snowflake.account"] : undefined,
     openSession: async () => {
@@ -126,7 +131,7 @@ describe("alternative-auth (anyOf) secret groups — Snowflake account + one-of 
     const sessionCalled = { value: false };
     const d: InvokeTeamToolListDeps = {
       vault: fakeVault(seed),
-      sandboxCwd: "/tmp/sbx",
+      sandboxCwd: SANDBOX_CWD,
       requiredSecretKeysFor: (service) => (service === "snowflake" ? snowflakeKeys : undefined),
       anyOfSecretGroupsFor: (service) => (service === "snowflake" ? snowflakeAnyOf : undefined),
       openSession: async () => {
@@ -243,7 +248,7 @@ describe("drainTeamListSession (production openSession — D9 one-spawn multi-pa
     const result = await drainTeamListSession({
       service: "snowflake",
       vaultView: fakeVaultView,
-      sandboxCwd: "/tmp/sbx",
+      sandboxCwd: SANDBOX_CWD,
       listToolId: "snowflake_list",
     });
 

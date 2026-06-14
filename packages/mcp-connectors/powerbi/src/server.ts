@@ -98,17 +98,19 @@ async function expandReport(accessToken: string, report: unknown): Promise<unkno
 export function registerPowerBiTools(reg: ZodToolRegistrar): void {
   reg(
     "powerbi_list",
-    "List Power BI reports (`GET /v1.0/myorg/reports`), each expanded with its dataset-table refs for lineage. Single fetch — `cursor` is accepted and ignored, `nextCursor` is always null; `limit` (default 200, max 500) caps defensively.",
+    "List Power BI reports (`GET /v1.0/myorg/reports`), each expanded with its dataset-table refs for lineage. The reports endpoint returns the full org list in one response and has no reliable server paging, so this is a single fetch returning ALL reports with `nextCursor: null` (`cursor`/`limit` are accepted for `_list` API symmetry but never truncate).",
     z.object({
       cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
-    async (p) => {
+    async (_p) => {
       const tenantId = requireEnv("POWERBI_TENANT_ID");
       const clientId = requireEnv("POWERBI_CLIENT_ID");
       const clientSecret = requireEnv("POWERBI_CLIENT_SECRET");
       const accessToken = await fetchAccessToken(tenantId, clientId, clientSecret);
-      const reports = (await listReports(accessToken)).slice(0, p.limit ?? 200);
+      // Return EVERY report: slicing to `limit` would silently drop reports (nextCursor is null, so
+      // the gateway drain stops) and lose them from the index for orgs with many reports.
+      const reports = await listReports(accessToken);
       const items = await Promise.all(reports.map((r) => expandReport(accessToken, r)));
       return jsonResult({ items, nextCursor: null });
     },

@@ -61,8 +61,8 @@ export function registerBigeyeTools(reg: ZodToolRegistrar): void {
     }),
     async (p) => {
       const limit = p.limit ?? 200;
-      // null / undefined / "" / "0" / non-numeric all resolve to offset 0.
-      const offset = Number(p.cursor) || 0;
+      // null / undefined / "" / non-numeric / negative all clamp to offset 0; fractional truncates.
+      const offset = Math.max(0, Math.trunc(Number(p.cursor) || 0));
       const issues = await fetchIssues(limit, offset);
       const nextCursor = issues.length === limit ? String(offset + limit) : null;
       return jsonResult({ items: issues, nextCursor });

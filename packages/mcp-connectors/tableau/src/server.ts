@@ -130,8 +130,10 @@ export function registerTableauTools(reg: ZodToolRegistrar): void {
     }),
     async (p) => {
       const pageSize = p.limit ?? 200;
-      // 1-based; null / undefined / "" / "0" all resolve to page 1 (never page 0 / out-of-bounds).
-      const pageNumber = Number(p.cursor) || 1;
+      // 1-based: null / "" / "0" / non-numeric / negative / fractional all resolve to page 1
+      // (never page 0 / a negative or out-of-bounds page).
+      const parsedPage = Math.trunc(Number(p.cursor));
+      const pageNumber = Number.isFinite(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
       const { token, siteId } = await tableauSignin();
       const { views, totalAvailable } = await listViews(token, siteId, { pageSize, pageNumber });
       const nextCursor = pageNumber * pageSize < totalAvailable ? String(pageNumber + 1) : null;

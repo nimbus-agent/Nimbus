@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
 import { __setPersonalDrainForTest, listConnectorItems } from "./warehouse-sync-transport.ts";
+
+// Opaque cwd handed to the (faked) spawner — built cross-platform per repo convention.
+const SANDBOX_CWD = join(tmpdir(), "nimbus-warehouse-transport-test");
 
 function ctx(
   over: Partial<Parameters<typeof listConnectorItems>[0]>,
@@ -15,7 +20,7 @@ function ctx(
     db: {} as Parameters<typeof listConnectorItems>[0]["db"],
     logger: {} as Parameters<typeof listConnectorItems>[0]["logger"],
     rateLimiter: {} as Parameters<typeof listConnectorItems>[0]["rateLimiter"],
-    sandboxCwd: "/tmp",
+    sandboxCwd: SANDBOX_CWD,
     credentialFor: () => ({ credential: "personal" as const }),
     runTeamList: async () => [{ team: true }],
     ...over,

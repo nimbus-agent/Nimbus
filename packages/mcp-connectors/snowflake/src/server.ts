@@ -73,7 +73,9 @@ async function fetchTables(page?: {
   const statement =
     page === undefined
       ? TABLES_SQL
-      : `${TABLES_SQL} ORDER BY table_schema, table_name LIMIT ${page.limit} OFFSET ${page.offset}`;
+      : // (table_catalog, table_schema, table_name) uniquely identifies a table in INFORMATION_SCHEMA
+        // — a TOTAL order, so OFFSET paging cannot skip or duplicate rows across pages.
+        `${TABLES_SQL} ORDER BY table_catalog, table_schema, table_name LIMIT ${page.limit} OFFSET ${page.offset}`;
   const url = `https://${snowflakeAccount()}.snowflakecomputing.com/api/v2/statements`;
   const res = await fetchWithTimeout(url, {
     method: "POST",

@@ -100,4 +100,17 @@ describe("tableau_list pagination", () => {
     expect(new URL(viewUrls[0] as string).searchParams.get("pageNumber")).toBe("1");
     expect(new URL(viewUrls[1] as string).searchParams.get("pageNumber")).toBe("1");
   });
+
+  it("clamps a negative or non-finite cursor to pageNumber=1", async () => {
+    installFetch(() => ({ names: ["A"], total: 1 }));
+    const tools = captureTools();
+
+    await tool(tools, "tableau_list")({ limit: 2, cursor: "-5" }); // negative → 1
+    await tool(tools, "tableau_list")({ limit: 2, cursor: "Infinity" }); // non-finite → 1
+    await tool(tools, "tableau_list")({ limit: 2, cursor: "abc" }); // NaN → 1
+
+    for (const u of viewUrls) {
+      expect(new URL(u).searchParams.get("pageNumber")).toBe("1");
+    }
+  });
 });
