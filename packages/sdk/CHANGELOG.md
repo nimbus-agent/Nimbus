@@ -1,5 +1,12 @@
 # @nimbus-dev/sdk — Changelog
 
+## [1.1.2](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.1...sdk-v1.1.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* add repository field to client, sdk, and root for npm provenance ([#633](https://github.com/nimbus-agent/Nimbus/issues/633)) ([f0e7f07](https://github.com/nimbus-agent/Nimbus/commit/f0e7f075d755c8b4a006911b513979f289fa192f))
+
 ## [1.1.1](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.0...sdk-v1.1.1) (2026-05-22)
 
 
