@@ -75,7 +75,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
       ghaMax: 10_000,
       gated: true,
       noiseFloorPct: 25,
-      noiseFloorAbs: 200,
+      noiseFloorAbs: 300,
       noiseFloorAbsUnit: "ms",
     } satisfies SloThreshold);
   });

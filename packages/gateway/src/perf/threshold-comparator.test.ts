@@ -43,6 +43,18 @@ describe("compareAgainstHistory", () => {
     expect(s1?.status).toEqual({ kind: "absolute-fail", measured: 12_000, threshold: 10_000 });
   });
 
+  test("S1 cold-start jitter (617→841 ms, +36 %) sits inside the widened 300 ms floor → pass", () => {
+    // Regression guard for the run-27487164610 macOS delta-fail: a pure release
+    // commit swung S1 p95 from 616.87 to 840.81 ms. With noiseFloorAbs=300 the
+    // effective floor is 300/616.87 ≈ 48.6 %, above the +36.3 % swing. If the
+    // floor is ever re-tightened to 200 ms (32.4 %), this flips back to delta-fail.
+    const current = fakeLine("gha-macos", { S1: { samples_count: 301, p95_ms: 840.81 } });
+    const previous = fakeLine("gha-macos", { S1: { samples_count: 301, p95_ms: 616.87 } });
+    const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-macos");
+    const s1 = out.find((c) => c.surfaceId === "S1");
+    expect(s1?.status).toEqual({ kind: "pass" });
+  });
+
   test("delta-fail when delta > floorPct AND > floorAbs/previous*100", () => {
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 65 } });
     const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 50 } });
