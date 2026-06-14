@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
-import { type CallRecord, captureStdout, makeQueuedCall } from "./cli-test-helpers.ts";
 import { awaitLogin, type IdentityIpc, parseIdentityArgs, runIdentityCommand } from "./identity.ts";
+import { type CallRecord, captureStdout, makeQueuedCall } from "./testing/cli-test-helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Parser tests (unchanged)

@@ -5,7 +5,7 @@ import type { NimbusIdentityToml } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityRuntime } from "./identity-runtime.ts";
 import { IdentityStore } from "./identity-store.ts";
-import { fakeVault } from "./identity-test-helpers.ts";
+import { fakeVault } from "./testing/identity-test-helpers.ts";
 import { isOperatorValid } from "./verifier.ts";
 
 const CFG: NimbusIdentityToml = {

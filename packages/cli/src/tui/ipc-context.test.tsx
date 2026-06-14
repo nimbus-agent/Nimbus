@@ -4,8 +4,8 @@ import { render } from "ink-testing-library";
 import React from "react";
 
 import { IpcContext, useIpc } from "./ipc-context.ts";
-import { ipcContextFor } from "./test-helpers/context.ts";
 import { StubIpcClient } from "./test-helpers/stub-client.ts";
+import { ipcContextFor } from "./testing/context.ts";
 
 // ---------------------------------------------------------------------------
 // IpcContext default value

@@ -1,8 +1,8 @@
 import { describe, test } from "bun:test";
 import { dispatchUpdaterRpc } from "../../../src/ipc/updater-rpc.ts";
 import { expectRpcError } from "../../../src/ipc/updater-rpc-test-helpers.ts";
+import { makeKeypair } from "../../../src/updater/testing/updater-test-fixtures.ts";
 import { Updater } from "../../../src/updater/updater.ts";
-import { makeKeypair } from "../../../src/updater/updater-test-fixtures.ts";
 
 const kp = makeKeypair();
 

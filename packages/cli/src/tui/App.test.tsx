@@ -3,8 +3,8 @@ import { render } from "ink-testing-library";
 
 import { App } from "./App.tsx";
 import { IpcContext } from "./ipc-context.ts";
-import { ipcContextFor, makeHistoryPath } from "./test-helpers/context.ts";
 import { StubIpcClient } from "./test-helpers/stub-client.ts";
+import { ipcContextFor, makeHistoryPath } from "./testing/context.ts";
 
 function setupStub(): StubIpcClient {
   return new StubIpcClient({

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import nacl from "tweetnacl";
-import { sha256Hex } from "./signature-verifier.ts";
-import type { PlatformTarget, UpdateManifest } from "./types.ts";
+import { sha256Hex } from "../signature-verifier.ts";
+import type { PlatformTarget, UpdateManifest } from "../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 export function jsonResponse(data: unknown): Response {

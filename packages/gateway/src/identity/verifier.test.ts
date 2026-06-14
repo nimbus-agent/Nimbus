@@ -3,8 +3,8 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { IdentityStore } from "./identity-store.ts";
-import { makeSignedJwt } from "./identity-test-helpers.ts";
 import { JwksCache } from "./jwks-cache.ts";
+import { makeSignedJwt } from "./testing/identity-test-helpers.ts";
 import { IdTokenValidationError, IdTokenVerifier, isOperatorValid } from "./verifier.ts";
 
 /** Inline base64url encoder for crafting hand-built JWT segments in tests. */

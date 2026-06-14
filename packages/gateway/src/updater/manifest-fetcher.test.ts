@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fetchUpdateManifest, ManifestFetchError } from "./manifest-fetcher.ts";
+import { jsonResponse } from "./testing/updater-test-fixtures.ts";
 import type { UpdateManifest } from "./types.ts";
-import { jsonResponse } from "./updater-test-fixtures.ts";
 
 let server: ReturnType<typeof Bun.serve>;
 let url: string;

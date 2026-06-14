@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
+import { jsonResponse, makeKeypair } from "../updater/testing/updater-test-fixtures.ts";
 import { ManifestFetchError, Updater } from "../updater/updater.ts";
-import { jsonResponse, makeKeypair } from "../updater/updater-test-fixtures.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "./updater-rpc.ts";
 import { expectRpcError } from "./updater-rpc-test-helpers.ts";
 

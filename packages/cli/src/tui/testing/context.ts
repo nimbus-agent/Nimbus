@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { IpcContextValue } from "../ipc-context.ts";
-import type { StubIpcClient } from "./stub-client.ts";
+import type { StubIpcClient } from "../test-helpers/stub-client.ts";
 
 export const silentLogger: IpcContextValue["logger"] = {
   debug: () => undefined,

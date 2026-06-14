@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
-import { type CallRecord, captureStdout, makeQueuedCall } from "./cli-test-helpers.ts";
 import { parseScimArgs, runScim, runScimCommand, type ScimIpc } from "./scim.ts";
+import { type CallRecord, captureStdout, makeQueuedCall } from "./testing/cli-test-helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Parser tests (unchanged)

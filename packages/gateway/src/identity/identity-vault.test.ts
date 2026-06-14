@@ -1,6 +1,5 @@
 // identity-vault.test.ts
 import { describe, expect, test } from "bun:test";
-import { fakeVault } from "./identity-test-helpers.ts";
 import {
   clearOidcTokens,
   IDENTITY_ID_TOKEN_KEY,
@@ -11,6 +10,7 @@ import {
   storeOidcTokens,
   writeScimBearer,
 } from "./identity-vault.ts";
+import { fakeVault } from "./testing/identity-test-helpers.ts";
 
 describe("identity-vault key constants", () => {
   test("the three raw-token keys equal their expected literals", () => {

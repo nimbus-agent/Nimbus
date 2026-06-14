@@ -7,8 +7,8 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { LongRunningEmit } from "../ipc/_lib/long-running.ts";
 import { buildIdentityBoot, refreshTokens } from "./identity-boot.ts";
 import type { IdentityRuntimeDeps } from "./identity-runtime.ts";
-import { fakeVault, makeSignedJwt } from "./identity-test-helpers.ts";
 import { IDENTITY_ID_TOKEN_KEY, IDENTITY_SCIM_BEARER_KEY } from "./identity-vault.ts";
+import { fakeVault, makeSignedJwt } from "./testing/identity-test-helpers.ts";
 import type { DeviceAuthResponse, OidcDiscovery, TokenResponse, ValidatedClaims } from "./types.ts";
 
 // Shared discovery doc for the refreshTokens + opts.log tests (B2 branch coverage).

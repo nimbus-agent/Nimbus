@@ -1,7 +1,7 @@
 // identity-test-helpers.ts — shared fixtures for the identity unit tests.
 // Not a *.test.ts file, so Bun never runs it directly; it is imported by the
 // identity test suite to keep the RS256 signing + fake-Vault setup in one place.
-import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 
 function b64url(bytes: Uint8Array): string {
   // base64url: swap +/ for -_ and drop the trailing `=` padding run.

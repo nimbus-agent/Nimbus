@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { V34_IDENTITY_SQL } from "../index/identity-v34-sql.ts";
-import { makeSignedJwt } from "./identity-test-helpers.ts";
 import { BOT_FRAMEWORK_ISSUER, buildTeamsBotJwtValidator } from "./teams-bot-jwt.ts";
+import { makeSignedJwt } from "./testing/identity-test-helpers.ts";
 
 function memDb(): Database {
   const db = new Database(":memory:");

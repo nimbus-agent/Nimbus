@@ -75,14 +75,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // by chatops-bot-spawn.test.ts). Not shipped logic — never exercised in a normal gateway boot.
   { kind: "exact", path: "packages/gateway/src/chatops/chatops-tool-runner-e2e-sink.ts" },
 
-  // Test-only support files (imported solely by *.test.ts; not shipped logic). Verified
-  // 2026-06-08 by import grep. Sub-project B0; D may relocate these under a `testing/` dir
-  // (which discoverSourceFiles already auto-skips) to make the exemption self-enforcing.
-  { kind: "exact", path: "packages/cli/src/tui/test-helpers/context.ts" },
-  { kind: "exact", path: "packages/cli/src/commands/cli-test-helpers.ts" },
-  { kind: "exact", path: "packages/gateway/src/identity/identity-test-helpers.ts" },
-  { kind: "exact", path: "packages/gateway/src/updater/updater-test-fixtures.ts" },
-
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   // `assemble.ts` is the boot-assembly I/O orchestrator (opens SQLite, spawns sidecars,
   // wires every runtime together) — same untestable shell class as `gateway/src/index.ts`

@@ -2,14 +2,14 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import type { Server } from "bun";
 import { loadUpdaterPublicKey } from "./public-key.ts";
-import type { UpdaterEmit, UpdaterOptions } from "./updater.ts";
-import { MAX_DOWNLOAD_BYTES, redactUrlUserinfo, Updater } from "./updater.ts";
 import {
   buildEnvelopeSignedManifest,
   buildSignedManifest,
   jsonResponse,
   makeKeypair,
-} from "./updater-test-fixtures.ts";
+} from "./testing/updater-test-fixtures.ts";
+import type { UpdaterEmit, UpdaterOptions } from "./updater.ts";
+import { MAX_DOWNLOAD_BYTES, redactUrlUserinfo, Updater } from "./updater.ts";
 
 const kp = makeKeypair();
 
