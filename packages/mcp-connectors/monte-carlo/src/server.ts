@@ -47,6 +47,42 @@ function asObject(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * Single POST helper for the Monte Carlo GraphQL endpoint. Sends `{ query, variables }` with the
+ * `x-mcd-id`/`x-mcd-token` key-pair auth headers, throws on a non-ok HTTP status or a non-empty
+ * GraphQL `errors` array, and returns the parsed top-level response object. Reused by every read
+ * and write tool so auth + error handling stay in one place.
+ */
+async function mcGraphql(
+  apiId: string,
+  apiToken: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetchWithTimeout(GRAPHQL_URL, {
+    method: "POST",
+    headers: {
+      "x-mcd-id": apiId,
+      "x-mcd-token": apiToken,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Monte Carlo API error ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  const parsed = asObject(JSON.parse(text) as unknown) ?? {};
+  const errors = parsed["errors"];
+  if (Array.isArray(errors) && errors.length > 0) {
+    const first = asObject(errors[0])?.["message"];
+    const message = typeof first === "string" ? first : JSON.stringify(errors[0]);
+    throw new Error(`Monte Carlo GraphQL error: ${message}`);
+  }
+  return parsed;
+}
+
 interface IncidentsPage {
   readonly incidents: unknown[];
   readonly hasNextPage: boolean;
@@ -73,21 +109,26 @@ async function fetchIncidentsPage(
   first: number,
   after: string | null,
 ): Promise<IncidentsPage> {
-  const res = await fetchWithTimeout(GRAPHQL_URL, {
-    method: "POST",
-    headers: {
-      "x-mcd-id": apiId,
-      "x-mcd-token": apiToken,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ query: GET_INCIDENTS_QUERY, variables: { first, after } }),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Monte Carlo API error ${String(res.status)}: ${text.slice(0, 400)}`);
+  const parsed = await mcGraphql(apiId, apiToken, GET_INCIDENTS_QUERY, { first, after });
+  return parseIncidentsPage(parsed);
+}
+
+const SET_INCIDENT_FEEDBACK_MUTATION = `
+  mutation NimbusSetIncidentFeedback($incidentId: UUID!, $feedback: IncidentFeedback!) {
+    setIncidentFeedback(input: { incidentId: $incidentId, feedback: $feedback }) {
+      __typename
+    }
   }
-  return parseIncidentsPage(JSON.parse(text) as unknown);
+`.trim();
+
+/** Set the feedback/status on a Monte Carlo incident; throws on a GraphQL/HTTP error. */
+async function setIncidentFeedback(
+  apiId: string,
+  apiToken: string,
+  incidentId: string,
+  feedback: "ACKNOWLEDGED" | "RESOLVED",
+): Promise<void> {
+  await mcGraphql(apiId, apiToken, SET_INCIDENT_FEEDBACK_MUTATION, { incidentId, feedback });
 }
 
 /** One page (up to 500) for `_get`/`_search`, which do not paginate. */
@@ -146,6 +187,30 @@ export function registerMonteCarloTools(reg: ZodToolRegistrar): void {
       const incidents = await fetchIncidents(apiId, apiToken);
       const matches = filterMonteCarloIncidents(incidents, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
+    },
+  );
+
+  reg(
+    "montecarlo_incident_acknowledge",
+    "Acknowledge a Monte Carlo incident (requires HITL montecarlo.incident.acknowledge).",
+    z.object({ incidentId: z.string().min(1) }),
+    async (p) => {
+      const apiId = requireEnv("MONTECARLO_API_ID");
+      const apiToken = requireEnv("MONTECARLO_API_TOKEN");
+      await setIncidentFeedback(apiId, apiToken, p.incidentId, "ACKNOWLEDGED");
+      return jsonResult({ status: "ok", incidentId: p.incidentId });
+    },
+  );
+
+  reg(
+    "montecarlo_incident_resolve",
+    "Resolve a Monte Carlo incident (requires HITL montecarlo.incident.resolve).",
+    z.object({ incidentId: z.string().min(1) }),
+    async (p) => {
+      const apiId = requireEnv("MONTECARLO_API_ID");
+      const apiToken = requireEnv("MONTECARLO_API_TOKEN");
+      await setIncidentFeedback(apiId, apiToken, p.incidentId, "RESOLVED");
+      return jsonResult({ status: "ok", incidentId: p.incidentId });
     },
   );
 }
