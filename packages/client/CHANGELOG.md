@@ -2,6 +2,20 @@
 
 All notable changes to `@nimbus-dev/client` are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.2.2](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.1...client-v0.2.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* add repository field to client, sdk, and root for npm provenance ([#633](https://github.com/nimbus-agent/Nimbus/issues/633)) ([f0e7f07](https://github.com/nimbus-agent/Nimbus/commit/f0e7f075d755c8b4a006911b513979f289fa192f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @nimbus-dev/sdk bumped to 1.1.2
+
 ## [0.2.1](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.0...client-v0.2.1) (2026-06-14)
 
 
