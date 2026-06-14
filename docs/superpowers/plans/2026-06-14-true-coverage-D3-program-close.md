@@ -32,7 +32,7 @@
 
 - `scripts/coverage-floor/exclusions.ts` — drop 4 relocated entries + the redundant `sandbox-probe.ts` entry; correct the `chatops-tool-runner-e2e-sink.ts` comment; group the 11 type-only entries; full category-comment pass.
 - `packages/gateway/src/embedding/embedding-worker.ts` — reduce to a thin wiring shell delegating to `EmbeddingWorkerCore` (stays excluded).
-- 12 test importers (exact lines in Task 1).
+- 13 test importers (exact lines in Task 1).
 - 11 type-only source files — 3-line guardian header each (zero `SF:` impact).
 - `docs/CHANGELOG.md`, the workstream memory, `MEMORY.md`.
 
@@ -108,10 +108,10 @@ bun -e "import {isExempt} from './scripts/coverage-floor/exclusions.ts'; for (co
 Expected: `isExempt` returns `false` for all four (they are no longer in EXCLUSIONS) — confirm `discoverSourceFiles` skips them instead. Then:
 
 ```bash
-bun -e "import {discoverSourceFiles} from './scripts/coverage-floor/check.ts'" 2>/dev/null || true
+bun -e "import {discoverSourceFiles} from './scripts/coverage-floor/check.ts'; const f=new Set(discoverSourceFiles().map(p=>p.replaceAll('\\\\','/'))); const moved=['packages/cli/src/tui/testing/context.ts','packages/cli/src/commands/testing/cli-test-helpers.ts','packages/gateway/src/identity/testing/identity-test-helpers.ts','packages/gateway/src/updater/testing/updater-test-fixtures.ts']; for (const p of moved) console.log(p, f.has(p) ? 'STILL-SCANNED (BAD)' : 'auto-skipped (OK)');"
 ```
 
-The authoritative check is the `/testing/` skip in `check.ts:160` — confirm by reading that the relocated paths contain `/testing/`.
+Expected: all four print `auto-skipped (OK)` — `discoverSourceFiles` actually runs and the relocated `/testing/` paths are absent from its result (the `/testing/` skip at `check.ts:160` is what excludes them).
 
 - [ ] **Step 6: Commit**
 

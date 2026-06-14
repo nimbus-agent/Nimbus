@@ -66,6 +66,8 @@ In **Task 4 (Step 3)**, the `handleEmbedItem` method swallows errors in the queu
 
   Ensure the unit tests also assert that the error is handled/logged correctly without crashing the test runner.
 
+> **Disposition (D3): declined — deferred follow-up, NOT an in-scope D3 change.** D3 is a zero-behavior-change refactor; production already swallows `embed_item` failures silently (intentional best-effort — there is no result `id` to correlate, unlike `embed_texts`), and the worker has no injected logger. Adding `console.error`/logging here would change behavior, so it is **not** applied. Observability for `embed_item` failures is recorded as a separate, out-of-scope follow-up. See the plan's dispositions table (point 2) and the silent-swallow comment pinned in `embedding-worker-core.ts`.
+
 ---
 
 ## 3. Configuration & Paths Audit on Relocation (§Task 1)

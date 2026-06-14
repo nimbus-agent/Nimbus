@@ -79,7 +79,7 @@ Tests for `EmbeddingWorkerCore` will use real in-memory `bun:sqlite` instances a
 
 ### Suggestion
 
-- **Concurrency & File Locks:** Since tests run concurrently, in-memory databases (e.g. `new Database(":memory:")`) must be explicitly closed using `db.close()` to prevent memory leaks and file-handle exhaustion.
+- **Concurrency & File Locks:** If tests run concurrently (e.g. `it.concurrent`), in-memory databases (e.g. `new Database(":memory:")`) must be explicitly closed using `db.close()` to prevent memory leaks and file-handle exhaustion.
 - **Timer Disposals:** If `EmbeddingWorkerCore` or the embedding pipeline utilizes any batching or debounce timers (e.g. `setTimeout` for backfilling or embedding queues), these must be cleared during test teardown.
 - **Recommendation:** Add a `dispose()` or `close()` method to `EmbeddingWorkerCore` that closes the underlying database and clears any active timers, and invoke it in an `afterEach` test hook.
 
