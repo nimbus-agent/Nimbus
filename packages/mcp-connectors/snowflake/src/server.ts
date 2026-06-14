@@ -26,6 +26,42 @@ function authHeader(): Record<string, string> {
   };
 }
 
+/**
+ * POST a single SQL statement to the Snowflake SQL REST API (`/api/v2/statements`) with the
+ * connector's Bearer auth. Returns the parsed JSON response; throws on a non-OK status. Shared by
+ * the read-only `fetchTables` path and the HITL-gated write tools so auth/transport stays in one place.
+ */
+async function executeStatement(statement: string): Promise<unknown> {
+  const url = `https://${snowflakeAccount()}.snowflakecomputing.com/api/v2/statements`;
+  const res = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: authHeader(),
+    body: JSON.stringify({ statement, timeout: 60 }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Snowflake ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  return JSON.parse(text) as unknown;
+}
+
+// Each dot-separated part is an unquoted identifier OR a fully double-quoted token (no embedded ").
+const SF_IDENT_PART = /^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+")$/;
+function assertSfIdentifier(name: string, label: string): string {
+  const parts = name.split(".");
+  for (const part of parts) {
+    if (!SF_IDENT_PART.test(part)) {
+      throw new Error(`unsafe Snowflake identifier component for ${label}: ${part} in ${name}`);
+    }
+  }
+  return name;
+}
+
+// String literals are escaped by doubling single quotes (the only Snowflake literal-injection vector).
+function sfLiteral(v: string): string {
+  return `'${v.replace(/'/g, "''")}'`;
+}
+
 const TABLES_SQL =
   "SELECT table_catalog AS database_name, table_schema AS schema_name, table_name, " +
   "row_count, last_altered FROM information_schema.tables WHERE table_schema <> 'INFORMATION_SCHEMA'";
@@ -76,17 +112,7 @@ async function fetchTables(page?: {
       : // (table_catalog, table_schema, table_name) uniquely identifies a table in INFORMATION_SCHEMA
         // — a TOTAL order, so OFFSET paging cannot skip or duplicate rows across pages.
         `${TABLES_SQL} ORDER BY table_catalog, table_schema, table_name LIMIT ${page.limit} OFFSET ${page.offset}`;
-  const url = `https://${snowflakeAccount()}.snowflakecomputing.com/api/v2/statements`;
-  const res = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: authHeader(),
-    body: JSON.stringify({ statement, timeout: 60 }),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Snowflake ${String(res.status)}: ${text.slice(0, 400)}`);
-  }
-  return rowsFromStatementsResponse(JSON.parse(text) as unknown);
+  return rowsFromStatementsResponse(await executeStatement(statement));
 }
 
 function tableKey(row: Record<string, unknown>): string {
@@ -149,6 +175,37 @@ export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
       const tables = await fetchTables();
       const matches = filterSnowflakeTables(tables, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
+    },
+  );
+
+  reg(
+    "snowflake_tag_set",
+    "Set or unset a governance TAG on a table (requires HITL snowflake.tag.set). `ALTER TABLE <object> SET TAG <tag> = '<value>'`; omit `value` to UNSET.",
+    z.object({
+      object: z.string().min(1),
+      tag: z.string().min(1),
+      value: z.string().optional(),
+    }),
+    async (p) => {
+      const obj = assertSfIdentifier(p.object, "object");
+      const tag = assertSfIdentifier(p.tag, "tag");
+      const statement =
+        p.value === undefined
+          ? `ALTER TABLE ${obj} UNSET TAG ${tag}`
+          : `ALTER TABLE ${obj} SET TAG ${tag} = ${sfLiteral(p.value)}`;
+      await executeStatement(statement);
+      return jsonResult({ status: "ok", object: obj, tag });
+    },
+  );
+
+  reg(
+    "snowflake_comment_set",
+    "Set a COMMENT on a table (requires HITL snowflake.comment.set). `COMMENT ON TABLE <object> IS '<comment>'`.",
+    z.object({ object: z.string().min(1), comment: z.string() }),
+    async (p) => {
+      const obj = assertSfIdentifier(p.object, "object");
+      await executeStatement(`COMMENT ON TABLE ${obj} IS ${sfLiteral(p.comment)}`);
+      return jsonResult({ status: "ok", object: obj });
     },
   );
 }

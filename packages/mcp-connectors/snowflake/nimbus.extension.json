@@ -10,7 +10,7 @@
     "network": [],
     "filesystem": { "read": [], "write": [] }
   },
-  "hitlRequired": [],
+  "hitlRequired": ["write"],
   "syncInterval": 600,
   "minNimbusVersion": "0.5.0"
 }
