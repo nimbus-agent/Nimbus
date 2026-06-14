@@ -845,7 +845,7 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 ##### Browser & Reading
 
 - [ ] **Web clipper** — browser extension saves a page into the Nimbus index with a tag; includes a browser "sidecar" UI (overlay) to show related local items without leaving the tab; surfaced in `nimbus search` alongside Drive files and emails
-- [ ] **Mendeley** — index whitepapers, PDFs, and citations alongside technical docs; `research_paper` item type; read-only (Zotero shipped in Phase 5)
+- [x] **Mendeley** — index whitepapers, PDFs, and citations alongside technical docs; `reference` item type; read-only (✅ delivered 2026-06-14; reuses the `reference` item type, read-only)
 
 ##### Email & Calendar (macOS-only)
 
