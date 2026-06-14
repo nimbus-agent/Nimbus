@@ -74,7 +74,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write        # github-action-benchmark auto-push to the perf-data orphan branch (push events only)
       pull-requests: write   # for `gh pr comment` upsert in bench-ci.ts
       actions: read          # for `gh run list` + `gh run view` + `gh run download`
     # Spec § 4.3 — do not skew measurements by cancelling a running matrix.
@@ -173,6 +173,35 @@ jobs:
           name: perf-${{ steps.runner-id.outputs.id }}-${{ github.sha }}
           path: ${{ runner.temp }}/run-history.jsonl
           retention-days: 90
+
+      # Push-to-main only: feed the trend-class p95/RSS surfaces to the
+      # github-action-benchmark dashboard on the orphan `perf-data` branch.
+      # Advisory only (fail-on-alert: false) — gating lives in the Compare
+      # step (PR events) and the M1-Air reference cron. Never runs on PRs or
+      # nightly schedules, so the dashboard tracks the canonical main baseline.
+      - name: Emit trend benchmark JSON
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/perf/emit-benchmark-json.ts \
+            --in "${RUNNER_TEMP}/run-history.jsonl" \
+            --out "${RUNNER_TEMP}/benchmark.json"
+
+      - name: Publish to github-action-benchmark trend dashboard
+        if: github.event_name == 'push'
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: ${{ runner.temp }}/benchmark.json
+          gh-pages-branch: perf-data
+          benchmark-data-dir-path: dev/bench
+          auto-push: true
+          fail-on-alert: false
+          comment-on-alert: true
+          alert-threshold: "200%"
+          max-items-in-chart: 500
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compare + post PR-comment delta
         if: |
