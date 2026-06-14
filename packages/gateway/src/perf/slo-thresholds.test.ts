@@ -77,7 +77,17 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
       noiseFloorPct: 25,
       noiseFloorAbs: 300,
       noiseFloorAbsUnit: "ms",
+      // Gated on Linux only: macOS/Windows cold-start spawn jitter is irreducible
+      // and was the dominant no-code-change delta-fail source on main. Mirrors S7.
+      linuxOnlyGate: true,
     } satisfies SloThreshold);
+  });
+
+  test("S1, S11-b carry linuxOnlyGate (latency spawn-jitter, gated on Linux only)", () => {
+    for (const id of ["S1", "S11-b"] as const) {
+      const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
+      expect(row?.linuxOnlyGate).toBe(true);
+    }
   });
 
   test("S2-a row matches spec § 3.2 exactly", () => {
