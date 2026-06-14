@@ -248,7 +248,7 @@ function freshLocalInvokeCtx(over: Partial<LocalOperatorInvokeCtx> = {}): {
 describe("I26 — federated peer gate fail-closed rejects write tool ids", () => {
   it("a granted write tool id is rejected; runTool is never called", async () => {
     let ran = false;
-    const { ctx } = freshI26Ctx({
+    const { db, ctx } = freshI26Ctx({
       runTool: async () => {
         ran = true;
         return { ok: true };
@@ -264,6 +264,11 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     });
     expect(result).toEqual({ kind: "error", error: "no_grant" });
     expect(ran).toBe(false);
+    // M3: audit log must record write_forbidden
+    const audited = db
+      .query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { action_type: string };
+    expect(audited.action_type).toBe("teamvault.invoke.write_forbidden");
   });
 
   it("a read tool id is unaffected by the predicate", async () => {
@@ -301,8 +306,14 @@ describe("answerLocalOperatorInvoke — local owner may invoke a write tool id",
     expect(result).toEqual({ kind: "ok", result: { echoed: "tableau_datasource_refresh" } });
   });
 
-  it("fail-closed on entry/service mismatch", async () => {
-    const { ctx } = freshLocalInvokeCtx();
+  it("fail-closed on entry/service mismatch — runTool is NEVER called (M1)", async () => {
+    let ran = false;
+    const { ctx } = freshLocalInvokeCtx({
+      runTool: async () => {
+        ran = true;
+        return { ok: true };
+      },
+    });
     const result = await answerLocalOperatorInvoke(ctx, {
       entry: "warehouse",
       service: "looker", // wrong service
@@ -310,5 +321,29 @@ describe("answerLocalOperatorInvoke — local owner may invoke a write tool id",
       args: {},
     });
     expect(result).toEqual({ kind: "error", error: "no_grant" });
+    expect(ran).toBe(false);
+  });
+
+  it("returns identity_invalid (non-opaque) and does NOT call runTool when identity is invalid (M2)", async () => {
+    let ran = false;
+    const { db, ctx } = freshLocalInvokeCtx({
+      identity: { enabled: true, isOperatorValid: () => false },
+      runTool: async () => {
+        ran = true;
+        return { ok: true };
+      },
+    });
+    const result = await answerLocalOperatorInvoke(ctx, {
+      entry: "warehouse",
+      service: "tableau",
+      toolId: "tableau_datasource_refresh",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "error", error: "identity_invalid" });
+    expect(ran).toBe(false);
+    const audited = db
+      .query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { action_type: string };
+    expect(audited.action_type).toBe("teamvault.invoke.identity_invalid");
   });
 });
