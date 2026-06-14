@@ -39,6 +39,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/index.ts" },
   { kind: "exact", path: "packages/cli/src/index.ts" },
   { kind: "exact", path: "packages/cli/src/lib/gateway-process.ts" },
+  // `start.ts`: the testable pure helpers (`decideStartAction`, `wantsNoWizard`) are exported +
+  // unit-tested by `start.test.ts`; the residual is irreducible subprocess/socket/timer boot glue
+  // (`spawnGateway`, the IPC ready-poll race, the TTY onboarding loop) with no injection seam —
+  // same untestable I/O-shell class as a connector `server.ts`. (`decideStartAction` is also
+  // currently dead — inlined by `handleExistingGatewayState`; a surgical fast-follow can remove it.)
   { kind: "exact", path: "packages/cli/src/commands/start.ts" },
   { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
   { kind: "exact", path: "packages/cli/src/commands/repl.ts" },
