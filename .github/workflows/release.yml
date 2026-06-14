@@ -392,6 +392,9 @@ jobs:
         shell: bash
         run: |
           set -e
+          # Drop the GHA runner's preinstalled Microsoft apt repos (azure-cli + prod);
+          # they periodically 403 and fail `apt-get update` wholesale. Not needed here.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y libfuse2 file
           # Pin appimagetool; update hash when bumping the version.
