@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
@@ -102,6 +103,9 @@ function makeSyncContext(db: Database): { ctx: SyncContext; warns: CapturedWarn[
       vault: EMPTY_VAULT,
       logger,
       rateLimiter: new ProviderRateLimiter(),
+      sandboxCwd: os.tmpdir(),
+      credentialFor: () => ({ credential: "personal" }),
+      runTeamList: async () => [],
     },
     warns,
   };

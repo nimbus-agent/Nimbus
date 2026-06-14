@@ -347,26 +347,10 @@ export function registerConnectorMeshSyncables(
       ensureMetabaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
-  syncScheduler.register(
-    createSnowflakeSyncable({
-      ensureSnowflakeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createTableauSyncable({
-      ensureTableauMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createLookerSyncable({
-      ensureLookerMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createPowerBiSyncable({
-      ensurePowerBiMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createSnowflakeSyncable());
+  syncScheduler.register(createTableauSyncable());
+  syncScheduler.register(createLookerSyncable());
+  syncScheduler.register(createPowerBiSyncable());
   syncScheduler.register(
     createSupersetSyncable({
       ensureSupersetMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
@@ -544,14 +528,6 @@ export function registerConnectorMeshSyncables(
       ensureGreatExpectationsMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
-  syncScheduler.register(
-    createMonteCarloSyncable({
-      ensureMonteCarloMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createBigeyeSyncable({
-      ensureBigeyeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createMonteCarloSyncable());
+  syncScheduler.register(createBigeyeSyncable());
 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
@@ -34,6 +35,9 @@ function makeCapturingContext(): {
       vault: EMPTY_NIMBUS_VAULT,
       logger,
       rateLimiter: new ProviderRateLimiter(),
+      sandboxCwd: os.tmpdir(),
+      credentialFor: () => ({ credential: "personal" }),
+      runTeamList: async () => [],
     },
     warns,
   };

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import pino from "pino";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createBigquerySyncable } from "./bigquery-sync.ts";
 import {
@@ -73,11 +73,9 @@ function makeTableDetailResponse(datasetId: string, tableId: string): string {
  * Build a SyncContext whose ProviderRateLimiter has a very high burst size for bigquery
  * so that tests issuing 100+ requests don't block on token-bucket waits.
  */
-function unlimitedSyncTestContext(db: Database, vault: NimbusVault) {
+function unlimitedSyncTestContext(db: Database, vault: NimbusVault): SyncContext {
   return {
-    db,
-    vault,
-    logger: pino({ level: "silent" }),
+    ...syncTestContext(db, vault),
     rateLimiter: new ProviderRateLimiter({
       bigquery: { requestsPerMinute: 1_000_000, burstSize: 100_000 },
       gcp: { requestsPerMinute: 1_000_000, burstSize: 100_000 },

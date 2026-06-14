@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterBigeyeIssues } from "./search-filter.ts";
 
 function apiBase(): string {
@@ -19,8 +22,10 @@ function authHeader(): Record<string, string> {
   return { Authorization: `Bearer ${k}`, Accept: "application/json" };
 }
 
-async function fetchIssues(): Promise<unknown[]> {
-  const res = await fetchWithTimeout(`${apiBase()}/api/v1/issues`, { headers: authHeader() });
+/** One page of issues (`GET /api/v1/issues?limit&offset`), tolerant of array / `{issues}` / `{data}`. */
+async function fetchIssues(limit: number, offset: number): Promise<unknown[]> {
+  const url = `${apiBase()}/api/v1/issues?limit=${String(limit)}&offset=${String(offset)}`;
+  const res = await fetchWithTimeout(url, { headers: authHeader() });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Bigeye ${String(res.status)}: ${text.slice(0, 400)}`);
@@ -46,17 +51,21 @@ function issueId(item: unknown): string {
   return "";
 }
 
-await runReadOnlyMcpConnector("nimbus-bigeye", (reg) => {
+export function registerBigeyeTools(reg: ZodToolRegistrar): void {
   reg(
     "bigeye_list",
-    "List Bigeye data-quality issues. `limit` (default 200, max 500) caps the returned list.",
+    "List Bigeye data-quality issues (`GET /api/v1/issues`). Paginated: `cursor` (offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
     z.object({
+      cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     async (p) => {
-      const issues = await fetchIssues();
-      const cap = p.limit ?? 200;
-      return jsonResult({ items: issues.slice(0, cap) });
+      const limit = p.limit ?? 200;
+      // null / undefined / "" / non-numeric / negative all clamp to offset 0; fractional truncates.
+      const offset = Math.max(0, Math.trunc(Number(p.cursor) || 0));
+      const issues = await fetchIssues(limit, offset);
+      const nextCursor = issues.length === limit ? String(offset + limit) : null;
+      return jsonResult({ items: issues, nextCursor });
     },
   );
 
@@ -67,7 +76,7 @@ await runReadOnlyMcpConnector("nimbus-bigeye", (reg) => {
       id: z.string().min(1),
     }),
     async (p) => {
-      const issues = await fetchIssues();
+      const issues = await fetchIssues(500, 0);
       const found = issues.find((item) => issueId(item) === p.id);
       if (found === undefined) {
         throw new Error(`Bigeye issue not found: ${p.id}`);
@@ -84,9 +93,14 @@ await runReadOnlyMcpConnector("nimbus-bigeye", (reg) => {
       limit: z.number().int().min(1).max(200).optional(),
     }),
     async (p) => {
-      const issues = await fetchIssues();
+      const issues = await fetchIssues(500, 0);
       const matches = filterBigeyeIssues(issues, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
     },
   );
-});
+}
+
+// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-bigeye", registerBigeyeTools);
+}

@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterTableauViews } from "./search-filter.ts";
 
 function trimTrailingSlash(s: string): string {
@@ -76,11 +79,22 @@ async function tableauSignin(): Promise<SigninResult> {
   return { token, siteId };
 }
 
-async function listViews(token: string, siteId: string): Promise<unknown[]> {
+/**
+ * List views for a site. With a `page`, requests Tableau's 1-based `pageSize`/`pageNumber` paging and
+ * returns `pagination.totalAvailable`; without it (used by `_get`/`_search`), returns the default page
+ * with `totalAvailable: 0`.
+ */
+async function listViews(
+  token: string,
+  siteId: string,
+  page?: { pageSize: number; pageNumber: number },
+): Promise<{ views: unknown[]; totalAvailable: number }> {
   const base = apiBase();
-  const res = await fetchWithTimeout(`${base}/api/3.4/sites/${encodeURIComponent(siteId)}/views`, {
-    headers: { "X-Tableau-Auth": token, Accept: "application/json" },
-  });
+  const qs = page === undefined ? "" : `?pageSize=${page.pageSize}&pageNumber=${page.pageNumber}`;
+  const res = await fetchWithTimeout(
+    `${base}/api/3.4/sites/${encodeURIComponent(siteId)}/views${qs}`,
+    { headers: { "X-Tableau-Auth": token, Accept: "application/json" } },
+  );
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Tableau views ${String(res.status)}: ${text.slice(0, 400)}`);
@@ -95,21 +109,35 @@ async function listViews(token: string, siteId: string): Promise<unknown[]> {
     views !== null && typeof views === "object" && !Array.isArray(views)
       ? (views as Record<string, unknown>)
       : null;
-  return Array.isArray(viewsObj?.["view"]) ? (viewsObj["view"] as unknown[]) : [];
+  const pagination = root?.["pagination"];
+  const paginationObj =
+    pagination !== null && typeof pagination === "object" && !Array.isArray(pagination)
+      ? (pagination as Record<string, unknown>)
+      : null;
+  return {
+    views: Array.isArray(viewsObj?.["view"]) ? (viewsObj["view"] as unknown[]) : [],
+    totalAvailable: Number(paginationObj?.["totalAvailable"]) || 0,
+  };
 }
 
-await runReadOnlyMcpConnector("nimbus-tableau", (reg) => {
+export function registerTableauTools(reg: ZodToolRegistrar): void {
   reg(
     "tableau_list",
-    "List Tableau views/dashboards (`GET /api/3.4/sites/{siteId}/views`). Requires a PAT sign-in first. `limit` (default 200, max 500) caps the returned list client-side.",
+    "List Tableau views/dashboards (`GET /api/3.4/sites/{siteId}/views`). Requires a PAT sign-in first. Paginated (1-based): `cursor` (page number) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
     z.object({
+      cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     async (p) => {
+      const pageSize = p.limit ?? 200;
+      // 1-based: null / "" / "0" / non-numeric / negative / fractional all resolve to page 1
+      // (never page 0 / a negative or out-of-bounds page).
+      const parsedPage = Math.trunc(Number(p.cursor));
+      const pageNumber = Number.isFinite(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
       const { token, siteId } = await tableauSignin();
-      const views = await listViews(token, siteId);
-      const cap = p.limit ?? 200;
-      return jsonResult({ items: views.slice(0, cap) });
+      const { views, totalAvailable } = await listViews(token, siteId, { pageSize, pageNumber });
+      const nextCursor = pageNumber * pageSize < totalAvailable ? String(pageNumber + 1) : null;
+      return jsonResult({ items: views, nextCursor });
     },
   );
 
@@ -121,7 +149,7 @@ await runReadOnlyMcpConnector("nimbus-tableau", (reg) => {
     }),
     async (p) => {
       const { token, siteId } = await tableauSignin();
-      const views = await listViews(token, siteId);
+      const { views } = await listViews(token, siteId);
       const found = views.find((v) => {
         const obj =
           v !== null && typeof v === "object" && !Array.isArray(v)
@@ -145,9 +173,14 @@ await runReadOnlyMcpConnector("nimbus-tableau", (reg) => {
     }),
     async (p) => {
       const { token, siteId } = await tableauSignin();
-      const views = await listViews(token, siteId);
+      const { views } = await listViews(token, siteId);
       const matches = filterTableauViews(views, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
     },
   );
-});
+}
+
+// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-tableau", registerTableauTools);
+}

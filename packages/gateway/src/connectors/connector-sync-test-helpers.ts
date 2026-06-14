@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import { LocalIndex } from "../index/local-index.ts";
@@ -29,10 +30,17 @@ export function createStubVault(entries: Readonly<Record<string, string | null>>
   };
 }
 
-export function silentSyncContextExtras(): Pick<SyncContext, "logger" | "rateLimiter"> {
+export function silentSyncContextExtras(): Pick<
+  SyncContext,
+  "logger" | "rateLimiter" | "sandboxCwd" | "credentialFor" | "runTeamList"
+> {
   return {
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
+    // Wave 7b SyncContext members — personal-credential defaults for sync tests.
+    sandboxCwd: os.tmpdir(),
+    credentialFor: () => ({ credential: "personal" }),
+    runTeamList: async () => [],
   };
 }
 

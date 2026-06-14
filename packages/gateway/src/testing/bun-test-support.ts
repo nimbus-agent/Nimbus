@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { expect } from "bun:test";
 import http from "node:http";
 import https from "node:https";
+import os from "node:os";
 import pino from "pino";
 
 import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
@@ -44,6 +45,10 @@ export function createSyncTestContext(db: Database, vault: NimbusVault): SyncCon
     vault,
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter(),
+    // Wave 7b SyncContext members — personal-credential defaults for sync tests.
+    sandboxCwd: os.tmpdir(),
+    credentialFor: () => ({ credential: "personal" }),
+    runTeamList: async () => [],
   };
 }
 

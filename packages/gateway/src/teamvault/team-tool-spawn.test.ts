@@ -1,16 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MCPClient } from "@mastra/mcp";
 
-import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
-import type { MeshSpawnContext } from "../connectors/lazy-mesh/slot.ts";
 import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { __setSessionSpawnerForTest } from "./connector-session.ts";
 import type { TeamToolSpawnRequest } from "./team-tool-invoke.ts";
-import { runSpawnedToolCall, spawnerFor } from "./team-tool-spawn.ts";
+import { spawnTeamToolAndCall } from "./team-tool-spawn.ts";
 
-// Inert in these tests (the fake spawner never reads it), but built cross-platform per convention.
+// `spawnTeamToolAndCall` is a thin wrapper over `withConnectorSession` (the spawn-once/N-calls
+// primitive). The spawn lifecycle itself — spawnerFor selection, realSpawn client assembly, the
+// not-found / disconnect semantics — is unit-tested in `connector-session.test.ts`. Here we only
+// prove the wrapper opens one session and makes exactly one call with the request's tool + args.
+
 const TEST_CWD = join(tmpdir(), "nimbus-team-tool-spawn-test");
 
 const fakeVault: NimbusVault = {
@@ -31,87 +33,66 @@ function req(over: Partial<TeamToolSpawnRequest> = {}): TeamToolSpawnRequest {
   };
 }
 
-/** A fake MCPClient exposing only the surface runSpawnedToolCall touches: listTools + disconnect. */
-function fakeClient(
+function sessionClient(
   tools: LazyMeshToolMap,
-  onDisconnect: () => Promise<void> = () => Promise.resolve(),
-): MCPClient {
+  onDisconnect: () => void = () => {},
+): { listTools: () => Promise<LazyMeshToolMap>; disconnect: () => Promise<void> } {
   return {
     listTools: () => Promise.resolve(tools),
-    disconnect: onDisconnect,
-  } as unknown as MCPClient;
-}
-
-/** A fake spawner that populates the ctx clients map (mirrors what a real spawner does). */
-function spawnerWith(...clients: ReadonlyArray<readonly [string, MCPClient]>) {
-  return async (ctx: MeshSpawnContext): Promise<void> => {
-    for (const [key, client] of clients) ctx.setLazyClient(key, client);
+    disconnect: () => {
+      onDisconnect();
+      return Promise.resolve();
+    },
   };
 }
 
-describe("spawnerFor", () => {
-  test("returns the single-service spawner for a known service", () => {
-    expect(spawnerFor("github")).toBe(spawners.ensureGithubMcp);
-    expect(spawnerFor("slack")).toBe(spawners.ensureSlackMcp);
+describe("spawnTeamToolAndCall (thin wrapper over withConnectorSession)", () => {
+  afterEach(() => {
+    __setSessionSpawnerForTest(undefined);
   });
 
-  test("falls back to the phase-3 bundle spawner for any other service", () => {
-    expect(spawnerFor("aws")).toBe(spawners.ensurePhase3BundleMcp);
-    expect(spawnerFor("totally-unknown")).toBe(spawners.ensurePhase3BundleMcp);
-  });
-});
+  test("opens one session, calls the requested tool once with its args, returns the result", async () => {
+    let spawns = 0;
+    let disconnects = 0;
+    const calls: unknown[] = [];
+    __setSessionSpawnerForTest((r) => {
+      spawns += 1;
+      expect(r.service).toBe("github");
+      expect(r.vaultView).toBe(fakeVault);
+      return sessionClient(
+        {
+          list_issues: {
+            execute: (args: unknown) => {
+              calls.push(args);
+              return Promise.resolve({ got: args });
+            },
+          },
+        },
+        () => {
+          disconnects += 1;
+        },
+      );
+    });
 
-describe("runSpawnedToolCall", () => {
-  test("calls the requested tool and returns its result", async () => {
-    const client = fakeClient({ list_issues: { execute: (a) => Promise.resolve({ got: a }) } });
-    const result = await runSpawnedToolCall(spawnerWith(["github", client]), req());
+    const result = await spawnTeamToolAndCall(req());
+
     expect(result).toEqual({ got: { a: 1 } });
+    expect(spawns).toBe(1);
+    expect(disconnects).toBe(1);
+    expect(calls).toEqual([{ a: 1 }]);
   });
 
-  test("searches across multiple clients and returns from the one that has the tool", async () => {
-    const noMatch = fakeClient({ other_tool: { execute: () => Promise.resolve("nope") } });
-    const match = fakeClient({ list_issues: { execute: () => Promise.resolve("yes") } });
-    const result = await runSpawnedToolCall(spawnerWith(["a", noMatch], ["b", match]), req());
-    expect(result).toBe("yes");
-  });
+  test("propagates the not-found error (and still disconnects) when the tool is absent", async () => {
+    let disconnects = 0;
+    __setSessionSpawnerForTest(() =>
+      sessionClient({ other_tool: { execute: () => Promise.resolve(1) } }, () => {
+        disconnects += 1;
+      }),
+    );
 
-  test("skips a tool whose execute is undefined and throws not-found", async () => {
-    const client = fakeClient({ list_issues: {} }); // present but no execute
-    await expect(runSpawnedToolCall(spawnerWith(["github", client]), req())).rejects.toThrow(
+    await expect(spawnTeamToolAndCall(req())).rejects.toThrow(
       /tool "list_issues" not found for service "github"/,
     );
-  });
-
-  test("throws not-found when no client exposes the tool", async () => {
-    const client = fakeClient({ unrelated: { execute: () => Promise.resolve(1) } });
-    await expect(runSpawnedToolCall(spawnerWith(["github", client]), req())).rejects.toThrow(
-      /not found for service "github"/,
-    );
-  });
-
-  test("disconnects every client in finally, swallowing disconnect errors", async () => {
-    let disconnected = 0;
-    const client = fakeClient({ list_issues: { execute: () => Promise.resolve("ok") } }, () => {
-      disconnected += 1;
-      return Promise.reject(new Error("disconnect boom"));
-    });
-    const result = await runSpawnedToolCall(spawnerWith(["github", client]), req());
-    expect(result).toBe("ok");
-    expect(disconnected).toBe(1); // rejection swallowed, no throw
-  });
-
-  test("disconnects partially-registered clients if the spawner throws mid-registration", async () => {
-    let disconnected = 0;
-    const partial = fakeClient({}, () => {
-      disconnected += 1;
-      return Promise.resolve();
-    });
-    const spawner = async (ctx: MeshSpawnContext): Promise<void> => {
-      ctx.setLazyClient("partial", partial);
-      throw new Error("spawn boom");
-    };
-    // The spawner error propagates, but the already-registered client is still disconnected.
-    await expect(runSpawnedToolCall(spawner, req())).rejects.toThrow("spawn boom");
-    expect(disconnected).toBe(1);
+    expect(disconnects).toBe(1);
   });
 });

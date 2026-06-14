@@ -181,6 +181,20 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
 
+/**
+ * Alternative-auth groups for the I19 team-secret presence check (`team-tool-invoke.ts`). A connector
+ * listed here accepts ANY ONE of the keys in each group in place of requiring them all — mirroring what
+ * the connector spawner actually consumes. Snowflake authenticates with `account` plus EITHER an OAuth
+ * token OR a key-pair JWT, never both (see `phase3AddSnowflakeMcp`), so requiring all three keys would
+ * make every real Snowflake team entry fail closed with `team_secret_missing`. Keys NOT in any group
+ * stay individually required (AND). All keys remain in `CONNECTOR_VAULT_SECRET_KEYS` (D11 + redaction).
+ */
+export const TEAM_SECRET_ANYOF_GROUPS: Partial<
+  Record<ConnectorServiceId, readonly (readonly string[])[]>
+> = {
+  snowflake: [["snowflake.oauth_token", "snowflake.key_pair_jwt"]],
+};
+
 export async function clearConnectorVaultSecretKeys(
   vault: NimbusVault,
   id: ConnectorServiceId,

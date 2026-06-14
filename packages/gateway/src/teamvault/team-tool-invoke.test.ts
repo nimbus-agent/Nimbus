@@ -1,10 +1,19 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { __setSessionSpawnerForTest } from "./connector-session.ts";
 import {
+  drainTeamListSession,
   type InvokeTeamToolDeps,
+  type InvokeTeamToolListDeps,
   invokeTeamTool,
+  invokeTeamToolList,
   type TeamToolSpawnRequest,
 } from "./team-tool-invoke.ts";
+
+// Opaque cwd handed to the (injected) spawn seam — built cross-platform per repo convention.
+const SANDBOX_CWD = join(tmpdir(), "nimbus-team-tool-invoke-test");
 
 function fakeVault(seed: Record<string, string> = {}): NimbusVault {
   const store = new Map<string, string>(Object.entries(seed));
@@ -24,7 +33,7 @@ function deps(over: Partial<InvokeTeamToolDeps> = {}): {
   const spawnCalls: TeamToolSpawnRequest[] = [];
   const d: InvokeTeamToolDeps = {
     vault: fakeVault({ "teamvault.prod-aws.github.pat": "TEAMPAT" }),
-    sandboxCwd: "/tmp/sbx",
+    sandboxCwd: SANDBOX_CWD,
     requiredSecretKeysFor: (service) => (service === "github" ? ["github.pat"] : undefined),
     spawnAndCall: async (req) => {
       spawnCalls.push(req);
@@ -33,6 +42,25 @@ function deps(over: Partial<InvokeTeamToolDeps> = {}): {
     ...over,
   };
   return { d, spawnCalls };
+}
+
+function listDeps(over: Partial<InvokeTeamToolListDeps> = {}): {
+  d: InvokeTeamToolListDeps;
+  sessionCalled: { value: boolean };
+} {
+  const sessionCalled = { value: false };
+  const d: InvokeTeamToolListDeps = {
+    vault: fakeVault({ "teamvault.dw-snowflake.snowflake.account": "ACCT123" }),
+    sandboxCwd: SANDBOX_CWD,
+    requiredSecretKeysFor: (service) =>
+      service === "snowflake" ? ["snowflake.account"] : undefined,
+    openSession: async () => {
+      sessionCalled.value = true;
+      return [{ schema: "PUBLIC" }, { schema: "RAW" }];
+    },
+    ...over,
+  };
+  return { d, sessionCalled };
 }
 
 describe("invokeTeamTool (I19)", () => {
@@ -86,5 +114,146 @@ describe("invokeTeamTool (I19)", () => {
       args: {},
     });
     expect(JSON.stringify(r)).not.toContain("TEAMPAT");
+  });
+});
+
+describe("alternative-auth (anyOf) secret groups — Snowflake account + one-of token", () => {
+  // Mirrors the production manifest: all three keys are "known" (D11/redaction), but the spawner
+  // (phase3AddSnowflakeMcp) needs account + EITHER oauth_token OR key_pair_jwt — never both.
+  const snowflakeKeys = ["snowflake.account", "snowflake.oauth_token", "snowflake.key_pair_jwt"];
+  const snowflakeAnyOf = [["snowflake.oauth_token", "snowflake.key_pair_jwt"]];
+  const listReq = { entry: "dw", service: "snowflake", listToolId: "snowflake_list" } as const;
+
+  function snowflakeListDeps(seed: Record<string, string>): {
+    d: InvokeTeamToolListDeps;
+    sessionCalled: { value: boolean };
+  } {
+    const sessionCalled = { value: false };
+    const d: InvokeTeamToolListDeps = {
+      vault: fakeVault(seed),
+      sandboxCwd: SANDBOX_CWD,
+      requiredSecretKeysFor: (service) => (service === "snowflake" ? snowflakeKeys : undefined),
+      anyOfSecretGroupsFor: (service) => (service === "snowflake" ? snowflakeAnyOf : undefined),
+      openSession: async () => {
+        sessionCalled.value = true;
+        return [{ schema: "PUBLIC" }];
+      },
+    };
+    return { d, sessionCalled };
+  }
+
+  it("succeeds with account + ONLY oauth_token (key_pair_jwt absent)", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.account": "ACCT",
+      "teamvault.dw.snowflake.oauth_token": "OAUTH",
+    });
+    expect(await invokeTeamToolList(d, listReq)).toEqual([{ schema: "PUBLIC" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("succeeds with account + ONLY key_pair_jwt (oauth_token absent)", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.account": "ACCT",
+      "teamvault.dw.snowflake.key_pair_jwt": "JWT",
+    });
+    expect(await invokeTeamToolList(d, listReq)).toEqual([{ schema: "PUBLIC" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("fails CLOSED (no session) when account is present but BOTH tokens are absent", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({ "teamvault.dw.snowflake.account": "ACCT" });
+    await expect(invokeTeamToolList(d, listReq)).rejects.toThrow(/missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+
+  it("fails CLOSED when a non-group key (account) is absent even if a token is present", async () => {
+    const { d, sessionCalled } = snowflakeListDeps({
+      "teamvault.dw.snowflake.oauth_token": "OAUTH",
+    });
+    await expect(invokeTeamToolList(d, listReq)).rejects.toThrow(/missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+});
+
+describe("invokeTeamToolList (I19 — paginated list drain)", () => {
+  it("returns the array openSession resolves when the team secret is present", async () => {
+    const { d, sessionCalled } = listDeps();
+    const result = await invokeTeamToolList(d, {
+      entry: "dw-snowflake",
+      service: "snowflake",
+      listToolId: "snowflake_list_schemas",
+    });
+    expect(result).toEqual([{ schema: "PUBLIC" }, { schema: "RAW" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("throws team_secret_missing and does NOT call openSession when the secret is absent", async () => {
+    const { d, sessionCalled } = listDeps({
+      vault: fakeVault({}), // no team secret stored
+    });
+    await expect(
+      invokeTeamToolList(d, {
+        entry: "dw-snowflake",
+        service: "snowflake",
+        listToolId: "snowflake_list_schemas",
+      }),
+    ).rejects.toThrow(/team_secret_missing|missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+
+  it("throws team_service_unsupported and does NOT call openSession for an unknown service", async () => {
+    const { d, sessionCalled } = listDeps();
+    await expect(
+      invokeTeamToolList(d, {
+        entry: "dw-snowflake",
+        service: "google_drive",
+        listToolId: "gdrive_list_files",
+      }),
+    ).rejects.toThrow(/team_service_unsupported|no team-injectable secret keys/);
+    expect(sessionCalled.value).toBe(false);
+  });
+});
+
+describe("drainTeamListSession (production openSession — D9 one-spawn multi-page drain)", () => {
+  afterEach(() => __setSessionSpawnerForTest(undefined));
+
+  it("drains two pages from a fake spawner and returns all items aggregated", async () => {
+    // Build a fake session client that returns two pages for snowflake_list.
+    const page1 = { items: [{ id: "row1" }, { id: "row2" }], nextCursor: "p2" };
+    const page2 = { items: [{ id: "row3" }], nextCursor: null };
+
+    function makeMcpResult(page: { items: unknown[]; nextCursor: string | null }): unknown {
+      return { content: [{ type: "text", text: JSON.stringify(page) }] };
+    }
+
+    let spawnCount = 0;
+    __setSessionSpawnerForTest(() => {
+      spawnCount += 1;
+      let callCount = 0;
+      return {
+        listTools: async () => ({
+          snowflake_list: {
+            execute: async () => {
+              callCount += 1;
+              return callCount === 1 ? makeMcpResult(page1) : makeMcpResult(page2);
+            },
+          },
+        }),
+        disconnect: async () => {},
+      };
+    });
+
+    const fakeVaultView = fakeVault({ "snowflake.account": "ACCT" });
+
+    const result = await drainTeamListSession({
+      service: "snowflake",
+      vaultView: fakeVaultView,
+      sandboxCwd: SANDBOX_CWD,
+      listToolId: "snowflake_list",
+    });
+
+    expect(result).toEqual([{ id: "row1" }, { id: "row2" }, { id: "row3" }]);
+    // D9: only ONE spawn for N pages.
+    expect(spawnCount).toBe(1);
   });
 });

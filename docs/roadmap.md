@@ -733,7 +733,7 @@ Phase 6 bundles several independent subsystems; it ships as **9 sequenced delive
 | 4 | Org Policy Engine + Admin Console + Observability (✅ delivered 2026-06-07, invariant I22) | 1 |
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) (✅ delivered 2026-06-09, invariant I23) | 1, 2 |
 | 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) — **Slice 6a** (ghost / conflicts / huddle agents + V38 known-namespaces cache) ✅ 2026-06-11; **6b** (cloud janitor + blast-radius preflight, I24) ✅ 2026-06-12; **6c** (tribal-knowledge extraction, I25/V39) ✅ 2026-06-12 — Slice 6 COMPLETE | 1 |
-| 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) — **Wave 7a ✅ delivered 2026-06-13** (read-only connectors + V40 cross-warehouse lineage; Waves 7b team-vault-gated / 7c HITL-writes follow) | 2, 3 |
+| 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) — **Wave 7a ✅ delivered 2026-06-13** (read-only connectors + V40 cross-warehouse lineage); **Wave 7b ✅ delivered 2026-06-14** (optional Team-Vault credentials via the I19 principal-polymorphic gate + unified paginated spawn transport; no new invariant/migration; deferred: live-API cursor verification, cross-gateway audit-identity-subject); Wave 7c HITL-writes follows | 2, 3 |
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) | 1, Phase 4 signing |
 | 9 | Deferred Phase 5 items (web clipper, Mendeley, Apple Mail/Cal, Workday, GitOps/ML writes) | mostly independent |
 

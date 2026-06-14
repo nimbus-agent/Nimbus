@@ -1414,3 +1414,12 @@ export function loadNimbusServiceConfigsFromConfigDir(
   }
   return merged;
 }
+
+export {
+  type ConnectorCredentialConfig,
+  type ConnectorsConfig,
+  loadNimbusConnectorsFromConfigDir,
+  parseNimbusConnectorsToml,
+  TEAM_CREDENTIAL_CONNECTORS,
+  type TeamCredentialConnector,
+} from "./nimbus-toml-connectors.ts";
