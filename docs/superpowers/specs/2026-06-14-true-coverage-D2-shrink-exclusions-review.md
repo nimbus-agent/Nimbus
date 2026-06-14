@@ -1,7 +1,7 @@
 # Review & Feedback: True Coverage — Sub-project D2 Spec Review
 
 **Review Date:** 2026-06-14  
-**Design Document Reviewed:** [2026-06-14-true-coverage-D2-shrink-exclusions-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/tc-D2/docs/superpowers/specs/2026-06-14-true-coverage-D2-shrink-exclusions-design.md)  
+**Design Document Reviewed:** [2026-06-14-true-coverage-D2-shrink-exclusions-design.md](./2026-06-14-true-coverage-D2-shrink-exclusions-design.md)  
 **Status:** Review Feedback / Suggestions / Open Questions
 
 ---

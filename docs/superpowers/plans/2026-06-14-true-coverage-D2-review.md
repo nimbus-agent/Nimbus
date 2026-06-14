@@ -20,7 +20,7 @@ We have identified one significant improvement that allows us to achieve **100% 
 ### 2.1. Testing the Cancel Branch in `handleConsentNotification` (Task 2 Step 1)
 
 - **Observation:** The plan states that the `isCancel(ok)` branch in `handleConsentNotification` is an "accepted uncovered residual (1 branch)" because Clack's `CANCEL_SYMBOL` is unexported.
-- **Correction:** In the codebase under [cli-mocks.ts](file:///C:/gitrep/Nimbus/packages/cli/test/helpers/cli-mocks.ts#L40), the cancel symbol is defined as `Symbol.for("clack:cancel")` and exported as `CLACK_CANCEL` (line 117). This means `isCancel` from `@clack/prompts` simply checks if the value is this registered symbol.
+- **Correction:** In the codebase under [cli-mocks.ts](../../../packages/cli/test/helpers/cli-mocks.ts), the cancel symbol is defined as `Symbol.for("clack:cancel")` and exported as `CLACK_CANCEL` (line 117). This means `isCancel` from `@clack/prompts` simply checks if the value is this registered symbol.
 - **Suggestion:** We can achieve 100% coverage of `handleConsentNotification` by adding a test case that returns this symbol from the mock prompt:
 
   ```typescript
