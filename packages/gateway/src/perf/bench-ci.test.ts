@@ -23,9 +23,12 @@ const passingLine: HistoryLine = {
   surfaces: { S1: { samples_count: 100, p95_ms: 800 } },
 };
 
+// S2-a is gate-class (the build-gating partition). S1 is now trend-class and no
+// longer gates on shared runners, so the gating fixture must use a gate-class
+// surface for an absolute-fail to drive a non-zero exit on a PR.
 const failingLine: HistoryLine = {
   ...passingLine,
-  surfaces: { S1: { samples_count: 100, p95_ms: 12_000 } },
+  surfaces: { "S2-a": { samples_count: 100, p95_ms: 12_000 } },
 };
 
 function spawnSequence(scripted: GhSpawnResult[]): {
@@ -60,7 +63,7 @@ describe("runBenchCiMain", () => {
     }
   });
 
-  test("UX absolute-fail on PR run → exits 1 + posts comment with marker", async () => {
+  test("gate-class absolute-fail on PR run → exits 1 + posts comment with marker", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const currentPath = writeHistory(dir, "current.jsonl", failingLine);

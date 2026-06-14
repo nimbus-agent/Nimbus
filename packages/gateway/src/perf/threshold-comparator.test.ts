@@ -28,52 +28,31 @@ describe("compareAgainstHistory", () => {
     expect(out.length).toBe(SLO_THRESHOLDS.length);
   });
 
-  test("first run on main: previous=null → every gated row → no-baseline", () => {
-    const current = fakeLine("gha-ubuntu", { S1: { samples_count: 100, p95_ms: 800 } });
+  test("first run on main: previous=null → gate-class row S2-a → no-baseline", () => {
+    const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 100, p95_ms: 100 } });
     const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
-    const s1 = out.find((c) => c.surfaceId === "S1");
-    expect(s1?.status).toEqual({ kind: "no-baseline", current: 800 });
+    const s2a = out.find((c) => c.surfaceId === "S2-a");
+    expect(s2a?.status).toEqual({ kind: "no-baseline", current: 100 });
   });
 
-  test("absolute-fail when current exceeds ghaMax (UX row)", () => {
-    const current = fakeLine("gha-ubuntu", { S1: { samples_count: 100, p95_ms: 12_000 } });
-    const previous = fakeLine("gha-ubuntu", { S1: { samples_count: 100, p95_ms: 800 } });
+  test("absolute-fail when current exceeds ghaMax (S2-a gate surface)", () => {
+    const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 100, p95_ms: 12_000 } });
+    const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 100, p95_ms: 800 } });
     const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
-    const s1 = out.find((c) => c.surfaceId === "S1");
-    expect(s1?.status).toEqual({ kind: "absolute-fail", measured: 12_000, threshold: 10_000 });
+    const s2a = out.find((c) => c.surfaceId === "S2-a");
+    expect(s2a?.status).toEqual({ kind: "absolute-fail", measured: 12_000, threshold: 200 });
   });
 
-  test("S1 cold-start jitter (617→841 ms, +36 %) sits inside the widened 300 ms floor → pass (Linux)", () => {
-    // Regression guard for the run-27487164610 delta-fail: a pure release commit
-    // swung S1 p95 from 616.87 to 840.81 ms. With noiseFloorAbs=300 the effective
-    // floor is 300/616.87 ≈ 48.6 %, above the +36.3 % swing. If the floor is ever
-    // re-tightened to 200 ms (32.4 %), this flips back to delta-fail. Asserted on
-    // gha-ubuntu because S1 is now Linux-only-gated (see the macOS/Windows tests
-    // below) — Linux is the runner where the floor still does the gating work.
+  test("S1 on gha-ubuntu is trend-only (no longer gated on shared runners) — skipped(trend-only)", () => {
+    // S1 is now gateClass: "trend" — on GHA shared runners it resolves to skipped,
+    // so jitter (617→841 ms, +36 %) no longer gates the build there.
+    // The delta is still computed and shown in the PR comment for humans.
     const current = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 840.81 } });
     const previous = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 616.87 } });
     const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
     const s1 = out.find((c) => c.surfaceId === "S1");
-    expect(s1?.status).toEqual({ kind: "pass" });
+    expect(s1?.status).toEqual({ kind: "skipped", reason: "trend-only" });
   });
-
-  // S1 + S11-a + S11-b carry linuxOnlyGate: their shared-runner spawn jitter on
-  // macOS / Windows is irreducible and was the dominant source of no-code-change
-  // perf delta-fails on main (e.g. run-27498114264 S1 +38.1 % on windows-2025;
-  // S11-a +57.7 % on macos-15 on the #622 release commit). The delta is still
-  // computed + surfaced in the PR comment; it just no longer gates the build off
-  // Linux. Mirrors the S7 memory-surface precedent above.
-  for (const surfaceId of ["S1", "S11-a", "S11-b"] as const) {
-    for (const runner of ["gha-macos", "gha-windows"] as const) {
-      test(`${surfaceId} on ${runner} resolves to skipped(linux-only-gate)`, () => {
-        const current = fakeLine(runner, { [surfaceId]: { samples_count: 301, p95_ms: 99_999 } });
-        const previous = fakeLine(runner, { [surfaceId]: { samples_count: 301, p95_ms: 600 } });
-        const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, runner);
-        const c = out.find((x) => x.surfaceId === surfaceId);
-        expect(c?.status).toEqual({ kind: "skipped", reason: "linux-only-gate" });
-      });
-    }
-  }
 
   test("delta-fail when delta > floorPct AND > floorAbs/previous*100", () => {
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 65 } });
@@ -91,11 +70,23 @@ describe("compareAgainstHistory", () => {
     expect(s2a?.status).toEqual({ kind: "pass" });
   });
 
-  test("workload row with ghaMax === 'tbd-c2' resolves to skipped(tbd-c2)", () => {
+  test("workload row with gateClass=gate and ghaMax=tbd-c2 resolves to skipped(tbd-c2)", () => {
+    // Use a custom SLO row with gateClass: "gate" and ghaMax: "tbd-c2" — trend surfaces
+    // are now skipped(trend-only) before reaching the tbd-c2 check.
+    const customSlo: SloThreshold = {
+      surfaceId: "S6-drive",
+      gateClass: "gate",
+      metric: "throughput_per_sec",
+      ghaMax: "tbd-c2",
+      gated: false,
+      noiseFloorPct: 25,
+      noiseFloorAbs: 5,
+      noiseFloorAbsUnit: "items_per_sec",
+    };
     const current = fakeLine("gha-ubuntu", {
       "S6-drive": { samples_count: 5, throughput_per_sec: 999_999 },
     });
-    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
+    const out = compareAgainstHistory(current, null, [customSlo], "gha-ubuntu");
     const s6 = out.find((c) => c.surfaceId === "S6-drive");
     expect(s6?.status).toEqual({ kind: "skipped", reason: "tbd-c2" });
   });
@@ -107,20 +98,23 @@ describe("compareAgainstHistory", () => {
     expect(s2c?.status).toEqual({ kind: "skipped", reason: "reference-only" });
   });
 
-  test("S7-a on gha-macos resolves to skipped(linux-only-gate)", () => {
-    const current = fakeLine("gha-macos", {
-      "S7-a": { samples_count: 60, rss_bytes_p95: 100_000_000 },
-    });
-    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-macos");
-    const s7a = out.find((c) => c.surfaceId === "S7-a");
-    expect(s7a?.status).toEqual({ kind: "skipped", reason: "linux-only-gate" });
-  });
-
-  test("stub surface (samples_count=0) resolves to skipped(stub)", () => {
+  test("stub surface (samples_count=0) resolves to skipped(stub) for gate-class surfaces", () => {
+    // Stub detection fires after classifySkip; for trend-class surfaces classifySkip
+    // returns trend-only first. Use a gate-class SLO to test stub path.
+    const stubSlo: SloThreshold = {
+      surfaceId: "S3",
+      gateClass: "gate",
+      metric: "p95_ms",
+      ghaMax: 7_500,
+      gated: true,
+      noiseFloorPct: 25,
+      noiseFloorAbs: 100,
+      noiseFloorAbsUnit: "ms",
+    };
     const current = fakeLine("gha-ubuntu", {
       S3: { samples_count: 0, stub_reason: "renderer instrumentation pending" },
     });
-    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
+    const out = compareAgainstHistory(current, null, [stubSlo], "gha-ubuntu");
     const s3 = out.find((c) => c.surfaceId === "S3");
     expect(s3?.status).toEqual({ kind: "skipped", reason: "stub" });
   });
@@ -245,9 +239,9 @@ describe("compareAgainstHistory — ceiling metrics regression direction", () =>
 });
 
 describe("isFailingComparison", () => {
-  test("returns false for any kind when slo.gated === false", () => {
+  test("returns false for any kind when slo.gateClass is trend", () => {
     const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S6-drive")!;
-    expect(slo.gated).toBe(false);
+    expect(slo.gateClass).toBe("trend");
     expect(
       isFailingComparison(
         {
@@ -260,12 +254,12 @@ describe("isFailingComparison", () => {
     ).toBe(false);
   });
 
-  test("returns true only for absolute-fail / delta-fail when gated", () => {
-    const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S1")!;
+  test("returns true only for absolute-fail / delta-fail when gate-class (S2-a)", () => {
+    const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S2-a")!;
     expect(
       isFailingComparison(
         {
-          surfaceId: "S1",
+          surfaceId: "S2-a",
           metric: "p95_ms",
           status: { kind: "absolute-fail", measured: 12_000, threshold: 10_000 },
         },
@@ -275,7 +269,7 @@ describe("isFailingComparison", () => {
     expect(
       isFailingComparison(
         {
-          surfaceId: "S1",
+          surfaceId: "S2-a",
           metric: "p95_ms",
           status: { kind: "delta-fail", previous: 100, current: 200, deltaPct: 100, floorPct: 25 },
         },
@@ -283,19 +277,131 @@ describe("isFailingComparison", () => {
       ),
     ).toBe(true);
     expect(
-      isFailingComparison({ surfaceId: "S1", metric: "p95_ms", status: { kind: "pass" } }, slo),
+      isFailingComparison({ surfaceId: "S2-a", metric: "p95_ms", status: { kind: "pass" } }, slo),
     ).toBe(false);
     expect(
       isFailingComparison(
-        { surfaceId: "S1", metric: "p95_ms", status: { kind: "no-baseline", current: 100 } },
+        { surfaceId: "S2-a", metric: "p95_ms", status: { kind: "no-baseline", current: 100 } },
         slo,
       ),
     ).toBe(false);
     expect(
       isFailingComparison(
-        { surfaceId: "S1", metric: "p95_ms", status: { kind: "skipped", reason: "stub" } },
+        { surfaceId: "S2-a", metric: "p95_ms", status: { kind: "skipped", reason: "stub" } },
         slo,
       ),
+    ).toBe(false);
+  });
+});
+
+describe("compareAgainstHistory — gateClass-driven skip classification", () => {
+  test("trend surface (S1) on gha-ubuntu resolves to skipped(trend-only)", () => {
+    const current = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 99_999 } });
+    const previous = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 600 } });
+    const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
+    const s1 = out.find((c) => c.surfaceId === "S1");
+    expect(s1?.status).toEqual({ kind: "skipped", reason: "trend-only" });
+  });
+
+  for (const runner of ["gha-ubuntu", "gha-macos", "gha-windows"] as const) {
+    test(`trend surface (S11-b) on ${runner} resolves to skipped(trend-only)`, () => {
+      const current = fakeLine(runner, { "S11-b": { samples_count: 301, p95_ms: 99_999 } });
+      const previous = fakeLine(runner, { "S11-b": { samples_count: 301, p95_ms: 600 } });
+      const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, runner);
+      const c = out.find((x) => x.surfaceId === "S11-b");
+      expect(c?.status).toEqual({ kind: "skipped", reason: "trend-only" });
+    });
+  }
+
+  test("trend RSS surface (S7-a) on gha-macos resolves to skipped(trend-only)", () => {
+    const current = fakeLine("gha-macos", {
+      "S7-a": { samples_count: 60, rss_bytes_p95: 100_000_000 },
+    });
+    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-macos");
+    const s7a = out.find((c) => c.surfaceId === "S7-a");
+    expect(s7a?.status).toEqual({ kind: "skipped", reason: "trend-only" });
+  });
+
+  test("reference surface (S2-c) on gha-ubuntu resolves to skipped(reference-only)", () => {
+    const current = fakeLine("gha-ubuntu", {});
+    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
+    const s2c = out.find((c) => c.surfaceId === "S2-c");
+    expect(s2c?.status).toEqual({ kind: "skipped", reason: "reference-only" });
+  });
+
+  test("on reference-m1air a trend surface is EVALUATED (not skipped) via refMax", () => {
+    // S1 refMax=2000; measured 12000 → absolute-fail on the reference runner.
+    const current = fakeLine("reference-m1air", { S1: { samples_count: 301, p95_ms: 12_000 } });
+    const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "reference-m1air");
+    const s1 = out.find((c) => c.surfaceId === "S1");
+    expect(s1?.status).toEqual({ kind: "absolute-fail", measured: 12_000, threshold: 2_000 });
+  });
+
+  test("gate surface (S2-a) on gha-ubuntu is EVALUATED (not skipped)", () => {
+    const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 65 } });
+    const previous = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 50 } });
+    const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
+    const s2a = out.find((c) => c.surfaceId === "S2-a");
+    expect(s2a?.status).toMatchObject({ kind: "delta-fail", previous: 50, current: 65 });
+  });
+});
+
+describe("isFailingComparison — gateClass gating", () => {
+  test("a trend-class surface can never fail the build", () => {
+    const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S1")!;
+    expect(slo.gateClass).toBe("trend");
+    expect(
+      isFailingComparison(
+        {
+          surfaceId: "S1",
+          metric: "p95_ms",
+          status: { kind: "absolute-fail", measured: 12_000, threshold: 10_000 },
+        },
+        slo,
+      ),
+    ).toBe(false);
+  });
+
+  test("a reference-class surface can never fail the build", () => {
+    const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S9")!;
+    expect(slo.gateClass).toBe("reference");
+    expect(
+      isFailingComparison(
+        {
+          surfaceId: "S9",
+          metric: "tokens_per_sec",
+          status: { kind: "absolute-fail", measured: 1, threshold: 100 },
+        },
+        slo,
+      ),
+    ).toBe(false);
+  });
+
+  test("a gate-class surface fails on absolute-fail / delta-fail", () => {
+    const slo = SLO_THRESHOLDS.find((r) => r.surfaceId === "S2-a")!;
+    expect(slo.gateClass).toBe("gate");
+    expect(
+      isFailingComparison(
+        {
+          surfaceId: "S2-a",
+          metric: "p95_ms",
+          status: { kind: "absolute-fail", measured: 300, threshold: 200 },
+        },
+        slo,
+      ),
+    ).toBe(true);
+    expect(
+      isFailingComparison(
+        {
+          surfaceId: "S2-a",
+          metric: "p95_ms",
+          status: { kind: "delta-fail", previous: 50, current: 200, deltaPct: 300, floorPct: 25 },
+        },
+        slo,
+      ),
+    ).toBe(true);
+    expect(
+      isFailingComparison({ surfaceId: "S2-a", metric: "p95_ms", status: { kind: "pass" } }, slo),
     ).toBe(false);
   });
 });
