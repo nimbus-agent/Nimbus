@@ -613,6 +613,8 @@ await runReadOnlyMcpConnector("nimbus-mendeley", (reg) => {
 });
 ```
 
+> **401 handling (plan-review B):** `mendeleyGet` throws an error that includes the HTTP status (`Mendeley 401: …`) — so an expired injected token surfaces explicitly, more so than Notion's server (which only returns the status). Mendeley does **not** add bespoke 401-driven re-spawn logic: no connector has that today. A token that expires mid-session is bounded by the existing lazy-mesh idle-disconnect, after which the next spawn re-resolves a token via `getValidMendeleyAccessToken` (which refreshes `REFRESH_MARGIN_MS` = 120s before expiry). Building a cross-connector force-disconnect-on-401 path is out of scope for this slice.
+
 - [ ] **Step 6: Write the sandbox contract test** (identical shape to Zotero's; gated on `NIMBUS_TEST_HARNESS`)
 
 `packages/mcp-connectors/mendeley/test/sandbox.test.ts`:
@@ -1094,7 +1096,7 @@ git commit -m "feat(mendeley): RFC 5988 Link-header next-page parser"
 
 The sync handler walks `GET /documents?view=all&limit=100` (plus `modified_since=<ISO>` on incremental cycles), following `Link: rel="next"` up to a page cap, mapping each document and upserting it. It uses a focused, rate-limit-aware fetch (`fetchMendeleyPage`) that captures the `Link` header — `connectorFetch` is intentionally not used because it discards headers. The token is resolved via `getValidMendeleyAccessToken`; `fetchFn` is injectable for tests.
 
-> **Date-format note (review item 2B):** `modified_since` is emitted via `new Date(ms).toISOString()` → `YYYY-MM-DDTHH:mm:ss.sssZ` (millisecond precision, trailing `Z`). Verify against the current Mendeley `/documents` docs during implementation; the test below pins the exact emitted string so a format change is caught.
+> **Date-format note (review items 2B / plan-review A):** `modified_since` is emitted through a single `formatCursorDate` helper that defaults to **seconds precision** (`YYYY-MM-DDTHH:mm:ssZ`, milliseconds stripped) — the lowest-common-denominator ISO 8601 form that no endpoint rejects, since some Mendeley endpoints historically return `400` when milliseconds are present. The format lives in exactly one place, so flipping to millisecond precision (`new Date(ms).toISOString()`) is a one-line change if the docs require it. The test below pins the exact emitted string so any format change is caught.
 
 - [ ] **Step 1: Write the failing sync test**
 
@@ -1107,7 +1109,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import pino from "pino";
-import { createMendeleySyncable } from "./mendeley-sync.ts";
+import { createMendeleySyncable, formatCursorDate } from "./mendeley-sync.ts";
 
 // Minimal SyncContext fake — DB-backed upsert is exercised by integration tests;
 // here we assert pagination, cursor, and error arms with a faked fetch.
@@ -1195,10 +1197,15 @@ describe("createMendeleySyncable", () => {
     }) as unknown as typeof fetch;
     const { ctx } = fakeCtx(fetchFn);
     const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
-    const cursor = JSON.stringify({ since: "2024-03-02T08:00:00.000Z" });
+    // The stored cursor is always seconds-precision (produced by formatCursorDate).
+    const cursor = "nimbus-mendeley1:" + JSON.stringify({ since: "2024-03-02T08:00:00Z" });
     // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
     await syncable.sync(ctx as any, cursor);
-    expect(calls[0]).toContain("modified_since=2024-03-02T08%3A00%3A00.000Z");
+    expect(calls[0]).toContain("modified_since=2024-03-02T08%3A00%3A00Z");
+  });
+
+  test("formatCursorDate strips milliseconds", () => {
+    expect(formatCursorDate(new Date("2024-03-02T08:00:00.123Z"))).toBe("2024-03-02T08:00:00Z");
   });
 
   test("first-page HTTP error returns an empty pass result", async () => {
@@ -1251,6 +1258,16 @@ interface PageOutcome {
   docs: unknown[];
   bytes: number;
   nextUrl: string | null;
+}
+
+/**
+ * Format a cursor timestamp for Mendeley's `modified_since` query param. Defaults
+ * to seconds precision (milliseconds stripped) — the lowest-common-denominator
+ * ISO 8601 form, since some Mendeley endpoints reject fractional seconds with 400.
+ * To switch to millisecond precision, return `date.toISOString()` instead.
+ */
+export function formatCursorDate(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function decodeCursor(cursor: string | null): MendeleyCursorV1 | null {
@@ -1338,7 +1355,7 @@ export function createMendeleySyncable(
       }
 
       const prev = decodeCursor(cursor);
-      const syncStartIso = new Date().toISOString();
+      const syncStartIso = formatCursorDate(new Date());
       let url: string | null = firstPageUrl(prev?.since ?? null);
       let totalBytes = 0;
       let upserted = 0;
@@ -1466,7 +1483,9 @@ Expected: PASS for all `mendeley-*` files. If a file is below floor, add the mis
 - [ ] **Step 6: Full preflight before first push**
 
 Run: `bun run preflight`
-Expected: PASS (typecheck across all packages, biome, tests, static structure audits, doc-refs). Resolve anything red before pushing.
+Expected: PASS (typecheck across all packages, biome, tests, static structure audits, doc-refs, **`audit:cross-platform`**). Resolve anything red before pushing.
+
+> **Cross-platform (plan-review C):** all temp dirs use `join(tmpdir(), …)` (separator-safe). Do not introduce raw `/` separators in any path assertion or file-copy — `audit:cross-platform` (run by preflight here) flags Windows-separator path assertions; use the `// cross-platform-ok` escape hatch only with justification.
 
 - [ ] **Step 7: Final commit / ready to push**
 
@@ -1493,4 +1512,12 @@ git log --oneline origin/main..HEAD   # review the slice's commits
 
 **Placeholder scan:** No TBD/TODO; every code step shows full code; commands have expected output. The few `>` notes ask the implementer to *verify an exact import/helper name against a named sibling file* — not to invent behavior.
 
-**Type consistency:** `getValidMendeleyAccessToken` (Tasks 2, 5, 8), `mapMendeleyDocumentToItem` (Tasks 6, 8), `filterMendeleyDocuments` (Task 4), `parseNextLink` (Tasks 7, 8), `createMendeleySyncable` (Tasks 8, 9), `ensureMendeleyMcp`/`ensureMendeleyRunning` (Tasks 5, 9), `OAUTH_PROVIDERS.mendeley` (Tasks 2, 5) — names are consistent across tasks. Item type `"reference"`, service `"mendeley"`, vault key `mendeley.oauth`, env vars `NIMBUS_OAUTH_MENDELEY_CLIENT_ID/_SECRET` used uniformly.
+**Type consistency:** `getValidMendeleyAccessToken` (Tasks 2, 5, 8), `mapMendeleyDocumentToItem` (Tasks 6, 8), `filterMendeleyDocuments` (Task 4), `parseNextLink` (Tasks 7, 8), `createMendeleySyncable` / `formatCursorDate` (Tasks 8, 9), `ensureMendeleyMcp`/`ensureMendeleyRunning` (Tasks 5, 9), `OAUTH_PROVIDERS.mendeley` (Tasks 2, 5) — names are consistent across tasks. Item type `"reference"`, service `"mendeley"`, vault key `mendeley.oauth`, env vars `NIMBUS_OAUTH_MENDELEY_CLIENT_ID/_SECRET` used uniformly.
+
+## Plan review triage (2026-06-14)
+
+Reviewer feedback in `2026-06-14-slice9-mendeley-connector-review.md`:
+
+- **A — `modified_since` millisecond precision — FIXED.** Task 8 now routes the cursor timestamp through an exported `formatCursorDate` helper defaulting to seconds precision (millis stripped), with a pinning test; one-line flip if the docs require millis.
+- **B — MCP server 401 surfacing / re-spawn — MOSTLY SATISFIED + DEFERRED.** `server.ts` already includes the HTTP status in its error; clarifying note added. Force-disconnect-on-401 is shared infra that exists for no connector and is out of scope for this slice.
+- **C — cross-platform temp-dir paths — ALREADY COVERED.** Plan uses `join(tmpdir(), …)`; `audit:cross-platform` runs in preflight (Task 10 Step 6). Reminder note added.
