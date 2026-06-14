@@ -42,7 +42,7 @@ Every surface is classified by where its measurement is trustworthy:
 
 This **supersedes `linuxOnlyGate`**: today S1/S11 still gate on `gha-ubuntu` (also a shared runner with jitter). Under this model, spawn/latency surfaces stop gating on *all* GHA runners (ubuntu included) and are gated only on the M1 Air reference run — which is consistent hardware and therefore trustworthy. GHA still *measures and charts* them; it just never blocks on them.
 
-> **Decision point for review:** this removes `gha-ubuntu` gating of spawn-latency surfaces (S1/S11). The safety net becomes the nightly reference run (§4.5). Alternative: keep a weaker `gate-on-ubuntu-too` for spawn-latency. Recommendation: drop it — ubuntu jitter is real and the reference run is the honest authority.
+> **Decided (review Q1):** **drop** `gha-ubuntu` gating of spawn-latency surfaces (S1/S11) — ubuntu is also a shared VM (CPU-scaling / neighbour noise / IO throttling), so gating there produces false alerts. The safety net is the nightly reference run (§4.5); GHA runs are trend-only for these surfaces.
 
 ## 4. Phase 1 — GH-native (build now, no external service)
 
@@ -57,8 +57,10 @@ Populate per the table in §3 and **remove `linuxOnlyGate`** (its three current 
 - `reference` runner → gate any surface that has a `refMax` (gate + trend + reference classes all evaluated).
 - GHA runner → only `gate`-class surfaces can fail; `trend`/`reference` resolve to `skipped` (still measured + reported).
 
+`gateClass` also **subsumes the existing `gated: boolean`** on `SloThreshold` (`gate` ⇒ gated everywhere; `trend`/`reference` ⇒ not GHA-gated). Remove `gated` and derive its call-sites from `gateClass`, so there is one source of truth, not two overlapping flags. (Name: keeping `gateClass` for concision; reviewer-suggested `gatingStrategy` / `evalMode` are equivalent — final name is the maintainer's call, §10.)
+
 ### 4.2 Stats fix — single p95 across flattened samples
-`bench-harness.ts buildLatencyResult` currently reports the **median of per-run p95 values** (p95-of-5 ≈ the 2nd-largest of 5 → max-like, volatile). Change it to **flatten all `rawSamples` across runs and compute one p95** over the full pool. Keeps the `p95_ms` metric (no schema-of-meaning change), is statistically far more stable, and was the adversarially-verified-sound option (p50 was rejected — it discards tail-latency signal). Bump `schema_version` 1 → 2; reset the trend history (old aggregates are not comparable).
+`bench-harness.ts buildLatencyResult` currently reports the **median of per-run p95 values** (p95-of-5 ≈ the 2nd-largest of 5 → max-like, volatile). Change it to a **trimmed-pool p95**: discard the single worst run (highest per-run p95) — so one catastrophically-contended run (disk thrash / network hang spiking *all* its samples) can't skew the result — then flatten the remaining runs' `rawSamples` into one pool and compute a single p95. With the default 5 runs this pools ~4 runs; for `runs < 3` skip the trim and pool all (too few to trim). *Verified feasible:* `buildLatencyResult` already receives `perRunSamples: number[][]`, so the trim + pooled p95 are a local change (and align latency with the existing RSS surface, which already pools). Keeps the `p95_ms` metric (no change of meaning), is far more stable than median-of-per-run-p95, and is the adversarially-verified-sound option (p50 was rejected — it discards tail-latency signal). Bump `schema_version` 1 → 2; reset the trend history (old aggregates are not comparable).
 
 ### 4.3 Event-aware gating
 `bench-ci.ts decideExit`:
@@ -71,6 +73,12 @@ On every main run, emit a `customSmallerIsBetter` / `customBiggerIsBetter` JSON 
 - `fail-on-alert: false`, `comment-on-alert: true` → advisory only, never blocks.
 
 Because that action only compares against the *previous* point (noisy), add a small **sustained-drift detector** (`scripts/perf/drift-check.ts`): rolling median of the last **K = 7** main runs per `(surface, runner)`; if the latest is worse than that median by **> the surface's own noise floor** for **N = 3 consecutive** runs, open/update **one** GitHub issue (de-duplicated by surface). This catches genuine drift while ignoring single-run spikes.
+
+**Noise-floor source (review B):** the drift threshold is *not* new config — it reuses each surface's existing `noiseFloorPct` / `noiseFloorAbs` on `SloThreshold`, i.e. the same `max(noiseFloorPct, noiseFloorAbs / median × 100)` effective floor that `threshold-comparator.ts` already computes for gating. Gate and trend share one noise definition.
+
+**In-PR comment (review Q3):** keep a condensed PR comment — a small table of the **`gate`-class** surfaces' pass/fail plus a link to the `/dev/bench` dashboard for the full `trend`-class detail. (Devs rarely click through to a dashboard without an at-a-glance summary in the PR.)
+
+**History retention (review C):** `github-action-benchmark`'s history JSON grows unbounded on a high-velocity repo. Interim mitigation: cap rendered points (`max-items-in-chart`) and periodically prune/down-sample the `perf-data` JSON — the orphan branch is checked out rarely, so growth is low-severity. Native retention/down-sampling is a **Phase-2 (Bencher)** capability; tracked as a known limitation (§8).
 
 ### 4.5 Promote the M1 Air reference run to gate authority
 `.github/workflows/_perf-reference.yml` is currently `workflow_dispatch`-only. Add a **nightly `schedule` cron** (keep manual dispatch). On consistent hardware it gates the **full** surface set via `refMax` — the trustworthy regression catch, off the PR critical path. Security: scheduled/dispatch only, never fork-PR-triggered (self-hosted runner).
@@ -97,6 +105,8 @@ Stand up a **self-hosted Bencher** instance (open-source, AGPL/local-first-align
 - *`github-action-benchmark` single-point alerts are noisy* → we set `fail-on-alert: false` and layer our own rolling-median sustained-drift rule for the actionable issue alert.
 - *`perf-data` branch churn* → orphan branch, charts only; never merged to main.
 - *Stats-fix baseline reset loses history continuity* → one-time, documented; the 90-day artifacts remain for forensics.
+- *`perf-data` history JSON grows unbounded* → interim `max-items-in-chart` cap + periodic prune of the orphan branch (rarely checked out → low severity); fully solved by Phase-2 Bencher's native retention (review C).
+- *A single catastrophically-contended run skews the pooled p95* → the run-level outlier trim in §4.2 (drop the worst run) absorbs it (review A).
 
 ## 9. Decisions already made (during brainstorm)
 - Philosophy = **hybrid** (gate stable, trend noisy).
@@ -104,9 +114,10 @@ Stand up a **self-hosted Bencher** instance (open-source, AGPL/local-first-align
 - Stats fix = **flatten→single p95** (not p50).
 - Trend tooling = **`github-action-benchmark`** (not hand-rolled charts).
 - Drift defaults: **K=7, N=3, threshold = per-surface noise floor** (tunable).
+- Review Q1–Q3 resolved: **drop ubuntu gating** (Q1); **`perf-data` orphan branch** for the dashboard (Q2); **keep a condensed gate-class PR comment** + dashboard link (Q3).
+- `gateClass` **subsumes** the existing `gated: boolean` — remove the redundant flag (surfaced by review Q4).
+- Stats fix adds a **run-level outlier trim** before the pooled p95 (review A).
+- Drift threshold **reuses the existing per-surface `noiseFloorPct` / `noiseFloorAbs`** — no new field (review B).
 
 ## 10. Open questions for reviewer
-1. Confirm the §3 decision to **drop `gha-ubuntu` gating** of spawn-latency in favour of the reference run.
-2. `perf-data` orphan branch vs the existing Astro docs site (`packages/docs`) for the dashboard?
-3. Keep the existing in-PR perf comment alongside the new chart, or fold it in?
-4. Field name `gateClass` acceptable?
+Q1–Q3 resolved via the review (see §9 + §3). **One residual — maintainer preference only, no functional impact:** the field **name** — `gateClass` (kept) vs the reviewer-suggested `gatingStrategy` / `evalMode`. Will use `gateClass` unless you say otherwise.
