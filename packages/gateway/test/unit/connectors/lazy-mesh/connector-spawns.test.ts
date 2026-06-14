@@ -70,9 +70,10 @@ mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
 }));
 
 type AuthBehaviour = "ok" | "empty" | "throw";
-const authBehaviour: { slack: AuthBehaviour; notion: AuthBehaviour } = {
+const authBehaviour: { slack: AuthBehaviour; notion: AuthBehaviour; mendeley: AuthBehaviour } = {
   slack: "ok",
   notion: "ok",
+  mendeley: "ok",
 };
 
 mock.module("../../../../src/auth/slack-access-token.ts", () => ({
@@ -87,6 +88,13 @@ mock.module("../../../../src/auth/notion-access-token.ts", () => ({
     if (authBehaviour.notion === "throw") throw new Error("test-injected-failure");
     if (authBehaviour.notion === "empty") return "";
     return "fake-notion-access-token";
+  },
+}));
+mock.module("../../../../src/auth/mendeley-access-token.ts", () => ({
+  getValidMendeleyAccessToken: async (): Promise<string> => {
+    if (authBehaviour.mendeley === "throw") throw new Error("test-injected-failure");
+    if (authBehaviour.mendeley === "empty") return "";
+    return "fake-mendeley-access-token";
   },
 }));
 
@@ -169,6 +177,7 @@ const {
   ensureJiraMcp,
   ensureKubernetesMcp,
   ensureLinearMcp,
+  ensureMendeleyMcp,
   ensureMicrosoftBundleMcp,
   ensureMiroMcp,
   ensureNotionMcp,
@@ -218,6 +227,7 @@ beforeEach(() => {
   capturedClients.length = 0;
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
+  authBehaviour.mendeley = "ok";
   oauthBehaviour.hubspot = "ok";
   oauthBehaviour.miro = "ok";
   oauthBehaviour.canva = "ok";
@@ -760,6 +770,48 @@ describe("ensureNotionMcp", () => {
     const { ctx, vault } = makeCtx({ existingClient: true });
     await vault.set("notion.oauth", '{"access_token":"raw"}');
     await ensureNotionMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureMendeleyMcp", () => {
+  test("missing mendeley.oauth raw → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureMendeleyMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("oauth raw present, getValidMendeleyAccessToken succeeds → spawn", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("mendeley.oauth", '{"access_token":"raw"}');
+    await ensureMendeleyMcp(ctx);
+    const env = capturedClients[0]?.servers["mendeley"]?.env;
+    expect(env?.["MENDELEY_ACCESS_TOKEN"]).toBe("fake-mendeley-access-token");
+    expectNoProcessEnvLeak(env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed by try/catch)", async () => {
+    authBehaviour.mendeley = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("mendeley.oauth", '{"access_token":"raw"}');
+    await ensureMendeleyMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("auth helper returns empty string → no spawn", async () => {
+    authBehaviour.mendeley = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("mendeley.oauth", '{"access_token":"raw"}');
+    await ensureMendeleyMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("mendeley.oauth", '{"access_token":"raw"}');
+    await ensureMendeleyMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
 });

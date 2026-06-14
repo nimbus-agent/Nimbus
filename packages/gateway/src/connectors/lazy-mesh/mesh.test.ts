@@ -110,6 +110,9 @@ describe("ensure<Service>Running delegators (no vault keys → all no-op)", () =
   test("ensureNotionRunning", async () => {
     await mesh!.ensureNotionRunning();
   });
+  test("ensureMendeleyRunning", async () => {
+    await mesh!.ensureMendeleyRunning();
+  });
   test("ensureObsidianRunning", async () => {
     await mesh!.ensureObsidianRunning();
   });
