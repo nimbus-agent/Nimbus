@@ -23,6 +23,7 @@ import {
   ensureJiraMcp,
   ensureKubernetesMcp,
   ensureLinearMcp,
+  ensureMendeleyMcp,
   ensureMicrosoftBundleMcp,
   ensureMiroMcp,
   ensureNotionMcp,
@@ -273,6 +274,10 @@ export class LazyConnectorMesh {
     return ensureNotionMcp(this.spawnContext);
   }
 
+  async ensureMendeleyRunning(): Promise<void> {
+    return ensureMendeleyMcp(this.spawnContext);
+  }
+
   async ensureObsidianRunning(): Promise<void> {
     return ensureObsidianMcp(this.spawnContext);
   }
@@ -342,6 +347,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.linear), name: "linear" },
       { map: await list(LAZY_MESH.jira), name: "jira" },
       { map: await list(LAZY_MESH.notion), name: "notion" },
+      { map: await list(LAZY_MESH.mendeley), name: "mendeley" },
       { map: await list(LAZY_MESH.confluence), name: "confluence" },
       { map: await list(LAZY_MESH.discord), name: "discord" },
       { map: await list(LAZY_MESH.jenkins), name: "jenkins" },
