@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterLookerDashboards } from "./search-filter.ts";
 
 function trimTrailingSlash(s: string): string {
@@ -58,31 +61,72 @@ async function lookerLogin(): Promise<string> {
   return token;
 }
 
-async function listDashboards(token: string): Promise<unknown[]> {
+/** GET a Looker collection as a bare array. With a `page`, adds `?limit&offset`; else the default page. */
+async function getArray(
+  token: string,
+  path: string,
+  page?: { limit: number; offset: number },
+): Promise<unknown[]> {
   const base = apiBase();
-  const res = await fetchWithTimeout(`${base}/api/4.0/dashboards`, {
+  const qs = page === undefined ? "" : `?limit=${page.limit}&offset=${page.offset}`;
+  const res = await fetchWithTimeout(`${base}${path}${qs}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`Looker dashboards ${String(res.status)}: ${text.slice(0, 400)}`);
+    throw new Error(`Looker ${path} ${String(res.status)}: ${text.slice(0, 400)}`);
   }
   const parsed = JSON.parse(text) as unknown;
   return Array.isArray(parsed) ? parsed : [];
 }
 
-await runReadOnlyMcpConnector("nimbus-looker", (reg) => {
+async function listDashboards(token: string): Promise<unknown[]> {
+  return getArray(token, "/api/4.0/dashboards");
+}
+
+/** Resolve an opaque offset cursor; null / "" / undefined → 0. */
+function offsetCursor(cursor: string | null | undefined): number {
+  return cursor === null || cursor === undefined || cursor === ""
+    ? 0
+    : Math.max(0, Number.parseInt(cursor, 10) || 0);
+}
+
+export function registerLookerTools(reg: ZodToolRegistrar): void {
   reg(
     "looker_list",
-    "List Looker dashboards (`GET /api/4.0/dashboards`). Requires a client-credentials login first. `limit` (default 200, max 500) caps the returned list client-side.",
+    "List Looker dashboards (`GET /api/4.0/dashboards`). Requires a client-credentials login first. Paginated: `cursor` (opaque offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`.",
     z.object({
+      cursor: z.string().nullable().optional(),
       limit: z.number().int().min(1).max(500).optional(),
     }),
     async (p) => {
+      const limit = p.limit ?? 200;
+      const offset = offsetCursor(p.cursor);
       const token = await lookerLogin();
-      const dashboards = await listDashboards(token);
-      const cap = p.limit ?? 200;
-      return jsonResult({ items: dashboards.slice(0, cap) });
+      const items = await getArray(token, "/api/4.0/dashboards", { limit, offset });
+      return jsonResult({
+        items,
+        nextCursor: items.length === limit ? String(offset + limit) : null,
+      });
+    },
+  );
+
+  reg(
+    "looker_models_list",
+    "List LookML models (`GET /api/4.0/lookml_models`) for dashboard→table lineage. Paginated: `cursor` (opaque offset) + `limit` (default 200, max 500) → `{ items, nextCursor }`. Returns raw models (explores/views nested); the gateway flattens them.",
+    z.object({
+      cursor: z.string().nullable().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    async (p) => {
+      const limit = p.limit ?? 200;
+      const offset = offsetCursor(p.cursor);
+      const token = await lookerLogin();
+      const items = await getArray(token, "/api/4.0/lookml_models", { limit, offset });
+      return jsonResult({
+        items,
+        nextCursor: items.length === limit ? String(offset + limit) : null,
+      });
     },
   );
 
@@ -123,4 +167,9 @@ await runReadOnlyMcpConnector("nimbus-looker", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+}
+
+// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-looker", registerLookerTools);
+}
