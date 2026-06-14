@@ -292,6 +292,120 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
   });
 });
 
+// ---------------------------------------------------------------------------
+// resolveIdentitySubject threading (Wave 7b deferral — I19 audit enrichment)
+// ---------------------------------------------------------------------------
+
+describe("resolveIdentitySubject threading", () => {
+  it("answerFederatedInvoke: answered audit row carries identity_subject when resolver returns a value", async () => {
+    const { db, ctx } = freshCtx({
+      resolveIdentitySubject: () => "operator@example.com",
+    });
+    const r = await answerFederatedInvoke(ctx, {
+      peerId: "peer:abc",
+      entry: "prod-aws",
+      toolId: "aws.ec2.instance.stop",
+      args: {},
+      purpose: "enrichment test",
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect(parsed.identity_subject).toBe("operator@example.com");
+  });
+
+  it("answerFederatedInvoke: answered audit row OMITS identity_subject when resolver returns undefined", async () => {
+    const { db, ctx } = freshCtx({
+      resolveIdentitySubject: () => undefined,
+    });
+    const r = await answerFederatedInvoke(ctx, {
+      peerId: "peer:abc",
+      entry: "prod-aws",
+      toolId: "aws.ec2.instance.stop",
+      args: {},
+      purpose: "omit test",
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect("identity_subject" in parsed).toBe(false);
+  });
+
+  it("answerLocalOperatorList: answered audit row carries identity_subject when resolver returns a value", async () => {
+    const { db, ctx } = freshLocalCtx({
+      resolveIdentitySubject: () => "local@example.com",
+    });
+    const r = await answerLocalOperatorList(ctx, {
+      entry: "dw-snowflake",
+      service: "snowflake",
+      listToolId: "snowflake_list_schemas",
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect(parsed.identity_subject).toBe("local@example.com");
+  });
+
+  it("answerLocalOperatorList: answered audit row OMITS identity_subject when resolver returns undefined", async () => {
+    const { db, ctx } = freshLocalCtx({
+      resolveIdentitySubject: () => undefined,
+    });
+    const r = await answerLocalOperatorList(ctx, {
+      entry: "dw-snowflake",
+      service: "snowflake",
+      listToolId: "snowflake_list_schemas",
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect("identity_subject" in parsed).toBe(false);
+  });
+
+  it("answerLocalOperatorInvoke: answered audit row carries identity_subject when resolver returns a value", async () => {
+    const { db, ctx } = freshLocalInvokeCtx({
+      resolveIdentitySubject: () => "invoke@example.com",
+    });
+    const r = await answerLocalOperatorInvoke(ctx, {
+      entry: "warehouse",
+      service: "tableau",
+      toolId: "tableau_datasource_refresh",
+      args: {},
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect(parsed.identity_subject).toBe("invoke@example.com");
+  });
+
+  it("answerLocalOperatorInvoke: answered audit row OMITS identity_subject when resolver returns undefined", async () => {
+    const { db, ctx } = freshLocalInvokeCtx({
+      resolveIdentitySubject: () => undefined,
+    });
+    const r = await answerLocalOperatorInvoke(ctx, {
+      entry: "warehouse",
+      service: "tableau",
+      toolId: "tableau_datasource_refresh",
+      args: {},
+    });
+    expect(r.kind).toBe("ok");
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect("identity_subject" in parsed).toBe(false);
+  });
+});
+
 describe("answerLocalOperatorInvoke — local owner may invoke a write tool id", () => {
   it("runs the tool and returns its result", async () => {
     const { ctx } = freshLocalInvokeCtx({

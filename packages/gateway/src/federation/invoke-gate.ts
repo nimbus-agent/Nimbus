@@ -35,6 +35,9 @@ export interface InvokeGateCtx {
    *  true for the requested toolId, the federated peer invoke is rejected fail-closed (opaque),
    *  before grant/quorum. Omitted → no write confinement (back-compat). */
   readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
+  /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
+   *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
+  readonly resolveIdentitySubject?: () => string | undefined;
 }
 
 export interface InboundInvoke {
@@ -55,6 +58,7 @@ function audit(
   decision: TeamVaultDecision,
   approvers?: readonly string[],
 ): void {
+  const identitySubject = ctx.resolveIdentitySubject?.();
   appendTeamVaultAudit(ctx.db, {
     principal: { kind: "peer", peerId: q.peerId },
     entry: q.entry,
@@ -62,6 +66,7 @@ function audit(
     decision,
     timestamp: (ctx.now ?? Date.now)(),
     ...(approvers === undefined ? {} : { approvers }),
+    ...(identitySubject === undefined ? {} : { identitySubject }),
   });
 }
 
@@ -127,6 +132,9 @@ export interface LocalOperatorListCtx {
   readonly now?: () => number;
   /** I18: when identity is enabled, the local operator must be valid to serve a team credential. */
   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+  /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
+   *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
+  readonly resolveIdentitySubject?: () => string | undefined;
 }
 
 export interface LocalOperatorListRequest {
@@ -177,12 +185,14 @@ export async function answerLocalOperatorList(
     service: req.service,
     listToolId: req.listToolId,
   });
+  const listIdentitySubject = ctx.resolveIdentitySubject?.();
   appendTeamVaultAudit(ctx.db, {
     principal: { kind: "localOperator" },
     entry: req.entry,
     toolId: req.listToolId,
     decision: "answered",
     timestamp: ts,
+    ...(listIdentitySubject === undefined ? {} : { identitySubject: listIdentitySubject }),
   });
   return { kind: "ok", items };
 }
@@ -203,6 +213,9 @@ export interface LocalOperatorInvokeCtx {
   readonly now?: () => number;
   /** I18: when identity is enabled, the local operator must be valid to serve a team credential. */
   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+  /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
+   *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
+  readonly resolveIdentitySubject?: () => string | undefined;
 }
 
 export interface LocalOperatorInvokeRequest {
@@ -255,12 +268,14 @@ export async function answerLocalOperatorInvoke(
     toolId: req.toolId,
     args: req.args,
   });
+  const invokeIdentitySubject = ctx.resolveIdentitySubject?.();
   appendTeamVaultAudit(ctx.db, {
     principal: { kind: "localOperator" },
     entry: req.entry,
     toolId: req.toolId,
     decision: "answered",
     timestamp: ts,
+    ...(invokeIdentitySubject === undefined ? {} : { identitySubject: invokeIdentitySubject }),
   });
   return { kind: "ok", result };
 }

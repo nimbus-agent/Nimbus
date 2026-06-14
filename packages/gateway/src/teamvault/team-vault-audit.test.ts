@@ -83,4 +83,42 @@ describe("appendTeamVaultAudit", () => {
     expect(parsed.peer_id).toBe("peer:xyz");
     db.close();
   });
+
+  it("records identity_subject in federation_json when provided (Wave 7b deferral)", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    appendTeamVaultAudit(db, {
+      principal: { kind: "peer", peerId: "peer:abc" },
+      entry: "prod-aws",
+      toolId: "aws.ec2.instance.stop",
+      decision: "answered",
+      timestamp: 5000,
+      identitySubject: "user@example.com",
+    });
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect(parsed.identity_subject).toBe("user@example.com");
+    db.close();
+  });
+
+  it("OMITS identity_subject key entirely when not provided (no sentinel)", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    appendTeamVaultAudit(db, {
+      principal: { kind: "localOperator" },
+      entry: "dw-snowflake",
+      toolId: "snowflake_list_schemas",
+      decision: "answered",
+      timestamp: 6000,
+      // identitySubject deliberately absent
+    });
+    const row = db
+      .query(`SELECT federation_json FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { federation_json: string };
+    const parsed = JSON.parse(row.federation_json);
+    expect("identity_subject" in parsed).toBe(false);
+    db.close();
+  });
 });
