@@ -44,6 +44,9 @@ export interface TeamRpcClient {
   call<T = unknown>(method: string, params?: unknown): Promise<T>;
 }
 
+/** The `confirm`-shaped prompt the consent listener uses, injected so the decision logic is unit-testable. */
+export type ConfirmPrompt = (opts: { message: string }) => Promise<boolean | symbol>;
+
 function collectFilters(args: string[]): Array<{ kind: string; value: string }> {
   const filters: Array<{ kind: string; value: string }> = [];
   for (let i = 0; i < args.length; i++) {
@@ -288,7 +291,7 @@ function cellText(v: unknown): string {
 }
 
 /** Renders the merged team-audit timeline as a fixed-width table (timestamp, peer, action, hitl, hash). */
-function renderAuditTable(entries: MergedAuditRow[]): string {
+export function renderAuditTable(entries: MergedAuditRow[]): string {
   const header = ["TIMESTAMP", "PEER", "ACTION", "HITL", "HASH"];
   const rows = entries.map((e) => [
     typeof e.timestamp === "number" ? new Date(e.timestamp).toISOString() : cellText(e.timestamp),
@@ -303,7 +306,7 @@ function renderAuditTable(entries: MergedAuditRow[]): string {
 }
 
 async function respondToConsent(
-  client: IPCClient,
+  client: TeamRpcClient,
   requestId: string,
   approved: boolean,
 ): Promise<void> {
@@ -328,38 +331,51 @@ async function respondToConsent(
   }
 }
 
+/**
+ * Handles a single `federation.consentRequest` notification: prompt the operator and submit the
+ * decision. Extracted from {@link runConsentListener} (which keeps only the notification
+ * registration + the run-until-interrupted wait) so the decision logic is unit-testable with an
+ * injected `prompt`. The real listener passes clack's `confirm`.
+ */
+export async function handleConsentNotification(
+  client: TeamRpcClient,
+  params: unknown,
+  prompt: ConfirmPrompt,
+  isCancelled: (value: unknown) => boolean,
+): Promise<void> {
+  const p = params as {
+    requestId?: string;
+    peerId?: string;
+    namespace?: string;
+    purpose?: string;
+  };
+  if (typeof p.requestId !== "string") return;
+  const ok = await prompt({
+    message: `Peer ${p.peerId ?? "?"} requests namespace "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
+  });
+  if (isCancelled(ok)) {
+    // Esc/cancel: do NOT submit a deny — leave the query to time out on the answerer.
+    process.stdout.write(`consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`);
+    return;
+  }
+  try {
+    await client.call("federation.consentRespond", {
+      requestId: p.requestId,
+      approved: ok === true,
+    });
+  } catch (e) {
+    process.stderr.write(
+      `Error sending consent decision: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+  }
+}
+
 async function runConsentListener(client: IPCClient): Promise<void> {
   process.stdout.write("Listening for federation consent requests. Press Ctrl-C to stop.\n");
   client.onNotification("federation.consentRequest", (params: unknown) => {
-    void (async () => {
-      const p = params as {
-        requestId?: string;
-        peerId?: string;
-        namespace?: string;
-        purpose?: string;
-      };
-      if (typeof p.requestId !== "string") return;
-      const ok = await confirm({
-        message: `Peer ${p.peerId ?? "?"} requests namespace "${p.namespace ?? "?"}" (purpose: ${p.purpose ?? "?"}). Approve?`,
-      });
-      if (isCancel(ok)) {
-        // Esc/cancel: do NOT submit a deny — leave the query to time out on the answerer.
-        process.stdout.write(
-          `consent prompt cancelled for ${p.requestId}; leaving it to time out.\n`,
-        );
-        return;
-      }
-      try {
-        await client.call("federation.consentRespond", {
-          requestId: p.requestId,
-          approved: ok === true,
-        });
-      } catch (e) {
-        process.stderr.write(
-          `Error sending consent decision: ${e instanceof Error ? e.message : String(e)}\n`,
-        );
-      }
-    })();
+    // Bind the real clack `confirm` + `isCancel` here (the single, untestable shell call site); the
+    // extracted handler stays DI-only so all its branches — incl. cancel — are unit-coverable.
+    void handleConsentNotification(client, params, confirm, isCancel);
   });
   await new Promise<void>(() => {}); // run until interrupted (Ctrl-C)
 }
@@ -472,7 +488,94 @@ export async function runTeamVaultRpc(client: TeamRpcClient, cmd: TeamCommand): 
   }
 }
 
-/** Parse + execute a team subcommand over an injected client (test entry point). */
+/**
+ * Executes the federation subcommands — everything except the team-vault subset handled by
+ * {@link runTeamVaultRpc} and the long-lived `listen` loop — over an injected IPC client. Exported
+ * so tests can drive each branch with a fake client without a live gateway.
+ */
+export async function runTeamFederationRpc(client: TeamRpcClient, cmd: TeamCommand): Promise<void> {
+  switch (cmd.kind) {
+    case "discover": {
+      const r = await client.call<{ peers: unknown[] }>("federation.discover", {});
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "namespacePublish": {
+      const r = await client.call<unknown>("federation.namespace.publish", {
+        name: cmd.name,
+        filters: cmd.filters,
+      });
+      process.stdout.write(`Published ${cmd.name}\n${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "namespaceGrant": {
+      await client.call<unknown>("federation.namespace.grant", {
+        namespace: cmd.namespace,
+        peerId: cmd.peerId,
+        role: cmd.role,
+        standingConsent: cmd.standing,
+      });
+      process.stdout.write(`Granted ${cmd.role} on ${cmd.namespace} to ${cmd.peerId}\n`);
+      break;
+    }
+    case "namespaceRevoke": {
+      await client.call<unknown>("federation.namespace.revoke", {
+        namespace: cmd.namespace,
+        peerId: cmd.peerId,
+      });
+      process.stdout.write(`Revoked ${cmd.peerId} from ${cmd.namespace}\n`);
+      break;
+    }
+    case "query": {
+      const r = await client.call<unknown>("federation.ask", {
+        peerId: cmd.peerId,
+        namespace: cmd.namespace,
+        purpose: cmd.purpose,
+      });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "whoKnows": {
+      const r = await client.call<unknown>("federation.askExpertise", {
+        peerId: cmd.peerId,
+        query: cmd.query,
+        purpose: "who-knows",
+      });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "pair": {
+      const r = await client.call<unknown>("federation.pair", {
+        host: cmd.host,
+        code: cmd.code,
+      });
+      process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      break;
+    }
+    case "consent":
+      await respondToConsent(client, cmd.requestId, cmd.approved);
+      break;
+    case "audit": {
+      const r = await client.call<{ entries: MergedAuditRow[] }>("team.auditMerged", {
+        namespace: cmd.namespace,
+        purpose: cmd.purpose,
+        sinceMs: cmd.sinceMs,
+      });
+      const entries = Array.isArray(r.entries) ? r.entries : [];
+      if (entries.length === 0) {
+        process.stdout.write("No federation-audit entries across the team.\n");
+      } else {
+        process.stdout.write(`${renderAuditTable(entries)}\n`);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Parse + execute a team-vault / invoke / delegation subcommand over an injected client (test entry
+ * point). Federation subcommands are tested directly via the exported `runTeamFederationRpc`.
+ */
 export async function runTeamCommand(
   argv: string[],
   deps: { client: TeamRpcClient },
@@ -503,85 +606,11 @@ export async function runTeam(argv: string[]): Promise<void> {
     if (await runTeamVaultRpc(client, cmd)) {
       return;
     }
-    switch (cmd.kind) {
-      case "discover": {
-        const r = await client.call<{ peers: unknown[] }>("federation.discover", {});
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "namespacePublish": {
-        const r = await client.call<unknown>("federation.namespace.publish", {
-          name: cmd.name,
-          filters: cmd.filters,
-        });
-        process.stdout.write(`Published ${cmd.name}\n${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "namespaceGrant": {
-        await client.call<unknown>("federation.namespace.grant", {
-          namespace: cmd.namespace,
-          peerId: cmd.peerId,
-          role: cmd.role,
-          standingConsent: cmd.standing,
-        });
-        process.stdout.write(`Granted ${cmd.role} on ${cmd.namespace} to ${cmd.peerId}\n`);
-        break;
-      }
-      case "namespaceRevoke": {
-        await client.call<unknown>("federation.namespace.revoke", {
-          namespace: cmd.namespace,
-          peerId: cmd.peerId,
-        });
-        process.stdout.write(`Revoked ${cmd.peerId} from ${cmd.namespace}\n`);
-        break;
-      }
-      case "query": {
-        const r = await client.call<unknown>("federation.ask", {
-          peerId: cmd.peerId,
-          namespace: cmd.namespace,
-          purpose: cmd.purpose,
-        });
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "whoKnows": {
-        const r = await client.call<unknown>("federation.askExpertise", {
-          peerId: cmd.peerId,
-          query: cmd.query,
-          purpose: "who-knows",
-        });
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "pair": {
-        const r = await client.call<unknown>("federation.pair", {
-          host: cmd.host,
-          code: cmd.code,
-        });
-        process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-        break;
-      }
-      case "consent":
-        await respondToConsent(client, cmd.requestId, cmd.approved);
-        break;
-      case "listen":
-        await runConsentListener(client);
-        break;
-      case "audit": {
-        const r = await client.call<{ entries: MergedAuditRow[] }>("team.auditMerged", {
-          namespace: cmd.namespace,
-          purpose: cmd.purpose,
-          sinceMs: cmd.sinceMs,
-        });
-        const entries = Array.isArray(r.entries) ? r.entries : [];
-        if (entries.length === 0) {
-          process.stdout.write("No federation-audit entries across the team.\n");
-        } else {
-          process.stdout.write(`${renderAuditTable(entries)}\n`);
-        }
-        break;
-      }
+    if (cmd.kind === "listen") {
+      await runConsentListener(client);
+      return;
     }
+    await runTeamFederationRpc(client, cmd);
   } finally {
     await client.disconnect().catch(() => {});
   }
