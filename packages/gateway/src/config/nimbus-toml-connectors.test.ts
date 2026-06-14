@@ -33,7 +33,7 @@ describe("parseNimbusConnectorsToml", () => {
   it("throws when credential = team but team_entry is absent", () => {
     const raw = ["[connectors.powerbi]", 'credential = "team"'].join("\n");
     expect(() => parseNimbusConnectorsToml(raw)).toThrow(
-      /connectors\.powerbi\.team_entry is required/,
+      /\[connectors\.powerbi\] requires team_entry/,
     );
   });
 
@@ -42,7 +42,7 @@ describe("parseNimbusConnectorsToml", () => {
       "\n",
     );
     expect(() => parseNimbusConnectorsToml(raw)).toThrow(
-      /connectors\.bigeye\.team_entry .* invalid/,
+      /\[connectors\.bigeye\] team_entry .* invalid/,
     );
   });
 

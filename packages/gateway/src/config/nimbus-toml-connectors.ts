@@ -63,11 +63,11 @@ export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
     }
     const teamEntry = (kv["team_entry"] ?? "").trim();
     if (teamEntry === "") {
-      throw new Error(`connectors.${name}.team_entry is required when credential = "team"`);
+      throw new Error(`[connectors.${name}] requires team_entry when credential = "team"`);
     }
     if (!ENTRY_RE.test(teamEntry)) {
       throw new Error(
-        `connectors.${name}.team_entry "${teamEntry}" is invalid (lowercase alphanumerics + dashes, no dots)`,
+        `[connectors.${name}] team_entry "${teamEntry}" is invalid (lowercase alphanumerics + dashes, no dots)`,
       );
     }
     out.set(connector, { credential: "team", teamEntry });
