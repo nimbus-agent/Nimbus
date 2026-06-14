@@ -211,4 +211,28 @@ describe("formatCondensedGateSummary", () => {
     expect(out).toContain("S2-b"); // no-baseline row rendered
     expect(out).toContain("S8-l50-b1"); // gate-class S8 cell rendered (skipped arm)
   });
+
+  test("floor-metric gate cell: '<' op on absolute-fail and a correctly-signed delta-fail", () => {
+    // S8 cells are gate-class throughput (floor metric). absolute-fail uses '<'
+    // (smaller is worse); a throughput-drop delta-fail stores a NEGATIVE deltaPct
+    // and must render "-30.0%", not a malformed "+-30.0%".
+    const out = formatCondensedGateSummary(
+      [
+        {
+          surfaceId: "S8-l50-b1",
+          metric: "throughput_per_sec",
+          status: { kind: "absolute-fail", measured: 40, threshold: 60 },
+        },
+        {
+          surfaceId: "S8-l50-b8",
+          metric: "throughput_per_sec",
+          status: { kind: "delta-fail", previous: 100, current: 70, deltaPct: -30, floorPct: 25 },
+        },
+      ],
+      fakeLine("gha-ubuntu"),
+    );
+    expect(out).toContain("40 < 60"); // floor metric → '<' operator branch
+    expect(out).toContain("-30.0%"); // signed negative delta-fail
+    expect(out).not.toContain("+-"); // the sign-prefix bug must be gone
+  });
 });

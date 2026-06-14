@@ -174,13 +174,16 @@ jobs:
           path: ${{ runner.temp }}/run-history.jsonl
           retention-days: 90
 
-      # Push-to-main only: feed the trend-class p95/RSS surfaces to the
-      # github-action-benchmark dashboard on the orphan `perf-data` branch.
-      # Advisory only (fail-on-alert: false) — gating lives in the Compare
-      # step (PR events) and the M1-Air reference cron. Never runs on PRs or
-      # nightly schedules, so the dashboard tracks the canonical main baseline.
+      # Push-to-main, UBUNTU LEG ONLY: feed the trend-class p95/RSS surfaces to
+      # the github-action-benchmark dashboard on the orphan `perf-data` branch.
+      # Restricted to a single runner so each surface is one coherent series (not
+      # three OSes interleaved) and the matrix legs don't race on the same
+      # auto-push. Advisory only (fail-on-alert: false) — gating lives in the
+      # Compare step (PR events) and the M1-Air reference cron. Never runs on PRs
+      # or nightly schedules, so the dashboard tracks the canonical main (ubuntu)
+      # baseline. (Per-OS trend tracking is the drift-check's job, wired later.)
       - name: Emit trend benchmark JSON
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && matrix.os == 'ubuntu-24.04'
         shell: bash
         run: |
           set -euo pipefail
@@ -189,7 +192,7 @@ jobs:
             --out "${RUNNER_TEMP}/benchmark.json"
 
       - name: Publish to github-action-benchmark trend dashboard
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && matrix.os == 'ubuntu-24.04'
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           tool: customSmallerIsBetter

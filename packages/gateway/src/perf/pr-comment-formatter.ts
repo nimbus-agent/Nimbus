@@ -116,7 +116,7 @@ function condensedStatusCell(c: SurfaceComparison): string {
       return `❌ (${fmtNum(c.status.measured)} ${op} ${fmtNum(c.status.threshold)})`;
     }
     case "delta-fail":
-      return `❌ (+${c.status.deltaPct.toFixed(1)}%)`;
+      return `❌ (${c.status.deltaPct >= 0 ? "+" : ""}${c.status.deltaPct.toFixed(1)}%)`;
     case "no-baseline":
       return "🆕";
     case "skipped":
