@@ -20,7 +20,7 @@ A bench fails when either:
 
 | Surface | Metric | Reference threshold | GHA threshold | Noise floor (rel %, abs) |
 |---|---|---|---|---|
-| S1 | p95_ms | **≤2 000 ms** | ≤10 000 ms | 25 %, 200 ms |
+| S1 | p95_ms | **≤2 000 ms** | ≤10 000 ms | 25 %, 300 ms |
 | S2-a | p95_ms | **≤30 ms** | ≤200 ms | 25 %, 5 ms |
 | S2-b | p95_ms | **≤80 ms** | ≤500 ms | 25 %, 10 ms |
 | S2-c | p95_ms | **≤300 ms** | n/a (reference only) | 25 %, 25 ms |

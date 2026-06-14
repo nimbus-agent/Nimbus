@@ -26,7 +26,14 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     ghaMax: 10_000,
     gated: true,
     noiseFloorPct: 25,
-    noiseFloorAbs: 200,
+    // S1 is the heaviest cold-start surface; on shared GHA macOS/Windows runners
+    // its p95 swings run-to-run between ~617 ms and ~841 ms (a ~224 ms / +36 %
+    // spawn-jitter envelope) with no code change. The 200 ms absolute floor was
+    // the binding constraint (200 / 617 ≈ 32 %, below that swing) and delta-failed
+    // a pure release commit. 300 ms lifts the effective floor to ~49 % (300 / 617):
+    // durable against the observed cold-start jitter while still catching a true
+    // ~1.5x regression (well under the 10 000 ms absolute ceiling above).
+    noiseFloorAbs: 300,
     noiseFloorAbsUnit: "ms",
   },
   {

@@ -109,7 +109,7 @@ jobs:
       - name: Linux — libsecret + D-Bus (gateway vault init)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       # macOS GHA marks downloaded native libs with `com.apple.quarantine`,
       # which blocks dlopen() of `sqlite-vec.dylib` from the bun:sqlite Workers

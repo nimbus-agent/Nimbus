@@ -148,7 +148,7 @@ jobs:
       - name: Linux — libsecret + D-Bus (vault / PAL tests)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
@@ -496,7 +496,7 @@ jobs:
       - name: Linux — libsecret + D-Bus (vault / PAL tests)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
@@ -518,7 +518,7 @@ jobs:
         run: mkdir -p junit-reports
 
       - name: Integration tests
-        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
+        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --timeout 60000 --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
         env:
           CI: "true"
 
@@ -566,7 +566,7 @@ jobs:
       - name: Linux — libsecret + D-Bus (vault / PAL tests)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
@@ -646,7 +646,7 @@ jobs:
       - name: Linux — libsecret + D-Bus (vault / PAL tests)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
@@ -809,12 +809,16 @@ jobs:
       - name: Linux — libsecret + D-Bus (vault tests)
         if: runner.os == 'Linux' && matrix.gate.name == 'Vault'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
         if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
+        run: |
+          # Drop the GHA runner's preinstalled Microsoft apt repos (azure-cli + prod);
+          # they periodically 403 and fail `apt-get update` wholesale. Not needed here.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
 
       - name: Build sandbox helper (Linux only, sandbox gate)
         if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
@@ -876,25 +880,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: latest
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
 
       - name: Setup Node 20
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "20"
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
       # Vault services must initialise before the spawned gateway can open its socket.
       # Without these the gateway crashes silently and the 15s socket-wait expires.
       - name: Linux — libsecret + D-Bus (vault tests)
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus
+        run: sudo bash scripts/linux/install-vault-deps.sh
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'

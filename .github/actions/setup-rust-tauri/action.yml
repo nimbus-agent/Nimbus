@@ -16,6 +16,10 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
+        # The GHA ubuntu runner ships Microsoft apt repos (azure-cli + prod) that
+        # periodically 403 during key rotations and fail `apt-get update` wholesale.
+        # We don't need them here — drop them first. See scripts/linux/install-vault-deps.sh.
+        sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
         sudo apt-get update
         sudo apt-get install -y \
           libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \

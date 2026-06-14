@@ -117,3 +117,27 @@ describe("nimbus team delegate/approve (Task 20)", () => {
     expect(calls[0]?.method).toBe("hitl.listDelegations");
   });
 });
+
+describe("nimbus team vault revoke (Task 18b)", () => {
+  it("vault revoke calls teamvault.revoke with parsed args", async () => {
+    const { client, calls } = fakeClient();
+    await runTeamCommand(["vault", "revoke", "prod-aws", "peer:abc", "aws.ec2.instance.stop"], {
+      client,
+    });
+    expect(calls[0]).toEqual({
+      method: "teamvault.revoke",
+      params: { entry: "prod-aws", peerId: "peer:abc", toolId: "aws.ec2.instance.stop" },
+    });
+  });
+});
+
+describe("nimbus team purge (Task 21)", () => {
+  it("purge --yes calls team.purge without prompting", async () => {
+    const { client, calls } = fakeClient();
+    await runTeamCommand(["purge", "--user", "u123", "--yes"], { client });
+    expect(calls[0]).toEqual({
+      method: "team.purge",
+      params: { externalId: "u123" },
+    });
+  });
+});
