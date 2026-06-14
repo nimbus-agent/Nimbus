@@ -61,6 +61,17 @@
   - `packages/gateway/test/integration/updater/air-gap.test.ts:5` `from "../../../src/updater/updater-test-fixtures.ts"` → `from "../../../src/updater/testing/updater-test-fixtures.ts"`
 - Modify: `scripts/coverage-floor/exclusions.ts` — delete the 4 exact entries (`tui/test-helpers/context.ts`, `commands/cli-test-helpers.ts`, `identity/identity-test-helpers.ts`, `updater/updater-test-fixtures.ts`) and their shared "Test-only support files" comment block (lines ~78–84).
 
+- [ ] **Step 0: Audit for config / path-alias references** (defensive — verified clean 2026-06-14, but re-confirm)
+
+Run:
+
+```bash
+grep -rnE "test-helpers/context|cli-test-helpers|identity-test-helpers|updater-test-fixtures" --include=tsconfig*.json --include=biome.json --include=package.json . || echo "NONE in config files"
+grep -rnE "from \"[^.].*(test-helpers/context|cli-test-helpers|identity-test-helpers|updater-test-fixtures)" packages --include=*.ts --include=*.tsx || echo "NONE (all relative imports)"
+```
+
+Expected: both print their `NONE` line — no `tsconfig.json` path alias, `biome.json` rule, or `package.json` reference points at the old paths; all importers use relative paths (handled in Step 2). If anything is found, update it in this task.
+
 - [ ] **Step 1: git mv the 4 files**
 
 ```bash
@@ -215,6 +226,8 @@ const INIT: InitMsg = {
 };
 
 // Track real in-memory DBs so afterEach can close them (B13 graph-populator lesson — no handle leaks).
+// Bun runs a file's tests SEQUENTIALLY by default; do NOT mark these tests `it.concurrent` — the
+// shared tracker assumes sequential execution (a concurrent test could close another's live DB).
 const openDbs: Database[] = [];
 afterEach(() => {
   while (openDbs.length > 0) openDbs.pop()?.close();
@@ -607,7 +620,11 @@ export class EmbeddingWorkerCore {
         await pipeline.embedItem(row);
       })
       .catch(() => {
-        /* best-effort: a failed embed must not wedge the serialized queue */
+        // best-effort: a failed embed must not wedge the serialized queue. This SWALLOW is the
+        // pre-extraction production behavior verbatim (embed_item has no result id to correlate a
+        // failure back, unlike embed_texts) — do NOT add console.error/logging here: that is a
+        // behavior change, forbidden in this zero-behavior-change refactor (spec §5). Observability
+        // for embed_item failures is a separate, out-of-scope follow-up.
       });
   }
 }
@@ -718,7 +735,9 @@ behavior unchanged. Origin check stays in the residual onmessage."
 
 ## Task 5: Resolve the §5.3 worker-realm probe (time-boxed) + document `query-guard-worker.ts`
 
-Per the spec, after extraction try the deferred worker-realm instrumentation probe on the residual `embedding-worker.ts` (and `query-guard-worker.ts`). Decision rule: if a worker-side preload re-register + `__coverage__` flush is cheap and yields a valid BRDA flush for the worker file, instrument it and drop the exclusion; otherwise the documented thin-shell exclusion stands. **Time-box: ~45 min. The documented exclusion is the guaranteed fallback** — do not rabbit-hole.
+Per the spec, after extraction try the deferred worker-realm instrumentation probe on the residual `embedding-worker.ts` (and `query-guard-worker.ts`). Decision rule: if a worker-side preload re-register + `__coverage__` flush is cheap and yields a valid BRDA flush for the worker file, instrument it and drop the exclusion; otherwise the documented thin-shell exclusion stands. **The documented exclusion is the guaranteed fallback** — do not rabbit-hole.
+
+**Explicit time-box (review point 4):** if a basic spike (a mock worker with a custom istanbul preload) does **not** flush `globalThis.__coverage__` back to the main realm within the **first 15 minutes**, **abort the probe immediately** and take the documented thin-shell fallback (Step 3). Overall hard cap ~45 min even if the first flush works (durable wiring + reseed must fit the slice). Cross-realm coverage flushing under Bun is known-hard; the fallback loses nothing (the meaningful logic is already extracted + tested in Task 4).
 
 **Files:** (investigation) possibly a worker-side preload under `scripts/coverage/`; otherwise comment-only in `scripts/coverage-floor/exclusions.ts`.
 
@@ -929,3 +948,14 @@ After CI runs: `gh run download <pr-run-id> -n coverage-lcov-merged` → copy to
 **Placeholder scan:** Task 4 Step 1 contains two intentionally-rough test scaffolds (flagged with an explicit NOTE + Step 4 tightening instruction using the real `idle()`/`initReadyCore` contract) — this is a guided refinement, not an unfilled placeholder. Task 5's `<OUTCOME>` and Task 8 `<pr-run-id>` are runtime-determined values, correctly marked. No "TBD/handle edge cases/add validation" placeholders remain.
 
 **Type consistency:** `EmbeddingWorkerCore`, `EmbeddingWorkerDeps`, `EmbeddingWorkerSetup`, `EmbeddingWorkerDb`, `EmbeddingWorkerPipeline`, `InitMsg`/`InMsg`/`EmbedTextsMsg`/`EmbedItemMsg`, `handleMessage`, `idle()` are used consistently across the test (Task 4 Step 1), the core (Step 3), and the residual shell (Step 5). The seam types match the real `Database`/`SqliteEmbeddingPipeline` signatures verified from `pipeline.ts` / `model.ts`.
+
+## Plan Review Dispositions (external review, 2026-06-14)
+
+Each point verified against the plan/codebase before disposition (receiving-code-review discipline).
+
+| # | Review point | Disposition | Reason |
+|---|---|---|---|
+| 1 | `openDbs` module-level state could race under `it.concurrent` | **Keep pattern + guard note** | The `afterEach`-closes-tracked-DBs pattern is the gateway exemplar (B13 graph-populator); Bun runs a file's tests sequentially by default, so the race needs `it.concurrent` (unused). Restructuring to per-test try/finally would break convention. Added a Task 4 guard note forbidding `it.concurrent` on these tests. |
+| 2 | Log instead of silently swallowing `embed_item` errors | **Decline (D3); follow-up** | This is the spec-review point 2 re-surfacing. Production already swallows silently (intentional best-effort, no result `id` to correlate); the extraction is zero-behavior-change (spec §5), and the worker has no injected logger. Adding logging changes behavior → forbidden. Pinned a Task 4 code comment so the implementer doesn't add it; observability is an out-of-scope follow-up. |
+| 3 | Audit config / path-alias references before the move | **Resolve + add defensive step** | Verified clean — no `tsconfig.json`/`biome.json`/`package.json` refs, all importers relative. Added Task 1 Step 0 grep to re-confirm at execution time. |
+| 4 | Tighten the §5.3 probe time-box | **Adopt** | Replaced "~45 min" with an explicit **15-min first-flush checkpoint → abort to documented fallback**, overall ~45-min hard cap. Matches the known-hard cross-realm reality; fallback loses nothing (logic already extracted in Task 4). |
