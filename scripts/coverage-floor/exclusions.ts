@@ -29,7 +29,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
 
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
-  { kind: "exact", path: "packages/sdk/src/testing/sandbox-probe.ts" },
   { kind: "exact", path: "packages/gateway/src/db/query-guard-worker.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-worker.ts" },
   {
