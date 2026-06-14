@@ -132,7 +132,19 @@ export function createGatewayPinoLogger(logDir: string): Logger {
     hooks: { logMethod: pinoLogMethodHook },
   };
 
+  // Ensure the target directory exists before the async destination opens it; the daily log is
+  // best-effort, so a missing dir must never throw out of logger construction.
+  mkdirSync(logDir, { recursive: true });
+
   const fileDest = pino.destination({ dest: logPath, sync: false });
+  // `sync: false` opens and flushes on a later tick via a background SonicBoom stream. Without an
+  // `error` listener an async open/flush failure (e.g. the dir was removed after the logger was
+  // built, as happens for short-lived loggers in tests) becomes an unhandled `error` event that
+  // can crash the process or be mis-attributed to an unrelated in-flight test. The daily log is
+  // best-effort: swallow these async errors rather than let them escape.
+  fileDest.on("error", () => {
+    /* best-effort daily log — ignore async open/flush failures */
+  });
 
   if (process.stdout.isTTY === true) {
     return pino(
