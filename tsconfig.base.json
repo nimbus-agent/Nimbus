@@ -4,6 +4,11 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // Prefer the "bun" export condition so in-repo TypeScript resolves workspace
+    // packages (notably @nimbus-dev/sdk) to their TS source rather than built dist,
+    // matching Bun's runtime resolution. Published npm consumers don't set this
+    // condition and fall through to the "types"/"default" (dist) targets.
+    "customConditions": ["bun"],
     "lib": ["ESNext"],
 
     "strict": true,

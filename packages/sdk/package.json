@@ -8,24 +8,31 @@
     "directory": "packages/sdk"
   },
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "types": "./src/index.ts"
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./testing": {
-      "import": "./src/testing/index.ts",
-      "types": "./src/testing/index.ts"
+      "bun": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
     },
     "./ipc": {
-      "import": "./src/ipc/index.ts",
-      "types": "./src/ipc/index.ts"
+      "bun": "./src/ipc/index.ts",
+      "types": "./dist/ipc/index.d.ts",
+      "import": "./dist/ipc/index.js",
+      "default": "./dist/ipc/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "dev": "bun run --watch src/index.ts",
