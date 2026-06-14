@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { runBench } from "./bench-harness.ts";
+import { poolTrimmedSamples, runBench } from "./bench-harness.ts";
 
 describe("runBench", () => {
-  test("invokes the surface fn `runs` times and returns median-of-medians", async () => {
+  test("invokes the surface fn `runs` times and returns a pooled p95", async () => {
     let calls = 0;
     const fn = async (): Promise<number[]> => {
       calls += 1;
@@ -16,7 +16,8 @@ describe("runBench", () => {
     expect(calls).toBe(5);
     expect(result.surfaceId).toBe("S2-a");
     expect(result.samplesCount).toBe(500);
-    expect(result.p95Ms).toBeGreaterThan(95);
+    // Worst run (calls=5, values 6..105) is trimmed; pool is runs 1..4 (values 1..104).
+    expect(result.p95Ms).toBeGreaterThan(90);
     expect(result.p95Ms).toBeLessThan(105);
   });
 
@@ -94,5 +95,41 @@ describe("runBench — busyRetries side-channel (S10)", () => {
     expect(withRetries.busyRetries).toBe(42);
     expect(withRetries.surfaceId).toBe("S10");
     expect(withRetries.throughputPerSec).toBe(200);
+  });
+});
+
+describe("poolTrimmedSamples", () => {
+  test("with fewer than 3 non-empty runs, returns all samples flattened (no trim)", () => {
+    expect(
+      poolTrimmedSamples([
+        [1, 2],
+        [3, 4],
+      ]),
+    ).toEqual([1, 2, 3, 4]);
+    expect(poolTrimmedSamples([[1, 2]])).toEqual([1, 2]);
+  });
+
+  test("filters out empty runs before counting toward the trim threshold", () => {
+    // 2 non-empty runs + an empty one → still < 3 non-empty → no trim, empties dropped.
+    expect(poolTrimmedSamples([[1, 2], [], [3, 4]])).toEqual([1, 2, 3, 4]);
+  });
+
+  test("with >=3 non-empty runs, drops the single worst run (highest per-run p95)", () => {
+    // Run C's p95 (~1000) is the highest; it is dropped, leaving A+B pooled.
+    const a = [1, 2, 3, 4, 5];
+    const b = [2, 3, 4, 5, 6];
+    const c = [900, 950, 1000, 1000, 1000];
+    const pooled = poolTrimmedSamples([a, b, c]);
+    expect(pooled.sort((x, y) => x - y)).toEqual([1, 2, 2, 3, 3, 4, 4, 5, 5, 6]);
+    expect(pooled).not.toContain(1000);
+  });
+
+  test("a single catastrophically-contended run does not enter the pooled p95", () => {
+    // 4 calm runs + 1 disk-thrash run; the thrash run is trimmed → stable aggregate.
+    const calm = Array.from({ length: 100 }, () => 10); // all 10ms
+    const runs = [calm, calm, calm, calm, Array(100).fill(100_000)];
+    const pooled = poolTrimmedSamples(runs);
+    expect(pooled).not.toContain(100_000);
+    expect(pooled.length).toBe(400);
   });
 });
