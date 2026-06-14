@@ -62,6 +62,7 @@ import {
 } from "../connectors/openapi-indexer-config.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
+import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import {
@@ -1167,7 +1168,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
           sandboxCwd: paths.dataDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
-          openSession: drainTeamListSession,
+          openSession: resolveTeamListOpenSession(
+            processEnvGet("NIMBUS_WAREHOUSE_E2E_SINK_DIR"),
+            drainTeamListSession,
+          ),
         },
         input,
       ),

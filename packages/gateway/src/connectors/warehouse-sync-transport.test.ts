@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
 import { __setPersonalDrainForTest, listConnectorItems } from "./warehouse-sync-transport.ts";
 
 function ctx(
@@ -58,5 +59,31 @@ describe("listConnectorItems", () => {
         "snowflake_list",
       ),
     ).rejects.toThrow(/team_entry/);
+  });
+
+  it("personal (real drain): spawns a service-scoped session and drains the list", async () => {
+    // No personal-drain override → exercise realPersonalDrain, with the mesh spawn faked.
+    let disconnected = false;
+    __setSessionSpawnerForTest(() => ({
+      listTools: async () => ({
+        snowflake_list: {
+          execute: async () => ({
+            content: [
+              { type: "text", text: JSON.stringify({ items: [{ id: 7 }], nextCursor: null }) },
+            ],
+          }),
+        },
+      }),
+      disconnect: async () => {
+        disconnected = true;
+      },
+    }));
+    try {
+      const items = await listConnectorItems(ctx({}), "snowflake", "snowflake_list");
+      expect(items).toEqual([{ id: 7 }]);
+      expect(disconnected).toBe(true);
+    } finally {
+      __setSessionSpawnerForTest(undefined);
+    }
   });
 });
