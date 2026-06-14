@@ -83,8 +83,8 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     } satisfies SloThreshold);
   });
 
-  test("S1, S11-b carry linuxOnlyGate (latency spawn-jitter, gated on Linux only)", () => {
-    for (const id of ["S1", "S11-b"] as const) {
+  test("S1, S11-a, S11-b carry linuxOnlyGate (latency spawn-jitter, gated on Linux only)", () => {
+    for (const id of ["S1", "S11-a", "S11-b"] as const) {
       const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
       expect(row?.linuxOnlyGate).toBe(true);
     }

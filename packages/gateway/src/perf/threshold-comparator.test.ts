@@ -57,12 +57,13 @@ describe("compareAgainstHistory", () => {
     expect(s1?.status).toEqual({ kind: "pass" });
   });
 
-  // S1 + S11-b carry linuxOnlyGate: their shared-runner spawn jitter on macOS /
-  // Windows is irreducible and was the dominant source of no-code-change perf
-  // delta-fails on main (e.g. run-27498114264 S1 +38.1 % on windows-2025). The
-  // delta is still computed + surfaced in the PR comment; it just no longer gates
-  // the build off Linux. Mirrors the S7 memory-surface precedent above.
-  for (const surfaceId of ["S1", "S11-b"] as const) {
+  // S1 + S11-a + S11-b carry linuxOnlyGate: their shared-runner spawn jitter on
+  // macOS / Windows is irreducible and was the dominant source of no-code-change
+  // perf delta-fails on main (e.g. run-27498114264 S1 +38.1 % on windows-2025;
+  // S11-a +57.7 % on macos-15 on the #622 release commit). The delta is still
+  // computed + surfaced in the PR comment; it just no longer gates the build off
+  // Linux. Mirrors the S7 memory-surface precedent above.
+  for (const surfaceId of ["S1", "S11-a", "S11-b"] as const) {
     for (const runner of ["gha-macos", "gha-windows"] as const) {
       test(`${surfaceId} on ${runner} resolves to skipped(linux-only-gate)`, () => {
         const current = fakeLine(runner, { [surfaceId]: { samples_count: 301, p95_ms: 99_999 } });

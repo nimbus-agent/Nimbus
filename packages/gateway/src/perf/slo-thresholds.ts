@@ -109,8 +109,17 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     ghaMax: 1_500,
     gated: true,
     noiseFloorPct: 40,
+    // Sibling of S11-b: warm-CLI latency dominated by fixed process-spawn cost
+    // on shared GHA runners. Same irreducible jitter — a no-code-change release
+    // commit (#622) swung S11-a p95 +57.7 % on macos-15 (168.5 -> 265.8 ms),
+    // past the 40 % floor, after S1/S11-b were already Linux-only-gated. The
+    // jitter is a runner property, not a code signal, so gate on Linux only
+    // (linuxOnlyGate), like S1/S11-b/S7. The 1 500 ms ceiling + 40 % floor still
+    // apply on gha-ubuntu and reference-m1air to catch a true spawn regression;
+    // on macOS / Windows the delta is shown in the PR comment but no longer gates.
     noiseFloorAbs: 50,
     noiseFloorAbsUnit: "ms",
+    linuxOnlyGate: true,
   },
   {
     surfaceId: "S11-b",
