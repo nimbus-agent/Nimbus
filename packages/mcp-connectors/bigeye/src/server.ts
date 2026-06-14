@@ -51,6 +51,21 @@ function issueId(item: unknown): string {
   return "";
 }
 
+/** Update a Bigeye issue status via `POST /api/v1/issues`. */
+async function updateIssueStatus(issueId: string, status: string): Promise<void> {
+  const base = apiBase();
+  const res = await fetchWithTimeout(`${base}/api/v1/issues`, {
+    method: "POST",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify({ issueId, status }),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `Bigeye updateIssue ${String(res.status)}: ${(await res.text()).slice(0, 400)}`,
+    );
+  }
+}
+
 export function registerBigeyeTools(reg: ZodToolRegistrar): void {
   reg(
     "bigeye_list",
@@ -96,6 +111,26 @@ export function registerBigeyeTools(reg: ZodToolRegistrar): void {
       const issues = await fetchIssues(500, 0);
       const matches = filterBigeyeIssues(issues, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
+    },
+  );
+
+  reg(
+    "bigeye_issue_acknowledge",
+    "Acknowledge a Bigeye issue (requires HITL bigeye.issue.acknowledge).",
+    z.object({ issueId: z.string().min(1) }),
+    async (p) => {
+      await updateIssueStatus(p.issueId, "ISSUE_STATUS_ACKNOWLEDGED");
+      return jsonResult({ status: "ok", issueId: p.issueId });
+    },
+  );
+
+  reg(
+    "bigeye_issue_resolve",
+    "Resolve (close) a Bigeye issue (requires HITL bigeye.issue.resolve).",
+    z.object({ issueId: z.string().min(1) }),
+    async (p) => {
+      await updateIssueStatus(p.issueId, "ISSUE_STATUS_CLOSED");
+      return jsonResult({ status: "ok", issueId: p.issueId });
     },
   );
 }
