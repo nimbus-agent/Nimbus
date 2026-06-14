@@ -4,7 +4,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { readIndexedUserVersion, runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import { isAcceptableWorkerOrigin } from "../platform/worker-security.ts";
-import { EmbeddingWorkerCore, type InitMsg, type InMsg } from "./embedding-worker-core.ts";
+import { EmbeddingWorkerCore, type InitMsg } from "./embedding-worker-core.ts";
 import { createLocalEmbedder } from "./model.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 
@@ -30,26 +30,34 @@ const core = new EmbeddingWorkerCore({
   sendToMain,
   setup: async (msg: InitMsg) => {
     const db = setupDb(msg.dbPath);
-    const embedder = await createLocalEmbedder({ cacheDir: msg.cacheDir });
-    const pipeline = new SqliteEmbeddingPipeline({
-      db,
-      embedder,
-      backfillBatchSize: msg.toml.backfillBatchSize,
-      chunkOptions: {
-        maxChunkTokens: msg.toml.chunkTokens,
-        overlapTokens: msg.toml.chunkOverlapTokens,
-      },
-    });
-    return { db, pipeline };
+    try {
+      const embedder = await createLocalEmbedder({ cacheDir: msg.cacheDir });
+      const pipeline = new SqliteEmbeddingPipeline({
+        db,
+        embedder,
+        backfillBatchSize: msg.toml.backfillBatchSize,
+        chunkOptions: {
+          maxChunkTokens: msg.toml.chunkTokens,
+          overlapTokens: msg.toml.chunkOverlapTokens,
+        },
+      });
+      return { db, pipeline };
+    } catch (err) {
+      // The pipeline was never constructed, so it can't own the handle. Close it
+      // here to avoid leaking the SQLite connection on a setup failure.
+      db.close();
+      throw err;
+    }
   },
 });
 
-(globalThis as unknown as { onmessage: ((ev: MessageEvent<InMsg>) => void) | null }).onmessage = (
-  ev: MessageEvent<InMsg>,
+(globalThis as unknown as { onmessage: ((ev: MessageEvent<unknown>) => void) | null }).onmessage = (
+  ev: MessageEvent<unknown>,
 ) => {
   // Origin check is the Worker realm boundary — it stays here, not in the core.
   if (!isAcceptableWorkerOrigin(ev)) {
     return;
   }
+  // `ev.data` is untrusted cross-realm input; the core narrows it via `isInMsg`.
   core.handleMessage(ev.data);
 };

@@ -13,6 +13,40 @@ export type EmbedItemMsg = { type: "embed_item"; itemId: string };
 export type InMsg = InitMsg | EmbedTextsMsg | EmbedItemMsg;
 
 /**
+ * Runtime type guard narrowing external (cross-realm) worker input to `InMsg`.
+ * `ev.data` arriving on the worker's `onmessage` is untrusted: a malformed
+ * payload (e.g. `null`) must not crash the worker. CLAUDE.md non-negotiable #7
+ * requires external data to enter as `unknown` and be narrowed before use; the
+ * core owns this narrowing (the excluded shell only does the origin check).
+ */
+export function isInMsg(data: unknown): data is InMsg {
+  if (typeof data !== "object" || data === null) return false;
+  const m = data as Record<string, unknown>;
+  if (m["type"] === "init") {
+    const toml = m["toml"] as Record<string, unknown> | undefined;
+    return (
+      typeof m["dbPath"] === "string" &&
+      typeof m["cacheDir"] === "string" &&
+      typeof toml?.["chunkTokens"] === "number" &&
+      typeof toml?.["chunkOverlapTokens"] === "number" &&
+      typeof toml?.["backfillBatchSize"] === "number"
+    );
+  }
+  if (m["type"] === "embed_texts") {
+    const texts = m["texts"];
+    return (
+      typeof m["id"] === "string" &&
+      Array.isArray(texts) &&
+      texts.every((t) => typeof t === "string")
+    );
+  }
+  if (m["type"] === "embed_item") {
+    return typeof m["itemId"] === "string";
+  }
+  return false;
+}
+
+/**
  * Minimal structural seam over the bun:sqlite `Database` — only the
  * `query(...).get(id)` shape the core uses. A real `Database` is assignable.
  */
@@ -70,7 +104,8 @@ export class EmbeddingWorkerCore {
     this.setup = deps.setup;
   }
 
-  handleMessage(msg: InMsg): void {
+  handleMessage(msg: unknown): void {
+    if (!isInMsg(msg)) return;
     if (msg.type === "init") {
       this.track(this.runInit(msg));
       return;

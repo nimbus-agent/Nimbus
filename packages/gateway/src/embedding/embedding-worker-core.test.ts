@@ -1,11 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   EmbeddingWorkerCore,
   type EmbeddingWorkerPipeline,
   type EmbeddingWorkerSetup,
   type InitMsg,
   type InMsg,
+  isInMsg,
 } from "./embedding-worker-core.ts";
 import type { IndexedItem } from "./types.ts";
 
@@ -39,7 +42,7 @@ function makeDb(): Database {
 const INIT_MSG: InitMsg = {
   type: "init",
   dbPath: ":memory:",
-  cacheDir: "/tmp/cache",
+  cacheDir: join(tmpdir(), "cache"),
   toml: { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 50 },
 };
 
@@ -319,5 +322,84 @@ describe("EmbeddingWorkerCore", () => {
 
     expect(embedded).toEqual(["B"]); // B's embedItem ran — queue drained past A's failure
     expect(unhandled).toBe(false);
+  });
+
+  it("handleMessage(null) on a ready core posts nothing and does not throw", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({ db, pipeline: makePipeline() });
+    const { core, posts } = await initReadyCore(setup);
+    const before = posts.length;
+
+    expect(() => core.handleMessage(null)).not.toThrow();
+    await core.idle();
+    expect(posts.length).toBe(before);
+  });
+
+  it("handleMessage({type:'embed_item'}) missing itemId on a ready core posts nothing", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({ db, pipeline: makePipeline() });
+    const { core, posts } = await initReadyCore(setup);
+    const before = posts.length;
+
+    expect(() => core.handleMessage({ type: "embed_item" })).not.toThrow();
+    await core.idle();
+    expect(posts.length).toBe(before);
+  });
+});
+
+describe("isInMsg", () => {
+  it("rejects non-object / null / primitive inputs", () => {
+    expect(isInMsg(null)).toBe(false);
+    expect(isInMsg(undefined)).toBe(false);
+    expect(isInMsg(42)).toBe(false);
+    expect(isInMsg("x")).toBe(false);
+    expect(isInMsg({})).toBe(false);
+  });
+
+  it("rejects an object with an unknown type", () => {
+    expect(isInMsg({ type: "nope" })).toBe(false);
+  });
+
+  it("accepts a valid init message and rejects a malformed one", () => {
+    expect(
+      isInMsg({
+        type: "init",
+        dbPath: ":memory:",
+        cacheDir: join(tmpdir(), "cache"),
+        toml: { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 50 },
+      }),
+    ).toBe(true);
+    // missing dbPath
+    expect(
+      isInMsg({
+        type: "init",
+        cacheDir: join(tmpdir(), "cache"),
+        toml: { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 50 },
+      }),
+    ).toBe(false);
+    // toml missing a numeric field
+    expect(
+      isInMsg({
+        type: "init",
+        dbPath: ":memory:",
+        cacheDir: join(tmpdir(), "cache"),
+        toml: { chunkTokens: 256, chunkOverlapTokens: 32 },
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts a valid embed_texts message and rejects a malformed one", () => {
+    expect(isInMsg({ type: "embed_texts", id: "x", texts: ["a", "b"] })).toBe(true);
+    // non-string element in texts
+    expect(isInMsg({ type: "embed_texts", id: "x", texts: ["a", 1] })).toBe(false);
+    // texts not an array
+    expect(isInMsg({ type: "embed_texts", id: "x", texts: "a" })).toBe(false);
+    // missing id
+    expect(isInMsg({ type: "embed_texts", texts: ["a"] })).toBe(false);
+  });
+
+  it("accepts a valid embed_item message and rejects one missing itemId", () => {
+    expect(isInMsg({ type: "embed_item", itemId: "i1" })).toBe(true);
+    expect(isInMsg({ type: "embed_item" })).toBe(false);
   });
 });
