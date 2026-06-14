@@ -80,24 +80,49 @@ shell residual in `runTeam`:
    `respondToConsent` (currently typed `IPCClient` but only uses `.call` → widen to `TeamRpcClient`)
    and the `audit` rendering (`renderAuditTable`/`cellText`). Mirrors the existing
    `runTeamVaultRpc(client, cmd)` sibling exactly.
-2. **`handleConsentNotification(client, params): Promise<void>`** — the body of the
+2. **`handleConsentNotification(client, params, prompt): Promise<void>`** — the body of the
    `client.onNotification("federation.consentRequest", …)` callback. Takes `TeamRpcClient` +
-   `unknown` params; covers the typeof-requestId guard, the `confirm`/`isCancel` branches, the
-   respond call, and the error arm. `runConsentListener` shrinks to the irreducible
-   `onNotification(handler) + await new Promise(()=>{})` registration + infinite wait.
+   `unknown` params + an **injected `prompt`** (the `confirm`-shaped fn, a **required** param — no
+   default, per the D1 EXTRACT-not-inject-with-default rule, so no test ever falls through to the
+   real TTY-blocking `confirm`). Covers the typeof-requestId guard, the `confirm`/`isCancel`
+   branches, the respond call, and the **error arm** (it **retains the existing `try/catch`** around
+   `client.call` that `runConsentListener` already has at team.ts:352–361, writing the failure to
+   stderr — preserved verbatim, and the call-error arm is one of the covered branches). The thin
+   `runConsentListener` residual binds the real `confirm` at the single call site
+   (`onNotification((p) => handleConsentNotification(client, p, confirm))`) and keeps only the
+   irreducible `await new Promise<void>(() => {})` infinite wait — that real-`confirm` binding line
+   lives in the uncovered shell, exactly mirroring the D1 residual-construction-line pattern.
 
 **Residual `runTeam` shell (stays uncovered, no branches that matter):** read gateway state,
 construct the real `IPCClient`, `connect`, dispatch `runTeamVaultRpc` ‖ `runConsentListener` (for
 `listen`) ‖ `runTeamFederationRpc`, `disconnect` in `finally`. This is the same thin-IPC-shell
 residual as the un-excluded D1 files — ~30 lines, no decision logic.
 
-**Tests (new `team-federation.test.ts`, or extend `team.test.ts`):** drive `runTeamFederationRpc`
-with a fake `TeamRpcClient` for each federation subcommand (assert the right method + params +
-stdout/exit-code), incl. the `audit` empty-vs-rows rendering and the `consent` matched/unmatched/
-error arms; drive `handleConsentNotification` for approve / deny / cancel-leaves-to-timeout / bad
-params / call-error. Output captured via the existing `captureOutput` helper; no `process.std*`
-global reliance (B10/B13 cross-file-leak lesson). **No `mock.module`** — DI only (the cli combined
-run is process-global; `team.ts` is the unit under test and its deps are injected).
+**Tests (new `team-federation.test.ts`):** follow the **proven `team-vault.test.ts` exemplar** —
+assert on the **injected fake `TeamRpcClient`'s recorded `calls[]`** (`{ method, params }`), *not*
+on global stdout. (Verified 2026-06-14: `team.ts` writes via `process.stdout.write`, which the
+`captureOutput` helper — a `console.*` patch — does not even intercept; `team-vault.test.ts`
+sidesteps output entirely by asserting on the fake client's calls. This is also the answer to the
+review's concurrency concern: there is **no global-output interception to bleed**, and Bun runs a
+file's tests sequentially by default — confirmed no `test.concurrent` exists anywhere in the cli
+suite.) Specifically:
+
+- `runTeamFederationRpc` — drive each federation subcommand with a fake `TeamRpcClient`; assert the
+  right method + params (discover/namespace publish-grant-revoke/query/who-knows/pair), and for
+  `consent` the matched / unmatched / error arms (the unmatched + error arms set
+  `process.exitCode = 1` — the **only** global touched; reset in `afterEach` to `0` per the
+  bun-test-exit-code-leak lesson).
+- `renderAuditTable` + `cellText` — **export and test as pure functions** directly (empty list,
+  primitive cells, object cells → `""`, numeric-timestamp ISO formatting, 12-char hash truncation),
+  rather than asserting the `audit` branch's stdout.
+- `handleConsentNotification` — fake `TeamRpcClient` + an **injected fake `prompt`** returning
+  `true` / `false` / the clack cancel-symbol; assert approve → `consentRespond`, deny →
+  `consentRespond(approved:false)`, cancel → no call (left to time out), bad params → early return,
+  call-error → swallowed-to-stderr (the retained try/catch).
+
+**No `mock.module`** — DI only (the cli combined run is process-global; `team.ts` is the unit under
+test and its `TeamRpcClient` + `prompt` deps are injected). Deterministic; no reliance on global
+`process.std*`/`env` defaults (B10/B13 cross-file-leak lesson).
 
 **Coverage estimate:** covered = `parseTeamArgs` + `runTeamVaultRpc` + `runTeamFederationRpc` +
 `handleConsentNotification` + `renderAuditTable`/`cellText` + `respondToConsent`; uncovered = the
@@ -130,10 +155,17 @@ subprocess/socket/timer boot glue with no injection seam (same class as a connec
 Stays in both `exclusions.ts` and `sonar.coverage.exclusions`.
 
 **Observed-but-out-of-scope (flag in the spec, do NOT fix in D2 — scope creep):**
-`resolveReadyWaitTimeoutMs` is the only untested pure logic, and `decideStartAction` is **dead**
-(`runStart` inlines the equivalent decision via `handleExistingGatewayState`, never calling
-`decideStartAction`). Both are pre-existing; a separate cleanup PR can extract/remove them. D2
-**characterizes existing structure**, zero behavior change.
+`resolveReadyWaitTimeoutMs` is the only untested pure logic, and `decideStartAction` is **dead** —
+verified 2026-06-14 by a repo-wide grep: it has **zero callers** outside its own definition (only
+its 4 tests in `start.test.ts`); `runStart` inlines the equivalent decision via
+`handleExistingGatewayState`, never calling it. **D2 leaves both untouched** (zero behavior change;
+characterize-existing-structure). Deleting `decideStartAction` (the fn + `StartDecision` type + its
+4 tests, ≈50 behaviour-neutral lines — `start.ts` stays excluded, so no coverage impact) is a
+legitimate cleanup but belongs in its **own surgical fast-follow commit**, not folded into an
+honest-shrink exclusion PR. The review's alternative — a `// TODO: remove` annotation — is
+**declined**: the program avoids TODO-comment churn (and the function being exported + tested means
+it reads as live, not obviously-dead, to a `// TODO` skimmer). Recommendation stands as a tracked
+fast-follow; if the owner prefers it deleted *in* D2, it is a trivial addition.
 
 ## 6. `ipc/server/options.ts` — reclassify to type-only (b), regroup now
 
@@ -151,6 +183,16 @@ rationale (zero executable lines / no `SF:` record — same class as the `types.
 It remains in `sonar.coverage.exclusions` (Sonar also reads it as uncoverable). This pre-does the
 small slice of D3's type-only grouping that D2's read surfaced — D3 still owns grouping the
 remaining type-only files.
+
+**Future enhancement (out of D2/D3 scope — noted, not actioned):** the manual type-only triage
+could eventually be obviated by teaching the gate (`check.ts` / `discoverSourceFiles`) to
+auto-skip any source file the merge lcov emits **no `SF:` record** for (i.e. zero instrumented
+lines) instead of reading it as 0%. That removes the whole "type-only exclusion" bucket. It is a
+**gate-tooling feature**, not exclusion-shrink, so it is outside the honest-shrink remit of D2/D3,
+and it carries a real misclassification risk (a file whose executable lines are fully tree-shaken,
+or whose `SF:` presence is instrumentation-dependent, must not be silently dropped from the floor).
+Recorded here as a post-program candidate; the program close (D3) ships the manual grouping as the
+guaranteed, auditable approach.
 
 ## 7. Scope summary
 
@@ -238,3 +280,35 @@ only; `team.ts` is the unit under test (deps injected), so it is not shadowed li
 | Reseed picks up environment/incidental/stale drift on untouched files | Reseed from the PR's own merge lcov; disambiguate the three drift classes per §8 |
 | `mock.module` leak from a cli test | DI only; `team.ts` is the unit under test with injected deps — not shadowed |
 | markdownlint `+`-as-bullet / suppressed-output regression | Run `lint:markdown` in-worktree, read output, comma prose |
+
+## 13. Review dispositions (Antigravity review, applied 2026-06-14)
+
+All four points dispositioned; each empirically validated before recording.
+
+- **1. Concurrency / output interception in `team.ts` tests → FIX (§4) + EXPLAIN.** The premise
+  (Bun runs tests concurrently → `captureOutput` global patch bleeds) does **not** apply here:
+  (a) verified there is **no `test.concurrent`** anywhere in the cli suite — Bun runs a file's tests
+  sequentially by default; (b) more decisively, the proven `team-vault.test.ts` exemplar asserts on
+  the **injected fake `TeamRpcClient`'s recorded calls**, not on global stdout — and `team.ts` emits
+  via `process.stdout.write`, which the `console.*`-patching `captureOutput` doesn't even intercept.
+  D2 adopts that exemplar verbatim (assert on recorded calls + pure `renderAuditTable`/`cellText` +
+  an injected `prompt`), so the reviewer's preferred remedy ("DI a writer / don't print to global
+  stdout") is satisfied **by construction**. The only global touched is `process.exitCode` (one
+  consent arm), reset in `afterEach`. §4 now states this explicitly.
+
+- **2. Dead `decideStartAction` in `start.ts` → DEFER (§5 tightened).** Empirically confirmed dead
+  (0 callers outside its definition + its 4 tests). D2 leaves it untouched to keep the honest-shrink
+  PR surgical — deleting an exported CLI symbol + its tests is an API/structure change for its own
+  fast-follow commit, not an exclusion-shrink PR. The reviewer's `// TODO` alternative is
+  **declined** (the program avoids TODO churn). §5 records the verified-dead finding + the fast-follow
+  recommendation; trivially upgradable to an in-D2 deletion if the owner prefers.
+
+- **3. RPC error handling for `handleConsentNotification` → FIX (§4) — already satisfied.** Confirmed
+  the existing `runConsentListener` already wraps `client.call` in `try/catch` → stderr
+  (team.ts:352–361). The extraction **preserves that `try/catch` verbatim**, and the call-error arm
+  is an explicit covered test branch. §4 now states the try/catch is retained and tested.
+
+- **4. Auto-detect type-only (no-`SF:`) files in the gate → DEFER (§6 note added).** A good idea but
+  a **gate-tooling feature**, not exclusion-shrink — outside D2/D3's honest-shrink remit, and it
+  carries a tree-shaking/instrumentation misclassification risk. Recorded in §6 as a post-program
+  candidate; D3 ships the manual, auditable grouping as the guaranteed approach.
