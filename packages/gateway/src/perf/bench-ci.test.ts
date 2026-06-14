@@ -13,7 +13,7 @@ function writeHistory(dir: string, name: string, line: HistoryLine): string {
 }
 
 const passingLine: HistoryLine = {
-  schema_version: 1,
+  schema_version: 2,
   run_id: "x",
   timestamp: "2026-04-29T00:00:00Z",
   runner: "gha-ubuntu",

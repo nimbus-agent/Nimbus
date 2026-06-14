@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 const referenceLine: HistoryLine = {
-  schema_version: 1,
+  schema_version: 2,
   run_id: "ref-001",
   timestamp: "2026-05-14T10:00:00Z",
   runner: "reference-m1air",

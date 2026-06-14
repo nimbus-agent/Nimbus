@@ -6,7 +6,7 @@ import type { SurfaceComparison } from "./threshold-comparator.ts";
 
 function fakeLine(runner: HistoryLine["runner"]): HistoryLine {
   return {
-    schema_version: 1,
+    schema_version: 2,
     run_id: "abc-123",
     timestamp: "2026-04-29T05:00:00Z",
     runner,

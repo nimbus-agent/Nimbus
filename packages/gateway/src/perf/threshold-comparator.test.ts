@@ -10,7 +10,7 @@ import {
 
 function fakeLine(runner: HistoryLine["runner"], surfaces: HistoryLine["surfaces"]): HistoryLine {
   return {
-    schema_version: 1,
+    schema_version: 2,
     run_id: "test-run",
     timestamp: "2026-04-29T00:00:00Z",
     runner,
