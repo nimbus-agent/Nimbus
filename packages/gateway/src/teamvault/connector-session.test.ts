@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { __setSessionSpawnerForTest, withConnectorSession } from "./connector-session.ts";
 
@@ -10,6 +10,8 @@ const fakeVault: NimbusVault = {
 };
 
 describe("withConnectorSession", () => {
+  afterEach(() => __setSessionSpawnerForTest(undefined));
+
   it("spawns once, allows N calls, then disconnects once", async () => {
     let spawns = 0;
     let disconnects = 0;
@@ -39,7 +41,6 @@ describe("withConnectorSession", () => {
     expect(disconnects).toBe(1);
     expect(execute).toHaveBeenCalledTimes(2);
     expect(calls).toHaveLength(2);
-    __setSessionSpawnerForTest(undefined);
   });
 
   it("disconnects even when the body throws", async () => {
@@ -59,6 +60,5 @@ describe("withConnectorSession", () => {
       ),
     ).rejects.toThrow("boom");
     expect(disconnects).toBe(1);
-    __setSessionSpawnerForTest(undefined);
   });
 });

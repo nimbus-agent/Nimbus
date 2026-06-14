@@ -77,6 +77,7 @@ async function realSpawn(req: ConnectorSessionRequest): Promise<SessionClient | 
     scheduleLazyDisconnect: () => {},
   };
   await spawnerFor(req.service)(ctx);
+  // Each spawner registers exactly one client via setLazyClient (see connector-spawns.ts), so first is the only entry.
   const client = [...clients.values()][0];
   if (client === undefined) return undefined;
   return {
@@ -103,13 +104,13 @@ export async function withConnectorSession<T>(
     throw new Error(`connector-session: no server spawned for service "${req.service}"`);
   }
   try {
+    const tools = await client.listTools();
     const session: ConnectorToolSession = {
-      async call(toolId, args) {
-        const tools = await client.listTools();
+      call(toolId, args) {
         const tool = tools[toolId];
         if (tool?.execute === undefined) {
-          throw new Error(
-            `connector-session: tool "${toolId}" not found for service "${req.service}"`,
+          return Promise.reject(
+            new Error(`connector-session: tool "${toolId}" not found for service "${req.service}"`),
           );
         }
         return tool.execute(args);
