@@ -731,7 +731,7 @@ export function poolTrimmedSamples(perRunSamples: number[][]): number[] {
     const pb = computePercentiles(b).p95 ?? Number.POSITIVE_INFINITY;
     return pa - pb;
   });
-  return ranked.slice(0, -1).flatMap((r) => r);
+  return ranked.slice(0, -1).flat();
 }
 ```
 
@@ -760,7 +760,7 @@ Now check the `median` import: `median` is a local function (L11-21), NOT an imp
 
 - [ ] **Step 4: Run, expect PASS.** Command: `cd packages/gateway && bun test src/perf/bench-harness.test.ts`. Expected: `0 fail`. Verify specifically that the `resultKind` block (L59-86) still passes — `'throughput' kind populates throughputPerSec from per-run medians` (L68-74) is unaffected (it exercises `buildThroughputResult`, which still uses `median`), and `default 'latency' behaviour` (L60-66) with `runs: 3` over `[10,20,30,40,50]` now pools the 2 best of 3 runs and yields a defined `p50Ms` (still `> 0`). Expected tail: `0 fail`.
 
-- [ ] **Step 5: Typecheck + lint.** `cd packages/gateway && bun run typecheck`. Expected: no errors. `bunx biome check packages/gateway/src/perf/bench-harness.ts packages/gateway/src/perf/bench-harness.test.ts`. Expected: no diagnostics — in particular confirm biome does NOT flag `median` as unused (it is still used by `buildThroughputResult`). If biome flags `flatMap((r) => r)` as preferring `.flat()`, replace `ranked.slice(0, -1).flatMap((r) => r)` with `ranked.slice(0, -1).flat()` (identical behavior) and re-run.
+- [ ] **Step 5: Typecheck + lint.** `cd packages/gateway && bun run typecheck`. Expected: no errors. `bunx biome check packages/gateway/src/perf/bench-harness.ts packages/gateway/src/perf/bench-harness.test.ts`. Expected: no diagnostics — in particular confirm biome does NOT flag `median` as unused (it is still used by `buildThroughputResult`).
 
 - [ ] **Step 6: Commit.**
 
@@ -1602,7 +1602,7 @@ The pure core `detectDrift(history, noiseFloorPct, k=7, n=3)` is fully unit-test
   // depends on (`detectDrift`) is fully covered above.
   // ---------------------------------------------------------------------------
 
-  const TREND_METRIC_BY_SURFACE: ReadonlyMap<BenchSurfaceId, HistoryLineSurface extends infer _ ? keyof HistoryLineSurface : never> =
+  const TREND_METRIC_BY_SURFACE: ReadonlyMap<BenchSurfaceId, keyof HistoryLineSurface> =
     new Map(
       SLO_THRESHOLDS.filter((s) => s.gateClass === "trend").map((s) => [
         s.surfaceId,
@@ -1774,7 +1774,14 @@ The pure core `detectDrift(history, noiseFloorPct, k=7, n=3)` is fully unit-test
     ]);
     const out = r.stdout.trim();
     if (out === "") return [];
-    const parsed: unknown = JSON.parse(out);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(out);
+    } catch {
+      // `gh` can emit warnings/notices before the JSON payload; degrade gracefully
+      // (treat as "no open issues") rather than crash the advisory drift checker.
+      return [];
+    }
     if (!Array.isArray(parsed)) return [];
     const result: { number: number; title: string }[] = [];
     for (const x of parsed) {
@@ -1813,8 +1820,6 @@ The pure core `detectDrift(history, noiseFloorPct, k=7, n=3)` is fully unit-test
   }
   ```
 
-  Note: the `TREND_METRIC_BY_SURFACE` type annotation uses a conditional only to express `keyof HistoryLineSurface`; simplify the declared type to `ReadonlyMap<BenchSurfaceId, keyof HistoryLineSurface>` if `tsc` prefers it (the implementation is identical) — see Step 5.
-
 - [ ] **Step 4: Run the test and confirm it PASSES.**
 
   ```bash
@@ -1823,20 +1828,9 @@ The pure core `detectDrift(history, noiseFloorPct, k=7, n=3)` is fully unit-test
 
   Expected: `7 pass, 0 fail`.
 
-- [ ] **Step 5: Typecheck and lint. Simplify the map type if `tsc` flags it.**
+- [ ] **Step 5: Typecheck and lint.**
 
-  If `tsc` rejects the conditional-typed `ReadonlyMap` declaration, replace its type with the plain form:
-
-  ```ts
-  const TREND_METRIC_BY_SURFACE: ReadonlyMap<BenchSurfaceId, keyof HistoryLineSurface> = new Map(
-    SLO_THRESHOLDS.filter((s) => s.gateClass === "trend").map((s) => [
-      s.surfaceId,
-      historyFieldFor(s.metric),
-    ]),
-  );
-  ```
-
-  Then run:
+  Run:
 
   ```bash
   cd "C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\packages\gateway" && bun run typecheck
