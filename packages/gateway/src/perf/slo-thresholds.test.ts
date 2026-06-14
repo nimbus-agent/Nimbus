@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
 import { SLO_THRESHOLDS, type SloThreshold, thresholdsBySurface } from "./slo-thresholds.ts";
+import type { BenchSurfaceId } from "./types.ts";
 
 describe("SLO_THRESHOLDS — schema invariants", () => {
   test("contains exactly 29 rows", () => {
@@ -70,6 +70,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     const s1 = SLO_THRESHOLDS.find((r) => r.surfaceId === "S1");
     expect(s1).toEqual({
       surfaceId: "S1",
+      gateClass: "trend",
       metric: "p95_ms",
       refMax: 2_000,
       ghaMax: 10_000,
@@ -94,6 +95,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     const s2a = SLO_THRESHOLDS.find((r) => r.surfaceId === "S2-a");
     expect(s2a).toEqual({
       surfaceId: "S2-a",
+      gateClass: "gate",
       metric: "p95_ms",
       refMax: 30,
       ghaMax: 200,
@@ -130,5 +132,78 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     expect(map.get("S1")?.surfaceId).toBe("S1");
     expect(map.get("S2-a")?.refMax).toBe(30);
     expect(map.get("not-a-real-surface" as never)).toBeUndefined();
+  });
+});
+
+describe("SLO_THRESHOLDS — gateClass partition (spec § 4.1)", () => {
+  const GATE_IDS: Set<BenchSurfaceId> = new Set([
+    "S2-a",
+    "S2-b",
+    "S8-l50-b1",
+    "S8-l50-b8",
+    "S8-l50-b32",
+    "S8-l50-b64",
+    "S8-l500-b1",
+    "S8-l500-b8",
+    "S8-l500-b32",
+    "S8-l500-b64",
+    "S8-l5000-b1",
+    "S8-l5000-b8",
+    "S8-l5000-b32",
+    "S8-l5000-b64",
+  ]);
+  const TREND_IDS: Set<BenchSurfaceId> = new Set([
+    "S1",
+    "S3",
+    "S4",
+    "S5",
+    "S6-drive",
+    "S6-gmail",
+    "S6-github",
+    "S7-a",
+    "S7-b",
+    "S10",
+    "S11-a",
+    "S11-b",
+  ]);
+  const REFERENCE_IDS: Set<BenchSurfaceId> = new Set(["S2-c", "S7-c", "S9"]);
+  const STUB_IDS: Set<BenchSurfaceId> = new Set(["S3", "S5"]);
+
+  test("every row carries a gateClass of gate | trend | reference", () => {
+    for (const row of SLO_THRESHOLDS) {
+      expect(["gate", "trend", "reference"]).toContain(row.gateClass);
+    }
+  });
+
+  test("the partition is exhaustive over all 29 surfaces with no overlap", () => {
+    const seen = new Set<string>();
+    for (const row of SLO_THRESHOLDS) {
+      expect(seen.has(row.surfaceId)).toBe(false);
+      seen.add(row.surfaceId);
+    }
+    expect(seen.size).toBe(29);
+  });
+
+  test("gate-class set matches the spec § 3 table (S2-a, S2-b + 12 S8 cells)", () => {
+    const gate = SLO_THRESHOLDS.filter((r) => r.gateClass === "gate").map((r) => r.surfaceId);
+    expect(new Set(gate)).toEqual(GATE_IDS);
+  });
+
+  test("trend-class set matches the spec § 3 table (S1, S4, S6-*, S7-a/b, S10, S11-a/b)", () => {
+    const trend = SLO_THRESHOLDS.filter((r) => r.gateClass === "trend").map((r) => r.surfaceId);
+    expect(new Set(trend)).toEqual(TREND_IDS);
+  });
+
+  test("reference-class set matches the spec § 3 table (S2-c, S7-c, S9)", () => {
+    const ref = SLO_THRESHOLDS.filter((r) => r.gateClass === "reference").map((r) => r.surfaceId);
+    expect(new Set(ref)).toEqual(REFERENCE_IDS);
+  });
+
+  test("S3/S5 stubs are classified trend (spawn-driver pending) and S4 is trend", () => {
+    for (const id of STUB_IDS) {
+      const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
+      expect(row?.gateClass).toBe("trend");
+    }
+    expect(SLO_THRESHOLDS.find((r) => r.surfaceId === "S4")?.gateClass).toBe("trend");
   });
 });

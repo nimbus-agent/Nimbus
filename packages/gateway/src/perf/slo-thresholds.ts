@@ -2,6 +2,7 @@ import { type BenchSurfaceId, S8_BATCHES, S8_LENGTHS } from "./types.ts";
 
 export interface SloThreshold {
   surfaceId: BenchSurfaceId;
+  gateClass: "gate" | "trend" | "reference";
   metric:
     | "p95_ms"
     | "p50_ms"
@@ -21,6 +22,7 @@ export interface SloThreshold {
 const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   {
     surfaceId: "S1",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 2_000,
     ghaMax: 10_000,
@@ -44,6 +46,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S2-a",
+    gateClass: "gate",
     metric: "p95_ms",
     refMax: 30,
     ghaMax: 200,
@@ -54,6 +57,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S2-b",
+    gateClass: "gate",
     metric: "p95_ms",
     refMax: 80,
     ghaMax: 500,
@@ -64,6 +68,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S2-c",
+    gateClass: "reference",
     metric: "p95_ms",
     refMax: 300,
     ghaMax: "skipped",
@@ -74,6 +79,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S3",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 1_500,
     ghaMax: 7_500,
@@ -84,6 +90,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S4",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 500,
     ghaMax: 2_500,
@@ -94,6 +101,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S5",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 200,
     ghaMax: 1_000,
@@ -104,6 +112,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S11-a",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 300,
     ghaMax: 1_500,
@@ -123,6 +132,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S11-b",
+    gateClass: "trend",
     metric: "p95_ms",
     refMax: 50,
     // Warm-CLI-overhead is dominated by a large fixed process-spawn cost on
@@ -144,6 +154,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
 
   {
     surfaceId: "S6-drive",
+    gateClass: "trend",
     metric: "throughput_per_sec",
     ghaMax: "tbd-c2",
     gated: false,
@@ -153,6 +164,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S6-gmail",
+    gateClass: "trend",
     metric: "throughput_per_sec",
     ghaMax: "tbd-c2",
     gated: false,
@@ -162,6 +174,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S6-github",
+    gateClass: "trend",
     metric: "throughput_per_sec",
     ghaMax: "tbd-c2",
     gated: false,
@@ -171,6 +184,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S7-a",
+    gateClass: "trend",
     metric: "rss_bytes_p95",
     ghaMax: "tbd-c2",
     gated: false,
@@ -181,6 +195,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S7-b",
+    gateClass: "trend",
     metric: "rss_bytes_p95",
     ghaMax: "tbd-c2",
     gated: false,
@@ -191,6 +206,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S7-c",
+    gateClass: "reference",
     metric: "rss_bytes_p95",
     ghaMax: "skipped",
     gated: false,
@@ -201,6 +217,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S9",
+    gateClass: "reference",
     metric: "tokens_per_sec",
     ghaMax: "skipped",
     gated: false,
@@ -210,6 +227,7 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
   },
   {
     surfaceId: "S10",
+    gateClass: "trend",
     metric: "throughput_per_sec",
     ghaMax: "tbd-c2",
     gated: false,
@@ -225,6 +243,7 @@ function buildS8Cells(): readonly SloThreshold[] {
     for (const batch of S8_BATCHES) {
       out.push({
         surfaceId: `S8-l${length}-b${batch}`,
+        gateClass: "gate",
         metric: "throughput_per_sec",
         ghaMax: "tbd-c2",
         gated: false,

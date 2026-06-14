@@ -143,6 +143,7 @@ describe("isFloorMetric", () => {
 describe("compareAgainstHistory — floor metrics", () => {
   const floorRow: SloThreshold = {
     surfaceId: "S6-drive",
+    gateClass: "gate",
     metric: "throughput_per_sec",
     refMax: 100,
     ghaMax: 60,
