@@ -17,8 +17,9 @@ unmerged Slice 7c branch.
 
 ## Goal
 
-A **read-only** first-party MCP connector that indexes the user's Mendeley library
-documents (papers, PDFs, citations) into the local index as **`reference`** items —
+A **read-only** first-party MCP connector that indexes the **metadata** of the
+user's Mendeley library documents (title, authors, year, abstract, DOI/identifiers
+for papers, PDFs, and citations) into the local index as **`reference`** items —
 the same item type the shipped Zotero connector uses — so `nimbus search` treats
 both reference managers uniformly (the `service` field distinguishes
 `mendeley` vs `zotero`). Implemented as a Zotero-style clone: a thin MCP server
@@ -28,6 +29,8 @@ stub plus a gateway-side sync handler and mapper.
 
 - Annotations / highlights.
 - Folders / groups organization.
+- **Full-text PDF attachment extraction** — only document metadata is indexed;
+  binary PDF attachments are never fetched, downloaded, or parsed.
 - Any write path (read-only connector).
 - Live-API credential verification (build to the documented API shape, per the
   established connector-buildout cadence).
@@ -53,14 +56,28 @@ stub plus a gateway-side sync handler and mapper.
   - `response_type=code`, scope `all`
   - `clientSecret: "required"`, `secretPlacement: "basic_header"`,
     `usesPkce: false` (Elsevier confidential client)
-- Secret manifest: `mendeley: ["mendeley.oauth"]`. Token blob stored in Vault.
-  User connects via `nimbus connect mendeley`.
-- The sync handler obtains a fresh access token via a
-  `getValidMendeleyAccessToken(ctx.vault)` accessor (mirrors
-  `getValidNotionAccessToken`), refreshing on expiry.
+- Secret manifest: `mendeley: ["mendeley.oauth"]`. Only the resulting OAuth token
+  blob is stored in Vault. User connects via `nimbus connector auth mendeley`.
+- **Client credentials are user-supplied, not bundled.** Because Mendeley/Elsevier
+  is a confidential client, the user registers their own Elsevier developer
+  application and supplies the credentials via environment variables —
+  `NIMBUS_OAUTH_MENDELEY_CLIENT_ID` and `NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET` —
+  exactly mirroring the confidential Notion/Zoom providers. There is **no central
+  first-party auth proxy** and **no client secret baked into the (AGPL, local-first)
+  client**; the secret is read from the environment only at token-exchange time and
+  is never persisted to Vault, logs, or config. `Config.oauthMendeleyClientId` /
+  `Config.oauthMendeleyClientSecret` expose them, with help-message constants in
+  `auth/oauth-env-help-messages.ts`.
+- The sync handler obtains a fresh access token via a thin
+  `getValidMendeleyAccessToken(ctx.vault)` wrapper over the shared
+  `getValidVaultAccessToken` (identical shape to `getValidNotionAccessToken`),
+  which performs refresh-on-expiry. Refresh concurrency is handled by that shared
+  accessor — not re-implemented here — and per-connector syncs are scheduler-
+  serialized, so Mendeley introduces no new concurrent-refresh risk.
 - **Coupling cost:** the exhaustive `OAuthProvider` union forces co-edits in
   `auth/oauth-registry.ts`, `auth/auth.ts`, `config/config.ts`, and
-  `auth/oauth-env-help-messages.ts` (the documented union-widening coupling).
+  `auth/oauth-env-help-messages.ts` (two new help constants) — the documented
+  union-widening coupling.
 
 ### Data flow & mapping
 
@@ -71,7 +88,11 @@ stub plus a gateway-side sync handler and mapper.
 2. `GET https://api.mendeley.com/documents?view=all&limit=500` with
    `Authorization: Bearer <token>` and
    `Accept: application/vnd.mendeley-document.1+json`.
-3. Incremental syncs pass `modified_since=<ISO>` as the cursor.
+3. Incremental syncs pass `modified_since=<ISO>` as the cursor. The exact ISO
+   format Mendeley accepts (millisecond precision vs. seconds, trailing `Z`) must be
+   pinned against the Mendeley API docs during planning and locked with a mocked
+   request assertion in `mendeley-sync.test.ts` to prevent serialization drift
+   (deferred to implementation).
 4. Each document → `connectors/mendeley-reference-mapping.ts` →
    `MappedRow<"mendeley","reference">` → `upsertIndexedItemForSync`.
 
@@ -90,6 +111,11 @@ that reads the `Link` header to follow `rel="next"`, bounded by a `MAX_PAGES` ca
 (like Zotero's page loop), leaving the shared helper untouched (no scope creep onto
 the other ~80 connectors). This is the single place Mendeley deviates from a pure
 Zotero clone.
+
+The RFC 5988 `Link` parser must tolerate casing, surrounding whitespace, and
+quoting variations and handle both absolute and relative next-URLs; the plan must
+include explicit test arms for these variations (deferred to implementation —
+code-level detail, not a spec decision).
 
 ## Wiring sites (type-coupled set)
 
@@ -167,3 +193,21 @@ before the first push.
 - All new files clear the coverage floor; full `bun run preflight` parity is green
   before the first push.
 - `docs/CHANGELOG.md` records the delivery; the roadmap Mendeley row is checked off.
+
+## Review triage (2026-06-14)
+
+Reviewer feedback in `2026-06-14-slice9-mendeley-connector-design-review.md`:
+
+- **1A — full-text PDF extraction non-goal — FIXED.** Goal reworded to "metadata";
+  added to Non-goals.
+- **1B — confidential-client credential supply — FIXED.** Auth section now states
+  client id/secret are user-supplied via `NIMBUS_OAUTH_MENDELEY_CLIENT_ID/_SECRET`
+  env vars (no proxy, no baked secret, never in Vault), mirroring Notion/Zoom; the
+  connect command corrected to `nimbus connector auth mendeley`.
+- **2A — Link parser robustness — DEFERRED to plan.** Implementation/test detail;
+  pagination section now requires variation test arms.
+- **2B — exact `modified_since` format — DEFERRED to plan.** Must be pinned against
+  Mendeley docs and locked with a mocked request assertion.
+- **2C — concurrent token refresh — DEFERRED (not Mendeley-scoped).** Refresh lives
+  in the shared `getValidVaultAccessToken`; Mendeley inherits it and syncs are
+  scheduler-serialized, so no new risk is introduced.
