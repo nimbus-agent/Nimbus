@@ -19,6 +19,11 @@ describe("parseMcpListPage", () => {
   it("throws on a non-MCP shape", () => {
     expect(() => parseMcpListPage({ nope: true })).toThrow(/unexpected MCP tool result/);
   });
+
+  it("throws with a connector-blaming message on malformed JSON", () => {
+    const badEnvelope = { content: [{ type: "text", text: "not json{" }] };
+    expect(() => parseMcpListPage(badEnvelope)).toThrow(/malformed JSON/);
+  });
 });
 
 describe("drainPagedList", () => {
@@ -43,7 +48,7 @@ describe("drainPagedList", () => {
     ]);
   });
 
-  it("stops at a safety page cap to avoid an infinite cursor loop", async () => {
+  it("terminates on a non-advancing cursor (same nextCursor twice)", async () => {
     const session: ConnectorToolSession = {
       call: async () => ({
         content: [
@@ -52,7 +57,31 @@ describe("drainPagedList", () => {
       }),
     };
     const items = await drainPagedList(session, "snowflake_list", 200);
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.length).toBeLessThanOrEqual(200 * 1000);
+    // First call: cursor null → "same"; second call: "same" === cursor → break.
+    // Two pages fetched, each returns one item.
+    expect(items).toEqual([{ id: 1 }, { id: 1 }]);
+  });
+
+  it("stops at MAX_PAGES (1000) when the cursor always advances", async () => {
+    let callCount = 0;
+    const session: ConnectorToolSession = {
+      call: async (_toolId, args) => {
+        const page = callCount;
+        callCount += 1;
+        const a = args as { cursor: string | null };
+        const nextPage = a.cursor === null ? 1 : Number(a.cursor) + 1;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ items: [{ page }], nextCursor: String(nextPage) }),
+            },
+          ],
+        };
+      },
+    };
+    const items = await drainPagedList(session, "snowflake_list", 1);
+    expect(callCount).toBe(1000);
+    expect(items.length).toBe(1000);
   });
 });

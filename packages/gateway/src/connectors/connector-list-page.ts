@@ -21,7 +21,14 @@ function extractMcpText(result: unknown): string {
 }
 
 export function parseMcpListPage(result: unknown): ListPage {
-  const parsed = JSON.parse(extractMcpText(result)) as Record<string, unknown>;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(extractMcpText(result)) as Record<string, unknown>;
+  } catch (e) {
+    throw new Error(
+      `connector list: malformed JSON in MCP response: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   const items = Array.isArray(parsed["items"]) ? parsed["items"] : [];
   const nextCursor = typeof parsed["nextCursor"] === "string" ? parsed["nextCursor"] : null;
   return { items, nextCursor };
