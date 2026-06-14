@@ -54,7 +54,8 @@ export function findParityGaps(sonarPatterns: readonly string[]): string[] {
   const gaps: string[] = [];
   for (const pattern of sonarPatterns) {
     const samples = patternToSampleRelPaths(pattern);
-    const anyCovered = samples.some((s) => isExempt(s));
+    // `/testing/` paths are exempt structurally via discoverSourceFiles (check.ts), not via isExempt.
+    const anyCovered = samples.some((s) => isExempt(s) || s.includes("/testing/"));
     if (!anyCovered) gaps.push(pattern);
   }
   return gaps;

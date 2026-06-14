@@ -17,4 +17,15 @@ describe("findParityGaps", () => {
   test("permits sonar patterns that are subsets of local exemptions", () => {
     expect(findParityGaps(["packages/gateway/src/perf/fixtures/foo.ts"])).toEqual([]);
   });
+
+  test("treats a /testing/ path as covered even when it is not in EXCLUSIONS", () => {
+    // sandbox-probe.ts is exempt structurally via discoverSourceFiles (check.ts),
+    // not via isExempt; the parity check must still consider it covered.
+    expect(findParityGaps(["packages/sdk/src/testing/sandbox-probe.ts"])).toEqual([]);
+  });
+
+  test("still reports a genuinely-uncovered non-testing path (no over-broadening)", () => {
+    const gaps = findParityGaps(["packages/gateway/src/some-real-file.ts"]);
+    expect(gaps).toContain("packages/gateway/src/some-real-file.ts");
+  });
 });
