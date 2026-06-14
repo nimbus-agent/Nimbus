@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   type InvokeTeamToolDeps,
+  type InvokeTeamToolListDeps,
   invokeTeamTool,
+  invokeTeamToolList,
   type TeamToolSpawnRequest,
 } from "./team-tool-invoke.ts";
 
@@ -33,6 +35,25 @@ function deps(over: Partial<InvokeTeamToolDeps> = {}): {
     ...over,
   };
   return { d, spawnCalls };
+}
+
+function listDeps(over: Partial<InvokeTeamToolListDeps> = {}): {
+  d: InvokeTeamToolListDeps;
+  sessionCalled: { value: boolean };
+} {
+  const sessionCalled = { value: false };
+  const d: InvokeTeamToolListDeps = {
+    vault: fakeVault({ "teamvault.dw-snowflake.snowflake.account": "ACCT123" }),
+    sandboxCwd: "/tmp/sbx",
+    requiredSecretKeysFor: (service) =>
+      service === "snowflake" ? ["snowflake.account"] : undefined,
+    openSession: async () => {
+      sessionCalled.value = true;
+      return [{ schema: "PUBLIC" }, { schema: "RAW" }];
+    },
+    ...over,
+  };
+  return { d, sessionCalled };
 }
 
 describe("invokeTeamTool (I19)", () => {
@@ -86,5 +107,44 @@ describe("invokeTeamTool (I19)", () => {
       args: {},
     });
     expect(JSON.stringify(r)).not.toContain("TEAMPAT");
+  });
+});
+
+describe("invokeTeamToolList (I19 — paginated list drain)", () => {
+  it("returns the array openSession resolves when the team secret is present", async () => {
+    const { d, sessionCalled } = listDeps();
+    const result = await invokeTeamToolList(d, {
+      entry: "dw-snowflake",
+      service: "snowflake",
+      listToolId: "snowflake_list_schemas",
+    });
+    expect(result).toEqual([{ schema: "PUBLIC" }, { schema: "RAW" }]);
+    expect(sessionCalled.value).toBe(true);
+  });
+
+  it("throws team_secret_missing and does NOT call openSession when the secret is absent", async () => {
+    const { d, sessionCalled } = listDeps({
+      vault: fakeVault({}), // no team secret stored
+    });
+    await expect(
+      invokeTeamToolList(d, {
+        entry: "dw-snowflake",
+        service: "snowflake",
+        listToolId: "snowflake_list_schemas",
+      }),
+    ).rejects.toThrow(/team_secret_missing|missing required secret/);
+    expect(sessionCalled.value).toBe(false);
+  });
+
+  it("throws team_service_unsupported and does NOT call openSession for an unknown service", async () => {
+    const { d, sessionCalled } = listDeps();
+    await expect(
+      invokeTeamToolList(d, {
+        entry: "dw-snowflake",
+        service: "google_drive",
+        listToolId: "gdrive_list_files",
+      }),
+    ).rejects.toThrow(/team_service_unsupported|no team-injectable secret keys/);
+    expect(sessionCalled.value).toBe(false);
   });
 });

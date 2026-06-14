@@ -52,7 +52,7 @@ function audit(
   approvers?: readonly string[],
 ): void {
   appendTeamVaultAudit(ctx.db, {
-    peerId: q.peerId,
+    principal: { kind: "peer", peerId: q.peerId },
     entry: q.entry,
     toolId: q.toolId,
     decision,
@@ -102,4 +102,79 @@ export async function answerFederatedInvoke(
   });
   audit(ctx, q, "answered");
   return { kind: "ok", result };
+}
+
+// ---------------------------------------------------------------------------
+// Local-operator list path (Wave 7b — data-warehouse sync)
+// ---------------------------------------------------------------------------
+
+export interface LocalOperatorListCtx {
+  readonly db: Database;
+  readonly store: Pick<TeamVaultStore, "getEntry">;
+  readonly runListTool: (input: {
+    entry: string;
+    service: string;
+    listToolId: string;
+  }) => Promise<unknown[]>;
+  readonly now?: () => number;
+  /** I18: when identity is enabled, the local operator must be valid to serve a team credential. */
+  readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+}
+
+export interface LocalOperatorListRequest {
+  readonly entry: string;
+  readonly service: string;
+  readonly listToolId: string;
+}
+
+export type LocalOperatorListResult =
+  | { readonly kind: "ok"; readonly items: unknown[] }
+  | { readonly kind: "error"; readonly error: "no_grant" | "identity_invalid" };
+
+/**
+ * I19 — local-operator variant of the team-vault gate. The local owner (not a remote peer) requests
+ * a paginated list over a team-credentialed connector. Unlike the peer path, identity failures are
+ * returned with a DISTINCT error (`identity_invalid`) because no cross-principal leak is possible on
+ * the operator's own machine. The peer path remains OPAQUE (returns `no_grant` for identity failures)
+ * to prevent state leaks across trust boundaries.
+ */
+export async function answerLocalOperatorList(
+  ctx: LocalOperatorListCtx,
+  req: LocalOperatorListRequest,
+): Promise<LocalOperatorListResult> {
+  const ts = (ctx.now ?? Date.now)();
+  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
+    appendTeamVaultAudit(ctx.db, {
+      principal: { kind: "localOperator" },
+      entry: req.entry,
+      toolId: req.listToolId,
+      decision: "identity_invalid",
+      timestamp: ts,
+    });
+    return { kind: "error", error: "identity_invalid" };
+  }
+  const entryDef = ctx.store.getEntry(req.entry);
+  if (entryDef === undefined || entryDef.service !== req.service) {
+    appendTeamVaultAudit(ctx.db, {
+      principal: { kind: "localOperator" },
+      entry: req.entry,
+      toolId: req.listToolId,
+      decision: "no_grant",
+      timestamp: ts,
+    });
+    return { kind: "error", error: "no_grant" };
+  }
+  const items = await ctx.runListTool({
+    entry: req.entry,
+    service: req.service,
+    listToolId: req.listToolId,
+  });
+  appendTeamVaultAudit(ctx.db, {
+    principal: { kind: "localOperator" },
+    entry: req.entry,
+    toolId: req.listToolId,
+    decision: "answered",
+    timestamp: ts,
+  });
+  return { kind: "ok", items };
 }
