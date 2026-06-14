@@ -897,7 +897,6 @@ describe("I25 — a tribal KB capture writes only the config destination, behind
         cooldownDays: 30,
         now: () => 5000,
       },
-      // biome-ignore lint/style/noNonNullAssertion: asserted above
       cluster!,
       "notion",
     );
@@ -922,7 +921,6 @@ describe("I25 — a tribal KB capture writes only the config destination, behind
         cooldownDays: 30,
         now: () => 5000,
       },
-      // biome-ignore lint/style/noNonNullAssertion: seeded above
       store.get("k1")!,
       "notion",
     );
@@ -942,7 +940,6 @@ describe("I25 — a tribal KB capture writes only the config destination, behind
         cooldownDays: 30,
         now: () => 5000,
       },
-      // biome-ignore lint/style/noNonNullAssertion: seeded above
       store.get("k1")!,
       "notion",
     );

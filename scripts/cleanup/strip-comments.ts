@@ -91,7 +91,7 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
         j++;
       }
       if (j < source.length && source[j] === '"') {
-        const terminator = '"' + "#".repeat(hashes);
+        const terminator = `"${"#".repeat(hashes)}`;
         const end = source.indexOf(terminator, j + 1);
         if (end < 0) {
           abstained = true;

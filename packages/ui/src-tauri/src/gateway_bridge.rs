@@ -32,7 +32,7 @@ impl HitlInbox {
         }
     }
     pub fn push_dedup(&self, r: PendingHitl) -> bool {
-        let mut g = self.list.lock().unwrap();
+        let mut g = self.list.lock().expect("lock poisoned");
         if g.iter().any(|x| x.request_id == r.request_id) {
             return false;
         }
@@ -40,11 +40,11 @@ impl HitlInbox {
         true
     }
     pub fn remove(&self, request_id: &str) {
-        let mut g = self.list.lock().unwrap();
+        let mut g = self.list.lock().expect("lock poisoned");
         g.retain(|x| x.request_id != request_id);
     }
     pub fn snapshot(&self) -> Vec<PendingHitl> {
-        self.list.lock().unwrap().clone()
+        self.list.lock().expect("lock poisoned").clone()
     }
 }
 

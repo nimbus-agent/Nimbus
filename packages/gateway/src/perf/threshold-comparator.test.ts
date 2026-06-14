@@ -43,17 +43,37 @@ describe("compareAgainstHistory", () => {
     expect(s1?.status).toEqual({ kind: "absolute-fail", measured: 12_000, threshold: 10_000 });
   });
 
-  test("S1 cold-start jitter (617→841 ms, +36 %) sits inside the widened 300 ms floor → pass", () => {
-    // Regression guard for the run-27487164610 macOS delta-fail: a pure release
-    // commit swung S1 p95 from 616.87 to 840.81 ms. With noiseFloorAbs=300 the
-    // effective floor is 300/616.87 ≈ 48.6 %, above the +36.3 % swing. If the
-    // floor is ever re-tightened to 200 ms (32.4 %), this flips back to delta-fail.
-    const current = fakeLine("gha-macos", { S1: { samples_count: 301, p95_ms: 840.81 } });
-    const previous = fakeLine("gha-macos", { S1: { samples_count: 301, p95_ms: 616.87 } });
-    const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-macos");
+  test("S1 cold-start jitter (617→841 ms, +36 %) sits inside the widened 300 ms floor → pass (Linux)", () => {
+    // Regression guard for the run-27487164610 delta-fail: a pure release commit
+    // swung S1 p95 from 616.87 to 840.81 ms. With noiseFloorAbs=300 the effective
+    // floor is 300/616.87 ≈ 48.6 %, above the +36.3 % swing. If the floor is ever
+    // re-tightened to 200 ms (32.4 %), this flips back to delta-fail. Asserted on
+    // gha-ubuntu because S1 is now Linux-only-gated (see the macOS/Windows tests
+    // below) — Linux is the runner where the floor still does the gating work.
+    const current = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 840.81 } });
+    const previous = fakeLine("gha-ubuntu", { S1: { samples_count: 301, p95_ms: 616.87 } });
+    const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, "gha-ubuntu");
     const s1 = out.find((c) => c.surfaceId === "S1");
     expect(s1?.status).toEqual({ kind: "pass" });
   });
+
+  // S1 + S11-a + S11-b carry linuxOnlyGate: their shared-runner spawn jitter on
+  // macOS / Windows is irreducible and was the dominant source of no-code-change
+  // perf delta-fails on main (e.g. run-27498114264 S1 +38.1 % on windows-2025;
+  // S11-a +57.7 % on macos-15 on the #622 release commit). The delta is still
+  // computed + surfaced in the PR comment; it just no longer gates the build off
+  // Linux. Mirrors the S7 memory-surface precedent above.
+  for (const surfaceId of ["S1", "S11-a", "S11-b"] as const) {
+    for (const runner of ["gha-macos", "gha-windows"] as const) {
+      test(`${surfaceId} on ${runner} resolves to skipped(linux-only-gate)`, () => {
+        const current = fakeLine(runner, { [surfaceId]: { samples_count: 301, p95_ms: 99_999 } });
+        const previous = fakeLine(runner, { [surfaceId]: { samples_count: 301, p95_ms: 600 } });
+        const out = compareAgainstHistory(current, previous, SLO_THRESHOLDS, runner);
+        const c = out.find((x) => x.surfaceId === surfaceId);
+        expect(c?.status).toEqual({ kind: "skipped", reason: "linux-only-gate" });
+      });
+    }
+  }
 
   test("delta-fail when delta > floorPct AND > floorAbs/previous*100", () => {
     const current = fakeLine("gha-ubuntu", { "S2-a": { samples_count: 500, p95_ms: 65 } });

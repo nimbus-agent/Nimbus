@@ -28,13 +28,19 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     noiseFloorPct: 25,
     // S1 is the heaviest cold-start surface; on shared GHA macOS/Windows runners
     // its p95 swings run-to-run between ~617 ms and ~841 ms (a ~224 ms / +36 %
-    // spawn-jitter envelope) with no code change. The 200 ms absolute floor was
-    // the binding constraint (200 / 617 ≈ 32 %, below that swing) and delta-failed
-    // a pure release commit. 300 ms lifts the effective floor to ~49 % (300 / 617):
-    // durable against the observed cold-start jitter while still catching a true
-    // ~1.5x regression (well under the 10 000 ms absolute ceiling above).
+    // spawn-jitter envelope) with no code change. A fixed absolute floor cannot
+    // hold this: the floor-as-percentage shrinks as the baseline grows, and the
+    // Windows baseline is ~2x macOS (~1123 ms), so 300 ms = only ~26.7 % there —
+    // a +38 % no-code-change run (27498114264) delta-failed straight through it.
+    // The jitter is a property of the shared runner, not the code, so — exactly
+    // like the S7 memory surfaces — S1 is gated on Linux only (linuxOnlyGate).
+    // The 300 ms floor + 10 000 ms ceiling still apply on gha-ubuntu (low-jitter)
+    // and reference-m1air, where they catch a true ~1.5x regression. On macOS /
+    // Windows the delta is still computed and shown in the PR comment for humans,
+    // it just no longer gates the build.
     noiseFloorAbs: 300,
     noiseFloorAbsUnit: "ms",
+    linuxOnlyGate: true,
   },
   {
     surfaceId: "S2-a",
@@ -103,8 +109,17 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     ghaMax: 1_500,
     gated: true,
     noiseFloorPct: 40,
+    // Sibling of S11-b: warm-CLI latency dominated by fixed process-spawn cost
+    // on shared GHA runners. Same irreducible jitter — a no-code-change release
+    // commit (#622) swung S11-a p95 +57.7 % on macos-15 (168.5 -> 265.8 ms),
+    // past the 40 % floor, after S1/S11-b were already Linux-only-gated. The
+    // jitter is a runner property, not a code signal, so gate on Linux only
+    // (linuxOnlyGate), like S1/S11-b/S7. The 1 500 ms ceiling + 40 % floor still
+    // apply on gha-ubuntu and reference-m1air to catch a true spawn regression;
+    // on macOS / Windows the delta is shown in the PR comment but no longer gates.
     noiseFloorAbs: 50,
     noiseFloorAbsUnit: "ms",
+    linuxOnlyGate: true,
   },
   {
     surfaceId: "S11-b",
@@ -114,14 +129,17 @@ const NON_S8_THRESHOLDS: readonly SloThreshold[] = [
     // shared GHA runners that does NOT scale with the 50 ms local reference, so
     // ghaMax is a deliberately larger multiple than the ~5x siblings. The CI
     // p95 hovers near 600 ms on macOS/Windows and tipped a hard 600 ceiling at
-    // ~607 (a ~1% spawn-jitter flake). With this row's own 40% declared noise
-    // floor (600 x 1.4 ≈ 840), 900 sits just past the noise envelope: durable
-    // against re-flake while still catching a true >=2x spawn regression.
+    // ~607 (a ~1% spawn-jitter flake). Like S1, this spawn jitter is a runner
+    // property, not a code signal, so S11-b is gated on Linux only
+    // (linuxOnlyGate). The 900 ms ceiling + 40 % floor still apply on gha-ubuntu
+    // and reference-m1air to catch a true >=2x spawn regression; on macOS /
+    // Windows the delta is shown in the PR comment but no longer gates.
     ghaMax: 900,
     gated: true,
     noiseFloorPct: 40,
     noiseFloorAbs: 10,
     noiseFloorAbsUnit: "ms",
+    linuxOnlyGate: true,
   },
 
   {

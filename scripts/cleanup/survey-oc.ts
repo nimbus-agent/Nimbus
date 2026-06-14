@@ -146,7 +146,7 @@ async function main() {
   );
   const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/04-oc-violations.md`;
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, out.join("\n") + "\n", "utf8");
+  await writeFile(target, `${out.join("\n")}\n`, "utf8");
   console.log(`Wrote ${all.length} OC candidates to ${relPath(target)}`);
 }
 

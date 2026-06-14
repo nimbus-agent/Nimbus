@@ -91,7 +91,7 @@ describe("ClientSession.push — disposed guard", () => {
 describe("ClientSession.push — reader parse error (sendParseFailure)", () => {
   test("oversized chunk triggers JsonRpcParseError; writes -32700 with the error message and disposes (branch=0: e instanceof JsonRpcParseError)", () => {
     // A line > IPC_MAX_LINE_BYTES (1 MB) causes NdjsonLineReader to throw JsonRpcParseError
-    const oversized = "x".repeat(IPC_MAX_LINE_BYTES + 1) + "\n";
+    const oversized = `${"x".repeat(IPC_MAX_LINE_BYTES + 1)}\n`;
     const { session, written, disposed } = makeSession();
     session.push(enc(oversized));
     expect(written).toHaveLength(1);

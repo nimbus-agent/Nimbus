@@ -25,8 +25,8 @@ afterEach(() => {
   }
 });
 
-const FAKE_KEY = "x".repeat(43) + "=";
-const FAKE_SIG = "y".repeat(86) + "==";
+const FAKE_KEY = `${"x".repeat(43)}=`;
+const FAKE_SIG = `${"y".repeat(86)}==`;
 
 function fakeInstalled(): InstalledExtensionRow[] {
   return [
@@ -318,7 +318,7 @@ describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
             version: "1.0.0",
             updateChannel: "stable",
             publisher: { id: "pub.test", key: FAKE_KEY },
-            signature: "z".repeat(86) + "==",
+            signature: `${"z".repeat(86)}==`,
             permissions: { network: [], filesystem: { read: [], write: [] } },
             dependsOn: { "com.shared.A": "^1.0.0" },
           },
@@ -332,7 +332,7 @@ describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
           version,
           updateChannel: "stable",
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: { id, version },
@@ -388,7 +388,7 @@ describe("auto-update — dependency conflict surfacing (T2 PR 4)", () => {
           version,
           updateChannel: "stable",
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: { id, version },
@@ -502,7 +502,7 @@ describe("auto-update — pollOnce skips disabled and no-publisher rows", () => 
           version,
           updateChannel: "stable",
           publisher: { id: "pub", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: { id, version },
@@ -567,7 +567,7 @@ describe("auto-update — pollOne early returns", () => {
           updateChannel: "stable" as const,
           // no publisher field → publisherId will be undefined
           permissions: { network: [], filesystem: { read: [], write: [] } },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
         },
         manifestRaw: {},
         manifestHash: "h".repeat(64),
@@ -654,7 +654,7 @@ describe("auto-update — tarballSizeBytes present vs absent", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: {},
@@ -687,7 +687,7 @@ describe("auto-update — tarballSizeBytes present vs absent", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: {},
@@ -756,7 +756,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
             version: "1.0.0",
             updateChannel: "stable",
             publisher: { id: "pub.test", key: FAKE_KEY },
-            signature: "z".repeat(86) + "==",
+            signature: `${"z".repeat(86)}==`,
             permissions: { network: [], filesystem: { read: [], write: [] } },
           },
         },
@@ -769,7 +769,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           // new version of A depends on X@^1.0.0
           dependsOn: { "com.dep.X": "^1.0.0" },
@@ -833,7 +833,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
             version: "1.0.0",
             updateChannel: "stable",
             publisher: { id: "pub.test", key: FAKE_KEY },
-            signature: "z".repeat(86) + "==",
+            signature: `${"z".repeat(86)}==`,
             permissions: { network: [], filesystem: { read: [], write: [] } },
           },
         },
@@ -846,7 +846,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           dependsOn: { "com.dep.Y": "^1.0.0" },
         },
@@ -906,7 +906,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           // A2's new version depends on com.dep.Z which isn't installed anywhere
           dependsOn: { "com.dep.Z": "^1.0.0" },
@@ -965,7 +965,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
             version: "1.0.0",
             updateChannel: "stable",
             publisher: { id: "pub.test", key: FAKE_KEY },
-            signature: "z".repeat(86) + "==",
+            signature: `${"z".repeat(86)}==`,
             permissions: { network: [], filesystem: { read: [], write: [] } },
             // B3 depends on A3@^1.0.0 → bump to 1.9.0 satisfies
             dependsOn: { "com.shared.A3": "^1.0.0" },
@@ -980,7 +980,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
         },
         manifestRaw: {},
@@ -1037,7 +1037,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
             version: "1.0.0",
             updateChannel: "stable",
             publisher: { id: "pub.test", key: FAKE_KEY },
-            signature: "z".repeat(86) + "==",
+            signature: `${"z".repeat(86)}==`,
             permissions: { network: [], filesystem: { read: [], write: [] } },
           },
         },
@@ -1050,7 +1050,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           dependsOn: { "com.dep.D": "^1.0.0" },
         },
@@ -1110,7 +1110,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           // new manifest: no dependsOn (undefined) → exercises the else/delete path
         },
@@ -1178,7 +1178,7 @@ describe("auto-update — computeUpdateConflicts: solver paths", () => {
           version,
           updateChannel: "stable" as const,
           publisher: { id: "pub.test", key: FAKE_KEY },
-          signature: "w".repeat(86) + "==",
+          signature: `${"w".repeat(86)}==`,
           permissions: { network: [], filesystem: { read: [], write: [] } },
           // AA@2.0.0 has no deps; this is a clean resolution path through the root fast-path
         },

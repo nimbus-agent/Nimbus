@@ -27,7 +27,7 @@ describe("formatGoogleHttpError", () => {
       // 161 "A"s → truncated at 160
       const body = "A".repeat(161);
       const result = formatGoogleHttpError(500, body, "TestService");
-      const expectedSuffix = "A".repeat(160) + "…";
+      const expectedSuffix = `${"A".repeat(160)}…`;
       expect(result).toBe(`TestService sync failed: 500 — ${expectedSuffix}`);
     });
   });

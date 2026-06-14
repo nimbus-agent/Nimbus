@@ -44,6 +44,7 @@ describe("D15 — the teamvault. vault-key prefix is composed only in team-vault
     const v = checkTeamVaultPrefixInvariant([
       {
         relPath: "packages/gateway/src/teamvault/team-vault-audit.ts",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: test mockup content
         contents: "const a = `teamvault.invoke.${decision}`;",
       },
     ]);

@@ -1,7 +1,11 @@
 {
   "name": "nimbus",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nimbus-agent/Nimbus.git"
+  },
   "overrides": {
     "sharp": "0.34.5",
     "protobufjs": "7.5.8",
@@ -145,8 +149,8 @@
     "audit:readme-cli": "bun scripts/audit/readme-cli-commands.ts",
     "audit:package-readmes": "bun scripts/audit/package-readmes.ts",
     "audit:cross-platform": "bun scripts/audit/check-cross-platform.ts",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome check --error-on-warnings .",
+    "lint:fix": "biome check --write --error-on-warnings .",
     "lint:markdown": "markdownlint-cli2",
     "preflight": "bun scripts/preflight.ts",
     "preflight:fast": "bun scripts/preflight.ts --fast",

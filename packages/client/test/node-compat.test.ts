@@ -133,10 +133,16 @@ if (GATEWAY_BIN === undefined) {
       const client = await NimbusClient.open({ socketPath });
       const handle = client.askStream("hello");
       // streamId is resolved asynchronously by the underlying engine.askStream
-      // RPC. Poll briefly until it lands so we can assert we got one.
+      // RPC. Poll until it lands so we can assert we got one. The deadline is
+      // STREAM_TIMEOUT_MS (not a tighter ad-hoc value): on a cold macOS/Windows
+      // CI runner the very first askStream round-trip can exceed 5 s while the
+      // gateway finishes its one-time agent/runtime warm-up, which was producing
+      // a false "askStream should return a streamId" failure (later streaming
+      // tests passed against the now-warm gateway). The hard assertion below
+      // still fails fast if the streamId genuinely never arrives.
       const waitForStreamId = async (): Promise<string> => {
         const start = Date.now();
-        while (Date.now() - start < 5000) {
+        while (Date.now() - start < STREAM_TIMEOUT_MS) {
           if (handle.streamId !== "") return handle.streamId;
           await new Promise((r) => setTimeout(r, 50));
         }
