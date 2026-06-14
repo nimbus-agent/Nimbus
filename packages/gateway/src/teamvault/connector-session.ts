@@ -43,7 +43,7 @@ const SINGLE_SERVICE_SPAWNERS: Readonly<Record<string, Spawner>> = {
   salesforce: spawners.ensureSalesforceMcp,
 };
 
-function spawnerFor(service: string): Spawner {
+export function spawnerFor(service: string): Spawner {
   // Phase-3 cloud/observability/data connectors (aws, azure, gcp, grafana, sentry, datadog, …)
   // are all started by the bundle spawner, which only launches the credentialed server.
   return SINGLE_SERVICE_SPAWNERS[service] ?? spawners.ensurePhase3BundleMcp;
@@ -54,7 +54,9 @@ interface SessionClient {
   disconnect(): Promise<void>;
 }
 
-type SessionSpawn = (req: ConnectorSessionRequest) => Promise<SessionClient> | SessionClient;
+type SessionSpawn = (
+  req: ConnectorSessionRequest,
+) => Promise<SessionClient | undefined> | SessionClient | undefined;
 
 let spawnOverride: SessionSpawn | undefined;
 
@@ -63,7 +65,16 @@ export function __setSessionSpawnerForTest(fn: SessionSpawn | undefined): void {
   spawnOverride = fn;
 }
 
-async function realSpawn(req: ConnectorSessionRequest): Promise<SessionClient | undefined> {
+/**
+ * Assemble a throwaway {@link MeshSpawnContext}, run `resolveSpawner(service)(ctx)` to register
+ * exactly one client, and wrap it as a {@link SessionClient}. `resolveSpawner` defaults to the
+ * real per-service spawner table; it is injectable so the deterministic client-assembly logic is
+ * unit-testable without launching a sandboxed subprocess.
+ */
+export async function realSpawn(
+  req: ConnectorSessionRequest,
+  resolveSpawner: (service: string) => Spawner = spawnerFor,
+): Promise<SessionClient | undefined> {
   const clients = new Map<string, MCPClient>();
   const ctx: MeshSpawnContext = {
     vault: req.vaultView,
@@ -76,7 +87,7 @@ async function realSpawn(req: ConnectorSessionRequest): Promise<SessionClient | 
     bumpToolsEpoch: () => {},
     scheduleLazyDisconnect: () => {},
   };
-  await spawnerFor(req.service)(ctx);
+  await resolveSpawner(req.service)(ctx);
   // Each spawner registers exactly one client via setLazyClient (see connector-spawns.ts), so first is the only entry.
   const client = [...clients.values()][0];
   if (client === undefined) return undefined;
