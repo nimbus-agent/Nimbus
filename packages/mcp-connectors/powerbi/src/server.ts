@@ -48,6 +48,17 @@ async function fetchAccessToken(
   return token;
 }
 
+const POWERBI_API_BASE = "https://api.powerbi.com";
+
+/** Mint an AAD access token from the connector's client-credentials env. */
+async function accessToken(): Promise<string> {
+  return fetchAccessToken(
+    requireEnv("POWERBI_TENANT_ID"),
+    requireEnv("POWERBI_CLIENT_ID"),
+    requireEnv("POWERBI_CLIENT_SECRET"),
+  );
+}
+
 function asRec(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -154,6 +165,55 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
       const reports = await listReports(accessToken);
       const matches = filterPowerBiReports(reports, { query: p.query, limit: p.limit });
       return jsonResult({ matches });
+    },
+  );
+
+  reg(
+    "powerbi_dataset_refresh",
+    "Trigger a dataset refresh (requires HITL powerbi.dataset.refresh). groupId optional (omit for My Workspace). Async (202).",
+    z.object({ groupId: z.string().min(1).optional(), datasetId: z.string().min(1) }),
+    async (p) => {
+      const token = await accessToken();
+      const datasetUrl =
+        p.groupId === undefined || p.groupId === ""
+          ? `${POWERBI_API_BASE}/v1.0/myorg/datasets/${encodeURIComponent(p.datasetId)}/refreshes`
+          : `${POWERBI_API_BASE}/v1.0/myorg/groups/${encodeURIComponent(p.groupId)}/datasets/${encodeURIComponent(p.datasetId)}/refreshes`;
+      const res = await fetchWithTimeout(datasetUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ notifyOption: "NoNotification" }),
+      });
+      if (!res.ok) {
+        throw new Error(
+          `Power BI dataset refresh ${String(res.status)}: ${(await res.text()).slice(0, 400)}`,
+        );
+      }
+      return jsonResult({
+        status: "queued",
+        ...(p.groupId !== undefined && p.groupId !== "" ? { groupId: p.groupId } : {}),
+        datasetId: p.datasetId,
+      });
+    },
+  );
+
+  reg(
+    "powerbi_dataflow_refresh",
+    "Trigger a dataflow refresh (requires HITL powerbi.dataflow.refresh). Async (202).",
+    z.object({ groupId: z.string().min(1), dataflowId: z.string().min(1) }),
+    async (p) => {
+      const token = await accessToken();
+      const url = `${POWERBI_API_BASE}/v1.0/myorg/groups/${encodeURIComponent(p.groupId)}/dataflows/${encodeURIComponent(p.dataflowId)}/refreshes`;
+      const res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ notifyOption: "NoNotification" }),
+      });
+      if (!res.ok) {
+        throw new Error(
+          `Power BI dataflow refresh ${String(res.status)}: ${(await res.text()).slice(0, 400)}`,
+        );
+      }
+      return jsonResult({ status: "queued", groupId: p.groupId, dataflowId: p.dataflowId });
     },
   );
 }

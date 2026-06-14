@@ -30,6 +30,7 @@ export function mapPowerBiReportToItem(
   if (id === undefined || id === "" || name === undefined || name === "") return null;
   const workspace = stringField(r, "workspace") ?? null;
   const datasetId = stringField(r, "datasetId") ?? null;
+  const groupId = stringField(r, "groupId") ?? null;
   const rawTables = Array.isArray(r["datasetTables"]) ? r["datasetTables"] : [];
   const upstreamDataModelKeys = rawTables
     .filter((t): t is string => typeof t === "string" && t !== "")
@@ -45,7 +46,7 @@ export function mapPowerBiReportToItem(
     url: null,
     canonicalUrl: null,
     modifiedAt: ctx.syncedAt,
-    metadata: { upstreamDataModelKeys, workspace, datasetId },
+    metadata: { upstreamDataModelKeys, workspace, datasetId, groupId },
     syncedAt: ctx.syncedAt,
   };
 }

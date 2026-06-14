@@ -74,6 +74,25 @@ test("workspace and datasetId default to null when absent", () => {
   expect(item?.metadata["datasetId"]).toBeNull();
 });
 
+test("indexes groupId GUID when present", () => {
+  const item = mapPowerBiReportToItem(
+    {
+      id: "r1",
+      name: "Dash",
+      workspace: "Finance",
+      groupId: "11111111-2222-3333-4444-555555555555",
+      datasetId: "d1",
+    },
+    { syncedAt: 1 },
+  );
+  expect(item?.metadata["groupId"]).toBe("11111111-2222-3333-4444-555555555555");
+});
+
+test("groupId defaults to null when absent", () => {
+  const item = mapPowerBiReportToItem({ id: "r2", name: "D" }, { syncedAt: 1 });
+  expect(item?.metadata["groupId"]).toBeNull();
+});
+
 test("upstreamDataModelKeys is empty when datasetTables is absent", () => {
   const item = mapPowerBiReportToItem({ id: "r5", name: "Dash" }, { syncedAt: 1_000 });
   expect(item?.metadata["upstreamDataModelKeys"]).toEqual([]);
