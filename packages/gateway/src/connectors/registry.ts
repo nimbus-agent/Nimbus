@@ -103,7 +103,7 @@ export function createConnectorDispatcher(
   };
 }
 
-function extractToolInput(action: PlannedAction): unknown {
+export function extractToolInput(action: PlannedAction): unknown {
   const p = action.payload;
   if (p === undefined) {
     return {};
