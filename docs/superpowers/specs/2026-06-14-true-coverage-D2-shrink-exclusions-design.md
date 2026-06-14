@@ -116,9 +116,14 @@ suite.) Specifically:
   primitive cells, object cells → `""`, numeric-timestamp ISO formatting, 12-char hash truncation),
   rather than asserting the `audit` branch's stdout.
 - `handleConsentNotification` — fake `TeamRpcClient` + an **injected fake `prompt`** returning
-  `true` / `false` / the clack cancel-symbol; assert approve → `consentRespond`, deny →
-  `consentRespond(approved:false)`, cancel → no call (left to time out), bad params → early return,
-  call-error → swallowed-to-stderr (the retained try/catch).
+  `true` / `false`; assert approve → `consentRespond(approved:true)`, deny →
+  `consentRespond(approved:false)`, bad params (non-string `requestId`) → early return (no call),
+  call-error → swallowed-to-stderr (the retained try/catch). **The `isCancel` true-arm
+  (cancel-leaves-to-timeout) is an accepted uncovered residual** (1 branch): verified 2026-06-14
+  that clack's `CANCEL_SYMBOL = Symbol("clack:cancel")` is **unregistered and unexported** (only
+  `isCancel` is exported), so no unit test can produce a value `isCancel` accepts without
+  `mock.module` (forbidden). One unreached branch out of the file's hundreds does **not** threaten
+  the ≥80% floor — confirmed in the Docker dry-run; it is **not** `istanbul-ignore`d, just unreached.
 
 **No `mock.module`** — DI only (the cli combined run is process-global; `team.ts` is the unit under
 test and its `TeamRpcClient` + `prompt` deps are injected). Deterministic; no reliance on global
