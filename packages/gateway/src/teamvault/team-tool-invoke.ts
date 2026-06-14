@@ -41,6 +41,41 @@ export class TeamToolError extends Error {
 }
 
 /**
+ * Fail-closed secret guard (I19 D8): validates that `service` has team-injectable secret keys and
+ * that every required key is present in the team keyspace for `entry`. Returns the team-scoped vault
+ * view on success so the caller can pass it to the spawn/session seam without re-creating it.
+ * Throws `TeamToolError` before any spawn occurs if either check fails — a single source of truth
+ * that both `invokeTeamTool` and `invokeTeamToolList` delegate to, preventing security drift.
+ */
+async function assertTeamSecretsPresentAndView(
+  deps: {
+    vault: NimbusVault;
+    requiredSecretKeysFor: (service: string) => readonly string[] | undefined;
+  },
+  service: string,
+  entry: string,
+): Promise<NimbusVault> {
+  const requiredKeys = deps.requiredSecretKeysFor(service);
+  if (requiredKeys === undefined || requiredKeys.length === 0) {
+    throw new TeamToolError(
+      "team_service_unsupported",
+      `team-vault: service "${service}" has no team-injectable secret keys`,
+    );
+  }
+  const vaultView = createTeamVaultView(deps.vault, entry);
+  for (const key of requiredKeys) {
+    const present = await vaultView.get(key);
+    if (present === null || present === "") {
+      throw new TeamToolError(
+        "team_secret_missing",
+        `team-vault: entry "${entry}" is missing required secret for ${service}`,
+      );
+    }
+  }
+  return vaultView;
+}
+
+/**
  * I19 — run a connector tool using a TEAM credential. The secret is read from the team keyspace
  * (`teamvault.<entry>.<key>`) by the spawner via a read-only vault view and injected into the
  * connector subprocess env. It is NEVER read into this function's scope, returned, or logged — only
@@ -51,27 +86,8 @@ export async function invokeTeamTool(
   deps: InvokeTeamToolDeps,
   req: TeamToolRequest,
 ): Promise<unknown> {
-  const requiredKeys = deps.requiredSecretKeysFor(req.service);
-  if (requiredKeys === undefined || requiredKeys.length === 0) {
-    // Unknown service, or an OAuth-refresh connector with no static secret keys: not team-invokable.
-    throw new TeamToolError(
-      "team_service_unsupported",
-      `team-vault: service "${req.service}" has no team-injectable secret keys`,
-    );
-  }
-
-  const vaultView = createTeamVaultView(deps.vault, req.entry);
-
-  // Fail closed: every required secret must be present in the team keyspace before we spawn.
-  for (const key of requiredKeys) {
-    const present = await vaultView.get(key);
-    if (present === null || present === "") {
-      throw new TeamToolError(
-        "team_secret_missing",
-        `team-vault: entry "${req.entry}" is missing required secret for ${req.service}`,
-      );
-    }
-  }
+  // Unknown service, or an OAuth-refresh connector with no static secret keys: not team-invokable.
+  const vaultView = await assertTeamSecretsPresentAndView(deps, req.service, req.entry);
 
   return deps.spawnAndCall({
     service: req.service,
@@ -136,26 +152,7 @@ export async function invokeTeamToolList(
   deps: InvokeTeamToolListDeps,
   req: TeamToolListRequest,
 ): Promise<unknown[]> {
-  const requiredKeys = deps.requiredSecretKeysFor(req.service);
-  if (requiredKeys === undefined || requiredKeys.length === 0) {
-    throw new TeamToolError(
-      "team_service_unsupported",
-      `team-vault: service "${req.service}" has no team-injectable secret keys`,
-    );
-  }
-
-  const vaultView = createTeamVaultView(deps.vault, req.entry);
-
-  // Fail closed: every required secret must be present in the team keyspace before we spawn.
-  for (const key of requiredKeys) {
-    const present = await vaultView.get(key);
-    if (present === null || present === "") {
-      throw new TeamToolError(
-        "team_secret_missing",
-        `team-vault: entry "${req.entry}" is missing required secret for ${req.service}`,
-      );
-    }
-  }
+  const vaultView = await assertTeamSecretsPresentAndView(deps, req.service, req.entry);
 
   return deps.openSession({
     service: req.service,

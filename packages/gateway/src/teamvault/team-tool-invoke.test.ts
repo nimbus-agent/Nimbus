@@ -1,6 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { __setSessionSpawnerForTest } from "./connector-session.ts";
 import {
+  drainTeamListSession,
   type InvokeTeamToolDeps,
   type InvokeTeamToolListDeps,
   invokeTeamTool,
@@ -146,5 +148,49 @@ describe("invokeTeamToolList (I19 — paginated list drain)", () => {
       }),
     ).rejects.toThrow(/team_service_unsupported|no team-injectable secret keys/);
     expect(sessionCalled.value).toBe(false);
+  });
+});
+
+describe("drainTeamListSession (production openSession — D9 one-spawn multi-page drain)", () => {
+  afterEach(() => __setSessionSpawnerForTest(undefined));
+
+  it("drains two pages from a fake spawner and returns all items aggregated", async () => {
+    // Build a fake session client that returns two pages for snowflake_list.
+    const page1 = { items: [{ id: "row1" }, { id: "row2" }], nextCursor: "p2" };
+    const page2 = { items: [{ id: "row3" }], nextCursor: null };
+
+    function makeMcpResult(page: { items: unknown[]; nextCursor: string | null }): unknown {
+      return { content: [{ type: "text", text: JSON.stringify(page) }] };
+    }
+
+    let spawnCount = 0;
+    __setSessionSpawnerForTest(() => {
+      spawnCount += 1;
+      let callCount = 0;
+      return {
+        listTools: async () => ({
+          snowflake_list: {
+            execute: async () => {
+              callCount += 1;
+              return callCount === 1 ? makeMcpResult(page1) : makeMcpResult(page2);
+            },
+          },
+        }),
+        disconnect: async () => {},
+      };
+    });
+
+    const fakeVaultView = fakeVault({ "snowflake.account": "ACCT" });
+
+    const result = await drainTeamListSession({
+      service: "snowflake",
+      vaultView: fakeVaultView,
+      sandboxCwd: "/tmp/sbx",
+      listToolId: "snowflake_list",
+    });
+
+    expect(result).toEqual([{ id: "row1" }, { id: "row2" }, { id: "row3" }]);
+    // D9: only ONE spawn for N pages.
+    expect(spawnCount).toBe(1);
   });
 });

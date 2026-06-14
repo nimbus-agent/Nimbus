@@ -128,7 +128,7 @@ export interface LocalOperatorListRequest {
 }
 
 export type LocalOperatorListResult =
-  | { readonly kind: "ok"; readonly items: unknown[] }
+  | { readonly kind: "ok"; readonly items: readonly unknown[] }
   | { readonly kind: "error"; readonly error: "no_grant" | "identity_invalid" };
 
 /**
