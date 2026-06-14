@@ -3,6 +3,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { medianBaseline } from "./baseline-median.ts";
 import { GhCli } from "./bench-ci-gh.ts";
 import type { HistoryLine } from "./history-line.ts";
 import { COMMENT_MARKER_PREFIX, formatPrComment } from "./pr-comment-formatter.ts";
@@ -58,55 +59,58 @@ function readPullRequestNumber(env: Record<string, string | undefined>): number 
   return m === null ? null : Number.parseInt(m[1] ?? "", 10);
 }
 
-async function resolvePreviousArtifact(
+/**
+ * How many recent successful `main` runs to median the baseline over. Comparing the current run
+ * against the run-over-run median (rather than a single previous run) makes the delta gate robust
+ * to a lone lucky-fast/unlucky-slow baseline — the root cause of the no-code-change perf flapping
+ * observed on `main`.
+ */
+const BASELINE_RUN_COUNT = 5;
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function resolveBaseline(
   gh: GhCli,
   runner: RunnerKind,
   prevDir: string,
   stderr: (s: string) => void,
 ): Promise<HistoryLine | null> {
-  let runId: number | null = null;
+  let runs: { databaseId: number; headSha: string }[];
   try {
-    runId = await gh.runListLatestSuccess({ workflow: "_perf.yml", branch: "main" });
+    runs = await gh.runListRecentSuccesses({
+      workflow: "_perf.yml",
+      branch: "main",
+      limit: BASELINE_RUN_COUNT,
+    });
   } catch (err) {
-    stderr(
-      `bench-ci: gh run list failed: ${err instanceof Error ? err.message : String(err)}; treating as first-run`,
-    );
+    stderr(`bench-ci: gh run list failed: ${errMsg(err)}; treating as first-run`);
     return null;
   }
-  if (runId === null) return null;
-
-  let prevSha: string | null = null;
-  try {
-    prevSha = await gh.runViewHeadSha({ runId });
-  } catch (err) {
-    stderr(
-      `bench-ci: gh run view failed: ${err instanceof Error ? err.message : String(err)}; treating as first-run`,
-    );
-    return null;
-  }
-  if (prevSha === null) return null;
+  if (runs.length === 0) return null;
 
   mkdirSync(prevDir, { recursive: true });
-  const artifactName = `perf-${runner}-${prevSha}`;
-  let downloaded = false;
-  try {
-    downloaded = await gh.runDownloadArtifact({ runId, name: artifactName, dir: prevDir });
-  } catch (err) {
-    stderr(
-      `bench-ci: gh run download failed: ${err instanceof Error ? err.message : String(err)}; treating as first-run`,
-    );
-    return null;
+  const lines: HistoryLine[] = [];
+  for (const { databaseId, headSha } of runs) {
+    const dir = join(prevDir, headSha);
+    const artifactName = `perf-${runner}-${headSha}`;
+    let downloaded = false;
+    try {
+      mkdirSync(dir, { recursive: true });
+      downloaded = await gh.runDownloadArtifact({ runId: databaseId, name: artifactName, dir });
+    } catch (err) {
+      stderr(`bench-ci: gh run download (${headSha}) failed: ${errMsg(err)}; skipping`);
+      continue;
+    }
+    if (!downloaded) continue;
+    try {
+      lines.push(parseHistoryFile(join(dir, "run-history.jsonl")));
+    } catch (err) {
+      stderr(`bench-ci: baseline artifact (${headSha}) unreadable: ${errMsg(err)}; skipping`);
+    }
   }
-  if (!downloaded) return null;
-
-  try {
-    return parseHistoryFile(join(prevDir, "run-history.jsonl"));
-  } catch (err) {
-    stderr(
-      `bench-ci: previous artifact unreadable: ${err instanceof Error ? err.message : String(err)}; treating as first-run`,
-    );
-    return null;
-  }
+  return medianBaseline(lines);
 }
 
 async function upsertComment(
@@ -157,7 +161,7 @@ export async function runBenchCiMain(args: string[], deps: RunBenchCiDeps): Prom
   const { current: currentPath, runner, prevDir } = parseArgs(args);
   const current = parseHistoryFile(currentPath);
 
-  const previous = await resolvePreviousArtifact(
+  const previous = await resolveBaseline(
     deps.gh,
     runner,
     prevDir ?? join(tmpRoot, `bench-ci-prev-${runner}`),

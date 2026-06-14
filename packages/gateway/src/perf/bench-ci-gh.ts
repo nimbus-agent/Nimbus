@@ -77,7 +77,11 @@ export class GhCli {
     );
   }
 
-  async runListLatestSuccess(args: { workflow: string; branch: string }): Promise<number | null> {
+  async runListRecentSuccesses(args: {
+    workflow: string;
+    branch: string;
+    limit: number;
+  }): Promise<{ databaseId: number; headSha: string }[]> {
     const r = await this.#run([
       "run",
       "list",
@@ -88,31 +92,19 @@ export class GhCli {
       "--status",
       "success",
       "--limit",
-      "1",
+      String(args.limit),
       "--json",
-      "databaseId",
-      "--jq",
-      ".[0].databaseId",
+      "databaseId,headSha",
     ]);
     const out = r.stdout.trim();
-    if (out === "") return null;
-    const id = Number.parseInt(out, 10);
-    if (!Number.isFinite(id)) return null;
-    return id;
-  }
-
-  async runViewHeadSha(args: { runId: number }): Promise<string | null> {
-    const r = await this.#run([
-      "run",
-      "view",
-      String(args.runId),
-      "--json",
-      "headSha",
-      "--jq",
-      ".headSha",
-    ]);
-    const sha = r.stdout.trim();
-    return sha === "" ? null : sha;
+    if (out === "") return [];
+    const parsed = JSON.parse(out) as { databaseId?: number; headSha?: string }[];
+    return parsed
+      .filter(
+        (x): x is { databaseId: number; headSha: string } =>
+          typeof x.databaseId === "number" && typeof x.headSha === "string",
+      )
+      .map(({ databaseId, headSha }) => ({ databaseId, headSha }));
   }
 
   async runDownloadArtifact(args: { runId: number; name: string; dir: string }): Promise<boolean> {

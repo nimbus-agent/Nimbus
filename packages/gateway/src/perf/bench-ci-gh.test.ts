@@ -20,11 +20,24 @@ function makeFakeRunner(scripted: GhSpawnResult[]): { spawn: GhSpawnFn; calls: C
 }
 
 describe("GhCli", () => {
-  test("runListLatestSuccess: returns databaseId of the most recent successful main run", async () => {
-    const { spawn, calls } = makeFakeRunner([{ exitCode: 0, stdout: "12345\n", stderr: "" }]);
+  test("runListRecentSuccesses: parses databaseId+headSha array and passes --limit", async () => {
+    const { spawn, calls } = makeFakeRunner([
+      {
+        exitCode: 0,
+        stdout: '[{"databaseId":42,"headSha":"aaa"},{"databaseId":41,"headSha":"bbb"}]\n',
+        stderr: "",
+      },
+    ]);
     const gh = new GhCli({ spawn });
-    const out = await gh.runListLatestSuccess({ workflow: "_perf.yml", branch: "main" });
-    expect(out).toBe(12345);
+    const out = await gh.runListRecentSuccesses({
+      workflow: "_perf.yml",
+      branch: "main",
+      limit: 5,
+    });
+    expect(out).toEqual([
+      { databaseId: 42, headSha: "aaa" },
+      { databaseId: 41, headSha: "bbb" },
+    ]);
     expect(calls[0]?.args).toEqual([
       "run",
       "list",
@@ -35,18 +48,32 @@ describe("GhCli", () => {
       "--status",
       "success",
       "--limit",
-      "1",
+      "5",
       "--json",
-      "databaseId",
-      "--jq",
-      ".[0].databaseId",
+      "databaseId,headSha",
     ]);
   });
 
-  test("runListLatestSuccess: empty stdout means no run found → returns null", async () => {
+  test("runListRecentSuccesses: empty stdout → empty array (first run)", async () => {
     const { spawn } = makeFakeRunner([{ exitCode: 0, stdout: "\n", stderr: "" }]);
     const gh = new GhCli({ spawn });
-    expect(await gh.runListLatestSuccess({ workflow: "_perf.yml", branch: "main" })).toBeNull();
+    expect(
+      await gh.runListRecentSuccesses({ workflow: "_perf.yml", branch: "main", limit: 5 }),
+    ).toEqual([]);
+  });
+
+  test("runListRecentSuccesses: drops malformed entries missing databaseId/headSha", async () => {
+    const { spawn } = makeFakeRunner([
+      {
+        exitCode: 0,
+        stdout: '[{"databaseId":42,"headSha":"aaa"},{"headSha":"no-id"},{"databaseId":7}]\n',
+        stderr: "",
+      },
+    ]);
+    const gh = new GhCli({ spawn });
+    expect(
+      await gh.runListRecentSuccesses({ workflow: "_perf.yml", branch: "main", limit: 5 }),
+    ).toEqual([{ databaseId: 42, headSha: "aaa" }]);
   });
 
   test("runDownloadArtifact: passes run-id, --name, --dir", async () => {
@@ -78,11 +105,15 @@ describe("GhCli", () => {
     const { spawn, calls } = makeFakeRunner([
       { exitCode: 1, stdout: "", stderr: "API error: 500" },
       { exitCode: 1, stdout: "", stderr: "API error: 500" },
-      { exitCode: 0, stdout: "999\n", stderr: "" },
+      { exitCode: 0, stdout: '[{"databaseId":999,"headSha":"z"}]\n', stderr: "" },
     ]);
     const gh = new GhCli({ spawn, sleep: async () => {} });
-    const out = await gh.runListLatestSuccess({ workflow: "_perf.yml", branch: "main" });
-    expect(out).toBe(999);
+    const out = await gh.runListRecentSuccesses({
+      workflow: "_perf.yml",
+      branch: "main",
+      limit: 5,
+    });
+    expect(out).toEqual([{ databaseId: 999, headSha: "z" }]);
     expect(calls.length).toBe(3);
   });
 
@@ -94,7 +125,7 @@ describe("GhCli", () => {
     ]);
     const gh = new GhCli({ spawn, sleep: async () => {} });
     await expect(
-      gh.runListLatestSuccess({ workflow: "_perf.yml", branch: "main" }),
+      gh.runListRecentSuccesses({ workflow: "_perf.yml", branch: "main", limit: 5 }),
     ).rejects.toMatchObject({
       message: expect.stringContaining("API error: 500"),
     });
