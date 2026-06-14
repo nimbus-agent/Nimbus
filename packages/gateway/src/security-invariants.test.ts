@@ -678,6 +678,67 @@ describe("I19 — team-vault secret injection is leak-proof + fail-closed", () =
     ).rejects.toThrow();
     expect(spawned).toBe(false);
   });
+
+  test("a localOperator team list fails CLOSED on a missing secret (no session opened)", async () => {
+    const { invokeTeamToolList } = await import("./teamvault/team-tool-invoke.ts");
+    let opened = false;
+    await expect(
+      invokeTeamToolList(
+        {
+          vault: {
+            get: async () => null,
+            set: async () => {},
+            delete: async () => {},
+            listKeys: async () => [],
+          },
+          sandboxCwd: "/tmp",
+          requiredSecretKeysFor: () => ["snowflake.account"],
+          openSession: async () => {
+            opened = true;
+            return [];
+          },
+        },
+        { entry: "e", service: "snowflake", listToolId: "snowflake_list" },
+      ),
+    ).rejects.toThrow();
+    expect(opened).toBe(false);
+  });
+
+  test("a team-credentialed list reaches the secret ONLY via the gate, never the personal drain", async () => {
+    const { listConnectorItems, __setPersonalDrainForTest } = await import(
+      "./connectors/warehouse-sync-transport.ts"
+    );
+    let personalCalled = false;
+    let teamCalled = false;
+    __setPersonalDrainForTest(async () => {
+      personalCalled = true;
+      return [];
+    });
+    try {
+      await listConnectorItems(
+        {
+          vault: {
+            get: async () => "x",
+            set: async () => {},
+            delete: async () => {},
+            listKeys: async () => [],
+          },
+          sandboxCwd: "/tmp",
+          credentialFor: () => ({ credential: "team", teamEntry: "prod-snowflake" }),
+          runTeamList: async () => {
+            teamCalled = true;
+            return [];
+          },
+        } as never,
+        "snowflake",
+        "snowflake_list",
+      );
+    } finally {
+      __setPersonalDrainForTest(undefined);
+    }
+    expect(teamCalled).toBe(true);
+    expect(personalCalled).toBe(false);
+  });
 });
 
 describe("I20 — a delegated approval is honored only from a live, identity-valid delegate", () => {
