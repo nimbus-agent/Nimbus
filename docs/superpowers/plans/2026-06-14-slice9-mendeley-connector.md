@@ -340,12 +340,11 @@ In `connector-catalog.ts`, add `"mendeley"` to the `CONNECTOR_SERVICE_IDS` array
 Run: `cd packages/gateway && bunx tsc --noEmit`
 Expected: FAIL — `CONNECTOR_SYNC_INTERVAL_MS`, the auth-detail map, `oauthProfileForService`, and `connector-secrets-manifest.ts` all become non-exhaustive. Steps 3-6 fix them.
 
-- [ ] **Step 3: Add the sync interval + auth detail**
+- [ ] **Step 3: Add the sync interval**
 
-In `connector-catalog.ts`:
-- In `CONNECTOR_SYNC_INTERVAL_MS`, add: `mendeley: MIN10,`
-- In the auth-description map (the `CONNECTOR_AUTH_DETAILS`-style record), add:
-  `mendeley: "uses the Elsevier OAuth2 authorization-code flow with user-supplied NIMBUS_OAUTH_MENDELEY_CLIENT_ID/_SECRET (connector.auth mendeley)",`
+In `connector-catalog.ts`, in `CONNECTOR_SYNC_INTERVAL_MS`, add: `mendeley: MIN10,`
+
+> **Correction (discovered during execution):** do NOT add a `mendeley` entry to the record where `zotero:` has its description — that record is `OAUTH_UNSUPPORTED_DETAILS`, the list of **non-OAuth** (api-key/service-account) connectors, and `oauthProfileForService` *throws* (`oauthUnsupported`) for any service listed there. Mendeley is an OAuth connector, so it must appear ONLY in the `oauthProfileForService` switch (Step 4), never in `OAUTH_UNSUPPORTED_DETAILS`. OAuth connectors get their user-facing auth guidance from the `oauth-env-help-messages.ts` constants (added in Task 2), not from this map.
 
 - [ ] **Step 4: Add the `oauthProfileForService` case**
 
