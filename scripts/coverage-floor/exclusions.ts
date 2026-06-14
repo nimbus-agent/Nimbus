@@ -29,6 +29,23 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
 
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
+
+  // ── Bun Workers (separate realm) ──
+  // Bun Workers run in a separate realm the Istanbul `[test].preload` plugin cannot reach (parity
+  // with Bun's native --coverage, which also misses workers). §5.3 probe (D3, 2026-06-14): a
+  // worker-side preload re-register + __coverage__ flush was attempted; it WORKED mechanically (a
+  // worker-spawned via Bun's `preload:` option re-registered the babel-plugin-istanbul Bun loader
+  // inside the worker realm, produced a valid istanbul map with real branchMap/branch-hits, and
+  // merged cleanly back into the main realm's globalThis.__coverage__ for report-coverage.ts). It
+  // was NOT durably wired: doing so would thread a test-only `preload:` injection seam plus a
+  // coverage-message merge protocol through the two PRODUCTION worker spawn sites
+  // (db/query-guard.ts, embedding/worker-bridge.ts) and each worker's onmessage contract —
+  // invasive cross-realm scaffolding in production I/O shells, and a divergence from Bun-native
+  // --coverage parity, for no real gain. The meaningful orchestration was extracted to the
+  // unit-tested `embedding/embedding-worker-core.ts` (NOT excluded), leaving:
+  //   - `embedding-worker.ts`: a thin wiring shell (constructs real deps, routes origin-validated msgs).
+  //   - `query-guard-worker.ts`: a genuinely-thin onmessage (security check lives in worker-security.ts;
+  //     opens a readonly DB, runs the SQL, posts back) — nothing to extract.
   { kind: "exact", path: "packages/gateway/src/db/query-guard-worker.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-worker.ts" },
   {

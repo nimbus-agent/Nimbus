@@ -94,6 +94,12 @@ If a file is structurally untestable in a single CI run (top-level side effects,
 
 Exclusions are a last resort — prefer testability refactors (extract pure helpers to a sibling file, as PR #326 did for `setOutput`).
 
+## Bun Workers (separate realm)
+
+Worker entry files (`db/query-guard-worker.ts`, `embedding/embedding-worker.ts`) are excluded. Bun Workers run in a separate realm that the Istanbul `[test].preload` plugin never reaches, so the worker body accrues no entries in the main realm's `globalThis.__coverage__` — the same blind spot Bun's native `--coverage` has. The general remedy is the one used elsewhere in this program: extract the meaningful orchestration into a sibling module that runs in the main (testable) realm. Task 4 did exactly that for the embedding worker (`embedding/embedding-worker-core.ts`, unit-tested, not excluded); `query-guard-worker.ts`'s security check already lives in `platform/worker-security.ts`. What remains in each worker entry is a thin wiring shell.
+
+A §5.3 probe (D3, 2026-06-14) confirmed a worker-realm flush is technically possible: spawning the worker with Bun's `preload:` option to re-register the `babel-plugin-istanbul` Bun loader inside the worker realm produced a valid Istanbul map (real `branchMap`, real branch hits), which then merged cleanly back into the main realm's `globalThis.__coverage__` for `report-coverage.ts` to shard. It was deliberately not wired durably: doing so would thread a test-only `preload:` injection seam plus a coverage post-back/merge protocol through the two production worker spawn sites (`db/query-guard.ts`, `embedding/worker-bridge.ts`) and each worker's `onmessage` contract — invasive cross-realm scaffolding inside production I/O shells, and a divergence from Bun-native `--coverage` parity, for negligible gain now that the substantive logic is extracted and tested. If a future worker grows non-trivial in-realm logic that cannot be extracted, revisit this probe.
+
 ## Updating the baseline (cross-platform note)
 
 The seeded baseline is **Linux-platform-specific**. CI runs the gate on Ubuntu, and Bun's V8 coverage exercises different code paths on different OSes — a Windows-only `vault/win32.ts` branch is uncovered on Linux, and vice versa. A local `bun run audit:coverage-floor:update-baseline` on macOS or Windows will produce a baseline that disagrees with CI by tens of percent on platform-specific files.
