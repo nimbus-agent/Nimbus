@@ -37,7 +37,9 @@ export function isInMsg(data: unknown): data is InMsg {
     return (
       typeof m["id"] === "string" &&
       Array.isArray(texts) &&
-      texts.every((t) => typeof t === "string")
+      // Array.from materializes holes as `undefined` so a sparse array (e.g. `Array(2)`)
+      // is rejected — `Array.prototype.every` skips holes and would wrongly pass.
+      Array.from(texts).every((t) => typeof t === "string")
     );
   }
   if (m["type"] === "embed_item") {
@@ -93,6 +95,9 @@ export class EmbeddingWorkerCore {
   private db: EmbeddingWorkerDb | null = null;
   private pipeline: EmbeddingWorkerPipeline | null = null;
   private ready = false;
+  // Set the moment the first `init` is accepted, so a duplicate `init` is ignored
+  // rather than orphaning the current db/pipeline and starting an overlapping backfill.
+  private initStarted = false;
   private embedChain: Promise<void> = Promise.resolve();
   // Tracks each piece of detached init/embed_texts work (which run concurrently,
   // exactly as the pre-extraction worker's `void (async () => …)()` did) so that
@@ -107,6 +112,8 @@ export class EmbeddingWorkerCore {
   handleMessage(msg: unknown): void {
     if (!isInMsg(msg)) return;
     if (msg.type === "init") {
+      if (this.initStarted) return;
+      this.initStarted = true;
       this.track(this.runInit(msg));
       return;
     }

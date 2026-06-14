@@ -324,6 +324,40 @@ describe("EmbeddingWorkerCore", () => {
     expect(unhandled).toBe(false);
   });
 
+  it("ignores a duplicate init (no re-init, no overlapping backfill)", async () => {
+    const db = makeDb();
+    let setupCalls = 0;
+    const posts: unknown[] = [];
+    let onBackfillDone: (() => void) | null = null;
+    const backfillDone = new Promise<void>((resolve) => {
+      onBackfillDone = resolve;
+    });
+    const core = new EmbeddingWorkerCore({
+      sendToMain: (data) => {
+        posts.push(data);
+        if (
+          typeof data === "object" &&
+          data !== null &&
+          (data as { type?: unknown }).type === "backfill_done"
+        ) {
+          onBackfillDone?.();
+        }
+      },
+      setup: async () => {
+        setupCalls += 1;
+        return { db, pipeline: makePipeline() };
+      },
+    });
+    core.handleMessage(INIT_MSG);
+    core.handleMessage(INIT_MSG); // duplicate — must be ignored (initStarted guard)
+    await backfillDone;
+    await core.idle();
+
+    expect(setupCalls).toBe(1);
+    expect(postsOfType(posts, "ready")).toHaveLength(1);
+    expect(postsOfType(posts, "backfill_done")).toHaveLength(1);
+  });
+
   it("handleMessage(null) on a ready core posts nothing and does not throw", async () => {
     const db = makeDb();
     const setup: EmbeddingWorkerSetup = async () => ({ db, pipeline: makePipeline() });
@@ -392,6 +426,8 @@ describe("isInMsg", () => {
     expect(isInMsg({ type: "embed_texts", id: "x", texts: ["a", "b"] })).toBe(true);
     // non-string element in texts
     expect(isInMsg({ type: "embed_texts", id: "x", texts: ["a", 1] })).toBe(false);
+    // sparse array (holes) — Array.prototype.every would skip them; the guard must reject
+    expect(isInMsg({ type: "embed_texts", id: "x", texts: Array(2) })).toBe(false);
     // texts not an array
     expect(isInMsg({ type: "embed_texts", id: "x", texts: "a" })).toBe(false);
     // missing id
