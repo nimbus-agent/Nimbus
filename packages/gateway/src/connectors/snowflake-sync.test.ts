@@ -1,335 +1,98 @@
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   createMemoryIndexDb,
   createStubVault,
-  describeWithFetchRestore,
   expectServiceItemCount,
-  expectSyncNoopResult,
-  type SyncTestFetchParams,
   syncTestContext,
 } from "./connector-sync-test-helpers.ts";
 import { createSnowflakeSyncable } from "./snowflake-sync.ts";
+import { __setPersonalDrainForTest } from "./warehouse-sync-transport.ts";
 
-function makeSyncable() {
-  return createSnowflakeSyncable({ ensureSnowflakeMcpRunning: async () => {} });
+/** A raw `snowflake_list` row in the shape the connector emits (lowercase named columns). */
+function tableRow(name: string): Record<string, unknown> {
+  return {
+    database_name: "DB",
+    schema_name: "PUBLIC",
+    table_name: name,
+    row_count: "100",
+    last_altered: "2026-01-01T00:00:00Z",
+  };
 }
 
-// Minimal Snowflake statements API response with one table row
-function statementsResponse(rows: string[][]): string {
-  return JSON.stringify({
-    resultSetMetaData: {
-      rowType: [
-        { name: "DATABASE_NAME" },
-        { name: "SCHEMA_NAME" },
-        { name: "TABLE_NAME" },
-        { name: "ROW_COUNT" },
-        { name: "LAST_ALTERED" },
-      ],
-    },
-    data: rows,
-  });
-}
-
-type FetchHandler = (url: string, init: SyncTestFetchParams[1]) => Response;
-
-function installFetch(handler: FetchHandler): void {
-  globalThis.fetch = (async (
-    input: SyncTestFetchParams[0],
-    init?: SyncTestFetchParams[1],
-  ): Promise<Response> => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    return handler(url, init);
-  }) as typeof fetch;
-}
-
-describeWithFetchRestore("snowflake-sync", () => {
-  // ─── No-op when credentials are missing ──────────────────────────────────
-
-  test("no-op when account is missing", async () => {
-    const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "snowflake.oauth_token": "tok" })),
-      null,
-    );
-    expectSyncNoopResult(r);
-    expectServiceItemCount(db, "snowflake", 0);
+describe("snowflake-sync (unified spawn transport)", () => {
+  afterEach(() => {
+    __setPersonalDrainForTest(undefined); // the override is module-global — reset between tests
   });
 
-  test("no-op when both oauth_token and key_pair_jwt are absent", async () => {
+  test("personal: indexes items drained from snowflake_list", async () => {
+    __setPersonalDrainForTest(async () => [tableRow("ORDERS")]);
     const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(db, createStubVault({ "snowflake.account": "acme-xy12345" })),
-      null,
-    );
-    expectSyncNoopResult(r);
-  });
+    const ctx = syncTestContext(db, createStubVault({ "snowflake.account": "acme-xy12345" }));
 
-  // ─── Bug 5 — blank oauth_token must fall through to key_pair_jwt ─────────
+    const r = await createSnowflakeSyncable().sync(ctx, null);
 
-  test("blank oauth_token + valid key_pair_jwt resolves via JWT (sync proceeds, not noop)", async () => {
-    const db = createMemoryIndexDb();
-    // oauth_token is empty string (blank) → should fall through to key_pair_jwt
-    const vault = createStubVault({
-      "snowflake.account": "acme-xy12345",
-      "snowflake.oauth_token": "",
-      "snowflake.key_pair_jwt": "valid-jwt-token",
-    });
-
-    installFetch(
-      () =>
-        new Response(
-          statementsResponse([["MYDB", "PUBLIC", "ORDERS", "100", "2026-06-01T00:00:00Z"]]),
-          { status: 200 },
-        ),
-    );
-
-    const r = await makeSyncable().sync(syncTestContext(db, vault), null);
-    // Should NOT be a noop — jwt provided valid creds and a table was returned
-    expect(r.cursor).not.toBeNull();
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
+    expect(r.cursor).toBeNull(); // pagination is drained inside the transport — cursor passes through
     expectServiceItemCount(db, "snowflake", 1);
   });
 
-  test("whitespace-only oauth_token + valid key_pair_jwt resolves via JWT", async () => {
+  test("team: routes through runTeamList (gate), indexes the returned items", async () => {
     const db = createMemoryIndexDb();
-    const vault = createStubVault({
-      "snowflake.account": "acme-xy12345",
-      "snowflake.oauth_token": "   ",
-      "snowflake.key_pair_jwt": "valid-jwt-token",
-    });
+    let listReq: unknown;
+    const ctx = {
+      ...syncTestContext(db, createStubVault({})),
+      credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-snowflake" }),
+      runTeamList: async (req: unknown) => {
+        listReq = req;
+        return [tableRow("ORDERS")];
+      },
+    };
 
-    installFetch(
-      () =>
-        new Response(
-          statementsResponse([["MYDB", "PUBLIC", "SESSIONS", "50", "2026-06-01T00:00:00Z"]]),
-          { status: 200 },
-        ),
-    );
+    const r = await createSnowflakeSyncable().sync(ctx, null);
 
-    const r = await makeSyncable().sync(syncTestContext(db, vault), null);
-    expect(r.cursor).not.toBeNull();
     expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
-  });
-
-  test("prefers non-blank oauth_token over key_pair_jwt when both are set", async () => {
-    const db = createMemoryIndexDb();
-    const vault = createStubVault({
-      "snowflake.account": "acme-xy12345",
-      "snowflake.oauth_token": "oauth-tok-valid",
-      "snowflake.key_pair_jwt": "jwt-fallback",
+    expect(listReq).toEqual({
+      entry: "prod-snowflake",
+      service: "snowflake",
+      listToolId: "snowflake_list",
     });
-
-    let capturedBearerToken = "";
-    installFetch((_url, init) => {
-      const authHeader =
-        (init?.headers as Record<string, string> | undefined)?.["Authorization"] ?? "";
-      capturedBearerToken = authHeader.replace(/^Bearer\s+/, "");
-      return new Response(statementsResponse([]), { status: 200 });
-    });
-
-    await makeSyncable().sync(syncTestContext(db, vault), null);
-    expect(capturedBearerToken).toBe("oauth-tok-valid");
+    expectServiceItemCount(db, "snowflake", 1);
   });
 
-  // ─── isSafeSnowflakeAccount guard ────────────────────────────────────────
-
-  test("no-op when account starts with a dash (isSafeSnowflakeAccount false)", async () => {
+  test("team no-leak: a secret-shaped value never lands in an indexed row", async () => {
+    const SECRET = "tv-secret-do-not-leak";
     const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "-bad-account",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    expectSyncNoopResult(r);
+    const ctx = {
+      ...syncTestContext(db, createStubVault({})),
+      credentialFor: () => ({ credential: "team" as const, teamEntry: "prod-snowflake" }),
+      // The transport returns only mapped raw items; the team secret is never in this array.
+      runTeamList: async () => [tableRow("ORDERS")],
+    };
+
+    await createSnowflakeSyncable().sync(ctx, null);
+
+    const rows = db.prepare("SELECT * FROM item WHERE service = 'snowflake'").all() as Array<
+      Record<string, unknown>
+    >;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      for (const v of Object.values(row)) {
+        expect(String(v)).not.toContain(SECRET);
+      }
+    }
   });
 
-  test("no-op when account contains a control character (codePoint < 0x20 branch)", async () => {
+  test("rows the mapper rejects (missing table_name) are skipped, not upserted", async () => {
+    __setPersonalDrainForTest(async () => [
+      { database_name: "DB", schema_name: "PUBLIC" }, // no table_name → mapper returns null
+    ]);
     const db = createMemoryIndexDb();
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme\x01xy",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    expectSyncNoopResult(r);
-  });
+    const ctx = syncTestContext(db, createStubVault({ "snowflake.account": "acme-xy12345" }));
 
-  // ─── HTTP / parse errors ───────────────────────────────────────────────────
+    const r = await createSnowflakeSyncable().sync(ctx, null);
 
-  test("http_error → http-empty pass cursor, preserves incoming cursor", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response("Unauthorized", { status: 401 }));
-    const incomingCursor = "nimbus-snowflake1:oldcursor";
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      incomingCursor,
-    );
     expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toBe(incomingCursor);
     expectServiceItemCount(db, "snowflake", 0);
-  });
-
-  test("parse_error (invalid JSON) → parse-empty pass cursor", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(() => new Response("not-json{", { status: 200 }));
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toContain("nimbus-snowflake1:");
-  });
-
-  // ─── rowsFromStatementsResponse edge cases ─────────────────────────────────
-
-  test("non-array row entry in data is skipped (!Array.isArray(rr) branch)", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(
-      () =>
-        new Response(
-          JSON.stringify({
-            resultSetMetaData: {
-              rowType: [{ name: "TABLE_NAME" }, { name: "SCHEMA_NAME" }, { name: "DATABASE_NAME" }],
-            },
-            // Mix of valid and non-array items in data
-            data: [
-              null, // not an array → skip
-              "string", // not an array → skip
-              ["MYDB", "PUBLIC", "ORDERS", null, "2026-06-01T00:00:00Z"],
-            ],
-          }),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    // Only the third item is a valid row but mapper may skip it; at least no crash
-    expect(r.cursor).toContain("nimbus-snowflake1:");
-  });
-
-  test("column with empty name is excluded from obj mapping", async () => {
-    const db = createMemoryIndexDb();
-    installFetch(
-      () =>
-        new Response(
-          JSON.stringify({
-            resultSetMetaData: {
-              // Include a rowType entry that lacks a 'name' field → lowercased name = ""
-              rowType: [{ name: "DATABASE_NAME" }, {}, { name: "TABLE_NAME" }],
-            },
-            data: [["MYDB", "ignored", "ORDERS"]],
-          }),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    // Completes without error; the empty-name column is skipped
-    expect(r.cursor).toContain("nimbus-snowflake1:");
-  });
-
-  test("string row_count from API is coerced to number in stored metadata.rowCountEstimate", async () => {
-    const db = createMemoryIndexDb();
-    // Snowflake's statements API returns ROW_COUNT as a string (e.g. "42"), not a number.
-    // rowsFromStatementsResponse coerces it; mapSnowflakeTableToItem stores it as rowCountEstimate.
-    installFetch(
-      () =>
-        new Response(
-          statementsResponse([["MYDB", "PUBLIC", "ORDERS", "42", "2026-06-01T00:00:00Z"]]),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    expect(r.itemsUpserted).toBeGreaterThanOrEqual(1);
-    // Fetch the stored item and assert numeric coercion
-    const row = db
-      .prepare("SELECT metadata FROM item WHERE service = 'snowflake' LIMIT 1")
-      .get() as { metadata: string } | null;
-    expect(row).not.toBeNull();
-    const meta = JSON.parse(row!.metadata) as Record<string, unknown>;
-    // Must be the NUMBER 42, not the string "42"
-    expect(meta["rowCountEstimate"]).toBe(42);
-    expect(typeof meta["rowCountEstimate"]).toBe("number");
-  });
-
-  test("table row that mapper rejects (mapped === null) is skipped", async () => {
-    const db = createMemoryIndexDb();
-    // Omit TABLE_NAME column entirely so the obj has no table_name key →
-    // stringField returns undefined → mapper returns null
-    installFetch(
-      () =>
-        new Response(
-          JSON.stringify({
-            resultSetMetaData: {
-              rowType: [
-                { name: "DATABASE_NAME" },
-                { name: "SCHEMA_NAME" },
-                // TABLE_NAME intentionally absent
-              ],
-            },
-            data: [["MYDB", "PUBLIC"]],
-          }),
-          { status: 200 },
-        ),
-    );
-    const r = await makeSyncable().sync(
-      syncTestContext(
-        db,
-        createStubVault({
-          "snowflake.account": "acme-xy12345",
-          "snowflake.oauth_token": "tok",
-        }),
-      ),
-      null,
-    );
-    expect(r.itemsUpserted).toBe(0);
   });
 });

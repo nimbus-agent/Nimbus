@@ -347,11 +347,7 @@ export function registerConnectorMeshSyncables(
       ensureMetabaseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
-  syncScheduler.register(
-    createSnowflakeSyncable({
-      ensureSnowflakeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createSnowflakeSyncable());
   syncScheduler.register(
     createTableauSyncable({
       ensureTableauMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
