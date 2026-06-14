@@ -102,7 +102,7 @@ describe("runBenchCiMain", () => {
     }
   });
 
-  test("workload absolute-fail does NOT exit 1 (gated: false)", async () => {
+  test("workload absolute-fail does NOT exit 1 (S6-drive is trend-class, not gate-class)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const line: HistoryLine = {

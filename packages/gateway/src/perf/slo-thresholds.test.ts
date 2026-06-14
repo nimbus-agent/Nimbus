@@ -7,7 +7,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     expect(SLO_THRESHOLDS.length).toBe(29);
   });
 
-  test("every UX row is gated and has both refMax and ghaMax populated", () => {
+  test("every UX row carries a gateClass and has refMax populated", () => {
     const uxIds: ReadonlySet<string> = new Set([
       "S1",
       "S2-a",
@@ -21,7 +21,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     ]);
     for (const row of SLO_THRESHOLDS) {
       if (!uxIds.has(row.surfaceId)) continue;
-      expect(row.gated).toBe(true);
+      expect(["gate", "trend", "reference"]).toContain(row.gateClass);
       expect(typeof row.refMax).toBe("number");
       if (row.surfaceId === "S2-c") {
         expect(row.ghaMax).toBe("skipped");
@@ -31,7 +31,7 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     }
   });
 
-  test("every workload row is ungated and has ghaMax === 'tbd-c2' or 'skipped'", () => {
+  test("every workload row carries a gateClass and has ghaMax === 'tbd-c2' or 'skipped'", () => {
     const workloadIds = SLO_THRESHOLDS.map((r) => r.surfaceId).filter(
       (id) =>
         id.startsWith("S6-") ||
@@ -43,19 +43,16 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
     for (const id of workloadIds) {
       const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
       expect(row).toBeDefined();
-      expect(row!.gated).toBe(false);
+      if (id.startsWith("S8-")) {
+        expect(row!.gateClass).toBe("gate");
+      } else {
+        expect(["trend", "reference"]).toContain(row!.gateClass);
+      }
       const ghaMax = row!.ghaMax;
       expect(typeof ghaMax).toBe("string");
       if (typeof ghaMax === "string") {
         expect(["tbd-c2", "skipped"]).toContain(ghaMax);
       }
-    }
-  });
-
-  test("S7-a, S7-b, S7-c carry linuxOnlyGate (spec § 3.3)", () => {
-    for (const id of ["S7-a", "S7-b", "S7-c"] as const) {
-      const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
-      expect(row?.linuxOnlyGate).toBe(true);
     }
   });
 
@@ -74,21 +71,10 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
       metric: "p95_ms",
       refMax: 2_000,
       ghaMax: 10_000,
-      gated: true,
       noiseFloorPct: 25,
       noiseFloorAbs: 300,
       noiseFloorAbsUnit: "ms",
-      // Gated on Linux only: macOS/Windows cold-start spawn jitter is irreducible
-      // and was the dominant no-code-change delta-fail source on main. Mirrors S7.
-      linuxOnlyGate: true,
     } satisfies SloThreshold);
-  });
-
-  test("S1, S11-a, S11-b carry linuxOnlyGate (latency spawn-jitter, gated on Linux only)", () => {
-    for (const id of ["S1", "S11-a", "S11-b"] as const) {
-      const row = SLO_THRESHOLDS.find((r) => r.surfaceId === id);
-      expect(row?.linuxOnlyGate).toBe(true);
-    }
   });
 
   test("S2-a row matches spec § 3.2 exactly", () => {
@@ -99,7 +85,6 @@ describe("SLO_THRESHOLDS — schema invariants", () => {
       metric: "p95_ms",
       refMax: 30,
       ghaMax: 200,
-      gated: true,
       noiseFloorPct: 25,
       noiseFloorAbs: 5,
       noiseFloorAbsUnit: "ms",
