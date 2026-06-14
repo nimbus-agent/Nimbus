@@ -17,6 +17,7 @@
 ## File Structure
 
 **New files (gateway):**
+
 - `packages/gateway/src/config/nimbus-toml-connectors.ts` — `[connectors.<name>]` parse + validate + `loadNimbusConnectorsFromConfigDir`. (Kept out of the already-large `nimbus-toml.ts`; re-exported from it for parity with siblings.)
 - `packages/gateway/src/connectors/service-scoped-vault-view.ts` — `createServiceScopedVaultView(vault, service)` (personal single-service spawn scope).
 - `packages/gateway/src/connectors/connector-list-page.ts` — `parseMcpListPage`, `drainPagedList` (gateway-side unwrap + pagination drain shared by personal + team).
@@ -24,6 +25,7 @@
 - `packages/gateway/src/connectors/warehouse-sync-transport.ts` — `listConnectorItems(ctx, service, listToolId)`: the personal-vs-team branch the 6 handlers call.
 
 **Modified files (gateway):**
+
 - `packages/gateway/src/federation/invoke-gate.ts` — principal-polymorphic gate.
 - `packages/gateway/src/teamvault/team-vault-audit.ts` — principal descriptor instead of required `peerId`.
 - `packages/gateway/src/teamvault/team-tool-invoke.ts` — add `invokeTeamToolList` (paginated drain in one session).
@@ -35,6 +37,7 @@
 - `packages/gateway/src/security-invariants.test.ts` — extend I19 for localOperator.
 
 **Modified files (connectors):**
+
 - `packages/mcp-connectors/{snowflake,tableau,looker,powerbi,monte-carlo,bigeye}/src/server.ts` — `<svc>_list` gains `{cursor,limit}` → `{items,nextCursor}`; new `test/server-list-pagination.test.ts` each.
 
 **Docs:** `docs/SECURITY-INVARIANTS.md` (I19 wording), `CLAUDE.md` + `GEMINI.md` (I19 line), `docs/CHANGELOG.md`, `docs/roadmap.md`.
@@ -52,11 +55,12 @@
 
 ---
 
-# Phase 0 — Foundations
+## Phase 0 — Foundations
 
 ## Task 1: `[connectors.<name>]` config schema + parser
 
 **Files:**
+
 - Create: `packages/gateway/src/config/nimbus-toml-connectors.ts`
 - Create: `packages/gateway/src/config/nimbus-toml-connectors.test.ts`
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (re-export, end of file)
@@ -255,6 +259,7 @@ git commit -m "feat(connectors): [connectors.<name>] team-credential config sche
 ## Task 2: Service-scoped personal vault view
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/service-scoped-vault-view.ts`
 - Create: `packages/gateway/src/connectors/service-scoped-vault-view.test.ts`
 
@@ -355,6 +360,7 @@ git commit -m "feat(connectors): service-scoped personal vault view for single-s
 ## Task 3: `withConnectorSession` spawn-once primitive (D9)
 
 **Files:**
+
 - Create: `packages/gateway/src/teamvault/connector-session.ts`
 - Create: `packages/gateway/src/teamvault/connector-session.test.ts`
 - Modify: `packages/gateway/src/teamvault/team-tool-spawn.ts` (re-implement `spawnTeamToolAndCall` on the new primitive)
@@ -592,6 +598,7 @@ git commit -m "feat(teamvault): withConnectorSession spawn-once primitive (D9, o
 ## Task 4: Gateway-side list unwrap + pagination drain
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/connector-list-page.ts`
 - Create: `packages/gateway/src/connectors/connector-list-page.test.ts`
 
@@ -731,6 +738,7 @@ git commit -m "feat(connectors): MCP list-envelope unwrap + paginated drain help
 ## Task 5: Principal-polymorphic gate + audit principal descriptor
 
 **Files:**
+
 - Modify: `packages/gateway/src/teamvault/team-vault-audit.ts`
 - Modify: `packages/gateway/src/teamvault/team-tool-invoke.ts` (add `invokeTeamToolList`)
 - Modify: `packages/gateway/src/federation/invoke-gate.ts`
@@ -994,6 +1002,7 @@ describe("answerLocalOperatorList — config-pinned local operator", () => {
 - [ ] **Step 11: Implement the polymorphic gate**
 
 In `invoke-gate.ts`:
+
 1. Change the `audit` helper to build an `AuditPrincipal` (peer path passes `{ kind:"peer", peerId: q.peerId }`).
 2. Keep `answerFederatedInvoke` signature + behavior **byte-identical** (it constructs the peer principal internally).
 3. Add a `runListTool` member to a new `LocalOperatorListCtx` and the `answerLocalOperatorList` function:
@@ -1043,7 +1052,7 @@ export async function answerLocalOperatorList(
 }
 ```
 
-4. Update the existing peer `audit(...)` calls to pass `{ kind:"peer", peerId: q.peerId }`.
+1. Update the existing peer `audit(...)` calls to pass `{ kind:"peer", peerId: q.peerId }`.
 
 - [ ] **Step 12: Adapt the federation wire (byte-identical peer path)**
 
@@ -1066,6 +1075,7 @@ git commit -m "feat(teamvault): principal-polymorphic invoke gate + localOperato
 ## Task 6: Unified sync transport (`listConnectorItems`) + SyncContext wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/warehouse-sync-transport.ts`
 - Create: `packages/gateway/src/connectors/warehouse-sync-transport.test.ts`
 - Modify: `packages/gateway/src/sync/types.ts` (SyncContext members)
@@ -1192,6 +1202,7 @@ export async function listConnectorItems(
 - [ ] **Step 6: Wire the SyncContext members in assemble**
 
 In `platform/assemble-sync-registrations.ts` (where `SyncContext` is constructed / sync runs), add:
+
 - `sandboxCwd: paths.dataDir`
 - `credentialFor: (service) => connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" }`
 - `runTeamList: (req) => answerLocalOperatorList(localOpListCtx, req).then((r) => { if (r.kind === "error") throw new Error(teamListErrorMessage(r.error, req)); return r.items; })`
@@ -1241,11 +1252,12 @@ git commit -m "feat(connectors): unified personal|team list transport + SyncCont
 
 ---
 
-# Phase 1 — Snowflake vertical (reference connector)
+## Phase 1 — Snowflake vertical (reference connector)
 
 ## Task 7: Snowflake `snowflake_list` pagination (D6)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/snowflake/src/server.ts` (lines ~82–93)
 - Create: `packages/mcp-connectors/snowflake/test/server-list-pagination.test.ts`
 
@@ -1346,6 +1358,7 @@ git commit -m "feat(connectors): paginate snowflake_list (cursor/limit -> items/
 ## Task 8: Snowflake sync handler on the unified transport
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/snowflake-sync.ts`
 - Modify: `packages/gateway/src/connectors/snowflake-sync.test.ts`
 
@@ -1462,6 +1475,7 @@ git commit -m "feat(connectors): snowflake sync on unified spawn transport (pers
 ## Task 9: I19 security-invariants extension (localOperator)
 
 **Files:**
+
 - Modify: `packages/gateway/src/security-invariants.test.ts` (the `I19` describe block, ~lines 650–681)
 
 Extend the existing I19 block (do **not** add a new invariant — count unchanged) with the localOperator assertions from design §7/§8.
@@ -1542,6 +1556,7 @@ git commit -m "test(security): extend I19 for the localOperator team-credential 
 ## Task 10: Snowflake team e2e via a sink seam (O4)
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/warehouse-team-sync.e2e.test.ts`
 - Modify: `packages/gateway/src/connectors/warehouse-sync-transport.ts` (add a `NIMBUS_WAREHOUSE_E2E_SINK_DIR` seam mirroring `NIMBUS_CHATOPS_E2E_SINK_DIR`)
 
@@ -1563,7 +1578,7 @@ git commit -m "test(connectors): team-credential warehouse sync e2e via sink sea
 
 ---
 
-# Phase 2 — Fan out the other five connectors
+## Phase 2 — Fan out the other five connectors
 
 > **Per-connector cadence (commit per connector to avoid subagent-death mid-registration):** for each, (a) paginate `<svc>_list` in the connector `server.ts` + a `test/server-list-pagination.test.ts`, (b) rewrite `<svc>-sync.ts` onto `listConnectorItems` + update its `*-sync.test.ts` (personal + team), (c) drop its `ensure<Svc>McpRunning` wiring in `assemble-sync-registrations.ts`, (d) typecheck the connector + gateway, (e) commit. The structure mirrors Tasks 7–8; only the **cursor contract, URL, and mapper** differ — given below per connector. **Each cursor contract is the vendor's documented model and MUST be verified against live docs during implementation; the test fakes that shape.**
 
@@ -1625,11 +1640,12 @@ git commit -m "test(connectors): team-credential warehouse sync e2e via sink sea
 
 ---
 
-# Phase 3 — Docs, invariant triple, preflight
+## Phase 3 — Docs, invariant triple, preflight
 
 ## Task 16: Docs + I19 triple-rule update
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (I19 row), `CLAUDE.md` (I19 line), `GEMINI.md` (I19 line), `docs/CHANGELOG.md`, `docs/roadmap.md`.
 
 - [ ] **Step 1: I19 wording** — broaden "an inbound peer" → "a peer **or** local-operator principal" in `docs/SECURITY-INVARIANTS.md` I19 + the matching CLAUDE.md/GEMINI.md I19 bullet. **Count stays at I25 — no new invariant.** Note the wiring sites are unchanged (`invoke-gate.ts`, `team-tool-invoke.ts`).

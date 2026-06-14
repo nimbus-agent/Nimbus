@@ -113,6 +113,7 @@ Both credential modes route through *spawn → `<svc>_list` (paginated) → gate
 ### 6.1 Connector read-tool pagination (D6)
 
 Each `<svc>_list` tool gains:
+
 - input: `{ cursor?: string; limit?: number }`,
 - output: `{ items: unknown[]; nextCursor: string | null }`.
 
