@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "overrides": {
     "sharp": "0.34.5",
