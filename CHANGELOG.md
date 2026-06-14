@@ -12,6 +12,8 @@ All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-
 
 ### Bug Fixes
 
+* **client:** widen node-compat askStream streamId poll to STREAM_TIMEOUT_MS ([#624](https://github.com/nimbus-agent/Nimbus/issues/624)) ([e86014f](https://github.com/nimbus-agent/Nimbus/commit/e86014f3ae3b2a865a0e589eda2eb997b33ca727))
+* **perf:** gate S1 + S11-b latency on Linux only to stop main bench delta-flapping ([#623](https://github.com/nimbus-agent/Nimbus/issues/623)) ([52eff98](https://github.com/nimbus-agent/Nimbus/commit/52eff98bfe540d1edbb72de78db1e51487697df6))
 * **perf:** median baseline over recent main runs to stop bench delta-flapping ([#618](https://github.com/nimbus-agent/Nimbus/issues/618)) ([e6c34c2](https://github.com/nimbus-agent/Nimbus/commit/e6c34c2023b9e31f74d0bc1e98a9bd6aee4eef8c))
 
 ## [0.6.3](https://github.com/nimbus-agent/Nimbus/compare/v0.6.2...v0.6.3) (2026-06-14)
