@@ -1,5 +1,6 @@
 import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import type { WarehouseWriteContext } from "../connectors/warehouse-write-transport.ts";
 import type { ExecutorDelegationDep } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
@@ -33,6 +34,8 @@ export interface PlatformServices {
   sessionMemoryStore?: SessionMemoryStore;
   llmRegistry: LlmRegistry;
   sandboxRunner: SandboxRunner;
+  /** Wave 7c — credential-aware deps for the warehouse/BI write dispatcher (wrapped in index.ts). */
+  warehouseWriteDeps: WarehouseWriteContext;
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate
   // routes a HITL action's approval to an active in-scope delegate before the local owner prompt.
   executorDelegation?: ExecutorDelegationDep;

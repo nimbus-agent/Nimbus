@@ -3,6 +3,7 @@ import pino from "pino";
 
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
+import { createWarehouseWriteDispatcher } from "./connectors/warehouse-write-dispatch.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { runAsk } from "./engine/run-ask.ts";
 import { emergencyGatewayLog } from "./platform/gateway-log-file.ts";
@@ -44,7 +45,10 @@ async function main(): Promise<void> {
     listTools: () => mcp.listToolsForDispatcher(),
     getToolsEpoch: () => mcp.getToolsEpoch(),
   };
-  const dispatcher = createConnectorDispatcher(dispatcherClient);
+  const dispatcher = createWarehouseWriteDispatcher(
+    createConnectorDispatcher(dispatcherClient),
+    platform.warehouseWriteDeps,
+  );
   const engine = createNimbusEngineAgent({
     localIndex: platform.localIndex,
     auditDb: platform.localIndex.getDatabase(),

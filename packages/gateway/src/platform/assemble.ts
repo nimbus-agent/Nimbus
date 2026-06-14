@@ -66,6 +66,7 @@ import {
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
+import type { WarehouseWriteContext } from "../connectors/warehouse-write-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import {
@@ -86,7 +87,12 @@ import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
-import { answerLocalOperatorList, type LocalOperatorListCtx } from "../federation/invoke-gate.ts";
+import {
+  answerLocalOperatorInvoke,
+  answerLocalOperatorList,
+  type LocalOperatorInvokeCtx,
+  type LocalOperatorListCtx,
+} from "../federation/invoke-gate.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
@@ -129,6 +135,7 @@ import { vectorSearchChunks } from "../search/vec-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
+import { withConnectorSession } from "../teamvault/connector-session.ts";
 import {
   drainTeamListSession,
   invokeTeamTool,
@@ -1206,6 +1213,58 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         return [...r.items];
       }),
   };
+
+  // Wave 7c — team-credentialed local WRITE invoke (I19 single-tool variant). Mirrors localOpListCtx
+  // but uses invokeTeamTool (single call) + a one-shot session call.
+  const localOpInvokeCtx: LocalOperatorInvokeCtx = {
+    db,
+    store: new TeamVaultStore(db),
+    runTool: (input) =>
+      invokeTeamTool(
+        {
+          vault,
+          sandboxCwd: paths.dataDir,
+          requiredSecretKeysFor: (service: string) =>
+            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          anyOfSecretGroupsFor: (service: string) =>
+            TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          spawnAndCall: (r) =>
+            withConnectorSession(
+              { service: r.service, vaultView: r.vaultView, sandboxCwd: r.sandboxCwd },
+              (session) => session.call(r.toolId, r.args),
+            ),
+        },
+        input,
+      ),
+    ...(identityEnabled
+      ? {
+          identity: {
+            enabled: true,
+            isOperatorValid: () => {
+              const store = identityBootRef?.store;
+              const issuer = identityBootRef?.issuer;
+              if (store === undefined || issuer === undefined) return false;
+              return isOperatorValid(store, issuer, Date.now(), identityBootRef?.graceSeconds ?? 0);
+            },
+          },
+        }
+      : {}),
+  };
+
+  const warehouseWriteDeps: WarehouseWriteContext = {
+    vault,
+    sandboxCwd: paths.dataDir,
+    credentialFor: (service: string) =>
+      connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
+    runTeamInvoke: (req) =>
+      answerLocalOperatorInvoke(localOpInvokeCtx, req).then((r) => {
+        if (r.kind === "error") {
+          throw new Error(`team-vault write (${req.service}/${req.toolId}): ${r.error}`);
+        }
+        return r.result;
+      }),
+  };
+
   const syncBase: SyncContext = {
     vault,
     db,
@@ -1569,6 +1628,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     openUrl: openUrlInDefaultBrowser,
     sandboxRunner,
     llmRegistry,
+    warehouseWriteDeps,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
     ...(chatopsBoot === undefined ? {} : { chatops: chatopsBoot }),
