@@ -6,6 +6,8 @@ import {
   GOOGLE_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_ID_HELP,
   HUBSPOT_OAUTH_CLIENT_SECRET_HELP,
+  MENDELEY_OAUTH_CLIENT_ID_HELP,
+  MENDELEY_OAUTH_CLIENT_SECRET_HELP,
   MICROSOFT_OAUTH_CLIENT_ID_HELP,
   MIRO_OAUTH_CLIENT_ID_HELP,
   MIRO_OAUTH_CLIENT_SECRET_HELP,
@@ -610,6 +612,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: SALESFORCE_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthSalesforceClientSecret,
         clientSecretMissingHelp: SALESFORCE_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "mendeley":
+      return {
+        clientId: Config.oauthMendeleyClientId,
+        emptyClientIdMessage: MENDELEY_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthMendeleyClientSecret,
+        clientSecretMissingHelp: MENDELEY_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;
