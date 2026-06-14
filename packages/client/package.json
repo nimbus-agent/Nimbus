@@ -3,6 +3,11 @@
   "version": "0.2.1",
   "license": "MIT",
   "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nimbus-agent/Nimbus.git",
+    "directory": "packages/client"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
