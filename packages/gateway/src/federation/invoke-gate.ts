@@ -31,6 +31,10 @@ export interface InvokeGateCtx {
   readonly now?: () => number;
   /** I18: when identity is enabled, the anchor operator must be valid to serve a team credential. */
   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+  /** I26: confines warehouse/BI write tool ids to the local executor I2 path — when this returns
+   *  true for the requested toolId, the federated peer invoke is rejected fail-closed (opaque),
+   *  before grant/quorum. Omitted → no write confinement (back-compat). */
+  readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
 }
 
 export interface InboundInvoke {
@@ -70,6 +74,10 @@ export async function answerFederatedInvoke(
   ctx: InvokeGateCtx,
   q: InboundInvoke,
 ): Promise<InvokeResult> {
+  if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) {
+    audit(ctx, q, "write_forbidden");
+    return { kind: "error", error: "no_grant" }; // opaque — never reveal write confinement
+  }
   if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
     audit(ctx, q, "identity_invalid");
     return { kind: "error", error: "no_grant" }; // opaque (no identity-state leak)
@@ -177,4 +185,82 @@ export async function answerLocalOperatorList(
     timestamp: ts,
   });
   return { kind: "ok", items };
+}
+
+// ---------------------------------------------------------------------------
+// Local-operator single-tool invoke path (Wave 7c — data-warehouse/BI writes)
+// ---------------------------------------------------------------------------
+
+export interface LocalOperatorInvokeCtx {
+  readonly db: Database;
+  readonly store: Pick<TeamVaultStore, "getEntry">;
+  readonly runTool: (input: {
+    entry: string;
+    service: string;
+    toolId: string;
+    args: unknown;
+  }) => Promise<unknown>;
+  readonly now?: () => number;
+  /** I18: when identity is enabled, the local operator must be valid to serve a team credential. */
+  readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
+}
+
+export interface LocalOperatorInvokeRequest {
+  readonly entry: string;
+  readonly service: string;
+  readonly toolId: string;
+  readonly args: unknown;
+}
+
+export type LocalOperatorInvokeResult =
+  | { readonly kind: "ok"; readonly result: unknown }
+  | { readonly kind: "error"; readonly error: "no_grant" | "identity_invalid" };
+
+/**
+ * I19 — local-operator single-tool variant of the team-vault gate (Wave 7c writes). The local owner
+ * runs ONE team-credentialed tool (a warehouse/BI write) after clearing the executor I2 HITL gate
+ * upstream. Unlike `answerFederatedInvoke`, no `isWriteForbiddenToolId` confinement applies — write
+ * tool ids ARE allowed here (this is the sanctioned local write path). Identity failures return a
+ * DISTINCT `identity_invalid` (no cross-principal leak on the owner's own machine).
+ */
+export async function answerLocalOperatorInvoke(
+  ctx: LocalOperatorInvokeCtx,
+  req: LocalOperatorInvokeRequest,
+): Promise<LocalOperatorInvokeResult> {
+  const ts = (ctx.now ?? Date.now)();
+  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
+    appendTeamVaultAudit(ctx.db, {
+      principal: { kind: "localOperator" },
+      entry: req.entry,
+      toolId: req.toolId,
+      decision: "identity_invalid",
+      timestamp: ts,
+    });
+    return { kind: "error", error: "identity_invalid" };
+  }
+  const entryDef = ctx.store.getEntry(req.entry);
+  if (entryDef === undefined || entryDef.service !== req.service) {
+    appendTeamVaultAudit(ctx.db, {
+      principal: { kind: "localOperator" },
+      entry: req.entry,
+      toolId: req.toolId,
+      decision: "no_grant",
+      timestamp: ts,
+    });
+    return { kind: "error", error: "no_grant" };
+  }
+  const result = await ctx.runTool({
+    entry: req.entry,
+    service: req.service,
+    toolId: req.toolId,
+    args: req.args,
+  });
+  appendTeamVaultAudit(ctx.db, {
+    principal: { kind: "localOperator" },
+    entry: req.entry,
+    toolId: req.toolId,
+    decision: "answered",
+    timestamp: ts,
+  });
+  return { kind: "ok", result };
 }

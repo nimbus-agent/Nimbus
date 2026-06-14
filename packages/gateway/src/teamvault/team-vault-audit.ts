@@ -6,7 +6,8 @@ export type TeamVaultDecision =
   | "no_grant"
   | "identity_invalid"
   | "quorum_failed"
-  | "quorum_denied";
+  | "quorum_denied"
+  | "write_forbidden";
 
 /** I19 — polymorphic principal for team-vault audit entries.
  *  "peer" = an inbound federated invoke from a remote peer (the classic path).

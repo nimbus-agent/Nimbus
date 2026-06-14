@@ -4,8 +4,10 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import {
   answerFederatedInvoke,
+  answerLocalOperatorInvoke,
   answerLocalOperatorList,
   type InvokeGateCtx,
+  type LocalOperatorInvokeCtx,
   type LocalOperatorListCtx,
 } from "./invoke-gate.ts";
 
@@ -199,5 +201,114 @@ describe("answerLocalOperatorList (I19 — localOperator principal)", () => {
       .query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`)
       .get() as { action_type: string };
     expect(audited.action_type).toBe("teamvault.invoke.identity_invalid");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I26 tests
+// ---------------------------------------------------------------------------
+
+function freshI26Ctx(over: Partial<InvokeGateCtx> = {}): { db: Database; ctx: InvokeGateCtx } {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 35);
+  const store = new TeamVaultStore(db);
+  store.createEntry("warehouse", "tableau", "owner", 1000);
+  store.grant("warehouse", "peer-1", "tableau_datasource_refresh", 1000);
+  store.grant("warehouse", "peer-1", "tableau_list", 1000);
+  const ctx: InvokeGateCtx = {
+    db,
+    store,
+    quorumFor: () => undefined,
+    runQuorum: async () => ({ outcome: "approved", approvers: [] }),
+    runTool: async () => ({ ok: true }),
+    now: () => 9000,
+    ...over,
+  };
+  return { db, ctx };
+}
+
+function freshLocalInvokeCtx(over: Partial<LocalOperatorInvokeCtx> = {}): {
+  db: Database;
+  ctx: LocalOperatorInvokeCtx;
+} {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 35);
+  const store = new TeamVaultStore(db);
+  store.createEntry("warehouse", "tableau", "owner", 1000);
+  const ctx: LocalOperatorInvokeCtx = {
+    db,
+    store,
+    runTool: async () => ({ ok: true }),
+    now: () => 9000,
+    ...over,
+  };
+  return { db, ctx };
+}
+
+describe("I26 — federated peer gate fail-closed rejects write tool ids", () => {
+  it("a granted write tool id is rejected; runTool is never called", async () => {
+    let ran = false;
+    const { ctx } = freshI26Ctx({
+      runTool: async () => {
+        ran = true;
+        return { ok: true };
+      },
+      isWriteForbiddenToolId: (id) => id === "tableau_datasource_refresh",
+    });
+    const result = await answerFederatedInvoke(ctx, {
+      peerId: "peer-1",
+      entry: "warehouse",
+      toolId: "tableau_datasource_refresh",
+      purpose: "p",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "error", error: "no_grant" });
+    expect(ran).toBe(false);
+  });
+
+  it("a read tool id is unaffected by the predicate", async () => {
+    let ran = false;
+    const { ctx } = freshI26Ctx({
+      runTool: async () => {
+        ran = true;
+        return { ok: true };
+      },
+      isWriteForbiddenToolId: (id) => id === "tableau_datasource_refresh",
+    });
+    const result = await answerFederatedInvoke(ctx, {
+      peerId: "peer-1",
+      entry: "warehouse",
+      toolId: "tableau_list",
+      purpose: "p",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "ok", result: { ok: true } });
+    expect(ran).toBe(true);
+  });
+});
+
+describe("answerLocalOperatorInvoke — local owner may invoke a write tool id", () => {
+  it("runs the tool and returns its result", async () => {
+    const { ctx } = freshLocalInvokeCtx({
+      runTool: async (input) => ({ echoed: input.toolId }),
+    });
+    const result = await answerLocalOperatorInvoke(ctx, {
+      entry: "warehouse",
+      service: "tableau",
+      toolId: "tableau_datasource_refresh",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "ok", result: { echoed: "tableau_datasource_refresh" } });
+  });
+
+  it("fail-closed on entry/service mismatch", async () => {
+    const { ctx } = freshLocalInvokeCtx();
+    const result = await answerLocalOperatorInvoke(ctx, {
+      entry: "warehouse",
+      service: "looker", // wrong service
+      toolId: "tableau_datasource_refresh",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "error", error: "no_grant" });
   });
 });
