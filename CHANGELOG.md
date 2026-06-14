@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.6.3](https://github.com/nimbus-agent/Nimbus/compare/v0.6.2...v0.6.3) (2026-06-14)
+
+
+### Bug Fixes
+
+* **ci:** harden Linux apt-get against flaky Microsoft repos + integration-test timeout ([#613](https://github.com/nimbus-agent/Nimbus/issues/613)) ([209fc96](https://github.com/nimbus-agent/Nimbus/commit/209fc966b8a86286f9535a8134b6238d16d1f313))
+* **ci:** set --timeout 60000 on the integration test step ([#610](https://github.com/nimbus-agent/Nimbus/issues/610)) ([69986c1](https://github.com/nimbus-agent/Nimbus/commit/69986c1a5eeb2b1cba00f97b3f243912d92f100f))
+
+
+### Performance Improvements
+
+* **slo:** widen S1 noise floor 200→300 ms to absorb cold-start jitter ([#608](https://github.com/nimbus-agent/Nimbus/issues/608)) ([b49c799](https://github.com/nimbus-agent/Nimbus/commit/b49c799af4e59ea93b2fff71d3eae2cb7c2e9caf))
+
 ## [0.6.2](https://github.com/nimbus-agent/Nimbus/compare/v0.6.1...v0.6.2) (2026-06-14)
 
 
