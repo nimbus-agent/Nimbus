@@ -1,3 +1,6 @@
+// Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
+// in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
+// logic here would silently bypass the floor — put runtime logic in a separate, covered module.
 /**
  * Events emitted by NimbusClient.askStream() over its AsyncIterable surface.
  * Single discriminated union so the consumer can `switch (ev.type)`.

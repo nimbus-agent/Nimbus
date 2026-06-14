@@ -23,9 +23,7 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/index.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
-  { kind: "exact", path: "packages/gateway/src/connectors/mapped-row.ts" },
   { kind: "exact", path: "packages/client/src/index.ts" },
-  { kind: "exact", path: "packages/client/src/stream-events.ts" },
   { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
 
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
@@ -92,18 +90,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // in a normal boot (the env var is unset). Imports are production-safe: node:fs/node:path + type-only.
   { kind: "exact", path: "packages/gateway/src/chatops/chatops-tool-runner-e2e-sink.ts" },
 
-  { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   // `assemble.ts` is the boot-assembly I/O orchestrator (opens SQLite, spawns sidecars,
   // wires every runtime together) — same untestable shell class as `gateway/src/index.ts`
   // and `ipc/server/options.ts`. The new federation glue block is inert by default
   // (federation.enabled = false); testing it requires a full subprocess boot.
   { kind: "exact", path: "packages/gateway/src/platform/assemble.ts" },
-  { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
-  { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
-  { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },
-  { kind: "exact", path: "packages/gateway/src/ipc/agent-invoke.ts" },
-  { kind: "exact", path: "packages/gateway/src/ipc/workflow-invoke.ts" },
-  { kind: "exact", path: "packages/gateway/src/ipc/connector-rpc-handlers/context.ts" },
 
   { kind: "dirPrefix", prefix: "packages/gateway/src/perf/" },
 
@@ -114,15 +105,23 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "basenameRegex", re: /^types\.ts$/ },
   { kind: "basenameRegex", re: /-types\.ts$/ },
 
-  // `transport.ts` is a types-only module (the `ChatTransport` interface + type re-exports, zero
-  // executable lines) — lcov emits no SF: record for it, so the gate reads it as 0%. Same
-  // type-only class as the `types.ts` basenameRegex above; excluded for the identical reason.
+  // ── Type-only / zero-executable-line modules ──────────────────────────────────────────────────
+  // These emit NO `SF:` lcov record (no executable statements) → the gate reads them as 0% and they
+  // can NEVER rejoin the floor — same class as the `types.ts` / `-types.ts` basenameRegex below. There
+  // is nothing to test. Each file carries a guardian header forbidding runtime logic. No rename
+  // (avoids import churn across every consumer for marginal gain).
+  { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
+  { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
+  { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },
+  { kind: "exact", path: "packages/gateway/src/ipc/agent-invoke.ts" },
+  { kind: "exact", path: "packages/gateway/src/ipc/workflow-invoke.ts" },
+  { kind: "exact", path: "packages/gateway/src/connectors/mapped-row.ts" },
+  { kind: "exact", path: "packages/gateway/src/ipc/connector-rpc-handlers/context.ts" },
+  { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/chatops/transport/transport.ts" },
-
-  // `ipc/server/options.ts` is a types-only module (`CreateIpcServerOptions` + `BunSessionData`
-  // over `import type` lines, zero executable statements) — lcov emits no SF: record, so the gate
-  // reads it as 0%. Same type-only class as the `types.ts` basenameRegex and `transport.ts`.
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
+  { kind: "exact", path: "packages/client/src/stream-events.ts" },
+  // ──────────────────────────────────────────────────────────────────────────────────────────────
 
   { kind: "pathRegex", re: /^packages\/github-actions\/[^/]+\/src\/main\.ts$/ },
 
