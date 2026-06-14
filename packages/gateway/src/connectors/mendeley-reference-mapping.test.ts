@@ -85,4 +85,17 @@ describe("mapMendeleyDocumentToItem", () => {
     expect(row.metadata["creators"]).toEqual(["Knuth"]);
     expect(row.metadata["keywords"]).toEqual([]);
   });
+
+  test("yields a null url when websites is empty or has no usable string", () => {
+    const empty = mapMendeleyDocumentToItem(doc({ websites: [] }), { syncedAt: SYNCED_AT });
+    const unusable = mapMendeleyDocumentToItem(doc({ websites: [null, 42, ""] }), {
+      syncedAt: SYNCED_AT,
+    });
+    const missing = mapMendeleyDocumentToItem(doc({ websites: undefined }), {
+      syncedAt: SYNCED_AT,
+    });
+    expect(empty?.canonicalUrl).toBeNull();
+    expect(unusable?.canonicalUrl).toBeNull();
+    expect(missing?.canonicalUrl).toBeNull();
+  });
 });
