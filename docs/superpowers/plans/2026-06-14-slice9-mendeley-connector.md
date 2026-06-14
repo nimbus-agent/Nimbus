@@ -35,6 +35,7 @@
 | Sync result helpers | `packages/gateway/src/sync/pass-cursor-sync-result.ts`, `sync/types.ts` |
 
 **Commands** (run from the worktree root `C:\gitrep\Nimbus\.claude\worktrees\dev+asafgolombek+phase6-slice9-deferred-phase5`):
+
 - One test file: `bun test packages/gateway/src/connectors/mendeley-reference-mapping.test.ts`
 - Connector tests: `bun test packages/mcp-connectors/mendeley`
 - Typecheck (gateway): `bun run --filter @nimbus-dev/gateway typecheck` (or `cd packages/gateway && bunx tsc --noEmit`)
@@ -47,6 +48,7 @@
 ## Task 1: Create the MCP connector package skeleton
 
 **Files:**
+
 - Create: `packages/mcp-connectors/mendeley/package.json`
 - Create: `packages/mcp-connectors/mendeley/tsconfig.json`
 - Create: `packages/mcp-connectors/mendeley/nimbus.extension.json`
@@ -129,6 +131,7 @@ git commit -m "feat(mendeley): connector package skeleton + manifest"
 ## Task 2: Register the `mendeley` OAuth provider
 
 **Files:**
+
 - Modify: `packages/gateway/src/auth/oauth-registry.ts` (union ~line 5-15; `OAUTH_PROVIDERS` ~line 205)
 - Create: `packages/gateway/src/auth/mendeley-access-token.ts`
 - Test: `packages/gateway/src/auth/mendeley-access-token.test.ts`
@@ -325,6 +328,7 @@ git commit -m "feat(mendeley): register the Mendeley OAuth2 provider"
 ## Task 3: Register the `mendeley` connector service id (catalog/secrets/rate-limiter/manifest)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts` (service-id list, interval map, auth-detail map, `oauthProfileForService`)
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts`
 - Modify: `packages/gateway/src/sync/rate-limiter.ts` (`Provider` union + rate map)
@@ -366,6 +370,7 @@ In `connector-secrets-manifest.ts`, add to the secret-keys map:
 - [ ] **Step 6: Add the rate-limiter provider + rate**
 
 In `sync/rate-limiter.ts`:
+
 - Add `| "mendeley"` to the `Provider` union.
 - Add to the rate map: `mendeley: { requestsPerMinute: 60, burstSize: 10 },` (Mendeley's documented default is generous; 60/min mirrors Zotero).
 
@@ -403,6 +408,7 @@ git commit -m "feat(mendeley): register the connector service id, secrets, rate 
 ## Task 4: Build the MCP server tool surface (`list`/`get`/`search`)
 
 **Files:**
+
 - Create: `packages/mcp-connectors/mendeley/src/search-filter.ts`
 - Create: `packages/mcp-connectors/mendeley/src/server.ts`
 - Test: `packages/mcp-connectors/mendeley/test/search-filter.test.ts`
@@ -654,6 +660,7 @@ git commit -m "feat(mendeley): MCP server tool surface (list/get/search) + searc
 ## Task 5: Lazy-mesh OAuth spawn wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/lazy-mesh/keys.ts` (`LAZY_MESH`)
 - Modify: `packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts` (`ensureMendeleyMcp`)
 - Modify: `packages/gateway/src/connectors/lazy-mesh/mesh.ts` (`ensureMendeleyRunning` + list map)
@@ -768,6 +775,7 @@ git commit -m "feat(mendeley): lazy-mesh OAuth spawn (ensureMendeleyMcp)"
 ## Task 6: Document → `reference` mapper
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/mendeley-reference-mapping.ts`
 - Test: `packages/gateway/src/connectors/mendeley-reference-mapping.test.ts`
 
@@ -1013,6 +1021,7 @@ git commit -m "feat(mendeley): map documents to reference index rows"
 ## Task 7: RFC 5988 `Link` header `rel="next"` parser
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/mendeley-link-header.ts`
 - Test: `packages/gateway/src/connectors/mendeley-link-header.test.ts`
 
@@ -1092,6 +1101,7 @@ git commit -m "feat(mendeley): RFC 5988 Link-header next-page parser"
 ## Task 8: Gateway sync handler
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/mendeley-sync.ts`
 - Test: `packages/gateway/src/connectors/mendeley-sync.test.ts`
 
@@ -1407,6 +1417,7 @@ git commit -m "feat(mendeley): gateway sync handler (Link-paginated, modified_si
 ## Task 9: Wire the syncable into boot
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts`
 
 - [ ] **Step 1: Register the syncable**
@@ -1444,6 +1455,7 @@ git commit -m "feat(mendeley): register the syncable at gateway boot"
 ## Task 10: Connector README + docs + final verification
 
 **Files:**
+
 - Create: `packages/mcp-connectors/mendeley/README.md`
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md` (check off the Mendeley row)
@@ -1500,6 +1512,7 @@ git log --oneline origin/main..HEAD   # review the slice's commits
 ## Self-review checklist (completed by plan author)
 
 **Spec coverage:**
+
 - Read-only connector indexing `reference` metadata → Tasks 4, 6, 8 ✅
 - OAuth2 provider (`mendeley.oauth`, env-supplied confidential client) → Task 2 ✅
 - User-supplied client id/secret, no proxy, never in Vault → Task 2 (Steps 4-6, 9) ✅
