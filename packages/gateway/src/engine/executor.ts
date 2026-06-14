@@ -105,6 +105,20 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "vault.delete",
   "teamvault.put",
   "teamvault.delete",
+  // Phase 6 Slice 7 Wave 7c — warehouse/BI writes (kept in sync with WAREHOUSE_BI_WRITES;
+  // see connectors/warehouse-write-tools.ts; drift asserted in warehouse-write-tools.test.ts).
+  "snowflake.tag.set",
+  "snowflake.comment.set",
+  "tableau.datasource.refresh",
+  "tableau.workbook.refresh",
+  "looker.datagroup.trigger",
+  "looker.schedule.run_once",
+  "powerbi.dataset.refresh",
+  "powerbi.dataflow.refresh",
+  "montecarlo.incident.acknowledge",
+  "montecarlo.incident.resolve",
+  "bigeye.issue.acknowledge",
+  "bigeye.issue.resolve",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({

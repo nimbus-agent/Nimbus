@@ -1,5 +1,6 @@
 // packages/gateway/src/connectors/warehouse-write-tools.test.ts
 import { describe, expect, test } from "bun:test";
+import { HITL_REQUIRED } from "../engine/executor.ts";
 import {
   isWarehouseWriteToolId,
   WAREHOUSE_BI_WRITE_TOOL_IDS,
@@ -47,5 +48,13 @@ describe("warehouse-write-tools — single source of truth", () => {
       "powerbi_dataset_refresh",
     );
     expect(warehouseWriteByActionType("notion.page.create")).toBeUndefined();
+  });
+});
+
+describe("warehouse writes are all HITL-gated (I2 drift)", () => {
+  test("every write action type is in HITL_REQUIRED", () => {
+    for (const w of WAREHOUSE_BI_WRITES) {
+      expect(HITL_REQUIRED.has(w.actionType)).toBe(true);
+    }
   });
 });
