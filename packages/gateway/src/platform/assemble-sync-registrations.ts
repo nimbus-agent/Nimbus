@@ -529,9 +529,5 @@ export function registerConnectorMeshSyncables(
     }),
   );
   syncScheduler.register(createMonteCarloSyncable());
-  syncScheduler.register(
-    createBigeyeSyncable({
-      ensureBigeyeMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  syncScheduler.register(createBigeyeSyncable());
 }
