@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.6.2](https://github.com/nimbus-agent/Nimbus/compare/v0.6.1...v0.6.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* **ci:** export GNUPGHOME in linux-repo publish so signing finds the key ([#605](https://github.com/nimbus-agent/Nimbus/issues/605)) ([e5f5154](https://github.com/nimbus-agent/Nimbus/commit/e5f515460d95a47e237086967e5876d22ef77525))
+* **ci:** linux-repo publish verifies only the downloaded .deb/.rpm ([#603](https://github.com/nimbus-agent/Nimbus/issues/603)) ([4d63cad](https://github.com/nimbus-agent/Nimbus/commit/4d63cada3a55d1e3bdeb2f3c1c7e434a05457f3c))
+
 ## [0.6.1](https://github.com/nimbus-agent/Nimbus/compare/v0.6.0...v0.6.1) (2026-06-13)
 
 
