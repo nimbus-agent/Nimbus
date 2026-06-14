@@ -67,11 +67,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // `IPCClient`, and calls `process.exit`, with no injection seam. Same exemption class as team.ts.
   { kind: "exact", path: "packages/cli/src/commands/chatops.ts" },
 
-  // `chatops-tool-runner-e2e-sink.ts` (Phase 6 Slice 5): a TEST-ONLY file-backed mock ChatOps
-  // transport, reachable only via the `NIMBUS_CHATOPS_E2E_SINK_DIR` env seam (same precedent class
-  // as `NIMBUS_SKIP_EMBEDDING_RUNTIME`). It stands in for the bot-credentialed connector subprocess
-  // so the ChatOps e2e can drive a REAL gateway without the OS sandbox spawn (verified independently
-  // by chatops-bot-spawn.test.ts). Not shipped logic — never exercised in a normal gateway boot.
+  // `chatops-tool-runner-e2e-sink.ts` (Phase 6 Slice 5): env-gated by `NIMBUS_CHATOPS_E2E_SINK_DIR`
+  // (same precedent class as `NIMBUS_SKIP_EMBEDDING_RUNTIME`) and STATICALLY IMPORTED by production boot
+  // (`platform/assemble.ts`) — so it is excluded as a genuinely-untestable env-gated shell, NOT relocated
+  // (relocating it would point a production import into the coverage-skipped tree). It is the file-backed
+  // mock ChatOps transport that stands in for the bot-credentialed connector subprocess in the e2e; inert
+  // in a normal boot (the env var is unset). Imports are production-safe: node:fs/node:path + type-only.
   { kind: "exact", path: "packages/gateway/src/chatops/chatops-tool-runner-e2e-sink.ts" },
 
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
