@@ -84,8 +84,22 @@ async function fetchMendeleyPage(
     kind: "ok",
     docs: Array.isArray(parsed) ? parsed : [],
     bytes,
-    nextUrl: parseNextLink(res.headers.get("link")),
+    // Resolve the rel="next" href against the current page URL so a relative
+    // Link header (RFC 5988 permits it) becomes an absolute URL fetch can use.
+    // An already-absolute href is returned unchanged by the URL constructor.
+    nextUrl: resolveNextUrl(parseNextLink(res.headers.get("link")), url),
   };
+}
+
+function resolveNextUrl(rawNext: string | null, base: string): string | null {
+  if (rawNext === null) {
+    return null;
+  }
+  try {
+    return new URL(rawNext, base).href;
+  } catch {
+    return null;
+  }
 }
 
 function nextCursor(since: string): string {

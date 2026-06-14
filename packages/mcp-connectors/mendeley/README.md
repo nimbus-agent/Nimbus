@@ -36,11 +36,12 @@ The Gateway injects the OAuth tokens into the connector process at spawn time;
 the connector itself never touches the vault.
 
 The gateway-side syncable (`packages/gateway/src/connectors/mendeley-sync.ts`)
-walks the Mendeley API (`GET /reference?view=all&limit=50&sort=modified`) — a
-single forward pass per cycle, incrementing the offset while a full page comes back
-(capped at 20 pages) — and upserts each reference with metadata `{ id, title,
-authors, year, source, doctype, keywords, doi, url, abstract }`. The abstract is
-truncated to 500 characters; PDFs and attachments are never fetched.
+walks the Mendeley API (`GET /documents?view=all&limit=100`) — a single forward
+pass per cycle that follows the RFC 5988 `Link: rel="next"` header (capped at 20
+pages), with an incremental `modified_since` cursor — and upserts each document
+with metadata `{ id, title, creators, year, source, doc_type, keywords, doi, url,
+abstract }`. The abstract is truncated to 500 characters; PDFs and attachments are
+never fetched.
 
 Note: Timestamp fields are converted from ISO-8601 to epoch-milliseconds on index.
 `authors` is reduced to a formatted author-list string; `keywords` are stored as a
@@ -59,8 +60,8 @@ Tools exposed:
 
 | Tool | Purpose |
 | --- | --- |
-| `mendeley_list` | List the library's references (`GET /reference?view=all&...`). |
-| `mendeley_get` | Fetch one reference by its ID (`GET /reference/{id}`). |
+| `mendeley_list` | List the library's documents (`GET /documents?view=all&limit=100`). |
+| `mendeley_get` | Fetch one document by its ID (`GET /documents/{id}?view=all`). |
 | `mendeley_search` | Substring search across references (title, authors, source, keywords, DOI, abstract). |
 
 All three tools are read-only; `hitlRequired` is intentionally empty.

@@ -94,6 +94,25 @@ describe("createMendeleySyncable", () => {
     expect(calls[0]).not.toContain("modified_since");
   });
 
+  test("resolves a relative rel=next href against the current page URL", async () => {
+    const calls: string[] = [];
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes("marker=REL2")) {
+        return jsonResponse([{ id: "d2", title: "Second" }]);
+      }
+      // Relative next href (RFC 5988 permits it) — must be resolved to absolute.
+      return jsonResponse([{ id: "d1", title: "First" }], '</documents?marker=REL2>; rel="next"');
+    }) as unknown as typeof fetch;
+    const ctx = makeCtx(true);
+    const syncable = createMendeleySyncable({ ensureMendeleyMcpRunning: async () => {} }, fetchFn);
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    expect(r.itemsUpserted).toBe(2);
+    expect(calls[1]).toBe("https://api.mendeley.com/documents?marker=REL2");
+  });
+
   test("emits modified_since (seconds precision) on an incremental cycle", async () => {
     const calls: string[] = [];
     const fetchFn = (async (url: string | URL) => {
