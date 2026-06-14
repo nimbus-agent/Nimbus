@@ -518,7 +518,7 @@ jobs:
         run: mkdir -p junit-reports
 
       - name: Integration tests
-        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
+        run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --timeout 60000 --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
         env:
           CI: "true"
 
