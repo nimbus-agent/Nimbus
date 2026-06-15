@@ -1017,3 +1017,10 @@ describe("I26 — warehouse/BI writes are confined to the local I2 path; federat
     expect(audit).toContain("D20-invoke-gate-predicate");
   });
 });
+
+describe("I27 — outbound share gated by share.publish HITL action", () => {
+  test("HITL_REQUIRED includes share.publish", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("share.publish")).toBe(true);
+  });
+});

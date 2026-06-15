@@ -119,6 +119,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "montecarlo.incident.resolve",
   "bigeye.issue.acknowledge",
   "bigeye.issue.resolve",
+  // Phase 6 Slice 8 — outbound share publish is owner-HITL-gated (I27); the share-gate
+  // (share/share-gate.ts) redacts → owner HITL → signs → persists → audits.
+  "share.publish",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({
