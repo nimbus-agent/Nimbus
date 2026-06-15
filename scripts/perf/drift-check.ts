@@ -238,6 +238,10 @@ export async function runDriftCheckMain(deps: RunDriftCheckDeps): Promise<void> 
     return;
   }
 
+  // `gh run list` returns runs newest-first; detectDrift walks the series as a
+  // time axis (index 0 = oldest), so reverse to oldest-first before collecting.
+  runs.reverse();
+
   // Download artifacts and collect HistoryLines, oldest-first
   const scratchDir = mkdtempSync(join(tmpRoot, "drift-check-"));
   const historyLines: HistoryLine[] = [];
