@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.9.0](https://github.com/nimbus-agent/Nimbus/compare/v0.8.0...v0.9.0) (2026-06-15)
+
+
+### Features
+
+* **perf:** hybrid perf-CI strategy — gate stable surfaces, trend the noisy ones ([#642](https://github.com/nimbus-agent/Nimbus/issues/642)) ([abfdfbe](https://github.com/nimbus-agent/Nimbus/commit/abfdfbe8c76ec59dcd3337317bc0c3241775a2db))
+
+
+### Bug Fixes
+
+* **deps:** clear high audit advisories (vite/protobufjs/form-data) ([#644](https://github.com/nimbus-agent/Nimbus/issues/644)) ([24169d9](https://github.com/nimbus-agent/Nimbus/commit/24169d9928b9317bd0ed19982eaad9f0b2e5e925))
+
 ## [0.8.0](https://github.com/nimbus-agent/Nimbus/compare/v0.7.0...v0.8.0) (2026-06-15)
 
 
