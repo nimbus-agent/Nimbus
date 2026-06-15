@@ -448,6 +448,49 @@ export function checkWarehouseWriteConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// D21 (I27): the outbound-share HITL action-type literal `share.publish` may be NAMED only in the
+// executor (the HITL frozen-set membership, I2) and the share-gate (the sole gateway-side gating
+// site). The share signing private-key Vault-key literal `share.signing.privkey` may be NAMED only
+// in share-keypair.ts (its single home). Any other reference would let a caller register or gate a
+// share publish out of band — bypassing the local owner's HITL gate (I27) — or compose the signing
+// key outside the keypair module (a Vault-keyspace leak, Non-Negotiable #3). Test files are exempt.
+const D21_PUBLISH_ALLOWED = [
+  "packages/gateway/src/engine/executor.ts",
+  "packages/gateway/src/share/share-gate.ts",
+];
+const D21_PUBLISH_RE = /['"`]share\.publish['"`]/;
+const D21_PRIVKEY_ALLOWED = ["packages/gateway/src/share/share-keypair.ts"];
+const D21_PRIVKEY_RE = /['"`]share\.signing\.privkey['"`]/;
+
+export function checkSharePublishConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (D21_PUBLISH_RE.test(line) && !D21_PUBLISH_ALLOWED.includes(f.relPath)) {
+        out.push({
+          rule: "D21-share-publish",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+      if (D21_PRIVKEY_RE.test(line) && !D21_PRIVKEY_ALLOWED.includes(f.relPath)) {
+        out.push({
+          rule: "D21-share-signing-privkey",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -590,6 +633,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D20 warehouse write tool referenced/wired outside allowed sites — bypasses I26: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkSharePublishConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D21 share.publish action-type / share.signing.privkey vault-key referenced outside the gate/keypair sites — bypasses I27: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
