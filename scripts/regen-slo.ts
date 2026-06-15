@@ -109,7 +109,7 @@ A bench fails when either:
 const FOOTER = `
 ## What this sheet is not
 
-- **Not a regression-tracking document.** This sheet pins the absolute SLO *thresholds*. Trend-over-time tracking lives in the **[/dev/bench dashboard](https://asafgolombek.github.io/Nimbus/dev/bench/)** — the github-action-benchmark chart published from \`main\` on every push (data in the \`perf-data\` branch under \`dev/bench/\`). The reference machine's per-run aggregates are recorded in \`docs/perf/history.jsonl\`.
+- **Not a regression-tracking document.** This sheet pins the absolute SLO *thresholds*. Trend-over-time tracking lives in the **[/dev/bench dashboard](https://github.com/nimbus-agent/Nimbus/tree/perf-data/dev/bench)** — the github-action-benchmark chart published from \`main\` on every push (data in the \`perf-data\` branch under \`dev/bench/\`). The reference machine's per-run aggregates are recorded in \`docs/perf/history.jsonl\`.
 
 ---
 

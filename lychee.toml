@@ -27,6 +27,10 @@ exclude = [
   "tauri\\.app",           # intermittent connection failures from runners
   "conventionalcommits\\.org",  # intermittent TCP RST from GH runner egress
   "nimbus-agent\\.dev",    # exclude until PR 1 DNS propagates
+  # github-action-benchmark dashboard on the perf-data orphan branch — the branch
+  # and dev/bench dir are created by the first post-merge push, so the link 404s
+  # while the PR documenting it is open. Resolves automatically post-merge.
+  "github\\.com/nimbus-agent/Nimbus/tree/perf-data",
 ]
 # 202 Accepted is a 2xx success — figma.com's homepage returns it to scripted UAs,
 # which lychee otherwise rejects (the long-standing intermittent figma.com flake).

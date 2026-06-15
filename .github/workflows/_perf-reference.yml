@@ -187,7 +187,7 @@ jobs:
             fi
             jq -e \
               --arg sha "$GITHUB_SHA" \
-              '.schema_version == 1
+              '.schema_version == 2
                and .runner == "reference-m1air"
                and .nimbus_git_sha == $sha
                and (.os_version | type == "string" and length > 0)' \
@@ -262,11 +262,11 @@ jobs:
           ## Reference benchmark run
 
           - **Runner:** \`reference-m1air\` (self-hosted, M1 Air, 8 GB / 256 GB)
-          - **Triggered by:** @${{ github.actor }} via workflow_dispatch
+          - **Triggered by:** @${{ github.actor }} via ${{ github.event_name }}
           - **macOS version:** see \`os_version\` field in the new history line
           - **Notes:** ${NOTES:-_(none)_}
 
-          ### § 4.2 Reference protocol checklist (operator attested)
+          ### § 4.2 Reference protocol checklist ${{ github.event_name == 'schedule' && '(nightly — runner held in §4.2 protocol state)' || '(operator attested)' }}
 
           - [x] AC powered
           - [x] Low Power Mode off
