@@ -197,3 +197,22 @@ Salesforce Setup → App Manager → your connected app → Manage Consumer Deta
 
 PowerShell example:
   $env:NIMBUS_OAUTH_SALESFORCE_CLIENT_SECRET = "..."`;
+
+export const MENDELEY_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_MENDELEY_CLIENT_ID to your Elsevier/Mendeley application's OAuth client ID.
+
+1. https://dev.mendeley.com/myapps.html → register an application with the authorization-code flow.
+2. Set the redirect URI to the Nimbus loopback redirect.
+
+You must also set NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET (Mendeley's token endpoint requires HTTP Basic auth with the secret).
+
+PowerShell:
+  $env:NIMBUS_OAUTH_MENDELEY_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET = "..."`;
+
+export const MENDELEY_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET to your Mendeley application's OAuth client secret.
+
+Mendeley's token exchange requires the client secret in the environment (it is not stored in the Nimbus vault).
+https://dev.mendeley.com/myapps.html → your application → copy the secret.
+
+PowerShell:
+  $env:NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET = "..."`;

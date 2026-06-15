@@ -12,7 +12,8 @@ export type OAuthProvider =
   | "miro"
   | "canva"
   | "figma"
-  | "salesforce";
+  | "salesforce"
+  | "mendeley";
 
 export interface PKCEResult {
   accessToken: string;
@@ -429,6 +430,25 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
         : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
     }),
     parseTokenResponse: parseSalesforceTokenResponse,
+  },
+  mendeley: {
+    id: "mendeley",
+    vaultKey: "mendeley.oauth",
+    authorizeUrl: "https://api.mendeley.com/oauth/authorize",
+    tokenUrl: "https://api.mendeley.com/oauth/token",
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "basic_header",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: (a) => ({
+      client_id: a.clientId,
+      redirect_uri: a.redirectUri,
+      response_type: "code",
+      scope: a.scopes.join(" "),
+      state: a.state,
+    }),
+    parseTokenResponse: parseStandardTokenResponse,
   },
 };
 

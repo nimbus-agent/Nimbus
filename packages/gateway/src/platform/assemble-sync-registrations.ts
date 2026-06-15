@@ -51,6 +51,7 @@ import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { createLocaldbSyncable } from "../connectors/localdb-sync.ts";
 import { createLookerSyncable } from "../connectors/looker-sync.ts";
+import { createMendeleySyncable } from "../connectors/mendeley-sync.ts";
 import { createMercurySyncable } from "../connectors/mercury-sync.ts";
 import { createMetabaseSyncable } from "../connectors/metabase-sync.ts";
 import { createMiroSyncable } from "../connectors/miro-sync.ts";
@@ -174,6 +175,11 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createNotionSyncable({
       ensureNotionMcpRunning: () => connectorMesh.ensureNotionRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createMendeleySyncable({
+      ensureMendeleyMcpRunning: () => connectorMesh.ensureMendeleyRunning(),
     }),
   );
   syncScheduler.register(

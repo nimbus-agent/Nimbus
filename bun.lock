@@ -773,6 +773,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/mendeley": {
+      "name": "nimbus-mcp-mendeley",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/mercury": {
       "name": "nimbus-mcp-mercury",
       "version": "0.1.0",
@@ -3501,6 +3513,8 @@
     "nimbus-mcp-localdb": ["nimbus-mcp-localdb@workspace:packages/mcp-connectors/localdb"],
 
     "nimbus-mcp-looker": ["nimbus-mcp-looker@workspace:packages/mcp-connectors/looker"],
+
+    "nimbus-mcp-mendeley": ["nimbus-mcp-mendeley@workspace:packages/mcp-connectors/mendeley"],
 
     "nimbus-mcp-mercury": ["nimbus-mcp-mercury@workspace:packages/mcp-connectors/mercury"],
 

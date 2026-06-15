@@ -54,6 +54,7 @@ describe("defaultSyncIntervalMsForService", () => {
     expect(defaultSyncIntervalMsForService("google_drive")).toBe(30 * 60 * 1000);
     expect(defaultSyncIntervalMsForService("google_photos")).toBe(6 * 60 * 60 * 1000);
     expect(defaultSyncIntervalMsForService("circleci")).toBe(90 * 1000);
+    expect(defaultSyncIntervalMsForService("mendeley")).toBe(10 * 60 * 1000);
   });
 });
 
@@ -127,6 +128,12 @@ describe("oauthProfileForService — supported providers", () => {
     const profile = oauthProfileForService("notion");
     expect(profile.provider).toBe("notion");
     expect(profile.defaultScopes).toEqual([]);
+  });
+
+  test("returns Mendeley provider profile with all scope", () => {
+    const profile = oauthProfileForService("mendeley");
+    expect(profile.provider).toBe("mendeley");
+    expect(profile.defaultScopes).toEqual(["all"]);
   });
 });
 

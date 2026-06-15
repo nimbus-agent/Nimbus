@@ -60,6 +60,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "pipedrive",
   "stackoverflow",
   "zotero",
+  "mendeley",
   "dependencytrack",
   "airflow",
   "prefect",
@@ -176,6 +177,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   pipedrive: MIN10,
   stackoverflow: MIN10,
   zotero: MIN10,
+  mendeley: MIN10,
   dependencytrack: MIN10,
   airflow: MIN10,
   prefect: MIN10,
@@ -413,6 +415,8 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
       };
     case "notion":
       return { provider: "notion", defaultScopes: [] };
+    case "mendeley":
+      return { provider: "mendeley", defaultScopes: ["all"] };
     case "zoom":
       return {
         provider: "zoom",

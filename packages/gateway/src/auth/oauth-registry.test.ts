@@ -487,6 +487,37 @@ describe("salesforce descriptor", () => {
   });
 });
 
+describe("mendeley descriptor", () => {
+  test("table includes mendeley with vaultKey, urls, and basic-header quirks", () => {
+    expect(OAUTH_PROVIDERS.mendeley.id).toBe("mendeley");
+    expect(OAUTH_PROVIDERS.mendeley.vaultKey).toBe("mendeley.oauth");
+    expect(OAUTH_PROVIDERS.mendeley.authorizeUrl).toBe("https://api.mendeley.com/oauth/authorize");
+    expect(OAUTH_PROVIDERS.mendeley.tokenUrl).toBe("https://api.mendeley.com/oauth/token");
+    expect(OAUTH_PROVIDERS.mendeley.usesPkce).toBe(false);
+    expect(OAUTH_PROVIDERS.mendeley.clientSecret).toBe("required");
+    expect(OAUTH_PROVIDERS.mendeley.secretPlacement).toBe("basic_header");
+    expect(OAUTH_PROVIDERS.mendeley.bodyFormat).toBe("form");
+    expect(OAUTH_PROVIDERS.mendeley.mirrorPerService).toBe(false);
+    expect(OAUTH_PROVIDERS.mendeley.tokenHeaders).toBeUndefined();
+  });
+
+  test("authorize params omit PKCE + scope joined with spaces", () => {
+    const p = OAUTH_PROVIDERS.mendeley.buildAuthorizeParams({
+      clientId: "mendeley-cid",
+      scopes: ["all"],
+      redirectUri: "http://127.0.0.1:1/oauth/callback",
+      state: "st",
+      codeChallenge: "cc",
+    });
+    expect(p["client_id"]).toBe("mendeley-cid");
+    expect(p["response_type"]).toBe("code");
+    expect(p["scope"]).toBe("all");
+    expect(p["state"]).toBe("st");
+    expect(p["code_challenge"]).toBeUndefined();
+    expect(p["code_challenge_method"]).toBeUndefined();
+  });
+});
+
 describe("buildAuthorizeUrl", () => {
   test("composes URL using descriptor.authorizeUrl + buildAuthorizeParams", () => {
     const url = buildAuthorizeUrl(OAUTH_PROVIDERS.google, {
