@@ -115,7 +115,7 @@ One row per **sent** share: `id`, `content_hash` (unique), `kind`, `session_id`,
   steps: [ { stepId, tool, service, params(redacted), thresholds?, dependsOn: [stepId...] } ],
   graphTraversals: [ { fromEntity, relation, ... } ] }
 ```
-Step ordering + `dependsOn` derived from `called_at` order and param-provenance (a step consuming a prior step's output). Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). *(Implementation note for the plan: confirm an available YAML serializer in deps; otherwise emit canonical hand-rolled YAML or fall back to JSON with a `.json` extension — decided at plan time.)*
+Step ordering + `dependsOn` derived from `called_at` order and param-provenance (a step consuming a prior step's output). Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). The serializer: at plan time check whether a `yaml` package is already in the dep tree; if not, add the well-established `yaml` package via the `bun add` dependency-safety pre-flight (`nimbus-commands` skill). Emit deterministic (stable-key-ordered) output so a recipe is content-addressable.
 
 ### 7.2 `nimbus share <session> --as-recipe`
 Routes through the **same** `share-gate` (redaction + HITL preview + sign), `body.kind="recipe"`, `body.recipe` populated, `turns` omitted (conversation stripped entirely). Recipe sharing therefore inherits I27 with zero new emit path. Also usable as a pure local artifact (write to file without forwarding).
