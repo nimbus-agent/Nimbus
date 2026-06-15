@@ -2,6 +2,13 @@
 
 All notable changes to `@nimbus-dev/client` are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.2.3](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.2...client-v0.2.3) (2026-06-15)
+
+
+### Bug Fixes
+
+* **client:** bundle sdk via the "bun" condition so the publish build resolves ([#638](https://github.com/nimbus-agent/Nimbus/issues/638)) ([c1f36d2](https://github.com/nimbus-agent/Nimbus/commit/c1f36d2e1cee0f02430aab5f48e517a9882ccf4d))
+
 ## [0.2.2](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.1...client-v0.2.2) (2026-06-14)
 
 
