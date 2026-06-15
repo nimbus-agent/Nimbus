@@ -122,6 +122,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "profile.switch",
     "scim.listUsers",
     "scim.status",
+    "share.get",
+    "share.list",
+    "share.pubkey",
+    "share.verify",
     "team.auditMerged",
     "teamvault.list",
     "telemetry.getStatus",
@@ -493,7 +497,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 90);
+        assert_eq!(ALLOWED_METHODS.len(), 94);
     }
 
     #[test]
