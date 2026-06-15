@@ -266,7 +266,7 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 40;
+export const CURRENT_SCHEMA_VERSION = 41;
 
 const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed"]);
 

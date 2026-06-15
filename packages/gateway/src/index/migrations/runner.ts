@@ -43,6 +43,7 @@ import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.t
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
+import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
@@ -397,6 +398,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "graph lineage relation types (data-warehouse/BI lineage v40)",
     GRAPH_LINEAGE_TYPES_V40_SQL,
   ),
+  simpleStep(40, 41, "share_records (share & virality ledger v41)", SHARE_RECORDS_V41_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
