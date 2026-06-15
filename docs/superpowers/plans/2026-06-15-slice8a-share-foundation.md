@@ -278,7 +278,18 @@ export function assertSafeUrl(raw: string): URL {
   return url;
 }
 
-/** Resolve the host and re-check the resolved address (DNS-rebind defense), then fetch. */
+/**
+ * Validate scheme + literal/resolved address, then fetch.
+ *
+ * KNOWN LIMITATION (design-review point 2): `fetch()` performs its own DNS resolution at
+ * connect time, so a malicious low-TTL DNS server could return a public IP to `lookup()` here
+ * and a private IP to `fetch()` — a TOCTOU/DNS-rebind window. We do NOT fully close it: pinning
+ * the connection to the resolved IP would require overriding SNI/Host and breaks TLS cert
+ * validation for https in Bun's fetch. The residual risk is bounded because (a) the `--http`
+ * sink host is config-pinned (`[share.http_sink].url`), not caller-chosen, and (b) `verify-share`
+ * url fetch is a user-initiated read whose worst case is reading a public address it was already
+ * pointed at. Full IP-pinning via a custom connector is a tracked hardening follow-up, not 8a.
+ */
 export async function safeFetch(raw: string, init?: RequestInit): Promise<Response> {
   const url = assertSafeUrl(raw);
   if (isIP(url.hostname) === 0) {
@@ -292,6 +303,8 @@ export async function safeFetch(raw: string, init?: RequestInit): Promise<Respon
   return fetch(url, init);
 }
 ```
+
+> Do not name this guarantee "SSRF-proof" anywhere — it is "SSRF-guarded with a documented DNS-rebind residual." The honest scoping is part of the fix.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -552,7 +565,12 @@ export function contentHash(body: ShareBody): string {
 export function buildShareFile(body: ShareBody, privkeyB64: string, pubkeyB64: string): ShareFile {
   const canonical = canonicalizeBody(body);
   const seed = decodeBase64(privkeyB64);
-  const kp = nacl.sign.keyPair.fromSeed(seed.length === 32 ? seed : seed.slice(0, 32));
+  if (seed.length !== 32) {
+    // Fail-closed: the Vault stores a 32-byte Ed25519 seed (generateEd25519Keypair().privkey,
+    // validated by ensureShareKeypair). A wrong length means corruption — never silently slice.
+    throw new TypeError(`share signing key must be a 32-byte seed, got ${seed.length}`);
+  }
+  const kp = nacl.sign.keyPair.fromSeed(seed);
   const signature = Buffer.from(nacl.sign.detached(canonical, kp.secretKey)).toString("base64");
   return {
     format: SHARE_FORMAT,
@@ -602,6 +620,8 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
 ```
 
 > `tweetnacl` is the existing nacl dep (see `policy/policy-signing.ts`'s `import nacl from "tweetnacl"`). Match its import style exactly.
+>
+> **Canonicalization — prefer reuse (design-review point 3):** before keeping the local `sortKeys`, check whether the SDK `canonicalize` re-exported from `extensions/canonical-json.ts` can serialize an arbitrary share body. It is the project's *manifest* canonicalizer and enforces limits (`ManifestNestedTooDeep`, `NonIntegerNumberInManifest`, `UnsupportedManifestValueType`). A share body has nested transcript turns / tool-call params and integer timestamps — if it stays within those limits, **import and reuse `canonicalize`** (delete the local `sortKeys`) so there is one canonicalizer and no drift. Only if real share bodies can exceed the manifest limits (deep nesting, non-integer numbers, unsupported value types) do you keep the local key-sorter — and then add a one-line comment stating exactly which limit forced the fork. Either way, `contentHash`/sign/verify must all call the *same* function.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1201,12 +1221,16 @@ import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import { dispatchShareRpc } from "./share-rpc.ts";
 
-function ctx(db: Database) {
+const okVerify = { ok: true, signatureValid: true, contentHashValid: true, expired: false, errors: [] as string[] };
+function ctx(_db: Database) {
   return {
-    db,
-    createShare: async () => ({ status: "ok" as const, contentHash: "h1", share: { format: "nimbus-share/v1" } }),
-    verifyBytes: () => ({ ok: true, signatureValid: true, contentHashValid: true, expired: false, errors: [] }),
+    createShare: async () => ({ status: "ok" as const, contentHash: "h1" }),
+    verifyBytes: () => okVerify,
+    verifyUrl: async () => okVerify,
     pubkey: async () => "PUB",
+    list: () => [],
+    get: () => undefined,
+    prune: () => 0,
   };
 }
 
@@ -1235,9 +1259,12 @@ Expected: FAIL — module not found.
 // packages/gateway/src/ipc/share-rpc.ts
 import { dispatchByMethod, type RpcMethodHandlerMap, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
+interface VerifyShape { ok: boolean; signatureValid: boolean; contentHashValid: boolean; expired: boolean; errors: readonly string[] }
 export interface ShareRpcCtx {
   readonly createShare: (params: unknown) => Promise<{ status: string; contentHash?: string }>;
-  readonly verifyBytes: (bytes: Uint8Array) => { ok: boolean; signatureValid: boolean; contentHashValid: boolean; expired: boolean; errors: readonly string[] };
+  readonly verifyBytes: (bytes: Uint8Array) => VerifyShape;
+  /** Gateway-side SSRF-safe fetch + verify for the url form (wraps verifyShareFromInput). */
+  readonly verifyUrl: (url: string) => Promise<VerifyShape>;
   readonly pubkey: () => Promise<string>;
   readonly list: (includeExpired: boolean) => unknown;
   readonly get: (contentHash: string) => unknown;
@@ -1254,8 +1281,14 @@ function reqString(p: unknown, key: string): string {
 const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
   "share.create": (p, ctx) => ctx.createShare(p),
   "share.verify": (p, ctx) => {
-    const b64 = reqString(p, "bytesB64");
-    return ctx.verifyBytes(new Uint8Array(Buffer.from(b64, "base64")));
+    const params = p as { bytesB64?: string; url?: string } | null;
+    if (typeof params?.bytesB64 === "string") {
+      return ctx.verifyBytes(new Uint8Array(Buffer.from(params.bytesB64, "base64")));
+    }
+    if (typeof params?.url === "string") {
+      return ctx.verifyUrl(params.url); // gateway-side SSRF-safe fetch (verifyShareFromInput)
+    }
+    throw new Error("ERR_INVALID_PARAMS: share.verify requires bytesB64 or url");
   },
   "share.pubkey": async (_p, ctx) => ({ pubkey: await ctx.pubkey() }),
   "share.list": (p, ctx) => ctx.list((p as { includeExpired?: boolean } | null)?.includeExpired === true),
@@ -1269,7 +1302,7 @@ export function dispatchShareRpc(method: string, params: unknown, ctx: ShareRpcC
 ```
 
 - [ ] **Step 4: Wire the dispatcher + LAN-forbid `share.create`.**
-  - **Read `packages/gateway/src/ipc/server/dispatchers.ts`** and find how `tribal`/`federation` RPC is wired into the Phase-4 dispatch chain. Add a `tryDispatchShareRpc(ctx, method, params)` following that exact pattern, constructing `ShareRpcCtx` from real deps: `createShare` calls the Task-8 `createShare` (with the consent broker's `request` as `requestApproval`, `collectSession` reading the transcript via `engine-get-session-transcript` + `tool_call_log`, and after a successful gate, performing the sink emit — file write / `safeFetch` POST to the configured `[share.http_sink]` / peer-forward-stub-for-8d); `verifyBytes` → `verifyShareFromBytes`; `pubkey` → `ensureShareKeypair(...).pubkeyB64`; `list`/`get`/`prune` → `share-store`.
+  - **Read `packages/gateway/src/ipc/server/dispatchers.ts`** and find how `tribal`/`federation` RPC is wired into the Phase-4 dispatch chain. Add a `tryDispatchShareRpc(ctx, method, params)` following that exact pattern, constructing `ShareRpcCtx` from real deps: `createShare` calls the Task-8 `createShare` (with the consent broker's `request` as `requestApproval`, `collectSession` reading the transcript via `engine-get-session-transcript` + `tool_call_log`, and after a successful gate, performing the sink emit — file write / `safeFetch` POST to the configured `[share.http_sink]` / peer-forward-stub-for-8d); `verifyBytes` → `verifyShareFromBytes`; `verifyUrl` → `verifyShareFromInput` (gateway-side SSRF-safe fetch); `pubkey` → `ensureShareKeypair(...).pubkeyB64`; `list`/`get`/`prune` → `share-store`.
   - **Read the LAN method-allow mechanism** (CLAUDE.md I5: `checkLanMethodAllowed` intrinsic to `LanServer`, `ipc/lan-server.ts`; federation methods are explicitly LAN-callable). Ensure `share.create`/`share.prune` are **not** LAN-callable while `share.verify`/`share.list`/`share.get`/`share.pubkey` may be. Match whatever allow/deny structure that file uses (allowlist of LAN-callable methods, or a forbidden set). Add a test mirroring the existing LAN-allow tests.
 
 - [ ] **Step 5: Run to verify it passes**
