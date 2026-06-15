@@ -26,7 +26,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun run build:clean && tsc -p tsconfig.build.json && bun build ./src/index.ts --bundle --target=node --format=cjs --outfile=dist/index.cjs",
+    "build": "bun run build:clean && tsc -p tsconfig.build.json && bun build ./src/index.ts --bundle --target=node --format=cjs --conditions=bun --outfile=dist/index.cjs",
     "build:clean": "bun -e \"import { rmSync } from 'node:fs'; try { rmSync('dist', { recursive: true }); } catch {}\"",
     "clean": "bun run build:clean",
     "typecheck": "tsc --noEmit",
