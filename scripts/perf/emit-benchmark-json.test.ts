@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { HistoryLine } from "../../packages/gateway/src/perf/history-line.ts";
-import { toBenchmarkPoints } from "./emit-benchmark-json.ts";
+import { runEmitBenchmarkJsonMain, toBenchmarkPoints } from "./emit-benchmark-json.ts";
 
 function baseLine(surfaces: HistoryLine["surfaces"]): HistoryLine {
   return {
@@ -75,5 +78,35 @@ describe("toBenchmarkPoints", () => {
       baseLine({ S1: { samples_count: 5, p95_ms: Number.POSITIVE_INFINITY } }),
     );
     expect(points).toEqual([]);
+  });
+});
+
+describe("runEmitBenchmarkJsonMain", () => {
+  test("returns 2 when required flags are missing", async () => {
+    expect(await runEmitBenchmarkJsonMain([])).toBe(2);
+  });
+
+  test("returns 1 (not an uncaught crash) when the input file does not exist", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "emit-bench-"));
+    const code = await runEmitBenchmarkJsonMain([
+      "--in",
+      join(dir, "does-not-exist.jsonl"),
+      "--out",
+      join(dir, "out.json"),
+    ]);
+    expect(code).toBe(1);
+  });
+
+  test("writes trend points and returns 0 on a valid input file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "emit-bench-"));
+    const inPath = join(dir, "run-history.jsonl");
+    const outPath = join(dir, "points.json");
+    const line: HistoryLine = baseLine({ S1: { samples_count: 5, p95_ms: 812.5 } });
+    writeFileSync(inPath, `${JSON.stringify(line)}\n`, "utf8");
+    const code = await runEmitBenchmarkJsonMain(["--in", inPath, "--out", outPath]);
+    expect(code).toBe(0);
+    expect(JSON.parse(readFileSync(outPath, "utf8"))).toEqual([
+      { name: "S1 p95", unit: "ms", value: 812.5 },
+    ]);
   });
 });

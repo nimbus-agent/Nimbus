@@ -98,8 +98,12 @@ export function formatPrComment(
   return lines.join("\n");
 }
 
-/** Path of the github-action-benchmark dashboard published on the `perf-data` branch. */
-const DEV_BENCH_DASHBOARD_PATH = "../../tree/perf-data/dev/bench";
+/**
+ * Absolute URL of the github-action-benchmark dashboard published on the `perf-data`
+ * branch. Must be absolute: GitHub PR comments lack a file context, so a relative
+ * `../../` path does not resolve. Matches the link in `docs/perf/slo.md`.
+ */
+const DEV_BENCH_DASHBOARD_PATH = "https://github.com/nimbus-agent/Nimbus/tree/perf-data/dev/bench";
 
 function isGateClass(surfaceId: string): boolean {
   return (

@@ -184,7 +184,22 @@ async function upsertDriftIssue(
   }
 }
 
-function parseHistoryLines(path: string): HistoryLine[] {
+/**
+ * A v2 HistoryLine carries a `surfaces` map and `schema_version: 2`. v1 history
+ * (median-of-per-run-p95 aggregation) is non-comparable, so it is skipped rather
+ * than silently mixed into the drift series where it would skew the rolling median.
+ */
+function isHistoryLineV2(parsed: unknown): parsed is HistoryLine {
+  return (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    (parsed as { schema_version?: unknown }).schema_version === 2 &&
+    typeof (parsed as { surfaces?: unknown }).surfaces === "object" &&
+    (parsed as { surfaces?: unknown }).surfaces !== null
+  );
+}
+
+export function parseHistoryLines(path: string): HistoryLine[] {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -196,7 +211,9 @@ function parseHistoryLines(path: string): HistoryLine[] {
     const trimmed = line.trim();
     if (trimmed === "") continue;
     try {
-      lines.push(JSON.parse(trimmed) as HistoryLine);
+      const parsed: unknown = JSON.parse(trimmed);
+      if (isHistoryLineV2(parsed)) lines.push(parsed);
+      // skip schema_version 1 (non-comparable) or otherwise malformed lines
     } catch {
       // skip malformed lines
     }
@@ -296,10 +313,29 @@ export async function runDriftCheckMain(deps: RunDriftCheckDeps): Promise<void> 
   }
 }
 
+/** The full `RunnerKind` set, used to validate the `NIMBUS_PERF_RUNNER` env var at startup. */
+const RUNNER_KINDS: ReadonlySet<RunnerKind> = new Set<RunnerKind>([
+  "reference-m1air",
+  "gha-ubuntu",
+  "gha-macos",
+  "gha-windows",
+  "local-dev",
+]);
+
+export function isRunnerKind(value: string): value is RunnerKind {
+  return (RUNNER_KINDS as ReadonlySet<string>).has(value);
+}
+
 if (import.meta.main) {
   const runnerEnv = process.env["NIMBUS_PERF_RUNNER"] ?? "gha-ubuntu";
+  if (!isRunnerKind(runnerEnv)) {
+    process.stderr.write(
+      `drift-check: invalid NIMBUS_PERF_RUNNER "${runnerEnv}"; expected one of ${[...RUNNER_KINDS].join(", ")}\n`,
+    );
+    process.exit(1);
+  }
   await runDriftCheckMain({
     gh: new GhCli(),
-    runner: runnerEnv as RunnerKind,
+    runner: runnerEnv,
   });
 }

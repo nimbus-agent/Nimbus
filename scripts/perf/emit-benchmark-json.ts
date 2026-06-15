@@ -79,12 +79,17 @@ export async function runEmitBenchmarkJsonMain(args: string[]): Promise<number> 
     );
     return 2;
   }
-  const text = await Bun.file(inPath).text();
-  const line = parseLastHistoryLine(text);
-  const points = toBenchmarkPoints(line);
-  writeFileSync(outPath, `${JSON.stringify(points, null, 2)}\n`, "utf8");
-  process.stdout.write(`wrote ${points.length} trend point(s) to ${outPath}\n`);
-  return 0;
+  try {
+    const text = await Bun.file(inPath).text();
+    const line = parseLastHistoryLine(text);
+    const points = toBenchmarkPoints(line);
+    writeFileSync(outPath, `${JSON.stringify(points, null, 2)}\n`, "utf8");
+    process.stdout.write(`wrote ${points.length} trend point(s) to ${outPath}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
 }
 
 if (import.meta.main) {

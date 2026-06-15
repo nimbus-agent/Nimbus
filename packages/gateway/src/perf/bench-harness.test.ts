@@ -16,7 +16,7 @@ describe("runBench", () => {
     expect(calls).toBe(5);
     expect(result.surfaceId).toBe("S2-a");
     expect(result.samplesCount).toBe(500);
-    // Worst run (calls=5, values 6..105) is trimmed; pool is runs 1..4 (values 1..104).
+    // Worst run (calls=5, values 5..104) is trimmed; pool is runs 1..4 (values 1..103).
     expect(result.p95Ms).toBeGreaterThan(90);
     expect(result.p95Ms).toBeLessThan(105);
   });
