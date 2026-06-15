@@ -31,7 +31,7 @@ This is the **one** subsystem in Nimbus that deliberately emits indexed data *ou
 | D-staging | Delivery shape | **Four waves, four PRs**, one umbrella spec (this doc) + four implementation plans. |
 | D-signing-key | Which key signs a share | **New dedicated Vault-only `share.signing.{priv,pub}key`** (mirrors `policy/anchor-keypair.ts`), not the policy anchor key. |
 | D-tauri | Renderer exposure | Read-only `share.verify/list/get` on the Tauri allowlist; **`share.create` stays CLI-only** (keep outbound/RCE-class surface off the renderer). |
-| D-provenance | Forwarding integrity | Inner share body+sig **immutable / origin-verifiable**; a **separate forwarding layer** carries the hop chain (each forwarder appends+signs). verify-share validates content against origin; the chain is advisory attribution. |
+| D-provenance | Forwarding integrity | Inner share body+sig **immutable / origin-verifiable**; the **top-level `forwarding` envelope** (outside the signed body) carries the hop chain (each forwarder appends+signs over `contentHash ++ prior chain`). verify-share validates content against origin; the chain is advisory attribution. |
 
 ## 4. Substrate (what already exists — reuse, don't rebuild)
 
@@ -57,17 +57,23 @@ A content-addressed, signed JSON envelope written as `.nimbus-share.json` (recip
     "createdAt": <ms>,
     "expiresAt": <ms> | null,
     "redactionSet": ["secrets","emails","hostnames","slack-handles","credit-cards","ips", ...caller],
-    "provenance": { "originLabel": "<string>", "originPubkey": "<b64>", "hops": 0, "chain": [] },
+    "origin": { "label": "<string>", "pubkey": "<b64>" },        // immutable; covered by sig
     "turns": [ { "role", "text(redacted)", "timestamp" } ]?,      // kind=transcript
     "toolCalls": [ { "toolId","service","params(redacted)","status" } ]?,
     "recipe": { ...declarative DAG... }?                          // kind=recipe
   },
-  "sig": { "alg": "ed25519", "pubkey": "<b64>", "signature": "<b64 over canonicalize(body)>" }
+  "sig": { "alg": "ed25519", "pubkey": "<b64>", "signature": "<b64 over canonicalize(body)>" },
+  "forwarding": {                                                 // OUTSIDE the signed body — see §9.2
+    "hops": <int>,                                                // 0 at origin; populated only by 8d
+    "chain": [ { "gatewayLabel": "<string>", "pubkey": "<b64>",
+                 "sig": "<b64 over contentHash ++ prior-chain-entries>" } ]
+  }
 }
 ```
 
 - `canonicalize` is reused from `policy/policy-signing.ts` (applied to the JSON-serialized body via a stable key-ordered serializer; see canonical-JSON in `extensions/canonical-json.ts`).
 - `contentHash` and `signature` are computed over the **same** canonical bytes — tamper of either fails verification.
+- **Forwarding metadata lives OUTSIDE the signed `body`.** Only immutable origin info (`body.origin`) is signed by the origin. The mutable hop chain sits in the top-level `forwarding` envelope so a forwarder can append a hop without invalidating the origin signature (resolves the §5↔§9.2 contradiction the design review flagged). `forwarding` is part of the `nimbus-share/v1` format from 8a (default `{ hops: 0, chain: [] }`) but is only ever *appended to* in 8d.
 - The body is **already redacted** before hashing/signing, so it is safe to persist in `share_records`.
 
 ## 6. Wave 8a — Foundation (PR1) · invariant I27 / static D21 · migration V41
@@ -89,12 +95,17 @@ The single function any emit path must call. Pipeline:
 `share/share-keypair.ts`: `ensureShareKeypair(vault)` mirroring `policy/anchor-keypair.ts`. Vault keys `share.signing.privkey` / `share.signing.pubkey`. Privkey never leaves the process; pubkey is the verification anchor (exposed via `share.pubkey` read method + printed by the CLI).
 
 ### 6.4 `nimbus verify-share <file|url>` + standalone primitive
-`share/verify-share.ts`: parse (`unknown` → validated `nimbus-share/v1`), recompute `contentHash`, verify signature against the embedded (optionally caller-pinned `--pubkey`) key, check `expiresAt`, report pass/fail per check. A documented dependency-light **standalone verify** (the `eaf-verify`-shaped primitive) reuses the same `verifyShareBytes` function so a reviewer can drop it into CI.
+`share/verify-share.ts`: parse (`unknown` → validated `nimbus-share/v1`), recompute `contentHash`, verify signature against the embedded (optionally caller-pinned `--pubkey`) key, evaluate `expiresAt`, report **per-check** results. A documented dependency-light **standalone verify** (the `eaf-verify`-shaped primitive) reuses the same `verifyShareBytes` (bytes-in, no I/O) so a reviewer can drop it into CI.
+
+**Expiry is advisory, not cryptographic** (design-review point 5a): an expired share returns `signatureValid: true` + `expired: true` with a warning — the signature is still genuine, only the share's freshness window has lapsed. Verification *fails* only on a bad signature / content-hash mismatch / malformed envelope, never on expiry alone, so users can still read historical records.
+
+**SSRF guard for the `url` form** (design-review point 4): fetching a share by URL goes through a shared `share/safe-fetch.ts` that rejects URLs resolving to loopback / link-local / RFC-1918 private ranges (`127.0.0.0/8`, `::1`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) and non-`http(s)` schemes, so `verify-share <url>` (and the §6.5 HTTP sink) cannot be turned into a probe against the local LAN servers (consistent with the I5/I6 local-bind posture). The check resolves the host and validates the *resolved* address, not just the literal, to defeat DNS-rebind-style bypasses.
 
 ### 6.5 IPC + CLI
 - IPC: `share.create` (long-running — drives HITL), `share.verify`, `share.list`, `share.get`, `share.pubkey`. (`nimbus-ipc` checklist; LAN-forbidden for `create`.)
 - Tauri allowlist (I7): read-only `share.verify` / `share.list` / `share.get` / `share.pubkey`; **`share.create` not exposed** (CLI-only).
 - CLI: `share` + `verify-share` registered in `COMMAND_HANDLERS`. `nimbus share <session-id> [--redact <patterns>] [--expires <duration>] [--out <path>|--http <url>|--to-peer <peer>]`.
+- **HTTP sink (`--http <url>`) config + auth** (design-review point 4): the target endpoint and any auth are configured in `nimbus.toml` `[share.http_sink]` (`url`, optional `auth_header_name`, and a Vault key name for the token value — the token itself is **Vault-only**, never in config). The sink POST runs through the same `share/safe-fetch.ts` SSRF guard. `--http` may only target the configured sink URL (or a prefix-match of it), not an arbitrary caller-supplied host.
 
 ### 6.6 Migration V41 — `share_records`
 One row per **sent** share: `id`, `content_hash` (unique), `kind`, `session_id`, `created_at`, `expires_at`, `redaction_set_json`, `provenance_json`, `body_json` (redacted body — safe), `sig_json`, `sink`. Append-only; powers `share.list`/`share.get` and replay.
@@ -115,7 +126,14 @@ One row per **sent** share: `id`, `content_hash` (unique), `kind`, `session_id`,
   steps: [ { stepId, tool, service, params(redacted), thresholds?, dependsOn: [stepId...] } ],
   graphTraversals: [ { fromEntity, relation, ... } ] }
 ```
-Step ordering + `dependsOn` derived from `called_at` order and param-provenance (a step consuming a prior step's output). Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). The serializer: at plan time check whether a `yaml` package is already in the dep tree; if not, add the well-established `yaml` package via the `bun add` dependency-safety pre-flight (`nimbus-commands` skill). Emit deterministic (stable-key-ordered) output so a recipe is content-addressable.
+Step ordering is the **execution order** (`called_at` ascending) — always present and authoritative. `dependsOn` edges are an *advisory* enrichment derived by a **conservative, documented value-matcher**, because Nimbus does not track parameter lineage today (design-review point 2):
+
+- A `dependsOn` edge from step B → step A is inferred only when a **non-trivial** value appearing in B's redacted params also appears in A's `result_envelope`.
+- "Non-trivial" excludes: booleans, numbers, strings shorter than 4 chars, and common low-entropy tokens (`true`/`false`/`null`/`""`) — these never create edges (avoids false dependencies from incidental scalar collisions).
+- Only **identifier-shaped** values qualify: entity IDs, file paths, URLs/URNs, or strings ≥ 8 chars with mixed alphanumerics. The matcher walks nested structures but matches on leaf scalars, not whole subtrees.
+- These limits are documented in `recipe.ts` and surfaced in the recipe (`dependsOn` is explicitly advisory; the ordered step list is the contract). Replay (§8) does not depend on `dependsOn` correctness — it executes steps in recorded order.
+
+Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). The serializer: at plan time check whether a `yaml` package is already in the dep tree; if not, add the well-established `yaml` package via the `bun add` dependency-safety pre-flight (`nimbus-commands` skill). Emit deterministic (stable-key-ordered) output so a recipe is content-addressable.
 
 ### 7.2 `nimbus share <session> --as-recipe`
 Routes through the **same** `share-gate` (redaction + HITL preview + sign), `body.kind="recipe"`, `body.recipe` populated, `turns` omitted (conversation stripped entirely). Recipe sharing therefore inherits I27 with zero new emit path. Also usable as a pure local artifact (write to file without forwarding).
@@ -123,20 +141,23 @@ Routes through the **same** `share-gate` (redaction + HITL preview + sign), `bod
 ## 8. Wave 8c — Replay (PR3, depends on 8b)
 
 ### 8.1 `share/recipe-runner.ts`
-Deterministic, **LLM-free** executor. For each declarative step against the receiver's local index/connectors:
+Deterministic, **LLM-free** executor. Read-only is enforced by a **positive allowlist, not a denylist** (design-review point 3 — a write tool absent from the frozen HITL set would otherwise execute). A step runs only when its `toolId` is positively classified read-only via `share/read-tool-registry.ts`, which sources its set from the connector tool declarations (the read tools — `*_list`/`*_get`/`*_query`/`*_search` and the curated read surface), **never** from "absent from `HITL_REQUIRED_BACKING`." For each step:
+- `toolId` not positively read-only → **`skipped-non-read`** (fail-safe; never executed during replay);
 - connector/tool not installed → `unavailable` (with the connector name — "you don't have connector X");
-- otherwise execute **read-only** (replay never fires write/HITL actions) and capture the result.
+- otherwise execute read-only and capture the result.
+
+Replay therefore never fires a write/HITL action, and never executes an un-classifiable or unknown tool.
 
 ### 8.2 `nimbus share verify --replay`
-Load the shared recipe (or a transcript share's `toolCalls`), run the recipe-runner locally, **diff** each step's result against the shared original, and render a divergence report: per-step `match` / `diverged` / `missing-connector` / `error` + a summary. Read-only and deterministic — the "watch what ran on Asaf's data run on yours" demo, and the catch for "this only works because Asaf has connector X."
+Load the shared recipe (or a transcript share's `toolCalls`), run the recipe-runner locally, **diff** each step's result against the shared original, and render a divergence report: per-step `match` / `diverged` / `missing-connector` / `skipped-non-read` / `error` + a summary. Read-only and deterministic — the "watch what ran on Asaf's data run on yours" demo, and the catch for "this only works because Asaf has connector X."
 
 ## 9. Wave 8d — Sovereign-mesh referral (PR4) · migration V42
 
 ### 9.1 Forwarding
 `federation.shareForward` RPC sends a signed share to a paired peer over `sendFederatedOverWire` (authenticated, peer-pubkey-pinned). Forwarding **out** is a share-emit and therefore passes through the I27 gate.
 
-### 9.2 Provenance (immutable inner + forwarding layer)
-The inner share `body`+`sig` are **immutable** and verifiable against the **origin** pubkey. A **separate forwarding layer** carries `chain[]` (`{ gatewayLabel, pubkey }` per hop) + `hops`; each forwarder appends itself and signs the layer. `verify-share` validates content against origin; the chain is advisory attribution that cannot forge the content.
+### 9.2 Provenance (immutable inner + forwarding envelope)
+The inner share `body`+`sig` are **immutable** and verifiable against the **origin** pubkey. The top-level **`forwarding` envelope** (§5, *outside* `canonicalize(body)`) carries `hops` + `chain[]` (`{ gatewayLabel, pubkey, sig }` per hop); each forwarder appends one entry and signs over `contentHash ++ prior-chain-entries` with its own federation key. `verify-share` validates content against the origin signature (always) and may *additionally* validate each hop signature against its claimed pubkey. The chain is advisory attribution and **cannot forge or mutate the content** — tampering with `body` breaks the origin `sig`; tampering with a hop breaks that hop's `sig` but never the content. A forwarder appending a hop does **not** re-sign or alter `body`.
 
 ### 9.3 Attribution chip
 A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a field on the record, rendered by CLI + Tauri.
@@ -153,14 +174,17 @@ A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a f
 
 (8b and 8c add no migrations — recipe lives inside the existing share body; replay is read-only.)
 
+**Retention / pruning** (design-review point 5b): both tables are append-only and user-initiated (shares are deliberate, low-volume actions — not a sync firehose), so automatic background pruning is **deferred**. `share.list` filters expired entries by default (`--all` to include them), and a manual `nimbus share prune [--expired] [--before <date>]` is provided in 8a for housekeeping. A background reaper can be added later if real-world volume warrants it; tracked as a follow-up, not built now.
+
 ## 11. Testing strategy
 
 - **I27 enforcement** in `security-invariants.test.ts` (gate is sole emit path; `share.publish` in frozen set; signing-key read confined). Static D21 in the structure-audit.
 - **Redaction proofs**: each family (email/host/IP/slack-handle/credit-card/secret) verifiably stripped; property-style "no un-redacted value escapes."
-- **Sign/verify**: round-trip; tamper-of-body fails; content-hash mismatch fails; expiry honored; wrong-pubkey fails.
-- **Recipe**: deterministic reconstruction (same session → identical DAG); conversation fully stripped in recipe mode.
-- **Replay**: divergence classification incl. missing-connector; read-only guarantee (no write action fires).
-- **Forwarding**: provenance chain append + hop count; deferred-reveal drain on first pair; inner-sig immutability across hops.
+- **Sign/verify**: round-trip; tamper-of-body fails; content-hash mismatch fails; wrong-pubkey fails. **Expiry is advisory**: an expired-but-genuine share returns `signatureValid: true` + `expired: true` (not a verification failure).
+- **SSRF guard** (`safe-fetch.ts`): rejects loopback / link-local / RFC-1918 / non-http(s); validates the *resolved* address (DNS-rebind defense); `--http` rejects a host other than the configured sink.
+- **Recipe**: deterministic reconstruction (same session → identical ordered steps); conversation fully stripped in recipe mode. **`dependsOn` matcher**: trivial scalars (bool/number/<4-char/`true`/`false`/`null`/`""`) create no edge; identifier-shaped values do; nested structures match on leaf scalars.
+- **Replay**: divergence classification incl. `missing-connector` and **`skipped-non-read`**; positive-allowlist guarantee — an un-classified or write tool is `skipped-non-read`, never executed (assert with a fixture write tool absent from `HITL_REQUIRED_BACKING`).
+- **Forwarding**: outer-`forwarding`-envelope append (body+sig byte-identical across hops); hop-signature verifies over `contentHash ++ prior chain`; provenance chain + hop count; deferred-reveal drain on first pair; tampered hop fails its own sig without affecting content verification.
 - **E2E CLI**: two real Gateway subprocesses + mock peers — forward a share, verify attribution end-to-end.
 - **Coverage**: new files clear the ≥80% line+branch true-coverage floor (Docker-Linux-authoritative).
 
