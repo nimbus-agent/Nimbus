@@ -111,6 +111,22 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
       errors: ["malformed json"],
     };
   }
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    typeof (parsed as ShareFile).body !== "object" ||
+    (parsed as ShareFile).body === null ||
+    typeof (parsed as ShareFile).sig !== "object" ||
+    (parsed as ShareFile).sig === null
+  ) {
+    return {
+      ok: false,
+      signatureValid: false,
+      contentHashValid: false,
+      expired: false,
+      errors: ["not a share file"],
+    };
+  }
   if (parsed.format !== SHARE_FORMAT) errors.push(`unexpected format: ${String(parsed.format)}`);
   const canonical = canonicalizeBody(parsed.body);
   const contentHashValid = contentHash(parsed.body) === parsed.contentHash;

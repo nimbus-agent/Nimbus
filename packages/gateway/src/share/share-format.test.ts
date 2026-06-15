@@ -47,4 +47,10 @@ describe("share-format", () => {
     expect(r.signatureValid).toBe(true);
     expect(r.expired).toBe(true);
   });
+  test("valid JSON that is not a share file returns not-ok without throwing", () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ hello: "world" }));
+    const r = verifyShareBytes(bytes);
+    expect(r.ok).toBe(false);
+    expect(r.signatureValid).toBe(false);
+  });
 });
