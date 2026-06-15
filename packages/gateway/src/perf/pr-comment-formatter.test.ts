@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { HistoryLine } from "./history-line.ts";
 import {
   COMMENT_MARKER_PREFIX,
+  composePrCommentBody,
   formatCondensedGateSummary,
   formatPrComment,
 } from "./pr-comment-formatter.ts";
@@ -234,5 +235,29 @@ describe("formatCondensedGateSummary", () => {
     expect(out).toContain("40 < 60"); // floor metric → '<' operator branch
     expect(out).toContain("-30.0%"); // signed negative delta-fail
     expect(out).not.toContain("+-"); // the sign-prefix bug must be gone
+  });
+});
+
+describe("composePrCommentBody", () => {
+  test("keeps the upsert marker on line 1 and splices the condensed summary above the full table", () => {
+    const body = composePrCommentBody(
+      [
+        { surfaceId: "S2-a", metric: "p95_ms", status: { kind: "pass" } },
+        { surfaceId: "S1", metric: "p95_ms", status: { kind: "skipped", reason: "trend-only" } },
+      ],
+      fakeLine("gha-ubuntu"),
+      null,
+    );
+    // marker must be the very first line — upsertComment matches via startsWith
+    expect(body.startsWith(`<!-- ${COMMENT_MARKER_PREFIX}:gha-ubuntu -->`)).toBe(true);
+    // condensed gate-class summary + dashboard link are present
+    expect(body).toContain("Gate-class summary");
+    expect(body).toContain("/dev/bench");
+    // condensed summary sits ABOVE the full per-surface table
+    expect(body.indexOf("Gate-class summary")).toBeLessThan(
+      body.indexOf("| Surface | Metric | Previous"),
+    );
+    // the full table is still rendered
+    expect(body).toContain("Performance benchmarks");
   });
 });

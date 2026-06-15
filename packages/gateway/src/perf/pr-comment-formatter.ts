@@ -158,3 +158,21 @@ export function formatCondensedGateSummary(
   );
   return lines.join("\n");
 }
+
+/**
+ * Assemble the full PR-comment body: the upsert marker stays on line 1 (the
+ * upsert logic matches it via body.startsWith), with the condensed gate-class
+ * summary spliced in right after it, ahead of the full per-surface delta table.
+ */
+export function composePrCommentBody(
+  comparisons: readonly SurfaceComparison[],
+  current: HistoryLine,
+  previous: HistoryLine | null,
+): string {
+  const fullTable = formatPrComment(comparisons, current, previous);
+  const newlineIdx = fullTable.indexOf("\n");
+  const markerLine = newlineIdx === -1 ? fullTable : fullTable.slice(0, newlineIdx);
+  const tableRest = newlineIdx === -1 ? "" : fullTable.slice(newlineIdx + 1);
+  const condensed = formatCondensedGateSummary(comparisons, current);
+  return `${markerLine}\n\n${condensed}\n\n${tableRest}`;
+}

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { medianBaseline } from "./baseline-median.ts";
 import { GhCli } from "./bench-ci-gh.ts";
 import type { HistoryLine } from "./history-line.ts";
-import { COMMENT_MARKER_PREFIX, formatPrComment } from "./pr-comment-formatter.ts";
+import { COMMENT_MARKER_PREFIX, composePrCommentBody } from "./pr-comment-formatter.ts";
 import { SLO_THRESHOLDS, thresholdsBySurface } from "./slo-thresholds.ts";
 import {
   compareAgainstHistory,
@@ -169,7 +169,7 @@ export async function runBenchCiMain(args: string[], deps: RunBenchCiDeps): Prom
   );
 
   const comparisons = compareAgainstHistory(current, previous, SLO_THRESHOLDS, runner);
-  const body = formatPrComment(comparisons, current, previous);
+  const body = composePrCommentBody(comparisons, current, previous);
   stdout(body);
   writeStepSummary(env, body);
 
