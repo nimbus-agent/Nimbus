@@ -35,6 +35,7 @@
 ### Task 1: Add `gateClass` to `SloThreshold` (additive partition field)
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/slo-thresholds.ts` (interface ~L3-19; every row in `NON_S8_THRESHOLDS` L21-211; the `buildS8Cells` row L213-229)
 - Test: `packages/gateway/src/perf/slo-thresholds.test.ts` (add a new `describe` block; existing tests stay green because this step is purely additive)
 
@@ -141,6 +142,7 @@ export interface SloThreshold {
 ```
 
 Then add `gateClass` to each row in `NON_S8_THRESHOLDS`. Add it immediately after the `surfaceId` line in each object literal:
+
 - `S1` → `gateClass: "trend",`
 - `S2-a` → `gateClass: "gate",`
 - `S2-b` → `gateClass: "gate",`
@@ -208,7 +210,7 @@ function buildS8Cells(): readonly SloThreshold[] {
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/slo-thresholds.ts packages/gateway/src/perf/slo-thresholds.test.ts
 git commit -m "$(cat <<'EOF'
 feat(perf): add gateClass partition field to SloThreshold (additive)
@@ -228,6 +230,7 @@ EOF
 ### Task 2: Rewire `threshold-comparator.ts` to consult `gateClass`
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/threshold-comparator.ts` (ComparisonStatus union L5-10; `classifySkip` L47-58; `isFailingComparison` L127-130)
 - Test: `packages/gateway/src/perf/threshold-comparator.test.ts` (add a new `describe` block; existing tests stay green because the runtime semantics are equivalent — `trend`/`reference` GHA surfaces still resolve to a `skipped` status, and `gate`-class rows still gate)
 
@@ -420,7 +423,7 @@ export function isFailingComparison(c: SurfaceComparison, slo: SloThreshold): bo
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/threshold-comparator.ts packages/gateway/src/perf/threshold-comparator.test.ts
 git commit -m "$(cat <<'EOF'
 feat(perf): rewire threshold-comparator off gated/linuxOnlyGate onto gateClass
@@ -442,6 +445,7 @@ EOF
 ### Task 3: Remove the redundant `gated` + `linuxOnlyGate` fields
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/slo-thresholds.ts` (interface L14 + L18; every row that sets `gated:` / `linuxOnlyGate:`; `buildS8Cells`)
 - Modify `packages/gateway/src/perf/threshold-comparator.test.ts` (the inline `floorRow` fixture at L143-152, which sets `gated: true`)
 - Test: `packages/gateway/src/perf/slo-thresholds.test.ts` (rewrite the four tests that assert `gated`/`linuxOnlyGate`, and the two exact-row snapshot tests)
@@ -617,7 +621,7 @@ The `buildS8Cells()` object after removal:
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/slo-thresholds.ts packages/gateway/src/perf/slo-thresholds.test.ts packages/gateway/src/perf/threshold-comparator.test.ts
 git commit -m "$(cat <<'EOF'
 refactor(perf): remove redundant gated + linuxOnlyGate fields
@@ -638,6 +642,7 @@ EOF
 ### Task 4: Trimmed-pool p95 in `buildLatencyResult`
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/bench-harness.ts` (add `poolTrimmedSamples` helper; rewrite `buildLatencyResult` L79-107; check/remove the now-unused `median` import path L11-21)
 - Test: `packages/gateway/src/perf/bench-harness.test.ts` (existing `invokes the surface fn ... returns median-of-medians` test L5-21 changes meaning; add new pooled/trim/stability tests)
 
@@ -764,7 +769,7 @@ Now check the `median` import: `median` is a local function (L11-21), NOT an imp
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/bench-harness.ts packages/gateway/src/perf/bench-harness.test.ts
 git commit -m "$(cat <<'EOF'
 fix(perf): trimmed-pool p95 latency aggregate (drop the worst run, then pool)
@@ -785,6 +790,7 @@ EOF
 ### Task 5: Bump `schema_version` 1 → 2 in `history-line.ts`
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/history-line.ts` (interface literal type L22)
 - Modify every constructed `HistoryLine` literal that hard-codes `schema_version: 1` — the test fixtures in `threshold-comparator.test.ts` (L13, `fakeLine`) and `bench-ci.test.ts` (L16, `passingLine`)
 - Test: `packages/gateway/src/perf/history-line.test.ts` (if it exists; otherwise the typecheck across the package is the gate)
@@ -860,7 +866,7 @@ There is no constructed `HistoryLine` object literal inside `history-line.ts` it
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/history-line.ts packages/gateway/src/perf/history-line.test.ts packages/gateway/src/perf/threshold-comparator.test.ts packages/gateway/src/perf/bench-ci.test.ts
 git commit -m "$(cat <<'EOF'
 feat(perf)!: bump HistoryLine schema_version 1 -> 2 (trimmed-pool p95 reset)
@@ -879,6 +885,7 @@ EOF
 ### Task 6: Event-aware exit in `bench-ci.ts`
 
 **Files:**
+
 - Modify `packages/gateway/src/perf/bench-ci.ts` (`runBenchCiMain` L155-190 — insert the push-only short-circuit just before `return decideExit(comparisons);` at L189)
 - Test: `packages/gateway/src/perf/bench-ci.test.ts` (add a test proving a `gate`-class delta-fail on a `push` event returns 0; existing tests already prove PR gating)
 
@@ -1007,7 +1014,7 @@ On a `push` to `main` there is no PR to attribute a regression to, so the run pu
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 git add packages/gateway/src/perf/bench-ci.ts packages/gateway/src/perf/bench-ci.test.ts
 git commit -m "$(cat <<'EOF'
 feat(perf): event-aware exit — push-to-main publishes only, PRs gate
@@ -1027,12 +1034,14 @@ EOF
 ### Task 7: `emit-benchmark-json.ts` — pure HistoryLine → github-action-benchmark mapper + thin CLI
 
 **Files:**
+
 - Create: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\scripts\perf\emit-benchmark-json.ts`
 - Test: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\scripts\perf\emit-benchmark-json.test.ts`
 
 **Preconditions (from PR-1, already landed in this branch's earlier cluster):** `SloThreshold` has `gateClass: "gate" | "trend" | "reference"` (and `gated`/`linuxOnlyGate` removed); `HistoryLine.schema_version` is `2`. This task imports `SLO_THRESHOLDS` + `thresholdsBySurface` from `packages/gateway/src/perf/slo-thresholds.ts` and the `HistoryLine`/`HistoryLineSurface` types from `packages/gateway/src/perf/history-line.ts`. It does NOT modify those files.
 
 **Contract for the mapper:**
+
 - `BenchmarkPoint` = `{ name: string; unit: string; value: number }` (exact github-action-benchmark shape).
 - `toBenchmarkPoints(line: HistoryLine): BenchmarkPoint[]` — for every surface whose threshold `gateClass === "trend"` AND whose metric is one of the two smaller-is-better trend surfaces this phase emits (`p95_ms` → unit `"ms"`; `rss_bytes_p95` → unit `"bytes"`), if the line carries a numeric value for that metric, emit one point. `name` = ``${surfaceId} ${metricLabel}`` where label is `"p95"` for `p95_ms` and `"rss_p95"` for `rss_bytes_p95`. Throughput trend surfaces (`throughput_per_sec`/`tokens_per_sec`) are deferred (customBiggerIsBetter file, Phase 2) and intentionally NOT emitted here.
 - Stub surfaces (`samples_count === 0`) emit nothing (no numeric metric).
@@ -1127,7 +1136,7 @@ describe("toBenchmarkPoints", () => {
 
 - [ ] **Step 2: Run the test, expect FAIL.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && bun test scripts/perf/emit-benchmark-json.test.ts
 ```
 
@@ -1226,7 +1235,7 @@ if (import.meta.main) {
 
 - [ ] **Step 4: Run the test, expect PASS.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && bun test scripts/perf/emit-benchmark-json.test.ts
 ```
 
@@ -1234,7 +1243,7 @@ Expected: `10 pass, 0 fail` (9 mapper assertions across 9 `test(...)` blocks; co
 
 - [ ] **Step 5: Typecheck + lint.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy/packages/gateway && bun run typecheck
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && bunx biome check scripts/perf/emit-benchmark-json.ts scripts/perf/emit-benchmark-json.test.ts
 ```
@@ -1243,7 +1252,7 @@ Expected: `tsc --noEmit` exits 0 (no errors). Biome reports `Checked 2 files` wi
 
 - [ ] **Step 6: Commit.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && git add scripts/perf/emit-benchmark-json.ts scripts/perf/emit-benchmark-json.test.ts && git commit -m "$(cat <<'EOF'
 feat(perf): emit github-action-benchmark JSON for trend-class surfaces
 
@@ -1262,6 +1271,7 @@ EOF
 ### Task 8: `_perf.yml` — push-only github-action-benchmark trend step
 
 **Files:**
+
 - Modify: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\.github\workflows\_perf.yml` (insert two steps immediately after the `Upload run history artifact` step, currently lines 164–175; before the `Compare + post PR-comment delta` step at line 177).
 
 No unit test (workflow YAML). Verification is `bunx actionlint` + a Bun YAML parse.
@@ -1288,7 +1298,7 @@ The `benchmark` job currently grants (lines 76–79):
       actions: read          # for `gh run list` + `gh run view` + `gh run download`
 ```
 
-(Exact edit: change the single line `      contents: read` within that block to `      contents: write        # github-action-benchmark auto-push to the perf-data orphan branch (push events only)`. The `detect-trigger` job's `contents: read` at lines 40–41 is unchanged.)
+(Exact edit: change the single line `contents: read` within that block to `contents: write        # github-action-benchmark auto-push to the perf-data orphan branch (push events only)`. The `detect-trigger` job's `contents: read` at lines 40–41 is unchanged.)
 
 - [ ] **Step 2: Insert the two new steps after `Upload run history artifact`.**
 
@@ -1329,7 +1339,7 @@ After this edit, the step order in the `benchmark` job is: Run bench → Upload 
 
 - [ ] **Step 3: Verify with actionlint.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && bunx actionlint .github/workflows/_perf.yml
 ```
 
@@ -1339,7 +1349,7 @@ Note: actionlint does not pin third-party action SHAs, but this repo elsewhere p
 
 - [ ] **Step 4: Verify the file parses as valid YAML and the two new steps + permission edit are present.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && bun -e '
 import { parse } from "yaml";
 const doc = parse(await Bun.file(".github/workflows/_perf.yml").text());
@@ -1361,7 +1371,7 @@ Expected output: a single line `OK steps: Harden Runner | Checkout | Setup Bun a
 
 - [ ] **Step 5: Commit.**
 
-```
+```bash
 cd C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy && git add .github/workflows/_perf.yml && git commit -m "$(cat <<'EOF'
 ci(perf): publish trend-class surfaces to github-action-benchmark on push
 
@@ -1379,6 +1389,7 @@ EOF
 ---
 
 **Notes for the executing session:**
+
 - Task 7 depends on PR-1 having landed `gateClass` on `SloThreshold` and `schema_version: 2` on `HistoryLine`. If those are not yet on the branch, the test's `schema_version: 2` literal and the `gateClass === "trend"` filter will not typecheck/behave correctly. Verify with `grep -n "gateClass" packages/gateway/src/perf/slo-thresholds.ts` before starting.
 - The emitter reads `${RUNNER_TEMP}/run-history.jsonl` — the exact path `_perf.yml`'s `Run bench` and `Upload run history artifact` steps already write/consume (lines 161, 174). The trend step is inserted between the upload and the compare so it runs on the freshly-written file without a re-download.
 - `scripts/perf/` is a new directory created by this cluster's first file write (Task 7); no pre-existing files there.
@@ -1390,6 +1401,7 @@ EOF
 ### Task 9: `scripts/perf/drift-check.ts` — pure `detectDrift` + gh-issue upsert wrapper
 
 **Files:**
+
 - Create: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\scripts\perf\drift-check.ts`
 - Test: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\scripts\perf\drift-check.test.ts`
 
@@ -1841,8 +1853,9 @@ The pure core `detectDrift(history, noiseFloorPct, k=7, n=3)` is fully unit-test
 
 - [ ] **Step 6: Commit.**
 
-  ```bash
-  cd "C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy" && git add scripts/perf/drift-check.ts scripts/perf/drift-check.test.ts && git commit -m "$(cat <<'EOF'
+```bash
+cd "C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy" && git add scripts/perf/drift-check.ts scripts/perf/drift-check.test.ts && git commit -m "$(cat <<'EOF'
+
 feat(perf): add drift-check pure detector + gh-issue upsert wrapper
 
 detectDrift(values, noiseFloorPct, k=7, n=3) trips only on a sustained
@@ -1854,7 +1867,8 @@ trend surface; only the pure core is unit-tested.
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
 )"
-  ```
+
+```
 
   Expected: one commit created with both files staged.
 
@@ -1863,6 +1877,7 @@ EOF
 ### Task 10: Extend `pr-comment-formatter.ts` with a condensed gate-class summary + dashboard link
 
 **Files:**
+
 - Modify: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\packages\gateway\src\perf\pr-comment-formatter.ts` (add a new exported `formatCondensedGateSummary`; lines ~72–98 untouched, append below)
 - Test: `C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\packages\gateway\src\perf\pr-comment-formatter.test.ts` (append a new `describe` block)
 
@@ -2076,8 +2091,9 @@ The new function renders a short table containing only `gate`-class surfaces plu
 
 - [ ] **Step 6: Commit.**
 
-  ```bash
-  cd "C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy" && git add packages/gateway/src/perf/pr-comment-formatter.ts packages/gateway/src/perf/pr-comment-formatter.test.ts && git commit -m "$(cat <<'EOF'
+```bash
+cd "C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy" && git add packages/gateway/src/perf/pr-comment-formatter.ts packages/gateway/src/perf/pr-comment-formatter.test.ts && git commit -m "$(cat <<'EOF'
+
 feat(perf): add condensed gate-class PR summary + /dev/bench link
 
 formatCondensedGateSummary renders a short table of only gate-class
@@ -2088,13 +2104,15 @@ and reference surfaces are intentionally omitted since they never gate.
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
 )"
-  ```
+
+```
 
   Expected: one commit created with both files staged.
 
 ---
 
 Key implementation notes for the caller:
+
 - Both tasks depend on the `gateClass` field on `SloThreshold` (replacing `gated`/`linuxOnlyGate`) and the `"trend-only"` reason added to the `skipped` status union — both delivered by the earlier partition/comparator tasks per the shared contract. Task 9's wrapper reads `s.gateClass === "trend"`; Task 10's `isGateClass` reads `=== "gate"`.
 - Task 9 unit-tests ONLY the pure `detectDrift` (7 tests, no `gh`); the `runDriftCheckMain` I/O wrapper is implemented in full but deliberately untested, and reuses `GhCli` from `bench-ci-gh.ts` for list/download plus a thin `Bun.spawn(["gh", ...])` pass-through for `issue list`/`create`/`comment`, mirroring `defaultSpawn`'s style.
 - `detectDrift` requires `history.length >= k + n` before it can trip, which is what makes the single-spike test return `false` and the sustained-regression test return `true`.
@@ -2105,6 +2123,7 @@ Key implementation notes for the caller:
 ### Task 11: Add a nightly `schedule` cron to `_perf-reference.yml`
 
 **Files:**
+
 - Modify: `.github/workflows/_perf-reference.yml` (header comment lines 3–10; `on:` trigger block lines 12–24; protocol-attestation step lines 50–56)
 
 This is a workflow-YAML task (no unit test), so the TDD shape is: write the exact diff, then verify with a YAML parse + a grep-based trigger assertion, then commit.
@@ -2112,6 +2131,7 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
 - [ ] **Step 1: Replace the trigger-doc comment block (lines 3–10) to record the new schedule trigger.**
 
   Replace:
+
   ```yaml
   # Triggers (spec §4.2 + design D-T):
   #   - workflow_dispatch only. Operator manually triggers from the Actions UI
@@ -2122,7 +2142,9 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
   # performs the bench, sanity-checks the resulting history.jsonl line, and
   # opens a `perf`-labelled bot PR for review.
   ```
+
   with:
+
   ```yaml
   # Triggers (spec §4.2 + design D-T):
   #   - workflow_dispatch — operator manually triggers from the Actions UI
@@ -2144,6 +2166,7 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
 - [ ] **Step 2: Add the `schedule` trigger alongside `workflow_dispatch` in the `on:` block (lines 12–24).**
 
   Replace:
+
   ```yaml
   on:
     workflow_dispatch:
@@ -2159,7 +2182,9 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
           type: string
           default: ""
   ```
+
   with:
+
   ```yaml
   on:
     # Nightly unattended reference run. cron is 5-field UTC. The dedicated
@@ -2188,6 +2213,7 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
 - [ ] **Step 3: Make the attestation step accept a scheduled run as pre-attested (lines 50–56).**
 
   Replace:
+
   ```yaml
         - name: Validate protocol attestation
           if: inputs.protocol_attested != true
@@ -2197,7 +2223,9 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
             echo "See docs/perf/reference-runner-setup.md and spec §4.2."
             exit 1
   ```
+
   with:
+
   ```yaml
         - name: Validate protocol attestation
           # Manual dispatch must explicitly attest. A scheduled run is
@@ -2217,49 +2245,65 @@ This is a workflow-YAML task (no unit test), so the TDD shape is: write the exac
 - [ ] **Step 4: Verify the YAML parses and the triggers are exactly as intended (actionlint is not installed locally; use a Python YAML parse + assertions).**
 
   Run:
-  ```bash
-  cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
-  python -c "
+
+```bash
+cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
+python -c "
+
 import yaml, sys
-# PyYAML maps the bare \`on:\` key to the Python bool True; read raw if needed.
+
+# PyYAML maps the bare \`on:\` key to the Python bool True; read raw if needed
+
 d = yaml.safe_load(open('.github/workflows/_perf-reference.yml', encoding='utf-8'))
 on = d.get('on', d.get(True))
 assert 'schedule' in on, f'schedule trigger missing: {on!r}'
-assert on['schedule'] == [{'cron': '0 5 * * *'}], f'cron wrong: {on[\"schedule\"]!r}'
+assert on['schedule'] == [{'cron': '0 5 ** *'}], f'cron wrong: {on[\"schedule\"]!r}'
 assert 'workflow_dispatch' in on, 'workflow_dispatch trigger missing'
 assert 'protocol_attested' in on['workflow_dispatch']['inputs'], 'protocol_attested input missing'
-print('OK: schedule(0 5 * * *) + workflow_dispatch both present, inputs intact')
+print('OK: schedule(0 5* **) + workflow_dispatch both present, inputs intact')
 "
-  ```
+
+```
+
   Expected output:
-  ```
-  OK: schedule(0 5 * * *) + workflow_dispatch both present, inputs intact
+
+  ```text
+
+  OK: schedule(0 5 ** *) + workflow_dispatch both present, inputs intact
+
   ```
 
   Then confirm the attestation gate now branches on the event name:
+
   ```bash
   cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
   grep -n "github.event_name != 'schedule' && inputs.protocol_attested != true" .github/workflows/_perf-reference.yml
   ```
+
   Expected output: one matching line (the `if:` of the "Validate protocol attestation" step), e.g.
-  ```
+
+  ```text
   58:        if: github.event_name != 'schedule' && inputs.protocol_attested != true
   ```
 
   If `actionlint` is later available on the path, also run it (optional, non-blocking — it is not installed in this environment):
+
   ```bash
   bunx actionlint .github/workflows/_perf-reference.yml && echo "actionlint OK"
   ```
+
   Expected: `actionlint OK` (no diagnostics).
 
 - [ ] **Step 5: Commit.**
-  ```bash
-  cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
-  git add .github/workflows/_perf-reference.yml
-  git commit -m "$(cat <<'EOF'
+
+```bash
+cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
+git add .github/workflows/_perf-reference.yml
+git commit -m "$(cat <<'EOF'
+
 feat(perf): nightly schedule cron for the M1 Air reference run
 
-Add a `schedule` trigger (cron "0 5 * * *", 05:00 UTC) alongside the
+Add a `schedule` trigger (cron "0 5 ** *", 05:00 UTC) alongside the
 existing `workflow_dispatch` on _perf-reference.yml so the dedicated
 reference runner produces an unattended nightly baseline.
 
@@ -2275,13 +2319,15 @@ dispatch must still explicitly attest.
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
 )"
-  ```
+
+```
 
 ---
 
 ### Task 12: Regenerate `docs/perf/slo.md` and point the "not a regression-tracking document" note at the `/dev/bench` dashboard
 
 **Files:**
+
 - Modify: `scripts/regen-slo.ts` (`FOOTER` template literal, lines 109–117) — the doc is *generated*, so the note text is edited in the generator, not by hand in the `.md`.
 - Modify (regenerated, not hand-edited): `docs/perf/slo.md` (the "What this sheet is not" section, line 70) — produced by re-running the script.
 
@@ -2290,6 +2336,7 @@ This task has no unit test (the generator's round-trip is itself verified by `--
 - [ ] **Step 1: Update the `FOOTER` "Not a regression-tracking document." note in `scripts/regen-slo.ts` (lines 109–117) to point at the `/dev/bench` trend dashboard.**
 
   Replace:
+
   ```ts
   const FOOTER = `
   ## What this sheet is not
@@ -2301,7 +2348,9 @@ This task has no unit test (the generator's round-trip is itself verified by `--
   *This file is generated from \`packages/gateway/src/perf/slo-thresholds.ts\`. Run \`bun scripts/regen-slo.ts\` after changing thresholds. CI runs \`bun scripts/regen-slo.ts --check\` to fail the build on drift.*
   `;
   ```
+
   with:
+
   ```ts
   const FOOTER = `
   ## What this sheet is not
@@ -2317,52 +2366,67 @@ This task has no unit test (the generator's round-trip is itself verified by `--
   (The `/dev/bench` path is the `benchmark-data-dir-path` published by github-action-benchmark to the `perf-data` `gh-pages-branch`, per the trend-pipeline contract in the shared spec. The URL follows the GitHub Pages convention `https://<owner>.github.io/<repo>/dev/bench/` for the `asafgolombek/Nimbus` repo.)
 
 - [ ] **Step 2: Regenerate the doc.**
+
   ```bash
   cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
   bun scripts/regen-slo.ts
   ```
+
   Expected output (path is `os.tmpdir()`-independent — it is the repo doc path):
-  ```
+
+  ```text
   regen-slo: wrote C:\gitrep\Nimbus\.claude\worktrees\hybrid-perf-strategy\docs\perf\slo.md
   ```
 
 - [ ] **Step 3: Verify the regenerated note is present in `docs/perf/slo.md` and the old wording is gone.**
+
   ```bash
   cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
   grep -n "dev/bench dashboard" docs/perf/slo.md
   grep -c "The ongoing per-run history lives in workflow artifacts" docs/perf/slo.md
   ```
+
   Expected output:
-  ```
+
+  ```text
   70:- **Not a regression-tracking document.** This sheet pins the absolute SLO *thresholds*. Trend-over-time tracking lives in the **[/dev/bench dashboard](https://asafgolombek.github.io/Nimbus/dev/bench/)** — ...
   0
   ```
+
   (The first grep prints the rewritten line; the second prints `0` — the old sentence is gone.)
 
 - [ ] **Step 4: Verify the generator round-trips — `--check` must pass with exit code 0.**
+
   ```bash
   cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
   bun scripts/regen-slo.ts --check
   echo "exit=$?"
   ```
+
   Expected output:
-  ```
+
+  ```text
   exit=0
   ```
+
   (No `regen-slo: ... is out of date` stderr line; clean exit means on-disk `slo.md` exactly equals the generator output.)
 
 - [ ] **Step 5: Lint the changed script (warnings-as-errors / no-any / no-unused per #627).**
+
   ```bash
   cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
   bunx biome check scripts/regen-slo.ts
   ```
+
   Expected output: `Checked 1 file ... No fixes applied.` with no errors (exit 0). The change is text-only inside an existing `const FOOTER` template literal — no new imports, types, or symbols — so no `tsc`/biome surface changes.
 
 - [ ] **Step 6: Commit both the generator and the regenerated doc together.**
-  ```bash
-  cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
-  git add scripts/regen-slo.ts docs/perf/slo.md
-  git commit -m "$(cat <<'EOF'
+
+```bash
+cd "C:/gitrep/Nimbus/.claude/worktrees/hybrid-perf-strategy"
+git add scripts/regen-slo.ts docs/perf/slo.md
+git commit -m "$(cat <<'EOF'
+
 docs(perf): point slo.md trend note at the /dev/bench dashboard
 
 The SLO sheet pins absolute thresholds, not trends. Update the
@@ -2376,7 +2440,8 @@ Verified `bun scripts/regen-slo.ts --check` passes (round-trips clean).
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
 )"
-  ```
+
+```
 
 ---
 
