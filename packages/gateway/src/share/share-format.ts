@@ -81,7 +81,7 @@ export function buildShareFile(body: ShareBody, privkeyB64: string, pubkeyB64: s
   const signature = Buffer.from(nacl.sign.detached(canonical, kp.secretKey)).toString("base64");
   return {
     format: SHARE_FORMAT,
-    contentHash: bytesToHex(blake3(canonical)),
+    contentHash: contentHash(body),
     body,
     sig: { alg: "ed25519", pubkey: pubkeyB64, signature },
     forwarding: { hops: 0, chain: [] },
@@ -113,7 +113,7 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
   }
   if (parsed.format !== SHARE_FORMAT) errors.push(`unexpected format: ${String(parsed.format)}`);
   const canonical = canonicalizeBody(parsed.body);
-  const contentHashValid = bytesToHex(blake3(canonical)) === parsed.contentHash;
+  const contentHashValid = contentHash(parsed.body) === parsed.contentHash;
   if (!contentHashValid) errors.push("content hash mismatch");
   let signatureValid = false;
   try {
