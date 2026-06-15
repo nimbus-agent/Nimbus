@@ -13,6 +13,7 @@
     "esbuild": "0.28.1",
     "vite": "7.3.3",
     "devalue": "5.8.1",
+    "ws": "8.21.0",
     "@mastra/core": "1.40.0",
     "@mastra/mcp": "1.9.1"
   },
