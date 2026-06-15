@@ -491,6 +491,57 @@ export function checkSharePublishConfinement(files: readonly FileEntry[]): Viola
   return out;
 }
 
+// D21 (I27) extension: `createShare` — the share-gate chokepoint that runs the owner-HITL approval +
+// sign + persist — may be CALLED only from share-gate.ts (its home) and the single wiring file
+// share-rpc.ts. AND the boot site that builds createShare's `requestApproval` dependency
+// (platform/assemble.ts) MUST supply the owner consent broker (`shareConsent.request`) — not an
+// arbitrary always-true approval thunk. This binds the HITL set-membership (the executor frozen set,
+// I2) to the actual gating call so they cannot silently drift: the share-gate's requestApproval IS
+// the owner-HITL approval (a broadcast to the local owner), distinct from the executor gate() path.
+// Mirrors D18 (PREFLIGHT_RUNNER_ALLOWED) / D19 (TRIBAL_KB_WRITE_ALLOWED). Test files are exempt.
+const D21_CREATESHARE_ALLOWED = [
+  "packages/gateway/src/share/share-gate.ts",
+  "packages/gateway/src/ipc/share-rpc.ts",
+];
+const D21_CREATESHARE_RE = /\bcreateShare\b/;
+const D21_CONSENT_WIRING_FILE = "packages/gateway/src/platform/assemble.ts";
+const D21_CONSENT_RE = /shareConsent\.request/;
+
+export function checkShareConsentBrokerConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    // (B) the boot site must feed the owner broker, not an arbitrary approval thunk.
+    if (f.relPath === D21_CONSENT_WIRING_FILE) {
+      if (!D21_CONSENT_RE.test(stripComments(f.contents))) {
+        out.push({
+          rule: "D21-share-consent-broker",
+          file: f.relPath,
+          line: 1,
+          snippet:
+            "assemble.ts must supply shareConsent.request as createShare's requestApproval (I27)",
+        });
+      }
+      continue;
+    }
+    // (A) createShare may not be NAMED outside the gate + the one wiring file.
+    if (D21_CREATESHARE_ALLOWED.includes(f.relPath)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (D21_CREATESHARE_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D21-createshare-callsite",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -642,6 +693,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D21 share.publish action-type / share.signing.privkey vault-key referenced outside the gate/keypair sites — bypasses I27: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkShareConsentBrokerConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D21 createShare called outside the gate/share-rpc sites, or assemble.ts does not wire shareConsent.request as the approval dep — bypasses I27: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  checkShareConsentBrokerConfinement,
   checkSpawnInvariant,
   checkVaultKeyAllowList,
   checkWarehouseWriteConfinement,
@@ -278,6 +279,65 @@ describe("D20 — warehouse write-id confinement", () => {
         relPath: "packages/gateway/src/ipc/some-handler.test.ts",
         contents: `dispatch("tableau_datasource_refresh")`,
       },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+});
+
+describe("D21 (I27) extension — createShare call-site + consent-broker wiring confinement", () => {
+  const ASSEMBLE = "packages/gateway/src/platform/assemble.ts";
+
+  test("flags createShare named outside the gate + share-rpc sites", () => {
+    const v = checkShareConsentBrokerConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.ts",
+        contents: `const r = await createShare(req, deps);`,
+      },
+      // assemble.ts must still be present (with the wiring) so its own check passes.
+      { relPath: ASSEMBLE, contents: `shareConsent.request(input, ttl);` },
+    ]);
+    expect(v.some((x) => x.rule === "D21-createshare-callsite")).toBe(true);
+  });
+
+  test("allows createShare in share-gate.ts and share-rpc.ts (their home + the sole wiring file)", () => {
+    const v = checkShareConsentBrokerConfinement([
+      {
+        relPath: "packages/gateway/src/share/share-gate.ts",
+        contents: `export async function createShare() {}`,
+      },
+      {
+        relPath: "packages/gateway/src/ipc/share-rpc.ts",
+        contents: `const result = await createShare(req, deps);`,
+      },
+      { relPath: ASSEMBLE, contents: `shareConsent.request(input, ttl);` },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("requires assemble.ts to wire shareConsent.request as the approval dep", () => {
+    const v = checkShareConsentBrokerConfinement([
+      { relPath: ASSEMBLE, contents: `ipcOpts.shareRpcCtx = { requestApproval: () => true };` },
+    ]);
+    expect(v.some((x) => x.rule === "D21-share-consent-broker")).toBe(true);
+  });
+
+  test("does NOT flag assemble.ts when it wires shareConsent.request", () => {
+    const v = checkShareConsentBrokerConfinement([
+      {
+        relPath: ASSEMBLE,
+        contents: `requestApproval: (...a) => shareConsent.request({ ...a }, ttl),`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("ignores .test.ts files (createShare may be named freely in tests)", () => {
+    const v = checkShareConsentBrokerConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/share-rpc.test.ts",
+        contents: `await createShare(req, deps);`,
+      },
+      { relPath: ASSEMBLE, contents: `shareConsent.request(input, ttl);` },
     ]);
     expect(v).toHaveLength(0);
   });
