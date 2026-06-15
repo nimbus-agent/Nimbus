@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.8.0](https://github.com/nimbus-agent/Nimbus/compare/v0.7.0...v0.8.0) (2026-06-15)
+
+
+### Features
+
+* **connectors:** Mendeley connector (Phase 6 Slice 9 — sub-project A) ([#631](https://github.com/nimbus-agent/Nimbus/issues/631)) ([1ddeae5](https://github.com/nimbus-agent/Nimbus/commit/1ddeae52ca6301d5992a915250a9189b4c61f3a4))
+* **connectors:** Phase 6 Slice 7 Wave 7c — HITL-gated WRITE actions for warehouse/BI connectors ([#632](https://github.com/nimbus-agent/Nimbus/issues/632)) ([822cebc](https://github.com/nimbus-agent/Nimbus/commit/822cebc39ad17cd1b6d1605f0a1296ac1d8cb68f))
+
+
+### Bug Fixes
+
+* add repository field to client, sdk, and root for npm provenance ([#633](https://github.com/nimbus-agent/Nimbus/issues/633)) ([f0e7f07](https://github.com/nimbus-agent/Nimbus/commit/f0e7f075d755c8b4a006911b513979f289fa192f))
+* **ci:** build @nimbus-dev/sdk before client in node-compat job ([#640](https://github.com/nimbus-agent/Nimbus/issues/640)) ([76b9898](https://github.com/nimbus-agent/Nimbus/commit/76b98988821e11bc279f9dea8bf6ad76d99582f6))
+* **client:** bundle sdk via the "bun" condition so the publish build resolves ([#638](https://github.com/nimbus-agent/Nimbus/issues/638)) ([c1f36d2](https://github.com/nimbus-agent/Nimbus/commit/c1f36d2e1cee0f02430aab5f48e517a9882ccf4d))
+* **perf:** gate S11-a latency on Linux only (completes the spawn-jitter set) ([#628](https://github.com/nimbus-agent/Nimbus/issues/628)) ([f107082](https://github.com/nimbus-agent/Nimbus/commit/f107082655a3f031776b7717d8509328d24111b3))
+* **sdk:** point published entry points at dist so the package is usable ([#637](https://github.com/nimbus-agent/Nimbus/issues/637)) ([155b127](https://github.com/nimbus-agent/Nimbus/commit/155b127f9577d8f19a4e822ba5ee3714b2a5badd))
+
 ## [0.7.0](https://github.com/nimbus-agent/Nimbus/compare/v0.6.3...v0.7.0) (2026-06-14)
 
 
