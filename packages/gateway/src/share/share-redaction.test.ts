@@ -42,4 +42,18 @@ describe("redactForShare", () => {
     expect(redacted).toEqual({ msg: "hello world", count: 3 });
     expect(applied).toEqual([]);
   });
+
+  test("redacts secret/PII-shaped object KEYS, not just values", () => {
+    const { redacted, applied } = redactForShare({
+      params: {
+        "alice@corp.com": { role: "admin" },
+        ghp_abcdefghijklmnopqrstuvwxyz0123456789: true,
+      },
+    });
+    const json = JSON.stringify(redacted);
+    expect(json).not.toContain("alice@corp.com");
+    expect(json).not.toContain("ghp_");
+    expect(json).toContain("[REDACTED]");
+    expect(applied).toEqual(expect.arrayContaining(["emails", "secrets"]));
+  });
 });

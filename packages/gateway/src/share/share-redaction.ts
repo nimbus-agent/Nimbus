@@ -49,7 +49,8 @@ function walk(value: unknown, applied: Set<string>, caller: readonly RegExp[]): 
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = walk(v, applied, caller);
+      const sk = scrub(k, applied, caller);
+      out[sk] = walk(v, applied, caller);
     }
     return out;
   }
