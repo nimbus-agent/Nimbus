@@ -44,7 +44,7 @@ function decodeCursor(cursor: string | null): MendeleyCursorV1 | null {
   }
   const parsed = decodeNimbusJsonCursorPayload(cursor, CURSOR_PREFIX);
   if (parsed !== null && typeof parsed === "object" && "since" in parsed) {
-    const since = (parsed as { since: unknown }).since;
+    const since = parsed.since;
     return { since: typeof since === "string" ? since : null };
   }
   return null;
@@ -110,6 +110,49 @@ export type MendeleySyncableOptions = {
   ensureMendeleyMcpRunning: () => Promise<void>;
 };
 
+/** Ensure the MCP is up and resolve a valid access token; null signals "no-op this cycle". */
+async function loadAccessToken(
+  ctx: SyncContext,
+  options: MendeleySyncableOptions,
+): Promise<string | null> {
+  await options.ensureMendeleyMcpRunning();
+  const raw = await readConnectorSecret(ctx.vault, "mendeley", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  try {
+    return await getValidMendeleyAccessToken(ctx.vault);
+  } catch {
+    return null;
+  }
+}
+
+/** Map + upsert one page of documents; returns the number upserted (skips unmappable rows). */
+function upsertDocs(ctx: SyncContext, docs: readonly unknown[]): number {
+  let upserted = 0;
+  for (const d of docs) {
+    const mapped = mapMendeleyDocumentToItem(d, { syncedAt: Date.now() });
+    if (mapped !== null) {
+      upsertIndexedItemForSync(ctx, mapped);
+      upserted += 1;
+    }
+  }
+  return upserted;
+}
+
+/** Empty pass-cursor result for a first-page failure (http vs parse error). */
+function firstPageEmptyResult(
+  outcome: PageOutcome,
+  t0: number,
+  totalBytes: number,
+  cursor: string | null,
+  next: string,
+): SyncResult {
+  return outcome.kind === "http_error"
+    ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, next)
+    : syncPassCursorParseEmpty(t0, totalBytes, next);
+}
+
 export function createMendeleySyncable(
   options: MendeleySyncableOptions,
   fetchFn: FetchFn = globalThis.fetch as FetchFn,
@@ -120,20 +163,13 @@ export function createMendeleySyncable(
     initialSyncDepthDays: 30,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
-      await options.ensureMendeleyMcpRunning();
-      const raw = await readConnectorSecret(ctx.vault, "mendeley", "oauth");
-      if (raw === null || raw === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      let accessToken: string;
-      try {
-        accessToken = await getValidMendeleyAccessToken(ctx.vault);
-      } catch {
+      const accessToken = await loadAccessToken(ctx, options);
+      if (accessToken === null) {
         return syncNoopResult(cursor, t0);
       }
 
       const prev = decodeCursor(cursor);
-      const syncStartIso = formatCursorDate(new Date());
+      const next = nextCursor(formatCursorDate(new Date()));
       let url: string | null = firstPageUrl(prev?.since ?? null);
       let totalBytes = 0;
       let upserted = 0;
@@ -143,23 +179,15 @@ export function createMendeleySyncable(
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
           if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, nextCursor(syncStartIso))
-              : syncPassCursorParseEmpty(t0, totalBytes, nextCursor(syncStartIso));
+            return firstPageEmptyResult(outcome, t0, totalBytes, cursor, next);
           }
           break;
         }
-        for (const d of outcome.docs) {
-          const mapped = mapMendeleyDocumentToItem(d, { syncedAt: Date.now() });
-          if (mapped !== null) {
-            upsertIndexedItemForSync(ctx, mapped);
-            upserted += 1;
-          }
-        }
+        upserted += upsertDocs(ctx, outcome.docs);
         url = outcome.nextUrl;
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, nextCursor(syncStartIso), upserted);
+      return syncPassCursorSuccess(t0, totalBytes, next, upserted);
     },
   };
 }

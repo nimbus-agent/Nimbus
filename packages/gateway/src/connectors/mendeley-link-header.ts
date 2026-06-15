@@ -1,3 +1,7 @@
+// One link-value: `<uri>; rel="next"`. No `g` flag, so the shared instance is
+// safe to reuse across iterations (exec keeps no lastIndex state without `g`).
+const LINK_VALUE_RE = /<([^>]+)>\s*;\s*rel\s*=\s*"?([^";]+)"?/i;
+
 /**
  * Parse an RFC 5988 Link header and return the absolute URL of the `rel="next"`
  * relation, or null when absent. Tolerant of casing, surrounding whitespace, and
@@ -8,7 +12,7 @@ export function parseNextLink(header: string | null): string | null {
     return null;
   }
   for (const part of header.split(",")) {
-    const match = part.match(/<([^>]+)>\s*;\s*rel\s*=\s*"?([^";]+)"?/i);
+    const match = LINK_VALUE_RE.exec(part);
     if (match === null) {
       continue;
     }
