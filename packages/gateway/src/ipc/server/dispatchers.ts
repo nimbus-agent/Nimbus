@@ -37,6 +37,7 @@ import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
 import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
+import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
@@ -784,6 +785,30 @@ export async function tryDispatchTribalRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * Share & Virality (Phase 6 Slice 8). The 3-arg form (no per-client `clientId`): share's HITL is the
+ * broadcast consent broker (a prompt to ALL connected clients answered by the local owner), NOT a
+ * per-client `ToolExecutor` channel like tribal.capture. So every share.* method (incl. share.create)
+ * lives in the HANDLERS map and is dispatched here uniformly.
+ */
+export async function tryDispatchShareRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("share.")) return phase4RpcSkipped;
+  const rpc = ctx.options.shareRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchShareRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof ShareRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -838,7 +863,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → policy → chatops → tribal → admin. */
+/** Third group: lan → profile → index-reembed → policy → chatops → tribal → share → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -857,6 +882,8 @@ async function dispatchPhase4PlatformGroup(
   if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
   const tribalOutcome = await tryDispatchTribalRpc(ctx, method, params, clientId);
   if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
+  const shareOutcome = await tryDispatchShareRpc(ctx, method, params);
+  if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
 

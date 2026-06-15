@@ -128,6 +128,42 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
   });
 });
 
+describe("share over LAN (I5 — Slice 8)", () => {
+  test("share.create + share.prune are fully forbidden over LAN regardless of grant-write", () => {
+    for (const m of ["share.create", "share.prune"]) {
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("share.create rejection is ERR_METHOD_NOT_ALLOWED (fully forbidden, not merely write-gated)", () => {
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("share.create", { peerId: "p", writeAllowed: true });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown).toBeInstanceOf(LanError);
+    expect(thrown?.rpcCode).toBe(-32601);
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+
+  test("the four share reads + approvalRespond are admitted over LAN (default-allow)", () => {
+    const peer = { peerId: "p", writeAllowed: false };
+    for (const m of [
+      "share.verify",
+      "share.list",
+      "share.get",
+      "share.pubkey",
+      "share.approvalRespond",
+    ]) {
+      expect(() => checkLanMethodAllowed(m, peer)).not.toThrow();
+    }
+  });
+});
+
 describe("federation over LAN (I5 + I17)", () => {
   const peer = { peerId: "p", writeAllowed: false };
 

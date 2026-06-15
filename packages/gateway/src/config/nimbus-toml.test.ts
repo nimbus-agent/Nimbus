@@ -48,6 +48,7 @@ import {
   loadNimbusSecurityFromConfigDir,
   loadNimbusSecurityFromPath,
   loadNimbusServiceConfigsFromConfigDir,
+  loadNimbusShareHttpSink,
   loadNimbusUpdaterFromConfigDir,
   loadNimbusUpdaterFromPath,
   loadNimbusUserFromConfigDir,
@@ -60,6 +61,7 @@ import {
   parseNimbusPagerdutyToml,
   parseNimbusScimToml,
   parseNimbusSecurityToml,
+  parseNimbusShareHttpSink,
   parseNimbusTomlEmbeddingSection,
   parseNimbusTomlLlmSection,
   parseNimbusTomlVoiceSection,
@@ -1474,5 +1476,45 @@ describe("if (key) check FALSE arms — unknown keys inside sections", () => {
   test("scim section: unknown key is ignored (key != enabled)", () => {
     const result = parseNimbusScimToml("[scim]\nunknown_key = 99\n");
     expect(result.enabled).toBe(false); // default
+  });
+});
+
+describe("[share.http_sink] (Slice 8)", () => {
+  test("parses url + auth_header_name + auth_vault_key (token is the Vault key NAME only)", () => {
+    const r = parseNimbusShareHttpSink(
+      '[share.http_sink]\nurl = "https://hooks.example.com/share"\nauth_header_name = "authorization"\nauth_vault_key = "share.sink.token"\n',
+    );
+    expect(r.url).toBe("https://hooks.example.com/share");
+    expect(r.authHeaderName).toBe("authorization");
+    expect(r.authVaultKey).toBe("share.sink.token");
+  });
+
+  test("empty/absent section yields url='' (http sink unconfigured → fail-closed)", () => {
+    expect(parseNimbusShareHttpSink("").url).toBe("");
+    expect(parseNimbusShareHttpSink("[other]\nx = 1\n").url).toBe("");
+    const r = parseNimbusShareHttpSink('[share.http_sink]\nurl = ""\n');
+    expect(r.url).toBe("");
+    expect(r.authHeaderName).toBeUndefined();
+    expect(r.authVaultKey).toBeUndefined();
+  });
+
+  test("unknown key is ignored; partial auth (header only) omits the vault key", () => {
+    const r = parseNimbusShareHttpSink(
+      '[share.http_sink]\nurl = "https://x"\nunknown = 1\nauth_header_name = "x-token"\n',
+    );
+    expect(r.url).toBe("https://x");
+    expect(r.authHeaderName).toBe("x-token");
+    expect(r.authVaultKey).toBeUndefined();
+  });
+
+  test("loadNimbusShareHttpSink reads <configDir>/nimbus.toml; missing file → default", () => {
+    const dir = makeTmpDir();
+    try {
+      expect(loadNimbusShareHttpSink(dir).url).toBe("");
+      writeToml(dir, '[share.http_sink]\nurl = "https://y/share"\n');
+      expect(loadNimbusShareHttpSink(dir).url).toBe("https://y/share");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

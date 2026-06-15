@@ -1382,6 +1382,51 @@ export function loadNimbusTribalFromConfigDir(configDir: string): NimbusTribalTo
 }
 
 // ---------------------------------------------------------------------------
+// Share & Virality (Phase 6 Slice 8). `[share.http_sink]` is the config-pinned destination for the
+// `--http` outbound-share sink (the only host it may POST to). The bearer token is Vault-only
+// (Non-Negotiable #3): config holds ONLY the Vault key NAME (`auth_vault_key`), never the value. An
+// empty/absent `url` leaves the http sink unconfigured → `share.create --http` fails closed.
+
+export type NimbusShareHttpSink = {
+  readonly url: string;
+  readonly authHeaderName?: string;
+  readonly authVaultKey?: string;
+};
+
+export const DEFAULT_NIMBUS_SHARE_HTTP_SINK: NimbusShareHttpSink = { url: "" };
+
+export function parseNimbusShareHttpSink(raw: string): NimbusShareHttpSink {
+  let url = "";
+  let authHeaderName: string | undefined;
+  let authVaultKey: string | undefined;
+  forEachSectionEntry(raw, "[share.http_sink]", (key, valRaw) => {
+    if (key === "url") {
+      const v = parseString(valRaw);
+      if (v.length > 0) url = v;
+    } else if (key === "auth_header_name") {
+      const v = parseString(valRaw);
+      if (v.length > 0) authHeaderName = v;
+    } else if (key === "auth_vault_key") {
+      const v = parseString(valRaw);
+      if (v.length > 0) authVaultKey = v;
+    }
+  });
+  return {
+    url,
+    ...(authHeaderName === undefined ? {} : { authHeaderName }),
+    ...(authVaultKey === undefined ? {} : { authVaultKey }),
+  };
+}
+
+export function loadNimbusShareHttpSink(configDir: string): NimbusShareHttpSink {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_SHARE_HTTP_SINK,
+    parseNimbusShareHttpSink,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the

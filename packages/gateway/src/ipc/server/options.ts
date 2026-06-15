@@ -25,6 +25,7 @@ import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import type { ClientSession } from "../session.ts";
+import type { ShareRpcCtx } from "../share-rpc.ts";
 import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
 
@@ -103,4 +104,10 @@ export type CreateIpcServerOptions = {
   // executor is built PER-CALL in the dispatcher with the initiating client's consent; this
   // provides the MCP dispatch target. Present only when [tribal].enabled at boot.
   tribalConnectorDispatcher?: ConnectorDispatcher;
+  // Share & Virality (Phase 6 Slice 8). The dependency seam behind the share.* IPC namespace.
+  // share.create gates through the owner consent broker (I27, fail-closed on timeout/deny); the four
+  // reads + share.approvalRespond are pure. Present only when assembled at boot; the dispatcher skips
+  // cleanly when unset. share.create/share.prune are LAN-forbidden (I5); only share.get/list/pubkey/
+  // verify are Tauri-exposed (I7).
+  shareRpcCtx?: ShareRpcCtx;
 };

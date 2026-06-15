@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Logger } from "pino";
@@ -32,6 +33,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
+  loadNimbusShareHttpSink,
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
   type NimbusChatopsToml,
@@ -69,6 +71,7 @@ import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transpo
 import type { WarehouseWriteContext } from "../connectors/warehouse-write-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
+import { readToolCallLog } from "../db/tool-call-log.ts";
 import {
   effectiveRetentionDays,
   startToolCallLogRetention,
@@ -132,6 +135,7 @@ import { PolicyStore } from "../policy/policy-store.ts";
 import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
 import { vectorSearchChunks } from "../search/vec-store.ts";
+import { shareConsent } from "../share/share-consent-broker.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -1552,9 +1556,58 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     identityBoot,
   });
 
+  // Share & Virality (Phase 6 Slice 8, Task 10). The dependency seam behind the share.* IPC
+  // namespace. requestApproval routes to the owner consent broker (I27) — fail-closed on
+  // timeout/deny: a denied/expired approval persists + signs NOTHING. The broker's setBroadcast is
+  // bound UNCONDITIONALLY below (after the IPC server exists), so the owner is prompted even with
+  // federation off. The sink config is the config-pinned [share.http_sink] (the only host --http may
+  // target; the bearer token is Vault-only). collectSession pre-resolves turns from the
+  // session-memory store + tool calls from tool_call_log (input args are not stored → params: null).
+  const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
+  ipcOpts.shareRpcCtx = {
+    db,
+    vault,
+    label: os.hostname(),
+    now: () => Date.now(),
+    collectSession: async (sessionId) => {
+      const rawTurns =
+        sessionMemoryStore === undefined
+          ? []
+          : await sessionMemoryStore.getRecentTurns(sessionId, 200);
+      const turns = rawTurns
+        .filter((t) => t.role === "user" || t.role === "assistant")
+        .map((t) => ({
+          role: t.role as "user" | "assistant",
+          text: t.text,
+          timestamp: t.createdAt,
+        }));
+      const toolCalls = readToolCallLog(db, { sessionId, limit: 1000 }).toolCalls.map((tc) => ({
+        toolId: tc.toolId,
+        service: tc.service,
+        params: null,
+        status: tc.status,
+      }));
+      return { turns, toolCalls };
+    },
+    requestApproval: (sessionId, kind, sink, preview, redactionSet) =>
+      shareConsent.request(
+        { sessionId, kind, preview, redactionSet, sink },
+        (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
+      ),
+    recordAudit: (entry) => appendAuditEntry(db, entry),
+    respondApproval: (requestId, approved) => shareConsent.respond(requestId, approved),
+    httpSink: shareHttpSink,
+  };
+
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 
   const ipc = createIpcServer(ipcOpts);
+
+  // I27 (Slice 8): the share-publish approval prompt reaches the local owner via the broadcast
+  // channel; they answer with `nimbus share approve <id>` → share.approvalRespond. UNCONDITIONAL
+  // (NOT federation-gated) — sharing to a file/http sink works with federation disabled; a missing
+  // binding would leave the broker's broadcast a no-op → every approval times out → silent deny.
+  shareConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
 
   if (federationBooted) {
     federationConsent.setBroadcast((method, params) =>

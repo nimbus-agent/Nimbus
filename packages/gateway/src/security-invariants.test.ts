@@ -113,6 +113,12 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/"extension\.update"/);
   });
 
+  test("FORBIDDEN_OVER_LAN blocks share.create + share.prune (Slice 8 / I27)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(src).toContain('"share.create"');
+    expect(src).toContain('"share.prune"');
+  });
+
   test("admits the team-vault wire methods but FORBIDS team-vault/HITL management over LAN (Slice 2)", async () => {
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     const peer = { peerId: "peer:x", writeAllowed: true };
