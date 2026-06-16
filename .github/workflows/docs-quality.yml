@@ -78,6 +78,13 @@ jobs:
           lychee --version
 
       - name: Run lychee
+        # Pass the workflow token so lychee resolves github.com links via the GitHub
+        # API instead of scraping HTML. Unauthenticated commit-page requests from the
+        # runner's egress get rate-limited to 500s (verified: CHANGELOG.md commit
+        # permalinks fail intermittently); the API path is rate-limit-resistant and
+        # still genuinely validates each link. Needs only `contents: read`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: lychee --config lychee.toml --no-progress 'docs/**/*.md' '*.md'
 
   markdownlint:
