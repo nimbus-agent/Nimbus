@@ -62,6 +62,8 @@ jobs:
     permissions:
       contents: write       # branch push
       pull-requests: write  # gh pr create
+    env:
+      BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
 
     steps:
       - name: Validate protocol attestation
@@ -99,6 +101,42 @@ jobs:
             --runs 3 \
             --protocol-confirmed \
             --history "${{ github.workspace }}/docs/perf/history.jsonl"
+
+      # ── Bencher Cloud advisory reference-trend ingest (perf strategy Phase 2)
+      # Dormant until the self-hosted reference-m1air runner is provisioned (this
+      # workflow only runs then). Advisory; skips when BENCHER_API_KEY is unset.
+      - name: Install Bencher CLI
+        if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: an install hiccup must never red the reference run
+        uses: bencherdev/bencher@ec56bb69a7f34096002ca3384d10e2f6676b063e # v0.6.7
+
+      - name: Emit Bencher BMF (reference)
+        id: bencher-emit
+        if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: a BMF-emit failure must never red the reference run
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/perf/emit-bencher-bmf.ts \
+            --in "${{ github.workspace }}/docs/perf/history.jsonl" \
+            --out "${RUNNER_TEMP}/bencher.json"
+          # `|| echo 0` keeps a malformed/garbage BMF from tripping pipefail.
+          surfaces="$(jq 'length' "${RUNNER_TEMP}/bencher.json" 2>/dev/null || echo 0)"
+          echo "surfaces=${surfaces}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Bencher (reference)
+        if: ${{ steps.bencher-emit.outputs.surfaces != '' && steps.bencher-emit.outputs.surfaces != '0' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          bencher run \
+            --project nimbus \
+            --key "${BENCHER_API_KEY}" \
+            --adapter json \
+            --file "${RUNNER_TEMP}/bencher.json" \
+            --testbed reference-m1air \
+            --branch main
 
       - name: Derive latest.json projection
         # Reads the new tail of history.jsonl, finds the most recent
