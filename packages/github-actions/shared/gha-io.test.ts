@@ -11,9 +11,8 @@ describe("emitAnnotation — workflow-command injection hardening", () => {
 
   function capture(): void {
     written = "";
-    // biome-ignore lint/suspicious/noExplicitAny: minimal stdout.write spy for the test
-    process.stdout.write = ((chunk: any) => {
-      written += String(chunk);
+    process.stdout.write = ((chunk: Parameters<typeof process.stdout.write>[0]): boolean => {
+      written += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
       return true;
     }) as typeof process.stdout.write;
   }
