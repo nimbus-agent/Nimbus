@@ -39,6 +39,7 @@ These cannot be done by a PR. They can land in **either order** relative to PR-1
 ## Task 1: Pure BMF mapper (`bencher-bmf.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/perf/bencher-bmf.ts`
 - Test: `packages/gateway/src/perf/bencher-bmf.test.ts`
 
@@ -213,6 +214,7 @@ git commit -m "feat(perf): pure HistoryLine -> Bencher Metric Format mapper"
 ## Task 2: CLI emitter (`emit-bencher-bmf.ts`)
 
 **Files:**
+
 - Create: `scripts/perf/emit-bencher-bmf.ts`
 - Test: `scripts/perf/emit-bencher-bmf.test.ts`
 
@@ -344,11 +346,13 @@ Expected: PASS (4 tests).
 - [ ] **Step 5: Smoke-test the CLI end to end**
 
 Run:
+
 ```bash
 printf '%s\n' '{"schema_version":2,"run_id":"r","timestamp":"2026-06-16T00:00:00.000Z","runner":"gha-ubuntu","os_version":"linux x64","nimbus_git_sha":"abc","bun_version":"1.2.0","surfaces":{"S1":{"samples_count":5,"p95_ms":800},"S10":{"samples_count":5,"throughput_per_sec":42}}}' > /tmp/rh.jsonl
 bun scripts/perf/emit-bencher-bmf.ts --in /tmp/rh.jsonl --out /tmp/bencher.json
 cat /tmp/bencher.json
 ```
+
 Expected stdout: `wrote 2 trend surface(s) to /tmp/bencher.json`, and the file contains `{"S1":{"latency":{"value":800}},"S10":{"throughput":{"value":42}}}` (pretty-printed).
 
 - [ ] **Step 6: Commit**
@@ -363,6 +367,7 @@ git commit -m "feat(perf): emit-bencher-bmf CLI wrapper"
 ## Task 3: Wire Bencher ingest into `_perf.yml`
 
 **Files:**
+
 - Modify: `.github/workflows/_perf.yml`
 
 Add a job-level `env` exposing the secret, the `bencherdev/bencher` install, and emit+publish steps. Steps run on the same legs that produce an artifact (existing `ubuntu || not-schedule || sunday` gate), skip cleanly when the secret is absent or the BMF is empty, skip fork PRs, and are `continue-on-error: true`. g-a-b steps are untouched.
@@ -492,6 +497,7 @@ git commit -m "ci(perf): advisory Bencher ingest in _perf.yml (soak alongside g-
 ## Task 4: Dormant reference-runner ingest in `_perf-reference.yml`
 
 **Files:**
+
 - Modify: `.github/workflows/_perf-reference.yml`
 
 Add a Bencher ingest for the `reference-m1air` testbed. It runs only when this workflow runs — i.e. once the M1 Air self-hosted runner is provisioned — so it is dormant (zero-risk) until then. It reads the last line of `docs/perf/history.jsonl` (the just-appended reference line). Add the same job-level secret env + the install + emit + publish steps, scoped to push-equivalent (`--branch main`).
@@ -565,6 +571,7 @@ git commit -m "ci(perf): dormant Bencher reference-m1air ingest (activates with 
 ## Task 5: CHANGELOG entry
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 
 - [ ] **Step 1: Add a dated entry**
@@ -639,6 +646,7 @@ gh pr create --base main --label perf \
   --title "perf: Phase 2 (Bencher) — advisory trend ingest (soak alongside g-a-b)" \
   --body "Implements PR-1 of docs/superpowers/specs/2026-06-16-perf-phase2-bencher-design.md. Advisory Bencher Cloud ingest runs alongside github-action-benchmark for a soak window; the in-code gateClass comparator stays the sole gate. g-a-b retires in PR-2 after the soak."
 ```
+
 The `perf` label makes `_perf.yml` run on the PR, validating the new steps end-to-end (Bencher steps skip cleanly if the `BENCHER_API_KEY` secret isn't set up yet).
 
 ---
