@@ -163,13 +163,13 @@
     "@types/dompurify": "^3.0.0",
     "@types/node": "^25.9.2",
     "@types/vscode": "^1.120.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
     "jsdom": "^29.1.1",
     "ovsx": "^0.10.12",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
