@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 const referenceLine: HistoryLine = {
-  schema_version: 1,
+  schema_version: 2,
   run_id: "ref-001",
   timestamp: "2026-05-14T10:00:00Z",
   runner: "reference-m1air",
@@ -56,6 +56,17 @@ const incompleteReferenceLine: HistoryLine = {
 
 const placeholderLine = `{"schema_version":1,"_comment":"Perf bench history."}`;
 
+// A structurally COMPLETE reference line (valid runner + all required fields)
+// whose ONLY flaw is the stale v1 schema. The trimmed-pool p95 reset makes v1
+// aggregates non-comparable, so the version gate must skip it — this fixture
+// pins that the `schema_version === 2` check is load-bearing (a plain placeholder
+// line is skipped for the missing runner regardless of version).
+const completeV1ReferenceLine = JSON.stringify({
+  ...referenceLine,
+  schema_version: 1,
+  run_id: "ref-v1-stale",
+});
+
 function writeHistory(...lines: (HistoryLine | string)[]): string {
   const path = join(tmpDir, "history.jsonl");
   const body = `${lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n")}\n`;
@@ -74,6 +85,20 @@ describe("selectLatestReferenceLine", () => {
       `${[placeholderLine, JSON.stringify(referenceLine)].join("\n")}\n`,
     );
     expect(got).toEqual(referenceLine);
+  });
+
+  test("skips a structurally complete reference line carrying the stale schema_version 1", () => {
+    // The stale v1 line is the MORE RECENT entry (last in the file); the version
+    // gate must still walk past it to the older v2 line. If the gate regressed to
+    // `=== 1`, this would return the v1 line and the assertion would fail.
+    const got = selectLatestReferenceLine(
+      `${[JSON.stringify(referenceLine), completeV1ReferenceLine].join("\n")}\n`,
+    );
+    expect(got).toEqual(referenceLine);
+  });
+
+  test("throws when the only reference line carries the stale schema_version 1", () => {
+    expect(() => selectLatestReferenceLine(`${completeV1ReferenceLine}\n`)).toThrow();
   });
 
   test("skips GHA-runner lines and returns the most recent reference line", () => {

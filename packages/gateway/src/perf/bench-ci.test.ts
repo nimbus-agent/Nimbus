@@ -13,7 +13,7 @@ function writeHistory(dir: string, name: string, line: HistoryLine): string {
 }
 
 const passingLine: HistoryLine = {
-  schema_version: 1,
+  schema_version: 2,
   run_id: "x",
   timestamp: "2026-04-29T00:00:00Z",
   runner: "gha-ubuntu",
@@ -23,9 +23,12 @@ const passingLine: HistoryLine = {
   surfaces: { S1: { samples_count: 100, p95_ms: 800 } },
 };
 
+// S2-a is gate-class (the build-gating partition). S1 is now trend-class and no
+// longer gates on shared runners, so the gating fixture must use a gate-class
+// surface for an absolute-fail to drive a non-zero exit on a PR.
 const failingLine: HistoryLine = {
   ...passingLine,
-  surfaces: { S1: { samples_count: 100, p95_ms: 12_000 } },
+  surfaces: { "S2-a": { samples_count: 100, p95_ms: 12_000 } },
 };
 
 function spawnSequence(scripted: GhSpawnResult[]): {
@@ -60,7 +63,7 @@ describe("runBenchCiMain", () => {
     }
   });
 
-  test("UX absolute-fail on PR run → exits 1 + posts comment with marker", async () => {
+  test("gate-class absolute-fail on PR run → exits 1 + posts comment with marker", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const currentPath = writeHistory(dir, "current.jsonl", failingLine);
@@ -99,7 +102,7 @@ describe("runBenchCiMain", () => {
     }
   });
 
-  test("workload absolute-fail does NOT exit 1 (gated: false)", async () => {
+  test("workload absolute-fail does NOT exit 1 (S6-drive is trend-class, not gate-class)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
     try {
       const line: HistoryLine = {
@@ -232,6 +235,90 @@ describe("runBenchCiMain", () => {
       });
       expect(exit).toBe(0);
       expect(errs.some((e) => e.includes("gh run list failed"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("gate-class delta-fail on a PUSH event returns 0 (publish-only, never gates)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
+    try {
+      // S2-a is gate-class; current 200ms vs baseline 50ms is a hard delta-fail.
+      const current: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 200 } },
+      };
+      const currentPath = writeHistory(dir, "current.jsonl", current);
+
+      const runs = [{ databaseId: 1, headSha: "s1" }];
+      const prevDir = join(dir, "prev");
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(join(prevDir, "s1"), { recursive: true });
+      const baseline: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 50 } },
+      };
+      await fs.writeFile(
+        join(prevDir, "s1", "run-history.jsonl"),
+        `${JSON.stringify(baseline)}\n`,
+        "utf8",
+      );
+
+      const { spawn } = spawnSequence([
+        { exitCode: 0, stdout: `${JSON.stringify(runs)}\n`, stderr: "" }, // run list
+        { exitCode: 0, stdout: "", stderr: "" }, // run download
+      ]);
+      const exit = await runBenchCiMain(
+        ["--current", currentPath, "--runner", "gha-ubuntu", "--prev-dir", prevDir],
+        { gh: new GhCli({ spawn, sleep: async () => {} }), env: { GITHUB_EVENT_NAME: "push" } },
+      );
+      expect(exit).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("gate-class delta-fail on a PULL_REQUEST event returns 1 (gates)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-ci-"));
+    try {
+      const current: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 200 } },
+      };
+      const currentPath = writeHistory(dir, "current.jsonl", current);
+
+      const runs = [{ databaseId: 1, headSha: "s1" }];
+      const prevDir = join(dir, "prev");
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(join(prevDir, "s1"), { recursive: true });
+      const baseline: HistoryLine = {
+        ...passingLine,
+        surfaces: { "S2-a": { samples_count: 500, p95_ms: 50 } },
+      };
+      await fs.writeFile(
+        join(prevDir, "s1", "run-history.jsonl"),
+        `${JSON.stringify(baseline)}\n`,
+        "utf8",
+      );
+
+      const { spawn } = spawnSequence([
+        { exitCode: 0, stdout: `${JSON.stringify(runs)}\n`, stderr: "" }, // run list
+        { exitCode: 0, stdout: "", stderr: "" }, // run download
+        { exitCode: 0, stdout: "[]\n", stderr: "" }, // pr comment list
+        { exitCode: 0, stdout: "", stderr: "" }, // pr comment create
+      ]);
+      const exit = await runBenchCiMain(
+        ["--current", currentPath, "--runner", "gha-ubuntu", "--prev-dir", prevDir],
+        {
+          gh: new GhCli({ spawn, sleep: async () => {} }),
+          env: {
+            GITHUB_EVENT_NAME: "pull_request",
+            GITHUB_REPOSITORY: "asafgolombek/Nimbus",
+            GITHUB_REF: "refs/pull/99/merge",
+          },
+        },
+      );
+      expect(exit).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -14,7 +14,7 @@ describe("appendHistoryLine", () => {
     const path = join(dir, "history.jsonl");
     try {
       const line: HistoryLine = {
-        schema_version: 1,
+        schema_version: 2,
         run_id: "abc",
         timestamp: "2026-04-26T12:00:00Z",
         runner: "local-dev",
@@ -29,6 +29,7 @@ describe("appendHistoryLine", () => {
       const lines = content.trim().split("\n");
       expect(lines.length).toBe(1);
       const parsed = JSON.parse(lines[0] ?? "");
+      expect(parsed.schema_version).toBe(2);
       expect(parsed.run_id).toBe("abc");
       expect(parsed.surfaces["S2-a"].p95_ms).toBe(42);
     } finally {
@@ -41,7 +42,7 @@ describe("appendHistoryLine", () => {
     const path = join(dir, "history.jsonl");
     try {
       const base: Omit<HistoryLine, "run_id"> = {
-        schema_version: 1,
+        schema_version: 2,
         timestamp: "2026-04-26T12:00:00Z",
         runner: "local-dev",
         os_version: "test",
@@ -65,7 +66,7 @@ describe("appendHistoryLine", () => {
     const path = join(dir, "history.jsonl");
     try {
       const line: HistoryLine = {
-        schema_version: 1,
+        schema_version: 2,
         run_id: "x",
         timestamp: "2026-04-26T12:00:00Z",
         runner: "local-dev",
@@ -92,7 +93,7 @@ describe("appendHistoryLine — stub_reason field", () => {
     const path = join(dir, "history.jsonl");
     try {
       const line: HistoryLine = {
-        schema_version: 1,
+        schema_version: 2,
         run_id: "abc",
         timestamp: "2026-04-26T00:00:00Z",
         runner: "local-dev",
@@ -118,7 +119,7 @@ describe("appendHistoryLine — busy_retries field", () => {
     try {
       const path = join(dir, "history.jsonl");
       appendHistoryLine(path, {
-        schema_version: 1,
+        schema_version: 2,
         run_id: "test",
         timestamp: "2026-04-28T00:00:00Z",
         runner: "local-dev",
@@ -143,7 +144,7 @@ describe("appendHistoryLine — busy_retries field", () => {
     try {
       const path = join(dir, "history.jsonl");
       appendHistoryLine(path, {
-        schema_version: 1,
+        schema_version: 2,
         run_id: "test",
         timestamp: "2026-04-28T00:00:00Z",
         runner: "local-dev",

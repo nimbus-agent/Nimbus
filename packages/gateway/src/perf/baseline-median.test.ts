@@ -5,7 +5,7 @@ import type { HistoryLine } from "./history-line.ts";
 
 function line(sha: string, surfaces: HistoryLine["surfaces"]): HistoryLine {
   return {
-    schema_version: 1,
+    schema_version: 2,
     run_id: `run-${sha}`,
     timestamp: "2026-06-14T00:00:00Z",
     runner: "gha-macos",

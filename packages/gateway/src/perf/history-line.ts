@@ -19,7 +19,7 @@ export interface HistoryLineSurface {
 }
 
 export interface HistoryLine {
-  schema_version: 1;
+  schema_version: 2;
   run_id: string;
   timestamp: string;
   runner: RunnerKind;

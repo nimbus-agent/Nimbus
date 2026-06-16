@@ -1,4 +1,5 @@
 import type { HistoryLine, HistoryLineSurface } from "./history-line.ts";
+import { thresholdsBySurface } from "./slo-thresholds.ts";
 import { isFloorMetric, type SurfaceComparison } from "./threshold-comparator.ts";
 
 export const COMMENT_MARKER_PREFIX = "nimbus-perf-delta";
@@ -95,4 +96,87 @@ export function formatPrComment(
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * Absolute URL of the github-action-benchmark dashboard published on the `perf-data`
+ * branch. Must be absolute: GitHub PR comments lack a file context, so a relative
+ * `../../` path does not resolve. Matches the link in `docs/perf/slo.md`.
+ */
+const DEV_BENCH_DASHBOARD_PATH = "https://github.com/nimbus-agent/Nimbus/tree/perf-data/dev/bench";
+
+function isGateClass(surfaceId: string): boolean {
+  return (
+    thresholdsBySurface().get(surfaceId as keyof HistoryLine["surfaces"])?.gateClass === "gate"
+  );
+}
+
+function condensedStatusCell(c: SurfaceComparison): string {
+  switch (c.status.kind) {
+    case "pass":
+      return "✅";
+    case "absolute-fail": {
+      const op = isFloorMetric(c.metric) ? "<" : ">";
+      return `❌ (${fmtNum(c.status.measured)} ${op} ${fmtNum(c.status.threshold)})`;
+    }
+    case "delta-fail":
+      return `❌ (${c.status.deltaPct >= 0 ? "+" : ""}${c.status.deltaPct.toFixed(1)}%)`;
+    case "no-baseline":
+      return "🆕";
+    case "skipped":
+      return `⏭ ${c.status.reason}`;
+  }
+}
+
+/**
+ * A short, gate-class-only summary table plus a single link to the `/dev/bench`
+ * trend dashboard. Rendered ALONGSIDE the full `formatPrComment` table so reviewers
+ * see the build-gating verdict at a glance; trend/reference surfaces are intentionally
+ * omitted here because they never gate the build.
+ */
+export function formatCondensedGateSummary(
+  comparisons: readonly SurfaceComparison[],
+  current: HistoryLine,
+): string {
+  const gate = comparisons.filter((c) => isGateClass(c.surfaceId));
+  const lines: string[] = [`#### Gate-class summary — ${current.runner}`, ""];
+
+  if (gate.length === 0) {
+    lines.push("> No gate-class surfaces evaluated on this runner.");
+  } else {
+    const failing = gate.filter(
+      (c) => c.status.kind === "absolute-fail" || c.status.kind === "delta-fail",
+    );
+    if (failing.length === 0) {
+      lines.push(`> All ${gate.length} gate-class surfaces passed.`);
+    }
+    lines.push("", "| Surface | Metric | Status |", "|---|---|---|");
+    for (const c of gate) {
+      lines.push(`| ${c.surfaceId} | ${c.metric} | ${condensedStatusCell(c)} |`);
+    }
+  }
+
+  lines.push(
+    "",
+    `📈 [Full trend dashboard](${DEV_BENCH_DASHBOARD_PATH}) (/dev/bench, published on \`perf-data\`).`,
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Assemble the full PR-comment body: the upsert marker stays on line 1 (the
+ * upsert logic matches it via body.startsWith), with the condensed gate-class
+ * summary spliced in right after it, ahead of the full per-surface delta table.
+ */
+export function composePrCommentBody(
+  comparisons: readonly SurfaceComparison[],
+  current: HistoryLine,
+  previous: HistoryLine | null,
+): string {
+  const fullTable = formatPrComment(comparisons, current, previous);
+  const newlineIdx = fullTable.indexOf("\n");
+  const markerLine = newlineIdx === -1 ? fullTable : fullTable.slice(0, newlineIdx);
+  const tableRest = newlineIdx === -1 ? "" : fullTable.slice(newlineIdx + 1);
+  const condensed = formatCondensedGateSummary(comparisons, current);
+  return `${markerLine}\n\n${condensed}\n\n${tableRest}`;
 }

@@ -12,7 +12,7 @@ export interface IncompleteContext {
 
 export function writeIncompleteLine(historyPath: string, ctx: IncompleteContext): void {
   const line: HistoryLine = {
-    schema_version: 1,
+    schema_version: 2,
     run_id: ctx.runId,
     timestamp: new Date().toISOString(),
     runner: ctx.runner,

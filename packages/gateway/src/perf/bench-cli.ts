@@ -245,7 +245,7 @@ function buildHistoryLine(
 ): HistoryLine {
   const resolveGitSha = deps.resolveGitSha ?? defaultResolveGitSha;
   return {
-    schema_version: 1,
+    schema_version: 2,
     run_id: deps.runId,
     timestamp: new Date().toISOString(),
     runner,

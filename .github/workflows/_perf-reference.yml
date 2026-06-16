@@ -1,8 +1,18 @@
 name: Performance Reference Run (M1 Air)
 
 # Triggers (spec §4.2 + design D-T):
-#   - workflow_dispatch only. Operator manually triggers from the Actions UI
-#     after preparing the M1 Air per the §4.2 protocol checklist.
+#
+#   workflow_dispatch — manual. Operator triggers from the Actions UI after
+#     preparing the M1 Air per the §4.2 protocol checklist and explicitly
+#     attests completion via the protocol_attested boolean input.
+#
+#   schedule — nightly unattended run at 05:00 UTC. The dedicated persistent
+#     M1 Air is held in the §4.2 protocol state between runs (AC powered, Low
+#     Power Mode off, display on, no background activity), so no operator
+#     inputs are supplied; the attestation step treats a schedule event as
+#     already-attested via its event-name branch. GitHub runs scheduled
+#     workflows only on the default branch of THIS repo — never for forks or
+#     fork PRs — so the nightly trigger is non-fork-triggered by construction.
 #
 # This workflow runs on the self-hosted runner registered with the
 # `reference-m1air` label (see docs/perf/reference-runner-setup.md). It
@@ -10,6 +20,13 @@ name: Performance Reference Run (M1 Air)
 # opens a `perf`-labelled bot PR for review.
 
 on:
+  # Nightly unattended reference run. cron is 5-field UTC. The dedicated M1 Air
+  # is held in the §4.2 protocol state, so no inputs are supplied; the attestation
+  # step resolves the missing inputs.protocol_attested to attested for the
+  # schedule event. GitHub runs schedule only on this repo's default branch —
+  # never for forks/fork PRs.
+  schedule:
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       protocol_attested:
@@ -48,7 +65,13 @@ jobs:
 
     steps:
       - name: Validate protocol attestation
-        if: inputs.protocol_attested != true
+        # Manual dispatch must explicitly attest the §4.2 checklist via
+        # protocol_attested=true. A scheduled run is implicitly attested —
+        # the dedicated M1 Air is held in the protocol state between runs,
+        # and schedule events carry no workflow_dispatch inputs (GitHub does
+        # not apply input defaults to schedule events). schedule only fires
+        # on this repo's default branch, never for forks/fork PRs.
+        if: github.event_name != 'schedule' && inputs.protocol_attested != true
         run: |
           echo "::error::Reference run requires §4.2 protocol attestation."
           echo "Re-dispatch with protocol_attested=true after completing the checklist."
@@ -164,7 +187,7 @@ jobs:
             fi
             jq -e \
               --arg sha "$GITHUB_SHA" \
-              '.schema_version == 1
+              '.schema_version == 2
                and .runner == "reference-m1air"
                and .nimbus_git_sha == $sha
                and (.os_version | type == "string" and length > 0)' \
@@ -239,11 +262,11 @@ jobs:
           ## Reference benchmark run
 
           - **Runner:** \`reference-m1air\` (self-hosted, M1 Air, 8 GB / 256 GB)
-          - **Triggered by:** @${{ github.actor }} via workflow_dispatch
+          - **Triggered by:** @${{ github.actor }} via ${{ github.event_name }}
           - **macOS version:** see \`os_version\` field in the new history line
           - **Notes:** ${NOTES:-_(none)_}
 
-          ### § 4.2 Reference protocol checklist (operator attested)
+          ### § 4.2 Reference protocol checklist ${{ github.event_name == 'schedule' && '(nightly — runner held in §4.2 protocol state)' || '(operator attested)' }}
 
           - [x] AC powered
           - [x] Low Power Mode off

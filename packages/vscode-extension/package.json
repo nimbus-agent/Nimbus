@@ -157,19 +157,19 @@
   "dependencies": {
     "@nimbus-dev/client": "workspace:*",
     "dompurify": "^3.4.8",
-    "marked": "^18.0.4"
+    "marked": "^18.0.5"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.0",
-    "@types/node": "^25.9.2",
+    "@types/node": "^25.9.3",
     "@types/vscode": "^1.120.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
     "jsdom": "^29.1.1",
-    "ovsx": "^0.10.12",
+    "ovsx": "^1.0.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }

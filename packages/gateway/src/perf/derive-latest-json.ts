@@ -19,7 +19,7 @@ function isCompleteReferenceLine(value: unknown): value is HistoryLine {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
-    v["schema_version"] === 1 &&
+    v["schema_version"] === 2 &&
     v["runner"] === "reference-m1air" &&
     v["incomplete"] !== true &&
     typeof v["run_id"] === "string" &&

@@ -6,7 +6,7 @@ export type ComparisonStatus =
   | { kind: "pass" }
   | { kind: "absolute-fail"; measured: number; threshold: number }
   | { kind: "delta-fail"; previous: number; current: number; deltaPct: number; floorPct: number }
-  | { kind: "skipped"; reason: "tbd-c2" | "linux-only-gate" | "reference-only" | "stub" }
+  | { kind: "skipped"; reason: "tbd-c2" | "trend-only" | "reference-only" | "stub" }
   | { kind: "no-baseline"; current: number };
 
 export interface SurfaceComparison {
@@ -45,11 +45,22 @@ export function isFloorMetric(metric: SloThreshold["metric"]): boolean {
 }
 
 function classifySkip(slo: SloThreshold, runner: RunnerKind): ComparisonStatus | null {
-  if (slo.ghaMax === "skipped" && runner !== "reference-m1air") {
+  // On the consistent-hardware reference runner, every class with a refMax is evaluated.
+  if (runner === "reference-m1air") {
+    if (slo.gateClass === "reference" && slo.refMax === undefined) {
+      return { kind: "skipped", reason: "reference-only" };
+    }
+    if (slo.ghaMax === "tbd-c2" && slo.refMax === undefined) {
+      return { kind: "skipped", reason: "tbd-c2" };
+    }
+    return null;
+  }
+  // On any GHA shared runner, only gate-class surfaces are evaluated.
+  if (slo.gateClass === "reference" || slo.ghaMax === "skipped") {
     return { kind: "skipped", reason: "reference-only" };
   }
-  if (slo.linuxOnlyGate === true && runner !== "gha-ubuntu" && runner !== "reference-m1air") {
-    return { kind: "skipped", reason: "linux-only-gate" };
+  if (slo.gateClass === "trend") {
+    return { kind: "skipped", reason: "trend-only" };
   }
   if (slo.ghaMax === "tbd-c2") {
     return { kind: "skipped", reason: "tbd-c2" };
@@ -125,6 +136,6 @@ export function compareAgainstHistory(
 }
 
 export function isFailingComparison(c: SurfaceComparison, slo: SloThreshold): boolean {
-  if (!slo.gated) return false;
+  if (slo.gateClass !== "gate") return false;
   return c.status.kind === "absolute-fail" || c.status.kind === "delta-fail";
 }

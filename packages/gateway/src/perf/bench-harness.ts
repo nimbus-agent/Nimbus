@@ -20,6 +20,26 @@ function median(values: number[]): number | undefined {
   return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
 }
 
+/**
+ * Pool per-run samples for the latency aggregate, dropping the single worst run.
+ * One catastrophically-contended run (disk thrash / network hang spiking *all*
+ * its samples) would otherwise skew the pooled p95, so with >=3 non-empty runs we
+ * rank runs by their own p95 and discard the highest before flattening. With
+ * fewer than 3 non-empty runs there is too little to trim, so we pool everything.
+ */
+export function poolTrimmedSamples(perRunSamples: number[][]): number[] {
+  const runs = perRunSamples.filter((r) => r.length > 0);
+  if (runs.length < 3) {
+    return runs.flat();
+  }
+  const ranked = [...runs].sort((a, b) => {
+    const pa = computePercentiles(a).p95 ?? Number.POSITIVE_INFINITY;
+    const pb = computePercentiles(b).p95 ?? Number.POSITIVE_INFINITY;
+    return pa - pb;
+  });
+  return ranked.slice(0, -1).flat();
+}
+
 export interface RunBenchDeps {
   stderr?: (s: string) => void;
 }
@@ -81,28 +101,15 @@ function buildLatencyResult(
   perRunSamples: number[][],
   totalSamples: number,
 ): BenchSurfaceResult {
-  const perRunP50: number[] = [];
-  const perRunP95: number[] = [];
-  const perRunP99: number[] = [];
-  const perRunMax: number[] = [];
-  for (const samples of perRunSamples) {
-    const p = computePercentiles(samples);
-    if (p.p50 !== undefined) perRunP50.push(p.p50);
-    if (p.p95 !== undefined) perRunP95.push(p.p95);
-    if (p.p99 !== undefined) perRunP99.push(p.p99);
-    if (p.max !== undefined) perRunMax.push(p.max);
-  }
-  const p50Ms = median(perRunP50);
-  const p95Ms = median(perRunP95);
-  const p99Ms = median(perRunP99);
-  const maxMs = median(perRunMax);
+  const pooled = poolTrimmedSamples(perRunSamples);
+  const p = computePercentiles(pooled);
   return {
     surfaceId,
     samplesCount: totalSamples,
-    ...(p50Ms !== undefined && { p50Ms }),
-    ...(p95Ms !== undefined && { p95Ms }),
-    ...(p99Ms !== undefined && { p99Ms }),
-    ...(maxMs !== undefined && { maxMs }),
+    ...(p.p50 !== undefined && { p50Ms: p.p50 }),
+    ...(p.p95 !== undefined && { p95Ms: p.p95 }),
+    ...(p.p99 !== undefined && { p99Ms: p.p99 }),
+    ...(p.max !== undefined && { maxMs: p.max }),
   };
 }
 
