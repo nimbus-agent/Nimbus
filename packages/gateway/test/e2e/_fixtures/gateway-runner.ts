@@ -105,6 +105,29 @@ if (tribalSeeds.length > 0) {
   }
 }
 
+// Seed session-memory turns (Slice 8 share e2e): the share-gate's collectSession reads turns from
+// the session_memory store. With NIMBUS_SKIP_EMBEDDING_RUNTIME=1 the store has no embedding vector,
+// so rows carry vec_rowid 0 (the store's own no-vec sentinel) — getRecentTurns reads
+// chunk_text/role/created_at only.
+interface SessionTurnSeed {
+  sessionId: string;
+  role: "user" | "assistant";
+  text: string;
+}
+const sessionSeeds = envJson<SessionTurnSeed[]>("NIMBUS_E2E_SEED_SESSION_JSON") ?? [];
+if (sessionSeeds.length > 0) {
+  const db = services.localIndex.getDatabase();
+  let now = Date.now();
+  for (const t of sessionSeeds) {
+    db.run(
+      `INSERT INTO session_memory (session_id, chunk_text, vec_rowid, role, created_at)
+       VALUES (?, ?, 0, ?, ?)`,
+      [t.sessionId, t.text, t.role, now],
+    );
+    now += 1; // keep insertion order stable for getRecentTurns' created_at ordering
+  }
+}
+
 // Deterministic engine stub for the chatops read path (see header note). The connector tool
 // layer is the file-backed sink (NIMBUS_CHATOPS_E2E_SINK_DIR, set by the test) — assemble.ts
 // swaps the real bot-spawn + mesh dispatch for it, so this gateway exercises the full chatops
