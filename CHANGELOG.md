@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.11.0](https://github.com/nimbus-agent/Nimbus/compare/v0.10.0...v0.11.0) (2026-06-16)
+
+
+### Features
+
+* **share:** Phase 6 Slice 8a — Share foundation (I27 share-gate, verify-share, V41) ([#661](https://github.com/nimbus-agent/Nimbus/issues/661)) ([c4f12d3](https://github.com/nimbus-agent/Nimbus/commit/c4f12d382be6e8601858605089b664f7c5604e0c))
+
+
+### Bug Fixes
+
+* **ci:** session-memory getRecentTurns must not require sqlite-vec (share e2e I27) ([#664](https://github.com/nimbus-agent/Nimbus/issues/664)) ([0870362](https://github.com/nimbus-agent/Nimbus/commit/0870362301fecd1c6742c799ece667edf1d8f671))
+
+
+### Performance Improvements
+
+* Phase 2 (Bencher) — advisory trend ingest (soak alongside github-action-benchmark) ([#666](https://github.com/nimbus-agent/Nimbus/issues/666)) ([5993765](https://github.com/nimbus-agent/Nimbus/commit/5993765bb97b1058676e7ecde34b112d4ed33c87))
+
 ## [0.10.0](https://github.com/nimbus-agent/Nimbus/compare/v0.9.1...v0.10.0) (2026-06-16)
 
 
