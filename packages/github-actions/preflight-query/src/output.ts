@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { makeSetOutput } from "../../shared/gha-io.ts";
 
 export const ALLOWED_OUTPUT_NAMES: ReadonlySet<string> = new Set([
   "verdict",
@@ -9,15 +8,4 @@ export const ALLOWED_OUTPUT_NAMES: ReadonlySet<string> = new Set([
   "result-json",
 ]);
 
-export function setOutput(name: string, value: string): void {
-  if (!ALLOWED_OUTPUT_NAMES.has(name)) {
-    throw new Error(`refusing to set unknown output: ${name}`);
-  }
-  const outFile = process.env.GITHUB_OUTPUT;
-  if (outFile === undefined) return;
-  let delim: string;
-  do {
-    delim = `EOF_${randomUUID().replaceAll("-", "")}`;
-  } while (value.includes(delim));
-  appendFileSync(outFile, `${name}<<${delim}\n${value}\n${delim}\n`);
-}
+export const setOutput: (name: string, value: string) => void = makeSetOutput(ALLOWED_OUTPUT_NAMES);

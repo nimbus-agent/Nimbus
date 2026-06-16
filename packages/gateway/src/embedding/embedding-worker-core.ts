@@ -159,13 +159,14 @@ export class EmbeddingWorkerCore {
    * Test seam: awaits all detached init/embed_texts work AND the serialized
    * embed_item queue. Every tracked path always resolves (init/embed_texts errors
    * are posted as messages, never thrown), so this cannot hang. The trailing await
-   * is a defensive re-snapshot of `inFlight` in case a test interleaves more
-   * detached work; the core never self-dispatches, so no re-entrancy occurs here.
+   * re-reads `inFlight` (Promise.all snapshots the Set's iterator synchronously at
+   * call time) in case a test interleaves more detached work after the queue drains;
+   * the core never self-dispatches, so no re-entrancy occurs here.
    */
   async idle(): Promise<void> {
-    await Promise.all([...this.inFlight]);
+    await Promise.all(this.inFlight);
     await this.embedChain;
-    await Promise.all([...this.inFlight]);
+    await Promise.all(this.inFlight);
   }
 
   /** Track a detached promise so `idle()` can await it; auto-remove when settled. */

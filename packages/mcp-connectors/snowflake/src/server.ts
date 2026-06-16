@@ -59,7 +59,7 @@ function assertSfIdentifier(name: string, label: string): string {
 
 // String literals are escaped by doubling single quotes (the only Snowflake literal-injection vector).
 function sfLiteral(v: string): string {
-  return `'${v.replace(/'/g, "''")}'`;
+  return `'${v.replaceAll("'", "''")}'`;
 }
 
 const TABLES_SQL =

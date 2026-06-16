@@ -41,6 +41,26 @@ function lite(it: {
   return { title: it.title, snippet: it.snippet, service: it.service, modifiedAt: it.modifiedAt };
 }
 
+/** Classify a peer's items into the contribution buckets, skipping anything older than the cutoff. */
+function collectPeerItems(
+  contrib: HuddleContribution,
+  items: ReadonlyArray<{
+    type: string;
+    title: string;
+    snippet: string;
+    service: string;
+    modifiedAt: number;
+  }>,
+  cutoff: number,
+): void {
+  for (const it of items) {
+    if (it.modifiedAt < cutoff) continue;
+    if (it.type === "pr") contrib.prs.push(lite(it));
+    else if (it.type === "issue") contrib.tickets.push(lite(it));
+    else if (it.type === "incident") contrib.incidents.push(lite(it));
+  }
+}
+
 function aggregateContributions(
   queryResults: Array<Awaited<ReturnType<typeof fanOutQuery>>>,
   cutoff: number,
@@ -59,12 +79,7 @@ function aggregateContributions(
           tickets: [],
           incidents: [],
         } satisfies HuddleContribution);
-      for (const it of peer.items) {
-        if (it.modifiedAt < cutoff) continue;
-        if (it.type === "pr") contrib.prs.push(lite(it));
-        else if (it.type === "issue") contrib.tickets.push(lite(it));
-        else if (it.type === "incident") contrib.incidents.push(lite(it));
-      }
+      collectPeerItems(contrib, peer.items, cutoff);
       byPeer.set(peer.peerId, contrib);
     }
   }

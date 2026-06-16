@@ -752,3 +752,97 @@ describe("runConnector auth — help + flag edges", () => {
     }
   });
 });
+
+describe("runConnector list — relative-time + truncation formatting", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  function row(overrides: Record<string, unknown>): Record<string, unknown> {
+    return {
+      serviceId: "svc",
+      status: "ok",
+      lastSyncAt: null,
+      nextSyncAt: null,
+      intervalMs: 60_000,
+      itemCount: 0,
+      lastError: null,
+      consecutiveFailures: 0,
+      healthState: "healthy",
+      healthRetryAfterMs: null,
+      ...overrides,
+    };
+  }
+
+  it("renders every relTime / fmtNextSync bucket, truncation, and health-retry formatting", async () => {
+    const now = Date.now();
+    const rows = [
+      // relTime buckets: seconds / minutes / hours / days ago
+      row({ serviceId: "secs", lastSyncAt: now - 5_000 }),
+      row({ serviceId: "mins", lastSyncAt: now - 5 * 60_000 }),
+      row({ serviceId: "hours", lastSyncAt: now - 5 * 3_600_000 }),
+      row({ serviceId: "days", lastSyncAt: now - 5 * 86_400_000 }),
+      // fmtNextSync buckets: due / in-seconds / in-minutes / in-hours / in-days
+      row({ serviceId: "due", nextSyncAt: now - 5_000 }),
+      row({ serviceId: "innext-s", nextSyncAt: now + 5_000 }),
+      row({ serviceId: "innext-m", nextSyncAt: now + 5 * 60_000 }),
+      row({ serviceId: "innext-h", nextSyncAt: now + 5 * 3_600_000 }),
+      row({ serviceId: "innext-d", nextSyncAt: now + 5 * 86_400_000 }),
+      // truncateText: a lastError longer than the 40-char cap; valid + invalid health-retry stamps
+      row({
+        serviceId: "longerr",
+        lastError: "this is a very long connector error message that exceeds the column cap",
+        healthState: null,
+        healthRetryAfterMs: now + 60_000,
+      }),
+      row({ serviceId: "nanretry", healthRetryAfterMs: Number.NaN }),
+    ];
+    const ipc = createMockIpcClient([rows]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await runConnector(["list"]);
+    expect(out.stdout).toContain("s ago");
+    expect(out.stdout).toContain("m ago");
+    expect(out.stdout).toContain("h ago");
+    expect(out.stdout).toContain("d ago");
+    expect(out.stdout).toContain("due");
+    expect(out.stdout).toMatch(/in \d+s/);
+    expect(out.stdout).toMatch(/in \d+m/);
+    expect(out.stdout).toMatch(/in \d+h/);
+    expect(out.stdout).toMatch(/in \d+d/);
+    // truncated error ends with an ellipsis (40-char cap)
+    expect(out.stdout).toContain("…");
+    // valid health-retry stamp renders as ISO; the NaN one falls back to the em dash
+    expect(out.stdout).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("runConnector flag-value validation edges", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("throws when a value-taking flag is given no value", async () => {
+    await expect(runConnector(["auth", "github", "--token"])).rejects.toThrow(
+      /Missing value for --token/,
+    );
+  });
+
+  it("throws when --token is whitespace-only", async () => {
+    await expect(runConnector(["auth", "github", "--token", "   "])).rejects.toThrow(
+      /Invalid --token \(empty\)/,
+    );
+  });
+});

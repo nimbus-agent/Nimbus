@@ -170,7 +170,7 @@ export async function answerLocalOperatorList(
     return { kind: "error", error: "identity_invalid" };
   }
   const entryDef = ctx.store.getEntry(req.entry);
-  if (entryDef === undefined || entryDef.service !== req.service) {
+  if (entryDef?.service !== req.service) {
     appendTeamVaultAudit(ctx.db, {
       principal: { kind: "localOperator" },
       entry: req.entry,
@@ -252,7 +252,7 @@ export async function answerLocalOperatorInvoke(
     return { kind: "error", error: "identity_invalid" };
   }
   const entryDef = ctx.store.getEntry(req.entry);
-  if (entryDef === undefined || entryDef.service !== req.service) {
+  if (entryDef?.service !== req.service) {
     appendTeamVaultAudit(ctx.db, {
       principal: { kind: "localOperator" },
       entry: req.entry,

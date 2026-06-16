@@ -20,9 +20,9 @@ export interface BonjourLike {
 }
 export type BonjourFactory = () => BonjourLike;
 
-// The real bonjour-service instance structurally satisfies BonjourLike; the `as unknown as`
-// bridges the wider real type to the seam interface used for testability.
-const defaultBonjourFactory: BonjourFactory = () => new BonjourLib() as unknown as BonjourLike;
+// The real bonjour-service instance structurally satisfies BonjourLike (the seam interface used for
+// testability), so it is assigned directly without a bridging type assertion.
+const defaultBonjourFactory: BonjourFactory = () => new BonjourLib();
 
 // MdnsDiscoveryProvider is a thin bonjour-service socket shell (advertise/browse _nimbus._tcp).
 // Real multicast cannot run on CI, so the bonjour client is injected via a factory (default = the

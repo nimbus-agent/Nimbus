@@ -17,6 +17,7 @@ import {
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
+  type ConnectorsConfig,
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
   loadNimbusChatopsFromConfigDir,
@@ -1135,41 +1136,40 @@ async function bootTribalKnowledge(deps: {
   return { tribalBoot, tribalInterceptCommand };
 }
 
-export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
-  const assemblyStartedMs = performance.now();
-  const sidecarStops: Array<() => void> = [];
-  await ensurePlatformDirectories(paths);
-  const vault = await createNimbusVault(paths);
-  const sandboxRunner = await createSandboxRunner();
-  const db = openGatewaySqlite(paths.dataDir, sidecarStops);
-  const notifications = createStubNotifications();
-  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
-  const rateLimiter = new ProviderRateLimiter();
-  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
-  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
-  const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath);
+/** Wave 7b/7c — build the team-shared credential contexts (I19 secret-consumption chokepoint).
+ *  `credentialFor` reads the per-connector [connectors.<name>] pin (default personal); the
+ *  localOperator list/invoke paths route through the principal-polymorphic gate. identityBoot is
+ *  built later in assembly, so operator-validity is late-bound through `identityBootRefHolder` and
+ *  fails closed until identity has booted (I18: identity-enabled but unbooted is treated as invalid).
+ *  Extracted from assemblePlatformServices to keep its cognitive complexity in budget. */
+function buildTeamCredentialContexts(deps: {
+  db: Database;
+  vault: NimbusVault;
+  paths: PlatformPaths;
+  connectorsConfig: ConnectorsConfig;
+  identityEnabled: boolean;
+  identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined };
+}): {
+  teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList">;
+  warehouseWriteDeps: WarehouseWriteContext;
+} {
+  const { db, vault, paths, connectorsConfig, identityEnabled, identityBootRefHolder } = deps;
+  // Shared by the list + invoke ctxs (previously duplicated): the late-bound operator-validity guard.
+  const identitySpread = identityEnabled
+    ? {
+        identity: {
+          enabled: true,
+          isOperatorValid: () => {
+            const ref = identityBootRefHolder.current;
+            const store = ref?.store;
+            const issuer = ref?.issuer;
+            if (store === undefined || issuer === undefined) return false; // fail-closed until booted
+            return isOperatorValid(store, issuer, Date.now(), ref?.graceSeconds ?? 0);
+          },
+        },
+      }
+    : {};
 
-  const { localIndex, scheduleItemEmbedding, rt } = await createLocalIndexWithEmbeddingRuntime(
-    db,
-    paths,
-    vault,
-    syncLogger,
-    activeTomlPath,
-  );
-  await ensureGithubCircleCiSchedulerCompanions(localIndex, vault);
-
-  await migrateToPerServiceOAuthKeys(vault);
-
-  await resumePendingRemovals(vault, localIndex);
-
-  // Wave 7b — team-shared credentials. `credentialFor` reads the per-connector [connectors.<name>]
-  // pin (default personal); `runTeamList` routes the localOperator path through the principal-
-  // polymorphic gate (I19 — the one secret-consumption chokepoint). identityBoot is built later in
-  // assembly, so the operator-validity check is late-bound through `identityBootRef` and fails closed
-  // until identity has booted (I18: identity-enabled but unbooted is treated as invalid).
-  const connectorsConfig = loadNimbusConnectorsFromConfigDir(paths.configDir);
-  const identityEnabled = loadNimbusIdentityFromConfigDir(paths.configDir).enabled;
-  let identityBootRef: ReturnType<typeof buildIdentityBoot> | undefined;
   const localOpListCtx: LocalOperatorListCtx = {
     db,
     store: new TeamVaultStore(db),
@@ -1189,19 +1189,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         },
         input,
       ),
-    ...(identityEnabled
-      ? {
-          identity: {
-            enabled: true,
-            isOperatorValid: () => {
-              const store = identityBootRef?.store;
-              const issuer = identityBootRef?.issuer;
-              if (store === undefined || issuer === undefined) return false; // fail-closed until booted
-              return isOperatorValid(store, issuer, Date.now(), identityBootRef?.graceSeconds ?? 0);
-            },
-          },
-        }
-      : {}),
+    ...identitySpread,
   };
   const teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList"> = {
     sandboxCwd: paths.dataDir,
@@ -1236,19 +1224,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         },
         input,
       ),
-    ...(identityEnabled
-      ? {
-          identity: {
-            enabled: true,
-            isOperatorValid: () => {
-              const store = identityBootRef?.store;
-              const issuer = identityBootRef?.issuer;
-              if (store === undefined || issuer === undefined) return false;
-              return isOperatorValid(store, issuer, Date.now(), identityBootRef?.graceSeconds ?? 0);
-            },
-          },
-        }
-      : {}),
+    ...identitySpread,
   };
 
   const warehouseWriteDeps: WarehouseWriteContext = {
@@ -1264,6 +1240,172 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
         return r.result;
       }),
   };
+
+  return { teamCredentialExtras, warehouseWriteDeps };
+}
+
+/** ChatOps (Phase 6 Slice 5) boot wiring. When [chatops].enabled, build the Slack/Teams bot graph
+ *  and wire it into the IPC + HTTP sidecar opts; returns the live ChatopsBoot (or undefined when
+ *  disabled). Extracted from assemblePlatformServices to keep its cognitive complexity in budget;
+ *  the chatops↔tribal reply cycle is preserved by rebinding `tribalSendHolder.current` here. */
+function bootChatopsIntoAssembly(deps: {
+  chatopsCfg: ReturnType<typeof loadNimbusChatopsFromConfigDir>;
+  policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"];
+  tribalBoot: TribalBoot | undefined;
+  tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
+  identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
+  vault: NimbusVault;
+  paths: PlatformPaths;
+  db: Database;
+  connectorMesh: Awaited<ReturnType<typeof createSchedulerWithMesh>>["connectorMesh"];
+  syncLogger: Logger;
+  ipcOpts: Parameters<typeof createIpcServer>[0];
+  httpSidecarOpts: HttpSidecarOpts;
+  sidecarStops: Array<() => void>;
+  tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
+}): ChatopsBoot | undefined {
+  const {
+    chatopsCfg,
+    policyGate,
+    tribalBoot,
+    tribalInterceptCommand,
+    identityBoot,
+    vault,
+    paths,
+    db,
+    connectorMesh,
+    syncLogger,
+    ipcOpts,
+    httpSidecarOpts,
+    sidecarStops,
+    tribalSendHolder,
+  } = deps;
+  if (!chatopsCfg.enabled) return undefined;
+  const identityBootRef = identityBoot;
+  // E2E seam (NIMBUS_CHATOPS_E2E_SINK_DIR, precedent: NIMBUS_SKIP_EMBEDDING_RUNTIME): swap the
+  // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
+  // Slack/Teams transport" the real-gateway e2e drives. Unset in production (the real spawn).
+  const chatopsE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
+  const chatopsBoot = buildChatopsBoot({
+    cfg: chatopsCfg,
+    policyGate,
+    ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
+    ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
+    ...(identityBootRef === undefined
+      ? {}
+      : {
+          identity: {
+            findScimByEmail: (email: string) => {
+              const scim = identityBootRef.store.findScimByEmail(email);
+              if (scim === undefined) return undefined;
+              return {
+                externalId: scim.externalId,
+                email: scim.email ?? email,
+                active: scim.active,
+                issuer: identityBootRef.issuer,
+              };
+            },
+            isOperatorValid: (issuer: string) =>
+              isOperatorValid(
+                identityBootRef.store,
+                issuer,
+                Date.now(),
+                identityBootRef.graceSeconds,
+              ),
+          },
+        }),
+    runTool:
+      chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
+        ? buildChatopsToolRunner({
+            vault,
+            botVaultEntry: chatopsCfg.botVaultEntry,
+            sandboxCwd: paths.dataDir,
+          })
+        : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
+    audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
+    dispatcher:
+      chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
+        ? createConnectorDispatcher({
+            listTools: () => connectorMesh.listToolsForDispatcher(),
+            getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+          })
+        : buildE2eSinkDispatcher(chatopsE2eSinkDir),
+    ...(chatopsCfg.teamsEnabled && chatopsCfg.teamsBotAppId !== ""
+      ? {
+          validateTeamsJwt: buildTeamsBotJwtValidator({
+            db,
+            teamsBotAppId: chatopsCfg.teamsBotAppId,
+            log: (m) => syncLogger.warn(m),
+          }),
+        }
+      : {}),
+    log: (m) => syncLogger.warn(m),
+  });
+  ipcOpts.chatopsRpcCtx = chatopsBoot.rpcCtx;
+  const teamsSurface = chatopsBoot.teamsSurface;
+  if (teamsSurface !== undefined) {
+    httpSidecarOpts.resolveTeamsEventsSurface = () => Promise.resolve(teamsSurface);
+  }
+  const stopChatops = chatopsBoot;
+  sidecarStops.push(() => void stopChatops.stop());
+  // Resolve the chatops↔tribal cycle: rebind the tribal watcher's `send` (the shared holder the
+  // tribal `send` closure reads at post time) to the chatops I23 reply seam now that it exists.
+  // Without chatops, the holder stays the no-op (detection still records clusters; CLI capture
+  // works; only auto-suggestion posts are suppressed).
+  if (tribalBoot !== undefined) {
+    const replyTo = chatopsBoot.replyTo;
+    tribalSendHolder.current = (target, text) => replyTo(target, text);
+  }
+  return chatopsBoot;
+}
+
+export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
+  const assemblyStartedMs = performance.now();
+  const sidecarStops: Array<() => void> = [];
+  await ensurePlatformDirectories(paths);
+  const vault = await createNimbusVault(paths);
+  const sandboxRunner = await createSandboxRunner();
+  const db = openGatewaySqlite(paths.dataDir, sidecarStops);
+  const notifications = createStubNotifications();
+  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
+  const rateLimiter = new ProviderRateLimiter();
+  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
+  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath);
+
+  const { localIndex, scheduleItemEmbedding, rt } = await createLocalIndexWithEmbeddingRuntime(
+    db,
+    paths,
+    vault,
+    syncLogger,
+    activeTomlPath,
+  );
+  await ensureGithubCircleCiSchedulerCompanions(localIndex, vault);
+
+  await migrateToPerServiceOAuthKeys(vault);
+
+  await resumePendingRemovals(vault, localIndex);
+
+  // Wave 7b — team-shared credentials. `credentialFor` reads the per-connector [connectors.<name>]
+  // pin (default personal); `runTeamList` routes the localOperator path through the principal-
+  // polymorphic gate (I19 — the one secret-consumption chokepoint). identityBoot is built later in
+  // assembly, so the operator-validity check is late-bound through `identityBootRef` and fails closed
+  // until identity has booted (I18: identity-enabled but unbooted is treated as invalid).
+  const connectorsConfig = loadNimbusConnectorsFromConfigDir(paths.configDir);
+  const identityEnabled = loadNimbusIdentityFromConfigDir(paths.configDir).enabled;
+  // identityBoot is built later in assembly; the operator-validity check is late-bound through this
+  // holder and fails closed until identity has booted (I18). Rebound to the live boot below.
+  const identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined } = {
+    current: undefined,
+  };
+  const { teamCredentialExtras, warehouseWriteDeps } = buildTeamCredentialContexts({
+    db,
+    vault,
+    paths,
+    connectorsConfig,
+    identityEnabled,
+    identityBootRefHolder,
+  });
 
   const syncBase: SyncContext = {
     vault,
@@ -1389,7 +1531,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     httpSidecarOpts,
   });
   // Bind the late-bound operator-validity guard used by the Wave 7b team-credential sync path (I18).
-  identityBootRef = identityBoot;
+  identityBootRefHolder.current = identityBoot;
 
   const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
 
@@ -1433,83 +1575,22 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // does not exist yet); the local-consent fallback binds to the delegated-approval broker after
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
   // (`chatopsBoot` is declared above so the tribal in-chat capture interceptor can late-bind to it.)
-  if (chatopsCfg.enabled) {
-    const identityBootRef = identityBoot;
-    // E2E seam (NIMBUS_CHATOPS_E2E_SINK_DIR, precedent: NIMBUS_SKIP_EMBEDDING_RUNTIME): swap the
-    // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
-    // Slack/Teams transport" the real-gateway e2e drives. Unset in production (the real spawn).
-    const chatopsE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
-    chatopsBoot = buildChatopsBoot({
-      cfg: chatopsCfg,
-      policyGate,
-      ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
-      ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
-      ...(identityBootRef === undefined
-        ? {}
-        : {
-            identity: {
-              findScimByEmail: (email: string) => {
-                const scim = identityBootRef.store.findScimByEmail(email);
-                if (scim === undefined) return undefined;
-                return {
-                  externalId: scim.externalId,
-                  email: scim.email ?? email,
-                  active: scim.active,
-                  issuer: identityBootRef.issuer,
-                };
-              },
-              isOperatorValid: (issuer: string) =>
-                isOperatorValid(
-                  identityBootRef.store,
-                  issuer,
-                  Date.now(),
-                  identityBootRef.graceSeconds,
-                ),
-            },
-          }),
-      runTool:
-        chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
-          ? buildChatopsToolRunner({
-              vault,
-              botVaultEntry: chatopsCfg.botVaultEntry,
-              sandboxCwd: paths.dataDir,
-            })
-          : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
-      audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
-      dispatcher:
-        chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
-          ? createConnectorDispatcher({
-              listTools: () => connectorMesh.listToolsForDispatcher(),
-              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-            })
-          : buildE2eSinkDispatcher(chatopsE2eSinkDir),
-      ...(chatopsCfg.teamsEnabled && chatopsCfg.teamsBotAppId !== ""
-        ? {
-            validateTeamsJwt: buildTeamsBotJwtValidator({
-              db,
-              teamsBotAppId: chatopsCfg.teamsBotAppId,
-              log: (m) => syncLogger.warn(m),
-            }),
-          }
-        : {}),
-      log: (m) => syncLogger.warn(m),
-    });
-    ipcOpts.chatopsRpcCtx = chatopsBoot.rpcCtx;
-    const teamsSurface = chatopsBoot.teamsSurface;
-    if (teamsSurface !== undefined) {
-      httpSidecarOpts.resolveTeamsEventsSurface = () => Promise.resolve(teamsSurface);
-    }
-    const stopChatops = chatopsBoot;
-    sidecarStops.push(() => void stopChatops.stop());
-    // Resolve the chatops↔tribal cycle: rebind the tribal watcher's `send` (the shared holder the
-    // tribal `send` closure reads at post time) to the chatops I23 reply seam now that it exists.
-    // Without chatops, the holder stays the no-op (detection still records clusters; CLI capture
-    // works; only auto-suggestion posts are suppressed).
-    if (tribalBoot !== undefined) {
-      const replyTo = chatopsBoot.replyTo;
-      tribalSendHolder.current = (target, text) => replyTo(target, text);
-    }
-  }
+  chatopsBoot = bootChatopsIntoAssembly({
+    chatopsCfg,
+    policyGate,
+    tribalBoot,
+    tribalInterceptCommand,
+    identityBoot,
+    vault,
+    paths,
+    db,
+    connectorMesh,
+    syncLogger,
+    ipcOpts,
+    httpSidecarOpts,
+    sidecarStops,
+    tribalSendHolder,
+  });
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every
   // subsystem is in scope. Wired into BOTH the IPC server (admin.status) and the read-only HTTP

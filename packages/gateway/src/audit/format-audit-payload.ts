@@ -21,7 +21,7 @@ const SENSITIVE_KEY = /(token|key|secret|password|credential|bearer|auth|^pat$)/
  */
 export const SENSITIVE_VALUE_PATTERNS: ReadonlyMap<string, RegExp> = new Map([
   ["github_classic", /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g],
-  ["github_fine_grained", /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])/g],
+  ["github_fine_grained", /(?<![A-Za-z0-9])github_pat_\w{20,}(?!\w)/g],
   ["openai", /(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g],
   ["anthropic", /(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g],
   ["slack", /(?<![A-Za-z0-9])xox[boapr]s?-[A-Za-z0-9-]{10,}(?![A-Za-z0-9-])/g],

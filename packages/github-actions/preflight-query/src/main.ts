@@ -1,4 +1,12 @@
-import { appendFileSync } from "node:fs";
+import {
+  emitAnnotation,
+  getBooleanInput,
+  getInput,
+  getIntInput,
+  safeInt,
+  safeString,
+  writeJobSummary,
+} from "../../shared/gha-io.ts";
 import { setOutput } from "./output.ts";
 import {
   decideExitCode,
@@ -8,18 +16,8 @@ import {
   renderJobSummary,
 } from "./render.ts";
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: explicit byte ranges define the sanitizer barrier
-const DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
-export function safeString(raw: unknown, maxLen: number): string {
-  const s = typeof raw === "string" ? raw : "";
-  return s.replace(DENY_CHARS, "").slice(0, maxLen);
-}
-
-function safeInt(raw: unknown): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(n) ? Math.trunc(n) : 0;
-}
+// Re-exported so this package's unit tests can import the pure helpers from main.ts.
+export { getBooleanInput, getInput, getIntInput, safeString };
 
 function safeVerdict(raw: unknown): "ok" | "warn" {
   return raw === "warn" ? "warn" : "ok";
@@ -75,36 +73,6 @@ export function sanitizeEnvelope(raw: Envelope): Envelope {
       },
     },
   };
-}
-
-export function getInput(name: string): string {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
-}
-
-export function getBooleanInput(name: string): boolean {
-  const raw = getInput(name).toLowerCase();
-  return raw === "true" || raw === "1" || raw === "yes";
-}
-
-export function getIntInput(name: string, fallback: number): number {
-  const raw = getInput(name);
-  if (raw === "") return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isInteger(n) ? n : fallback;
-}
-
-const STEP_SUMMARY_MAX_BYTES = 64 * 1024;
-
-function writeJobSummary(md: string): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
-  if (file === undefined) return;
-  const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
-  appendFileSync(file, `${safe}\n`);
-}
-
-function emitAnnotation(level: "warning" | "error", message: string): void {
-  process.stdout.write(`::${level}::${message}\n`);
 }
 
 export function parseMode(raw: string): PreflightMode {

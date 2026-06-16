@@ -1,5 +1,74 @@
-// src/main.ts
+import { createRequire } from "node:module";
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
+
+// ../shared/gha-io.ts
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
+var DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+function safeString(raw, maxLen) {
+  const s = typeof raw === "string" ? raw : "";
+  return s.replace(DENY_CHARS, "").slice(0, maxLen);
+}
+function safeInt(raw) {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+function getInput(name) {
+  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
+  return process.env[envName] ?? "";
+}
+function getBooleanInput(name) {
+  const raw = getInput(name).toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+function getIntInput(name, fallback) {
+  const raw = getInput(name);
+  if (raw === "")
+    return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) ? n : fallback;
+}
+var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
+function writeJobSummary(md) {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (file === undefined)
+    return;
+  const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
+  appendFileSync(file, `${safe}
+`);
+}
+function emitAnnotation(level, message) {
+  process.stdout.write(`::${level}::${message}
+`);
+}
+function makeSetOutput(allowedNames) {
+  return (name, value) => {
+    if (!allowedNames.has(name)) {
+      throw new Error(`refusing to set unknown output: ${name}`);
+    }
+    const outFile = process.env.GITHUB_OUTPUT;
+    if (outFile === undefined)
+      return;
+    let delim;
+    do {
+      delim = `EOF_${randomUUID().replaceAll("-", "")}`;
+    } while (value.includes(delim));
+    appendFileSync(outFile, `${name}<<${delim}
+${value}
+${delim}
+`);
+  };
+}
+
+// src/output.ts
+var ALLOWED_OUTPUT_NAMES = new Set([
+  "verdict",
+  "incident-count",
+  "failing-ci-count",
+  "merge-conflict-count",
+  "result-json"
+]);
+var setOutput = makeSetOutput(ALLOWED_OUTPUT_NAMES);
 
 // src/render.ts
 var CHECK_LABELS = {
@@ -10,13 +79,7 @@ var CHECK_LABELS = {
 var CHECK_ORDER = ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"];
 function renderJobSummary(env) {
   const lines = [];
-  lines.push(`### Nimbus pre-deploy preflight — ${env.service} @ \`${env.target_ref}\``);
-  lines.push("");
-  lines.push(`**Verdict:** \`${env.verdict}\``);
-  lines.push(`**Computed at:** ${env.computed_at}`);
-  lines.push("");
-  lines.push("| Check | Count | Gap |");
-  lines.push("|---|---:|---|");
+  lines.push(`### Nimbus pre-deploy preflight — ${env.service} @ \`${env.target_ref}\``, "", `**Verdict:** \`${env.verdict}\``, `**Computed at:** ${env.computed_at}`, "", "| Check | Count | Gap |", "|---|---:|---|");
   for (const key of CHECK_ORDER) {
     const m = env.checks[key];
     const gap = m.gap === null ? "" : `\`${m.gap}\``;
@@ -26,9 +89,7 @@ function renderJobSummary(env) {
     const m = env.checks[key];
     if (m.findings.length === 0)
       continue;
-    lines.push("");
-    lines.push(`<details><summary>${CHECK_LABELS[key]} (${m.count})</summary>`);
-    lines.push("");
+    lines.push("", `<details><summary>${CHECK_LABELS[key]} (${m.count})</summary>`, "");
     for (const f of m.findings) {
       const linkPart = f.url ? ` — ${f.url}` : "";
       lines.push(`- \`${f.id}\` — ${f.title}${linkPart}`);
@@ -67,15 +128,6 @@ function decideExitCode(args) {
 }
 
 // src/main.ts
-var DENY_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-function safeString(raw, maxLen) {
-  const s = typeof raw === "string" ? raw : "";
-  return s.replace(DENY_CHARS, "").slice(0, maxLen);
-}
-function safeInt(raw) {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(n) ? Math.trunc(n) : 0;
-}
 function safeVerdict(raw) {
   return raw === "warn" ? "warn" : "ok";
 }
@@ -112,57 +164,6 @@ function sanitizeEnvelope(raw) {
       }
     }
   };
-}
-function getInput(name) {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
-}
-function getBooleanInput(name) {
-  const raw = getInput(name).toLowerCase();
-  return raw === "true" || raw === "1" || raw === "yes";
-}
-function getIntInput(name, fallback) {
-  const raw = getInput(name);
-  if (raw === "")
-    return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isInteger(n) ? n : fallback;
-}
-var ALLOWED_OUTPUT_NAMES = new Set([
-  "verdict",
-  "incident-count",
-  "failing-ci-count",
-  "merge-conflict-count",
-  "result-json"
-]);
-function setOutput(name, value) {
-  if (!ALLOWED_OUTPUT_NAMES.has(name)) {
-    throw new Error(`refusing to set unknown output: ${name}`);
-  }
-  const outFile = process.env.GITHUB_OUTPUT;
-  if (outFile === undefined)
-    return;
-  let delim;
-  do {
-    delim = `EOF_${Math.random().toString(36).slice(2)}`;
-  } while (value.includes(delim));
-  appendFileSync(outFile, `${name}<<${delim}
-${value}
-${delim}
-`);
-}
-var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
-function writeJobSummary(md) {
-  const file = process.env.GITHUB_STEP_SUMMARY;
-  if (file === undefined)
-    return;
-  const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
-  appendFileSync(file, `${safe}
-`);
-}
-function emitAnnotation(level, message) {
-  process.stdout.write(`::${level}::${message}
-`);
 }
 function parseMode(raw) {
   if (raw === "block" || raw === "off")
@@ -216,7 +217,8 @@ async function main() {
       unreachable: true,
       allowGatewayFailure
     });
-    setOutput("verdict", code2 === 1 ? "block" : mode === "off" ? "ok" : "warn");
+    const nonBlockVerdict = mode === "off" ? "ok" : "warn";
+    setOutput("verdict", code2 === 1 ? "block" : nonBlockVerdict);
     setOutput("result-json", "{}");
     process.exit(code2);
   }
@@ -239,7 +241,15 @@ async function main() {
   });
   process.exit(code);
 }
-await main();
+if (__require.main == __require.module) {
+  await main();
+}
 export {
-  main
+  sanitizeEnvelope,
+  safeString,
+  parseMode,
+  main,
+  getIntInput,
+  getInput,
+  getBooleanInput
 };
