@@ -126,7 +126,13 @@ export class SessionMemoryStore {
     sessionId: string,
     limit: number,
   ): Promise<Array<{ text: string; role: SessionMemoryRole; createdAt: number }>> {
-    if (!this.ensureReady()) {
+    // This read touches only the `session_memory` table — never a vec virtual table — so it must
+    // NOT gate on ensureReady() (which also requires the sqlite-vec extension to load). On a runner
+    // where sqlite-vec is unavailable (no npm prebuilt + no sidecar), the table still holds the
+    // no-vec rows append() wrote; gating on vec readiness here silently dropped them (empty turns),
+    // which is why the I27 share e2e redaction round-trip failed on all 3 OS legs. Gate on table
+    // existence (V10) only, mirroring listSessions()/deleteSession().
+    if (readIndexedUserVersion(this.db) < 10) {
       return [];
     }
     const k = Math.min(200, Math.max(1, Math.floor(limit)));
