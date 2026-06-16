@@ -105,12 +105,12 @@ function parseSink(params: unknown): { sink: ShareSink; filePath?: string } {
     return { sink: { type: "file" }, ...(path === undefined ? {} : { filePath: path }) };
   }
   // Reject an unrecognized sink rather than silently coercing it to a file write.
-  throw new ShareRpcError(-32602, `ERR_INVALID_PARAMS: unknown sink.type ${String(type)}`);
+  throw new ShareRpcError(-32602, `ERR_INVALID_PARAMS: unknown sink.type ${JSON.stringify(type)}`);
 }
 
 /** Escape a caller-supplied literal so it is matched verbatim (no regex injection / ReDoS). */
 function literalToRegExp(s: string): RegExp {
-  return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+  return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`), "g");
 }
 
 async function emitFile(filePath: string, json: string): Promise<void> {

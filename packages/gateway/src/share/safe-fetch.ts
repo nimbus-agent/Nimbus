@@ -23,7 +23,7 @@ function isPrivateV4(addr: string): boolean {
  */
 function extractMappedV4(addr: string): string | null {
   const a = addr.toLowerCase();
-  const m = a.match(/^::ffff:(.+)$/);
+  const m = /^::ffff:(.+)$/.exec(a);
   if (!m) return null;
   const tail = m[1] as string;
   // Dotted form: ::ffff:127.0.0.1

@@ -2,16 +2,8 @@ import { decodeBase64 } from "@nimbus-dev/sdk";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import nacl from "tweetnacl";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
-
-/**
- * Deterministic, locale-independent code-unit comparison for canonical key/array ordering.
- * Must NOT use `localeCompare` (locale-dependent → would break the cross-machine stability of the
- * signed canonical form). Matches the default `Array.prototype.sort()` lexicographic order.
- */
-function codeUnitCompare(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 
 export const SHARE_FORMAT = "nimbus-share/v1";
 
@@ -67,7 +59,7 @@ export function canonicalizeBody(body: ShareBody): Uint8Array {
     if (Array.isArray(v)) return v.map(sortKeys);
     if (v !== null && typeof v === "object") {
       const o: Record<string, unknown> = {};
-      for (const k of Object.keys(v as Record<string, unknown>).sort(codeUnitCompare)) {
+      for (const k of Object.keys(v).sort(codeUnitCompare)) {
         o[k] = sortKeys((v as Record<string, unknown>)[k]);
       }
       return o;
@@ -124,10 +116,10 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
   if (
     parsed === null ||
     typeof parsed !== "object" ||
-    typeof (parsed as ShareFile).body !== "object" ||
-    (parsed as ShareFile).body === null ||
-    typeof (parsed as ShareFile).sig !== "object" ||
-    (parsed as ShareFile).sig === null
+    typeof parsed.body !== "object" ||
+    parsed.body === null ||
+    typeof parsed.sig !== "object" ||
+    parsed.sig === null
   ) {
     return {
       ok: false,

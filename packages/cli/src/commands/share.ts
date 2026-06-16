@@ -39,14 +39,15 @@ export function parseShareCreateArgs(args: readonly string[]): ShareCreateArgs {
   };
   const out = flag("--out");
   const peer = flag("--to-peer");
-  const sink: ShareSinkArg =
-    out !== undefined
-      ? { type: "file", path: out }
-      : args.includes("--http")
-        ? { type: "http" }
-        : peer !== undefined
-          ? { type: "peer", peerId: peer }
-          : { type: "file" };
+  // Precedence: explicit --out file > --http > --to-peer > default file. Early returns keep each
+  // branch a positive guard (no negated-condition-with-else) and avoid a nested ternary.
+  const resolveSink = (): ShareSinkArg => {
+    if (out !== undefined) return { type: "file", path: out };
+    if (args.includes("--http")) return { type: "http" };
+    if (peer !== undefined) return { type: "peer", peerId: peer };
+    return { type: "file" };
+  };
+  const sink = resolveSink();
   const exp = flag("--expires");
   const redact: string[] = [];
   for (let i = 0; i < args.length; i++) {
