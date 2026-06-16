@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { emitAnnotation, getIntInput, makeSetOutput, safeInt, safeString } from "./gha-io.ts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  emitAnnotation,
+  getBooleanInput,
+  getInput,
+  getIntInput,
+  makeSetOutput,
+  safeInt,
+  safeString,
+  writeJobSummary,
+} from "./gha-io.ts";
 
 describe("emitAnnotation — workflow-command injection hardening", () => {
   let written = "";
@@ -84,6 +96,86 @@ describe("scalar input helpers", () => {
     } finally {
       if (saved === undefined) delete process.env.INPUT_TIMEOUT_MS;
       else process.env.INPUT_TIMEOUT_MS = saved;
+    }
+  });
+
+  test("getInput and getBooleanInput read INPUT_* env vars", () => {
+    const savedString = process.env.INPUT_SOME_STRING;
+    const savedBool = process.env.INPUT_SOME_BOOL;
+    try {
+      process.env.INPUT_SOME_STRING = " hello ";
+      expect(getInput("some-string")).toBe(" hello ");
+
+      process.env.INPUT_SOME_BOOL = "true";
+      expect(getBooleanInput("some-bool")).toBe(true);
+
+      process.env.INPUT_SOME_BOOL = "YES";
+      expect(getBooleanInput("some-bool")).toBe(true);
+
+      process.env.INPUT_SOME_BOOL = "1";
+      expect(getBooleanInput("some-bool")).toBe(true);
+
+      process.env.INPUT_SOME_BOOL = "false";
+      expect(getBooleanInput("some-bool")).toBe(false);
+
+      delete process.env.INPUT_SOME_BOOL;
+      expect(getBooleanInput("some-bool")).toBe(false);
+    } finally {
+      if (savedString !== undefined) process.env.INPUT_SOME_STRING = savedString;
+      else delete process.env.INPUT_SOME_STRING;
+      if (savedBool !== undefined) process.env.INPUT_SOME_BOOL = savedBool;
+      else delete process.env.INPUT_SOME_BOOL;
+    }
+  });
+});
+
+describe("writeJobSummary", () => {
+  test("writeJobSummary writes to process.env.GITHUB_STEP_SUMMARY", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "gha-summary-"));
+    const summaryFile = join(tmpDir, "summary.md");
+    const saved = process.env.GITHUB_STEP_SUMMARY;
+    process.env.GITHUB_STEP_SUMMARY = summaryFile;
+    try {
+      writeJobSummary("hello world");
+      expect(readFileSync(summaryFile, "utf8")).toBe("hello world\n");
+      const huge = "A".repeat(70000);
+      writeJobSummary(huge);
+      const content = readFileSync(summaryFile, "utf8");
+      expect(content.length).toBe(12 + 65536 + 1); // "hello world\n" + 64kb + "\n"
+    } finally {
+      if (saved === undefined) delete process.env.GITHUB_STEP_SUMMARY;
+      else process.env.GITHUB_STEP_SUMMARY = saved;
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("writeJobSummary does nothing when GITHUB_STEP_SUMMARY is unset", () => {
+    const saved = process.env.GITHUB_STEP_SUMMARY;
+    delete process.env.GITHUB_STEP_SUMMARY;
+    try {
+      expect(() => writeJobSummary("hello")).not.toThrow();
+    } finally {
+      if (saved !== undefined) process.env.GITHUB_STEP_SUMMARY = saved;
+    }
+  });
+});
+
+describe("makeSetOutput file writing", () => {
+  test("makeSetOutput writes correct heredoc format to GITHUB_OUTPUT", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "gha-output-"));
+    const outFile = join(tmpDir, "output.txt");
+    const saved = process.env.GITHUB_OUTPUT;
+    process.env.GITHUB_OUTPUT = outFile;
+    try {
+      const setOutput = makeSetOutput(new Set(["my-out"]));
+      setOutput("my-out", "hello\nworld");
+      const content = readFileSync(outFile, "utf8");
+      expect(content).toContain("my-out<<EOF_");
+      expect(content).toContain("\nhello\nworld\nEOF_");
+    } finally {
+      if (saved === undefined) delete process.env.GITHUB_OUTPUT;
+      else process.env.GITHUB_OUTPUT = saved;
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 });
