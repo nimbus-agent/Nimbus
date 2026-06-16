@@ -56,9 +56,11 @@ export function verifyShareFromBytes(
 export async function verifyShareFromInput(
   input: string,
   opts?: { now?: number },
+  deps?: { readonly safeFetchFn?: typeof safeFetch },
 ): Promise<VerifyShareReport> {
   if (input.startsWith("http://") || input.startsWith("https://")) {
-    const res = await safeFetch(input);
+    const doFetch = deps?.safeFetchFn ?? safeFetch;
+    const res = await doFetch(input);
     const buf = new Uint8Array(await res.arrayBuffer());
     return verifyShareFromBytes(buf, opts);
   }

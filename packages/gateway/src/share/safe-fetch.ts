@@ -82,16 +82,31 @@ export function assertSafeUrl(raw: string): URL {
  * --http sink host is config-pinned and verify-share url fetch is a user-initiated read. Full
  * IP-pinning via a custom connector is a tracked hardening follow-up, not 8a.
  */
-export async function safeFetch(raw: string, init?: RequestInit): Promise<Response> {
+/**
+ * Injectable DNS + fetch seam. Defaults to the real `node:dns` resolver and global `fetch`;
+ * tests substitute fakes to exercise the resolve-then-fetch path without real network I/O.
+ */
+export interface SafeFetchDeps {
+  readonly lookupFn?: typeof lookup;
+  readonly fetchFn?: typeof fetch;
+}
+
+export async function safeFetch(
+  raw: string,
+  init?: RequestInit,
+  deps?: SafeFetchDeps,
+): Promise<Response> {
+  const doLookup = deps?.lookupFn ?? lookup;
+  const doFetch = deps?.fetchFn ?? fetch;
   const url = assertSafeUrl(raw);
   const host = unbracketHost(url.hostname);
   if (isIP(host) === 0) {
-    const resolved = await lookup(host, { all: true });
+    const resolved = await doLookup(host, { all: true });
     for (const { address } of resolved) {
       if (isPrivateAddress(address)) {
         throw new Error(`unsafe url: ${url.hostname} resolves to private ${address}`);
       }
     }
   }
-  return fetch(url, init);
+  return doFetch(url, init);
 }

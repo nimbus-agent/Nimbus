@@ -91,6 +91,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/cli/src/commands/chatops.ts" },
   { kind: "exact", path: "packages/cli/src/commands/repl.ts" },
   { kind: "exact", path: "packages/cli/src/commands/doctor.ts" },
+  // `share.ts` (Phase 6 Slice 8a): the testable core (`parseShareCreateArgs` — sink/expiry/redact
+  // parsing) is exported + unit-tested by `share.test.ts`; the residual uncovered lines are the
+  // `runShare` / `runVerifyShare` wrappers — CLI IPC shells that read gateway state, construct a
+  // real `IPCClient`, and call `process.exit`, with no injection seam. Same exemption class as
+  // chatops.ts / policy.ts. The full create→verify path is proven by `gateway/test/e2e/share-e2e`.
+  { kind: "exact", path: "packages/cli/src/commands/share.ts" },
 
   // ── Env-gated production-imported mock ──
   // `chatops-tool-runner-e2e-sink.ts` (Phase 6 Slice 5): env-gated by `NIMBUS_CHATOPS_E2E_SINK_DIR`
