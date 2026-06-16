@@ -63,14 +63,20 @@ Four units, each independently testable:
   queued run waits rather than racing on issue upserts).
 - **Job (ubuntu-24.04):** `step-security/harden-runner` (egress audit, mirroring
   the other perf workflows) → `actions/checkout` → setup Bun + install →
+  **ensure the `perf-drift` label exists** (`gh label create perf-drift --color
+  … --description … --force` — idempotent; `--force` updates if present) →
   `bun scripts/perf/drift-check.ts`, with `NIMBUS_PERF_RUNNER: gha-ubuntu` in
-  the env. All action refs SHA-pinned to match repo convention.
+  the env. All action refs SHA-pinned to match repo convention. The label step
+  is required because `gh issue create --label <l>` **fails** on a missing label
+  (it does not auto-create) — without it the per-surface try/catch would swallow
+  the error and silently file nothing. `gh label create` is covered by the
+  `issues: write` grant already requested.
 - `schedule` fires only on the default branch of this repo — never on forks/fork
   PRs — so the `issues: write` grant is non-fork-triggered by construction.
 
 ### 3.2 `GhCli` issue methods (`packages/gateway/src/perf/bench-ci-gh.ts`)
 
-Add three methods mirroring the existing body-file-based, retry-wrapped
+Add two methods mirroring the existing body-file-based, retry-wrapped
 `prComment*` methods (so issue ops inherit the `#run` retry/backoff and the
 `spawn` injection seam):
 
@@ -80,47 +86,63 @@ Add three methods mirroring the existing body-file-based, retry-wrapped
   output, matching `prCommentList`).
 - `issueCreate({ title, label, bodyFile }): Promise<void>` —
   `gh issue create --title <title> --label <label> --body-file <bodyFile>`.
-- `issueComment({ number, bodyFile }): Promise<void>` —
-  `gh issue comment <number> --body-file <bodyFile>`.
 
-Body-file (not `--body`) keeps multi-line bodies out of argv and matches the
-`prComment*` precedent. These methods are exercised by new unit tests (required —
-`bench-ci-gh.ts` is coverage-floor-gated at ≥80% line+branch).
+There is intentionally **no `issueComment`** method: the upsert is *create-only*
+(see §3.3) — an already-open issue is left untouched, so daily re-commenting
+never happens. Body-file (not `--body`) keeps multi-line bodies out of argv and
+matches the `prComment*` precedent. Both methods are exercised by new unit tests
+(required — `bench-ci-gh.ts` is coverage-floor-gated at ≥80% line+branch).
 
 ### 3.3 `scripts/perf/drift-check.ts` refactor
 
-- Delete the local `ghSpawn` pass-through; route `issueList/create/comment`
-  through the injected `deps.gh: GhCli`. `upsertDriftIssue` writes its computed
-  body to a temp file (`mkdtempSync` + `join`, cross-platform) and passes it via
-  `bodyFile`. Net: the wrapper now depends only on `GhCli`, which is injectable.
+- **Create-only upsert.** Delete the local `ghSpawn` pass-through and route the
+  upsert through the injected `deps.gh: GhCli`. `upsertDriftIssue` calls
+  `issueList(perf-drift)`; if an open issue whose title matches the surface
+  already exists it **does nothing** (the open issue is the standing signal),
+  otherwise it writes the body to a temp file (`mkdtempSync` + `join`,
+  cross-platform) and calls `issueCreate`. This removes the shipped behavior of
+  posting a fresh comment on every daily run while a regression persists (the
+  reviewer's spam concern). Net: the wrapper depends only on `GhCli`, injectable.
 - Replace local `rollingMedian` with `medianOf` from `baseline-median.ts`,
   guarding the empty case (`window.length === 0 ? 0 : medianOf(window)`) to
   preserve `detectDrift`'s exact contract. `medianOf` is byte-for-byte the same
   median algorithm, so the existing `detectDrift` unit tests stay green. (The
   `detectDrift` loop only ever passes a fixed-size `k`-element window, so the
   guard is defensive, not load-bearing.)
-- Use the shared last-line parser (§3.4) in `downloadRecentMainLines` instead of
-  its inline `split("\n").filter(...).at(-1)`.
+- **One sample per run.** The shipped `downloadRecentMainLines` uses
+  `parseHistoryLines`, which parses *every* line of each artifact. Each `_perf.yml`
+  run writes a fresh single-run `run-history.jsonl` (its `RUNNER_TEMP` is per-run),
+  so today that is one line per artifact and there is no live duplication — but
+  reading *all* lines is fragile: an artifact that ever carried more than one line
+  would inject multiple samples for a single run and distort the series. Switch to
+  the shared last-line parser (§3.4) so each run contributes exactly one sample,
+  preserving the existing `isHistoryLineV2` guard (a non-v2 / unreadable artifact
+  is skipped, as today).
 
 ### 3.4 Shared JSONL parser (`scripts/perf/history-jsonl.ts`, new)
 
 Extract `parseLastHistoryLine(text: string): HistoryLine` (currently private in
 `emit-benchmark-json.ts`) into a small shared module; both `emit-benchmark-json.ts`
-and `drift-check.ts` import it. Same behavior: split on newlines, drop blank
-lines, `JSON.parse` the last, throw on empty input.
+and `drift-check.ts` import it. Behavior: split on newlines, drop blank lines,
+`JSON.parse` the last, throw on empty input. `drift-check.ts` applies its
+existing `isHistoryLineV2` check to the returned line inside its per-artifact
+try/catch (skipping a non-v2 / unparseable artifact), so the shared helper stays
+a thin parser and the v2-guard semantics drift-check needs are preserved at the
+call site. `parseHistoryLines` (the all-lines reader) is removed.
 
 ## 4. Data flow
 
 ```text
 06:00 UTC daily
   └─ _perf-drift.yml (ubuntu, gha-ubuntu history)
+       ├─ gh label create perf-drift --force   (idempotent; ensures the label exists)
        └─ drift-check.ts → runDriftCheckMain({ gh, runner: "gha-ubuntu" })
             ├─ GhCli.runListRecentSuccesses(_perf.yml, branch=main, limit=14)
-            ├─ for each run (oldest-first): GhCli.runDownloadArtifact → parseLastHistoryLine
+            ├─ for each run (oldest-first): GhCli.runDownloadArtifact → parseLastHistoryLine (one/run)
             ├─ per trend, smaller-is-better surface: build DriftSample[] → detectDrift(series, 20)
             └─ if drifting: GhCli.issueList(label=perf-drift)
                  ├─ no matching open issue → GhCli.issueCreate(title, label, bodyFile)
-                 └─ matching open issue    → GhCli.issueComment(number, bodyFile)
+                 └─ matching open issue    → no-op (create-only; no daily re-comment)
 ```
 
 ## 5. Error handling
@@ -139,13 +161,14 @@ normally on all handled errors.
 - **`parseLastHistoryLine`** (new, `history-jsonl.test.ts`) — empty input throws;
   last-of-many wins; trailing-newline tolerated.
 - **`GhCli` issue methods** (new, in the existing `bench-ci-gh` test file) —
-  injected `spawn` asserts exact argv for list/create/comment and the
+  injected `spawn` asserts exact argv for `issueList`/`issueCreate` and the
   tolerant-JSON parse for `issueList` (incl. the non-JSON-notice → `[]` arm).
 - **`runDriftCheckMain` wrapper** (new) — injected `GhCli` (canned `spawn`
   sequence) + fake `run-history.jsonl` artifacts staged in a temp dir, mirroring
-  the `bench-ci.test.ts` fixture pattern. Three cases: a drifting series →
-  exactly one `issueCreate`; a drifting series with a matching open issue →
-  `issueComment` (no create); a flat series → neither.
+  the `bench-ci.test.ts` fixture pattern. Three cases: a drifting series with no
+  matching open issue → exactly one `issueCreate`; a drifting series **with** a
+  matching open issue → **no** `issueCreate` (create-only no-op, the anti-spam
+  behavior); a flat series → no `issueList`/`issueCreate` at all.
 
 ## 7. Rollout
 
@@ -153,13 +176,25 @@ Single PR (workflow + GhCli methods + drift-check refactor + shared parser +
 tests). No schema migration, no new security invariant (perf is not an invariant
 surface; the `issues: write` grant is scoped to one non-fork-triggered workflow).
 First scheduled run lands the day after merge; can be smoke-tested immediately
-via `workflow_dispatch`. The `perf-drift` issue label is created on first use by
-`gh issue create --label` (or pre-created in the repo).
+via `workflow_dispatch`. The `perf-drift` label is guaranteed by the idempotent
+`gh label create … --force` step at the top of the job (§3.1), so the run is
+self-contained and needs no manual repo setup.
+
+**Issue resolution is manual** in this phase: when a regression is fixed the
+daily run simply stops finding drift and files nothing further, but the existing
+open `perf-drift` issue is **not** auto-closed — a human verifies the fix and
+closes it. This is deliberate: these are intentionally noisy `trend` surfaces, so
+auto-closing on the first no-drift run would flap the issue open/closed. (A
+future enhancement could auto-close only after *N* consecutive clean runs — §9.)
 
 ## 8. Risks & mitigations
 
-- *Unattended issue spam from a wrapper bug* → mitigated by the new wrapper test
-  plus the upsert dedup (one open issue per surface title) that already exists.
+- *Unattended issue spam* → create-only upsert (§3.3): an already-open issue is
+  left untouched, so there is no daily re-comment; one standing issue per drifting
+  surface. Backed by the new wrapper test.
+- *`gh issue create --label` fails on a missing label* → idempotent
+  `gh label create perf-drift --force` step runs before drift-check (§3.1), so
+  the label always exists.
 - *14-artifact download cost daily* → low; one ubuntu job, ~14 small JSONL
   artifacts, once/day.
 - *`gha-ubuntu` history sparse early on* → `detectDrift` needs `≥ k+n` samples
@@ -167,3 +202,18 @@ via `workflow_dispatch`. The `perf-drift` issue label is created on first use by
 - *Stale duplicate of the two #656 gate fixes on this branch* → this branch is
   stacked on the Biome-2.5.0/ovsx fix branch; rebase onto `main` after #656
   merges drops the duplicates.
+
+## 9. Deferred enhancements (out of scope, noted for later)
+
+These were raised in review and intentionally deferred to keep this PR focused on
+*activating* alerting safely:
+
+- **Informative comment body.** A future iteration could re-introduce a comment
+  (re-adding `GhCli.issueComment`) carrying the current p95/median, the deviation
+  vs. the rolling median, and the commits since the last clean run — gated by a
+  throttle (e.g. no comment unless the prior one is ≥ *N* days old) so it never
+  becomes daily noise.
+- **Auto-close after sustained recovery.** Close an open `perf-drift` issue
+  automatically once drift has been absent for *N* consecutive runs (not a single
+  run — that would flap), with a closing comment. Requires tracking per-surface
+  clean-run streaks, which this phase does not model.
