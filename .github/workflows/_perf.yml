@@ -77,6 +77,7 @@ jobs:
       contents: write        # github-action-benchmark auto-push to the perf-data orphan branch (push events only)
       pull-requests: write   # for `gh pr comment` upsert in bench-ci.ts
       actions: read          # for `gh run list` + `gh run view` + `gh run download`
+      checks: write          # for the advisory Bencher "Bencher Report" check run (`bencher run --github-actions`)
     # Spec § 4.3 — do not skew measurements by cancelling a running matrix.
     # Group by (workflow, os, ref) so different branches don't queue behind
     # each other but two pushes on the same branch+OS serialise.
