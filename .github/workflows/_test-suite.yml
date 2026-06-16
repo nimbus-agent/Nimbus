@@ -228,6 +228,11 @@ jobs:
           # mail-core, mcp-tool-kit, run-cli-json, search-filter) are measured.
           run_pkg "packages/mcp-connectors/shared"
 
+          # `github-actions/shared` is the same case: a package.json-less relative-import
+          # folder (gha-io.ts) shared by the preflight-query + annotate-action actions,
+          # with its own *.test.ts. Run it explicitly so it is exercised in CI.
+          run_pkg "packages/github-actions/shared"
+
           # Union the per-process istanbul shards (coverage/.nyc-tmp/*.json)
           # written by the report-coverage preload into a single repo-root
           # coverage/lcov.info carrying BRDA branch records.

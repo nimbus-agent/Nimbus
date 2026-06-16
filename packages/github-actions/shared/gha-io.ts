@@ -51,9 +51,15 @@ export function writeJobSummary(md: string): void {
   appendFileSync(file, `${safe}\n`);
 }
 
-/** Emit a GitHub Actions workflow annotation command on stdout. */
+/**
+ * Emit a GitHub Actions workflow annotation command on stdout. The message is escaped with the
+ * GitHub-documented encoding (`%`→`%25`, CR→`%0D`, LF→`%0A`) so that gateway-supplied content (error
+ * bodies, hints) containing newlines or `::` cannot inject additional workflow commands; GitHub
+ * decodes the escapes back when rendering the annotation, so multi-line messages still display.
+ */
 export function emitAnnotation(level: "warning" | "error", message: string): void {
-  process.stdout.write(`::${level}::${message}\n`);
+  const safe = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+  process.stdout.write(`::${level}::${safe}\n`);
 }
 
 /**

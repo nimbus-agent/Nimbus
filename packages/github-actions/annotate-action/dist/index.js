@@ -38,7 +38,9 @@ function writeJobSummary(md) {
 `);
 }
 function emitAnnotation(level, message) {
-  process.stdout.write(`::${level}::${message}
+  const safe = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll(`
+`, "%0A");
+  process.stdout.write(`::${level}::${safe}
 `);
 }
 function makeSetOutput(allowedNames) {
