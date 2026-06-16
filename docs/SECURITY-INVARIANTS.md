@@ -499,6 +499,26 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ---
 
+## I27 — an outbound share leaves the machine only through the share-gate, behind the owner's HITL approval of the exact redacted bytes
+
+**Statement:** This is the one subsystem in Nimbus that deliberately emits indexed data *outward*; every other invariant keeps data local. An outbound share therefore leaves the machine only through `share/share-gate.ts` `createShare()`: default + caller redaction is applied (secrets + the share PII families), the LOCAL owner approves the exact redacted preview bytes via the `share.publish` HITL action (a member of the I2 `HITL_REQUIRED_BACKING` frozen set — no `--yes` skip), the body is signed with the Vault-only `share.signing.privkey` Ed25519 seed, the share is persisted to `share_records` (V41), and the applied redaction-set is audit-logged. A rejected or timed-out approval persists + signs + emits NOTHING (fail-closed). No other code path emits a share to a file sink, the config-pinned HTTP sink, or a federation peer. The signing privkey is Vault-only and never leaves the process. Static **D21**.
+
+**Wired at:**
+
+- `packages/gateway/src/share/share-gate.ts` — `createShare()`: the chokepoint that runs collect → redact → owner-HITL preview approval → sign → persist → audit. Returns `{ status: "rejected" }` (no side effects) on a denied/timed-out approval.
+- `packages/gateway/src/engine/executor.ts` — `"share.publish"` is a member of `HITL_REQUIRED_BACKING` (I2), so the action type cannot be emitted without the executor gate firing.
+- `packages/gateway/src/share/share-keypair.ts` — `ensureShareKeypair()` is the sole reader/writer of the Vault-only `share.signing.privkey` / `share.signing.pubkey`.
+- `packages/gateway/src/ipc/share-rpc.ts` — the single wiring file that constructs the `createShare` deps (routing `requestApproval` to the fail-closed `shareConsent` broker) and performs the post-gate sink emit (file / SSRF-safe HTTP POST to the config-pinned `[share.http_sink]` / peer stub).
+- `packages/gateway/src/platform/assemble.ts` — supplies `shareConsent.request` as `createShare`'s `requestApproval` at boot, binding the owner-HITL broker to the gate so it cannot silently become an always-true stub.
+- Enforced statically by **D21** in `scripts/structure-audit/check-nimbus-invariants.ts` — confines the `share.publish` action-type literal to executor + share-gate (`D21-share-publish`), the `share.signing.privkey` Vault-key literal to share-keypair.ts (`D21-share-signing-privkey`), and the `createShare` call site to share-gate.ts + share-rpc.ts (`D21-createshare-callsite`); also asserts assemble.ts wires `shareConsent.request` (`D21-share-consent-broker`).
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I27` describe block (`share.publish` ∈ `HITL_REQUIRED`) plus the `FORBIDDEN_OVER_LAN` test asserting `share.create` + `share.prune` are not LAN-callable.
+
+**Anti-pattern:** emitting a share (file write / HTTP POST / federation forward) from anywhere but the share-rpc wiring after the gate; calling `createShare` outside the gate + share-rpc; reading `share.signing.privkey` outside share-keypair.ts; naming `share.publish` outside executor + share-gate; replacing the `shareConsent` broker with an always-true approval.
+
+**How to comply:** route every outbound share through `createShare`; keep the emit confined to share-rpc.ts after a successful gate result; read the signing key only via `ensureShareKeypair`; never make `requestApproval` resolve true without explicit owner approval of the redacted preview.
+
+---
+
 ## How a new invariant is added
 
 1. The defense ships with at least one production caller — never an orphan helper function.

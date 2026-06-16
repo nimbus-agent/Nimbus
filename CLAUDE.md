@@ -55,8 +55,9 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - **I24** — a federated preflight (action) request executes only behind the LOCAL owner's HITL gate, never on the caller's say-so; the command is resolved from local config only (fail-closed if missing) and runs sandboxed with validated params as env (static D18) · `federation/preflight-gate.ts`
 - **I25** — a tribal-knowledge KB capture writes only to the config-pinned destination (`[tribal.notion]`/`[tribal.confluence]`), behind the LOCAL owner's HITL gate; the caller supplies at most a `--target` selector, never the destination; the `notion_kb_append`/`confluence_kb_append` tool ids are confined to the write-gate + connector sites (static D19) · `tribal/tribal-write-gate.ts`
 - **I26** — warehouse/BI write actions execute only behind the LOCAL owner's HITL gate (I2); the federated peer invoke gate (`answerFederatedInvoke`) fail-closed rejects any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (`isWarehouseWriteToolId`), so a peer can never trigger a warehouse write. Write tool ids are confined to the SSoT + connector + transport/dispatch sites (static D20) · `federation/invoke-gate.ts`, `connectors/warehouse-write-tools.ts`
+- **I27** — an outbound share leaves the machine only through `share/share-gate.ts` `createShare()`: default+caller redaction applied, the LOCAL owner approves the exact redacted preview via the `share.publish` HITL action (I2 frozen set), the body is signed with the Vault-only `share.signing.privkey`, persisted to `share_records` (V41), and the applied redaction-set audit-logged; a denied/timed-out approval emits nothing (fail-closed). No other path emits a share to file/HTTP-sink/peer; the emit + the `createShare` call are confined to `ipc/share-rpc.ts` (static D21) · `share/share-gate.ts`, `share/share-keypair.ts`
 
-**Static complement:** `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (fails first; runtime tests stay authoritative). It enforces I1, the vault-key allow-list, I14 (D12), I15 (D10), I17 (D13), I18 (D14), I19 (D15), I22 (D16), I23 (D17), I24 (D18), I25 (D19), I26 (D20) at static time.
+**Static complement:** `scripts/structure-audit/check-nimbus-invariants.ts` runs before the test suite (fails first; runtime tests stay authoritative). It enforces I1, the vault-key allow-list, I14 (D12), I15 (D10), I17 (D13), I18 (D14), I19 (D15), I22 (D16), I23 (D17), I24 (D18), I25 (D19), I26 (D20), I27 (D21) at static time.
 
 ---
 
@@ -108,7 +109,7 @@ Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` 
 
 - [`docs/architecture.md`](./docs/architecture.md) — subsystem design, IPC method catalogue, schema reference. Read before modifying any subsystem.
 - [`docs/roadmap.md`](./docs/roadmap.md) — phases, acceptance criteria, delivered summaries.
-- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I26 rationale + anti-patterns.
+- [`docs/SECURITY-INVARIANTS.md`](./docs/SECURITY-INVARIANTS.md) — I1–I27 rationale + anti-patterns.
 - [`docs/cli-reference.md`](./docs/cli-reference.md) — full CLI subcommand reference.
 
 ---
