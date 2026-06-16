@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
-import { detectDrift, isRunnerKind, parseHistoryLines } from "./drift-check.ts";
+import { GhCli, type GhSpawnFn } from "../../packages/gateway/src/perf/bench-ci-gh.ts";
+import { detectDrift, isRunnerKind, parseLatestV2Line, runDriftCheckMain } from "./drift-check.ts";
 
 describe("detectDrift", () => {
   test("returns false when there is not enough history to fill the window", () => {
@@ -107,43 +108,127 @@ describe("detectDrift", () => {
   });
 });
 
-describe("parseHistoryLines", () => {
-  function writeLines(lines: string[]): string {
-    const dir = mkdtempSync(join(tmpdir(), "drift-parse-"));
-    const path = join(dir, "run-history.jsonl");
-    writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
-    return path;
+describe("parseLatestV2Line", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "drift-parse-"));
+  function writeFile(contents: string): string {
+    const p = join(tmp, `h-${Math.random().toString(36).slice(2)}.jsonl`);
+    writeFileSync(p, contents, "utf8");
+    return p;
+  }
+  function v2(p95: number): string {
+    return JSON.stringify({
+      schema_version: 2,
+      run_id: "r",
+      timestamp: "2026-06-16T00:00:00Z",
+      runner: "gha-ubuntu",
+      os_version: "ubuntu-24.04",
+      nimbus_git_sha: "abc",
+      bun_version: "1.3.14",
+      surfaces: { S1: { samples_count: 301, p95_ms: p95 } },
+    });
+  }
+  const v1 = JSON.stringify({
+    schema_version: 1,
+    surfaces: { S1: { samples_count: 1, p95_ms: 1 } },
+  });
+
+  test("returns null when the file is unreadable", () => {
+    expect(parseLatestV2Line(join(tmpdir(), "definitely-missing-drift.jsonl"))).toBeNull();
+  });
+
+  test("returns the last v2 line", () => {
+    const line = parseLatestV2Line(writeFile(`${v2(100)}\n${v2(250)}\n`));
+    expect(line?.surfaces["S1"]?.p95_ms).toBe(250);
+  });
+
+  test("returns null when the last line is schema_version 1 (non-comparable)", () => {
+    expect(parseLatestV2Line(writeFile(`${v2(100)}\n${v1}\n`))).toBeNull();
+  });
+
+  test("returns null when the last line is malformed JSON", () => {
+    expect(parseLatestV2Line(writeFile(`${v2(100)}\n{not json\n`))).toBeNull();
+  });
+
+  test("returns null on an empty file", () => {
+    expect(parseLatestV2Line(writeFile("\n  \n"))).toBeNull();
+  });
+});
+
+describe("runDriftCheckMain", () => {
+  // 14 runs, oldest-first sha-0..sha-13. The newest 3 (>=11) regress to 130 over
+  // a stable 100 baseline → a sustained drift on S1 (and only S1).
+  const shas = Array.from({ length: 14 }, (_, i) => `sha-${i}`);
+  const driftValue = (sha: string): number => (Number(sha.slice(4)) >= 11 ? 130 : 100);
+
+  function v2Line(p95: number): string {
+    return JSON.stringify({
+      schema_version: 2,
+      run_id: "r",
+      timestamp: "2026-06-16T00:00:00Z",
+      runner: "gha-ubuntu",
+      os_version: "ubuntu-24.04",
+      nimbus_git_sha: "abc",
+      bun_version: "1.3.14",
+      surfaces: { S1: { samples_count: 301, p95_ms: p95 } },
+    });
   }
 
-  const v2Line = JSON.stringify({
-    schema_version: 2,
-    run_id: "run-1",
-    timestamp: "2026-06-14T00:00:00.000Z",
-    runner: "gha-ubuntu",
-    os_version: "linux x64",
-    nimbus_git_sha: "abc123",
-    bun_version: "1.2.0",
-    surfaces: { S1: { samples_count: 5, p95_ms: 800 } },
+  function fakeGh(opts: {
+    valueForSha: (sha: string) => number;
+    existingIssues: { number: number; title: string }[];
+    calls: string[][];
+  }): GhCli {
+    const spawn: GhSpawnFn = async (args) => {
+      const a = [...args];
+      opts.calls.push(a);
+      if (a[0] === "run" && a[1] === "list") {
+        const newestFirst = [...shas]
+          .reverse()
+          .map((sha, i) => ({ databaseId: 1000 + i, headSha: sha }));
+        return { exitCode: 0, stdout: `${JSON.stringify(newestFirst)}\n`, stderr: "" };
+      }
+      if (a[0] === "run" && a[1] === "download") {
+        const dir = a[a.indexOf("--dir") + 1] as string;
+        const sha = basename(dir);
+        writeFileSync(join(dir, "run-history.jsonl"), `${v2Line(opts.valueForSha(sha))}\n`, "utf8");
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (a[0] === "issue" && a[1] === "list") {
+        return { exitCode: 0, stdout: `${JSON.stringify(opts.existingIssues)}\n`, stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    return new GhCli({ spawn, sleep: async () => {} });
+  }
+
+  test("files exactly one issue for a sustained-drifting surface with no open issue", async () => {
+    const calls: string[][] = [];
+    const gh = fakeGh({ valueForSha: driftValue, existingIssues: [], calls });
+    const tmpDir = mkdtempSync(join(tmpdir(), "drift-wrap-"));
+    await runDriftCheckMain({ gh, runner: "gha-ubuntu", tmpDir, stderr: () => {} });
+    const creates = calls.filter((c) => c[0] === "issue" && c[1] === "create");
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toContain("perf: sustained drift detected on S1 (gha-ubuntu)");
   });
 
-  test("returns [] when the file is unreadable", () => {
-    expect(parseHistoryLines(join(tmpdir(), "definitely-missing-drift.jsonl"))).toEqual([]);
+  test("does NOT create when an open issue already exists (create-only)", async () => {
+    const calls: string[][] = [];
+    const gh = fakeGh({
+      valueForSha: driftValue,
+      existingIssues: [{ number: 7, title: "perf: sustained drift detected on S1 (gha-ubuntu)" }],
+      calls,
+    });
+    const tmpDir = mkdtempSync(join(tmpdir(), "drift-wrap-"));
+    await runDriftCheckMain({ gh, runner: "gha-ubuntu", tmpDir, stderr: () => {} });
+    expect(calls.filter((c) => c[0] === "issue" && c[1] === "create")).toHaveLength(0);
   });
 
-  test("keeps well-formed schema_version 2 lines", () => {
-    const lines = parseHistoryLines(writeLines([v2Line]));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]?.surfaces.S1?.p95_ms).toBe(800);
-  });
-
-  test("skips schema_version 1 lines (non-comparable semantics)", () => {
-    const v1Line = JSON.stringify({ schema_version: 1, runner: "gha-ubuntu", surfaces: {} });
-    expect(parseHistoryLines(writeLines([v1Line, v2Line]))).toHaveLength(1);
-  });
-
-  test("skips malformed JSON and objects missing surfaces", () => {
-    const noSurfaces = JSON.stringify({ schema_version: 2, runner: "gha-ubuntu" });
-    expect(parseHistoryLines(writeLines(["{not json", noSurfaces, v2Line]))).toHaveLength(1);
+  test("a flat (non-drifting) series files nothing and never lists issues", async () => {
+    const calls: string[][] = [];
+    const gh = fakeGh({ valueForSha: () => 100, existingIssues: [], calls });
+    const tmpDir = mkdtempSync(join(tmpdir(), "drift-wrap-"));
+    await runDriftCheckMain({ gh, runner: "gha-ubuntu", tmpDir, stderr: () => {} });
+    expect(calls.filter((c) => c[0] === "issue")).toHaveLength(0);
   });
 });
 
