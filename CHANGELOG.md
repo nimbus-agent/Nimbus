@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.10.0](https://github.com/nimbus-agent/Nimbus/compare/v0.9.1...v0.10.0) (2026-06-16)
+
+
+### Features
+
+* **perf:** wire up the sustained-drift detector (daily _perf-drift.yml) ([#659](https://github.com/nimbus-agent/Nimbus/issues/659)) ([e433ec7](https://github.com/nimbus-agent/Nimbus/commit/e433ec71c9651f07cb8109e848a97b4923a8d95b))
+
+
+### Bug Fixes
+
+* **ci:** publish package managers after Release uploads assets (kill the asset-race) ([#658](https://github.com/nimbus-agent/Nimbus/issues/658)) ([f5f246f](https://github.com/nimbus-agent/Nimbus/commit/f5f246fb9713a023ef8c1eaf8f09ffbac6804b80))
+
 ## [0.9.1](https://github.com/nimbus-agent/Nimbus/compare/v0.9.0...v0.9.1) (2026-06-16)
 
 
