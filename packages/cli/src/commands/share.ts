@@ -125,7 +125,23 @@ export async function runShare(args: string[]): Promise<void> {
     });
     return;
   }
-  console.error("Usage: nimbus share <create|list|prune|pubkey> ...");
+  if (sub === "approve" || sub === "reject") {
+    const requestId = rest[0];
+    if (requestId === undefined || requestId.startsWith("--")) {
+      console.error(`Usage: nimbus share ${sub} <request-id>`);
+      process.exitCode = 1;
+      return;
+    }
+    await withIpc(async (c) => {
+      const r = await c.call<{ matched: boolean }>("share.approvalRespond", {
+        requestId,
+        approved: sub === "approve",
+      });
+      console.log(r.matched ? `${sub}ed ${requestId}` : "no pending share request with that id");
+    });
+    return;
+  }
+  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject> ...");
   process.exitCode = 1;
 }
 
