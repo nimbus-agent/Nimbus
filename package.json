@@ -214,7 +214,7 @@
   "devDependencies": {
     "@babel/core": "7.29.7",
     "@babel/preset-typescript": "7.29.7",
-    "@biomejs/biome": "^2.4.15",
+    "@biomejs/biome": "^2.5.0",
     "@hughescr/stryker-bun-runner": "1.2.2",
     "@resvg/resvg-js": "^2.6.2",
     "@stryker-mutator/core": "9.6.1",
