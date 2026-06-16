@@ -399,7 +399,15 @@ Immediately AFTER the existing `- name: Upload run history artifact` step, add:
       # only: the in-code gateClass comparator stays the sole gate. Skips when
       # BENCHER_API_KEY is unset (forks / pre-ops-setup) and on fork PRs.
       - name: Install Bencher CLI
-        if: ${{ env.BENCHER_API_KEY != '' }}
+        # Same secret-presence + leg gate as the emit/publish steps so a
+        # provision-then-skip nightly leg (macOS/Windows Mon–Sat) doesn't install
+        # the CLI for nothing.
+        if: |
+          env.BENCHER_API_KEY != '' && (
+            matrix.os == 'ubuntu-24.04' ||
+            github.event_name != 'schedule' ||
+            github.event.schedule == '0 4 * * 0'
+          )
         continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
         uses: bencherdev/bencher@<sha> # <tag>
 ```

@@ -128,7 +128,7 @@ The existing g-a-b steps (`Emit trend benchmark JSON`, `Publish to github-action
 
 | Event | `--branch` | start-point | `--github-actions` | Comment behavior |
 |---|---|---|---|---|
-| `push` → main | `main` | — | (omitted) | Feeds the dashboard; no PR. |
+| `push` → main | `main` | — | `$GITHUB_TOKEN` | Feeds the dashboard; posts a "Bencher Report" check on the commit. |
 | perf-labelled PR (same-repo) | `$GITHUB_HEAD_REF` | `--start-point main --start-point-hash <base.sha> --start-point-clone-thresholds --start-point-reset` | `$GITHUB_TOKEN` | `--ci-only-thresholds`: with no thresholds configured, Bencher posts only the informational **"Bencher Report" check** (no PR comment) — see §5.5. |
 | Fork PR | — | — | — | **Skipped** via `if: github.event.pull_request.head.repo.full_name == github.repository` (secrets are unavailable to fork runners). The two-workflow `workflow_run` fork pattern is deferred (§8). |
 
