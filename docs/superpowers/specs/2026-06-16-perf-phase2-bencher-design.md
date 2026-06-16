@@ -120,6 +120,8 @@ Two new steps per matrix leg, after the existing "Upload run history artifact" s
 
 Setup needs a `uses: bencherdev/bencher@<pinned-sha>` install step (SHA-pinned per the repo's Scorecard pin policy, like the g-a-b action). The `BENCHER_API_KEY` secret is exposed only to this perf job.
 
+**Secret-presence guard (review A).** The job copies the secret into a job-level `env: BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}`, and **both** Bencher steps (emit + publish) carry `if: ${{ env.BENCHER_API_KEY != '' }}` in addition to the existing leg gate. When the secret is absent the steps **skip cleanly** rather than fail — this covers (a) the window after PR-1 merges but before the §6 ops setup completes, (b) forks and non-`nimbus-agent/Nimbus` repo copies, and (c) any branch where the secret is unset. It also means PR-1's workflow can land independently of the manual ops steps (§10) without redding the perf job. (This is belt-and-suspenders with `continue-on-error` from §5.6: the guard avoids even a *visible* failed step in the no-secret case; `continue-on-error` covers a *transient* API failure when the secret IS present.)
+
 The existing g-a-b steps (`Emit trend benchmark JSON`, `Publish to github-action-benchmark`) are **left in place** through the soak.
 
 ### 5.4 Branch/event behavior
@@ -130,6 +132,8 @@ The existing g-a-b steps (`Emit trend benchmark JSON`, `Publish to github-action
 | perf-labelled PR (same-repo) | `$GITHUB_HEAD_REF` | `--start-point main --start-point-hash <base.sha> --start-point-clone-thresholds --start-point-reset` | `$GITHUB_TOKEN` | `--ci-only-thresholds`: with no thresholds configured, Bencher posts only the informational **"Bencher Report" check** (no PR comment) — see §5.5. |
 | Fork PR | — | — | — | **Skipped** via `if: github.event.pull_request.head.repo.full_name == github.repository` (secrets are unavailable to fork runners). The two-workflow `workflow_run` fork pattern is deferred (§8). |
 
+**Testbed name exactness (review B).** `--testbed` consumes the **existing** `steps.runner-id.outputs.id` from `_perf.yml`'s "Derive runner id" step (lines 137–148) verbatim — `gha-ubuntu` / `gha-macos` / `gha-windows` — the *same* identifier the artifact name (`perf-${id}-${sha}`) and `bench-ci.ts --runner` already consume. No new string is introduced, so the Bencher Testbed dimension can never drift from `RunnerKind`. The `_perf-reference.yml` ingest (§7) passes the literal `reference-m1air`. Bencher auto-creates a Testbed on first ingest, so these become the canonical testbed slugs.
+
 ### 5.5 Advisory mode & PR-comment coexistence
 
 We configure **no Bencher thresholds** → no alerts → `bencher run` never fails on the data (advisory by construction; the `gateClass` comparator stays the only thing that can red a PR). On PRs, `--github-actions $GITHUB_TOKEN --ci-only-thresholds` makes Bencher post only its informational "Bencher Report" check (a link to the run), **not** a PR comment — so it never double-comments alongside `bench-ci.ts`'s authoritative gate-class comment. `bench-ci.ts` remains the single PR comment; in PR-2 its dashboard link flips from `/dev/bench` to the Bencher project URL.
@@ -137,6 +141,8 @@ We configure **no Bencher thresholds** → no alerts → `bencher run` never fai
 ### 5.6 Error handling
 
 Bencher ingest is advisory, so a transient Bencher API / network failure must **not** red the perf job. We use GitHub-native **`continue-on-error: true`** on the Bencher steps: a failure is *visible* (the step is marked failed) but non-blocking. This is deliberately **not** `|| true`, which would swallow the signal entirely (an anti-pattern that previously bit this repo's perf gating).
+
+**Empty / partial BMF (review C).** `toBencherBmf` skips stub surfaces (`samples_count===0`) and non-finite values, so a degraded run can yield a BMF with a subset of surfaces — or, in the (rare) all-stub case, an empty `{}`. Two safeguards: (1) the emit step prints the surface count (mirroring `emit-benchmark-json.ts`'s "wrote N point(s)"), and the **publish step is guarded to skip an empty BMF** (no surfaces → nothing to ingest); (2) a *partial* BMF is safe to send — **verified:** Bencher treats each report as additive, so submitting a subset of benchmarks never erases or fails the historical data for the omitted ones. The advisory ingest is therefore resilient to per-surface flakiness.
 
 ## 6. Ops prerequisites (manual — operator, not automatable in-repo)
 
@@ -178,12 +184,15 @@ These mirror the installer program's infra-provisioning steps; they cannot be do
 
 ## 10. Rollout
 
-1. **PR-1** — `bencher-bmf.ts` + `emit-bencher-bmf.ts` + tests; `_perf.yml` Bencher steps (push + same-repo PR, all legs, `continue-on-error`); dormant `_perf-reference.yml` step; ops prerequisites completed (project, measures, secret). g-a-b untouched. Labelled `perf` so the bench validates on-PR.
+1. **PR-1** — `bencher-bmf.ts` + `emit-bencher-bmf.ts` + tests; `_perf.yml` Bencher steps (push + same-repo PR, all legs, `continue-on-error` + secret-presence guard); dormant `_perf-reference.yml` step. g-a-b untouched. Labelled `perf` so the bench validates on-PR. **Ordering is relaxed by the secret guard (§5.3):** the code/workflow PR and the manual ops setup (§6: project, measures, `BENCHER_API_KEY` secret) can land in either order — until the secret exists the Bencher steps skip cleanly; ingest begins the first run after the secret is set. Recommended: do §6 just before or right after merging PR-1 so the soak clock starts.
 2. **Soak** — ~2 weeks / ~10 main pushes; verify Bencher dashboard ≈ perf-data trend across testbeds.
 3. **PR-2** — retire g-a-b steps + emitter + tests; flip dashboard links; archive `perf-data` branch.
 
 - **No security-invariant impact** (perf is not an invariant surface). No DB migration. No `SloThreshold` schema change.
 
-## 11. Open questions for reviewer
+## 11. Resolved review points
 
-None blocking. One preference to confirm during PR-1: whether on perf-PRs Bencher should stay **check-only** (`--ci-only-thresholds`, current design — keeps `bench-ci.ts` the single PR comment) or post a full advisory **trend PR comment** (richer, but two comments). Defaulting to check-only.
+- **PR comments — DECIDED: check-only** (`--ci-only-thresholds`). Reviewer (Antigravity) concurred: a single authoritative `bench-ci.ts` comment avoids PR-timeline pollution; Bencher's "Bencher Report" check already links to the run dashboard for anyone wanting trend detail. No second PR comment.
+- **Fork double-guard + no-secret resilience (review A)** — addressed by the secret-presence step guard (§5.3) plus the same-repo `if` (§5.4) and `continue-on-error` (§5.6).
+- **Testbed name exactness (review B)** — addressed: `--testbed` reuses the existing `steps.runner-id.outputs.id` (§5.4).
+- **Empty / partial BMF resilience (review C)** — addressed: skip-on-empty publish + reviewer-verified additive-report semantics (§5.6).
