@@ -192,4 +192,74 @@ describe("GhCli", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("issueList: parses number+title array and passes the open+label+json args", async () => {
+    const { spawn, calls } = makeFakeRunner([
+      {
+        exitCode: 0,
+        stdout: '[{"number":12,"title":"perf drift A"},{"number":9,"title":"perf drift B"}]\n',
+        stderr: "",
+      },
+    ]);
+    const gh = new GhCli({ spawn });
+    const out = await gh.issueList({ label: "perf-drift" });
+    expect(out).toEqual([
+      { number: 12, title: "perf drift A" },
+      { number: 9, title: "perf drift B" },
+    ]);
+    expect(calls[0]?.args).toEqual([
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--label",
+      "perf-drift",
+      "--json",
+      "number,title",
+    ]);
+  });
+
+  test("issueList: empty stdout → empty array", async () => {
+    const { spawn } = makeFakeRunner([{ exitCode: 0, stdout: "\n", stderr: "" }]);
+    const gh = new GhCli({ spawn });
+    expect(await gh.issueList({ label: "perf-drift" })).toEqual([]);
+  });
+
+  test("issueList: non-array JSON → empty array (no throw)", async () => {
+    const { spawn } = makeFakeRunner([{ exitCode: 0, stdout: '{"oops":true}\n', stderr: "" }]);
+    const gh = new GhCli({ spawn });
+    expect(await gh.issueList({ label: "perf-drift" })).toEqual([]);
+  });
+
+  test("issueList: drops entries missing number or title", async () => {
+    const { spawn } = makeFakeRunner([
+      {
+        exitCode: 0,
+        stdout: '[{"number":1},{"title":"only-title"},{"number":2,"title":"ok"}]\n',
+        stderr: "",
+      },
+    ]);
+    const gh = new GhCli({ spawn });
+    expect(await gh.issueList({ label: "perf-drift" })).toEqual([{ number: 2, title: "ok" }]);
+  });
+
+  test("issueCreate: passes title, label, and --body-file", async () => {
+    const { spawn, calls } = makeFakeRunner([{ exitCode: 0, stdout: "", stderr: "" }]);
+    const gh = new GhCli({ spawn });
+    await gh.issueCreate({
+      title: "perf drift on S1",
+      label: "perf-drift",
+      bodyFile: "fake-body.md",
+    });
+    expect(calls[0]?.args).toEqual([
+      "issue",
+      "create",
+      "--title",
+      "perf drift on S1",
+      "--label",
+      "perf-drift",
+      "--body-file",
+      "fake-body.md",
+    ]);
+  });
 });

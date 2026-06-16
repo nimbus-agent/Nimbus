@@ -180,4 +180,37 @@ export class GhCli {
       `body=${body}`,
     ]);
   }
+
+  async issueList(args: { label: string }): Promise<{ number: number; title: string }[]> {
+    const r = await this.#run([
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--label",
+      args.label,
+      "--json",
+      "number,title",
+    ]);
+    const out = r.stdout.trim();
+    if (out === "") return [];
+    return parseJsonObjectArray(
+      out,
+      (rec) => typeof rec["number"] === "number" && typeof rec["title"] === "string",
+      (rec) => ({ number: rec["number"] as number, title: rec["title"] as string }),
+    );
+  }
+
+  async issueCreate(args: { title: string; label: string; bodyFile: string }): Promise<void> {
+    await this.#run([
+      "issue",
+      "create",
+      "--title",
+      args.title,
+      "--label",
+      args.label,
+      "--body-file",
+      args.bodyFile,
+    ]);
+  }
 }
