@@ -41,7 +41,11 @@ const PACKAGE_OVERRIDES: ReadonlySet<string> = new Set([
   "@img/sharp-libvips-linux-x64@1.2.4",
   "@img/sharp-libvips-linuxmusl-x64@1.2.4",
   "flatbuffers@1.12.0",
-  "ovsx@0.10.12",
+  // ovsx is the Open VSX publish CLI — a build-only devDependency of
+  // packages/vscode-extension, never bundled or linked into shipped code.
+  // 1.0.x is licensed EPL-2.0 (weak-copyleft); safe in this dev-tool context,
+  // so it is pinned here rather than allowing EPL-2.0 repo-wide.
+  "ovsx@1.0.1",
 ]);
 
 type LicenseField = string | { type: string } | LicenseField[] | undefined;
