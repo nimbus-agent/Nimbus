@@ -1,13 +1,24 @@
 name: Publish Linux repo
 
-# `released` (not `published`) fires only for non-prerelease releases, so
-# rc/beta/alpha tags are skipped automatically (the apt/yum channel tracks
-# stable only). `workflow_dispatch` lets a maintainer re-publish a tag if a
-# push failed transiently — re-running is safe (it republishes the same
-# inputs; signature timestamps mean a re-run lands a fresh commit, not a no-op).
+# Triggered by the Release workflow COMPLETING — not the `release: released`
+# event. release-please publishes the (empty) GitHub Release the instant the
+# release PR merges, which fires `released` ~18 min before release.yml finishes
+# building + attaching SHA256SUMS/.deb/.rpm. Keying off `released` therefore
+# always raced an asset-less release ("no assets to download"). `workflow_run`
+# fires only after release.yml has uploaded every asset.
+#
+# The job `if` gates on: the Release run SUCCEEDED, the ref is a `v*` tag (so
+# sdk-*/client-* releases — which never build installers and don't trigger
+# release.yml anyway — are doubly excluded), and the tag is NON-prerelease (no
+# `-`, matching the old "released only fires for stable" behavior).
+#
+# `workflow_dispatch` lets a maintainer re-publish a tag if a run failed
+# transiently — re-running is safe (it republishes the same inputs; signature
+# timestamps mean a re-run lands a fresh commit, not a no-op).
 on:
-  release:
-    types: [released]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag_name:
@@ -16,7 +27,7 @@ on:
         type: string
 
 concurrency:
-  group: publish-linux-repo-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+  group: publish-linux-repo-${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
   cancel-in-progress: false
 
 permissions:
@@ -27,6 +38,13 @@ jobs:
     name: Build + publish apt/yum repo
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Stable `v*` tags whose Release build succeeded (or a manual re-run). See the
+    # `on:` header for why this replaces the `release: released` trigger.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      !contains(github.event.workflow_run.head_branch, '-'))
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -36,6 +54,10 @@ jobs:
       - name: Checkout Nimbus
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # workflow_run defaults to the default branch; check out the released
+          # tag's tree instead (head_sha = the commit release.yml built from).
+          # Manual dispatch falls back to the tag input.
+          ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag_name }}
           persist-credentials: false
 
       - name: Setup Bun and install dependencies
@@ -72,7 +94,7 @@ jobs:
       - name: Download released .deb + .rpm + SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -85,7 +107,7 @@ jobs:
       - name: Resolve + verify artifact checksums
         id: art
         env:
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -126,7 +148,7 @@ jobs:
 
       - name: Build the apt repo (reprepro) + the yum repo (createrepo_c)
         env:
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -170,7 +192,7 @@ jobs:
       - name: Commit + push to linux-repo
         env:
           GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           cd repo

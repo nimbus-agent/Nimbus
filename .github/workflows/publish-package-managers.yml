@@ -1,12 +1,23 @@
 name: Publish package managers
 
-# `released` (not `published`) fires only for non-prerelease releases, so
-# rc/beta/alpha tags are skipped automatically (channels track stable only).
-# `workflow_dispatch` lets a maintainer re-run a publish by tag if the push failed
+# Triggered by the Release workflow COMPLETING — not the `release: released`
+# event. release-please publishes the (empty) GitHub Release the instant the
+# release PR merges, which fires `released` ~18 min before release.yml finishes
+# building + attaching SHA256SUMS/.msi/binaries. Keying off `released` therefore
+# always raced an asset-less release ("no assets to download"). `workflow_run`
+# fires only after release.yml has uploaded every asset.
+#
+# Each job's `if` gates on: the Release run SUCCEEDED, the ref is a `v*` tag (so
+# sdk-*/client-* releases — which never build installers and don't trigger
+# release.yml anyway — are doubly excluded), and the tag is NON-prerelease (no
+# `-`, matching the old "released only fires for stable" behavior).
+#
+# `workflow_dispatch` lets a maintainer re-run a publish by tag if a run failed
 # transiently (GitHub outage, expired PAT) — re-running is idempotent (no-op if unchanged).
 on:
-  release:
-    types: [released]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag_name:
@@ -15,7 +26,7 @@ on:
         type: string
 
 concurrency:
-  group: publish-pkgmgr-${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+  group: publish-pkgmgr-${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
   cancel-in-progress: false
 
 permissions:
@@ -26,6 +37,13 @@ jobs:
     name: Generate + publish brew/scoop manifests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Stable `v*` tags whose Release build succeeded (or a manual re-run). See the
+    # `on:` header for why this replaces the `release: released` trigger.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      !contains(github.event.workflow_run.head_branch, '-'))
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -35,6 +53,10 @@ jobs:
       - name: Checkout Nimbus
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # workflow_run defaults to the default branch; check out the released
+          # tag's tree instead (head_sha = the commit release.yml built from).
+          # Manual dispatch falls back to the tag input.
+          ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag_name }}
           persist-credentials: false
 
       - name: Setup Bun and install dependencies
@@ -59,7 +81,7 @@ jobs:
       - name: Download SHA256SUMS from the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -67,7 +89,7 @@ jobs:
 
       - name: Generate manifests
         env:
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -82,7 +104,7 @@ jobs:
       - name: Publish to homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/homebrew-tap.git" tap
@@ -102,7 +124,7 @@ jobs:
       - name: Publish to scoop-bucket
         env:
           GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/scoop-bucket.git" bucket
@@ -122,11 +144,22 @@ jobs:
     name: Submit winget manifest PR
     runs-on: windows-latest
     timeout-minutes: 20
+    # Stable `v*` tags whose Release build succeeded (or a manual re-run). See the
+    # `on:` header for why this replaces the `release: released` trigger.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      !contains(github.event.workflow_run.head_branch, '-'))
     # No step-security/harden-runner here: it supports Linux runners only.
     steps:
       - name: Checkout Nimbus
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # workflow_run defaults to the default branch; check out the released
+          # tag's tree instead (head_sha = the commit release.yml built from).
+          # Manual dispatch falls back to the tag input.
+          ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag_name }}
           persist-credentials: false
 
       - name: Setup Bun and install dependencies
@@ -152,7 +185,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
           gh release download "$env:TAG" --repo "$env:GITHUB_REPOSITORY" `
@@ -163,7 +196,7 @@ jobs:
         id: msi
         shell: pwsh
         env:
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           $version = $env:TAG -replace '^v',''
           bun scripts/release/winget-manifest.ts `
@@ -200,7 +233,7 @@ jobs:
         shell: pwsh
         env:
           WINGET_PAT: ${{ secrets.WINGET_PAT }}
-          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag_name }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           $version = $env:TAG -replace '^v',''
           $url = "${{ steps.msi.outputs.url }}"
