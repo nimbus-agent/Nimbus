@@ -43,4 +43,15 @@ describe("parseShareCreateArgs", () => {
     expect(parseShareCreateArgs(["s-1"]).expiresMs).toBeNull();
     expect(parseShareCreateArgs(["s-1", "--expires", "nope"]).expiresMs).toBeNull();
   });
+
+  test("rejects an option whose value is missing or is another flag", () => {
+    expect(() => parseShareCreateArgs(["s-1", "--out"])).toThrow(/--out requires a value/);
+    expect(() => parseShareCreateArgs(["s-1", "--out", "--http"])).toThrow(
+      /--out requires a value/,
+    );
+    expect(() => parseShareCreateArgs(["s-1", "--redact"])).toThrow(/--redact requires a value/);
+    expect(() => parseShareCreateArgs(["s-1", "--to-peer", "--http"])).toThrow(
+      /--to-peer requires a value/,
+    );
+  });
 });

@@ -31,4 +31,16 @@ describe("ensureShareKeypair", () => {
     const b = await ensureShareKeypair(v.vault);
     expect(b).toEqual(a);
   });
+  test("regenerates when the persisted pubkey does not match the persisted privkey", async () => {
+    const v = fakeVault();
+    const a = await ensureShareKeypair(v.vault);
+    // Corrupt the Vault: keep a's privkey but replace the pubkey with a DIFFERENT valid 32-byte key.
+    const other = await ensureShareKeypair(fakeVault().vault);
+    await v.vault.set(SHARE_SIGNING_PUBKEY, other.pubkeyB64);
+    const b = await ensureShareKeypair(v.vault);
+    // The mismatched pair is rejected and a fresh, self-consistent keypair is generated + stored.
+    expect(b.privkeyB64).not.toBe(a.privkeyB64);
+    expect(v.store.get(SHARE_SIGNING_PRIVKEY)).toBe(b.privkeyB64);
+    expect(v.store.get(SHARE_SIGNING_PUBKEY)).toBe(b.pubkeyB64);
+  });
 });

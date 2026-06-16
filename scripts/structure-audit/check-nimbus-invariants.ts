@@ -505,7 +505,10 @@ const D21_CREATESHARE_ALLOWED = [
 ];
 const D21_CREATESHARE_RE = /\bcreateShare\b/;
 const D21_CONSENT_WIRING_FILE = "packages/gateway/src/platform/assemble.ts";
-const D21_CONSENT_RE = /shareConsent\.request/;
+// Require `shareConsent.request` to be wired AS the `requestApproval` dependency (not merely
+// mentioned somewhere) — so an unrelated/dead `shareConsent.request` reference can't satisfy the
+// check while the real approval thunk is an always-true stub.
+const D21_CONSENT_RE = /requestApproval\s*:[\s\S]{0,400}?shareConsent\.request\b/;
 
 export function checkShareConsentBrokerConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

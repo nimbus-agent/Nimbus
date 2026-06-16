@@ -23,11 +23,22 @@ class TestIpcClient {
   private readonly pending = new Map<number, (v: { result?: unknown; error?: unknown }) => void>();
   private readonly notifyHandlers = new Map<string, NotificationHandler>();
 
+  private failAllPending(reason: string): void {
+    for (const [, cb] of this.pending) cb({ error: { message: reason } });
+    this.pending.clear();
+  }
+
   async connect(socketPath: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const sock = net.createConnection(socketPath);
       sock.on("connect", () => resolve());
-      sock.on("error", reject);
+      sock.on("error", (e) => {
+        // Before connect, surface the connection error; after, fail any in-flight calls so a
+        // closed/broken socket rejects rather than hanging forever.
+        reject(e);
+        this.failAllPending(`socket error: ${e.message}`);
+      });
+      sock.on("close", () => this.failAllPending("socket closed"));
       sock.on("data", (chunk) => {
         this.buffer += chunk.toString("utf8");
         let idx = this.buffer.indexOf("\n");

@@ -113,10 +113,16 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/"extension\.update"/);
   });
 
-  test("FORBIDDEN_OVER_LAN blocks share.create + share.prune (Slice 8 / I27)", async () => {
-    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
-    expect(src).toContain('"share.create"');
-    expect(src).toContain('"share.prune"');
+  test("FORBIDDEN_OVER_LAN blocks share.create + share.prune + share.approvalRespond (Slice 8 / I27)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // The outbound chokepoint, the local prune, and the LOCAL-owner approval answer are all
+    // un-callable over the wire — a remote peer must never approve/trigger an outbound publish.
+    expect(() => checkLanMethodAllowed("share.create", peer)).toThrow();
+    expect(() => checkLanMethodAllowed("share.prune", peer)).toThrow();
+    expect(() => checkLanMethodAllowed("share.approvalRespond", peer)).toThrow();
+    // Read-only share methods remain admitted (gated downstream like federation reads).
+    expect(() => checkLanMethodAllowed("share.verify", peer)).not.toThrow();
   });
 
   test("admits the team-vault wire methods but FORBIDS team-vault/HITL management over LAN (Slice 2)", async () => {

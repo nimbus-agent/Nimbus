@@ -168,6 +168,40 @@ describe("share.create", () => {
       /ERR_INVALID_PARAMS: sessionId/,
     );
   });
+
+  test("an unknown sink.type is rejected (not silently coerced to a file)", async () => {
+    await expect(
+      dispatchShareRpc(
+        "share.create",
+        { sessionId: "s1", sink: { type: "carrier-pigeon" } },
+        freshCtx(db, { approve: true }),
+      ),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS: unknown sink\.type/);
+    expect(listShareRecords(db, { now: 2000 }).length).toBe(0);
+  });
+
+  test("expiresMs is converted to an absolute expiresAt on the persisted share", async () => {
+    await dispatchShareRpc(
+      "share.create",
+      { sessionId: "s1", sink: { type: "file" }, expiresMs: 60_000 },
+      freshCtx(db, { approve: true }),
+    );
+    const [row] = listShareRecords(db, { now: 2000, includeExpired: true });
+    expect(row?.expiresAt).toBe(1000 + 60_000); // ctx.now() === 1000
+  });
+
+  test("caller redact patterns are threaded into the gate and applied to the body", async () => {
+    const filePath = join(tmp, "redact.json");
+    await dispatchShareRpc(
+      "share.create",
+      { sessionId: "s1", sink: { type: "file", path: filePath }, redact: ["ping"] },
+      freshCtx(db, { approve: true }),
+    );
+    const written = await readFile(filePath, "utf8");
+    // "ping" is not PII — it is redacted only because the caller pattern was wired through.
+    expect(written).not.toContain("ping");
+    expect(written).toContain("[REDACTED]");
+  });
 });
 
 describe("share read methods", () => {

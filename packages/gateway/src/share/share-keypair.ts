@@ -1,4 +1,5 @@
 import { decodeBase64, encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import nacl from "tweetnacl";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /** Vault key for the share signing seed (base64, 32-byte Ed25519 seed). NEVER leaves the Vault. */
@@ -10,6 +11,20 @@ export const SHARE_SIGNING_PUBKEY = "share.signing.pubkey";
 function isValidB64Len(b64: string, len: number): boolean {
   try {
     return decodeBase64(b64).length === len;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True only if the stored public key is the one derived from the stored private seed — i.e. they
+ * form a consistent Ed25519 keypair. Guards against a partially-rotated / mismatched Vault (a
+ * privkey from one keypair next to a pubkey from another), which would sign shares verifiers reject.
+ */
+function isMatchingKeypair(privkeyB64: string, pubkeyB64: string): boolean {
+  try {
+    const derivedPub = nacl.sign.keyPair.fromSeed(decodeBase64(privkeyB64)).publicKey;
+    return encodeBase64(derivedPub) === pubkeyB64;
   } catch {
     return false;
   }
@@ -33,7 +48,8 @@ export async function ensureShareKeypair(
     existingPriv !== null &&
     existingPub !== null &&
     isValidB64Len(existingPriv, 32) &&
-    isValidB64Len(existingPub, 32)
+    isValidB64Len(existingPub, 32) &&
+    isMatchingKeypair(existingPriv, existingPub)
   ) {
     return { privkeyB64: existingPriv, pubkeyB64: existingPub };
   }

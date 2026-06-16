@@ -40,10 +40,20 @@ export function verifyShareFromBytes(
   }
   try {
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as {
-      body?: { origin?: { label: string; pubkey: string } };
+      body?: { origin?: unknown };
     };
     const origin = parsed.body?.origin;
-    return origin === undefined ? base : { ...base, origin };
+    // `origin` is untrusted JSON — only surface it when it has the expected `{label, pubkey}`
+    // string shape, so a malformed value can't poison the report's type contract.
+    if (
+      origin !== null &&
+      typeof origin === "object" &&
+      typeof (origin as { label?: unknown }).label === "string" &&
+      typeof (origin as { pubkey?: unknown }).pubkey === "string"
+    ) {
+      return { ...base, origin: origin as { label: string; pubkey: string } };
+    }
+    return base;
   } catch {
     return base;
   }

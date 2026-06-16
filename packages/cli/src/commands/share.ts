@@ -26,9 +26,16 @@ function parseDuration(s: string): number | null {
 
 export function parseShareCreateArgs(args: readonly string[]): ShareCreateArgs {
   const sessionId = args[0] ?? "";
+  // Reject an option whose value is missing or is itself another flag (e.g. `--out --http`),
+  // rather than silently consuming the next token as the value.
   const flag = (name: string): string | undefined => {
     const i = args.indexOf(name);
-    return i >= 0 ? args[i + 1] : undefined;
+    if (i < 0) return undefined;
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith("--")) {
+      throw new Error(`${name} requires a value`);
+    }
+    return v;
   };
   const out = flag("--out");
   const peer = flag("--to-peer");
@@ -41,13 +48,18 @@ export function parseShareCreateArgs(args: readonly string[]): ShareCreateArgs {
           ? { type: "peer", peerId: peer }
           : { type: "file" };
   const exp = flag("--expires");
+  const redact: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--redact") continue;
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith("--")) throw new Error("--redact requires a value");
+    redact.push(v);
+  }
   return {
     sessionId,
     sink,
     expiresMs: exp === undefined ? null : parseDuration(exp),
-    redact: args.flatMap((a, i) =>
-      a === "--redact" && args[i + 1] !== undefined ? [args[i + 1] as string] : [],
-    ),
+    redact,
     asRecipe: args.includes("--as-recipe"),
   };
 }
@@ -137,7 +149,8 @@ export async function runShare(args: string[]): Promise<void> {
         requestId,
         approved: sub === "approve",
       });
-      console.log(r.matched ? `${sub}ed ${requestId}` : "no pending share request with that id");
+      const verb = sub === "approve" ? "approved" : "rejected";
+      console.log(r.matched ? `${verb} ${requestId}` : "no pending share request with that id");
     });
     return;
   }

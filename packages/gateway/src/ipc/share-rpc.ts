@@ -100,8 +100,17 @@ function parseSink(params: unknown): { sink: ShareSink; filePath?: string } {
     const peerId = typeof s["peerId"] === "string" ? s["peerId"] : "";
     return { sink: { type: "peer", peerId } };
   }
-  const path = typeof s["path"] === "string" ? s["path"] : undefined;
-  return { sink: { type: "file" }, ...(path === undefined ? {} : { filePath: path }) };
+  if (type === undefined || type === "file") {
+    const path = typeof s["path"] === "string" ? s["path"] : undefined;
+    return { sink: { type: "file" }, ...(path === undefined ? {} : { filePath: path }) };
+  }
+  // Reject an unrecognized sink rather than silently coercing it to a file write.
+  throw new ShareRpcError(-32602, `ERR_INVALID_PARAMS: unknown sink.type ${String(type)}`);
+}
+
+/** Escape a caller-supplied literal so it is matched verbatim (no regex injection / ReDoS). */
+function literalToRegExp(s: string): RegExp {
+  return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
 }
 
 async function emitFile(filePath: string, json: string): Promise<void> {
@@ -133,8 +142,20 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
     const kind: "transcript" | "recipe" = rec["kind"] === "recipe" ? "recipe" : "transcript";
     const { sink, filePath } = parseSink(params);
 
+    // Relative expiry (ms from now) → absolute expiresAt; caller redaction literals → escaped
+    // global patterns threaded into the gate's redaction pass (no longer silent no-ops).
+    const expiresMsRaw = rec["expiresMs"];
+    const expiresAt =
+      typeof expiresMsRaw === "number" && Number.isFinite(expiresMsRaw) && expiresMsRaw > 0
+        ? ctx.now() + expiresMsRaw
+        : null;
+    const redactRaw = rec["redact"];
+    const callerPatterns = Array.isArray(redactRaw)
+      ? redactRaw.filter((x): x is string => typeof x === "string").map(literalToRegExp)
+      : [];
+
     const content = await ctx.collectSession(sessionId);
-    const req: CreateShareRequest = { sessionId, kind, sink };
+    const req: CreateShareRequest = { sessionId, kind, sink, expiresAt, callerPatterns };
 
     const result = await createShare(req, {
       db: ctx.db,

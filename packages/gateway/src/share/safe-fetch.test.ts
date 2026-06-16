@@ -17,6 +17,10 @@ describe("isPrivateAddress", () => {
     ["::ffff:8.8.8.8", false],
     ["fc00::1", true],
     ["fe80::1", true],
+    // fe80::/10 link-local spans the fe80–febf hextet range, not just fe80::/16.
+    ["fe90::1", true],
+    ["fea0::1", true],
+    ["febf::1", true],
     ["not-an-ip", false],
   ])("%s -> private=%p", (addr, expected) => {
     expect(isPrivateAddress(addr as string)).toBe(expected);

@@ -48,8 +48,10 @@ export function isPrivateAddress(addr: string): boolean {
     const mappedV4 = extractMappedV4(addr);
     if (mappedV4 !== null) return isPrivateV4(mappedV4);
     const a = addr.toLowerCase();
+    // fc00::/7 (ULA: fc/fd) + fe80::/10 (link-local: the first hextet is fe80–febf, i.e. fe8/fe9/
+    // fea/feb) + loopback/unspecified. `startsWith("fe80")` alone would miss fe90::–febf:: .
     return (
-      a === "::1" || a === "::" || a.startsWith("fc") || a.startsWith("fd") || a.startsWith("fe80")
+      a === "::1" || a === "::" || a.startsWith("fc") || a.startsWith("fd") || /^fe[89ab]/.test(a)
     );
   }
   return false;

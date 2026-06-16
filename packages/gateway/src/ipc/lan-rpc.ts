@@ -15,11 +15,13 @@ const FORBIDDEN_OVER_LAN = new Set([
   "chatops", // Slice 5 — local/Tauri-read-only bot lifecycle; never answerable over the wire
   "tribal", // Slice 6c — local/Tauri-read-only knowledge extraction + owner-HITL capture; never over the wire
   // Slice 8 — share: create is the I27 owner-HITL outbound chokepoint; prune deletes local
-  // share_records rows. Both are local/CLI-only (full-method forbid, not merely write-gated). The
-  // reads (share.verify/list/get/pubkey) + share.approvalRespond are left admitted by default-allow,
-  // mirroring federation.query/expertise.
+  // share_records rows; approvalRespond is the LOCAL owner answering a publish-approval prompt.
+  // All three are local/CLI-only (full-method forbid) — admitting approvalRespond over the wire
+  // would let a remote peer approve an outbound publish, defeating the LOCAL-owner gate (I27).
+  // The reads (share.verify/list/get/pubkey) stay admitted by default-allow.
   "share.create",
   "share.prune",
+  "share.approvalRespond",
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace
   "security", // exfiltration-class — credential locations must not leak to LAN peers

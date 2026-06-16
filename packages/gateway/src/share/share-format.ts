@@ -2,6 +2,16 @@ import { decodeBase64 } from "@nimbus-dev/sdk";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import nacl from "tweetnacl";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
+
+/**
+ * Deterministic, locale-independent code-unit comparison for canonical key/array ordering.
+ * Must NOT use `localeCompare` (locale-dependent → would break the cross-machine stability of the
+ * signed canonical form). Matches the default `Array.prototype.sort()` lexicographic order.
+ */
+function codeUnitCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 export const SHARE_FORMAT = "nimbus-share/v1";
 
@@ -57,7 +67,7 @@ export function canonicalizeBody(body: ShareBody): Uint8Array {
     if (Array.isArray(v)) return v.map(sortKeys);
     if (v !== null && typeof v === "object") {
       const o: Record<string, unknown> = {};
-      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+      for (const k of Object.keys(v as Record<string, unknown>).sort(codeUnitCompare)) {
         o[k] = sortKeys((v as Record<string, unknown>)[k]);
       }
       return o;
@@ -127,9 +137,14 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
       errors: ["not a share file"],
     };
   }
-  if (parsed.format !== SHARE_FORMAT) errors.push(`unexpected format: ${String(parsed.format)}`);
+  const formatValid = parsed.format === SHARE_FORMAT;
+  if (!formatValid) errors.push(`unexpected format: ${String(parsed.format)}`);
   const canonical = canonicalizeBody(parsed.body);
-  const contentHashValid = contentHash(parsed.body) === parsed.contentHash;
+  // Constant-time compare (I10). The `contentHash` field is untrusted JSON — guard its type before
+  // comparing so a non-string hash fails closed rather than coercing.
+  const contentHashValid =
+    typeof parsed.contentHash === "string" &&
+    constantTimeStringEqual(contentHash(parsed.body), parsed.contentHash);
   if (!contentHashValid) errors.push("content hash mismatch");
   let signatureValid = false;
   try {
@@ -143,8 +158,10 @@ export function verifyShareBytes(bytes: Uint8Array, opts?: { now?: number }): Ve
   }
   if (!signatureValid) errors.push("signature invalid");
   const expired = parsed.body.expiresAt !== null && parsed.body.expiresAt < now;
+  // `format` is NOT part of the signed body, so an attacker can rewrite it without breaking the
+  // signature — fold it into `ok` so a non-canonical envelope is never reported genuine.
   return {
-    ok: signatureValid && contentHashValid,
+    ok: signatureValid && contentHashValid && formatValid,
     signatureValid,
     contentHashValid,
     expired,

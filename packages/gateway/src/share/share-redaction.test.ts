@@ -56,4 +56,15 @@ describe("redactForShare", () => {
     expect(json).toContain("[REDACTED]");
     expect(applied).toEqual(expect.arrayContaining(["emails", "secrets"]));
   });
+
+  test("keys that redact to the same value are kept distinct (no silent overwrite)", () => {
+    const { redacted } = redactForShare({
+      "alice@corp.com": 1,
+      "bob@corp.com": 2,
+    });
+    const out = redacted as Record<string, unknown>;
+    // Both emails redact to "[REDACTED]"; the second must not clobber the first.
+    expect(Object.keys(out)).toHaveLength(2);
+    expect(Object.values(out).sort()).toEqual([1, 2]);
+  });
 });

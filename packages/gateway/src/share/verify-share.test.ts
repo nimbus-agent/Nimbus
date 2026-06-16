@@ -55,6 +55,13 @@ describe("verifyShareFromBytes", () => {
     expect(r.origin).toBeUndefined();
   });
 
+  test("a malformed origin shape is not attached to the report", () => {
+    for (const badOrigin of ["a string", { label: 123, pubkey: "x" }, { label: "x" }, null]) {
+      const bytes = new TextEncoder().encode(JSON.stringify({ body: { origin: badOrigin } }));
+      expect(verifyShareFromBytes(bytes).origin).toBeUndefined();
+    }
+  });
+
   test("a tampered body fails verification but still surfaces origin", () => {
     const kp = generateEd25519Keypair();
     const body: ShareBody = {
