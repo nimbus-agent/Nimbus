@@ -1,0 +1,69 @@
+name: Performance Drift Check
+
+# Daily sustained-drift watch over recent `main` perf history. Downloads the last
+# 14 gha-ubuntu run-history artifacts, runs the rolling-median detector, and files
+# ONE `perf-drift` issue per sustained-regressing trend surface (create-only: an
+# already-open issue is left untouched — no daily re-comment). Advisory: it never
+# gates a build.
+#
+# Triggers:
+#   - schedule (06:00 UTC daily) — ~2h after _perf.yml's 04:00 bench crons so the
+#     latest artifact exists. GitHub runs `schedule` only on this repo's default
+#     branch, never for forks/fork PRs, so the `issues: write` grant is
+#     non-fork-triggered by construction.
+#   - workflow_dispatch — manual smoke test from the Actions UI.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+# Default-deny baseline (Scorecard Token-Permissions); the job grants only what
+# it uses (per-job, mirroring _perf.yml).
+permissions: {}
+
+jobs:
+  drift-check:
+    name: Perf sustained-drift check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+      actions: read # gh run list + gh run download (perf artifacts)
+      issues: write # gh label create + gh issue list/create (perf-drift)
+    concurrency:
+      group: perf-drift
+      cancel-in-progress: false
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Ensure perf-drift label exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `gh issue create --label` FAILS on a missing label (it does not
+          # auto-create); --force makes this idempotent (create or update).
+          gh label create perf-drift \
+            --color B60205 \
+            --description "Sustained performance drift detected on a trend surface" \
+            --force
+
+      - name: Run drift check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIMBUS_PERF_RUNNER: gha-ubuntu
+        run: bun scripts/perf/drift-check.ts
