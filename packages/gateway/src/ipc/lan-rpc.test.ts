@@ -129,8 +129,8 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
 });
 
 describe("share over LAN (I5 — Slice 8)", () => {
-  test("share.create + share.prune are fully forbidden over LAN regardless of grant-write", () => {
-    for (const m of ["share.create", "share.prune"]) {
+  test("share.create + share.prune + share.approvalRespond are fully forbidden over LAN regardless of grant-write", () => {
+    for (const m of ["share.create", "share.prune", "share.approvalRespond"]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
         LanError,
@@ -150,15 +150,9 @@ describe("share over LAN (I5 — Slice 8)", () => {
     expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
   });
 
-  test("the four share reads + approvalRespond are admitted over LAN (default-allow)", () => {
+  test("the four share reads are admitted over LAN (default-allow)", () => {
     const peer = { peerId: "p", writeAllowed: false };
-    for (const m of [
-      "share.verify",
-      "share.list",
-      "share.get",
-      "share.pubkey",
-      "share.approvalRespond",
-    ]) {
+    for (const m of ["share.verify", "share.list", "share.get", "share.pubkey"]) {
       expect(() => checkLanMethodAllowed(m, peer)).not.toThrow();
     }
   });
